@@ -95,8 +95,9 @@ func NewDatabase(cfg config.DatabaseConfig, log *applogger.Logger) (*Database, e
 func (d *Database) AutoMigrate() error {
 	return d.DB.AutoMigrate(
 		&models.User{},
-		&models.Company{},
-		&models.Client{},
+		&models.BusinessProfile{},
+		&models.Customer{},
+		&models.Vendor{},
 		&models.Invoice{},
 		&models.InvoiceItem{},
 	)

@@ -51,13 +51,17 @@ type CognitoConfig struct {
 }
 
 type DynamoDBConfig struct {
-	SessionsTable     string `mapstructure:"sessions_table"`
-	PreferencesTable  string `mapstructure:"preferences_table"`
-	Region            string `mapstructure:"region"`
+	SessionsTable             string `mapstructure:"sessions_table"`
+	PreferencesTable          string `mapstructure:"preferences_table"`
+	CustomersCacheTable       string `mapstructure:"customers_cache_table"`
+	VendorsCacheTable         string `mapstructure:"vendors_cache_table"`
+	BusinessProfilesCacheTable string `mapstructure:"business_profiles_cache_table"`
+	Region                    string `mapstructure:"region"`
 }
 
 type S3Config struct {
 	ProfilePicturesBucket string `mapstructure:"profile_pictures_bucket"`
+	BusinessLogosBucket   string `mapstructure:"business_logos_bucket"`
 	Region               string `mapstructure:"region"`
 }
 
@@ -129,7 +133,13 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("aws.localstack_endpoint", "http://localhost:4566")
 	v.SetDefault("aws.cognito.region", "us-east-1")
 	v.SetDefault("aws.dynamodb.region", "us-east-1")
+	v.SetDefault("aws.dynamodb.sessions_table", "invoice-backend-sessions-development")
+	v.SetDefault("aws.dynamodb.customers_cache_table", "invoice-backend-customers-cache")
+	v.SetDefault("aws.dynamodb.vendors_cache_table", "invoice-backend-vendors-cache")
+	v.SetDefault("aws.dynamodb.business_profiles_cache_table", "invoice-backend-business-profiles-cache")
 	v.SetDefault("aws.s3.region", "us-east-1")
+	v.SetDefault("aws.s3.profile_pictures_bucket", "invoice-backend-profile-pictures-development")
+	v.SetDefault("aws.s3.business_logos_bucket", "invoice-backend-business-logos-development")
 
 	// JWT defaults
 	v.SetDefault("jwt.access_token_exp", 15)

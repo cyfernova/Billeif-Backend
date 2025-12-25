@@ -117,16 +117,34 @@ func main() {
 	}
 
 	// Initialize repositories
-	repos := repositories.NewRegistry(db, dynamoDBClient, cfg.AWS.DynamoDB.SessionsTable)
+	repos := repositories.NewRegistry(
+		db,
+		dynamoDBClient,
+		cfg.AWS.DynamoDB.SessionsTable,
+		cfg.AWS.DynamoDB.CustomersCacheTable,
+		cfg.AWS.DynamoDB.VendorsCacheTable,
+		cfg.AWS.DynamoDB.BusinessProfilesCacheTable,
+		24*time.Hour, // Cache TTL
+	)
 
 	// Initialize services
 	cognitoService := services.NewCognitoService(cognitoClient, cfg.AWS.Cognito)
 	authService := services.NewAuthService(cognitoService, repos.User, repos.Session, cfg.JWT, log)
 	userService := services.NewUserService(repos.User, cognitoService)
+	customerService := services.NewCustomerService(repos.Customer)
+	vendorService := services.NewVendorService(repos.Vendor)
+	businessProfileService := services.NewBusinessProfileService(
+		repos.BusinessProfile,
+		s3Client,
+		cfg.AWS.S3.BusinessLogosBucket,
+	)
 
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(authService)
 	userHandler := handlers.NewUserHandler(userService)
+	customerHandler := handlers.NewCustomerHandler(customerService)
+	vendorHandler := handlers.NewVendorHandler(vendorService)
+	businessProfileHandler := handlers.NewBusinessProfileHandler(businessProfileService)
 	healthHandler := handlers.NewHealthHandler(db, cognitoClient, dynamoDBClient, s3Client)
 
 	// Set Gin mode
@@ -188,6 +206,56 @@ func main() {
 			users.PUT("/profile", userHandler.UpdateProfile)
 			users.GET(":id", middleware.RequireRole(models.RoleAdmin, models.RoleAccountant), userHandler.GetProfile)
 			users.GET("", middleware.RequireAdmin(), userHandler.ListUsers)
+		}
+
+		// Customer routes
+		customers := v1.Group("/customers")
+		customers.Use(authMiddleware.RequireAuth())
+		{
+			customers.POST("", customerHandler.Create)
+			customers.GET("", customerHandler.List)
+			customers.GET("/search", customerHandler.Search)
+			customers.GET("/filter", customerHandler.FilterByType)
+			customers.GET("/outstanding", customerHandler.GetOutstanding)
+			customers.GET("/stats", customerHandler.GetStats)
+			customers.GET(":id", customerHandler.GetByID)
+			customers.PUT(":id", customerHandler.Update)
+			customers.DELETE(":id", customerHandler.Delete)
+			customers.PATCH(":id/balance", customerHandler.UpdateBalance)
+		}
+
+		// Vendor routes
+		vendors := v1.Group("/vendors")
+		vendors.Use(authMiddleware.RequireAuth())
+		{
+			vendors.POST("", vendorHandler.Create)
+			vendors.GET("", vendorHandler.List)
+			vendors.GET("/search", vendorHandler.Search)
+			vendors.GET("/filter", vendorHandler.FilterByType)
+			vendors.GET("/outstanding", vendorHandler.GetOutstanding)
+			vendors.GET("/stats", vendorHandler.GetStats)
+			vendors.GET(":id", vendorHandler.GetByID)
+			vendors.PUT(":id", vendorHandler.Update)
+			vendors.DELETE(":id", vendorHandler.Delete)
+			vendors.PATCH(":id/balance", vendorHandler.UpdateBalance)
+		}
+
+		// Business profile routes
+		businessProfiles := v1.Group("/business-profiles")
+		businessProfiles.Use(authMiddleware.RequireAuth())
+		{
+			businessProfiles.POST("", businessProfileHandler.Create)
+			businessProfiles.GET("", businessProfileHandler.GetByUserID)
+			businessProfiles.GET("/search", businessProfileHandler.Search)
+			businessProfiles.GET("/has-any", businessProfileHandler.HasAny)
+			businessProfiles.GET("/default", businessProfileHandler.GetDefault)
+			businessProfiles.GET("/:id", businessProfileHandler.GetByID)
+			businessProfiles.PUT("/:id", businessProfileHandler.Update)
+			businessProfiles.DELETE("/:id", businessProfileHandler.Delete)
+			businessProfiles.PUT("/:id/set-default", businessProfileHandler.SetDefault)
+			businessProfiles.GET("/:id/logo-upload", businessProfileHandler.GetLogoUploadURL)
+			businessProfiles.POST("/:id/logo-confirm", businessProfileHandler.ConfirmLogoUpload)
+			businessProfiles.GET("/:id/next-invoice-number", businessProfileHandler.GetNextInvoiceNumber)
 		}
 	}
 

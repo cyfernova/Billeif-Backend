@@ -19,26 +19,26 @@ const (
 
 // Invoice represents an invoice
 type Invoice struct {
-	ID            uuid.UUID      `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
-	CompanyID     uuid.UUID      `gorm:"column:company_id;index;not null" json:"company_id"`
-	ClientID      uuid.UUID      `gorm:"column:client_id;index;not null" json:"client_id"`
-	InvoiceNumber string         `gorm:"column:invoice_number;uniqueIndex;size:50;not null" json:"invoice_number"`
-	IssueDate     time.Time      `gorm:"column:issue_date;index;not null" json:"issue_date"`
-	DueDate       time.Time      `gorm:"column:due_date;not null" json:"due_date"`
-	Status        InvoiceStatus  `gorm:"size:50;default:'draft'" json:"status"`
-	Subtotal      float64        `gorm:"type:decimal(12,2);default:0" json:"subtotal"`
-	TaxRate       float64        `gorm:"type:decimal(5,2);default:0" json:"tax_rate"`
-	TaxAmount     float64        `gorm:"type:decimal(12,2);default:0" json:"tax_amount"`
-	Total         float64        `gorm:"type:decimal(12,2);default:0" json:"total"`
-	Notes         string         `gorm:"type:text" json:"notes,omitempty"`
-	CreatedAt     time.Time      `gorm:"column:created_at" json:"created_at"`
-	UpdatedAt     time.Time      `gorm:"column:updated_at" json:"updated_at"`
-	DeletedAt     *time.Time     `gorm:"column:deleted_at;index" json:"deleted_at,omitempty"`
+	ID                uuid.UUID      `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
+	BusinessProfileID uuid.UUID      `gorm:"column:business_profile_id;index;not null" json:"business_profile_id"`
+	CustomerID        uuid.UUID      `gorm:"column:customer_id;index;not null" json:"customer_id"`
+	InvoiceNumber     string         `gorm:"column:invoice_number;uniqueIndex;size:50;not null" json:"invoice_number"`
+	IssueDate         time.Time      `gorm:"column:issue_date;index;not null" json:"issue_date"`
+	DueDate           time.Time      `gorm:"column:due_date;not null" json:"due_date"`
+	Status            InvoiceStatus  `gorm:"size:50;default:'draft'" json:"status"`
+	Subtotal          float64        `gorm:"type:decimal(12,2);default:0" json:"subtotal"`
+	TaxRate           float64        `gorm:"type:decimal(5,2);default:0" json:"tax_rate"`
+	TaxAmount         float64        `gorm:"type:decimal(12,2);default:0" json:"tax_amount"`
+	Total             float64        `gorm:"type:decimal(12,2);default:0" json:"total"`
+	Notes             string         `gorm:"type:text" json:"notes,omitempty"`
+	CreatedAt         time.Time      `gorm:"column:created_at" json:"created_at"`
+	UpdatedAt         time.Time      `gorm:"column:updated_at" json:"updated_at"`
+	DeletedAt         *time.Time     `gorm:"column:deleted_at;index" json:"deleted_at,omitempty"`
 
 	// Relations
-	Company Company       `gorm:"foreignKey:CompanyID" json:"-"`
-	Client  Client        `gorm:"foreignKey:ClientID" json:"client,omitempty"`
-	Items   []InvoiceItem `gorm:"foreignKey:InvoiceID" json:"items,omitempty"`
+	BusinessProfile BusinessProfile `gorm:"foreignKey:BusinessProfileID" json:"-"`
+	Customer        Customer         `gorm:"foreignKey:CustomerID" json:"customer,omitempty"`
+	Items           []InvoiceItem    `gorm:"foreignKey:InvoiceID" json:"items,omitempty"`
 }
 
 // TableName returns the table name for Invoice
