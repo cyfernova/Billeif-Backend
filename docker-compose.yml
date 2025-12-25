@@ -1,0 +1,97 @@
+version: "3.8"
+
+services:
+  localstack:
+    image: localstack/localstack:latest
+    container_name: invoice-localstack
+    ports:
+      - "4566:4566"
+      - "4510-4559:4510-4559"
+    environment:
+      - DEBUG=1
+      - AWS_DEFAULT_REGION=us-east-1
+      - SERVICES=cognito,dynamodb,s3
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - DATA_DIR=/tmp/localstack/data
+    volumes:
+      - "./localstack-volume:/tmp/localstack/data"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - invoice-network
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: invoice-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=invoice_db
+      - POSTGRES_USER=invoice_user
+      - POSTGRES_PASSWORD=invoice_password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U invoice_user -d invoice_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - invoice-network
+
+  adminer:
+    image: adminer:latest
+    container_name: invoice-adminer
+    ports:
+      - "8090:8080"
+    environment:
+      - ADMINER_DEFAULT_SERVER=postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - invoice-network
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: invoice-api
+    ports:
+      - "8080:8080"
+    environment:
+      - SERVER_PORT=8080
+      - SERVER_MODE=debug
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=invoice_user
+      - DB_PASSWORD=invoice_password
+      - DB_NAME=invoice_db
+      - AWS_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_LOCALSTACK_ENDPOINT=http://localstack:4566
+      - COGNITO_REGION=us-east-1
+      - APP_LOG_LEVEL=debug
+      - APP_ENVIRONMENT=development
+    depends_on:
+      localstack:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./configs:/app/configs:ro
+    networks:
+      - invoice-network
+
+volumes:
+  postgres-data:
+
+networks:
+  invoice-network:
+    driver: bridge
