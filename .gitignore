@@ -1,0 +1,48 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+api
+
+# Test files
+*.test
+coverage.out
+coverage.html
+
+# Go workspace file
+go.work
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Terraform
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/.tfplan
+terraform/crash.log
+terraform/override.tf
+terraform/override.tf.json
+terraform/*_override.tf
+terraform/*_override.tf.json
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
