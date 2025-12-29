@@ -98,3 +98,68 @@ variable "ssh_allowed_cidr" {
   type        = string
   default     = "0.0.0.0/0"
 }
+
+# ECS Configuration
+variable "ecs_task_cpu" {
+  description = "CPU units for ECS task (256, 512, 1024, 2048, 4096)"
+  type        = number
+  default     = 512
+}
+
+variable "ecs_task_memory" {
+  description = "Memory for ECS task in MB (512, 1024, 2048, etc.)"
+  type        = number
+  default     = 1024
+}
+
+variable "ecs_desired_count" {
+  description = "Desired number of ECS tasks"
+  type        = number
+  default     = 2
+}
+
+variable "ecs_min_count" {
+  description = "Minimum number of ECS tasks for auto-scaling"
+  type        = number
+  default     = 2
+}
+
+variable "ecs_max_count" {
+  description = "Maximum number of ECS tasks for auto-scaling"
+  type        = number
+  default     = 10
+}
+
+variable "container_port" {
+  description = "Port the container exposes"
+  type        = number
+  default     = 8080
+}
+
+# SSL/TLS Configuration
+variable "acm_certificate_arn" {
+  description = "ARN of ACM certificate for HTTPS (optional)"
+  type        = string
+  default     = ""
+}
+
+# Monitoring Configuration
+variable "alert_email" {
+  description = "Email address for CloudWatch alarm notifications (optional)"
+  type        = string
+  default     = ""
+}
+
+variable "log_retention_days" {
+  description = "Number of days to retain CloudWatch logs"
+  type        = number
+  default     = 30
+}
+
+# Application Secrets
+variable "jwt_secret" {
+  description = "JWT secret for application authentication"
+  type        = string
+  sensitive   = true
+  default     = "change-me-in-production-with-secure-secret"
+}

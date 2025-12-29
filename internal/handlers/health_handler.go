@@ -20,8 +20,8 @@ func (h *HealthHandler) Check(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status": "healthy",
 		"services": gin.H{
-			"database":   "up",
-			"localstack": "up",
+			"database": "up",
+			"redis":    "up",
 		},
 	})
 }
