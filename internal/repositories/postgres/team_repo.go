@@ -7,14 +7,14 @@ import (
 	"gorm.io/gorm"
 
 	"invoice-backend/internal/models"
-	"invoice-backend/internal/repositories/interfaces"
+	interfaces "invoice-backend/internal/repositories/interfaces"
 )
 
 type teamMemberRepository struct {
 	db *gorm.DB
 }
 
-func NewTeamMemberRepository(db *gorm.DB) TeamMemberRepository {
+func NewTeamMemberRepository(db *gorm.DB) interfaces.TeamMemberRepository {
 	return &teamMemberRepository{db: db}
 }
 
@@ -24,7 +24,7 @@ func (r *teamMemberRepository) Create(ctx context.Context, member *models.TeamMe
 
 func (r *teamMemberRepository) GetByID(ctx context.Context, id string) (*models.TeamMember, error) {
 	var member models.TeamMember
-	err := r.db.WithContext(ctx).Where("id = ?", id).First(&member).Error
+	err := r.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", id).First(&member).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, errors.New("team member not found")
 	}
@@ -37,17 +37,22 @@ func (r *teamMemberRepository) GetByBusinessID(ctx context.Context, businessID s
 
 	offset := (page - 1) * limit
 
-	query := r.db.WithContext(ctx).Model(&models.TeamMember{}).Where("business_id = ?", businessID)
+	query := r.db.WithContext(ctx).Model(&models.TeamMember{}).Where("business_id = ? AND deleted_at IS NULL", businessID).Order("created_at DESC")
 
 	if err := query.Count(&total).Error; err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	if err := query.Offset(offset).Limit(limit).Find(&members).Error; err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	return members, total, nil
+	result := make([]*models.TeamMember, len(members))
+	for i := range members {
+		result[i] = &members[i]
+	}
+
+	return result, total, nil
 }
 
 func (r *teamMemberRepository) Update(ctx context.Context, member *models.TeamMember) error {
@@ -60,9 +65,15 @@ func (r *teamMemberRepository) Delete(ctx context.Context, id string) error {
 
 func (r *teamMemberRepository) GetByUserID(ctx context.Context, userID string) ([]*models.TeamMember, error) {
 	var members []models.TeamMember
-	err := r.db.WithContext(ctx).Where("user_id = ?", userID).Find(&members).Error
+	err := r.db.WithContext(ctx).Where("user_id = ? AND deleted_at IS NULL", userID).Find(&members).Error
 	if err != nil {
 		return nil, err
 	}
-	return members, nil
+
+	result := make([]*models.TeamMember, len(members))
+	for i := range members {
+		result[i] = &members[i]
+	}
+
+	return result, nil
 }

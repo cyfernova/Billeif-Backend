@@ -2,17 +2,18 @@ package postgres
 
 import (
 	"context"
+
 	"gorm.io/gorm"
 
 	"invoice-backend/internal/models"
-	"invoice-backend/internal/repositories/interfaces"
+	interfaces "invoice-backend/internal/repositories/interfaces"
 )
 
 type ledgerRepository struct {
 	db *gorm.DB
 }
 
-func NewLedgerRepository(db *gorm.DB) LedgerRepository {
+func NewLedgerRepository(db *gorm.DB) interfaces.LedgerRepository {
 	return &ledgerRepository{db: db}
 }
 
@@ -29,18 +30,25 @@ func (r *ledgerRepository) GetByBusinessID(ctx context.Context, businessID strin
 	query := r.db.WithContext(ctx).Model(&models.LedgerEntry{}).Where("business_id = ?", businessID).Order("entry_date DESC")
 
 	if err := query.Count(&total).Error; err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	if err := query.Offset(offset).Limit(limit).Find(&entries).Error; err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	return entries, total, nil
+	result := make([]*models.LedgerEntry, len(entries))
+	for i := range entries {
+		result[i] = &entries[i]
+	}
+
+	return result, total, nil
 }
 
 func (r *ledgerRepository) GetBalance(ctx context.Context, businessID string) (float64, error) {
-	var balance float64
-	err := r.db.WithContext(ctx).Model(&models.LedgerEntry{}).Where("business_id = ?", businessID).Select("COALESCE(SUM(CASE WHEN entry_type = 'credit' THEN amount ELSE -amount END))").Scan(&balance).Error
-	return balance, err
+	var balance struct {
+		Total float64
+	}
+	err := r.db.WithContext(ctx).Model(&models.LedgerEntry{}).Where("business_id = ?", businessID).Select("SUM(CASE WHEN entry_type = 'debit' THEN amount ELSE -amount END) as total").Scan(&balance).Error
+	return balance.Total, err
 }

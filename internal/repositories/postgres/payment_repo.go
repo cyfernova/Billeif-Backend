@@ -7,14 +7,14 @@ import (
 	"gorm.io/gorm"
 
 	"invoice-backend/internal/models"
-	"invoice-backend/internal/repositories/interfaces"
+	interfaces "invoice-backend/internal/repositories/interfaces"
 )
 
 type paymentRepository struct {
 	db *gorm.DB
 }
 
-func NewPaymentRepository(db *gorm.DB) PaymentRepository {
+func NewPaymentRepository(db *gorm.DB) interfaces.PaymentRepository {
 	return &paymentRepository{db: db}
 }
 
@@ -37,17 +37,22 @@ func (r *paymentRepository) GetByInvoiceID(ctx context.Context, invoiceID string
 
 	offset := (page - 1) * limit
 
-	query := r.db.WithContext(ctx).Model(&models.Payment{}).Where("invoice_id = ? AND deleted_at IS NULL", invoiceID).Order("payment_date DESC")
+	query := r.db.WithContext(ctx).Model(&models.Payment{}).Where("invoice_id = ?", invoiceID).Order("payment_date DESC")
 
 	if err := query.Count(&total).Error; err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	if err := query.Offset(offset).Limit(limit).Find(&payments).Error; err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	return payments, total, nil
+	result := make([]*models.Payment, len(payments))
+	for i := range payments {
+		result[i] = &payments[i]
+	}
+
+	return result, total, nil
 }
 
 func (r *paymentRepository) Update(ctx context.Context, payment *models.Payment) error {

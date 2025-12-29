@@ -7,14 +7,14 @@ import (
 	"gorm.io/gorm"
 
 	"invoice-backend/internal/models"
-	"invoice-backend/internal/repositories/interfaces"
+	interfaces "invoice-backend/internal/repositories/interfaces"
 )
 
 type businessRepository struct {
 	db *gorm.DB
 }
 
-func NewBusinessRepository(db *gorm.DB) BusinessRepository {
+func NewBusinessRepository(db *gorm.DB) interfaces.BusinessRepository {
 	return &businessRepository{db: db}
 }
 
@@ -24,9 +24,9 @@ func (r *businessRepository) Create(ctx context.Context, business *models.Busine
 
 func (r *businessRepository) GetByID(ctx context.Context, id string) (*models.BusinessProfile, error) {
 	var business models.BusinessProfile
-	err := r.db.WithContext(ctx).Where("id = ?", id).First(&business).Error
+	err := r.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", id).First(&business).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, errors.New("business profile not found")
+		return nil, errors.New("business not found")
 	}
 	return &business, err
 }
@@ -45,15 +45,20 @@ func (r *businessRepository) List(ctx context.Context, userID string, page, limi
 
 	offset := (page - 1) * limit
 
-	query := r.db.WithContext(ctx).Model(&models.BusinessProfile{})
+	query := r.db.WithContext(ctx).Model(&models.BusinessProfile{}).Where("owner_id = ? AND deleted_at IS NULL", userID).Order("created_at DESC")
 
 	if err := query.Count(&total).Error; err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	if err := query.Offset(offset).Limit(limit).Find(&businesses).Error; err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	return businesses, total, nil
+	result := make([]*models.BusinessProfile, len(businesses))
+	for i := range businesses {
+		result[i] = &businesses[i]
+	}
+
+	return result, total, nil
 }

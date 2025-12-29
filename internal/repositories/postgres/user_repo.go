@@ -5,17 +5,16 @@ import (
 	"errors"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"invoice-backend/internal/models"
-	"invoice-backend/internal/repositories/interfaces"
+	interfaces "invoice-backend/internal/repositories/interfaces"
 )
 
 type userRepository struct {
 	db *gorm.DB
 }
 
-func NewUserRepository(db *gorm.DB) UserRepository {
+func NewUserRepository(db *gorm.DB) interfaces.UserRepository {
 	return &userRepository{db: db}
 }
 
@@ -67,12 +66,17 @@ func (r *userRepository) List(ctx context.Context, businessID string, page, limi
 	query := r.db.WithContext(ctx).Model(&models.User{}).Where("business_id = ? AND deleted_at IS NULL", businessID)
 
 	if err := query.Count(&total).Error; err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	if err := query.Offset(offset).Limit(limit).Find(&users).Error; err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	return users, total, nil
+	result := make([]*models.User, len(users))
+	for i := range users {
+		result[i] = &users[i]
+	}
+
+	return result, total, nil
 }

@@ -7,14 +7,14 @@ import (
 	"gorm.io/gorm"
 
 	"invoice-backend/internal/models"
-	"invoice-backend/internal/repositories/interfaces"
+	interfaces "invoice-backend/internal/repositories/interfaces"
 )
 
 type vendorRepository struct {
 	db *gorm.DB
 }
 
-func NewVendorRepository(db *gorm.DB) VendorRepository {
+func NewVendorRepository(db *gorm.DB) interfaces.VendorRepository {
 	return &vendorRepository{db: db}
 }
 
@@ -40,14 +40,19 @@ func (r *vendorRepository) GetByBusinessID(ctx context.Context, businessID strin
 	query := r.db.WithContext(ctx).Model(&models.Vendor{}).Where("business_id = ? AND deleted_at IS NULL", businessID)
 
 	if err := query.Count(&total).Error; err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	if err := query.Offset(offset).Limit(limit).Find(&vendors).Error; err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	return vendors, total, nil
+	result := make([]*models.Vendor, len(vendors))
+	for i := range vendors {
+		result[i] = &vendors[i]
+	}
+
+	return result, total, nil
 }
 
 func (r *vendorRepository) Update(ctx context.Context, vendor *models.Vendor) error {

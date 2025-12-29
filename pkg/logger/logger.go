@@ -17,7 +17,6 @@ func Init(env string) error {
 	} else {
 		config := zap.NewDevelopmentConfig()
 		config.EncoderConfig.TimeKey = "timestamp"
-		config.EncoderConfig.EncodeTime = zap.TimeEncoderOfLayout("2006-01-02T15:04:05.000Z")
 		logger, err = config.Build()
 	}
 

@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 type Invoice struct {

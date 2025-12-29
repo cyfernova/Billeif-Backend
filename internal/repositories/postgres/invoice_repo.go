@@ -7,14 +7,14 @@ import (
 	"gorm.io/gorm"
 
 	"invoice-backend/internal/models"
-	"invoice-backend/internal/repositories/interfaces"
+	interfaces "invoice-backend/internal/repositories/interfaces"
 )
 
 type invoiceRepository struct {
 	db *gorm.DB
 }
 
-func NewInvoiceRepository(db *gorm.DB) InvoiceRepository {
+func NewInvoiceRepository(db *gorm.DB) interfaces.InvoiceRepository {
 	return &invoiceRepository{db: db}
 }
 
@@ -49,14 +49,19 @@ func (r *invoiceRepository) GetByBusinessID(ctx context.Context, businessID stri
 	query := r.db.WithContext(ctx).Model(&models.Invoice{}).Where("business_id = ? AND deleted_at IS NULL", businessID).Order("created_at DESC")
 
 	if err := query.Count(&total).Error; err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	if err := query.Offset(offset).Limit(limit).Find(&invoices).Error; err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	return invoices, total, nil
+	result := make([]*models.Invoice, len(invoices))
+	for i := range invoices {
+		result[i] = &invoices[i]
+	}
+
+	return result, total, nil
 }
 
 func (r *invoiceRepository) GetItems(ctx context.Context, invoiceID string) ([]*models.InvoiceItem, error) {
@@ -65,7 +70,12 @@ func (r *invoiceRepository) GetItems(ctx context.Context, invoiceID string) ([]*
 	if err != nil {
 		return nil, err
 	}
-	return items, nil
+
+	result := make([]*models.InvoiceItem, len(items))
+	for i := range items {
+		result[i] = &items[i]
+	}
+	return result, nil
 }
 
 func (r *invoiceRepository) Update(ctx context.Context, invoice *models.Invoice) error {

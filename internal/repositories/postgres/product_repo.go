@@ -7,14 +7,14 @@ import (
 	"gorm.io/gorm"
 
 	"invoice-backend/internal/models"
-	"invoice-backend/internal/repositories/interfaces"
+	interfaces "invoice-backend/internal/repositories/interfaces"
 )
 
 type productRepository struct {
 	db *gorm.DB
 }
 
-func NewProductRepository(db *gorm.DB) ProductRepository {
+func NewProductRepository(db *gorm.DB) interfaces.ProductRepository {
 	return &productRepository{db: db}
 }
 
@@ -40,14 +40,19 @@ func (r *productRepository) GetByBusinessID(ctx context.Context, businessID stri
 	query := r.db.WithContext(ctx).Model(&models.Product{}).Where("business_id = ? AND deleted_at IS NULL", businessID)
 
 	if err := query.Count(&total).Error; err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	if err := query.Offset(offset).Limit(limit).Find(&products).Error; err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	return products, total, nil
+	result := make([]*models.Product, len(products))
+	for i := range products {
+		result[i] = &products[i]
+	}
+
+	return result, total, nil
 }
 
 func (r *productRepository) GetBySKU(ctx context.Context, businessID, sku string) (*models.Product, error) {
@@ -68,5 +73,5 @@ func (r *productRepository) Delete(ctx context.Context, id string) error {
 }
 
 func (r *productRepository) AdjustStock(ctx context.Context, productID string, quantity int64) error {
-	return r.db.WithContext(ctx).Model(&models.Product{}).Where("id = ?", productID).Update("stock_level", gorm.Expr("stock_level + ?", quantity)).Error
+	return r.db.WithContext(ctx).Model(&models.Product{}).Where("id = ?", productID).UpdateColumn("stock", gorm.Expr("stock + ?", quantity)).Error
 }

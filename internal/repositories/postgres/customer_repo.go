@@ -7,14 +7,14 @@ import (
 	"gorm.io/gorm"
 
 	"invoice-backend/internal/models"
-	"invoice-backend/internal/repositories/interfaces"
+	interfaces "invoice-backend/internal/repositories/interfaces"
 )
 
 type customerRepository struct {
 	db *gorm.DB
 }
 
-func NewCustomerRepository(db *gorm.DB) CustomerRepository {
+func NewCustomerRepository(db *gorm.DB) interfaces.CustomerRepository {
 	return &customerRepository{db: db}
 }
 
@@ -40,14 +40,19 @@ func (r *customerRepository) GetByBusinessID(ctx context.Context, businessID str
 	query := r.db.WithContext(ctx).Model(&models.Customer{}).Where("business_id = ? AND deleted_at IS NULL", businessID)
 
 	if err := query.Count(&total).Error; err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	if err := query.Offset(offset).Limit(limit).Find(&customers).Error; err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	return customers, total, nil
+	result := make([]*models.Customer, len(customers))
+	for i := range customers {
+		result[i] = &customers[i]
+	}
+
+	return result, total, nil
 }
 
 func (r *customerRepository) Update(ctx context.Context, customer *models.Customer) error {
