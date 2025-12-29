@@ -2,29 +2,24 @@ package logger
 
 import (
 	"context"
-
-	"go.uber.org/zap"
 )
 
 type contextKey string
 
 const loggerKey contextKey = "logger"
 
-func FromContext(ctx context.Context) *zap.Logger {
-	if logger, ok := ctx.Value(loggerKey).(*zap.Logger); ok {
+func FromContext(ctx context.Context) *Logger {
+	if logger, ok := ctx.Value(loggerKey).(*Logger); ok {
 		return logger
 	}
-	return globalLogger
+	return Global()
 }
 
-func ToContext(ctx context.Context, logger *zap.Logger) context.Context {
+func ToContext(ctx context.Context, logger *Logger) context.Context {
 	return context.WithValue(ctx, loggerKey, logger)
 }
 
-func WithFields(ctx context.Context, fields ...zap.Field) *zap.Logger {
+func WithFieldsFromContext(ctx context.Context, keysAndValues ...interface{}) *Logger {
 	logger := FromContext(ctx)
-	if logger == nil {
-		return globalLogger
-	}
-	return logger.With(fields...)
+	return logger.With(keysAndValues...)
 }

@@ -4,75 +4,75 @@ import (
 	"os"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
-var globalLogger *zap.Logger
+type Logger struct {
+	*zap.SugaredLogger
+}
 
-func Init(env string) error {
+var globalLogger *Logger
+
+func New() *Logger {
+	return NewWithEnv(os.Getenv("ENVIRONMENT"))
+}
+
+func NewWithEnv(env string) *Logger {
+	var zapLogger *zap.Logger
 	var err error
-	var logger *zap.Logger
 
 	if env == "prod" {
-		logger, err = zap.NewProduction()
+		zapLogger, err = zap.NewProduction()
 	} else {
 		config := zap.NewDevelopmentConfig()
 		config.EncoderConfig.TimeKey = "timestamp"
-		logger, err = config.Build()
+		config.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+		zapLogger, err = config.Build()
 	}
 
 	if err != nil {
-		return err
+		zapLogger = zap.NewNop()
 	}
 
-	globalLogger = logger
+	return &Logger{SugaredLogger: zapLogger.Sugar()}
+}
+
+func Init(env string) error {
+	globalLogger = NewWithEnv(env)
 	return nil
 }
 
-func Sync() {
-	if globalLogger != nil {
-		_ = globalLogger.Sync()
+func Global() *Logger {
+	if globalLogger == nil {
+		globalLogger = New()
 	}
+	return globalLogger
 }
 
-func Info(msg string, fields ...zap.Field) {
-	if globalLogger != nil {
-		globalLogger.Info(msg, fields...)
-	}
+func (l *Logger) Info(msg string, keysAndValues ...interface{}) {
+	l.SugaredLogger.Infow(msg, keysAndValues...)
 }
 
-func Debug(msg string, fields ...zap.Field) {
-	if globalLogger != nil {
-		globalLogger.Debug(msg, fields...)
-	}
+func (l *Logger) Debug(msg string, keysAndValues ...interface{}) {
+	l.SugaredLogger.Debugw(msg, keysAndValues...)
 }
 
-func Warn(msg string, fields ...zap.Field) {
-	if globalLogger != nil {
-		globalLogger.Warn(msg, fields...)
-	}
+func (l *Logger) Warn(msg string, keysAndValues ...interface{}) {
+	l.SugaredLogger.Warnw(msg, keysAndValues...)
 }
 
-func Error(msg string, fields ...zap.Field) {
-	if globalLogger != nil {
-		globalLogger.Error(msg, fields...)
-	}
+func (l *Logger) Error(msg string, keysAndValues ...interface{}) {
+	l.SugaredLogger.Errorw(msg, keysAndValues...)
 }
 
-func Fatal(msg string, fields ...zap.Field) {
-	if globalLogger != nil {
-		globalLogger.Fatal(msg, fields...)
-	}
-	os.Exit(1)
+func (l *Logger) Fatal(msg string, keysAndValues ...interface{}) {
+	l.SugaredLogger.Fatalw(msg, keysAndValues...)
 }
 
-func WithRequestID(requestID string) zap.Field {
-	return zap.String("request_id", requestID)
+func (l *Logger) With(keysAndValues ...interface{}) *Logger {
+	return &Logger{SugaredLogger: l.SugaredLogger.With(keysAndValues...)}
 }
 
-func WithUserID(userID string) zap.Field {
-	return zap.String("user_id", userID)
-}
-
-func WithError(err error) zap.Field {
-	return zap.Error(err)
+func (l *Logger) Sync() {
+	_ = l.SugaredLogger.Sync()
 }
