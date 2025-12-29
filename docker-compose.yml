@@ -1,0 +1,98 @@
+version: '3.8'
+
+services:
+  localstack:
+    image: localstack/localstack:latest
+    container_name: invoice-localstack
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=cognito,dynamodb,s3,sns,sqs,ses
+      - DEBUG=1
+      - DATA_DIR=/tmp/localstack/data
+      - AWS_DEFAULT_REGION=us-east-1
+    volumes:
+      - localstack-data:/tmp/localstack/data
+      - ./infrastructure/localstack/init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:18.1
+    container_name: invoice-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=invoice_user
+      - POSTGRES_PASSWORD=invoice_pass
+      - POSTGRES_DB=invoice_db
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U invoice_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: invoice-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: invoice-app
+    ports:
+      - "8080:8080"
+      - "9090:9090"
+    environment:
+      - ENVIRONMENT=dev
+      - SERVER_PORT=8080
+      - DATABASE_HOST=postgres
+      - DATABASE_PORT=5432
+      - DATABASE_USER=invoice_user
+      - DATABASE_PASSWORD=invoice_pass
+      - DATABASE_NAME=invoice_db
+      - DATABASE_SSL_MODE=disable
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - AWS_REGION=us-east-1
+      - AWS_LOCALSTACK=true
+      - AWS_ENDPOINT=http://localstack:4566
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+    depends_on:
+      localstack:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./migrations:/app/migrations
+
+  adminer:
+    image: adminer:latest
+    container_name: invoice-adminer
+    ports:
+      - "8081:8080"
+    depends_on:
+      - postgres
+
+volumes:
+  postgres-data:
+  redis-data:
+  localstack-data:

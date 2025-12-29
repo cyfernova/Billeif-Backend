@@ -1,0 +1,137 @@
+package config
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/spf13/viper"
+)
+
+type Config struct {
+	Environment string         `mapstructure:"ENVIRONMENT"`
+	Server      ServerConfig   `mapstructure:"SERVER"`
+	Database    DatabaseConfig `mapstructure:"DATABASE"`
+	Redis       RedisConfig    `mapstructure:"REDIS"`
+	AWS         AWSConfig      `mapstructure:"AWS"`
+	Cognito     CognitoConfig  `mapstructure:"COGNITO"`
+	JWT         JWTConfig      `mapstructure:"JWT"`
+	S3          S3Config       `mapstructure:"S3"`
+	SQS         SQSConfig      `mapstructure:"SQS"`
+}
+
+type ServerConfig struct {
+	Port         int `mapstructure:"PORT"`
+	ReadTimeout  int `mapstructure:"READ_TIMEOUT"`
+	WriteTimeout int `mapstructure:"WRITE_TIMEOUT"`
+}
+
+type DatabaseConfig struct {
+	Host     string `mapstructure:"HOST"`
+	Port     int    `mapstructure:"PORT"`
+	User     string `mapstructure:"USER"`
+	Password string `mapstructure:"PASSWORD"`
+	Name     string `mapstructure:"NAME"`
+	SSLMode  string `mapstructure:"SSL_MODE"`
+}
+
+type RedisConfig struct {
+	Host     string `mapstructure:"HOST"`
+	Port     int    `mapstructure:"PORT"`
+	Password string `mapstructure:"PASSWORD"`
+	DB       int    `mapstructure:"DB"`
+}
+
+type AWSConfig struct {
+	Region     string `mapstructure:"REGION"`
+	LocalStack bool   `mapstructure:"LOCALSTACK"`
+	Endpoint   string `mapstructure:"ENDPOINT"`
+	AccessKey  string `mapstructure:"ACCESS_KEY_ID"`
+	SecretKey  string `mapstructure:"SECRET_ACCESS_KEY"`
+}
+
+type CognitoConfig struct {
+	UserPoolID      string        `mapstructure:"USER_POOL_ID"`
+	ClientID        string        `mapstructure:"CLIENT_ID"`
+	Region          string        `mapstructure:"REGION"`
+	JWKSRefreshRate time.Duration `mapstructure:"JWKS_REFRESH_RATE"`
+}
+
+type JWTConfig struct {
+	AccessTokenExpiry  time.Duration `mapstructure:"ACCESS_TOKEN_EXPIRY"`
+	RefreshTokenExpiry time.Duration `mapstructure:"REFRESH_TOKEN_EXPIRY"`
+}
+
+type S3Config struct {
+	BucketLogos     string `mapstructure:"BUCKET_LOGOS"`
+	BucketInvoices  string `mapstructure:"BUCKET_INVOICES"`
+	BucketProducts  string `mapstructure:"BUCKET_PRODUCTS"`
+	BucketEmailSink string `mapstructure:"BUCKET_EMAIL_SINK"`
+}
+
+type SQSConfig struct {
+	InvoiceQueue string `mapstructure:"INVOICE_QUEUE"`
+	PaymentQueue string `mapstructure:"PAYMENT_QUEUE"`
+}
+
+func Load() (*Config, error) {
+	viper.SetConfigName(".env")
+	viper.SetConfigType("env")
+	viper.AddConfigPath(".")
+	viper.AddConfigPath("..")
+	viper.AutomaticEnv()
+
+	if err := viper.ReadInConfig(); err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return nil, fmt.Errorf("failed to read config: %w", err)
+		}
+	}
+
+	var cfg Config
+	if err := viper.Unmarshal(&cfg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	if err := validate(&cfg); err != nil {
+		return nil, fmt.Errorf("config validation failed: %w", err)
+	}
+
+	setDefaults(&cfg)
+
+	return &cfg, nil
+}
+
+func setDefaults(cfg *Config) {
+	if cfg.Environment == "" {
+		cfg.Environment = "dev"
+	}
+	if cfg.Server.Port == 0 {
+		cfg.Server.Port = 8080
+	}
+	if cfg.Server.ReadTimeout == 0 {
+		cfg.Server.ReadTimeout = 30
+	}
+	if cfg.Server.WriteTimeout == 0 {
+		cfg.Server.WriteTimeout = 30
+	}
+	if cfg.Database.Port == 0 {
+		cfg.Database.Port = 5432
+	}
+	if cfg.Database.SSLMode == "" {
+		cfg.Database.SSLMode = "disable"
+	}
+	if cfg.Redis.Port == 0 {
+		cfg.Redis.Port = 6379
+	}
+	if cfg.AWS.Region == "" {
+		cfg.AWS.Region = "us-east-1"
+	}
+	if cfg.JWT.AccessTokenExpiry == 0 {
+		cfg.JWT.AccessTokenExpiry = time.Hour
+	}
+	if cfg.JWT.RefreshTokenExpiry == 0 {
+		cfg.JWT.RefreshTokenExpiry = 720 * time.Hour
+	}
+	if cfg.Cognito.JWKSRefreshRate == 0 {
+		cfg.Cognito.JWKSRefreshRate = 10 * time.Minute
+	}
+}

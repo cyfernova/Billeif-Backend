@@ -1,0 +1,56 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.html
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# Environment variables
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# LocalStack data
+localstack-data/
+
+# Redis data
+redis-data/
+
+# PostgreSQL data
+postgres-data/
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+
+# Generated docs
+docs/swagger.json
+docs/swagger.yaml
+
+# Logs
+*.log
