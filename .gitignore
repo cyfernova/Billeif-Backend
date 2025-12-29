@@ -55,8 +55,7 @@ docs/swagger.yaml
 # Logs
 *.log
 
-# Large binaries
-api
+
 
 # Terraform variables
 *.tfvars

@@ -17,11 +17,13 @@ func NewHealthHandler(log *logger.Logger) *HealthHandler {
 }
 
 func (h *HealthHandler) Check(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"status": "healthy",
-		"services": gin.H{
-			"database": "up",
-			"redis":    "up",
-		},
-	})
+	message := `
+ __          __                                  _  _                _ 
+ \ \        / /                                 | |(_)              | |
+  \ \  /\  / /   ___    __ _   _ __   ___       | | _  __   __  ___ | |
+   \ \/  \/ /   / _ \  / _` + "`" + ` | | '__| / _ \      | || | \ \ / / / _ \| |
+    \  /\  /   |  __/ | (_| | | |    |  __/      | || |  \ V / |  __/|_|
+     \/  \/     \___|  \__,_| |_|     \___|      |_||_|   \_/   \___|(_)
+`
+	c.String(http.StatusOK, message)
 }
