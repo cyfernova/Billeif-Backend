@@ -8,7 +8,7 @@ bin/
 
 # Test binary, built with `go test -c`
 *.test
-
+AWSCLIV2.pkg
 # Output of the go coverage tool
 *.out
 coverage.html

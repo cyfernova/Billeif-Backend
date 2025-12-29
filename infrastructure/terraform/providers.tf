@@ -1,4 +1,14 @@
 terraform {
+  required_version = ">= 1.0.0"
+
+  backend "s3" {
+    bucket         = "invoice-backend-tfstate-20251229"
+    key            = "terraform.tfstate"
+    region         = "us-east-1"
+    encrypt        = true
+    dynamodb_table = "terraform-state-lock"
+  }
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -8,20 +18,13 @@ terraform {
 }
 
 provider "aws" {
-  region                      = var.aws_region
-  access_key                  = "test"
-  secret_key                  = "test"
-  skip_credentials_validation = true
-  skip_metadata_api_check     = true
-  skip_requesting_account_id  = true
-  s3_use_path_style           = true
+  region = var.aws_region
 
-  endpoints {
-    cognitoidp = var.aws_endpoint
-    dynamodb   = var.aws_endpoint
-    s3         = var.aws_endpoint
-    ses        = var.aws_endpoint
-    sqs        = var.aws_endpoint
-    sns        = var.aws_endpoint
+  default_tags {
+    tags = {
+      Project     = var.project_name
+      Environment = var.environment
+      ManagedBy   = "Terraform"
+    }
   }
 }

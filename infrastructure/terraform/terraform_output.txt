@@ -1,0 +1,24 @@
+client_id = "7jatbehnr478sehugtt0becuop"
+ec2_instance_id = "i-09822257da878aea5"
+ec2_public_ip = "13.223.95.94"
+elasticache_endpoint = "invoice-backend-redis.oijf1i.0001.use1.cache.amazonaws.com"
+elasticache_port = 6379
+invoice_processing_queue_url = "https://sqs.us-east-1.amazonaws.com/232745433140/invoice-processing-queue"
+payment_processing_queue_url = "https://sqs.us-east-1.amazonaws.com/232745433140/payment-processing-queue"
+private_subnet_ids = [
+  "subnet-0dab47d5202f16d18",
+  "subnet-0d8b76300244aa395",
+]
+public_subnet_ids = [
+  "subnet-0729654f534a92d04",
+  "subnet-045778f69758fd1c0",
+]
+rds_address = "invoice-backend-postgres.c01i2mcsikp8.us-east-1.rds.amazonaws.com"
+rds_database_name = "invoice_db"
+rds_endpoint = "invoice-backend-postgres.c01i2mcsikp8.us-east-1.rds.amazonaws.com:5432"
+rds_port = 5432
+s3_bucket_invoices = "invoice-backend-dev-invoices-pdf"
+s3_bucket_logos = "invoice-backend-dev-business-logos"
+s3_bucket_products = "invoice-backend-dev-product-images"
+user_pool_id = "us-east-1_J4rk9fuQJ"
+vpc_id = "vpc-0de56f1a083e4bdf0"

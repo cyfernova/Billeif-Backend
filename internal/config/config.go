@@ -42,11 +42,9 @@ type RedisConfig struct {
 }
 
 type AWSConfig struct {
-	Region     string `mapstructure:"REGION"`
-	LocalStack bool   `mapstructure:"LOCALSTACK"`
-	Endpoint   string `mapstructure:"ENDPOINT"`
-	AccessKey  string `mapstructure:"ACCESS_KEY_ID"`
-	SecretKey  string `mapstructure:"SECRET_ACCESS_KEY"`
+	Region    string `mapstructure:"REGION"`
+	AccessKey string `mapstructure:"ACCESS_KEY_ID"`
+	SecretKey string `mapstructure:"SECRET_ACCESS_KEY"`
 }
 
 type CognitoConfig struct {

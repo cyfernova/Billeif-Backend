@@ -29,9 +29,6 @@ func validate(cfg *Config) error {
 	if cfg.AWS.Region == "" {
 		return fmt.Errorf("AWS_REGION is required")
 	}
-	if cfg.AWS.LocalStack && cfg.AWS.Endpoint == "" {
-		return fmt.Errorf("AWS_ENDPOINT is required when LOCALSTACK=true")
-	}
 
 	if cfg.JWT.AccessTokenExpiry <= 0 {
 		return fmt.Errorf("JWT_ACCESS_TOKEN_EXPIRY must be positive")

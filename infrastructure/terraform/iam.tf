@@ -19,7 +19,7 @@ data "aws_iam_policy_document" "lambda_exec" {
       "dynamodb:UpdateItem",
       "dynamodb:Query",
     ]
-    resources = ["arn:aws:dynamodb:*:*:*:*"]
+    resources = ["arn:aws:dynamodb:*:*:table/*"]
   }
 
   statement {
@@ -29,7 +29,7 @@ data "aws_iam_policy_document" "lambda_exec" {
       "s3:GetObject",
       "s3:PutObject",
     ]
-    resources = ["arn:aws:s3:::*:*"]
+    resources = ["arn:aws:s3:::*/*"]
   }
 }
 
@@ -42,12 +42,15 @@ data "aws_iam_policy_document" "sqs_consumer" {
       "sqs:DeleteMessage",
       "sqs:GetQueueAttributes",
     ]
-    resources = ["*"]
+    resources = [
+      aws_sqs_queue.invoice_processing.arn,
+      aws_sqs_queue.payment_processing.arn,
+    ]
   }
 }
 
 resource "aws_iam_role" "lambda_exec" {
-  name = "lambda-exec-role"
+  name = "${var.project_name}-lambda-exec-role"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -68,7 +71,7 @@ resource "aws_iam_role" "lambda_exec" {
 }
 
 resource "aws_iam_role" "sqs_consumer" {
-  name = "sqs-consumer-role"
+  name = "${var.project_name}-sqs-consumer-role"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -99,14 +102,14 @@ data "aws_iam_policy_document" "app_s3_access" {
       "s3:ListBucket",
     ]
     resources = [
-      "arn:aws:s3:::business-logos",
-      "arn:aws:s3:::business-logos/*",
-      "arn:aws:s3:::invoices-pdf",
-      "arn:aws:s3:::invoices-pdf/*",
-      "arn:aws:s3:::product-images",
-      "arn:aws:s3:::product-images/*",
-      "arn:aws:s3:::email-sink",
-      "arn:aws:s3:::email-sink/*",
+      aws_s3_bucket.business_logos.arn,
+      "${aws_s3_bucket.business_logos.arn}/*",
+      aws_s3_bucket.invoices_pdf.arn,
+      "${aws_s3_bucket.invoices_pdf.arn}/*",
+      aws_s3_bucket.product_images.arn,
+      "${aws_s3_bucket.product_images.arn}/*",
+      aws_s3_bucket.email_sink.arn,
+      "${aws_s3_bucket.email_sink.arn}/*",
     ]
   }
 }

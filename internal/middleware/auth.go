@@ -40,13 +40,8 @@ type JWKSCache struct {
 	jwksURL   string
 }
 
-func NewJWKSCache(poolID, region string, ttl time.Duration, localstack bool, endpoint string) *JWKSCache {
-	var jwksURL string
-	if localstack && endpoint != "" {
-		jwksURL = fmt.Sprintf("%s/%s/.well-known/jwks.json", endpoint, poolID)
-	} else {
-		jwksURL = fmt.Sprintf("https://cognito-idp.%s.amazonaws.com/%s/.well-known/jwks.json", region, poolID)
-	}
+func NewJWKSCache(poolID, region string, ttl time.Duration) *JWKSCache {
+	jwksURL := fmt.Sprintf("https://cognito-idp.%s.amazonaws.com/%s/.well-known/jwks.json", region, poolID)
 	return &JWKSCache{
 		keys:    make(map[string]*rsa.PublicKey),
 		ttl:     ttl,
@@ -149,7 +144,7 @@ var jwksCache *JWKSCache
 
 func Auth(cfg config.CognitoConfig, log *logger.Logger) gin.HandlerFunc {
 	if jwksCache == nil {
-		jwksCache = NewJWKSCache(cfg.UserPoolID, cfg.Region, cfg.JWKSRefreshRate, false, "")
+		jwksCache = NewJWKSCache(cfg.UserPoolID, cfg.Region, cfg.JWKSRefreshRate)
 	}
 
 	return func(c *gin.Context) {

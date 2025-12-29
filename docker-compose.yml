@@ -1,27 +1,6 @@
-version: '3.8'
-
 services:
-  localstack:
-    image: localstack/localstack:latest
-    container_name: invoice-localstack
-    ports:
-      - "4566:4566"
-    environment:
-      - SERVICES=cognito,dynamodb,s3,sns,sqs,ses
-      - DEBUG=1
-      - DATA_DIR=/tmp/localstack/data
-      - AWS_DEFAULT_REGION=us-east-1
-    volumes:
-      - localstack-data:/tmp/localstack/data
-      - ./infrastructure/localstack/init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   postgres:
-    image: postgres:18.1
+    image: postgres:16-alpine
     container_name: invoice-postgres
     ports:
       - "5432:5432"
@@ -36,6 +15,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - invoice-network
 
   redis:
     image: redis:7-alpine
@@ -49,6 +30,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - invoice-network
 
   app:
     build:
@@ -70,19 +53,19 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - AWS_REGION=us-east-1
-      - AWS_LOCALSTACK=true
-      - AWS_ENDPOINT=http://localstack:4566
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
+      # For local dev, use local postgres/redis
+      # For AWS, set these from terraform outputs or SSM
+      # - DATABASE_HOST=${RDS_ENDPOINT}
+      # - REDIS_HOST=${ELASTICACHE_ENDPOINT}
     depends_on:
-      localstack:
-        condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
     volumes:
       - ./migrations:/app/migrations
+    networks:
+      - invoice-network
 
   adminer:
     image: adminer:latest
@@ -91,8 +74,13 @@ services:
       - "8081:8080"
     depends_on:
       - postgres
+    networks:
+      - invoice-network
+
+networks:
+  invoice-network:
+    driver: bridge
 
 volumes:
   postgres-data:
   redis-data:
-  localstack-data:

@@ -59,14 +59,10 @@ func (s *EmailService) SendEmail(ctx context.Context, to, subject, body string) 
 		Source: aws.String("noreply@invoiceapp.local"),
 	}
 
-	result, err := s.client.SendEmail(ctx, input)
+	_, err := s.client.SendEmail(ctx, input)
 	if err != nil {
 		s.log.Warn("SES send failed, storing to S3 fallback", "error", err)
 		return s.storeEmailFallback(ctx, to, subject, body, "")
-	}
-
-	if s.cfg.AWS.LocalStack {
-		return s.storeEmailFallback(ctx, to, subject, body, *result.MessageId)
 	}
 
 	return nil

@@ -2,7 +2,6 @@ resource "aws_cognito_user_pool" "main" {
   name = var.user_pool_name
 
   username_attributes      = ["email"]
-  alias_attributes         = ["email", "preferred_username"]
   auto_verified_attributes = ["email"]
 
   password_policy {
@@ -53,7 +52,7 @@ resource "aws_cognito_user_pool_client" "main" {
 
   explicit_auth_flows           = ["ADMIN_NO_SRP_AUTH"]
   generate_secret               = false
-  prevent_user_existence_errors = true
+  prevent_user_existence_errors = "ENABLED"
   enable_token_revocation       = true
 
   token_validity_units {

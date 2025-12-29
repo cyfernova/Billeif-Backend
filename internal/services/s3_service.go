@@ -108,8 +108,5 @@ func (s *S3Service) ListObjects(ctx context.Context, bucket, prefix string) ([]s
 }
 
 func (s *S3Service) GetObjectURL(bucket, key string) string {
-	if s.cfg.AWS.LocalStack {
-		return fmt.Sprintf("%s/%s/%s", s.cfg.AWS.Endpoint, bucket, key)
-	}
 	return fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", bucket, s.cfg.AWS.Region, key)
 }
