@@ -9,11 +9,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
-
 	"invoice-backend/internal/config"
 	"invoice-backend/internal/handlers"
 	"invoice-backend/internal/middleware"
@@ -23,7 +18,34 @@ import (
 	"invoice-backend/internal/workers"
 	"invoice-backend/pkg/awsclients"
 	"invoice-backend/pkg/logger"
+
+	_ "invoice-backend/docs"
+
+	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
+
+// @title Invoice Backend API
+// @version 1.0
+// @description Production-grade monolithic Golang backend for an invoice/billing platform.
+// @termsOfService http://swagger.io/terms/
+
+// @contact.name API Support
+// @contact.email support@invoiceapp.com
+
+// @license.name Apache 2.0
+// @license.url http://www.apache.org/licenses/LICENSE-2.0.html
+
+// @host localhost:8080
+// @BasePath /api/v1
+
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
 
 func main() {
 	log := logger.New()
@@ -160,6 +182,7 @@ func setupRouter(cfg *config.Config, h *handlers.Handler, log *logger.Logger) *g
 	router.Use(middleware.CORS())
 
 	router.GET("/health", h.Health.Check)
+	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	api := router.Group("/api/v1")
 	{

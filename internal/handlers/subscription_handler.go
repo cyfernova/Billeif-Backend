@@ -19,6 +19,18 @@ func NewSubscriptionHandler(svc *services.SubscriptionService, log *logger.Logge
 	return &SubscriptionHandler{svc: svc, log: log}
 }
 
+// Create creates a new subscription for a business
+// @Summary Create subscription
+// @Description Create a new subscription plan for a business.
+// @Tags Subscriptions
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body services.CreateSubscriptionInput true "Subscription details"
+// @Success 201 {object} models.Subscription
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /subscriptions [post]
 func (h *SubscriptionHandler) Create(c *gin.Context) {
 	var input services.CreateSubscriptionInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -35,6 +47,17 @@ func (h *SubscriptionHandler) Create(c *gin.Context) {
 	c.JSON(http.StatusCreated, subscription)
 }
 
+// Get retrieves the current subscription for a business
+// @Summary Get subscription
+// @Description Returns the subscription details for the authenticated business.
+// @Tags Subscriptions
+// @Produce json
+// @Security BearerAuth
+// @Param business_id query string false "Business ID (if not in token)"
+// @Success 200 {object} models.Subscription
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /subscriptions [get]
 func (h *SubscriptionHandler) Get(c *gin.Context) {
 	businessID := middleware.GetBusinessID(c)
 	if businessID == "" {
@@ -54,6 +77,19 @@ func (h *SubscriptionHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, subscription)
 }
 
+// Update updates the subscription for a business
+// @Summary Update subscription
+// @Description Update the subscription plan or status for a business.
+// @Tags Subscriptions
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param business_id query string false "Business ID (if not in token)"
+// @Param input body services.UpdateSubscriptionInput true "Subscription updates"
+// @Success 200 {object} models.Subscription
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /subscriptions [put]
 func (h *SubscriptionHandler) Update(c *gin.Context) {
 	businessID := middleware.GetBusinessID(c)
 	if businessID == "" {

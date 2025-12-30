@@ -19,6 +19,19 @@ func NewLedgerHandler(svc *services.LedgerService, log *logger.Logger) *LedgerHa
 	return &LedgerHandler{svc: svc, log: log}
 }
 
+// List retrieves all ledger entries for a business
+// @Summary List ledger entries
+// @Description Returns a list of general ledger entries for a specific business.
+// @Tags Ledger
+// @Produce json
+// @Security BearerAuth
+// @Param business_id query string true "Business ID"
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Page size" default(10)
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /ledger [get]
 func (h *LedgerHandler) List(c *gin.Context) {
 	businessID := c.Query("business_id")
 	if businessID == "" {
@@ -43,6 +56,17 @@ func (h *LedgerHandler) List(c *gin.Context) {
 	})
 }
 
+// Balance returns the current ledger balance for a business
+// @Summary Get ledger balance
+// @Description Returns the total balance for a specific business from the general ledger.
+// @Tags Ledger
+// @Produce json
+// @Security BearerAuth
+// @Param business_id query string true "Business ID"
+// @Success 200 {object} map[string]float64
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /ledger/balance [get]
 func (h *LedgerHandler) Balance(c *gin.Context) {
 	businessID := c.Query("business_id")
 	if businessID == "" {

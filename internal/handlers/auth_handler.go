@@ -20,6 +20,16 @@ func NewAuthHandler(svc *services.AuthService, log *logger.Logger) *AuthHandler 
 	return &AuthHandler{svc: svc, log: log}
 }
 
+// Register registers a new user
+// @Summary Register a new user
+// @Description Create a new user account with email and password.
+// @Tags Authentication
+// @Accept json
+// @Produce json
+// @Param input body services.RegisterInput true "Registration details"
+// @Success 201 {object} services.RegisterOutput
+// @Failure 400 {object} map[string]string
+// @Router /auth/register [post]
 func (h *AuthHandler) Register(c *gin.Context) {
 	var input services.RegisterInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -36,6 +46,16 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	c.JSON(http.StatusCreated, result)
 }
 
+// Login authenticates a user
+// @Summary Login user
+// @Description Authenticate a user with email and password and return tokens.
+// @Tags Authentication
+// @Accept json
+// @Produce json
+// @Param input body services.LoginInput true "Login credentials"
+// @Success 200 {object} services.LoginOutput
+// @Failure 401 {object} map[string]string
+// @Router /auth/login [post]
 func (h *AuthHandler) Login(c *gin.Context) {
 	var input services.LoginInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -52,6 +72,15 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// Logout invalidates a user session
+// @Summary Logout user
+// @Description Revoke the user's access token and end the session.
+// @Tags Authentication
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Router /auth/logout [post]
 func (h *AuthHandler) Logout(c *gin.Context) {
 	token := extractToken(c)
 	if token == "" {
@@ -67,6 +96,16 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "logged out successfully"})
 }
 
+// Refresh renews an access token
+// @Summary Refresh token
+// @Description Get a new access token using a refresh token.
+// @Tags Authentication
+// @Accept json
+// @Produce json
+// @Param input body services.RefreshInput true "Refresh token"
+// @Success 200 {object} services.LoginOutput
+// @Failure 401 {object} map[string]string
+// @Router /auth/refresh [post]
 func (h *AuthHandler) Refresh(c *gin.Context) {
 	var input services.RefreshInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -83,6 +122,15 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// ForgotPassword initiates password reset
+// @Summary Forgot password
+// @Description Send a reset code to the user's email if it exists.
+// @Tags Authentication
+// @Accept json
+// @Produce json
+// @Param input body services.ForgotPasswordInput true "User email"
+// @Success 200 {object} map[string]string
+// @Router /auth/forgot-password [post]
 func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 	var input services.ForgotPasswordInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -94,6 +142,16 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "if the email exists, a reset code will be sent"})
 }
 
+// ResetPassword completes password reset
+// @Summary Reset password
+// @Description Reset the user's password using the code sent to their email.
+// @Tags Authentication
+// @Accept json
+// @Produce json
+// @Param input body services.ResetPasswordInput true "New password and reset code"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Router /auth/reset-password [post]
 func (h *AuthHandler) ResetPassword(c *gin.Context) {
 	var input services.ResetPasswordInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -109,6 +167,16 @@ func (h *AuthHandler) ResetPassword(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "password reset successfully"})
 }
 
+// VerifyEmail verifies user's email
+// @Summary Verify email
+// @Description Verify a user's email address using the verification code.
+// @Tags Authentication
+// @Accept json
+// @Produce json
+// @Param input body services.VerifyEmailInput true "Verification code"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Router /auth/verify-email [post]
 func (h *AuthHandler) VerifyEmail(c *gin.Context) {
 	var input services.VerifyEmailInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -124,6 +192,16 @@ func (h *AuthHandler) VerifyEmail(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "email verified successfully"})
 }
 
+// ResendVerification resends verification code
+// @Summary Resend verification
+// @Description Resend the email verification code to the user.
+// @Tags Authentication
+// @Accept json
+// @Produce json
+// @Param input body object{email=string} true "User email"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Router /auth/resend-verification [post]
 func (h *AuthHandler) ResendVerification(c *gin.Context) {
 	var input struct {
 		Email string `json:"email" binding:"required,email"`
@@ -141,6 +219,16 @@ func (h *AuthHandler) ResendVerification(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "verification code resent"})
 }
 
+// Me returns current user profile
+// @Summary Get current user
+// @Description Returns the profile information of the authenticated user.
+// @Tags Authentication
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.User
+// @Failure 401 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /auth/me [get]
 func (h *AuthHandler) Me(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == "" {
@@ -160,6 +248,18 @@ func (h *AuthHandler) Me(c *gin.Context) {
 	c.JSON(http.StatusOK, user)
 }
 
+// UpdateProfile updates user profile
+// @Summary Update profile
+// @Description Update the profile information of the authenticated user.
+// @Tags Authentication
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body services.UpdateProfileInput true "Profile updates"
+// @Success 200 {object} models.User
+// @Failure 401 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /auth/profile [put]
 func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == "" {
@@ -182,6 +282,18 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 	c.JSON(http.StatusOK, user)
 }
 
+// ChangePassword changes user password
+// @Summary Change password
+// @Description Change the password of the authenticated user.
+// @Tags Authentication
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body services.ChangePasswordInput true "Password change details"
+// @Success 200 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Router /auth/change-password [post]
 func (h *AuthHandler) ChangePassword(c *gin.Context) {
 	token := extractToken(c)
 	if token == "" {
@@ -203,23 +315,24 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "password changed successfully"})
 }
 
+// GoogleLogin handles Google OAuth login
+// @Summary Google login
+// @Description Sync user data from Google after successful OAuth authentication.
+// @Tags Authentication
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} models.User
+// @Failure 401 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /auth/google [post]
 func (h *AuthHandler) GoogleLogin(c *gin.Context) {
 	userId := middleware.GetUserID(c)
 	email := middleware.GetEmail(c)
-	// Optionally get name if available in claims (need to update middleware to set it if needed, or assume empty)
-	// For now we rely on email and ID.
 	if userId == "" || email == "" {
 		h.log.Error("google login failed: missing user_id or email from token", "user_id", userId, "email", email)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token claims"})
 		return
 	}
-
-	// Name might not be in the standard claims we extracted in middleware yet,
-	// but we can try to get it if we decide to extract it.
-	// For this iteration, we'll pass empty name or try to extract from context if we added it.
-	// Let's assume we might update middleware later for name, or just pass empty.
-	// Actually, let's look at middleware again. It sets: user_id, email, username, groups, business_id, role.
-	// We don't have name. That's fine for now, user can update profile later.
 
 	input := services.SyncGoogleUserInput{
 		Email:     email,
