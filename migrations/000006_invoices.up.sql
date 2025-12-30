@@ -1,4 +1,4 @@
-+ CREATE TABLE IF NOT EXISTS invoices (
+CREATE TABLE IF NOT EXISTS invoices (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     business_id UUID NOT NULL,
     customer_id UUID NOT NULL,
@@ -32,7 +32,7 @@ CREATE INDEX idx_invoices_status ON invoices(status) WHERE deleted_at IS NULL;
 CREATE INDEX idx_invoices_invoice_date ON invoices(invoice_date) WHERE deleted_at IS NULL;
 CREATE INDEX idx_invoices_deleted_at ON invoices(deleted_at);
 
-+ CREATE TABLE IF NOT EXISTS invoice_items (
+CREATE TABLE IF NOT EXISTS invoice_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     invoice_id UUID NOT NULL,
     product_id UUID,

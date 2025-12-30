@@ -1,4 +1,4 @@
-+ CREATE TABLE IF NOT EXISTS subscriptions (
+CREATE TABLE IF NOT EXISTS subscriptions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     business_id UUID NOT NULL,
     plan VARCHAR(50) NOT NULL CHECK (plan IN ('free', 'starter', 'professional', 'enterprise')),

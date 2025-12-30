@@ -50,16 +50,26 @@ resource "aws_cognito_user_pool_client" "main" {
   name         = var.client_name
   user_pool_id = aws_cognito_user_pool.main.id
 
-  explicit_auth_flows           = ["ADMIN_NO_SRP_AUTH"]
+  explicit_auth_flows           = ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_REFRESH_TOKEN_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH"]
   generate_secret               = false
   prevent_user_existence_errors = "ENABLED"
   enable_token_revocation       = true
+
+  # OAuth configuration for Google Sign-In
+  supported_identity_providers         = ["COGNITO", "Google"]
+  callback_urls                        = ["myapp://callback", "http://localhost:3000/callback"]
+  logout_urls                          = ["myapp://logout", "http://localhost:3000/logout"]
+  allowed_oauth_flows_user_pool_client = true
+  allowed_oauth_flows                  = ["code", "implicit"]
+  allowed_oauth_scopes                 = ["email", "openid", "profile", "aws.cognito.signin.user.admin"]
 
   token_validity_units {
     access_token  = "hours"
     id_token      = "hours"
     refresh_token = "days"
   }
+
+  depends_on = [aws_cognito_identity_provider.google]
 }
 
 resource "aws_cognito_user_group" "admin" {
@@ -81,4 +91,29 @@ resource "aws_cognito_user_group" "viewer" {
   user_pool_id = aws_cognito_user_pool.main.id
   description  = "Viewers with read-only access"
   precedence   = 2
+}
+
+# Cognito Domain for Hosted UI
+resource "aws_cognito_user_pool_domain" "main" {
+  domain       = var.cognito_domain_prefix
+  user_pool_id = aws_cognito_user_pool.main.id
+}
+
+# Google Identity Provider
+resource "aws_cognito_identity_provider" "google" {
+  user_pool_id  = aws_cognito_user_pool.main.id
+  provider_name = "Google"
+  provider_type = "Google"
+
+  provider_details = {
+    client_id        = var.google_client_id
+    client_secret    = var.google_client_secret
+    authorize_scopes = "profile email openid"
+  }
+
+  attribute_mapping = {
+    email    = "email"
+    username = "sub"
+    name     = "name"
+  }
 }

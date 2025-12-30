@@ -1,4 +1,4 @@
-+ CREATE TABLE IF NOT EXISTS payments (
+CREATE TABLE IF NOT EXISTS payments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     business_id UUID NOT NULL,
     invoice_id UUID NOT NULL,

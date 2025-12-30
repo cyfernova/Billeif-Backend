@@ -46,11 +46,26 @@ func New(ctx context.Context, cfg appconfig.AWSConfig) (*Config, error) {
 func loadConfig(ctx context.Context, cfg appconfig.AWSConfig) (aws.Config, error) {
 	loaders := []func(*config.LoadOptions) error{
 		config.WithRegion(cfg.Region),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
+	}
+
+	if cfg.AccessKey != "" && cfg.SecretKey != "" {
+		loaders = append(loaders, config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
 			cfg.AccessKey,
 			cfg.SecretKey,
 			"",
-		)),
+		)))
+	}
+
+	if cfg.Endpoint != "" {
+		loaders = append(loaders, config.WithEndpointResolverWithOptions(
+			aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+				return aws.Endpoint{
+					URL:               cfg.Endpoint,
+					SigningRegion:     cfg.Region,
+					HostnameImmutable: true,
+				}, nil
+			}),
+		))
 	}
 
 	return config.LoadDefaultConfig(ctx, loaders...)

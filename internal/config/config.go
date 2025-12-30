@@ -45,6 +45,7 @@ type AWSConfig struct {
 	Region    string `mapstructure:"REGION"`
 	AccessKey string `mapstructure:"ACCESS_KEY_ID"`
 	SecretKey string `mapstructure:"SECRET_ACCESS_KEY"`
+	Endpoint  string `mapstructure:"ENDPOINT"`
 }
 
 type CognitoConfig struct {
@@ -94,6 +95,7 @@ func Load() (*Config, error) {
 	viper.BindEnv("AWS.REGION", "AWS_REGION")
 	viper.BindEnv("AWS.ACCESS_KEY_ID", "AWS_ACCESS_KEY_ID")
 	viper.BindEnv("AWS.SECRET_ACCESS_KEY", "AWS_SECRET_ACCESS_KEY")
+	viper.BindEnv("AWS.ENDPOINT", "AWS_ENDPOINT")
 	viper.BindEnv("COGNITO.USER_POOL_ID", "COGNITO_USER_POOL_ID")
 	viper.BindEnv("COGNITO.CLIENT_ID", "COGNITO_CLIENT_ID")
 	viper.BindEnv("COGNITO.REGION", "COGNITO_REGION")

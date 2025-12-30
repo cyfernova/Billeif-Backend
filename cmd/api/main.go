@@ -173,6 +173,22 @@ func setupRouter(cfg *config.Config, h *handlers.Handler, log *logger.Logger) *g
 			auth.POST("/reset-password", h.Auth.ResetPassword)
 			auth.POST("/verify-email", h.Auth.VerifyEmail)
 			auth.POST("/resend-verification", h.Auth.ResendVerification)
+			// POST /auth/google needs to be protected because we need to validate the ID token
+			// However, typically "login" endpoints are public.
+			// But here, the flow is: Frontend gets token -> Backend validates token -> Backend syncs user.
+			// The validation happens via middleware.
+			// So we should put it in a protected group or apply middleware manually.
+			// The existing "protected" group applies Auth middleware.
+			// So let's add it to the protected group, or a new group with Auth middleware.
+		}
+
+		// We need a specific group for this because the existing "auth" group is public (no middleware).
+		// And "protected" group has all the other protected routes.
+		// We can add it to "protected" group or create a small subgroup here.
+		googleAuth := api.Group("/auth")
+		googleAuth.Use(middleware.Auth(cfg.Cognito, log))
+		{
+			googleAuth.POST("/google", h.Auth.GoogleLogin)
 		}
 
 		protected := api.Group("")

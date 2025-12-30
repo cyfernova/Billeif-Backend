@@ -203,6 +203,39 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "password changed successfully"})
 }
 
+func (h *AuthHandler) GoogleLogin(c *gin.Context) {
+	userId := middleware.GetUserID(c)
+	email := middleware.GetEmail(c)
+	// Optionally get name if available in claims (need to update middleware to set it if needed, or assume empty)
+	// For now we rely on email and ID.
+	if userId == "" || email == "" {
+		h.log.Error("google login failed: missing user_id or email from token", "user_id", userId, "email", email)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token claims"})
+		return
+	}
+
+	// Name might not be in the standard claims we extracted in middleware yet,
+	// but we can try to get it if we decide to extract it.
+	// For this iteration, we'll pass empty name or try to extract from context if we added it.
+	// Let's assume we might update middleware later for name, or just pass empty.
+	// Actually, let's look at middleware again. It sets: user_id, email, username, groups, business_id, role.
+	// We don't have name. That's fine for now, user can update profile later.
+
+	input := services.SyncGoogleUserInput{
+		Email:     email,
+		CognitoID: userId,
+	}
+
+	user, err := h.svc.SyncGoogleUser(c.Request.Context(), input)
+	if err != nil {
+		h.log.Error("failed to sync google user", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to process google login"})
+		return
+	}
+
+	c.JSON(http.StatusOK, user)
+}
+
 func extractToken(c *gin.Context) string {
 	auth := c.GetHeader("Authorization")
 	if auth == "" {

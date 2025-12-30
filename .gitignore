@@ -1,5 +1,6 @@
 # Binaries
 bin/
+.build/
 *.exe
 *.exe~
 *.dll
@@ -22,7 +23,7 @@ go.work
 # Environment variables
 .env
 .env.local
-
+terraform.tfvars
 # IDE
 .vscode/
 .idea/
@@ -57,5 +58,3 @@ docs/swagger.yaml
 
 
 
-# Terraform variables
-*.tfvars

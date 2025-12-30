@@ -1,4 +1,4 @@
-+ CREATE TABLE IF NOT EXISTS webhooks (
+CREATE TABLE IF NOT EXISTS webhooks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     business_id UUID NOT NULL,
     name VARCHAR(255) NOT NULL,

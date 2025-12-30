@@ -1,11 +1,11 @@
-# RDS Subnet Group
-resource "aws_db_subnet_group" "main" {
-  name        = "${var.project_name}-db-subnet-group"
-  description = "Database subnet group for ${var.project_name}"
-  subnet_ids  = aws_subnet.private[*].id
+# RDS Subnet Group - Public subnets only for external access
+resource "aws_db_subnet_group" "public" {
+  name        = "${var.project_name}-db-public-subnet-group"
+  description = "Public database subnet group for ${var.project_name}"
+  subnet_ids  = aws_subnet.public[*].id
 
   tags = {
-    Name = "${var.project_name}-db-subnet-group"
+    Name = "${var.project_name}-db-public-subnet-group"
   }
 }
 
@@ -32,9 +32,9 @@ resource "aws_db_instance" "main" {
   port     = 5432
 
   # Network
-  db_subnet_group_name   = aws_db_subnet_group.main.name
+  db_subnet_group_name   = aws_db_subnet_group.public.name
   vpc_security_group_ids = [aws_security_group.rds.id]
-  publicly_accessible    = false
+  publicly_accessible    = true
   multi_az               = var.environment == "prod" ? true : false
 
   # Backup

@@ -1,4 +1,4 @@
-+ CREATE TABLE IF NOT EXISTS ledger_entries (
+CREATE TABLE IF NOT EXISTS ledger_entries (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     business_id UUID NOT NULL,
     invoice_id UUID,

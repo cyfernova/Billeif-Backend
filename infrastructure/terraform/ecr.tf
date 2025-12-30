@@ -14,6 +14,8 @@ resource "aws_ecr_repository" "main" {
   tags = {
     Name = "${var.project_name}-ecr"
   }
+
+  force_delete = true
 }
 
 # ECR Lifecycle Policy - Keep only last 10 images

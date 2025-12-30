@@ -1,4 +1,4 @@
-+ CREATE TABLE IF NOT EXISTS team_members (
+CREATE TABLE IF NOT EXISTS team_members (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     business_id UUID NOT NULL,
     user_id UUID NOT NULL,

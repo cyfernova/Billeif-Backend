@@ -184,7 +184,7 @@ func Auth(cfg config.CognitoConfig, log *logger.Logger) gin.HandlerFunc {
 			return
 		}
 
-		if claims.TokenUse != "access" {
+		if claims.TokenUse != "access" && claims.TokenUse != "id" {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token type"})
 			return
 		}

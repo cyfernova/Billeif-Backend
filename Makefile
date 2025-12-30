@@ -1,4 +1,8 @@
-.PHONY: help infra-backend-init infra-init infra-apply infra-destroy infra-output build run test test-integration migrate-up migrate-down migrate-create fmt lint docker-build docker-up docker-down clean deps test-coverage swagger
+# Load .env file if it exists
+-include .env
+export
+
+.PHONY: help infra-backend-init infra-init infra-apply infra-destroy infra-output build run test test-integration migrate-up migrate-down migrate-create migration-up migration-down migration-down-all migration-create migration-status fmt lint docker-build docker-up docker-down clean deps test-coverage swagger
 
 help:
 	@echo 'Usage: make [target]'
@@ -39,7 +43,7 @@ infra-output: ## Save Terraform output to file
 
 # Build targets
 build: ## Build the application
-	go build -o bin/api ./cmd/api
+	go build -o .build/api ./cmd/api
 
 run: ## Run the application
 	go run ./cmd/api
@@ -57,15 +61,31 @@ test-integration: ## Run integration tests
 	@echo "Cleaning up..."
 	$(MAKE) docker-down
 
-# Migration targets
-migrate-up: ## Run database migrations up
+# Migration targets (using golang-migrate CLI)
+migrate-up: ## Run database migrations up (using migrate CLI)
 	migrate -path ./migrations -database "postgres://invoice_user:invoice_pass@localhost:5432/invoice_db?sslmode=disable" up
 
-migrate-down: ## Run database migrations down
+migrate-down: ## Run database migrations down (using migrate CLI)
 	migrate -path ./migrations -database "postgres://invoice_user:invoice_pass@localhost:5432/invoice_db?sslmode=disable" down
 
 migrate-create: ## Create a new migration (usage: make migrate-create NAME=migration_name)
 	migrate create -ext sql -dir ./migrations -seq $(NAME)
+
+# GORM-based migration targets (using Go script)
+migration-up: ## Run database migrations up using Go script
+	go run ./cmd/api/migrations.go -direction=up
+
+migration-down: ## Run database migrations down using Go script (rolls back 1 by default)
+	go run ./cmd/api/migrations.go -direction=down
+
+migration-down-all: ## Roll back all migrations using Go script
+	go run ./cmd/api/migrations.go -direction=down -steps=999
+
+migration-create: ## Create new up/down SQL migration files (usage: make migration-create NAME=add_users_table)
+	go run ./cmd/api/migrations.go -create="$(NAME)"
+
+migration-status: ## Show migration status
+	go run ./cmd/api/migrations.go -direction=up -steps=0
 
 # Code quality targets
 fmt: ## Format Go code
@@ -87,7 +107,7 @@ docker-down: ## Stop Docker containers
 
 # Utility targets
 clean: ## Clean build artifacts
-	rm -rf bin/
+	rm -rf .build/
 	go clean
 
 deps: ## Download and tidy dependencies

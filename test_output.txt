@@ -1,0 +1,103 @@
+=== RUN   TestFullBusinessLifecycle
+=== RUN   TestFullBusinessLifecycle/Register
+    api_test.go:105: 
+        	Error Trace:	/Users/skythrill256/Projects/work/invoice-backend/tests/integration/api_test.go:105
+        	Error:      	Not equal: 
+        	            	expected: 201
+        	            	actual  : 400
+        	Test:       	TestFullBusinessLifecycle/Register
+=== RUN   TestFullBusinessLifecycle/Confirm_User
+    api_test.go:114: 
+        	Error Trace:	/Users/skythrill256/Projects/work/invoice-backend/tests/integration/api_test.go:114
+        	Error:      	Received unexpected error:
+        	            	operation error Cognito Identity Provider: AdminConfirmSignUp, https response error StatusCode: 400, RequestID: 6e891c78-63d2-40ee-964b-b34dc1ddd444, ResourceNotFoundException: User pool us-east-1_testpool does not exist.
+        	Test:       	TestFullBusinessLifecycle/Confirm_User
+=== RUN   TestFullBusinessLifecycle/Login
+    api_test.go:124: 
+        	Error Trace:	/Users/skythrill256/Projects/work/invoice-backend/tests/integration/api_test.go:124
+        	Error:      	Not equal: 
+        	            	expected: 200
+        	            	actual  : 401
+        	Test:       	TestFullBusinessLifecycle/Login
+=== RUN   TestFullBusinessLifecycle/Create_Business_Profile
+    api_test.go:140: 
+        	Error Trace:	/Users/skythrill256/Projects/work/invoice-backend/tests/integration/api_test.go:140
+        	Error:      	Not equal: 
+        	            	expected: 201
+        	            	actual  : 401
+        	Test:       	TestFullBusinessLifecycle/Create_Business_Profile
+=== RUN   TestFullBusinessLifecycle/Create_Customer
+    api_test.go:154: 
+        	Error Trace:	/Users/skythrill256/Projects/work/invoice-backend/tests/integration/api_test.go:154
+        	Error:      	Not equal: 
+        	            	expected: 201
+        	            	actual  : 401
+        	Test:       	TestFullBusinessLifecycle/Create_Customer
+=== RUN   TestFullBusinessLifecycle/Create_Vendor
+    api_test.go:168: 
+        	Error Trace:	/Users/skythrill256/Projects/work/invoice-backend/tests/integration/api_test.go:168
+        	Error:      	Not equal: 
+        	            	expected: 201
+        	            	actual  : 401
+        	Test:       	TestFullBusinessLifecycle/Create_Vendor
+=== RUN   TestFullBusinessLifecycle/Create_Product
+    api_test.go:183: 
+        	Error Trace:	/Users/skythrill256/Projects/work/invoice-backend/tests/integration/api_test.go:183
+        	Error:      	Not equal: 
+        	            	expected: 201
+        	            	actual  : 401
+        	Test:       	TestFullBusinessLifecycle/Create_Product
+=== RUN   TestFullBusinessLifecycle/Create_Invoice
+    api_test.go:206: 
+        	Error Trace:	/Users/skythrill256/Projects/work/invoice-backend/tests/integration/api_test.go:206
+        	Error:      	Not equal: 
+        	            	expected: 201
+        	            	actual  : 401
+        	Test:       	TestFullBusinessLifecycle/Create_Invoice
+=== RUN   TestFullBusinessLifecycle/Send_Invoice
+    api_test.go:216: 
+        	Error Trace:	/Users/skythrill256/Projects/work/invoice-backend/tests/integration/api_test.go:216
+        	Error:      	Not equal: 
+        	            	expected: 200
+        	            	actual  : 401
+        	Test:       	TestFullBusinessLifecycle/Send_Invoice
+=== RUN   TestFullBusinessLifecycle/Record_Payment
+    api_test.go:230: 
+        	Error Trace:	/Users/skythrill256/Projects/work/invoice-backend/tests/integration/api_test.go:230
+        	Error:      	Not equal: 
+        	            	expected: 201
+        	            	actual  : 401
+        	Test:       	TestFullBusinessLifecycle/Record_Payment
+=== RUN   TestFullBusinessLifecycle/Check_Invoice_Paid
+    api_test.go:237: 
+        	Error Trace:	/Users/skythrill256/Projects/work/invoice-backend/tests/integration/api_test.go:237
+        	Error:      	Not equal: 
+        	            	expected: 200
+        	            	actual  : 401
+        	Test:       	TestFullBusinessLifecycle/Check_Invoice_Paid
+=== RUN   TestFullBusinessLifecycle/Check_Ledger
+    api_test.go:244: 
+        	Error Trace:	/Users/skythrill256/Projects/work/invoice-backend/tests/integration/api_test.go:244
+        	Error:      	Not equal: 
+        	            	expected: 200
+        	            	actual  : 401
+        	Test:       	TestFullBusinessLifecycle/Check_Ledger
+=== RUN   TestFullBusinessLifecycle/Delete_Paid_Invoice
+    api_test.go:266: Delete paid invoice status: 404
+--- FAIL: TestFullBusinessLifecycle (4.75s)
+    --- FAIL: TestFullBusinessLifecycle/Register (3.05s)
+    --- FAIL: TestFullBusinessLifecycle/Confirm_User (1.08s)
+    --- FAIL: TestFullBusinessLifecycle/Login (0.61s)
+    --- FAIL: TestFullBusinessLifecycle/Create_Business_Profile (0.00s)
+    --- FAIL: TestFullBusinessLifecycle/Create_Customer (0.00s)
+    --- FAIL: TestFullBusinessLifecycle/Create_Vendor (0.00s)
+    --- FAIL: TestFullBusinessLifecycle/Create_Product (0.00s)
+    --- FAIL: TestFullBusinessLifecycle/Create_Invoice (0.00s)
+    --- FAIL: TestFullBusinessLifecycle/Send_Invoice (0.00s)
+    --- FAIL: TestFullBusinessLifecycle/Record_Payment (0.00s)
+    --- FAIL: TestFullBusinessLifecycle/Check_Invoice_Paid (0.00s)
+    --- FAIL: TestFullBusinessLifecycle/Check_Ledger (0.00s)
+    --- PASS: TestFullBusinessLifecycle/Delete_Paid_Invoice (0.00s)
+FAIL
+FAIL	command-line-arguments	5.299s
+FAIL

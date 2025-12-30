@@ -163,3 +163,21 @@ variable "jwt_secret" {
   sensitive   = true
   default     = "change-me-in-production-with-secure-secret"
 }
+
+variable "google_client_id" {
+  description = "Google OAuth Client ID"
+  type        = string
+  sensitive   = true
+}
+
+variable "google_client_secret" {
+  description = "Google OAuth Client Secret"
+  type        = string
+  sensitive   = true
+}
+
+variable "cognito_domain_prefix" {
+  description = "Prefix for the Cognito User Pool Domain"
+  type        = string
+  default     = "invoice-backend-app"
+}

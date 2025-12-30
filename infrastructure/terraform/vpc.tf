@@ -124,6 +124,15 @@ resource "aws_security_group" "rds" {
     cidr_blocks = [var.vpc_cidr]
   }
 
+  # TEMPORARY: External access for migrations - REMOVE AFTER MIGRATION
+  ingress {
+    description = "PostgreSQL from external (TEMPORARY - REMOVE AFTER MIGRATION)"
+    from_port   = 5432
+    to_port     = 5432
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
   egress {
     from_port   = 0
     to_port     = 0

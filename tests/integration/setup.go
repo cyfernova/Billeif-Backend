@@ -46,11 +46,10 @@ func SetupTestEnv(t *testing.T) *TestEnv {
 	cfg := &config.Config{
 		Environment: "test",
 		AWS: config.AWSConfig{
-			Region:     "us-east-1",
-			LocalStack: true,
-			Endpoint:   getEnvOrDefault("AWS_ENDPOINT", LocalStackEndpoint),
-			AccessKey:  "test",
-			SecretKey:  "test",
+			Region:    "us-east-1",
+			Endpoint:  getEnvOrDefault("AWS_ENDPOINT", ""),
+			AccessKey: getEnvOrDefault("AWS_ACCESS_KEY_ID", ""),
+			SecretKey: getEnvOrDefault("AWS_SECRET_ACCESS_KEY", ""),
 		},
 		Cognito: config.CognitoConfig{
 			UserPoolID: getEnvOrDefault("COGNITO_USER_POOL_ID", "us-east-1_testpool"),
@@ -95,12 +94,14 @@ func getEnvOrDefault(key, defaultVal string) string {
 func CreateTestS3Client(t *testing.T) *s3.Client {
 	t.Helper()
 
-	endpoint := getEnvOrDefault("AWS_ENDPOINT", LocalStackEndpoint)
+	endpoint := getEnvOrDefault("AWS_ENDPOINT", "")
 
-	cfg, err := awsconfig.LoadDefaultConfig(context.Background(),
+	loaders := []func(*awsconfig.LoadOptions) error{
 		awsconfig.WithRegion("us-east-1"),
-		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("test", "test", "")),
-		awsconfig.WithEndpointResolverWithOptions(
+	}
+
+	if endpoint != "" {
+		loaders = append(loaders, awsconfig.WithEndpointResolverWithOptions(
 			aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
 				return aws.Endpoint{
 					URL:               endpoint,
@@ -108,8 +109,17 @@ func CreateTestS3Client(t *testing.T) *s3.Client {
 					HostnameImmutable: true,
 				}, nil
 			}),
-		),
-	)
+		))
+	}
+
+	// Only specific credentials if provided, otherwise default chain
+	accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
+	secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
+	if accessKey != "" && secretKey != "" {
+		loaders = append(loaders, awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")))
+	}
+
+	cfg, err := awsconfig.LoadDefaultConfig(context.Background(), loaders...)
 	if err != nil {
 		t.Fatalf("Failed to load AWS config: %v", err)
 	}
