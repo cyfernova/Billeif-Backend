@@ -76,7 +76,7 @@ jobs:
 
       - name: Output deployment info
         run: |
-          echo "✅ Deployment completed successfully!"
-          echo "📦 Image: ${{ steps.build-image.outputs.image }}"
-          echo "🚀 Cluster: ${{ env.ECS_CLUSTER }}"
-          echo "🔧 Service: ${{ env.ECS_SERVICE }}"
+          echo "Deployment completed successfully!"
+          echo "Image: ${{ steps.build-image.outputs.image }}"
+          echo "Cluster: ${{ env.ECS_CLUSTER }}"
+          echo "Service: ${{ env.ECS_SERVICE }}"
