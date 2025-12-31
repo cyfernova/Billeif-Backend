@@ -21,9 +21,9 @@ vendor/
 go.work
 
 # Environment variables
-#.env
+.env
 .env.local
-#terraform.tfvars
+terraform.tfvars
 # IDE
 .vscode/
 .idea/
