@@ -328,6 +328,8 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 func (h *AuthHandler) GoogleLogin(c *gin.Context) {
 	userId := middleware.GetUserID(c)
 	email := middleware.GetEmail(c)
+	name := middleware.GetName(c)
+	picture := middleware.GetPicture(c)
 	if userId == "" || email == "" {
 		h.log.Error("google login failed: missing user_id or email from token", "user_id", userId, "email", email)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token claims"})
@@ -335,8 +337,10 @@ func (h *AuthHandler) GoogleLogin(c *gin.Context) {
 	}
 
 	input := services.SyncGoogleUserInput{
-		Email:     email,
-		CognitoID: userId,
+		Email:             email,
+		CognitoID:         userId,
+		Name:              name,
+		ProfilePictureURL: picture,
 	}
 
 	user, err := h.svc.SyncGoogleUser(c.Request.Context(), input)

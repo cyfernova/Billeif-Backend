@@ -247,15 +247,24 @@ func (s *AuthService) ChangePassword(ctx context.Context, accessToken string, in
 }
 
 type SyncGoogleUserInput struct {
-	Email     string
-	CognitoID string
-	Name      string
+	Email             string
+	CognitoID         string
+	Name              string
+	ProfilePictureURL string
 }
 
 func (s *AuthService) SyncGoogleUser(ctx context.Context, input SyncGoogleUserInput) (*models.User, error) {
 	// First check if user exists by Cognito ID
 	user, err := s.userRepo.GetByCognitoID(ctx, input.CognitoID)
 	if err == nil {
+		// Update profile picture if it changed
+		if input.ProfilePictureURL != "" && user.ProfilePictureURL != input.ProfilePictureURL {
+			user.ProfilePictureURL = input.ProfilePictureURL
+			user.UpdatedAt = time.Now()
+			if err := s.userRepo.Update(ctx, user); err != nil {
+				s.log.Warn("failed to update profile picture", "error", err)
+			}
+		}
 		return user, nil
 	}
 
@@ -268,6 +277,9 @@ func (s *AuthService) SyncGoogleUser(ctx context.Context, input SyncGoogleUserIn
 		if input.Name != "" {
 			user.Name = input.Name
 		}
+		if input.ProfilePictureURL != "" {
+			user.ProfilePictureURL = input.ProfilePictureURL
+		}
 		user.UpdatedAt = time.Now()
 		if err := s.userRepo.Update(ctx, user); err != nil {
 			return nil, fmt.Errorf("failed to link google user: %w", err)
@@ -277,10 +289,11 @@ func (s *AuthService) SyncGoogleUser(ctx context.Context, input SyncGoogleUserIn
 
 	// Create new user
 	newUser := &models.User{
-		Email:     input.Email,
-		CognitoID: input.CognitoID,
-		Name:      input.Name,
-		Role:      "viewer",
+		Email:             input.Email,
+		CognitoID:         input.CognitoID,
+		Name:              input.Name,
+		ProfilePictureURL: input.ProfilePictureURL,
+		Role:              "viewer",
 	}
 
 	if err := s.userRepo.Create(ctx, newUser); err != nil {

@@ -138,6 +138,8 @@ type CognitoClaims struct {
 	TokenUse   string   `json:"token_use"`
 	BusinessID string   `json:"custom:businessId"`
 	Role       string   `json:"custom:role"`
+	Picture    string   `json:"picture"`
+	Name       string   `json:"name"`
 }
 
 var jwksCache *JWKSCache
@@ -195,6 +197,8 @@ func Auth(cfg config.CognitoConfig, log *logger.Logger) gin.HandlerFunc {
 		c.Set("groups", claims.Groups)
 		c.Set("business_id", claims.BusinessID)
 		c.Set("role", claims.Role)
+		c.Set("picture", claims.Picture)
+		c.Set("name", claims.Name)
 
 		c.Next()
 	}
@@ -233,4 +237,18 @@ func GetGroups(c *gin.Context) []string {
 		return groups.([]string)
 	}
 	return nil
+}
+
+func GetPicture(c *gin.Context) string {
+	if picture, exists := c.Get("picture"); exists {
+		return picture.(string)
+	}
+	return ""
+}
+
+func GetName(c *gin.Context) string {
+	if name, exists := c.Get("name"); exists {
+		return name.(string)
+	}
+	return ""
 }
