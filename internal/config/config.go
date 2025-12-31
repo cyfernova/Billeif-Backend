@@ -162,4 +162,7 @@ func setDefaults(cfg *Config) {
 	if cfg.Cognito.JWKSRefreshRate == 0 {
 		cfg.Cognito.JWKSRefreshRate = 10 * time.Minute
 	}
+	if cfg.Cognito.Region == "" {
+		cfg.Cognito.Region = "us-east-1"
+	}
 }
