@@ -12,6 +12,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ses v1.23.0
 	github.com/aws/aws-sdk-go-v2/service/sns v1.29.0
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.35.0
+	github.com/getsentry/sentry-go v0.40.0
+	github.com/getsentry/sentry-go/gin v0.40.0
 	github.com/gin-contrib/cors v1.7.6
 	github.com/gin-gonic/gin v1.11.0
 	github.com/go-redis/redis/v8 v8.11.5
@@ -20,6 +22,9 @@ require (
 	github.com/prometheus/client_golang v1.23.2
 	github.com/spf13/viper v1.18.2
 	github.com/stretchr/testify v1.11.1
+	github.com/swaggo/files v1.0.1
+	github.com/swaggo/gin-swagger v1.6.1
+	github.com/swaggo/swag v1.16.4
 	go.uber.org/zap v1.27.0
 	gorm.io/driver/postgres v1.6.0
 	gorm.io/gorm v1.25.12
@@ -98,9 +103,6 @@ require (
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
-	github.com/swaggo/files v1.0.1 // indirect
-	github.com/swaggo/gin-swagger v1.6.1 // indirect
-	github.com/swaggo/swag v1.16.4 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.3.0 // indirect
 	go.uber.org/mock v0.5.0 // indirect

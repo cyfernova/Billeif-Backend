@@ -18,6 +18,7 @@ import (
 	"invoice-backend/internal/workers"
 	"invoice-backend/pkg/awsclients"
 	"invoice-backend/pkg/logger"
+	pkgsentry "invoice-backend/pkg/sentry"
 
 	_ "invoice-backend/docs"
 
@@ -55,6 +56,13 @@ func main() {
 	if err != nil {
 		log.Fatal("failed to load config", "error", err)
 	}
+
+	// Initialize Sentry early for production error tracking
+	if err := initSentry(cfg, log); err != nil {
+		log.Error("failed to initialize Sentry", "error", err)
+		// Don't fail startup if Sentry fails, just log the error
+	}
+	defer pkgsentry.Flush(2 * time.Second)
 
 	if cfg.Environment == "prod" {
 		gin.SetMode(gin.ReleaseMode)
@@ -173,12 +181,64 @@ func initServices(cfg *config.Config, repos *Repositories, aws *awsclients.Confi
 		repos.Webhook, repos.Subscription, aws, log)
 }
 
+// initSentry initializes the Sentry SDK with production configuration
+func initSentry(cfg *config.Config, log *logger.Logger) error {
+	if cfg.Sentry.DSN == "" {
+		log.Info("Sentry DSN not configured, error tracking disabled")
+		return nil
+	}
+
+	// Set default sample rates for production
+	sampleRate := cfg.Sentry.SampleRate
+	if sampleRate == 0 {
+		sampleRate = 1.0 // Capture 100% of errors in production
+	}
+
+	tracesSampleRate := cfg.Sentry.TracesSampleRate
+	if tracesSampleRate == 0 {
+		tracesSampleRate = 0.2 // Sample 20% of transactions for performance monitoring
+	}
+
+	err := pkgsentry.Init(pkgsentry.Config{
+		DSN:              cfg.Sentry.DSN,
+		Environment:      cfg.Environment,
+		Release:          "invoice-backend@1.0.0", // TODO: Get from build info
+		Debug:            cfg.Sentry.Debug,
+		SampleRate:       sampleRate,
+		TracesSampleRate: tracesSampleRate,
+		EnableTracing:    cfg.Sentry.EnableTracing,
+	})
+
+	if err != nil {
+		return err
+	}
+
+	log.Info("Sentry initialized",
+		"environment", cfg.Environment,
+		"sample_rate", sampleRate,
+		"traces_sample_rate", tracesSampleRate,
+	)
+
+	return nil
+}
+
 func setupRouter(cfg *config.Config, h *handlers.Handler, log *logger.Logger) *gin.Engine {
 	router := gin.New()
 
+	// Add Sentry middleware first for request context
+	if cfg.Sentry.DSN != "" {
+		router.Use(middleware.SentryMiddleware())
+	}
+
 	router.Use(middleware.RequestID())
 	router.Use(middleware.Logger(log))
-	router.Use(middleware.Recovery(log))
+
+	// Use Sentry-aware recovery if Sentry is enabled
+	if cfg.Sentry.DSN != "" {
+		router.Use(middleware.SentryRecovery(log))
+	} else {
+		router.Use(middleware.Recovery(log))
+	}
 	router.Use(middleware.CORS())
 
 	router.GET("/health", h.Health.Check)

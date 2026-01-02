@@ -17,6 +17,15 @@ type Config struct {
 	JWT         JWTConfig      `mapstructure:"JWT"`
 	S3          S3Config       `mapstructure:"S3"`
 	SQS         SQSConfig      `mapstructure:"SQS"`
+	Sentry      SentryConfig   `mapstructure:"SENTRY"`
+}
+
+type SentryConfig struct {
+	DSN              string  `mapstructure:"DSN"`
+	SampleRate       float64 `mapstructure:"SAMPLE_RATE"`
+	TracesSampleRate float64 `mapstructure:"TRACES_SAMPLE_RATE"`
+	EnableTracing    bool    `mapstructure:"ENABLE_TRACING"`
+	Debug            bool    `mapstructure:"DEBUG"`
 }
 
 type ServerConfig struct {
@@ -107,6 +116,11 @@ func Load() (*Config, error) {
 	viper.BindEnv("S3.BUCKET_EMAIL_SINK", "S3_BUCKET_EMAIL_SINK")
 	viper.BindEnv("SQS.INVOICE_QUEUE", "SQS_INVOICE_QUEUE")
 	viper.BindEnv("SQS.PAYMENT_QUEUE", "SQS_PAYMENT_QUEUE")
+	viper.BindEnv("SENTRY.DSN", "SENTRY_DSN")
+	viper.BindEnv("SENTRY.SAMPLE_RATE", "SENTRY_SAMPLE_RATE")
+	viper.BindEnv("SENTRY.TRACES_SAMPLE_RATE", "SENTRY_TRACES_SAMPLE_RATE")
+	viper.BindEnv("SENTRY.ENABLE_TRACING", "SENTRY_ENABLE_TRACING")
+	viper.BindEnv("SENTRY.DEBUG", "SENTRY_DEBUG")
 
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {

@@ -31,7 +31,7 @@ make run
 cmd/api/              # Application entry point
 internal/
 ├── config/           # Viper configuration
-├── middleware/       # Gin middleware (auth, RBAC, logging, rate-limit)
+├── middleware/       # Gin middleware (auth, RBAC, logging, rate-limit, sentry)
 ├── models/           # GORM domain models
 ├── handlers/         # HTTP handlers
 ├── services/         # Business logic
@@ -40,7 +40,8 @@ internal/
 └── utils/            # Helpers (JWT, pagination, errors)
 pkg/
 ├── awsclients/       # AWS SDK v2 with LocalStack support
-└── logger/           # Zap structured logging
+├── logger/           # Zap structured logging
+└── sentry/           # Sentry error tracking integration
 infrastructure/
 ├── terraform/        # IaC: Cognito, DynamoDB, S3, SES, SNS/SQS
 └── localstack/       # Init scripts
@@ -179,6 +180,56 @@ To switch from LocalStack to real AWS:
 | AWS_ENDPOINT | LocalStack URL | http://localhost:4566 |
 | COGNITO_USER_POOL_ID | Cognito pool ID | - |
 | COGNITO_CLIENT_ID | Cognito client ID | - |
+| SENTRY_DSN | Sentry Data Source Name | - |
+| SENTRY_SAMPLE_RATE | Error sample rate (0.0-1.0) | 1.0 |
+| SENTRY_TRACES_SAMPLE_RATE | Performance trace rate | 0.2 |
+| SENTRY_ENABLE_TRACING | Enable performance tracing | false |
+| SENTRY_DEBUG | Debug mode for Sentry SDK | false |
+
+## Error Tracking (Sentry)
+
+Sentry is integrated for production error tracking and performance monitoring.
+
+### Configuration
+
+Add your Sentry DSN to `.env`:
+```bash
+SENTRY_DSN=https://your-key@sentry.io/project-id
+SENTRY_SAMPLE_RATE=1.0          # Capture 100% of errors
+SENTRY_TRACES_SAMPLE_RATE=0.2   # Sample 20% of transactions
+SENTRY_ENABLE_TRACING=true      # Enable performance monitoring
+```
+
+### Features
+
+- **Automatic panic capture** with full stack traces
+- **Request context** (method, path, headers, query params)
+- **User context** when authenticated
+- **Performance monitoring** with transaction tracing
+- **Breadcrumbs** for debugging
+- **Runtime enrichment** (Go version, memory stats, goroutine count)
+
+### Usage in Handlers
+
+```go
+import "invoice-backend/internal/middleware"
+
+// Capture errors with context
+func (h *Handler) SomeEndpoint(c *gin.Context) {
+    err := someOperation()
+    if err != nil {
+        middleware.SentryErrorHandler(c, err,
+            map[string]string{"operation": "some_operation"},
+            map[string]interface{}{"input": input},
+        )
+        c.JSON(500, gin.H{"error": "failed"})
+        return
+    }
+}
+
+// Add breadcrumbs for debugging
+middleware.AddSentryBreadcrumb(c, "db", "queried users", sentry.LevelInfo, nil)
+```
 
 ## Testing
 
