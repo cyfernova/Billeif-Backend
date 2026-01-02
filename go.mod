@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider v1.47.0
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.34.0
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.55.0
-	github.com/aws/aws-sdk-go-v2/service/ses v1.23.0
+	github.com/aws/aws-sdk-go-v2/service/ses v1.34.17
 	github.com/aws/aws-sdk-go-v2/service/sns v1.29.0
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.35.0
 	github.com/getsentry/sentry-go v0.40.0
@@ -36,8 +36,8 @@ require (
 	github.com/PuerkitoBio/urlesc v0.0.0-20170810143723-de5bf2ad4578 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.6.2 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.16.17 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.3.24 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.6.24 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.16 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.16 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/ini v1.8.1 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.3.8 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.12.0 // indirect
