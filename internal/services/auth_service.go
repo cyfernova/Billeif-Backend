@@ -46,7 +46,7 @@ type RegisterOutput struct {
 }
 
 func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*RegisterOutput, error) {
-	_, err := s.cognito.SignUp(ctx, &cognitoidentityprovider.SignUpInput{
+	signUpResp, err := s.cognito.SignUp(ctx, &cognitoidentityprovider.SignUpInput{
 		ClientId: aws.String(s.cfg.Cognito.ClientID),
 		Username: aws.String(input.Email),
 		Password: aws.String(input.Password),
@@ -60,9 +60,15 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*Regis
 		return nil, fmt.Errorf("registration failed: %w", err)
 	}
 
+	// Use the actual Cognito UserSub (UUID) instead of email
+	cognitoID := input.Email // fallback to email if UserSub is nil
+	if signUpResp.UserSub != nil {
+		cognitoID = *signUpResp.UserSub
+	}
+
 	user := &models.User{
 		Email:     input.Email,
-		CognitoID: input.Email,
+		CognitoID: cognitoID,
 		Name:      input.Name,
 		Role:      "viewer",
 	}
@@ -210,6 +216,20 @@ func (s *AuthService) GetUser(ctx context.Context, userID string) (*models.User,
 
 func (s *AuthService) GetUserByCognitoID(ctx context.Context, cognitoID string) (*models.User, error) {
 	return s.userRepo.GetByCognitoID(ctx, cognitoID)
+}
+
+func (s *AuthService) GetUserByEmail(ctx context.Context, email string) (*models.User, error) {
+	return s.userRepo.GetByEmail(ctx, email)
+}
+
+func (s *AuthService) UpdateUserCognitoID(ctx context.Context, userID string, cognitoID string) error {
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	user.CognitoID = cognitoID
+	user.UpdatedAt = time.Now()
+	return s.userRepo.Update(ctx, user)
 }
 
 type UpdateProfileInput struct {

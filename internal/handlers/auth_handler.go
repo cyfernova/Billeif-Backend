@@ -231,17 +231,31 @@ func (h *AuthHandler) ResendVerification(c *gin.Context) {
 // @Router /auth/me [get]
 func (h *AuthHandler) Me(c *gin.Context) {
 	userID := middleware.GetUserID(c)
+	email := middleware.GetEmail(c)
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
 	}
 
+	// Try to find user by database ID first
 	user, err := h.svc.GetUser(c.Request.Context(), userID)
 	if err != nil {
+		// Try by Cognito ID (the JWT subject)
 		user, err = h.svc.GetUserByCognitoID(c.Request.Context(), userID)
 		if err != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
-			return
+			// Fallback: try by email for legacy users who have email as cognito_id
+			if email != "" {
+				user, err = h.svc.GetUserByEmail(c.Request.Context(), email)
+				if err == nil {
+					// Auto-fix the cognito_id for this legacy user
+					_ = h.svc.UpdateUserCognitoID(c.Request.Context(), user.ID, userID)
+					user.CognitoID = userID // Update in response
+				}
+			}
+			if err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+				return
+			}
 		}
 	}
 
