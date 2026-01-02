@@ -11,7 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.95.0
 	github.com/aws/aws-sdk-go-v2/service/ses v1.34.17
 	github.com/aws/aws-sdk-go-v2/service/sns v1.29.0
-	github.com/aws/aws-sdk-go-v2/service/sqs v1.35.0
+	github.com/aws/aws-sdk-go-v2/service/sqs v1.42.20
 	github.com/getsentry/sentry-go v0.40.0
 	github.com/getsentry/sentry-go/gin v0.40.0
 	github.com/gin-contrib/cors v1.7.6
