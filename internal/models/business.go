@@ -8,6 +8,7 @@ import (
 
 type BusinessProfile struct {
 	ID         string         `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
+	OwnerID    string         `gorm:"not null;size:255;index" json:"owner_id"`
 	Name       string         `gorm:"not null;size:255" json:"name" validate:"required,min=2,max=255"`
 	Email      string         `gorm:"not null;size:255" json:"email" validate:"required,email"`
 	Phone      string         `gorm:"size:50" json:"phone,omitempty" validate:"omitempty,max=50"`

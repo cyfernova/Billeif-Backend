@@ -35,6 +35,7 @@ type CreateBusinessInput struct {
 
 func (s *BusinessService) Create(ctx context.Context, userID string, input CreateBusinessInput) (*models.BusinessProfile, error) {
 	business := &models.BusinessProfile{
+		OwnerID:    userID,
 		Name:       input.Name,
 		Email:      input.Email,
 		Phone:      input.Phone,
