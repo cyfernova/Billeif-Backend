@@ -21,15 +21,17 @@ type AuthService struct {
 	userRepo interfaces.UserRepository
 	cognito  *cognitoidentityprovider.Client
 	email    *EmailService
+	s3       *S3Service
 	log      *logger.Logger
 }
 
-func NewAuthService(cfg *config.Config, userRepo interfaces.UserRepository, aws *awsclients.Config, email *EmailService, log *logger.Logger) *AuthService {
+func NewAuthService(cfg *config.Config, userRepo interfaces.UserRepository, aws *awsclients.Config, email *EmailService, s3 *S3Service, log *logger.Logger) *AuthService {
 	return &AuthService{
 		cfg:      cfg,
 		userRepo: userRepo,
 		cognito:  aws.Cognito,
 		email:    email,
+		s3:       s3,
 		log:      log,
 	}
 }
@@ -246,7 +248,8 @@ func (s *AuthService) UpdateUserCognitoID(ctx context.Context, userID string, co
 }
 
 type UpdateProfileInput struct {
-	Name string `json:"name" binding:"required,min=2"`
+	Name              string `json:"name" binding:"required,min=2"`
+	ProfilePictureURL string `json:"profile_picture_url,omitempty"`
 }
 
 func (s *AuthService) UpdateProfile(ctx context.Context, userID string, input UpdateProfileInput) (*models.User, error) {
@@ -256,6 +259,9 @@ func (s *AuthService) UpdateProfile(ctx context.Context, userID string, input Up
 	}
 
 	user.Name = input.Name
+	if input.ProfilePictureURL != "" {
+		user.ProfilePictureURL = input.ProfilePictureURL
+	}
 	user.UpdatedAt = time.Now()
 
 	if err := s.userRepo.Update(ctx, user); err != nil {
@@ -263,6 +269,12 @@ func (s *AuthService) UpdateProfile(ctx context.Context, userID string, input Up
 	}
 
 	return user, nil
+}
+
+// GetProfilePictureUploadURL generates a presigned URL for profile picture upload
+func (s *AuthService) GetProfilePictureUploadURL(ctx context.Context, userID, contentType string) (string, error) {
+	key := fmt.Sprintf("profile-pictures/%s/profile", userID)
+	return s.s3.GeneratePresignedUploadURL(ctx, "user-profile-pictures", key, contentType, 3600)
 }
 
 type ChangePasswordInput struct {

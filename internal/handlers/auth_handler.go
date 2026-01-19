@@ -367,6 +367,76 @@ func (h *AuthHandler) GoogleLogin(c *gin.Context) {
 	c.JSON(http.StatusOK, user)
 }
 
+// UploadProfilePicture generates a presigned URL for profile picture upload
+// @Summary Upload profile picture
+// @Description Returns a presigned S3 URL to upload a profile picture.
+// @Tags Authentication
+// @Produce json
+// @Security BearerAuth
+// @Param Content-Type header string false "MIME type (default: image/png)"
+// @Success 200 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /auth/profile-picture [post]
+func (h *AuthHandler) UploadProfilePicture(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	contentType := c.GetHeader("Content-Type")
+	if contentType == "" {
+		contentType = "image/png"
+	}
+
+	url, err := h.svc.GetProfilePictureUploadURL(c.Request.Context(), userID, contentType)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"upload_url": url})
+}
+
+// UpdateProfilePicture updates the user's profile picture URL
+// @Summary Update profile picture URL
+// @Description Updates the user's profile picture URL after successful upload.
+// @Tags Authentication
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body object{profile_picture_url=string} true "Profile picture URL"
+// @Success 200 {object} models.User
+// @Failure 401 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /auth/profile-picture [put]
+func (h *AuthHandler) UpdateProfilePicture(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	var input struct {
+		ProfilePictureURL string `json:"profile_picture_url" binding:"required,url"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	user, err := h.svc.UpdateProfile(c.Request.Context(), userID, services.UpdateProfileInput{
+		Name:              "", // Only update profile picture
+		ProfilePictureURL: input.ProfilePictureURL,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, user)
+}
+
 func extractToken(c *gin.Context) string {
 	auth := c.GetHeader("Authorization")
 	if auth == "" {

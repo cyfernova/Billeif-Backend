@@ -47,7 +47,7 @@ func NewContainer(
 	emailSvc := NewEmailService(cfg, aws, s3Svc, log)
 
 	return &Container{
-		Auth:         NewAuthService(cfg, userRepo, aws, emailSvc, log),
+		Auth:         NewAuthService(cfg, userRepo, aws, emailSvc, s3Svc, log),
 		BusinessAuth: NewBusinessAuthService(businessRepo, teamRepo, log),
 		Business:     NewBusinessService(businessRepo, s3Svc, log),
 		Customer:     NewCustomerService(customerRepo, log),

@@ -281,6 +281,8 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			protected.GET("/auth/me", h.Auth.Me)
 			protected.PUT("/auth/profile", h.Auth.UpdateProfile)
 			protected.POST("/auth/change-password", h.Auth.ChangePassword)
+			protected.POST("/auth/profile-picture", h.Auth.UploadProfilePicture)
+			protected.PUT("/auth/profile-picture", h.Auth.UpdateProfilePicture)
 
 			businesses := protected.Group("/business-profiles")
 			{
