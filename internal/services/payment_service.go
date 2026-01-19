@@ -8,16 +8,19 @@ import (
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/logger"
+
+	"gorm.io/gorm"
 )
 
 type PaymentService struct {
+	db          *gorm.DB
 	repo        interfaces.PaymentRepository
 	invoiceRepo interfaces.InvoiceRepository
 	log         *logger.Logger
 }
 
-func NewPaymentService(repo interfaces.PaymentRepository, invoiceRepo interfaces.InvoiceRepository, log *logger.Logger) *PaymentService {
-	return &PaymentService{repo: repo, invoiceRepo: invoiceRepo, log: log}
+func NewPaymentService(db *gorm.DB, repo interfaces.PaymentRepository, invoiceRepo interfaces.InvoiceRepository, log *logger.Logger) *PaymentService {
+	return &PaymentService{db: db, repo: repo, invoiceRepo: invoiceRepo, log: log}
 }
 
 type CreatePaymentInput struct {
@@ -53,21 +56,32 @@ func (s *PaymentService) Create(ctx context.Context, input CreatePaymentInput) (
 		Notes:         input.Notes,
 	}
 
-	if err := s.repo.Create(ctx, payment); err != nil {
-		return nil, fmt.Errorf("failed to create payment: %w", err)
-	}
+	// Use transaction to ensure atomicity of payment creation and invoice update
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(payment).Error; err != nil {
+			return fmt.Errorf("failed to create payment: %w", err)
+		}
 
-	invoice.PaidAmount += input.Amount
-	invoice.BalanceDue = invoice.Total - invoice.PaidAmount
-	if invoice.PaidAmount >= invoice.Total {
-		invoice.Status = "paid"
-		now := time.Now()
-		invoice.PaidAt = &now
-	} else {
-		invoice.Status = "partial"
-	}
-	if err := s.invoiceRepo.Update(ctx, invoice); err != nil {
-		s.log.Error("failed to update invoice after payment", "invoice_id", input.InvoiceID, "error", err)
+		invoice.PaidAmount += input.Amount
+		invoice.BalanceDue = invoice.Total - invoice.PaidAmount
+		if invoice.PaidAmount >= invoice.Total {
+			invoice.Status = "paid"
+			now := time.Now()
+			invoice.PaidAt = &now
+		} else {
+			invoice.Status = "partial"
+		}
+
+		if err := tx.Save(invoice).Error; err != nil {
+			return fmt.Errorf("failed to update invoice: %w", err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		s.log.Error("payment transaction failed", "invoice_id", input.InvoiceID, "error", err)
+		return nil, err
 	}
 
 	return payment, nil

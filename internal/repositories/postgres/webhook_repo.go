@@ -51,5 +51,5 @@ func (r *webhookRepository) Update(ctx context.Context, webhook *models.Webhook)
 }
 
 func (r *webhookRepository) Delete(ctx context.Context, id string) error {
-	return r.db.WithContext(ctx).Delete(&models.Webhook{ID: id}).Error
+	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&models.Webhook{}).Error
 }

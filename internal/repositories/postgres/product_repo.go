@@ -69,7 +69,7 @@ func (r *productRepository) Update(ctx context.Context, product *models.Product)
 }
 
 func (r *productRepository) Delete(ctx context.Context, id string) error {
-	return r.db.WithContext(ctx).Delete(&models.Product{ID: id}).Error
+	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&models.Product{}).Error
 }
 
 func (r *productRepository) AdjustStock(ctx context.Context, productID string, quantity int64) error {

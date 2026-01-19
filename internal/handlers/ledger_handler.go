@@ -2,9 +2,9 @@ package handlers
 
 import (
 	"net/http"
-	"strconv"
 
 	"invoice-backend/internal/services"
+	"invoice-backend/internal/utils"
 	"invoice-backend/pkg/logger"
 
 	"github.com/gin-gonic/gin"
@@ -39,8 +39,7 @@ func (h *LedgerHandler) List(c *gin.Context) {
 		return
 	}
 
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+	page, limit := utils.ParsePagination(c)
 
 	entries, total, err := h.svc.List(c.Request.Context(), businessID, page, limit)
 	if err != nil {

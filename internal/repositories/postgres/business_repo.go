@@ -36,7 +36,7 @@ func (r *businessRepository) Update(ctx context.Context, business *models.Busine
 }
 
 func (r *businessRepository) Delete(ctx context.Context, id string) error {
-	return r.db.WithContext(ctx).Delete(&models.BusinessProfile{ID: id}).Error
+	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&models.BusinessProfile{}).Error
 }
 
 func (r *businessRepository) List(ctx context.Context, userID string, page, limit int) ([]*models.BusinessProfile, int64, error) {

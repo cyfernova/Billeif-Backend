@@ -79,10 +79,10 @@ func main() {
 	}
 
 	repos := initRepositories(db)
-	svcs := initServices(cfg, repos, awsClients, log)
+	svcs := initServices(cfg, db, repos, awsClients, log)
 	h := handlers.New(svcs, log)
 
-	router := setupRouter(cfg, h, log)
+	router := setupRouter(cfg, svcs, h, log)
 
 	worker := workers.New(cfg, svcs, awsClients, log)
 	go worker.Start(ctx)
@@ -175,8 +175,8 @@ func initRepositories(db *gorm.DB) *Repositories {
 	}
 }
 
-func initServices(cfg *config.Config, repos *Repositories, aws *awsclients.Config, log *logger.Logger) *services.Container {
-	return services.NewContainer(cfg, repos.User, repos.Business, repos.Customer, repos.Vendor,
+func initServices(cfg *config.Config, db *gorm.DB, repos *Repositories, aws *awsclients.Config, log *logger.Logger) *services.Container {
+	return services.NewContainer(cfg, db, repos.User, repos.Business, repos.Customer, repos.Vendor,
 		repos.Product, repos.Invoice, repos.Payment, repos.Ledger, repos.Team,
 		repos.Webhook, repos.Subscription, aws, log)
 }
@@ -222,7 +222,7 @@ func initSentry(cfg *config.Config, log *logger.Logger) error {
 	return nil
 }
 
-func setupRouter(cfg *config.Config, h *handlers.Handler, log *logger.Logger) *gin.Engine {
+func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handler, log *logger.Logger) *gin.Engine {
 	router := gin.New()
 
 	// Add Sentry middleware first for request context
@@ -239,7 +239,7 @@ func setupRouter(cfg *config.Config, h *handlers.Handler, log *logger.Logger) *g
 	} else {
 		router.Use(middleware.Recovery(log))
 	}
-	router.Use(middleware.CORS())
+	router.Use(middleware.CORS(cfg))
 
 	router.GET("/health", h.Health.Check)
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
@@ -276,6 +276,7 @@ func setupRouter(cfg *config.Config, h *handlers.Handler, log *logger.Logger) *g
 
 		protected := api.Group("")
 		protected.Use(middleware.Auth(cfg.Cognito, log))
+		protected.Use(middleware.BusinessAuth(svcs.BusinessAuth))
 		{
 			protected.GET("/auth/me", h.Auth.Me)
 			protected.PUT("/auth/profile", h.Auth.UpdateProfile)

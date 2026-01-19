@@ -87,5 +87,5 @@ func (r *invoiceRepository) UpdateStatus(ctx context.Context, invoiceID string, 
 }
 
 func (r *invoiceRepository) Delete(ctx context.Context, id string) error {
-	return r.db.WithContext(ctx).Delete(&models.Invoice{ID: id}).Error
+	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&models.Invoice{}).Error
 }

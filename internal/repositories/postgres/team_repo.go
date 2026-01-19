@@ -60,7 +60,7 @@ func (r *teamMemberRepository) Update(ctx context.Context, member *models.TeamMe
 }
 
 func (r *teamMemberRepository) Delete(ctx context.Context, id string) error {
-	return r.db.WithContext(ctx).Delete(&models.TeamMember{ID: id}).Error
+	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&models.TeamMember{}).Error
 }
 
 func (r *teamMemberRepository) GetByUserID(ctx context.Context, userID string) ([]*models.TeamMember, error) {

@@ -114,11 +114,17 @@ func (s *AuthService) Login(ctx context.Context, input LoginInput) (*LoginOutput
 		return nil, fmt.Errorf("authentication result is nil")
 	}
 
+	authResult := result.AuthenticationResult
+	if authResult.AccessToken == nil || authResult.RefreshToken == nil || authResult.TokenType == nil {
+		s.log.Error("incomplete authentication result from Cognito")
+		return nil, fmt.Errorf("authentication failed: incomplete response")
+	}
+
 	return &LoginOutput{
-		AccessToken:  *result.AuthenticationResult.AccessToken,
-		RefreshToken: *result.AuthenticationResult.RefreshToken,
-		ExpiresIn:    result.AuthenticationResult.ExpiresIn,
-		TokenType:    *result.AuthenticationResult.TokenType,
+		AccessToken:  *authResult.AccessToken,
+		RefreshToken: *authResult.RefreshToken,
+		ExpiresIn:    authResult.ExpiresIn,
+		TokenType:    *authResult.TokenType,
 	}, nil
 }
 
@@ -142,11 +148,17 @@ func (s *AuthService) Refresh(ctx context.Context, input RefreshInput) (*LoginOu
 		return nil, fmt.Errorf("no authentication result")
 	}
 
+	authResult := result.AuthenticationResult
+	if authResult.AccessToken == nil || authResult.TokenType == nil {
+		s.log.Error("incomplete refresh result from Cognito")
+		return nil, fmt.Errorf("token refresh failed: incomplete response")
+	}
+
 	return &LoginOutput{
-		AccessToken:  *result.AuthenticationResult.AccessToken,
+		AccessToken:  *authResult.AccessToken,
 		RefreshToken: input.RefreshToken,
-		ExpiresIn:    result.AuthenticationResult.ExpiresIn,
-		TokenType:    *result.AuthenticationResult.TokenType,
+		ExpiresIn:    authResult.ExpiresIn,
+		TokenType:    *authResult.TokenType,
 	}, nil
 }
 
@@ -168,6 +180,7 @@ func (s *AuthService) ForgotPassword(ctx context.Context, input ForgotPasswordIn
 	})
 	if err != nil {
 		s.log.Error("forgot password failed", "error", err)
+		return fmt.Errorf("failed to initiate password reset: %w", err)
 	}
 	return nil
 }

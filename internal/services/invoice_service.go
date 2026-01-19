@@ -132,9 +132,13 @@ func (s *InvoiceService) queuePDFGeneration(invoiceID string) {
 		"type":       "generate_pdf",
 		"invoice_id": invoiceID,
 	}
-	body, _ := json.Marshal(message)
+	body, err := json.Marshal(message)
+	if err != nil {
+		s.log.Error("failed to marshal PDF generation message", "invoice_id", invoiceID, "error", err)
+		return
+	}
 
-	_, err := s.sqs.SendMessage(ctx, &sqs.SendMessageInput{
+	_, err = s.sqs.SendMessage(ctx, &sqs.SendMessageInput{
 		QueueUrl:    aws.String(s.cfg.SQS.InvoiceQueue),
 		MessageBody: aws.String(string(body)),
 	})
@@ -144,18 +148,8 @@ func (s *InvoiceService) queuePDFGeneration(invoiceID string) {
 }
 
 func (s *InvoiceService) Get(ctx context.Context, id string) (*models.Invoice, error) {
-	invoice, err := s.repo.GetByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-
-	items, err := s.repo.GetItems(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	invoice.Items = items
-
-	return invoice, nil
+	// GetByID already preloads Items, no need to call GetItems separately
+	return s.repo.GetByID(ctx, id)
 }
 
 func (s *InvoiceService) List(ctx context.Context, businessID string, page, limit int) ([]*models.Invoice, int64, error) {

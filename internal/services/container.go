@@ -5,10 +5,13 @@ import (
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/awsclients"
 	"invoice-backend/pkg/logger"
+
+	"gorm.io/gorm"
 )
 
 type Container struct {
 	Auth         *AuthService
+	BusinessAuth *BusinessAuthService
 	Business     *BusinessService
 	Customer     *CustomerService
 	Vendor       *VendorService
@@ -25,6 +28,7 @@ type Container struct {
 
 func NewContainer(
 	cfg *config.Config,
+	db *gorm.DB,
 	userRepo interfaces.UserRepository,
 	businessRepo interfaces.BusinessRepository,
 	customerRepo interfaces.CustomerRepository,
@@ -44,12 +48,13 @@ func NewContainer(
 
 	return &Container{
 		Auth:         NewAuthService(cfg, userRepo, aws, emailSvc, log),
+		BusinessAuth: NewBusinessAuthService(businessRepo, teamRepo, log),
 		Business:     NewBusinessService(businessRepo, s3Svc, log),
 		Customer:     NewCustomerService(customerRepo, log),
 		Vendor:       NewVendorService(vendorRepo, log),
 		Product:      NewProductService(productRepo, s3Svc, log),
 		Invoice:      NewInvoiceService(cfg, invoiceRepo, productRepo, customerRepo, aws, s3Svc, emailSvc, log),
-		Payment:      NewPaymentService(paymentRepo, invoiceRepo, log),
+		Payment:      NewPaymentService(db, paymentRepo, invoiceRepo, log),
 		Ledger:       NewLedgerService(ledgerRepo, log),
 		Team:         NewTeamService(teamRepo, log),
 		Webhook:      NewWebhookService(webhookRepo, log),

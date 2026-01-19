@@ -60,5 +60,5 @@ func (r *customerRepository) Update(ctx context.Context, customer *models.Custom
 }
 
 func (r *customerRepository) Delete(ctx context.Context, id string) error {
-	return r.db.WithContext(ctx).Delete(&models.Customer{ID: id}).Error
+	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&models.Customer{}).Error
 }

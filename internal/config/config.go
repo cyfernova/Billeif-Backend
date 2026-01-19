@@ -8,16 +8,17 @@ import (
 )
 
 type Config struct {
-	Environment string         `mapstructure:"ENVIRONMENT"`
-	Server      ServerConfig   `mapstructure:"SERVER"`
-	Database    DatabaseConfig `mapstructure:"DATABASE"`
-	Redis       RedisConfig    `mapstructure:"REDIS"`
-	AWS         AWSConfig      `mapstructure:"AWS"`
-	Cognito     CognitoConfig  `mapstructure:"COGNITO"`
-	JWT         JWTConfig      `mapstructure:"JWT"`
-	S3          S3Config       `mapstructure:"S3"`
-	SQS         SQSConfig      `mapstructure:"SQS"`
-	Sentry      SentryConfig   `mapstructure:"SENTRY"`
+	Environment    string         `mapstructure:"ENVIRONMENT"`
+	Server         ServerConfig   `mapstructure:"SERVER"`
+	Database       DatabaseConfig `mapstructure:"DATABASE"`
+	Redis          RedisConfig    `mapstructure:"REDIS"`
+	AWS            AWSConfig      `mapstructure:"AWS"`
+	Cognito        CognitoConfig  `mapstructure:"COGNITO"`
+	JWT            JWTConfig      `mapstructure:"JWT"`
+	S3             S3Config       `mapstructure:"S3"`
+	SQS            SQSConfig      `mapstructure:"SQS"`
+	Sentry         SentryConfig   `mapstructure:"SENTRY"`
+	AllowedOrigins []string       `mapstructure:"ALLOWED_ORIGINS"`
 }
 
 type SentryConfig struct {
@@ -121,6 +122,7 @@ func Load() (*Config, error) {
 	viper.BindEnv("SENTRY.TRACES_SAMPLE_RATE", "SENTRY_TRACES_SAMPLE_RATE")
 	viper.BindEnv("SENTRY.ENABLE_TRACING", "SENTRY_ENABLE_TRACING")
 	viper.BindEnv("SENTRY.DEBUG", "SENTRY_DEBUG")
+	viper.BindEnv("ALLOWED_ORIGINS")
 
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
@@ -178,5 +180,8 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Cognito.Region == "" {
 		cfg.Cognito.Region = "us-east-1"
+	}
+	if len(cfg.AllowedOrigins) == 0 {
+		cfg.AllowedOrigins = []string{"http://localhost:3000"}
 	}
 }

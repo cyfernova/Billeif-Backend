@@ -60,5 +60,5 @@ func (r *paymentRepository) Update(ctx context.Context, payment *models.Payment)
 }
 
 func (r *paymentRepository) Delete(ctx context.Context, id string) error {
-	return r.db.WithContext(ctx).Delete(&models.Payment{ID: id}).Error
+	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&models.Payment{}).Error
 }
