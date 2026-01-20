@@ -9,23 +9,24 @@ import (
 
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
+	"invoice-backend/pkg/a2a"
 	"invoice-backend/pkg/ap2"
 	"invoice-backend/pkg/logger"
-	"invoice-backend/pkg/a2a"
 )
 
 var (
-	ErrCartMandateNotFound      = errors.New("cart mandate not found")
-	ErrInvalidProduct           = errors.New("invalid product")
-	ErrInsufficientStock        = errors.New("insufficient stock")
-	ErrMandateExpired           = errors.New("mandate has expired")
-	ErrCartTotalMismatch        = errors.New("cart total does not match line items")
-	ErrIntentMandateNotFound    = errors.New("intent mandate not found")
+	ErrCartMandateNotFound   = errors.New("cart mandate not found")
+	ErrInvalidProduct        = errors.New("invalid product")
+	ErrInsufficientStock     = errors.New("insufficient stock")
+	ErrMandateExpired        = errors.New("mandate has expired")
+	ErrCartTotalMismatch     = errors.New("cart total does not match line items")
+	ErrIntentMandateNotFound = errors.New("intent mandate not found")
 )
 
 type ShoppingAgentService struct {
 	ap2Repo    interfaces.AP2Repository
 	agentSvc   *AgentService
+	intentSvc  *IntentProcessingService
 	signer     *ap2.SignatureService
 	mandateSvc *ap2.MandateService
 	verifier   *ap2.MandateVerifier
@@ -33,10 +34,19 @@ type ShoppingAgentService struct {
 	log        *logger.Logger
 }
 
-func NewShoppingAgentService(ap2Repo interfaces.AP2Repository, agentSvc *AgentService, signer *ap2.SignatureService, mandateSvc *ap2.MandateService, a2aClient *a2a.A2AClient, log *logger.Logger) *ShoppingAgentService {
+func NewShoppingAgentService(
+	ap2Repo interfaces.AP2Repository,
+	agentSvc *AgentService,
+	intentSvc *IntentProcessingService,
+	signer *ap2.SignatureService,
+	mandateSvc *ap2.MandateService,
+	a2aClient *a2a.A2AClient,
+	log *logger.Logger,
+) *ShoppingAgentService {
 	return &ShoppingAgentService{
 		ap2Repo:    ap2Repo,
 		agentSvc:   agentSvc,
+		intentSvc:  intentSvc,
 		signer:     signer,
 		mandateSvc: mandateSvc,
 		a2aClient:  a2aClient,
@@ -529,4 +539,12 @@ func (s *ShoppingAgentService) BroadcastCartStatusA2A(ctx context.Context, endpo
 	}
 
 	return nil
+}
+
+// GenerateIdeas generates ideas for AI assistants
+func (s *ShoppingAgentService) GenerateIdeas(ctx context.Context, userInput string) (string, error) {
+	if s.intentSvc == nil {
+		return "", fmt.Errorf("intent processing service not available")
+	}
+	return s.intentSvc.GenerateIdeas(ctx, userInput)
 }

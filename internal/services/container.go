@@ -77,6 +77,8 @@ func NewContainer(
 	intentProcessingSvc, _ := NewIntentProcessingService(productMatchingSvc, marketplaceSvc, log)
 	llmSvc := NewLLMService(cfg.LLM, log)
 
+	agentSvc := NewAgentService(ap2Repo, ap2Signer, log)
+
 	return &Container{
 		Auth:               NewAuthService(cfg, userRepo, aws, emailSvc, s3Svc, log),
 		BusinessAuth:       NewBusinessAuthService(businessRepo, teamRepo, log),
@@ -92,8 +94,8 @@ func NewContainer(
 		Subscription:       NewSubscriptionService(subscriptionRepo, log),
 		S3:                 s3Svc,
 		Email:              emailSvc,
-		Agent:              NewAgentService(ap2Repo, ap2Signer, log),
-		ShoppingAgent:      NewShoppingAgentService(ap2Repo, nil, ap2Signer, ap2MandateSvc, a2aClient, log),
+		Agent:              agentSvc,
+		ShoppingAgent:      NewShoppingAgentService(ap2Repo, agentSvc, intentProcessingSvc, ap2Signer, ap2MandateSvc, a2aClient, log),
 		MerchantAgent:      NewMerchantAgentService(ap2Repo, log),
 		CredentialProvider: NewCredentialProviderService(ap2Repo, log),
 		PaymentProcessor:   NewPaymentProcessorService(ap2Repo, log),

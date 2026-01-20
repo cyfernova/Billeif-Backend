@@ -79,8 +79,14 @@ func (s *AgentDiscoveryService) RegisterAgent(ctx context.Context, req *Register
 		return nil, fmt.Errorf("failed to serialize agent card: %w", err)
 	}
 
+	// Handle optional domain
+	domain := req.Domain
+	if domain == "" {
+		domain = fmt.Sprintf("agent-%s.internal", req.AgentID)
+	}
+
 	// Create well-known URI
-	wellKnownURI := ap2.CreateWellKnownURI(req.Domain)
+	wellKnownURI := ap2.CreateWellKnownURI(domain)
 
 	// Create registry entry
 	agentCardJSON := datatypes.JSON(cardJSON)
@@ -91,6 +97,8 @@ func (s *AgentDiscoveryService) RegisterAgent(ctx context.Context, req *Register
 		pricingJSON = datatypes.JSON(pricingData)
 	}
 
+	a2aEndpoint := req.A2AEndpoint
+
 	registry := &models.AgentRegistry{
 		ID:                 uuid.New(),
 		AgentID:            uuid.MustParse(req.AgentID),
@@ -98,9 +106,9 @@ func (s *AgentDiscoveryService) RegisterAgent(ctx context.Context, req *Register
 		AgentDescription:   &req.Description,
 		AgentType:          req.AgentType,
 		AgentCard:          agentCardJSON,
-		Domain:             &req.Domain,
+		Domain:             &domain,
 		WellKnownURI:       &wellKnownURI,
-		A2AEndpoint:        &req.A2AEndpoint,
+		A2AEndpoint:        &a2aEndpoint,
 		Capabilities:       req.Capabilities,
 		Tags:               req.Tags,
 		Jurisdictions:      req.Jurisdictions,

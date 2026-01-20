@@ -392,6 +392,7 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 				agents.GET("/active", h.Agent.GetActiveAgents)
 				agents.GET("/type/:type", h.Agent.GetAgentByType)
 				agents.POST("/validate-permissions/:id", h.Agent.ValidateAgentPermissions)
+				agents.POST("/ideate", h.ShoppingAgent.GenerateIdeas)
 
 				shopping := agents.Group("/shopping")
 				{

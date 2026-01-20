@@ -12,10 +12,11 @@ import (
 
 // IntentProcessingService orchestrates natural language intent parsing and product matching
 type IntentProcessingService struct {
-	intentParser      nlp.IntentParser
-	productMatching   *ProductMatchingService
-	marketplace       *MarketplaceService
-	log               *logger.Logger
+	intentParser    nlp.IntentParser
+	ideaGenerator   *nlp.IdeaGenerator
+	productMatching *ProductMatchingService
+	marketplace     *MarketplaceService
+	log             *logger.Logger
 }
 
 // ProcessIntentRequest represents a request to process a shopping intent
@@ -37,6 +38,7 @@ type ProcessIntentResponse struct {
 func NewIntentProcessingService(productMatching *ProductMatchingService, marketplace *MarketplaceService, log *logger.Logger) (*IntentProcessingService, error) {
 	// Create intent parser based on configuration
 	var parser nlp.IntentParser
+	var ideaGenerator *nlp.IdeaGenerator
 	var err error
 
 	provider := os.Getenv("NLP_PROVIDER")
@@ -61,6 +63,12 @@ func NewIntentProcessingService(productMatching *ProductMatchingService, marketp
 				log.Warn("failed to create Claude parser, falling back to rule-based", "error", err)
 				parser = nlp.NewRuleBasedIntentParser()
 			}
+
+			// Initialize idea generator
+			ideaGenerator, err = nlp.NewIdeaGenerator(config)
+			if err != nil {
+				log.Warn("failed to create idea generator", "error", err)
+			}
 		}
 
 	case "gemini":
@@ -79,6 +87,12 @@ func NewIntentProcessingService(productMatching *ProductMatchingService, marketp
 				log.Warn("failed to create Gemini parser, falling back to rule-based", "error", err)
 				parser = nlp.NewRuleBasedIntentParser()
 			}
+
+			// Initialize idea generator
+			ideaGenerator, err = nlp.NewIdeaGenerator(config)
+			if err != nil {
+				log.Warn("failed to create idea generator", "error", err)
+			}
 		}
 
 	default:
@@ -88,6 +102,7 @@ func NewIntentProcessingService(productMatching *ProductMatchingService, marketp
 
 	return &IntentProcessingService{
 		intentParser:    parser,
+		ideaGenerator:   ideaGenerator,
 		productMatching: productMatching,
 		marketplace:     marketplace,
 		log:             log,
@@ -196,4 +211,12 @@ func (s *IntentProcessingService) RankProducts(products []*models.MarketplacePro
 // ParseIntentOnly parses a natural language intent without searching for products
 func (s *IntentProcessingService) ParseIntentOnly(ctx context.Context, naturalLanguage string) (*nlp.IntentParseResult, error) {
 	return s.intentParser.ParseIntent(ctx, naturalLanguage)
+}
+
+// GenerateIdeas generates ideas for AI assistants
+func (s *IntentProcessingService) GenerateIdeas(ctx context.Context, userInput string) (string, error) {
+	if s.ideaGenerator == nil {
+		return "", fmt.Errorf("idea generator not configured (check API keys)")
+	}
+	return s.ideaGenerator.GenerateIdeas(ctx, userInput)
 }
