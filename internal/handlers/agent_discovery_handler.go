@@ -143,6 +143,35 @@ func (h *AgentDiscoveryHandler) GetPublicAgents(c *gin.Context) {
 	})
 }
 
+// GetVerifiedAgents retrieves all verified agents
+// GET /api/v1/discovery/agents/verified?type=...&page=1&limit=10
+func (h *AgentDiscoveryHandler) GetVerifiedAgents(c *gin.Context) {
+	agentType := c.DefaultQuery("type", "")
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 10
+	}
+
+	agents, total, err := h.discovery.GetVerifiedAgents(c.Request.Context(), agentType, page, limit)
+	if err != nil {
+		h.log.Error("failed to get verified agents", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get verified agents"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"agents": agents,
+		"total":  total,
+		"page":   page,
+		"limit":  limit,
+	})
+}
+
 // GetAgentsByCapability retrieves agents with specific capabilities
 // GET /api/v1/discovery/agents/by-capability?capability=...&page=1&limit=10
 func (h *AgentDiscoveryHandler) GetAgentsByCapability(c *gin.Context) {

@@ -20,6 +20,14 @@ type Config struct {
 	Sentry         SentryConfig   `mapstructure:"SENTRY"`
 	AllowedOrigins []string       `mapstructure:"ALLOWED_ORIGINS"`
 	Razorpay       RazorpayConfig `mapstructure:"RAZORPAY"`
+	LLM            LLMConfig      `mapstructure:"LLM"`
+}
+
+type LLMConfig struct {
+	APIKey  string `mapstructure:"API_KEY"`
+	APIURL  string `mapstructure:"API_URL"`
+	Model   string `mapstructure:"MODEL"`
+	Timeout int    `mapstructure:"TIMEOUT"`
 }
 
 type RazorpayConfig struct {
@@ -133,6 +141,10 @@ func Load() (*Config, error) {
 	viper.BindEnv("RAZORPAY.KEY", "RAZORPAY_KEY")
 	viper.BindEnv("RAZORPAY.SECRET", "RAZORPAY_SECRET")
 	viper.BindEnv("RAZORPAY.WEBHOOK_SECRET", "RAZORPAY_WEBHOOK_SECRET")
+	viper.BindEnv("LLM.API_KEY", "LLM_API_KEY")
+	viper.BindEnv("LLM.API_URL", "LLM_API_URL")
+	viper.BindEnv("LLM.MODEL", "LLM_MODEL")
+	viper.BindEnv("LLM.TIMEOUT", "LLM_TIMEOUT")
 
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
@@ -193,5 +205,8 @@ func setDefaults(cfg *Config) {
 	}
 	if len(cfg.AllowedOrigins) == 0 {
 		cfg.AllowedOrigins = []string{"http://localhost:3000"}
+	}
+	if cfg.LLM.Timeout == 0 {
+		cfg.LLM.Timeout = 60
 	}
 }

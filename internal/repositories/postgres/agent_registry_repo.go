@@ -25,14 +25,14 @@ func (r *ap2Repository) RegisterAgent(ctx context.Context, registry *models.Agen
 
 	// Create corresponding stats record
 	stats := &models.AgentDiscoveryStats{
-		ID:                uuid.New(),
-		AgentRegistryID:   registry.ID,
-		TotalViews:        0,
+		ID:                 uuid.New(),
+		AgentRegistryID:    registry.ID,
+		TotalViews:         0,
 		TotalSearchesFound: 0,
-		TotalInquiries:    0,
-		TotalIntegrations: 0,
-		CreatedAt:         time.Now(),
-		UpdatedAt:         time.Now(),
+		TotalInquiries:     0,
+		TotalIntegrations:  0,
+		CreatedAt:          time.Now(),
+		UpdatedAt:          time.Now(),
 	}
 
 	if err := r.db.WithContext(ctx).Create(stats).Error; err != nil {
@@ -219,6 +219,36 @@ func (r *ap2Repository) GetPublicAgents(ctx context.Context, page, limit int) ([
 		Limit(limit).
 		Find(&registries).Error; err != nil {
 		return nil, 0, fmt.Errorf("failed to get public agents: %w", err)
+	}
+
+	return registries, total, nil
+}
+
+// GetVerifiedAgents retrieves all verified agents
+func (r *ap2Repository) GetVerifiedAgents(ctx context.Context, agentType string, page, limit int) ([]*models.AgentRegistry, int64, error) {
+	var registries []*models.AgentRegistry
+	var total int64
+
+	query := r.db.WithContext(ctx).
+		Where("is_verified = ? AND is_active = ? AND deleted_at IS NULL", true, true)
+
+	if agentType != "" {
+		query = query.Where("agent_type = ?", agentType)
+	}
+
+	// Get total count
+	if err := query.Model(&models.AgentRegistry{}).Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to count verified agents: %w", err)
+	}
+
+	// Apply pagination
+	offset := (page - 1) * limit
+	if err := query.
+		Order("average_rating DESC, total_reviews DESC, created_at DESC").
+		Offset(offset).
+		Limit(limit).
+		Find(&registries).Error; err != nil {
+		return nil, 0, fmt.Errorf("failed to get verified agents: %w", err)
 	}
 
 	return registries, total, nil
@@ -420,10 +450,10 @@ func (r *ap2Repository) IncrementAgentInquiries(ctx context.Context, agentRegist
 		Model(&models.AgentDiscoveryStats{}).
 		Where("agent_registry_id = ?", agentRegistryID).
 		Updates(map[string]interface{}{
-			"total_inquiries":    gorm.Expr("total_inquiries + 1"),
+			"total_inquiries":     gorm.Expr("total_inquiries + 1"),
 			"inquiries_this_week": gorm.Expr("inquiries_this_week + 1"),
-			"last_inquiry_at":    now,
-			"updated_at":         now,
+			"last_inquiry_at":     now,
+			"updated_at":          now,
 		}).Error; err != nil {
 		return fmt.Errorf("failed to increment inquiries: %w", err)
 	}

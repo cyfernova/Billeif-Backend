@@ -442,6 +442,7 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			// Discover agents
 			discovery.GET("/agents", h.AgentDiscovery.DiscoverAgents)
 			discovery.GET("/agents/public", h.AgentDiscovery.GetPublicAgents)
+			discovery.GET("/agents/verified", h.AgentDiscovery.GetVerifiedAgents)
 			discovery.GET("/agents/by-capability", h.AgentDiscovery.GetAgentsByCapability)
 			discovery.GET("/agents/:agentID", h.AgentDiscovery.GetAgentRegistry)
 
@@ -459,6 +460,13 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			discovery.POST("/agents/:registryID/rate", h.AgentDiscovery.RateAgent)
 			discovery.POST("/agents/:registryID/inquiry", h.AgentDiscovery.RecordInquiry)
 			discovery.POST("/agents/:registryID/integration", h.AgentDiscovery.RecordIntegration)
+		}
+
+		// LLM endpoints
+		llm := protected.Group("/llm")
+		{
+			llm.POST("/chat", h.LLM.Chat)
+			llm.POST("/agent-assist", h.LLM.AgentAssist)
 		}
 
 		// Intent Processing endpoints

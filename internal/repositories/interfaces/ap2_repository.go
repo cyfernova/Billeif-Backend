@@ -102,6 +102,7 @@ type AP2Repository interface {
 	SearchAgents(ctx context.Context, filter *models.AgentDiscoveryFilter, page, limit int) ([]*models.AgentRegistry, int64, error)
 	DiscoverAgentsByCapability(ctx context.Context, capabilities []string, page, limit int) ([]*models.AgentRegistry, int64, error)
 	GetPublicAgents(ctx context.Context, page, limit int) ([]*models.AgentRegistry, int64, error)
+	GetVerifiedAgents(ctx context.Context, agentType string, page, limit int) ([]*models.AgentRegistry, int64, error)
 	VerifyAgentRegistry(ctx context.Context, registryID string) error
 	UnverifyAgentRegistry(ctx context.Context, registryID string) error
 	DeactivateAgentRegistry(ctx context.Context, registryID string) error

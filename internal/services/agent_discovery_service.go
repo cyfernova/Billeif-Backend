@@ -31,20 +31,20 @@ func NewAgentDiscoveryService(ap2Repo interfaces.AP2Repository, log *logger.Logg
 
 // RegisterAgentRequest represents a request to register an agent
 type RegisterAgentRequest struct {
-	AgentID           string
-	Name              string
-	Description       string
-	Domain            string
-	A2AEndpoint       string
-	AgentType         string
-	Capabilities      []string
-	Tags              []string
-	Jurisdictions     []string
-	Currencies        []string
+	AgentID            string
+	Name               string
+	Description        string
+	Domain             string
+	A2AEndpoint        string
+	AgentType          string
+	Capabilities       []string
+	Tags               []string
+	Jurisdictions      []string
+	Currencies         []string
 	SupportedLanguages []string
-	PricingModel      map[string]interface{}
-	PublicKey         *string
-	IsPublic          bool
+	PricingModel       map[string]interface{}
+	PublicKey          *string
+	IsPublic           bool
 }
 
 // RegisterAgent registers a new agent in the discovery registry
@@ -146,6 +146,16 @@ func (s *AgentDiscoveryService) GetPublicAgents(ctx context.Context, page, limit
 	agents, total, err := s.ap2Repo.GetPublicAgents(ctx, page, limit)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to get public agents: %w", err)
+	}
+
+	return agents, total, nil
+}
+
+// GetVerifiedAgents retrieves all verified agents
+func (s *AgentDiscoveryService) GetVerifiedAgents(ctx context.Context, agentType string, page, limit int) ([]*models.AgentRegistry, int64, error) {
+	agents, total, err := s.ap2Repo.GetVerifiedAgents(ctx, agentType, page, limit)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to get verified agents: %w", err)
 	}
 
 	return agents, total, nil
@@ -296,13 +306,13 @@ func (s *AgentDiscoveryService) RecordAgentIntegration(ctx context.Context, regi
 
 func (s *AgentDiscoveryService) createAuditLog(ctx context.Context, registryID uuid.UUID, action string, performedBy string, reason *string, stateJSON []byte) {
 	audit := &models.AgentDiscoveryAudit{
-		ID:                uuid.New(),
-		AgentRegistryID:   registryID,
-		Action:            action,
-		PerformedBy:       &performedBy,
-		Reason:            reason,
-		CurrentState:      datatypes.JSON(stateJSON),
-		CreatedAt:         time.Now(),
+		ID:              uuid.New(),
+		AgentRegistryID: registryID,
+		Action:          action,
+		PerformedBy:     &performedBy,
+		Reason:          reason,
+		CurrentState:    datatypes.JSON(stateJSON),
+		CreatedAt:       time.Now(),
 	}
 
 	if err := s.ap2Repo.CreateDiscoveryAudit(ctx, audit); err != nil {
