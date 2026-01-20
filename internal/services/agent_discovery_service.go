@@ -31,20 +31,20 @@ func NewAgentDiscoveryService(ap2Repo interfaces.AP2Repository, log *logger.Logg
 
 // RegisterAgentRequest represents a request to register an agent
 type RegisterAgentRequest struct {
-	AgentID            string
-	Name               string
-	Description        string
-	Domain             string
-	A2AEndpoint        string
-	AgentType          string
-	Capabilities       []string
-	Tags               []string
-	Jurisdictions      []string
-	Currencies         []string
-	SupportedLanguages []string
-	PricingModel       map[string]interface{}
-	PublicKey          *string
-	IsPublic           bool
+	AgentID            string                 `json:"agent_id"`
+	Name               string                 `json:"name"`
+	Description        string                 `json:"description"`
+	Domain             string                 `json:"domain"`
+	A2AEndpoint        string                 `json:"a2a_endpoint"`
+	AgentType          string                 `json:"agent_type"`
+	Capabilities       []string               `json:"capabilities"`
+	Tags               []string               `json:"tags"`
+	Jurisdictions      []string               `json:"jurisdictions"`
+	Currencies         []string               `json:"currencies"`
+	SupportedLanguages []string               `json:"supported_languages"`
+	PricingModel       map[string]interface{} `json:"pricing_model"`
+	PublicKey          *string                `json:"public_key"`
+	IsPublic           bool                   `json:"is_public"`
 }
 
 // RegisterAgent registers a new agent in the discovery registry
