@@ -54,5 +54,16 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("SQS_PAYMENT_QUEUE is required")
 	}
 
+	// Razorpay configuration validation
+	if cfg.Razorpay.Key == "" {
+		return fmt.Errorf("RAZORPAY_KEY is required")
+	}
+	if cfg.Razorpay.Secret == "" {
+		return fmt.Errorf("RAZORPAY_SECRET is required")
+	}
+	if cfg.Razorpay.WebhookSecret == "" {
+		return fmt.Errorf("RAZORPAY_WEBHOOK_SECRET is required for webhook verification")
+	}
+
 	return nil
 }

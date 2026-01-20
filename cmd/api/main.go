@@ -80,7 +80,7 @@ func main() {
 
 	repos := initRepositories(db)
 	svcs := initServices(cfg, db, repos, awsClients, log)
-	h := handlers.New(svcs, log)
+	h := handlers.New(svcs, &handlers.Repositories{AP2: repos.AP2}, cfg, log)
 
 	router := setupRouter(cfg, svcs, h, log)
 
@@ -157,6 +157,7 @@ type Repositories struct {
 	Team         interfaces.TeamMemberRepository
 	Webhook      interfaces.WebhookRepository
 	Subscription interfaces.SubscriptionRepository
+	AP2          interfaces.AP2Repository
 }
 
 func initRepositories(db *gorm.DB) *Repositories {
@@ -172,13 +173,14 @@ func initRepositories(db *gorm.DB) *Repositories {
 		Team:         postgresrepo.NewTeamMemberRepository(db),
 		Webhook:      postgresrepo.NewWebhookRepository(db),
 		Subscription: postgresrepo.NewSubscriptionRepository(db),
+		AP2:          postgresrepo.NewAP2Repository(db),
 	}
 }
 
 func initServices(cfg *config.Config, db *gorm.DB, repos *Repositories, aws *awsclients.Config, log *logger.Logger) *services.Container {
 	return services.NewContainer(cfg, db, repos.User, repos.Business, repos.Customer, repos.Vendor,
 		repos.Product, repos.Invoice, repos.Payment, repos.Ledger, repos.Team,
-		repos.Webhook, repos.Subscription, aws, log)
+		repos.Webhook, repos.Subscription, repos.AP2, aws, log)
 }
 
 // initSentry initializes the Sentry SDK with production configuration
@@ -376,7 +378,124 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 				subscriptions.POST("", h.Subscription.Create)
 				subscriptions.PUT("", h.Subscription.Update)
 			}
+
+			agents := protected.Group("/agents")
+			{
+				agents.POST("", middleware.AgentCreationRateLimit(), h.Agent.CreateAgent)
+				agents.GET("", h.Agent.ListAgents)
+				agents.GET("/:id", h.Agent.GetAgent)
+				agents.PUT("/:id", h.Agent.UpdateAgent)
+				agents.DELETE("/:id", h.Agent.DeleteAgent)
+				agents.GET("/:id/capabilities", h.Agent.GetAgentCapabilities)
+				agents.POST("/:id/capabilities", h.Agent.AddCapability)
+				agents.DELETE("/:id/capabilities/:capability_id", h.Agent.RemoveCapability)
+				agents.GET("/active", h.Agent.GetActiveAgents)
+				agents.GET("/type/:type", h.Agent.GetAgentByType)
+				agents.POST("/validate-permissions/:id", h.Agent.ValidateAgentPermissions)
+
+				shopping := agents.Group("/shopping")
+				{
+					shopping.GET("/search", h.ShoppingAgent.SearchProducts)
+					shopping.POST("/cart", middleware.ShoppingIntentRateLimit(), h.ShoppingAgent.CreateCart)
+					shopping.POST("/cart/add", middleware.ShoppingIntentRateLimit(), h.ShoppingAgent.AddToCart)
+					shopping.POST("/checkout", middleware.PaymentRateLimit(), h.ShoppingAgent.Checkout)
+					shopping.GET("/cart/:id", h.ShoppingAgent.GetCart)
+					shopping.GET("/carts", h.ShoppingAgent.ListCarts)
+					shopping.GET("/orders", h.ShoppingAgent.ListOrders)
+					shopping.GET("/orders/:id", h.ShoppingAgent.TrackOrder)
+					shopping.GET("/products/available", h.ShoppingAgent.GetAvailableProducts)
+					shopping.GET("/products/:id", h.ShoppingAgent.GetProductDetails)
+					shopping.GET("/:id/capabilities", h.ShoppingAgent.GetAgentCapabilities)
+				}
+
+				credentials := agents.Group("/credentials")
+				{
+					credentials.GET("/payment-methods", h.Credential.ListPaymentMethods)
+					credentials.GET("/payment-methods/default", h.Credential.GetDefaultPaymentMethod)
+					credentials.POST("/payment-methods", h.Credential.AddPaymentMethod)
+					credentials.GET("/payment-methods/:id", h.Credential.GetPaymentMethod)
+					credentials.PUT("/payment-methods/:id", h.Credential.SetDefaultPaymentMethod)
+					credentials.DELETE("/payment-methods/:id", h.Credential.DeletePaymentMethod)
+					credentials.POST("/tokens", h.Credential.GenerateToken)
+					credentials.GET("/tokens/validate", h.Credential.ValidateToken)
+				}
+			}
+
+			marketplace := protected.Group("/marketplace")
+			{
+				marketplace.GET("/products", h.Marketplace.ListProducts)
+				marketplace.GET("/products/search", h.Marketplace.SearchProducts)
+				marketplace.GET("/products/:id", h.Marketplace.GetProduct)
+				marketplace.GET("/products/available", h.Marketplace.GetAvailableProducts)
+				marketplace.GET("/merchant/products", h.Marketplace.GetMerchantProducts)
+				marketplace.POST("/merchant/products", h.Marketplace.AddProduct)
+				marketplace.PUT("/merchant/products/:id", h.Marketplace.UpdateProduct)
+				marketplace.GET("/orders", h.Marketplace.GetUserOrders)
+				marketplace.GET("/orders/status/:status", h.Marketplace.GetOrdersByStatus)
+				marketplace.GET("/stats", h.Marketplace.GetMarketplaceStats)
+			}
 		}
+
+		// Agent Discovery endpoints
+		discovery := protected.Group("/discovery")
+		{
+			// Discover agents
+			discovery.GET("/agents", h.AgentDiscovery.DiscoverAgents)
+			discovery.GET("/agents/public", h.AgentDiscovery.GetPublicAgents)
+			discovery.GET("/agents/by-capability", h.AgentDiscovery.GetAgentsByCapability)
+			discovery.GET("/agents/:agentID", h.AgentDiscovery.GetAgentRegistry)
+
+			// Register agent
+			discovery.POST("/agents/register", h.AgentDiscovery.RegisterAgent)
+
+			// Admin operations
+			discovery.POST("/agents/:registryID/verify", middleware.RequireRole("admin"), h.AgentDiscovery.VerifyAgent)
+			discovery.POST("/agents/:registryID/unverify", middleware.RequireRole("admin"), h.AgentDiscovery.UnverifyAgent)
+			discovery.POST("/agents/:registryID/deactivate", middleware.RequireRole("admin"), h.AgentDiscovery.DeactivateAgent)
+			discovery.POST("/agents/:registryID/activate", middleware.RequireRole("admin"), h.AgentDiscovery.ActivateAgent)
+			discovery.POST("/agents/:registryID/health-check", middleware.RequireRole("admin"), h.AgentDiscovery.HealthCheck)
+
+			// User operations
+			discovery.POST("/agents/:registryID/rate", h.AgentDiscovery.RateAgent)
+			discovery.POST("/agents/:registryID/inquiry", h.AgentDiscovery.RecordInquiry)
+			discovery.POST("/agents/:registryID/integration", h.AgentDiscovery.RecordIntegration)
+		}
+
+		// Intent Processing endpoints
+		intent := protected.Group("/intent")
+		{
+			// Intent processing and parsing
+			intent.POST("/process", h.Intent.ProcessIntent)
+			intent.POST("/validate", h.Intent.ValidateIntent)
+			intent.POST("/parse", h.Intent.ParseIntent)
+		}
+
+		// A2A Protocol endpoints
+		a2a := protected.Group("/a2a")
+		{
+			// A2A messaging
+			a2a.POST("/message", h.A2AMessage.HandleMessage)
+			a2a.GET("/stats", h.A2AMessage.GetMessageStats)
+		}
+
+		// WebSocket endpoints
+		ws := protected.Group("/ws")
+		{
+			// WebSocket connection
+			ws.GET("", h.WebSocket.HandleConnection)
+
+			// WebSocket management endpoints
+			ws.GET("/stats", h.WebSocket.GetStats)
+			ws.GET("/status/:userID", h.WebSocket.GetConnectionStatus)
+			ws.GET("/users", h.WebSocket.GetConnectedUsers)
+			ws.GET("/health", h.WebSocket.HealthCheck)
+
+			// Notification endpoints (for sending notifications via REST)
+			ws.POST("/notify/:userID", h.WebSocket.SendNotification)
+			ws.POST("/notify-all", h.WebSocket.SendNotificationToAll)
+		}
+
+		api.POST("/webhooks/razorpay", h.Credential.HandleRazorpayWebhook)
 
 		admin := api.Group("/admin")
 		admin.Use(middleware.Auth(cfg.Cognito, log))

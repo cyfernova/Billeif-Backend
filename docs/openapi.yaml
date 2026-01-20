@@ -1,0 +1,483 @@
+openapi: 3.0.0
+info:
+  title: Invoice Tracker + AI Agent Marketplace API
+  description: |
+    Comprehensive API for managing invoices, agents, and AI-powered shopping marketplace.
+    Built with Go, integrated with AP2 protocol for agent discovery and A2A for agent communication.
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: api@example.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://api.example.com/api/v1
+    description: Production API
+  - url: http://localhost:8080/api/v1
+    description: Local development
+
+tags:
+  - name: Intent Processing
+    description: Natural language intent parsing and product matching
+  - name: Agent Discovery
+    description: Agent registry and discovery endpoints
+  - name: A2A Protocol
+    description: Agent-to-agent communication
+  - name: WebSocket
+    description: Real-time bidirectional communication
+  - name: Marketplace
+    description: Product and order management
+  - name: Payment
+    description: Payment processing and credentials
+
+paths:
+  /intent/process:
+    post:
+      summary: Process shopping intent
+      description: |
+        Parse natural language shopping intent and return matching products.
+        Uses Claude or Gemini LLM for intent extraction, applies constraint validation.
+      tags:
+        - Intent Processing
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - intent
+              properties:
+                intent:
+                  type: string
+                  description: Natural language shopping intent
+                  example: "I need a laptop under 50000 rupees with good battery"
+                max_results:
+                  type: integer
+                  default: 20
+                  description: Maximum number of products to return
+      responses:
+        "200":
+          description: Intent processed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntentProcessingResponse"
+        "400":
+          description: Invalid intent or no products found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+        "500":
+          description: Internal server error
+
+  /intent/validate:
+    post:
+      summary: Validate intent against inventory
+      description: Check if products exist for the given intent without detailed search
+      tags:
+        - Intent Processing
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - intent
+              properties:
+                intent:
+                  type: string
+                  example: "blue running shoes"
+      responses:
+        "200":
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid:
+                    type: boolean
+                  confidence:
+                    type: number
+                  matched_products:
+                    type: integer
+                  error:
+                    type: string
+
+  /intent/parse:
+    post:
+      summary: Parse intent only
+      description: Parse natural language intent without searching products
+      tags:
+        - Intent Processing
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - intent
+              properties:
+                intent:
+                  type: string
+      responses:
+        "200":
+          description: Parsed intent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ParsedIntent"
+
+  /discovery/agents:
+    get:
+      summary: Search agents in registry
+      tags:
+        - Agent Discovery
+      parameters:
+        - name: query
+          in: query
+          schema:
+            type: string
+          description: Search query
+        - name: type
+          in: query
+          schema:
+            type: string
+          description: Agent type (shopping, merchant, credential_provider, payment_processor)
+        - name: capability
+          in: query
+          schema:
+            type: string
+          description: Required capability
+        - name: jurisdiction
+          in: query
+          schema:
+            type: string
+          description: Jurisdiction filter
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+            maximum: 100
+      responses:
+        "200":
+          description: List of agents
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentSearchResponse"
+
+  /.well-known/agent-card.json:
+    get:
+      summary: Get agent card (AP2 discovery)
+      description: |
+        Standard AP2 agent discovery endpoint.
+        Returns agent capabilities and configuration in AP2 format.
+      tags:
+        - Agent Discovery
+      responses:
+        "200":
+          description: Agent card in AP2 format
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentCard"
+        "404":
+          description: Agent not configured
+
+  /a2a/message:
+    post:
+      summary: Send A2A message
+      description: |
+        Agent-to-agent communication endpoint.
+        Supports task.start, task.data, task.status, task.result, task.error messages.
+      tags:
+        - A2A Protocol
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/A2AMessage"
+      responses:
+        "200":
+          description: Message processed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/A2AMessage"
+        "400":
+          description: Invalid message format
+        "422":
+          description: Message validation failed
+
+  /ws:
+    get:
+      summary: WebSocket connection
+      description: |
+        Upgrade HTTP to WebSocket for real-time communication.
+        Send and receive order updates, payment notifications, agent actions.
+      tags:
+        - WebSocket
+      security:
+        - BearerAuth: []
+      responses:
+        "101":
+          description: Switching Protocols
+        "401":
+          description: Unauthorized
+        "503":
+          description: WebSocket service unavailable
+
+  /ws/stats:
+    get:
+      summary: WebSocket statistics
+      tags:
+        - WebSocket
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: WebSocket stats
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  connected_clients:
+                    type: integer
+                  connected_users:
+                    type: array
+                    items:
+                      type: string
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token from authentication endpoint
+
+  schemas:
+    ParsedIntent:
+      type: object
+      properties:
+        intent:
+          type: object
+          properties:
+            categories:
+              type: array
+              items:
+                type: string
+            keywords:
+              type: array
+              items:
+                type: string
+            price_range:
+              type: object
+              properties:
+                min:
+                  type: number
+                max:
+                  type: number
+                currency:
+                  type: string
+            urgency:
+              type: string
+              enum: [low, medium, high, urgent]
+            quantity:
+              type: integer
+        confidence:
+          type: number
+          description: Confidence score 0-100
+        parsed:
+          type: boolean
+
+    IntentProcessingResponse:
+      type: object
+      properties:
+        parse_result:
+          $ref: "#/components/schemas/ParsedIntent"
+        match_results:
+          type: object
+          properties:
+            total_matched:
+              type: integer
+            total_searched:
+              type: integer
+            products:
+              type: array
+              items:
+                $ref: "#/components/schemas/MatchedProduct"
+
+    MatchedProduct:
+      type: object
+      properties:
+        product:
+          $ref: "#/components/schemas/Product"
+        relevance_score:
+          type: number
+          description: Score 0-100
+        match_reasons:
+          type: array
+          items:
+            type: string
+
+    Product:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        price:
+          type: number
+          format: double
+        currency:
+          type: string
+          example: INR
+        category:
+          type: string
+        rating:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 5
+        review_count:
+          type: integer
+        is_available:
+          type: boolean
+        inventory_count:
+          type: integer
+
+    AgentCard:
+      type: object
+      description: AP2 Agent Card format
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        endpoint:
+          type: string
+          format: uri
+        type:
+          type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+        pricing_model:
+          type: object
+        currencies:
+          type: array
+          items:
+            type: string
+        jurisdictions:
+          type: array
+          items:
+            type: string
+        public_key:
+          type: string
+        version:
+          type: string
+
+    AgentSearchResponse:
+      type: object
+      properties:
+        agents:
+          type: array
+          items:
+            type: object
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+
+    A2AMessage:
+      type: object
+      properties:
+        version:
+          type: string
+          default: "1.0"
+        message_id:
+          type: string
+          format: uuid
+        task_id:
+          type: string
+          format: uuid
+        sender_id:
+          type: string
+        receiver_id:
+          type: string
+        message_type:
+          type: string
+          enum:
+            - task.start
+            - task.data
+            - task.status
+            - task.result
+            - task.error
+            - task.cancel
+            - negotiate.start
+            - negotiate.accept
+            - negotiate.reject
+            - query.capabilities
+            - response.capabilities
+        payload:
+          type: object
+        timestamp:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        signature:
+          type: string
+          description: ECDSA P-256 signature in base64
+
+    Error:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+        errors:
+          type: array
+          items:
+            type: string
+        timestamp:
+          type: string
+          format: date-time
+        request_id:
+          type: string
+          format: uuid

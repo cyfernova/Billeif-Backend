@@ -1,30 +1,34 @@
+version: '3.9'
+
 services:
+  # PostgreSQL Database
   postgres:
     image: postgres:16-alpine
     container_name: invoice-postgres
+    environment:
+      POSTGRES_USER: invoice_user
+      POSTGRES_PASSWORD: invoice_password
+      POSTGRES_DB: invoice_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
-    environment:
-      - POSTGRES_USER=invoice_user
-      - POSTGRES_PASSWORD=invoice_pass
-      - POSTGRES_DB=invoice_db
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U invoice_user"]
+      test: ["CMD-SHELL", "pg_isready -U invoice_user -d invoice_db"]
       interval: 10s
       timeout: 5s
       retries: 5
     networks:
       - invoice-network
 
+  # Redis Cache
   redis:
     image: redis:7-alpine
     container_name: invoice-redis
     ports:
       - "6379:6379"
     volumes:
-      - redis-data:/data
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -33,54 +37,38 @@ services:
     networks:
       - invoice-network
 
-  app:
+  # Backend API
+  api:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: invoice-app
+    container_name: invoice-api
+    environment:
+      DATABASE_URL: postgres://invoice_user:invoice_password@postgres:5432/invoice_db
+      REDIS_URL: redis://redis:6379
+      PORT: 8080
+      ENV: development
+      LOG_LEVEL: info
     ports:
       - "8080:8080"
-      - "9090:9090"
-    environment:
-      - ENVIRONMENT=dev
-      - SERVER_PORT=8080
-      - DATABASE_HOST=postgres
-      - DATABASE_PORT=5432
-      - DATABASE_USER=invoice_user
-      - DATABASE_PASSWORD=invoice_pass
-      - DATABASE_NAME=invoice_db
-      - DATABASE_SSL_MODE=disable
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - AWS_REGION=us-east-1
-      # For local dev, use local postgres/redis
-      # For AWS, set these from terraform outputs or SSM
-      # - DATABASE_HOST=${RDS_ENDPOINT}
-      # - REDIS_HOST=${ELASTICACHE_ENDPOINT}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    volumes:
-      - ./migrations:/app/migrations
     networks:
       - invoice-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
 
-  adminer:
-    image: adminer:latest
-    container_name: invoice-adminer
-    ports:
-      - "8081:8080"
-    depends_on:
-      - postgres
-    networks:
-      - invoice-network
+volumes:
+  postgres_data:
+  redis_data:
 
 networks:
   invoice-network:
     driver: bridge
-
-volumes:
-  postgres-data:
-  redis-data:

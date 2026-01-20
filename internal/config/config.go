@@ -19,6 +19,13 @@ type Config struct {
 	SQS            SQSConfig      `mapstructure:"SQS"`
 	Sentry         SentryConfig   `mapstructure:"SENTRY"`
 	AllowedOrigins []string       `mapstructure:"ALLOWED_ORIGINS"`
+	Razorpay       RazorpayConfig `mapstructure:"RAZORPAY"`
+}
+
+type RazorpayConfig struct {
+	Key           string `mapstructure:"RAZORPAY_KEY"`
+	Secret        string `mapstructure:"RAZORPAY_SECRET"`
+	WebhookSecret string `mapstructure:"RAZORPAY_WEBHOOK_SECRET"`
 }
 
 type SentryConfig struct {
@@ -123,6 +130,9 @@ func Load() (*Config, error) {
 	viper.BindEnv("SENTRY.ENABLE_TRACING", "SENTRY_ENABLE_TRACING")
 	viper.BindEnv("SENTRY.DEBUG", "SENTRY_DEBUG")
 	viper.BindEnv("ALLOWED_ORIGINS")
+	viper.BindEnv("RAZORPAY.KEY", "RAZORPAY_KEY")
+	viper.BindEnv("RAZORPAY.SECRET", "RAZORPAY_SECRET")
+	viper.BindEnv("RAZORPAY.WEBHOOK_SECRET", "RAZORPAY_WEBHOOK_SECRET")
 
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {

@@ -1,0 +1,316 @@
+package handlers
+
+import (
+	"net/http"
+	"strconv"
+
+	"invoice-backend/internal/models"
+	"invoice-backend/internal/services"
+	"invoice-backend/pkg/logger"
+
+	"github.com/gin-gonic/gin"
+)
+
+// AgentDiscoveryHandler handles agent discovery endpoints
+type AgentDiscoveryHandler struct {
+	discovery *services.AgentDiscoveryService
+	log       *logger.Logger
+}
+
+// NewAgentDiscoveryHandler creates a new agent discovery handler
+func NewAgentDiscoveryHandler(discovery *services.AgentDiscoveryService, log *logger.Logger) *AgentDiscoveryHandler {
+	return &AgentDiscoveryHandler{
+		discovery: discovery,
+		log:       log,
+	}
+}
+
+// GetAgentCard handles the well-known URI for agent discovery
+// GET /.well-known/agent-card.json
+func (h *AgentDiscoveryHandler) GetAgentCard(c *gin.Context) {
+	// This would be called for a specific agent's well-known endpoint
+	// Extract domain or agent info from request
+	// Return the agent card in AP2 format
+
+	// For now, return a placeholder
+	c.JSON(http.StatusOK, gin.H{
+		"error": "agent card endpoint not configured for this domain",
+	})
+}
+
+// RegisterAgent registers an agent in the discovery registry
+// POST /api/v1/agents/register
+func (h *AgentDiscoveryHandler) RegisterAgent(c *gin.Context) {
+	userID := c.GetString("user_id")
+
+	var req services.RegisterAgentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	registry, err := h.discovery.RegisterAgent(c.Request.Context(), &req)
+	if err != nil {
+		h.log.Error("failed to register agent", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to register agent"})
+		return
+	}
+
+	h.log.Info("agent registered", "user_id", userID, "registry_id", registry.ID.String())
+	c.JSON(http.StatusCreated, registry)
+}
+
+// DiscoverAgents searches for agents
+// GET /api/v1/discovery/agents?query=...&type=...&capability=...&page=1&limit=10
+func (h *AgentDiscoveryHandler) DiscoverAgents(c *gin.Context) {
+	query := c.DefaultQuery("query", "")
+	agentType := c.DefaultQuery("type", "")
+	capability := c.DefaultQuery("capability", "")
+	jurisdiction := c.DefaultQuery("jurisdiction", "")
+	currency := c.DefaultQuery("currency", "")
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 10
+	}
+
+	// Build filter
+	filter := &models.AgentDiscoveryFilter{
+		ExcludeDeleted: true,
+	}
+
+	if agentType != "" {
+		filter.AgentTypes = []string{agentType}
+	}
+
+	if capability != "" {
+		filter.Capabilities = []string{capability}
+	}
+
+	if jurisdiction != "" {
+		filter.Jurisdictions = []string{jurisdiction}
+	}
+
+	if currency != "" {
+		filter.Currencies = []string{currency}
+	}
+
+	agents, total, err := h.discovery.DiscoverAgents(c.Request.Context(), query, filter, page, limit)
+	if err != nil {
+		h.log.Error("failed to discover agents", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to discover agents"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"agents": agents,
+		"total":  total,
+		"page":   page,
+		"limit":  limit,
+	})
+}
+
+// GetPublicAgents retrieves all public agents
+// GET /api/v1/discovery/public-agents?page=1&limit=10
+func (h *AgentDiscoveryHandler) GetPublicAgents(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 10
+	}
+
+	agents, total, err := h.discovery.GetPublicAgents(c.Request.Context(), page, limit)
+	if err != nil {
+		h.log.Error("failed to get public agents", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get public agents"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"agents": agents,
+		"total":  total,
+		"page":   page,
+		"limit":  limit,
+	})
+}
+
+// GetAgentsByCapability retrieves agents with specific capabilities
+// GET /api/v1/discovery/agents/by-capability?capability=...&page=1&limit=10
+func (h *AgentDiscoveryHandler) GetAgentsByCapability(c *gin.Context) {
+	capabilities := c.QueryArray("capability")
+
+	if len(capabilities) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "at least one capability is required"})
+		return
+	}
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 10
+	}
+
+	agents, total, err := h.discovery.GetAgentsByCapability(c.Request.Context(), capabilities, page, limit)
+	if err != nil {
+		h.log.Error("failed to get agents by capability", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get agents"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"agents": agents,
+		"total":  total,
+		"page":   page,
+		"limit":  limit,
+	})
+}
+
+// GetAgentRegistry retrieves an agent's registry entry
+// GET /api/v1/discovery/agents/:agentID
+func (h *AgentDiscoveryHandler) GetAgentRegistry(c *gin.Context) {
+	agentID := c.Param("agentID")
+
+	registry, err := h.discovery.GetAgentRegistry(c.Request.Context(), agentID)
+	if err != nil {
+		h.log.Error("failed to get agent registry", "error", err, "agent_id", agentID)
+		c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, registry)
+}
+
+// VerifyAgent marks an agent as verified (admin only)
+// POST /api/v1/discovery/agents/:registryID/verify
+func (h *AgentDiscoveryHandler) VerifyAgent(c *gin.Context) {
+	registryID := c.Param("registryID")
+
+	if err := h.discovery.VerifyAgent(c.Request.Context(), registryID); err != nil {
+		h.log.Error("failed to verify agent", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to verify agent"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "agent verified"})
+}
+
+// UnverifyAgent removes verification from an agent (admin only)
+// POST /api/v1/discovery/agents/:registryID/unverify
+func (h *AgentDiscoveryHandler) UnverifyAgent(c *gin.Context) {
+	registryID := c.Param("registryID")
+
+	if err := h.discovery.UnverifyAgent(c.Request.Context(), registryID); err != nil {
+		h.log.Error("failed to unverify agent", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to unverify agent"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "agent unverified"})
+}
+
+// DeactivateAgent deactivates an agent
+// POST /api/v1/discovery/agents/:registryID/deactivate
+func (h *AgentDiscoveryHandler) DeactivateAgent(c *gin.Context) {
+	registryID := c.Param("registryID")
+
+	if err := h.discovery.DeactivateAgent(c.Request.Context(), registryID); err != nil {
+		h.log.Error("failed to deactivate agent", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to deactivate agent"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "agent deactivated"})
+}
+
+// ActivateAgent activates a deactivated agent
+// POST /api/v1/discovery/agents/:registryID/activate
+func (h *AgentDiscoveryHandler) ActivateAgent(c *gin.Context) {
+	registryID := c.Param("registryID")
+
+	if err := h.discovery.ActivateAgent(c.Request.Context(), registryID); err != nil {
+		h.log.Error("failed to activate agent", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to activate agent"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "agent activated"})
+}
+
+// HealthCheck performs a health check on an agent
+// POST /api/v1/discovery/agents/:registryID/health-check
+func (h *AgentDiscoveryHandler) HealthCheck(c *gin.Context) {
+	registryID := c.Param("registryID")
+
+	if err := h.discovery.PerformHealthCheck(c.Request.Context(), registryID); err != nil {
+		h.log.Error("failed to perform health check", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to perform health check"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "health check completed"})
+}
+
+// RateAgent rates an agent
+// POST /api/v1/discovery/agents/:registryID/rate
+func (h *AgentDiscoveryHandler) RateAgent(c *gin.Context) {
+	registryID := c.Param("registryID")
+
+	var req struct {
+		Rating float64 `json:"rating" binding:"required,min=1,max=5"`
+		Review string  `json:"review"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := h.discovery.UpdateAgentRating(c.Request.Context(), registryID, req.Rating, req.Review); err != nil {
+		h.log.Error("failed to rate agent", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to rate agent"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "agent rated successfully"})
+}
+
+// RecordInquiry records an inquiry for an agent
+// POST /api/v1/discovery/agents/:registryID/inquiry
+func (h *AgentDiscoveryHandler) RecordInquiry(c *gin.Context) {
+	registryID := c.Param("registryID")
+
+	if err := h.discovery.RecordAgentInquiry(c.Request.Context(), registryID); err != nil {
+		h.log.Error("failed to record inquiry", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record inquiry"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "inquiry recorded"})
+}
+
+// RecordIntegration records an integration for an agent
+// POST /api/v1/discovery/agents/:registryID/integration
+func (h *AgentDiscoveryHandler) RecordIntegration(c *gin.Context) {
+	registryID := c.Param("registryID")
+
+	if err := h.discovery.RecordAgentIntegration(c.Request.Context(), registryID); err != nil {
+		h.log.Error("failed to record integration", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to record integration"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "integration recorded"})
+}
