@@ -163,14 +163,27 @@ func Auth(cfg config.CognitoConfig, log *logger.Logger) gin.HandlerFunc {
 		}
 
 		tokenString := parts[1]
+
+		// Pre-validate JWT format to catch malformed tokens early (prevents DoS)
+		if err := ValidateJWTFormat(tokenString); err != nil {
+			log.Warn("invalid JWT format", "error", err, "request_id", GetRequestID(c))
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token format"})
+			return
+		}
+
 		token, err := jwt.ParseWithClaims(tokenString, &CognitoClaims{}, func(token *jwt.Token) (interface{}, error) {
-			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			// Validate signing method
+			if err := ValidateTokenSigningMethod(token); err != nil {
+				return nil, err
 			}
-			kid, ok := token.Header["kid"].(string)
-			if !ok {
-				return nil, fmt.Errorf("kid not found in token header")
+
+			// Validate token header structure
+			if err := ValidateTokenHeader(token.Header); err != nil {
+				return nil, err
 			}
+
+			// Get kid from header (safe type assertion already done in ValidateTokenHeader)
+			kid := token.Header["kid"].(string)
 			return jwksCache.GetKey(kid)
 		})
 
@@ -186,6 +199,14 @@ func Auth(cfg config.CognitoConfig, log *logger.Logger) gin.HandlerFunc {
 			return
 		}
 
+		// Validate claims structure and required fields (CVE-2024-51744 mitigation)
+		if err := ValidateClaims(claims); err != nil {
+			log.Warn("invalid claims", "error", err, "request_id", GetRequestID(c))
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token claims"})
+			return
+		}
+
+		// TokenUse validation is now part of ValidateClaims, but we check again for clarity
 		if claims.TokenUse != "access" && claims.TokenUse != "id" {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token type"})
 			return
@@ -206,49 +227,63 @@ func Auth(cfg config.CognitoConfig, log *logger.Logger) gin.HandlerFunc {
 
 func GetUserID(c *gin.Context) string {
 	if id, exists := c.Get("user_id"); exists {
-		return id.(string)
+		if str, ok := id.(string); ok {
+			return str
+		}
 	}
 	return ""
 }
 
 func GetEmail(c *gin.Context) string {
 	if email, exists := c.Get("email"); exists {
-		return email.(string)
+		if str, ok := email.(string); ok {
+			return str
+		}
 	}
 	return ""
 }
 
 func GetBusinessID(c *gin.Context) string {
 	if id, exists := c.Get("business_id"); exists {
-		return id.(string)
+		if str, ok := id.(string); ok {
+			return str
+		}
 	}
 	return ""
 }
 
 func GetRole(c *gin.Context) string {
 	if role, exists := c.Get("role"); exists {
-		return role.(string)
+		if str, ok := role.(string); ok {
+			return str
+		}
 	}
 	return "viewer"
 }
 
 func GetGroups(c *gin.Context) []string {
 	if groups, exists := c.Get("groups"); exists {
-		return groups.([]string)
+		if groupSlice, ok := groups.([]string); ok {
+			return groupSlice
+		}
 	}
 	return nil
 }
 
 func GetPicture(c *gin.Context) string {
 	if picture, exists := c.Get("picture"); exists {
-		return picture.(string)
+		if str, ok := picture.(string); ok {
+			return str
+		}
 	}
 	return ""
 }
 
 func GetName(c *gin.Context) string {
 	if name, exists := c.Get("name"); exists {
-		return name.(string)
+		if str, ok := name.(string); ok {
+			return str
+		}
 	}
 	return ""
 }

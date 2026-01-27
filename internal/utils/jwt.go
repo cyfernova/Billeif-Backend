@@ -8,10 +8,15 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v4"
+)
+
+const (
+	maxTokenSizeBytes = 8192 // 8KB max token size to prevent DoS
 )
 
 type JWKS struct {
@@ -127,16 +132,50 @@ func parseRSAKey(key JWKKey) (*rsa.PublicKey, error) {
 }
 
 func ValidateToken(tokenString string, jwksClient *JWKSClient) (*jwt.Token, error) {
+	// Pre-validate format to catch malformed tokens early
+	if err := validateJWTFormat(tokenString); err != nil {
+		return nil, err
+	}
+
 	return jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
 
-		kid, ok := token.Header["kid"].(string)
-		if !ok {
+		kidValue, exists := token.Header["kid"]
+		if !exists {
 			return nil, fmt.Errorf("kid not found in token header")
+		}
+
+		kid, ok := kidValue.(string)
+		if !ok {
+			return nil, fmt.Errorf("kid is not a string: %v", kidValue)
 		}
 
 		return jwksClient.GetKey(kid)
 	})
+}
+
+// validateJWTFormat checks JWT structure (private version for utils package)
+func validateJWTFormat(tokenString string) error {
+	if tokenString == "" {
+		return fmt.Errorf("token is empty")
+	}
+
+	if len(tokenString) > maxTokenSizeBytes {
+		return fmt.Errorf("token exceeds maximum size of %d bytes", maxTokenSizeBytes)
+	}
+
+	parts := strings.Split(tokenString, ".")
+	if len(parts) != 3 {
+		return fmt.Errorf("invalid JWT format: expected 3 parts, got %d", len(parts))
+	}
+
+	for i, part := range parts {
+		if part == "" {
+			return fmt.Errorf("invalid JWT format: part %d is empty", i)
+		}
+	}
+
+	return nil
 }
