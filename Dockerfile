@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.24-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
 
@@ -21,7 +21,7 @@ RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build \
     -o invoice-backend ./cmd/api
 
 # Runtime stage
-FROM alpine:3.18
+FROM alpine:3.23
 
 WORKDIR /app
 
