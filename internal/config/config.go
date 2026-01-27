@@ -45,9 +45,10 @@ type SentryConfig struct {
 }
 
 type ServerConfig struct {
-	Port         int `mapstructure:"PORT"`
-	ReadTimeout  int `mapstructure:"READ_TIMEOUT"`
-	WriteTimeout int `mapstructure:"WRITE_TIMEOUT"`
+	Port         int    `mapstructure:"PORT"`
+	BaseURL      string `mapstructure:"BASE_URL"`
+	ReadTimeout  int    `mapstructure:"READ_TIMEOUT"`
+	WriteTimeout int    `mapstructure:"WRITE_TIMEOUT"`
 }
 
 type DatabaseConfig struct {

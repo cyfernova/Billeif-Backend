@@ -181,3 +181,31 @@ variable "cognito_domain_prefix" {
   type        = string
   default     = "invoice-backend-app"
 }
+
+# Mobile Push Notification Configuration
+variable "fcm_api_key" {
+  description = "Firebase Cloud Messaging (FCM) API Key for Android push notifications"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "apns_sandbox" {
+  description = "Whether to use APNs sandbox (true for development, false for production)"
+  type        = bool
+  default     = true
+}
+
+variable "apns_private_key" {
+  description = "Apple Push Notification service (APNs) private key content"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "apns_certificate" {
+  description = "Apple Push Notification service (APNs) certificate content"
+  type        = string
+  sensitive   = true
+  default     = ""
+}

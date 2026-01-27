@@ -154,3 +154,25 @@ output "api_gateway_endpoint" {
   description = "API Gateway Endpoint URL"
   value       = aws_apigatewayv2_api.main.api_endpoint
 }
+
+# Workflow Queue Output
+output "workflow_runs_queue_url" {
+  description = "Workflow runs SQS queue URL"
+  value       = aws_sqs_queue.workflow_runs.url
+}
+
+output "workflow_notifications_topic_arn" {
+  description = "SNS Topic ARN for workflow notifications"
+  value       = aws_sns_topic.workflow_notifications.arn
+}
+
+# Mobile Push Platform Applications
+output "fcm_platform_application_arn" {
+  description = "FCM (Android) SNS Platform Application ARN"
+  value       = aws_sns_platform_application.fcm.arn
+}
+
+output "apns_platform_application_arn" {
+  description = "APNs (iOS) SNS Platform Application ARN"
+  value       = aws_sns_platform_application.apns.arn
+}

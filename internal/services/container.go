@@ -38,6 +38,9 @@ type Container struct {
 	Razorpay           *razorpay.RazorpayService
 	AgentDiscovery     *AgentDiscoveryService
 	LLM                *LLMService
+	A2ATask            *A2ATaskService
+	A2APush            *A2APushService
+	Workflow           *WorkflowService
 }
 
 func NewContainer(
@@ -79,6 +82,10 @@ func NewContainer(
 
 	agentSvc := NewAgentService(ap2Repo, ap2Signer, log)
 
+	a2aPushSvc := NewA2APushService(db, log)
+	a2aTaskSvc := NewA2ATaskService(db, log, a2aPushSvc)
+	workflowSvc := NewWorkflowService(db, log, emailSvc, a2aPushSvc)
+
 	return &Container{
 		Auth:               NewAuthService(cfg, userRepo, aws, emailSvc, s3Svc, log),
 		BusinessAuth:       NewBusinessAuthService(businessRepo, teamRepo, log),
@@ -105,5 +112,8 @@ func NewContainer(
 		Razorpay:           razorpaySvc,
 		AgentDiscovery:     NewAgentDiscoveryService(ap2Repo, log),
 		LLM:                llmSvc,
+		A2ATask:            a2aTaskSvc,
+		A2APush:            a2aPushSvc,
+		Workflow:           workflowSvc,
 	}
 }

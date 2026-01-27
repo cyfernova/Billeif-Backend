@@ -246,6 +246,9 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 	router.GET("/health", h.Health.Check)
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
+	// Well-known endpoints
+	router.GET("/.well-known/agent.json", h.WellKnown.GetAgentCard)
+
 	api := router.Group("/api/v1")
 	{
 		auth := api.Group("/auth")
@@ -470,6 +473,19 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			llm.POST("/agent-assist", h.LLM.AgentAssist)
 		}
 
+		// Workflow automation endpoints
+		workflows := protected.Group("/workflows")
+		{
+			workflows.POST("", h.Workflow.CreateWorkflow)
+			workflows.GET("", h.Workflow.ListWorkflows)
+			workflows.GET("/:id", h.Workflow.GetWorkflow)
+			workflows.PUT("/:id", h.Workflow.UpdateWorkflow)
+			workflows.DELETE("/:id", h.Workflow.DeleteWorkflow)
+			workflows.POST("/:id/pause", h.Workflow.PauseWorkflow)
+			workflows.POST("/:id/resume", h.Workflow.ResumeWorkflow)
+			workflows.POST("/:id/run", h.Workflow.RunWorkflow)
+		}
+
 		// Intent Processing endpoints
 		intent := protected.Group("/intent")
 		{
@@ -479,12 +495,34 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			intent.POST("/parse", h.Intent.ParseIntent)
 		}
 
-		// A2A Protocol endpoints
-		a2a := protected.Group("/a2a")
+		// A2A Protocol v0.3 endpoints
+		a2a := protected.Group("/a2a/v0.3")
+		{
+			// Task endpoints
+			a2a.POST("/tasks:send", h.A2ATask.SendTask)
+			a2a.POST("/tasks:stream", h.A2ATask.StreamTask)
+			a2a.GET("/tasks", h.A2ATask.ListTasks)
+			a2a.GET("/tasks/:taskId", h.A2ATask.GetTask)
+			a2a.POST("/tasks/:taskId:cancel", h.A2ATask.CancelTask)
+			a2a.GET("/tasks/:taskId:subscribe", h.A2ATask.SubscribeTask)
+
+			// Push notification endpoints
+			push := a2a.Group("/push")
+			{
+				push.POST("/configure", h.A2APush.ConfigurePush)
+				push.GET("/config", h.A2APush.GetPushConfig)
+				push.GET("/config/:id", h.A2APush.GetPushConfigByID)
+				push.DELETE("/config/:id", h.A2APush.DeletePushConfig)
+				push.POST("/test/:id", h.A2APush.TestPush)
+			}
+		}
+
+		// A2A Protocol v0.2 endpoints (legacy)
+		a2aLegacy := protected.Group("/a2a")
 		{
 			// A2A messaging
-			a2a.POST("/message", h.A2AMessage.HandleMessage)
-			a2a.GET("/stats", h.A2AMessage.GetMessageStats)
+			a2aLegacy.POST("/message", h.A2AMessage.HandleMessage)
+			a2aLegacy.GET("/stats", h.A2AMessage.GetMessageStats)
 		}
 
 		// WebSocket endpoints
