@@ -13,7 +13,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sns v1.39.11
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.42.20
 	github.com/getsentry/sentry-go v0.41.0
-	github.com/getsentry/sentry-go/gin v0.40.0
+	github.com/getsentry/sentry-go/gin v0.41.0
 	github.com/gin-contrib/cors v1.7.6
 	github.com/gin-gonic/gin v1.11.0
 	github.com/golang-jwt/jwt/v4 v4.5.2
