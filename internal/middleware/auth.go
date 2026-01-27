@@ -206,49 +206,63 @@ func Auth(cfg config.CognitoConfig, log *logger.Logger) gin.HandlerFunc {
 
 func GetUserID(c *gin.Context) string {
 	if id, exists := c.Get("user_id"); exists {
-		return id.(string)
+		if str, ok := id.(string); ok {
+			return str
+		}
 	}
 	return ""
 }
 
 func GetEmail(c *gin.Context) string {
 	if email, exists := c.Get("email"); exists {
-		return email.(string)
+		if str, ok := email.(string); ok {
+			return str
+		}
 	}
 	return ""
 }
 
 func GetBusinessID(c *gin.Context) string {
 	if id, exists := c.Get("business_id"); exists {
-		return id.(string)
+		if str, ok := id.(string); ok {
+			return str
+		}
 	}
 	return ""
 }
 
 func GetRole(c *gin.Context) string {
 	if role, exists := c.Get("role"); exists {
-		return role.(string)
+		if str, ok := role.(string); ok {
+			return str
+		}
 	}
 	return "viewer"
 }
 
 func GetGroups(c *gin.Context) []string {
 	if groups, exists := c.Get("groups"); exists {
-		return groups.([]string)
+		if groupSlice, ok := groups.([]string); ok {
+			return groupSlice
+		}
 	}
 	return nil
 }
 
 func GetPicture(c *gin.Context) string {
 	if picture, exists := c.Get("picture"); exists {
-		return picture.(string)
+		if str, ok := picture.(string); ok {
+			return str
+		}
 	}
 	return ""
 }
 
 func GetName(c *gin.Context) string {
 	if name, exists := c.Get("name"); exists {
-		return name.(string)
+		if str, ok := name.(string); ok {
+			return str
+		}
 	}
 	return ""
 }

@@ -1,6 +1,9 @@
 package middleware
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
 	"net/http"
 
 	"invoice-backend/internal/services"
@@ -49,12 +52,22 @@ func extractBusinessID(c *gin.Context) string {
 	}
 
 	// Check if this is a JSON request with business_id in body
-	// We peek at the body without consuming it
-	if c.ContentType() == "application/json" {
+	// We need to read the body without consuming it for subsequent handlers
+	if c.ContentType() == "application/json" || c.ContentType() == "application/json; charset=utf-8" {
+		// Read the body
+		bodyBytes, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			return ""
+		}
+
+		// Restore the body for subsequent handlers
+		c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+		// Try to parse business_id from body
 		var body struct {
 			BusinessID string `json:"business_id"`
 		}
-		if err := c.ShouldBindBodyWithJSON(&body); err == nil && body.BusinessID != "" {
+		if err := json.Unmarshal(bodyBytes, &body); err == nil && body.BusinessID != "" {
 			return body.BusinessID
 		}
 	}
