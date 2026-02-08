@@ -89,3 +89,40 @@ func (r *invoiceRepository) UpdateStatus(ctx context.Context, invoiceID string, 
 func (r *invoiceRepository) Delete(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&models.Invoice{}).Error
 }
+
+func (r *invoiceRepository) GetNextSequentialNumber(ctx context.Context, businessID string, year int) (int64, error) {
+	var nextNumber int64
+
+	// Use a transaction-safe approach with SELECT FOR UPDATE
+	err := r.db.WithContext(ctx).Raw(`
+		WITH last_invoice AS (
+			SELECT invoice_no
+			FROM invoices
+			WHERE business_id = ? AND invoice_no LIKE ?
+			AND deleted_at IS NULL
+			ORDER BY created_at DESC
+			LIMIT 1
+			FOR UPDATE
+		)
+		SELECT COALESCE(
+			CAST(SUBSTRING(last_invoice.invoice_no FROM POSITION('-' IN last_invoice.invoice_no) + 1) AS BIGINT),
+			0
+		) + 1
+		FROM last_invoice
+		UNION ALL
+		SELECT 1
+		WHERE NOT EXISTS (SELECT 1 FROM last_invoice)
+		LIMIT 1
+	`, businessID, fmt.Sprintf("INV-%d-", year)).Scan(&nextNumber).Error
+
+	if err != nil {
+		return 0, err
+	}
+
+	// Ensure minimum value of 1
+	if nextNumber == 0 {
+		nextNumber = 1
+	}
+
+	return nextNumber, nil
+}

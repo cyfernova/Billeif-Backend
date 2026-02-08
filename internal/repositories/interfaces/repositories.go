@@ -56,6 +56,7 @@ type InvoiceRepository interface {
 	GetByInvoiceNo(ctx context.Context, businessID, invoiceNo string) (*models.Invoice, error)
 	GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.Invoice, int64, error)
 	GetItems(ctx context.Context, invoiceID string) ([]*models.InvoiceItem, error)
+	GetNextSequentialNumber(ctx context.Context, businessID string, year int) (int64, error)
 	Update(ctx context.Context, invoice *models.Invoice) error
 	UpdateStatus(ctx context.Context, invoiceID string, status string) error
 	Delete(ctx context.Context, id string) error

@@ -30,6 +30,13 @@ import (
 	"gorm.io/gorm"
 )
 
+// Build information set by -ldflags at build time
+var (
+	buildVersion = "" // Set by: go build -ldflags "-X main.buildVersion=1.0.0"
+	gitCommit    = "" // Set by: go build -ldflags "-X main.gitCommit=$(git rev-parse HEAD)"
+	buildTime   = "" // Set by: go build -ldflags "-X main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+)
+
 // @title Invoice Backend API
 // @version 1.0
 // @description Production-grade monolithic Golang backend for an invoice/billing platform.
@@ -63,6 +70,15 @@ func main() {
 		// Don't fail startup if Sentry fails, just log the error
 	}
 	defer pkgsentry.Flush(2 * time.Second)
+
+	// Set version from build info
+	version := "1.0.0"
+	if buildVersion != "" {
+		version = buildVersion
+	}
+	if gitCommit != "" {
+		version = fmt.Sprintf("%s+%s", version, gitCommit[:8])
+	}
 
 	if cfg.Environment == "prod" {
 		gin.SetMode(gin.ReleaseMode)
@@ -204,7 +220,7 @@ func initSentry(cfg *config.Config, log *logger.Logger) error {
 	err := pkgsentry.Init(pkgsentry.Config{
 		DSN:              cfg.Sentry.DSN,
 		Environment:      cfg.Environment,
-		Release:          "invoice-backend@1.0.0", // TODO: Get from build info
+		Release:          fmt.Sprintf("invoice-backend@%s", version),
 		Debug:            cfg.Sentry.Debug,
 		SampleRate:       sampleRate,
 		TracesSampleRate: tracesSampleRate,

@@ -122,8 +122,15 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 
 func (s *InvoiceService) generateInvoiceNumber(ctx context.Context, businessID string) (string, error) {
 	year := time.Now().Year()
+
+	// Get the next sequential number for this business/year
+	nextNumber, err := s.repo.GetNextSequentialNumber(ctx, businessID, year)
+	if err != nil {
+		return "", fmt.Errorf("failed to get next invoice number: %w", err)
+	}
+
 	prefix := fmt.Sprintf("INV-%d-", year)
-	return prefix + fmt.Sprintf("%06d", time.Now().UnixNano()%1000000), nil
+	return prefix + fmt.Sprintf("%06d", nextNumber), nil
 }
 
 func (s *InvoiceService) queuePDFGeneration(invoiceID string) {
