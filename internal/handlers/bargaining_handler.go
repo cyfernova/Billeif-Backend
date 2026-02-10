@@ -34,6 +34,18 @@ type CounterOfferRequest struct {
 	Action         string  `json:"action" binding:"required,oneof=counteroffer accept reject"`
 }
 
+// CreateNegotiation creates a new negotiation
+// @Summary Create negotiation
+// @Description Create a new bargaining negotiation between buyer and seller agents.
+// @Tags Bargaining
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body CreateNegotiationRequest true "Negotiation details"
+// @Success 201 {object} models.BargainingNegotiation
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /bargaining/negotiations [post]
 func (h *BargainingHandler) CreateNegotiation(c *gin.Context) {
 	userID := c.GetString("user_id")
 
@@ -61,6 +73,16 @@ func (h *BargainingHandler) CreateNegotiation(c *gin.Context) {
 	c.JSON(http.StatusCreated, negotiation)
 }
 
+// GetNegotiation retrieves a negotiation by ID
+// @Summary Get negotiation
+// @Description Returns the details of a specific negotiation.
+// @Tags Bargaining
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Negotiation ID"
+// @Success 200 {object} models.BargainingNegotiation
+// @Failure 404 {object} map[string]string
+// @Router /bargaining/negotiations/{id} [get]
 func (h *BargainingHandler) GetNegotiation(c *gin.Context) {
 	id := c.Param("id")
 
@@ -73,6 +95,17 @@ func (h *BargainingHandler) GetNegotiation(c *gin.Context) {
 	c.JSON(http.StatusOK, negotiation)
 }
 
+// ListNegotiations retrieves all negotiations for a user
+// @Summary List negotiations
+// @Description Returns a list of negotiations belonging to the authenticated user.
+// @Tags Bargaining
+// @Produce json
+// @Security BearerAuth
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Page size" default(10)
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /bargaining/negotiations [get]
 func (h *BargainingHandler) ListNegotiations(c *gin.Context) {
 	userID := c.GetString("user_id")
 	page, limit := utils.ParsePagination(c)
@@ -91,6 +124,21 @@ func (h *BargainingHandler) ListNegotiations(c *gin.Context) {
 	})
 }
 
+// SubmitCounterOffer submits a counter offer for a negotiation
+// @Summary Submit counter offer
+// @Description Submit a counter offer, accept, or reject a negotiation round.
+// @Tags Bargaining
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Negotiation ID"
+// @Param input body CounterOfferRequest true "Counter offer details"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 410 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /bargaining/negotiations/{id}/counteroffer [post]
 func (h *BargainingHandler) SubmitCounterOffer(c *gin.Context) {
 	negotiationID := c.Param("id")
 
@@ -128,6 +176,16 @@ func (h *BargainingHandler) SubmitCounterOffer(c *gin.Context) {
 	})
 }
 
+// GetNegotiationRounds retrieves all rounds for a negotiation
+// @Summary Get negotiation rounds
+// @Description Returns all rounds for a specific negotiation.
+// @Tags Bargaining
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Negotiation ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /bargaining/negotiations/{id}/rounds [get]
 func (h *BargainingHandler) GetNegotiationRounds(c *gin.Context) {
 	negotiationID := c.Param("id")
 
@@ -142,6 +200,18 @@ func (h *BargainingHandler) GetNegotiationRounds(c *gin.Context) {
 	})
 }
 
+// GetSuggestedCounterOffer retrieves a suggested counter offer amount
+// @Summary Get suggested counter offer
+// @Description Returns a suggested counter offer amount based on negotiation state and agent type.
+// @Tags Bargaining
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Negotiation ID"
+// @Param agent_type query string true "Agent type (buyer or seller)" Enums(buyer, seller)
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /bargaining/negotiations/{id}/suggest [get]
 func (h *BargainingHandler) GetSuggestedCounterOffer(c *gin.Context) {
 	negotiationID := c.Param("id")
 	agentType := c.Query("agent_type")
