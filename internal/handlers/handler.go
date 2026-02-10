@@ -37,6 +37,7 @@ type Handler struct {
 	A2ATask        *A2ATaskHandler
 	A2APush        *A2APushHandler
 	Workflow       *WorkflowHandler
+	Bargaining     *BargainingHandler
 }
 
 func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log *logger.Logger) *Handler {
@@ -75,6 +76,7 @@ func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log 
 		A2ATask:        NewA2ATaskHandler(svcs.A2ATask, log),
 		A2APush:        NewA2APushHandler(svcs.A2APush, log),
 		Workflow:       NewWorkflowHandler(svcs.Workflow, log),
+		Bargaining:     NewBargainingHandler(svcs.Bargaining, log),
 	}
 }
 

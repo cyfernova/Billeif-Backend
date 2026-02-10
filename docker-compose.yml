@@ -46,9 +46,30 @@ services:
     environment:
       DATABASE_URL: postgres://invoice_user:invoice_password@postgres:5432/invoice_db
       REDIS_URL: redis://redis:6379
-      PORT: 8080
-      ENV: development
+      SERVER_PORT: 8080
+      ENVIRONMENT: development
       LOG_LEVEL: info
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_USER: invoice_user
+      DATABASE_PASSWORD: invoice_password
+      DATABASE_NAME: invoice_db
+      DATABASE_SSL_MODE: disable
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      AWS_REGION: us-east-1
+      S3_BUCKET_LOGOS: test-logos-bucket
+      S3_BUCKET_INVOICES: test-invoices-bucket
+      S3_BUCKET_PRODUCTS: test-products-bucket
+      S3_BUCKET_EMAIL_SINK: test-email-sink-bucket
+      SQS_INVOICE_QUEUE: test-invoice-queue
+      SQS_PAYMENT_QUEUE: test-payment-queue
+      RAZORPAY_KEY: test_razorpay_key
+      RAZORPAY_SECRET: test_razorpay_secret
+      RAZORPAY_WEBHOOK_SECRET: test_webhook_secret
+      JWT_ACCESS_TOKEN_EXPIRY: 1h
+      JWT_REFRESH_TOKEN_EXPIRY: 720h
+      COGNITO_REGION: us-east-1
     ports:
       - "8080:8080"
     depends_on:

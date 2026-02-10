@@ -542,6 +542,17 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			ws.POST("/notify-all", h.WebSocket.SendNotificationToAll)
 		}
 
+		// Bargaining endpoints
+		bargaining := protected.Group("/bargaining")
+		{
+			bargaining.POST("/negotiations", h.Bargaining.CreateNegotiation)
+			bargaining.GET("/negotiations", h.Bargaining.ListNegotiations)
+			bargaining.GET("/negotiations/:id", h.Bargaining.GetNegotiation)
+			bargaining.POST("/negotiations/:id/counteroffer", h.Bargaining.SubmitCounterOffer)
+			bargaining.GET("/negotiations/:id/rounds", h.Bargaining.GetNegotiationRounds)
+			bargaining.GET("/negotiations/:id/suggest", h.Bargaining.GetSuggestedCounterOffer)
+		}
+
 		api.POST("/webhooks/razorpay", h.Credential.HandleRazorpayWebhook)
 
 		admin := api.Group("/admin")
