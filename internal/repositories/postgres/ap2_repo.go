@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -743,6 +744,156 @@ func (r *ap2Repository) GetTransactionsByUser(ctx context.Context, userID string
 	result := make([]*models.AgentTransaction, len(transactions))
 	for i := range transactions {
 		result[i] = &transactions[i]
+	}
+	return result, total, nil
+}
+
+// Bargaining Negotiations
+func (r *ap2Repository) CreateBargainingNegotiation(ctx context.Context, negotiation *models.BargainingNegotiation) error {
+	return r.db.WithContext(ctx).Create(negotiation).Error
+}
+
+func (r *ap2Repository) GetBargainingNegotiationByID(ctx context.Context, id string) (*models.BargainingNegotiation, error) {
+	var negotiation models.BargainingNegotiation
+	err := r.db.WithContext(ctx).
+		Preload("BuyerAgent").
+		Preload("SellerAgent").
+		Where("id = ?", id).
+		First(&negotiation).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, errors.New("negotiation not found")
+	}
+	return &negotiation, err
+}
+
+func (r *ap2Repository) GetNegotiationsByUser(ctx context.Context, userID string, page, limit int) ([]*models.BargainingNegotiation, int64, error) {
+	var negotiations []models.BargainingNegotiation
+	var total int64
+
+	offset := (page - 1) * limit
+	query := r.db.WithContext(ctx).Model(&models.BargainingNegotiation{}).Where("user_id = ?", userID)
+
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	if err := query.
+		Preload("BuyerAgent").
+		Preload("SellerAgent").
+		Order("created_at DESC").
+		Offset(offset).
+		Limit(limit).
+		Find(&negotiations).Error; err != nil {
+		return nil, 0, err
+	}
+
+	result := make([]*models.BargainingNegotiation, len(negotiations))
+	for i := range negotiations {
+		result[i] = &negotiations[i]
+	}
+	return result, total, nil
+}
+
+func (r *ap2Repository) GetNegotiationsByAgent(ctx context.Context, agentID string, page, limit int) ([]*models.BargainingNegotiation, int64, error) {
+	var negotiations []models.BargainingNegotiation
+	var total int64
+
+	offset := (page - 1) * limit
+	query := r.db.WithContext(ctx).Model(&models.BargainingNegotiation{}).
+		Where("buyer_agent_id = ? OR seller_agent_id = ?", agentID, agentID)
+
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	if err := query.
+		Preload("BuyerAgent").
+		Preload("SellerAgent").
+		Order("created_at DESC").
+		Offset(offset).
+		Limit(limit).
+		Find(&negotiations).Error; err != nil {
+		return nil, 0, err
+	}
+
+	result := make([]*models.BargainingNegotiation, len(negotiations))
+	for i := range negotiations {
+		result[i] = &negotiations[i]
+	}
+	return result, total, nil
+}
+
+func (r *ap2Repository) UpdateNegotiationStatus(ctx context.Context, id, status string) error {
+	updates := map[string]interface{}{"status": status}
+	if status == "expired" {
+		updates["completed_at"] = gorm.Expr("NOW()")
+	}
+	return r.db.WithContext(ctx).Model(&models.BargainingNegotiation{}).Where("id = ?", id).Updates(updates).Error
+}
+
+func (r *ap2Repository) UpdateNegotiationAmountAndRounds(ctx context.Context, id string, amount float64, rounds int, status string) error {
+	return r.db.WithContext(ctx).Model(&models.BargainingNegotiation{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"current_amount": amount,
+			"rounds":         rounds,
+			"status":         status,
+		}).Error
+}
+
+func (r *ap2Repository) CompleteNegotiation(ctx context.Context, id, status string, finalAmount float64, completedAt *time.Time) error {
+	return r.db.WithContext(ctx).Model(&models.BargainingNegotiation{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"status":         status,
+			"current_amount": finalAmount,
+			"completed_at":   completedAt,
+		}).Error
+}
+
+// Bargaining Rounds
+func (r *ap2Repository) CreateBargainingRound(ctx context.Context, round *models.BargainingRound) error {
+	return r.db.WithContext(ctx).Create(round).Error
+}
+
+func (r *ap2Repository) GetBargainingRounds(ctx context.Context, negotiationID string) ([]*models.BargainingRound, error) {
+	var rounds []models.BargainingRound
+	err := r.db.WithContext(ctx).
+		Where("negotiation_id = ?", negotiationID).
+		Order("round_number ASC").
+		Find(&rounds).Error
+	if err != nil {
+		return nil, err
+	}
+	result := make([]*models.BargainingRound, len(rounds))
+	for i := range rounds {
+		result[i] = &rounds[i]
+	}
+	return result, nil
+}
+
+func (r *ap2Repository) GetBargainingRoundsByAgent(ctx context.Context, agentID string, page, limit int) ([]*models.BargainingRound, int64, error) {
+	var rounds []models.BargainingRound
+	var total int64
+
+	offset := (page - 1) * limit
+	query := r.db.WithContext(ctx).Model(&models.BargainingRound{}).Where("agent_id = ?", agentID)
+
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	if err := query.
+		Order("created_at DESC").
+		Offset(offset).
+		Limit(limit).
+		Find(&rounds).Error; err != nil {
+		return nil, 0, err
+	}
+
+	result := make([]*models.BargainingRound, len(rounds))
+	for i := range rounds {
+		result[i] = &rounds[i]
 	}
 	return result, total, nil
 }
