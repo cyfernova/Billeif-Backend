@@ -1,6 +1,6 @@
 # Invoice Backend
 
-Production-grade Golang backend for an invoice/billing platform, running on LocalStack with Terraform.
+Production-Grade Golang backend for an invoice/billing platform, running on LocalStack with Terraform.
 
 ## Quick Start
 
