@@ -256,9 +256,7 @@ func (h *AgentConfigHandler) UpdateAgentConfig(c *gin.Context) {
 // @Tags Agent Configuration
 // @Security BearerAuth
 // @Param agent_id path string true "Agent ID"
-// @Success 204
-// @Failure 404 {object} map[string]string
-// @Failure 500 {object} map[string]string
+// @Success 204 "No Content"
 // @Router /agents/config/{agent_id} [delete]
 func (h *AgentConfigHandler) DeleteAgentConfig(c *gin.Context) {
 	agentID := c.Param("agent_id")

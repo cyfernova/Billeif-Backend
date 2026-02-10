@@ -225,7 +225,7 @@ func (h *AuthHandler) ResendVerification(c *gin.Context) {
 // @Tags Authentication
 // @Produce json
 // @Security BearerAuth
-// @Success 200 {object} models.User
+// @Success 200 {object} map[string]interface{}
 // @Failure 401 {object} map[string]string
 // @Failure 404 {object} map[string]string
 // @Router /auth/me [get]
@@ -270,7 +270,7 @@ func (h *AuthHandler) Me(c *gin.Context) {
 // @Produce json
 // @Security BearerAuth
 // @Param input body services.UpdateProfileInput true "Profile updates"
-// @Success 200 {object} models.User
+// @Success 200 {object} map[string]interface{}
 // @Failure 401 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /auth/profile [put]
@@ -335,7 +335,7 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 // @Tags Authentication
 // @Produce json
 // @Security BearerAuth
-// @Success 200 {object} models.User
+// @Success 200 {object} map[string]interface{}
 // @Failure 401 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /auth/google [post]
@@ -406,7 +406,7 @@ func (h *AuthHandler) UploadProfilePicture(c *gin.Context) {
 // @Produce json
 // @Security BearerAuth
 // @Param input body object{profile_picture_url=string} true "Profile picture URL"
-// @Success 200 {object} models.User
+// @Success 200 {object} map[string]interface{}
 // @Failure 401 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /auth/profile-picture [put]

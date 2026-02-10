@@ -386,24 +386,6 @@ const docTemplate = `{
                 "responses": {
                     "204": {
                         "description": "No Content"
-                    },
-                    "404": {
-                        "description": "Not Found",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
                     }
                 }
             }
@@ -757,7 +739,8 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.User"
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     },
                     "401": {
@@ -880,7 +863,8 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.User"
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     },
                     "401": {
@@ -937,7 +921,8 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.User"
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     },
                     "401": {
@@ -999,7 +984,8 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.User"
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     },
                     "401": {
@@ -5541,51 +5527,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "user_id": {
-                    "type": "string"
-                }
-            }
-        },
-        "models.User": {
-            "type": "object",
-            "required": [
-                "cognito_id",
-                "email",
-                "name",
-                "role"
-            ],
-            "properties": {
-                "business_id": {
-                    "type": "string"
-                },
-                "cognito_id": {
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "email": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string",
-                    "maxLength": 255,
-                    "minLength": 2
-                },
-                "profile_picture_url": {
-                    "type": "string"
-                },
-                "role": {
-                    "type": "string",
-                    "enum": [
-                        "admin",
-                        "accountant",
-                        "viewer"
-                    ]
-                },
-                "updated_at": {
                     "type": "string"
                 }
             }

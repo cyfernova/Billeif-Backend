@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
@@ -105,9 +106,15 @@ func Load() (*Config, error) {
 	viper.AddConfigPath("..")
 	viper.AutomaticEnv()
 
+	// Use replacer to convert underscores to dots for nested config
+	viper.SetEnvKeyReplacer(strings.NewReplacer("_", "."))
+
 	// Explicitly bind environment variables for nested config
 	viper.BindEnv("ENVIRONMENT")
 	viper.BindEnv("SERVER.PORT", "SERVER_PORT")
+	viper.BindEnv("SERVER.BASE_URL", "SERVER_BASE_URL")
+	viper.BindEnv("SERVER.READ_TIMEOUT", "SERVER_READ_TIMEOUT")
+	viper.BindEnv("SERVER.WRITE_TIMEOUT", "SERVER_WRITE_TIMEOUT")
 	viper.BindEnv("DATABASE.HOST", "DATABASE_HOST")
 	viper.BindEnv("DATABASE.PORT", "DATABASE_PORT")
 	viper.BindEnv("DATABASE.USER", "DATABASE_USER")
@@ -125,6 +132,7 @@ func Load() (*Config, error) {
 	viper.BindEnv("COGNITO.USER_POOL_ID", "COGNITO_USER_POOL_ID")
 	viper.BindEnv("COGNITO.CLIENT_ID", "COGNITO_CLIENT_ID")
 	viper.BindEnv("COGNITO.REGION", "COGNITO_REGION")
+	viper.BindEnv("COGNITO.JWKS_REFRESH_RATE", "COGNITO_JWKS_REFRESH_RATE")
 	viper.BindEnv("JWT.ACCESS_TOKEN_EXPIRY", "JWT_ACCESS_TOKEN_EXPIRY")
 	viper.BindEnv("JWT.REFRESH_TOKEN_EXPIRY", "JWT_REFRESH_TOKEN_EXPIRY")
 	viper.BindEnv("S3.BUCKET_LOGOS", "S3_BUCKET_LOGOS")
@@ -138,7 +146,7 @@ func Load() (*Config, error) {
 	viper.BindEnv("SENTRY.TRACES_SAMPLE_RATE", "SENTRY_TRACES_SAMPLE_RATE")
 	viper.BindEnv("SENTRY.ENABLE_TRACING", "SENTRY_ENABLE_TRACING")
 	viper.BindEnv("SENTRY.DEBUG", "SENTRY_DEBUG")
-	viper.BindEnv("ALLOWED_ORIGINS")
+	viper.BindEnv("ALLOWED_ORIGINS", "ALLOWED_ORIGINS")
 	viper.BindEnv("RAZORPAY.KEY", "RAZORPAY_KEY")
 	viper.BindEnv("RAZORPAY.SECRET", "RAZORPAY_SECRET")
 	viper.BindEnv("RAZORPAY.WEBHOOK_SECRET", "RAZORPAY_WEBHOOK_SECRET")
