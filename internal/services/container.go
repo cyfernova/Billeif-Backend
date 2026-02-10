@@ -43,6 +43,7 @@ type Container struct {
 	Workflow           *WorkflowService
 	Mentee             *MenteeService
 	Bargaining         *BargainingService
+	AgentConfig        *AgentConfigService
 }
 
 func NewContainer(
@@ -89,6 +90,7 @@ func NewContainer(
 	a2aTaskSvc := NewA2ATaskService(db, log, a2aPushSvc)
 	workflowSvc := NewWorkflowService(db, log, emailSvc, a2aPushSvc)
 	bargainingSvc := NewBargainingService(ap2Repo, a2aClient, agentSvc, menteeSvc, log)
+	agentConfigSvc := NewAgentConfigService(".well-known", log)
 
 	return &Container{
 		Auth:               NewAuthService(cfg, userRepo, aws, emailSvc, s3Svc, log),
@@ -121,5 +123,6 @@ func NewContainer(
 		Workflow:           workflowSvc,
 		Mentee:             menteeSvc,
 		Bargaining:         bargainingSvc,
+		AgentConfig:        agentConfigSvc,
 	}
 }

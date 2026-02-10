@@ -248,6 +248,9 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 	// Well-known endpoints
 	router.GET("/.well-known/agent.json", h.WellKnown.GetAgentCard)
+	router.GET("/.well-known/agents.json", func(c *gin.Context) {
+		c.File(".well-known/agents.json")
+	})
 
 	api := router.Group("/api/v1")
 	{
@@ -422,6 +425,25 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 					credentials.DELETE("/payment-methods/:id", h.Credential.DeletePaymentMethod)
 					credentials.POST("/tokens", h.Credential.GenerateToken)
 					credentials.GET("/tokens/validate", h.Credential.ValidateToken)
+				}
+
+				config := agents.Group("/config")
+				{
+					config.POST("", h.AgentConfig.CreateAgentConfig)
+					config.GET("", h.AgentConfig.GetAllAgentConfigs)
+					config.GET("/:agent_id", h.AgentConfig.GetAgentConfig)
+					config.PUT("/:agent_id", h.AgentConfig.UpdateAgentConfig)
+					config.DELETE("/:agent_id", h.AgentConfig.DeleteAgentConfig)
+					config.POST("/default", h.AgentConfig.CreateDefaultConfig)
+
+					mentee := config.Group("/mentee")
+					{
+						mentee.GET("/recommendation/:negotiation_id", h.AgentConfig.GetMenteeRecommendation)
+						mentee.GET("/learning/:agent_id", h.AgentConfig.GetMenteeLearningData)
+						mentee.DELETE("/learning/:agent_id", h.AgentConfig.ResetMenteeLearning)
+						mentee.GET("/export", h.AgentConfig.ExportMenteeData)
+						mentee.POST("/import", h.AgentConfig.ImportMenteeData)
+					}
 				}
 			}
 

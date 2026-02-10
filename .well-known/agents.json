@@ -1,0 +1,84 @@
+{
+  "version": "1.0.0",
+  "agent_types": {
+    "buyer": {
+      "name": "Buyer Agent",
+      "description": "Agent configured for purchasing goods and services with optimal bargaining strategies",
+      "default_config": {
+        "volatility": 0.5,
+        "max_discount_target": 0.25,
+        "min_discount_acceptable": 0.05,
+        "preferred_payment_terms": "net_30",
+        "auto_accept_threshold": 0.85,
+        "bargaining_style": "moderate",
+        "risk_tolerance": "medium",
+        "response_time_hours": 24,
+        "bulk_discount_enabled": true,
+        "negotiation_rounds": 5
+      },
+      "capabilities": [
+        "price_negotiation",
+        "bulk_order_pricing",
+        "payment_term_negotiation",
+        "delivery_scheduling",
+        "quality_assessment",
+        "vendor_comparison"
+      ]
+    },
+    "seller": {
+      "name": "Seller Agent",
+      "description": "Agent configured for selling goods and services with profit maximization strategies",
+      "default_config": {
+        "volatility": 0.4,
+        "min_margin_target": 0.15,
+        "max_markup_allowed": 0.30,
+        "preferred_payment_terms": "payment_in_advance",
+        "auto_reject_below_margin": 0.10,
+        "bargaining_style": "firm",
+        "risk_tolerance": "low",
+        "response_time_hours": 12,
+        "volume_discount_enabled": true,
+        "negotiation_rounds": 5
+      },
+      "capabilities": [
+        "price_optimization",
+        "volume_pricing",
+        "payment_term_negotiation",
+        "inventory_management",
+        "delivery_scheduling",
+        "customer_loyalty"
+      ]
+    }
+  },
+  "bargaining_parameters": {
+    "buyer": {
+      "initial_offer_discount": 0.15,
+      "discount_increment": 0.03,
+      "acceptance_threshold": 0.90,
+      "walk_away_threshold": 0.30
+    },
+    "seller": {
+      "initial_markup": 0.20,
+      "markup_decrement": 0.02,
+      "acceptance_threshold": 0.95,
+      "minimum_margin": 0.10
+    }
+  },
+  "mentee_config": {
+    "learning_rate": 0.05,
+    "decay_factor": 0.95,
+    "max_history_size": 100,
+    "confidence_threshold": 0.7,
+    "adaptive_strategy": true,
+    "opponent_learning": true,
+    "self_learning": true,
+    "market_conditions_influence": 0.2
+  },
+  "a2a_config": {
+    "message_format": "v0.3",
+    "timeout_seconds": 30,
+    "retry_attempts": 3,
+    "retry_delay_ms": 1000
+  },
+  "updated_at": "2024-02-10T00:00:00Z"
+}

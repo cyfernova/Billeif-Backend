@@ -76,6 +76,571 @@ const docTemplate = `{
                 }
             }
         },
+        "/agents/config": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns all agent configurations for the authenticated user.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent Configuration"
+                ],
+                "summary": "Get all agent configurations",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Create or update a bargaining agent configuration for buyer or seller agents.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent Configuration"
+                ],
+                "summary": "Create agent configuration",
+                "parameters": [
+                    {
+                        "description": "Agent configuration",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CreateAgentConfigRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/models.AgentConfig"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/agents/config/default": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates a default bargaining configuration for a buyer or seller agent.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent Configuration"
+                ],
+                "summary": "Create default configuration",
+                "parameters": [
+                    {
+                        "description": "Default config request",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CreateDefaultConfigRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/models.AgentConfig"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/agents/config/{agent_id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the configuration for a specific agent.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent Configuration"
+                ],
+                "summary": "Get agent configuration",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Agent ID",
+                        "name": "agent_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.AgentConfig"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Update the bargaining configuration for a specific agent.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent Configuration"
+                ],
+                "summary": "Update agent configuration",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Agent ID",
+                        "name": "agent_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Agent configuration updates",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.UpdateAgentConfigRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.AgentConfig"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Deletes the configuration for a specific agent.",
+                "tags": [
+                    "Agent Configuration"
+                ],
+                "summary": "Delete agent configuration",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Agent ID",
+                        "name": "agent_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/agents/mentee/export": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Exports all mentee learning data as a JSON file.",
+                "tags": [
+                    "Agent Configuration"
+                ],
+                "summary": "Export mentee learning data",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/agents/mentee/import": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Imports mentee learning data from a JSON file.",
+                "tags": [
+                    "Agent Configuration"
+                ],
+                "summary": "Import mentee learning data",
+                "parameters": [
+                    {
+                        "type": "file",
+                        "description": "JSON file with mentee learning data",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/agents/mentee/learning/{agent_id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the mentee's learning data for a specific agent.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent Configuration"
+                ],
+                "summary": "Get mentee learning data",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Agent ID",
+                        "name": "agent_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/services.AgentLearningData"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Resets the mentee's learning data for a specific agent.",
+                "tags": [
+                    "Agent Configuration"
+                ],
+                "summary": "Reset mentee learning data",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Agent ID",
+                        "name": "agent_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/agents/mentee/recommendation/{negotiation_id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the mentee's recommendation for the next bargaining action.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent Configuration"
+                ],
+                "summary": "Get mentee recommendation",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Negotiation ID",
+                        "name": "negotiation_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "enum": [
+                            "buyer",
+                            "seller"
+                        ],
+                        "type": "string",
+                        "description": "Agent type (buyer or seller)",
+                        "name": "agent_type",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/services.BargainingDecision"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/auth/change-password": {
             "post": {
                 "security": [
@@ -3939,6 +4504,40 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.CreateAgentConfigRequest": {
+            "type": "object",
+            "required": [
+                "agent_id",
+                "config"
+            ],
+            "properties": {
+                "agent_id": {
+                    "type": "string"
+                },
+                "config": {
+                    "$ref": "#/definitions/models.AgentConfig"
+                }
+            }
+        },
+        "handlers.CreateDefaultConfigRequest": {
+            "type": "object",
+            "required": [
+                "agent_id",
+                "type"
+            ],
+            "properties": {
+                "agent_id": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string",
+                    "enum": [
+                        "buyer",
+                        "seller"
+                    ]
+                }
+            }
+        },
         "handlers.CreateNegotiationRequest": {
             "type": "object",
             "required": [
@@ -3963,6 +4562,20 @@ const docTemplate = `{
                 },
                 "seller_agent_id": {
                     "type": "string"
+                }
+            }
+        },
+        "handlers.UpdateAgentConfigRequest": {
+            "type": "object",
+            "properties": {
+                "buyer_config": {
+                    "$ref": "#/definitions/services.UpdateBuyerConfigRequest"
+                },
+                "seller_config": {
+                    "$ref": "#/definitions/services.UpdateSellerConfigRequest"
+                },
+                "volatility": {
+                    "type": "number"
                 }
             }
         },
@@ -4074,6 +4687,23 @@ const docTemplate = `{
                 }
             }
         },
+        "models.AgentConfig": {
+            "type": "object",
+            "properties": {
+                "buyer_config": {
+                    "$ref": "#/definitions/models.BuyerConfig"
+                },
+                "seller_config": {
+                    "$ref": "#/definitions/models.SellerConfig"
+                },
+                "type": {
+                    "$ref": "#/definitions/models.AgentType"
+                },
+                "volatility": {
+                    "type": "number"
+                }
+            }
+        },
         "models.AgentTransaction": {
             "type": "object",
             "required": [
@@ -4114,6 +4744,17 @@ const docTemplate = `{
                     "type": "string"
                 }
             }
+        },
+        "models.AgentType": {
+            "type": "string",
+            "enum": [
+                "buyer",
+                "seller"
+            ],
+            "x-enum-varnames": [
+                "AgentTypeBuyer",
+                "AgentTypeSeller"
+            ]
         },
         "models.BargainingNegotiation": {
             "type": "object",
@@ -4269,6 +4910,56 @@ const docTemplate = `{
                 }
             }
         },
+        "models.BuyerConfig": {
+            "type": "object",
+            "properties": {
+                "acceptance_threshold": {
+                    "type": "number"
+                },
+                "blacklisted_vendors": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "budget_limit": {
+                    "type": "number"
+                },
+                "delivery_preferences": {
+                    "$ref": "#/definitions/models.DeliveryPref"
+                },
+                "max_discount_percent": {
+                    "type": "number"
+                },
+                "max_rounds": {
+                    "type": "integer"
+                },
+                "min_discount_percent": {
+                    "type": "number"
+                },
+                "patience_level": {
+                    "type": "number"
+                },
+                "payment_terms": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "preferred_products": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "risk_tolerance": {
+                    "type": "number"
+                },
+                "target_discount": {
+                    "type": "number"
+                }
+            }
+        },
         "models.Customer": {
             "type": "object",
             "required": [
@@ -4330,6 +5021,37 @@ const docTemplate = `{
                 },
                 "updated_at": {
                     "type": "string"
+                }
+            }
+        },
+        "models.DeliveryPref": {
+            "type": "object",
+            "properties": {
+                "insurance_required": {
+                    "type": "boolean"
+                },
+                "max_delivery_days": {
+                    "type": "integer"
+                },
+                "preferred_carriers": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "tracking_required": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "models.DiscountTier": {
+            "type": "object",
+            "properties": {
+                "discount_percent": {
+                    "type": "number"
+                },
+                "min_quantity": {
+                    "type": "integer"
                 }
             }
         },
@@ -4651,6 +5373,70 @@ const docTemplate = `{
                 }
             }
         },
+        "models.SeasonalAdj": {
+            "type": "object",
+            "properties": {
+                "effective_from": {
+                    "type": "string"
+                },
+                "effective_to": {
+                    "type": "string"
+                },
+                "multiplier": {
+                    "type": "number"
+                },
+                "season": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.SellerConfig": {
+            "type": "object",
+            "properties": {
+                "acceptance_threshold": {
+                    "type": "number"
+                },
+                "customer_loyalty_factor": {
+                    "type": "number"
+                },
+                "inventory_pressure": {
+                    "type": "number"
+                },
+                "max_markup_percent": {
+                    "type": "number"
+                },
+                "max_rounds": {
+                    "type": "integer"
+                },
+                "min_acceptable_price": {
+                    "type": "number"
+                },
+                "payment_terms": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "preferred_customers": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "sales_volume_goal": {
+                    "type": "number"
+                },
+                "seasonal_adjustments": {
+                    "$ref": "#/definitions/models.SeasonalAdj"
+                },
+                "volume_discount_tiers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.DiscountTier"
+                    }
+                }
+            }
+        },
         "models.Subscription": {
             "type": "object",
             "required": [
@@ -4913,6 +5699,81 @@ const docTemplate = `{
                 },
                 "url": {
                     "type": "string"
+                }
+            }
+        },
+        "services.AgentLearningData": {
+            "type": "object",
+            "properties": {
+                "agentID": {
+                    "type": "string"
+                },
+                "agentType": {
+                    "type": "string"
+                },
+                "averageDiscount": {
+                    "type": "number",
+                    "format": "float64"
+                },
+                "averageMarkup": {
+                    "type": "number",
+                    "format": "float64"
+                },
+                "confidence": {
+                    "type": "number",
+                    "format": "float64"
+                },
+                "lastUpdated": {
+                    "type": "string"
+                },
+                "learnedParameters": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "number",
+                        "format": "float64"
+                    }
+                },
+                "outcomes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/services.NegotiationOutcome"
+                    }
+                },
+                "preferredStrategies": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "successRate": {
+                    "type": "number",
+                    "format": "float64"
+                },
+                "volatility": {
+                    "type": "number",
+                    "format": "float64"
+                }
+            }
+        },
+        "services.BargainingDecision": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "confidence": {
+                    "type": "number",
+                    "format": "float64"
+                },
+                "proposedAmount": {
+                    "type": "number",
+                    "format": "float64"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "suggestedRange": {
+                    "$ref": "#/definitions/services.PriceRange"
                 }
             }
         },
@@ -5307,6 +6168,57 @@ const docTemplate = `{
                 }
             }
         },
+        "services.NegotiationOutcome": {
+            "type": "object",
+            "properties": {
+                "finalAmount": {
+                    "type": "number",
+                    "format": "float64"
+                },
+                "initialAmount": {
+                    "type": "number",
+                    "format": "float64"
+                },
+                "negotiationID": {
+                    "type": "string"
+                },
+                "opponentID": {
+                    "type": "string"
+                },
+                "opponentType": {
+                    "type": "string"
+                },
+                "rounds": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "strategy": {
+                    "type": "string"
+                },
+                "timestamp": {
+                    "type": "string"
+                },
+                "volatilityFactor": {
+                    "type": "number",
+                    "format": "float64"
+                }
+            }
+        },
+        "services.PriceRange": {
+            "type": "object",
+            "properties": {
+                "max": {
+                    "type": "number",
+                    "format": "float64"
+                },
+                "min": {
+                    "type": "number",
+                    "format": "float64"
+                }
+            }
+        },
         "services.RefreshInput": {
             "type": "object",
             "required": [
@@ -5422,6 +6334,76 @@ const docTemplate = `{
                 }
             }
         },
+        "services.UpdateBuyerConfigRequest": {
+            "type": "object",
+            "required": [
+                "acceptance_threshold",
+                "max_discount_percent",
+                "max_rounds",
+                "min_discount_percent",
+                "patience_level",
+                "risk_tolerance",
+                "target_discount"
+            ],
+            "properties": {
+                "acceptance_threshold": {
+                    "type": "number",
+                    "maximum": 1,
+                    "minimum": 0
+                },
+                "blacklisted_vendors": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "budget_limit": {
+                    "type": "number"
+                },
+                "max_discount_percent": {
+                    "type": "number",
+                    "maximum": 100,
+                    "minimum": 0
+                },
+                "max_rounds": {
+                    "type": "integer",
+                    "maximum": 20,
+                    "minimum": 1
+                },
+                "min_discount_percent": {
+                    "type": "number",
+                    "maximum": 100,
+                    "minimum": 0
+                },
+                "patience_level": {
+                    "type": "number",
+                    "maximum": 1,
+                    "minimum": 0
+                },
+                "payment_terms": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "preferred_products": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "risk_tolerance": {
+                    "type": "number",
+                    "maximum": 1,
+                    "minimum": 0
+                },
+                "target_discount": {
+                    "type": "number",
+                    "maximum": 100,
+                    "minimum": 0
+                }
+            }
+        },
         "services.UpdateCustomerInput": {
             "type": "object",
             "properties": {
@@ -5526,6 +6508,63 @@ const docTemplate = `{
                 },
                 "profile_picture_url": {
                     "type": "string"
+                }
+            }
+        },
+        "services.UpdateSellerConfigRequest": {
+            "type": "object",
+            "required": [
+                "acceptance_threshold",
+                "customer_loyalty_factor",
+                "inventory_pressure",
+                "max_markup_percent",
+                "max_rounds",
+                "min_acceptable_price"
+            ],
+            "properties": {
+                "acceptance_threshold": {
+                    "type": "number",
+                    "maximum": 1,
+                    "minimum": 0
+                },
+                "customer_loyalty_factor": {
+                    "type": "number",
+                    "maximum": 2,
+                    "minimum": 0
+                },
+                "inventory_pressure": {
+                    "type": "number",
+                    "maximum": 1,
+                    "minimum": 0
+                },
+                "max_markup_percent": {
+                    "type": "number",
+                    "maximum": 200,
+                    "minimum": 0
+                },
+                "max_rounds": {
+                    "type": "integer",
+                    "maximum": 20,
+                    "minimum": 1
+                },
+                "min_acceptable_price": {
+                    "type": "number",
+                    "minimum": 0
+                },
+                "payment_terms": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "preferred_customers": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "sales_volume_goal": {
+                    "type": "number"
                 }
             }
         },
