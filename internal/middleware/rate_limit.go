@@ -81,20 +81,18 @@ func (rl *RateLimiter) cleanup() {
 	}
 }
 
-// AgentCreationRateLimit returns middleware that limits agent creation per user
-// 10 agents per hour per user
+// AgentCreationRateLimit returns middleware that limits agent creation per IP address
+// 10 agents per hour per IP (works without auth)
 func AgentCreationRateLimit() gin.HandlerFunc {
 	limiter := NewRateLimiter(time.Hour, 10)
 
 	return func(c *gin.Context) {
-		userID := c.GetString("user_id")
-		if userID == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
-			c.Abort()
-			return
+		clientIP := c.ClientIP()
+		if clientIP == "" {
+			clientIP = "unknown"
 		}
 
-		if !limiter.isAllowed(userID) {
+		if !limiter.isAllowed(clientIP) {
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error":   "agent creation rate limit exceeded",
 				"message": fmt.Sprintf("maximum 10 agents per hour. Please try again in an hour"),
