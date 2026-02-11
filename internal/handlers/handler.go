@@ -66,7 +66,7 @@ func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log 
 		Admin:          NewAdminHandler(svcs.Email, log),
 		Agent:          NewAgentHandler(svcs.Agent, log),
 		ShoppingAgent:  NewShoppingAgentHandler(svcs.ShoppingAgent, log),
-		Credential:     NewCredentialHandler(svcs.CredentialProvider, repos.AP2, svcs.Razorpay, cfg, log),
+		Credential:     NewCredentialHandler(svcs.CredentialProvider, repos.AP2, cfg, log),
 		Marketplace:    NewMarketplaceHandler(svcs.Marketplace, repos.AP2, log),
 		AgentDiscovery: NewAgentDiscoveryHandler(svcs.AgentDiscovery, log),
 		Intent:         NewIntentHandler(svcs.IntentProcessing, log),

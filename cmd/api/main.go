@@ -521,12 +521,12 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 		a2a := protected.Group("/a2a/v0.3")
 		{
 			// Task endpoints
-			a2a.POST("/tasks:send", h.A2ATask.SendTask)
-			a2a.POST("/tasks:stream", h.A2ATask.StreamTask)
+			a2a.POST("/tasks/send", h.A2ATask.SendTask)
+			a2a.POST("/tasks/stream", h.A2ATask.StreamTask)
 			a2a.GET("/tasks", h.A2ATask.ListTasks)
 			a2a.GET("/tasks/:taskId", h.A2ATask.GetTask)
-			a2a.POST("/tasks/:taskId:cancel", h.A2ATask.CancelTask)
-			a2a.GET("/tasks/:taskId:subscribe", h.A2ATask.SubscribeTask)
+			a2a.POST("/tasks/:taskId/cancel", h.A2ATask.CancelTask)
+			a2a.GET("/tasks/:taskId/subscribe", h.A2ATask.SubscribeTask)
 
 			// Push notification endpoints
 			push := a2a.Group("/push")
@@ -574,8 +574,6 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			bargaining.GET("/negotiations/:id/rounds", h.Bargaining.GetNegotiationRounds)
 			bargaining.GET("/negotiations/:id/suggest", h.Bargaining.GetSuggestedCounterOffer)
 		}
-
-		api.POST("/webhooks/razorpay", h.Credential.HandleRazorpayWebhook)
 
 		admin := api.Group("/admin")
 		admin.Use(middleware.Auth(cfg.Cognito, log))

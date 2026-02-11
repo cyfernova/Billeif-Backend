@@ -7,7 +7,6 @@ import (
 	"invoice-backend/pkg/ap2"
 	"invoice-backend/pkg/awsclients"
 	"invoice-backend/pkg/logger"
-	"invoice-backend/pkg/razorpay"
 
 	"gorm.io/gorm"
 )
@@ -35,8 +34,7 @@ type Container struct {
 	Marketplace        *MarketplaceService
 	ProductMatching    *ProductMatchingService
 	IntentProcessing   *IntentProcessingService
-	Razorpay           *razorpay.RazorpayService
-	AgentDiscovery     *AgentDiscoveryService
+	AgentDiscovery *AgentDiscoveryService
 	LLM                *LLMService
 	A2ATask            *A2ATaskService
 	A2APush            *A2APushService
@@ -72,12 +70,6 @@ func NewContainer(
 	ap2MandateSvc := ap2.NewMandateService(ap2MandateSigner, ap2MandateVerifier)
 	a2aSigner, _ := ap2.NewSignatureService()
 	a2aClient := a2a.NewA2AClient(a2aSigner, log)
-	razorpaySvc := razorpay.NewRazorpayService(&razorpay.Config{
-		Key:           cfg.Razorpay.Key,
-		Secret:        cfg.Razorpay.Secret,
-		WebhookSecret: cfg.Razorpay.WebhookSecret,
-	}, log)
-
 	marketplaceSvc := NewMarketplaceService(ap2Repo, log)
 	productMatchingSvc := NewProductMatchingService(marketplaceSvc, log)
 	intentProcessingSvc, _ := NewIntentProcessingService(productMatchingSvc, marketplaceSvc, log)
@@ -115,7 +107,6 @@ func NewContainer(
 		Marketplace:        marketplaceSvc,
 		ProductMatching:    productMatchingSvc,
 		IntentProcessing:   intentProcessingSvc,
-		Razorpay:           razorpaySvc,
 		AgentDiscovery:     NewAgentDiscoveryService(ap2Repo, log),
 		LLM:                llmSvc,
 		A2ATask:            a2aTaskSvc,

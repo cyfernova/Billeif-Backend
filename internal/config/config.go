@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/spf13/viper"
@@ -19,9 +18,8 @@ type Config struct {
 	S3             S3Config       `mapstructure:"S3"`
 	SQS            SQSConfig      `mapstructure:"SQS"`
 	Sentry         SentryConfig   `mapstructure:"SENTRY"`
-	AllowedOrigins []string       `mapstructure:"ALLOWED_ORIGINS"`
-	Razorpay       RazorpayConfig `mapstructure:"RAZORPAY"`
-	LLM            LLMConfig      `mapstructure:"LLM"`
+	AllowedOrigins []string  `mapstructure:"ALLOWED_ORIGINS"`
+	LLM            LLMConfig `mapstructure:"LLM"`
 }
 
 type LLMConfig struct {
@@ -29,12 +27,6 @@ type LLMConfig struct {
 	APIURL  string `mapstructure:"API_URL"`
 	Model   string `mapstructure:"MODEL"`
 	Timeout int    `mapstructure:"TIMEOUT"`
-}
-
-type RazorpayConfig struct {
-	Key           string `mapstructure:"RAZORPAY_KEY"`
-	Secret        string `mapstructure:"RAZORPAY_SECRET"`
-	WebhookSecret string `mapstructure:"RAZORPAY_WEBHOOK_SECRET"`
 }
 
 type SentryConfig struct {
@@ -106,8 +98,6 @@ func Load() (*Config, error) {
 	viper.AddConfigPath("..")
 	viper.AutomaticEnv()
 
-	// Use replacer to convert underscores to dots for nested config
-	viper.SetEnvKeyReplacer(strings.NewReplacer("_", "."))
 
 	// Explicitly bind environment variables for nested config
 	viper.BindEnv("ENVIRONMENT")
@@ -147,9 +137,6 @@ func Load() (*Config, error) {
 	viper.BindEnv("SENTRY.ENABLE_TRACING", "SENTRY_ENABLE_TRACING")
 	viper.BindEnv("SENTRY.DEBUG", "SENTRY_DEBUG")
 	viper.BindEnv("ALLOWED_ORIGINS", "ALLOWED_ORIGINS")
-	viper.BindEnv("RAZORPAY.KEY", "RAZORPAY_KEY")
-	viper.BindEnv("RAZORPAY.SECRET", "RAZORPAY_SECRET")
-	viper.BindEnv("RAZORPAY.WEBHOOK_SECRET", "RAZORPAY_WEBHOOK_SECRET")
 	viper.BindEnv("LLM.API_KEY", "LLM_API_KEY")
 	viper.BindEnv("LLM.API_URL", "LLM_API_URL")
 	viper.BindEnv("LLM.MODEL", "LLM_MODEL")
