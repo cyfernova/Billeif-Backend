@@ -145,3 +145,79 @@ Before finishing a task, confirm:
 
 - Treat this as a living playbook: update it when build/test/migration workflows change.
 - If a repeated agent mistake happens twice, add a short preventive rule here.
+
+## 11) AI Coding Style Guardrails (DRY + KISS)
+
+Apply these defaults on every task unless the user explicitly asks otherwise:
+
+### DRY (Don't Repeat Yourself)
+
+1. Keep one authoritative implementation per business rule, query rule, and validation rule.
+2. If logic is repeated in 2+ places, extract it to the correct layer (`services` for business rules, `repositories` for persistence rules, `middleware` for cross-cutting HTTP rules).
+3. Reuse shared constants/types for statuses, roles, and protocol values instead of string literals.
+4. Do not move domain logic into `internal/utils`; keep utilities generic and side-effect free.
+
+### KISS (Keep It Simple, Stupid)
+
+1. Prefer the smallest change that satisfies acceptance criteria and tests.
+2. Prefer explicit code over clever abstractions; optimize for readability during on-call/debugging.
+3. Use YAGNI: do not add extension points, frameworks, or generic builders before a real second use case exists.
+4. Keep functions focused on one responsibility and use early returns to reduce nesting.
+
+## 12) Required Coding Paradigms
+
+1. Layered architecture: `handlers` parse/validate HTTP, `services` own use cases and business invariants, `repositories` handle data access.
+2. Dependency inversion at boundaries: depend on repository interfaces in services; keep infrastructure-specific code in adapters.
+3. Composition over inheritance: compose behavior with structs/interfaces; avoid deep type hierarchies.
+4. Context-first service/repository APIs: pass `context.Context` through all request-scoped operations.
+5. Error-first control flow: wrap errors with `%w`, return typed/sentinel errors only when callers need branching behavior.
+6. Testability by design: write code so business logic can be unit tested without network/database dependencies.
+
+## 13) Production File Structure (Default for New Features)
+
+Follow this shape for new domain work:
+
+```text
+cmd/
+  api/
+    main.go
+internal/
+  handlers/
+    <domain>_handler.go
+  services/
+    <domain>_service.go
+    container.go
+  repositories/
+    interfaces/
+      <domain>_repository.go
+    postgres/
+      <domain>_repository.go
+  models/
+    <domain>.go
+  middleware/
+  config/
+  workers/
+pkg/                    # reusable, non-domain-specific libraries only
+tests/
+  integration/
+migrations/
+docs/                   # generated API docs, swagger outputs
+```
+
+Structure rules:
+
+1. Keep domain workflows vertical: handler -> service -> repository.
+2. Keep cross-domain utilities minimal and pure; avoid creating a catch-all helpers package.
+3. Prefer one file per primary responsibility (`invoice_handler.go`, `invoice_service.go`, `invoice_repository.go`) before splitting further.
+4. Put transport DTOs near handlers and persistence models near repositories/models; do not leak DB-only fields to API contracts.
+
+## 14) Web References (for the principles above)
+
+- DRY origin and definition from *The Pragmatic Programmer*: https://media.pragprog.com/articles/may_04_improve_code1.pdf
+- YAGNI: https://martinfowler.com/bliki/Yagni.html
+- Simple design rules (practical KISS): https://martinfowler.com/bliki/BeckDesignRules.html
+- Dependency Injection pattern: https://martinfowler.com/articles/injection.html
+- Go module/project organization: https://go.dev/doc/modules/layout
+- Effective Go: https://go.dev/doc/effective_go
+- Go Code Review Comments: https://go.dev/wiki/CodeReviewComments
+- The Twelve-Factor App (production operational defaults): https://12factor.net/
