@@ -385,9 +385,14 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 				subscriptions.PUT("", h.Subscription.Update)
 			}
 
+			// Agent creation is public (no auth required)
+			publicAgents := api.Group("/agents")
+			{
+				publicAgents.POST("", middleware.AgentCreationRateLimit(), h.Agent.CreateAgent)
+			}
+
 			agents := protected.Group("/agents")
 			{
-				agents.POST("", middleware.AgentCreationRateLimit(), h.Agent.CreateAgent)
 				agents.GET("", h.Agent.ListAgents)
 				agents.GET("/:id", h.Agent.GetAgent)
 				agents.PUT("/:id", h.Agent.UpdateAgent)

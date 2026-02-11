@@ -9,7 +9,7 @@ import (
 )
 
 // BusinessAuth validates that the authenticated user has access to the requested business.
-// It checks the business_id from query params, path params, or request body.
+// It checks the business_id from query params or path params.
 func BusinessAuth(authSvc *services.BusinessAuthService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID := GetUserID(c)
@@ -36,7 +36,8 @@ func BusinessAuth(authSvc *services.BusinessAuthService) gin.HandlerFunc {
 	}
 }
 
-// extractBusinessID extracts business_id from various request locations
+// extractBusinessID extracts business_id from query or path params.
+// Note: We do not read the request body here to avoid EOF issues with API Gateway/proxies.
 func extractBusinessID(c *gin.Context) string {
 	// Check query param first
 	if id := c.Query("business_id"); id != "" {
@@ -46,17 +47,6 @@ func extractBusinessID(c *gin.Context) string {
 	// Check path param
 	if id := c.Param("business_id"); id != "" {
 		return id
-	}
-
-	// Check if this is a JSON request with business_id in body
-	// We peek at the body without consuming it
-	if c.ContentType() == "application/json" {
-		var body struct {
-			BusinessID string `json:"business_id"`
-		}
-		if err := c.ShouldBindBodyWithJSON(&body); err == nil && body.BusinessID != "" {
-			return body.BusinessID
-		}
 	}
 
 	return ""

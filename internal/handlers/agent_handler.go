@@ -97,6 +97,10 @@ func (h *AgentHandler) ListAgents(c *gin.Context) {
 	if businessID != "" {
 		agents, total, err = h.svc.GetAgentsByBusiness(c.Request.Context(), businessID, page, limit)
 	} else {
+		if userID == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+			return
+		}
 		agents, total, err = h.svc.GetAgentsByUser(c.Request.Context(), userID, page, limit)
 	}
 
@@ -217,6 +221,11 @@ func (h *AgentHandler) GetAgentCapabilities(c *gin.Context) {
 
 func (h *AgentHandler) ValidateAgentPermissions(c *gin.Context) {
 	userID := c.GetString("user_id")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		return
+	}
+
 	agentID := c.Param("id")
 
 	hasPermission, err := h.svc.ValidateAgentPermission(userID, agentID)
@@ -311,6 +320,11 @@ func (h *AgentHandler) GetAgentByType(c *gin.Context) {
 	page, limit := utils.ParsePagination(c)
 
 	userID := c.GetString("user_id")
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		return
+	}
+
 	var agents interface{}
 	var total int64
 	var err error

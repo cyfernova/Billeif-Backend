@@ -1,0 +1,1195 @@
+# Negotiation Test Guide - Buyer and Seller Agents
+
+This file contains test cases and HTTP request examples for negotiating between buyer and seller agents.
+
+## Prerequisites
+
+Before running negotiations, you need:
+1. **Authenticated user with valid JWT token** - requires registration + email verification + login
+2. Business profile created
+3. Two trading agents created:
+   - Buyer agent (agent_type: "trading")
+   - Seller agent (agent_type: "trading")
+
+**Authentication Flow Summary**:
+1. Register user → receives verification code via email
+2. Verify email using code
+3. Login with email/password → receives JWT access token
+4. Use JWT token in Authorization header for subsequent requests
+
+---
+
+## Test Case 1: Complete Negotiation Flow
+
+### Setup Requests
+
+#### 1. Register User
+```bash
+POST /api/v1/auth/register
+Content-Type: application/json
+
+{
+  "email": "test@example.com",
+  "password": "TestPass123!",
+  "name": "Test User"
+}
+
+# Response: 201 Created
+{
+  "user_id": "user-uuid-here",
+  "message": "Please verify your email address"
+}
+```
+
+**Important**: After registration, you will receive a verification code via email. You MUST verify your email before you can login.
+
+#### 2. Verify Email (Required Before Login)
+```bash
+POST /api/v1/auth/verify-email
+Content-Type: application/json
+
+{
+  "email": "test@example.com",
+  "code": "123456"
+}
+
+# Response: 200 OK
+{
+  "message": "email verified successfully"
+}
+```
+
+**Notes**:
+- The verification code is sent to the email address provided during registration
+- Check your email inbox (and spam folder) for the code
+- Code is typically 6 digits
+- If you didn't receive the code, use the resend verification endpoint (see below)
+
+#### 2b. Resend Verification Code (If Needed)
+```bash
+POST /api/v1/auth/resend-verification
+Content-Type: application/json
+
+{
+  "email": "test@example.com"
+}
+
+# Response: 200 OK
+{
+  "message": "verification code resent"
+}
+```
+
+#### 3. Login (Get JWT Token)
+```bash
+POST /api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "test@example.com",
+  "password": "TestPass123!"
+}
+
+# Response: 200 OK
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refresh_token": "...",
+  "user": { ... }
+}
+```
+
+#### 4. Create Business Profile
+```bash
+POST /api/v1/business-profiles
+Content-Type: application/json
+Authorization: Bearer <access_token>
+
+{
+  "company_name": "Test Business LLC",
+  "tax_id": "US-123456789",
+  "address": "123 Test Street, City, Country",
+  "currency": "USD",
+  "phone": "+1234567890"
+}
+
+# Response: 201 Created
+{
+  "id": "business-uuid-here",
+  "company_name": "Test Business LLC",
+  ...
+}
+```
+
+#### 5. Create Buyer Agent
+```bash
+POST /api/v1/agents
+Content-Type: application/json
+Authorization: Bearer <access_token>
+
+{
+  "name": "Buyer Agent 1",
+  "agent_type": "trading",
+  "config": {
+    "volatility": 0.3,
+    "strategy": "aggressive"
+  },
+  "business_id": "<business_id>"
+}
+
+# Response: 201 Created
+{
+  "id": "buyer-agent-uuid",
+  "name": "Buyer Agent 1",
+  "agent_type": "trading",
+  "config": "{\"volatility\":0.3,\"strategy\":\"aggressive\"}",
+  ...
+}
+```
+
+#### 6. Create Seller Agent
+```bash
+POST /api/v1/agents
+Content-Type: application/json
+Authorization: Bearer <access_token>
+
+{
+  "name": "Seller Agent 1",
+  "agent_type": "trading",
+  "config": {
+    "volatility": 0.7,
+    "strategy": "conservative"
+  },
+  "business_id": "<business_id>"
+}
+
+# Response: 201 Created
+{
+  "id": "seller-agent-uuid",
+  "name": "Seller Agent 1",
+  "agent_type": "trading",
+  "config": "{\"volatility\":0.7,\"strategy\":\"conservative\"}",
+  ...
+}
+```
+
+---
+
+### Negotiation Flow
+
+#### Step 1: Create Negotiation
+
+##### Request
+```bash
+POST /api/v1/bargaining/negotiations
+Content-Type: application/json
+Authorization: Bearer <access_token>
+
+{
+  "buyer_agent_id": "<buyer_agent_id>",
+  "seller_agent_id": "<seller_agent_id>",
+  "initial_amount": 1000.00,
+  "max_rounds": 5,
+  "marketplace_order_id": null
+}
+```
+
+##### Response (201 Created)
+```json
+{
+  "id": "neg-uuid-here",
+  "buyer_agent_id": "<buyer_agent_id>",
+  "seller_agent_id": "<seller_agent_id>",
+  "user_id": "<user_id>",
+  "initial_amount": 1000.00,
+  "current_amount": 1000.00,
+  "buyer_volatility": 0.3,
+  "seller_volatility": 0.7,
+  "status": "initiated",
+  "rounds": 0,
+  "max_rounds": 5,
+  "expires_at": "2025-02-12T10:30:00Z",
+  "created_at": "2025-02-11T10:30:00Z",
+  "updated_at": "2025-02-11T10:30:00Z"
+}
+```
+
+---
+
+#### Step 2: Buyer Makes First Counteroffer
+
+##### Request
+```bash
+POST /api/v1/bargaining/negotiations/<negotiation_id>/counteroffer
+Content-Type: application/json
+Authorization: Bearer <access_token>
+
+{
+  "agent_id": "<buyer_agent_id>",
+  "proposed_amount": 800.00,
+  "action": "counteroffer",
+  "reason": "Market price is lower, need discount to proceed"
+}
+```
+
+##### Response (200 OK)
+```json
+{
+  "round": {
+    "id": "round-uuid-1",
+    "negotiation_id": "<negotiation_id>",
+    "agent_id": "<buyer_agent_id>",
+    "round_number": 1,
+    "proposed_amount": 800.00,
+    "previous_amount": 1000.00,
+    "agent_type": "buyer",
+    "action": "counteroffer",
+    "reason": "Market price is lower, need discount to proceed",
+    "volatility_factor": 0.06,
+    "created_at": "2025-02-11T10:31:00Z"
+  },
+  "negotiation": {
+    "id": "<negotiation_id>",
+    "current_amount": 800.00,
+    "status": "in_progress",
+    "rounds": 1,
+    ...
+  }
+}
+```
+
+---
+
+#### Step 3: Seller Makes Counteroffer
+
+##### Request
+```bash
+POST /api/v1/bargaining/negotiations/<negotiation_id>/counteroffer
+Content-Type: application/json
+Authorization: Bearer <access_token>
+
+{
+  "agent_id": "<seller_agent_id>",
+  "proposed_amount": 950.00,
+  "action": "counteroffer",
+  "reason": "Quality premium, cannot go that low"
+}
+```
+
+##### Response (200 OK)
+```json
+{
+  "round": {
+    "id": "round-uuid-2",
+    "negotiation_id": "<negotiation_id>",
+    "agent_id": "<seller_agent_id>",
+    "round_number": 2,
+    "proposed_amount": 950.00,
+    "previous_amount": 800.00,
+    "agent_type": "seller",
+    "action": "counteroffer",
+    "reason": "Quality premium, cannot go that low",
+    "volatility_factor": 0.15,
+    "created_at": "2025-02-11T10:32:00Z"
+  },
+  "negotiation": {
+    "id": "<negotiation_id>",
+    "current_amount": 950.00,
+    "status": "in_progress",
+    "rounds": 2,
+    ...
+  }
+}
+```
+
+---
+
+#### Step 4: Get Suggested Counteroffer (Optional)
+
+For Buyer:
+```bash
+GET /api/v1/bargaining/negotiations/<negotiation_id>/suggest?agent_type=buyer
+Authorization: Bearer <access_token>
+
+# Response (200 OK)
+{
+  "suggested_amount": 870.00,
+  "agent_type": "buyer"
+}
+```
+
+For Seller:
+```bash
+GET /api/v1/bargaining/negotiations/<negotiation_id>/suggest?agent_type=seller
+Authorization: Bearer <access_token>
+
+# Response (200 OK)
+{
+  "suggested_amount": 920.00,
+  "agent_type": "seller"
+}
+```
+
+---
+
+#### Step 5: Buyer Makes Second Counteroffer
+
+##### Request
+```bash
+POST /api/v1/bargaining/negotiations/<negotiation_id>/counteroffer
+Content-Type: application/json
+Authorization: Bearer <access_token>
+
+{
+  "agent_id": "<buyer_agent_id>",
+  "proposed_amount": 870.00,
+  "action": "counteroffer",
+  "reason": "Meeting halfway"
+}
+```
+
+##### Response (200 OK)
+```json
+{
+  "round": {
+    "id": "round-uuid-3",
+    "negotiation_id": "<negotiation_id>",
+    "agent_id": "<buyer_agent_id>",
+    "round_number": 3,
+    "proposed_amount": 870.00,
+    "previous_amount": 950.00,
+    "agent_type": "buyer",
+    "action": "counteroffer",
+    "reason": "Meeting halfway",
+    "volatility_factor": 0.08,
+    "created_at": "2025-02-11T10:33:00Z"
+  },
+  "negotiation": {
+    "id": "<negotiation_id>",
+    "current_amount": 870.00,
+    "status": "in_progress",
+    "rounds": 3,
+    ...
+  }
+}
+```
+
+---
+
+#### Step 6: Seller Accepts the Deal
+
+##### Request
+```bash
+POST /api/v1/bargaining/negotiations/<negotiation_id>/counteroffer
+Content-Type: application/json
+Authorization: Bearer <access_token>
+
+{
+  "agent_id": "<seller_agent_id>",
+  "proposed_amount": 870.00,
+  "action": "accept",
+  "reason": null
+}
+```
+
+##### Response (200 OK)
+```json
+{
+  "round": {
+    "id": "round-uuid-4",
+    "negotiation_id": "<negotiation_id>",
+    "agent_id": "<seller_agent_id>",
+    "round_number": 4,
+    "proposed_amount": 870.00,
+    "previous_amount": 870.00,
+    "agent_type": "seller",
+    "action": "accept",
+    "reason": null,
+    "volatility_factor": 0.0,
+    "created_at": "2025-02-11T10:34:00Z"
+  },
+  "negotiation": {
+    "id": "<negotiation_id>",
+    "current_amount": 870.00,
+    "status": "accepted",
+    "rounds": 4,
+    "completed_at": "2025-02-11T10:34:00Z",
+    ...
+  }
+}
+```
+
+---
+
+## Test Case 2: Negotiation Rejection
+
+### Reject Counteroffer
+
+#### Request
+```bash
+POST /api/v1/bargaining/negotiations/<negotiation_id>/counteroffer
+Content-Type: application/json
+Authorization: Bearer <access_token>
+
+{
+  "agent_id": "<seller_agent_id>",
+  "proposed_amount": 800.00,
+  "action": "reject",
+  "reason": "Price is too low, not interested"
+}
+```
+
+#### Response (200 OK)
+```json
+{
+  "round": {
+    "id": "round-uuid-reject",
+    "negotiation_id": "<negotiation_id>",
+    "agent_id": "<seller_agent_id>",
+    "round_number": 2,
+    "proposed_amount": 800.00,
+    "previous_amount": 800.00,
+    "agent_type": "seller",
+    "action": "reject",
+    "reason": "Price is too low, not interested",
+    "volatility_factor": 0.0,
+    "created_at": "2025-02-11T10:35:00Z"
+  },
+  "negotiation": {
+    "id": "<negotiation_id>",
+    "current_amount": 800.00,
+    "status": "rejected",
+    "rounds": 2,
+    ...
+  }
+}
+```
+
+---
+
+## Test Case 3: Validation Errors
+
+### Invalid Amount - Buyer Proposes Higher Price
+```bash
+POST /api/v1/bargaining/negotiations/<negotiation_id>/counteroffer
+Content-Type: application/json
+Authorization: Bearer <access_token>
+
+{
+  "agent_id": "<buyer_agent_id>",
+  "proposed_amount": 1100.00,
+  "action": "counteroffer",
+  "reason": "Testing validation"
+}
+
+# Response: 400 Bad Request
+{
+  "error": "invalid amount proposed"
+}
+```
+
+### Invalid Agent - Agent Not Part of Negotiation
+```bash
+POST /api/v1/bargaining/negotiations/<negotiation_id>/counteroffer
+Content-Type: application/json
+Authorization: Bearer <access_token>
+
+{
+  "agent_id": "random-agent-uuid",
+  "proposed_amount": 900.00,
+  "action": "counteroffer",
+  "reason": "Trying to hack"
+}
+
+# Response: 400 Bad Request
+{
+  "error": "agent is not part of this negotiation"
+}
+```
+
+### Max Rounds Exceeded
+```bash
+# After 5 rounds, try to submit another offer
+POST /api/v1/bargaining/negotiations/<negotiation_id>/counteroffer
+Content-Type: application/json
+Authorization: Bearer <access_token>
+
+{
+  "agent_id": "<buyer_agent_id>",
+  "proposed_amount": 600.00,
+  "action": "counteroffer",
+  "reason": "One more try"
+}
+
+# Response: 400 Bad Request
+{
+  "error": "maximum negotiation rounds exceeded"
+}
+```
+
+### Negotiation Already Completed
+```bash
+# Try to negotiate after acceptance
+POST /api/v1/bargaining/negotiations/<negotiation_id>/counteroffer
+Content-Type: application/json
+Authorization: Bearer <access_token>
+
+{
+  "agent_id": "<buyer_agent_id>",
+  "proposed_amount": 800.00,
+  "action": "counteroffer",
+  "reason": "Can we renegotiate?"
+}
+
+# Response: 400 Bad Request
+{
+  "error": "negotiation already completed"
+}
+```
+
+### Expired Negotiation
+```bash
+# Try to negotiate after expiration (24 hours from creation)
+POST /api/v1/bargaining/negotiations/<negotiation_id>/counteroffer
+Content-Type: application/json
+Authorization: Bearer <access_token>
+
+{
+  "agent_id": "<buyer_agent_id>",
+  "proposed_amount": 800.00,
+  "action": "counteroffer",
+  "reason": "Late to the party"
+}
+
+# Response: 410 Gone
+{
+  "error": "negotiation has expired"
+}
+```
+
+---
+
+## Additional Endpoints
+
+### Get Negotiation Details
+```bash
+GET /api/v1/bargaining/negotiations/<negotiation_id>
+Authorization: Bearer <access_token>
+
+# Response: 200 OK
+{
+  "id": "<negotiation_id>",
+  "buyer_agent_id": "<buyer_agent_id>",
+  "seller_agent_id": "<seller_agent_id>",
+  "initial_amount": 1000.00,
+  "current_amount": 870.00,
+  "status": "accepted",
+  "rounds": 4,
+  "max_rounds": 5,
+  "expires_at": "2025-02-12T10:30:00Z",
+  ...
+}
+```
+
+### Get All Negotiations for User
+```bash
+GET /api/v1/bargaining/negotiations?page=1&limit=10
+Authorization: Bearer <access_token>
+
+# Response: 200 OK
+{
+  "data": [
+    {
+      "id": "neg-1",
+      "status": "accepted",
+      "current_amount": 870.00,
+      ...
+    },
+    {
+      "id": "neg-2",
+      "status": "rejected",
+      "current_amount": 800.00,
+      ...
+    }
+  ],
+  "total": 2,
+  "page": 1,
+  "limit": 10
+}
+```
+
+### Get Negotiation Rounds History
+```bash
+GET /api/v1/bargaining/negotiations/<negotiation_id>/rounds
+Authorization: Bearer <access_token>
+
+# Response: 200 OK
+{
+  "rounds": [
+    {
+      "id": "round-1",
+      "round_number": 1,
+      "agent_type": "buyer",
+      "action": "counteroffer",
+      "proposed_amount": 800.00,
+      "previous_amount": 1000.00,
+      "created_at": "2025-02-11T10:31:00Z"
+    },
+    {
+      "id": "round-2",
+      "round_number": 2,
+      "agent_type": "seller",
+      "action": "counteroffer",
+      "proposed_amount": 950.00,
+      "previous_amount": 800.00,
+      "created_at": "2025-02-11T10:32:00Z"
+    },
+    {
+      "id": "round-3",
+      "round_number": 3,
+      "agent_type": "buyer",
+      "action": "counteroffer",
+      "proposed_amount": 870.00,
+      "previous_amount": 950.00,
+      "created_at": "2025-02-11T10:33:00Z"
+    },
+    {
+      "id": "round-4",
+      "round_number": 4,
+      "agent_type": "seller",
+      "action": "accept",
+      "proposed_amount": 870.00,
+      "previous_amount": 870.00,
+      "created_at": "2025-02-11T10:34:00Z"
+    }
+  ]
+}
+```
+
+---
+
+## Test Data Summary
+
+### Agent Volatility Levels
+- Low volatility (0.0-0.3): Conservative pricing, small discounts
+- Medium volatility (0.3-0.7): Moderate negotiation range
+- High volatility (0.7-1.0): Aggressive pricing, large discounts possible
+
+### Validation Rules
+- Buyer proposals must be: > 30% of initial amount AND <= current amount
+- Seller proposals must be: <= 150% of initial amount AND >= current amount
+- Proposed amount must be >= 0
+- Max rounds: 10 (default: 5)
+- Negotiation expires: 24 hours after creation
+
+### Negotiation Status Flow
+1. `initiated` - Created, no rounds yet
+2. `in_progress` - At least one counteroffer submitted
+3. `accepted` - Both parties agreed on price
+4. `rejected` - One party rejected
+5. `expired` - Max rounds exceeded OR 24 hours passed
+
+---
+
+## Quick Test Script (curl)
+
+```bash
+# Set variables
+export TOKEN="your-jwt-token-here"
+export BUYER_ID="buyer-agent-uuid"
+export SELLER_ID="seller-agent-uuid"
+export API_URL="http://localhost:8080/api/v1"
+
+# Create negotiation
+curl -X POST $API_URL/bargaining/negotiations \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "buyer_agent_id": "'$BUYER_ID'",
+    "seller_agent_id": "'$SELLER_ID'",
+    "initial_amount": 1000.00,
+    "max_rounds": 5
+  }' | jq
+
+# Extract negotiation_id from response
+export NEG_ID="paste-negotiation-id-here"
+
+# Buyer counteroffer
+curl -X POST $API_URL/bargaining/negotiations/$NEG_ID/counteroffer \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "agent_id": "'$BUYER_ID'",
+    "proposed_amount": 800.00,
+    "action": "counteroffer",
+    "reason": "Need discount"
+  }' | jq
+
+# Seller counteroffer
+curl -X POST $API_URL/bargaining/negotiations/$NEG_ID/counteroffer \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "agent_id": "'$SELLER_ID'",
+    "proposed_amount": 950.00,
+    "action": "counteroffer",
+    "reason": "Quality premium"
+  }' | jq
+
+# Seller accepts
+curl -X POST $API_URL/bargaining/negotiations/$NEG_ID/counteroffer \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{
+    "agent_id": "'$SELLER_ID'",
+    "proposed_amount": 950.00,
+    "action": "accept"
+  }' | jq
+
+# Get all rounds
+curl -X GET $API_URL/bargaining/negotiations/$NEG_ID/rounds \
+  -H "Authorization: Bearer $TOKEN" | jq
+```
+
+---
+
+## Running Integration Tests
+
+To run negotiation integration tests:
+
+```bash
+# Set up test environment
+make docker-up
+
+# Run integration tests
+go test -v ./tests/integration/... -run TestBargainingNegotiationFlow -tags=integration
+
+# Cleanup
+make docker-down
+```
+
+---
+
+## Notes
+
+- All timestamps are in UTC
+- Amounts are in USD (configurable via currency setting)
+- Agents must have valid A2A endpoints for notifications to work
+- Negotiation outcome is recorded in mentee learning system for future recommendations
+- Volatility factors are calculated based on price changes and round progression
+
+---
+
+# Agent Creation JSON Format (UPDATED)
+
+## Important: Agent Creation Request Format
+
+The note.txt above contains OUTDATED trading agent examples. The correct format for creating agents is:
+
+### Valid Agent Types
+- `shopping` - Personal shopping agent
+- `merchant` - Business/merchant agent  
+- `buyer` - Buyer agent for bargaining
+- `seller` - Seller agent for bargaining
+- `credential_provider` - Credential management agent
+- `payment_processor` - Payment processing agent
+
+### Field Name: `type` (NOT `agent_type`)
+
+Use `type` field, not `agent_type`:
+```json
+{
+  "type": "seller",  // NOT "agent_type"
+  "name": "Seller Agent 1",
+  "description": "Description here",
+  "config": {
+    "volatility": 0.7,
+    "strategy": "conservative"
+  }
+}
+```
+
+### Do NOT Send ID When Creating
+Remove the `"id": "seller-agent-uuid"` field from create requests. ID is auto-generated by the database.
+
+### Config Should Be Object, Not String
+```json
+// CORRECT:
+"config": {
+  "volatility": 0.7,
+  "strategy": "conservative"
+}
+
+// WRONG:
+"config": "{\"volatility\":0.7,\"strategy\":\"conservative\"}"
+```
+
+## Correct Examples
+
+### Create Buyer Agent
+```json
+{
+  "type": "buyer",
+  "name": "Buyer Agent 1",
+  "description": "Buyer agent for negotiations",
+  "config": {
+    "volatility": 0.3,
+    "strategy": "aggressive"
+  }
+}
+```
+
+### Create Seller Agent
+```json
+{
+  "type": "seller",
+  "name": "Seller Agent 1",
+  "description": "Seller agent for negotiations",
+  "config": {
+    "volatility": 0.7,
+    "strategy": "conservative"
+  }
+}
+```
+
+### Create Shopping Agent
+```json
+{
+  "type": "shopping",
+  "name": "My Shopping Agent",
+  "description": "Personal shopping assistant"
+}
+```
+
+### Create Merchant Agent
+```json
+{
+  "type": "merchant",
+  "name": "My Merchant Agent",
+  "description": "Business merchant agent",
+  "product_ids": []
+}
+```
+
+## Common Errors and Fixes
+
+### Error: "type is required"
+**Cause**: Using `agent_type` instead of `type`
+**Fix**: Change `"agent_type": "seller"` to `"type": "seller"`
+
+### Error: "invalid agent type"
+**Cause**: Using unsupported type like "trading"
+**Fix**: Use valid types: buyer, seller, shopping, merchant, credential_provider, payment_processor
+
+### Error: EOF or connection hangs
+**Cause**: Sending `id` field in create request, or config as string
+**Fix**:
+- Remove `"id": "..."` from request
+- Make config an object: `"config": {...}` instead of `"config": "{...}"`
+
+---
+
+# EOF Error Fix Test Cases - /api/v1/agents
+
+This section contains test cases for verifying the EOF error fix on the /api/v1/agents endpoint.
+
+## Problem Description
+The /api/v1/agents endpoint was returning EOF errors when called without proper authentication or when the JWT token validation failed. This was caused by:
+1. Handlers attempting database queries with empty userID values
+2. BusinessAuth middleware reading the request body, causing issues with API Gateway
+
+## Test Environment
+- URL: https://2msvdt2oba.execute-api.us-east-1.amazonaws.com/api/v1/agents
+- Base URL: https://2msvdt2oba.execute-api.us-east-1.amazonaws.com
+
+## Prerequisites
+- Obtain a valid JWT token from AWS Cognito via /api/v1/auth/login
+- Test with both authenticated and unauthenticated requests
+
+## Test Cases
+
+### 1. GET /api/v1/agents - Without Authentication (EOF FIX)
+```bash
+curl -X GET https://2msvdt2oba.execute-api.us-east-1.amazonaws.com/api/v1/agents
+```
+Expected: 401 Unauthorized
+Response body:
+```json
+{
+  "error": "user not authenticated"
+}
+```
+**Before Fix**: Would return EOF or hang indefinitely
+**After Fix**: Properly returns 401 with error message
+
+### 2. GET /api/v1/agents - With Authentication
+```bash
+curl -X GET https://2msvdt2oba.execute-api.us-east-1.amazonaws.com/api/v1/agents \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+Expected: 200 OK
+Response body:
+```json
+{
+  "data": [],
+  "total": 0,
+  "page": 1,
+  "limit": 10
+}
+```
+
+### 3. GET /api/v1/agents/type/shopping - Without Authentication (EOF FIX)
+```bash
+curl -X GET https://2msvdt2oba.execute-api.us-east-1.amazonaws.com/api/v1/agents/type/shopping
+```
+Expected: 401 Unauthorized
+Response body:
+```json
+{
+  "error": "user not authenticated"
+}
+```
+**Before Fix**: Would return EOF
+**After Fix**: Properly returns 401
+
+### 4. GET /api/v1/agents/type/shopping - With Authentication
+```bash
+curl -X GET https://2msvdt2oba.execute-api.us-east-1.amazonaws.com/api/v1/agents/type/shopping \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+Expected: 200 OK
+
+### 5. POST /api/v1/agents - Without Authentication (EOF FIX)
+```bash
+curl -X POST https://2msvdt2oba.execute-api.us-east-1.amazonaws.com/api/v1/agents \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "shopping",
+    "name": "Test Agent",
+    "description": "Test Description"
+  }'
+```
+Expected: 401 Unauthorized
+Response body:
+```json
+{
+  "error": "user not authenticated"
+}
+```
+**Before Fix**: Would return EOF or partial response
+**After Fix**: Properly returns 401
+
+### 6. POST /api/v1/agents - With Authentication (Shopping Agent)
+```bash
+curl -X POST https://2msvdt2oba.execute-api.us-east-1.amazonaws.com/api/v1/agents \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "shopping",
+    "name": "Test Shopping Agent",
+    "description": "Test Shopping Agent Description"
+  }'
+```
+Expected: 201 Created
+Response body:
+```json
+{
+  "id": "uuid-here",
+  "name": "Test Shopping Agent",
+  "type": "shopping",
+  ...
+}
+```
+
+### 7. POST /api/v1/agents - With Authentication (Merchant Agent)
+```bash
+curl -X POST https://2msvdt2oba.execute-api.us-east-1.amazonaws.com/api/v1/agents \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "merchant",
+    "name": "Test Merchant Agent",
+    "description": "Test Merchant Agent Description",
+    "product_ids": []
+  }'
+```
+Expected: 201 Created
+
+### 8. POST /api/v1/agents/validate-permissions/:id - Without Authentication (EOF FIX)
+```bash
+curl -X POST https://2msvdt2oba.execute-api.us-east-1.amazonaws.com/api/v1/agents/validate-permissions/agent-id-123
+```
+Expected: 401 Unauthorized
+Response body:
+```json
+{
+  "error": "user not authenticated"
+}
+```
+
+### 9. POST /api/v1/agents/validate-permissions/:id - With Authentication
+```bash
+curl -X POST https://2msvdt2oba.execute-api.us-east-1.amazonaws.com/api/v1/agents/validate-permissions/agent-id-123 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+Expected: 200 OK
+Response body:
+```json
+{
+  "has_permission": false
+}
+```
+
+### 10. GET /api/v1/agents?business_id=biz-id-123 - Without Authentication (EOF FIX)
+```bash
+curl -X GET "https://2msvdt2oba.execute-api.us-east-1.amazonaws.com/api/v1/agents?business_id=biz-id-123"
+```
+Expected: 401 Unauthorized
+
+### 11. GET /api/v1/agents?business_id=biz-id-123 - With Authentication
+```bash
+curl -X GET "https://2msvdt2oba.execute-api.us-east-1.amazonaws.com/api/v1/agents?business_id=biz-id-123" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+Expected: 200 OK (or 403 if no access to business)
+
+## Changes Made to Fix EOF Error
+
+### 1. agent_handler.go - ListAgents()
+Added validation to check if userID is empty:
+```go
+if userID == "" {
+    c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+    return
+}
+```
+- Returns 401 if user is not authenticated
+- Prevents database query with empty userID
+
+### 2. agent_handler.go - GetAgentByType()
+Added validation to check if userID is empty:
+```go
+if userID == "" {
+    c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+    return
+}
+```
+- Returns 401 if user is not authenticated
+- Prevents database query with empty userID
+
+### 3. agent_handler.go - ValidateAgentPermissions()
+Added validation to check if userID is empty:
+```go
+if userID == "" {
+    c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+    return
+}
+```
+- Returns 401 if user is not authenticated
+- Prevents permission check with empty userID
+
+### 4. agent_handler.go - CreateAgent()
+Added validation to check if userID is empty:
+```go
+if userID == "" {
+    c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+    return
+}
+```
+- Returns 401 if user is not authenticated
+- Prevents agent creation without authentication
+
+### 5. business_auth.go - extractBusinessID()
+Removed request body reading logic:
+```go
+// extractBusinessID extracts business_id from query or path params.
+// Note: We do not read request body here to avoid EOF issues with API Gateway/proxies.
+func extractBusinessID(c *gin.Context) string {
+    // Check query param first
+    if id := c.Query("business_id"); id != "" {
+        return id
+    }
+    // Check path param
+    if id := c.Param("business_id"); id != "" {
+        return id
+    }
+    return ""
+}
+```
+- Now only reads business_id from query params and path params
+- Prevents EOF issues caused by consuming request body in middleware
+
+## Verification Steps
+
+1. Test all unauthenticated endpoints - should return 401, not EOF
+2. Test all authenticated endpoints with valid token - should work normally
+3. Test that request body is not consumed by middleware
+4. Verify no more EOF errors in CloudWatch logs
+
+## Quick Test Script
+
+```bash
+# Set variables
+export API_URL="https://2msvdt2oba.execute-api.us-east-1.amazonaws.com/api/v1"
+export TOKEN="your-valid-jwt-token-here"
+
+# Test 1: Get agents without auth (should fail with 401, not EOF)
+echo "Test 1: Get agents without auth"
+curl -i -X GET $API_URL/agents
+
+# Test 2: Get agents with auth (should succeed)
+echo -e "\n\nTest 2: Get agents with auth"
+curl -i -X GET $API_URL/agents \
+  -H "Authorization: Bearer $TOKEN"
+
+# Test 3: Get agents by type without auth (should fail with 401, not EOF)
+echo -e "\n\nTest 3: Get agents by type without auth"
+curl -i -X GET $API_URL/agents/type/shopping
+
+# Test 4: Get agents by type with auth (should succeed)
+echo -e "\n\nTest 4: Get agents by type with auth"
+curl -i -X GET $API_URL/agents/type/shopping \
+  -H "Authorization: Bearer $TOKEN"
+
+# Test 5: Create agent without auth (should fail with 401, not EOF)
+echo -e "\n\nTest 5: Create agent without auth"
+curl -i -X POST $API_URL/agents \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "shopping",
+    "name": "Test Agent",
+    "description": "Test Description"
+  }'
+
+# Test 6: Create agent with auth (should succeed)
+echo -e "\n\nTest 6: Create agent with auth"
+curl -i -X POST $API_URL/agents \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "shopping",
+    "name": "Test Shopping Agent",
+    "description": "Test Description"
+  }'
+
+# Test 7: Validate permissions without auth (should fail with 401, not EOF)
+echo -e "\n\nTest 7: Validate permissions without auth"
+curl -i -X POST $API_URL/agents/validate-permissions/test-id-123
+
+# Test 8: Validate permissions with auth (should succeed)
+echo -e "\n\nTest 8: Validate permissions with auth"
+curl -i -X POST $API_URL/agents/validate-permissions/test-id-123 \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## Expected Behavior Summary
+
+Before Fix:
+- Unauthenticated requests to /api/v1/agents returned EOF error
+- Connection would hang or close without response
+- AWS CloudWatch logs showed connection errors
+
+After Fix:
+- All unauthenticated requests return 401 Unauthorized with proper JSON error message
+- Authenticated requests work normally
+- No more EOF errors
+- Request body is not consumed by middleware
