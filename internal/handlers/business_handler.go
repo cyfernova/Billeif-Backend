@@ -42,7 +42,7 @@ func (h *BusinessHandler) Create(c *gin.Context) {
 	}
 
 	var input services.CreateBusinessInput
-	if err := c.ShouldBindJSON(&input); err != nil {
+	if err := c.ShouldBindBodyWithJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -130,7 +130,7 @@ func (h *BusinessHandler) List(c *gin.Context) {
 func (h *BusinessHandler) Update(c *gin.Context) {
 	id := c.Param("id")
 	var input services.UpdateBusinessInput
-	if err := c.ShouldBindJSON(&input); err != nil {
+	if err := c.ShouldBindBodyWithJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
