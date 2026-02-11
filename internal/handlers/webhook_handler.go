@@ -1,11 +1,10 @@
 package handlers
 
 import (
-	"net/http"
 	"invoice-backend/internal/models"
-
 	"invoice-backend/internal/services"
 	"invoice-backend/pkg/logger"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 )
@@ -38,6 +37,7 @@ func (h *WebhookHandler) Create(c *gin.Context) {
 		return
 	}
 
+	var webhook *models.Webhook
 	webhook, err := h.svc.Create(c.Request.Context(), input)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -59,6 +59,7 @@ func (h *WebhookHandler) Create(c *gin.Context) {
 // @Router /webhooks/{id} [get]
 func (h *WebhookHandler) Get(c *gin.Context) {
 	id := c.Param("id")
+	var webhook *models.Webhook
 	webhook, err := h.svc.Get(c.Request.Context(), id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "webhook not found"})
@@ -116,6 +117,7 @@ func (h *WebhookHandler) Update(c *gin.Context) {
 		return
 	}
 
+	var webhook *models.Webhook
 	webhook, err := h.svc.Update(c.Request.Context(), id, input)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

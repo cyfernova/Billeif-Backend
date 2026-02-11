@@ -1,8 +1,8 @@
 package handlers
 
 import (
-	"net/http"
 	"invoice-backend/internal/models"
+	"net/http"
 
 	"invoice-backend/internal/services"
 	"invoice-backend/internal/utils"
@@ -39,6 +39,7 @@ func (h *CustomerHandler) Create(c *gin.Context) {
 		return
 	}
 
+	var customer *models.Customer
 	customer, err := h.svc.Create(c.Request.Context(), input)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -60,6 +61,7 @@ func (h *CustomerHandler) Create(c *gin.Context) {
 // @Router /customers/{id} [get]
 func (h *CustomerHandler) Get(c *gin.Context) {
 	id := c.Param("id")
+	var customer *models.Customer
 	customer, err := h.svc.Get(c.Request.Context(), id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "customer not found"})
@@ -126,6 +128,7 @@ func (h *CustomerHandler) Update(c *gin.Context) {
 		return
 	}
 
+	var customer *models.Customer
 	customer, err := h.svc.Update(c.Request.Context(), id, input)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -208,6 +211,7 @@ func (h *CustomerHandler) Export(c *gin.Context) {
 		return
 	}
 
+	var customers []*models.Customer
 	customers, err := h.svc.Export(c.Request.Context(), businessID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

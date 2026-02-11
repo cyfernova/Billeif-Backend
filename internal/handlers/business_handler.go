@@ -47,6 +47,7 @@ func (h *BusinessHandler) Create(c *gin.Context) {
 		return
 	}
 
+	var business *models.BusinessProfile
 	business, err := h.svc.Create(c.Request.Context(), userID, input)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -68,6 +69,7 @@ func (h *BusinessHandler) Create(c *gin.Context) {
 // @Router /business-profiles/{id} [get]
 func (h *BusinessHandler) Get(c *gin.Context) {
 	id := c.Param("id")
+	var business *models.BusinessProfile
 	business, err := h.svc.Get(c.Request.Context(), id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "business not found"})
@@ -133,6 +135,7 @@ func (h *BusinessHandler) Update(c *gin.Context) {
 		return
 	}
 
+	var business *models.BusinessProfile
 	business, err := h.svc.Update(c.Request.Context(), id, input)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

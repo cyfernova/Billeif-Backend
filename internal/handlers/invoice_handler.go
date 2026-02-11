@@ -1,11 +1,11 @@
 package handlers
 
 import (
-	"net/http"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/services"
 	"invoice-backend/internal/utils"
 	"invoice-backend/pkg/logger"
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 )
@@ -38,6 +38,7 @@ func (h *InvoiceHandler) Create(c *gin.Context) {
 		return
 	}
 
+	var invoice *models.Invoice
 	invoice, err := h.svc.Create(c.Request.Context(), input)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -59,6 +60,7 @@ func (h *InvoiceHandler) Create(c *gin.Context) {
 // @Router /invoices/{id} [get]
 func (h *InvoiceHandler) Get(c *gin.Context) {
 	id := c.Param("id")
+	var invoice *models.Invoice
 	invoice, err := h.svc.Get(c.Request.Context(), id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "invoice not found"})
@@ -125,6 +127,7 @@ func (h *InvoiceHandler) Update(c *gin.Context) {
 		return
 	}
 
+	var invoice *models.Invoice
 	invoice, err := h.svc.Update(c.Request.Context(), id, input)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

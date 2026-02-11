@@ -1,8 +1,8 @@
 package handlers
 
 import (
-	"net/http"
 	"invoice-backend/internal/models"
+	"net/http"
 
 	"invoice-backend/internal/services"
 	"invoice-backend/internal/utils"
@@ -39,6 +39,7 @@ func (h *VendorHandler) Create(c *gin.Context) {
 		return
 	}
 
+	var vendor *models.Vendor
 	vendor, err := h.svc.Create(c.Request.Context(), input)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -60,6 +61,7 @@ func (h *VendorHandler) Create(c *gin.Context) {
 // @Router /vendors/{id} [get]
 func (h *VendorHandler) Get(c *gin.Context) {
 	id := c.Param("id")
+	var vendor *models.Vendor
 	vendor, err := h.svc.Get(c.Request.Context(), id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "vendor not found"})
@@ -126,6 +128,7 @@ func (h *VendorHandler) Update(c *gin.Context) {
 		return
 	}
 
+	var vendor *models.Vendor
 	vendor, err := h.svc.Update(c.Request.Context(), id, input)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

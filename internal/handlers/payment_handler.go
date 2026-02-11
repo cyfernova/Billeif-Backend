@@ -1,8 +1,8 @@
 package handlers
 
 import (
-	"net/http"
 	"invoice-backend/internal/models"
+	"net/http"
 
 	"invoice-backend/internal/services"
 	"invoice-backend/internal/utils"
@@ -39,6 +39,7 @@ func (h *PaymentHandler) Create(c *gin.Context) {
 		return
 	}
 
+	var payment *models.Payment
 	payment, err := h.svc.Create(c.Request.Context(), input)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -60,6 +61,7 @@ func (h *PaymentHandler) Create(c *gin.Context) {
 // @Router /payments/{id} [get]
 func (h *PaymentHandler) Get(c *gin.Context) {
 	id := c.Param("id")
+	var payment *models.Payment
 	payment, err := h.svc.Get(c.Request.Context(), id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "payment not found"})
@@ -126,6 +128,7 @@ func (h *PaymentHandler) Update(c *gin.Context) {
 		return
 	}
 
+	var payment *models.Payment
 	payment, err := h.svc.Update(c.Request.Context(), id, input)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

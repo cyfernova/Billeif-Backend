@@ -1,8 +1,8 @@
 package handlers
 
 import (
-	"net/http"
 	"invoice-backend/internal/models"
+	"net/http"
 
 	"invoice-backend/internal/services"
 	"invoice-backend/internal/utils"
@@ -39,6 +39,7 @@ func (h *TeamHandler) Create(c *gin.Context) {
 		return
 	}
 
+	var member *models.TeamMember
 	member, err := h.svc.Create(c.Request.Context(), input)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -60,6 +61,7 @@ func (h *TeamHandler) Create(c *gin.Context) {
 // @Router /teams/{id} [get]
 func (h *TeamHandler) Get(c *gin.Context) {
 	id := c.Param("id")
+	var member *models.TeamMember
 	member, err := h.svc.Get(c.Request.Context(), id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "team member not found"})
@@ -126,6 +128,7 @@ func (h *TeamHandler) Update(c *gin.Context) {
 		return
 	}
 
+	var member *models.TeamMember
 	member, err := h.svc.Update(c.Request.Context(), id, input)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

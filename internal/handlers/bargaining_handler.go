@@ -1,12 +1,11 @@
 package handlers
 
 import (
-	"net/http"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/services"
 	"invoice-backend/internal/utils"
 	"invoice-backend/pkg/logger"
-	
+	"net/http"
 
 	"github.com/gin-gonic/gin"
 )
@@ -65,6 +64,7 @@ func (h *BargainingHandler) CreateNegotiation(c *gin.Context) {
 		MaxRounds:          req.MaxRounds,
 	}
 
+	var negotiation *models.BargainingNegotiation
 	negotiation, err := h.svc.CreateNegotiation(c.Request.Context(), createReq)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -87,6 +87,7 @@ func (h *BargainingHandler) CreateNegotiation(c *gin.Context) {
 func (h *BargainingHandler) GetNegotiation(c *gin.Context) {
 	id := c.Param("id")
 
+	var negotiation *models.BargainingNegotiation
 	negotiation, err := h.svc.GetNegotiation(c.Request.Context(), id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "negotiation not found"})
@@ -156,6 +157,7 @@ func (h *BargainingHandler) SubmitCounterOffer(c *gin.Context) {
 		Action:         req.Action,
 	}
 
+	var negotiation *models.BargainingNegotiation
 	round, negotiation, err := h.svc.SubmitCounterOffer(c.Request.Context(), negotiationID, counterOfferReq)
 	if err != nil {
 		statusCode := http.StatusInternalServerError
@@ -222,6 +224,7 @@ func (h *BargainingHandler) GetSuggestedCounterOffer(c *gin.Context) {
 		return
 	}
 
+	var negotiation *models.BargainingNegotiation
 	negotiation, err := h.svc.GetNegotiation(c.Request.Context(), negotiationID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "negotiation not found"})
