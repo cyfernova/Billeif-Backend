@@ -67,6 +67,7 @@ make docker-down
 6. If API contracts change, run `make swagger`.
 7. If schema changes, add migration files and validate up/down paths.
 8. Use `pnpm` (not `npm`/`yarn`) for any Node.js tooling that may be introduced.
+9. Do NOT create any extra markdown files (README, CHANGELOG, docs, summaries, etc.) after completing a task. Only modify existing `.md` files when explicitly requested.
 
 ## 4) High-Value Workflows
 

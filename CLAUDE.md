@@ -67,3 +67,4 @@ make swagger
 - Do not commit `.env` values, secrets, or generated credentials.
 - Keep business scoping intact on all protected resource queries.
 - If Node.js tools are ever required in this repo, use `pnpm`.
+- Do NOT create any extra markdown files (e.g., README, CHANGELOG, docs, summaries) after completing a task. Only modify existing `.md` files when explicitly requested.
