@@ -134,7 +134,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/handlers.CreateAgentConfigRequest"
+                            "$ref": "#/definitions/internal_handlers.CreateAgentConfigRequest"
                         }
                     }
                 ],
@@ -142,7 +142,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/models.AgentConfig"
+                            "$ref": "#/definitions/invoice-backend_internal_models.AgentConfig"
                         }
                     },
                     "400": {
@@ -200,7 +200,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/handlers.CreateDefaultConfigRequest"
+                            "$ref": "#/definitions/internal_handlers.CreateDefaultConfigRequest"
                         }
                     }
                 ],
@@ -208,7 +208,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/models.AgentConfig"
+                            "$ref": "#/definitions/invoice-backend_internal_models.AgentConfig"
                         }
                     },
                     "400": {
@@ -269,7 +269,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.AgentConfig"
+                            "$ref": "#/definitions/invoice-backend_internal_models.AgentConfig"
                         }
                     },
                     "404": {
@@ -323,7 +323,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/handlers.UpdateAgentConfigRequest"
+                            "$ref": "#/definitions/internal_handlers.UpdateAgentConfigRequest"
                         }
                     }
                 ],
@@ -331,7 +331,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.AgentConfig"
+                            "$ref": "#/definitions/invoice-backend_internal_models.AgentConfig"
                         }
                     },
                     "400": {
@@ -501,7 +501,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/services.AgentLearningData"
+                            "$ref": "#/definitions/invoice-backend_internal_services.AgentLearningData"
                         }
                     },
                     "500": {
@@ -590,7 +590,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/services.BargainingDecision"
+                            "$ref": "#/definitions/invoice-backend_internal_services.BargainingDecision"
                         }
                     },
                     "400": {
@@ -648,7 +648,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/services.ChangePasswordInput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.ChangePasswordInput"
                         }
                     }
                 ],
@@ -703,7 +703,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/services.ForgotPasswordInput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.ForgotPasswordInput"
                         }
                     }
                 ],
@@ -784,7 +784,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/services.LoginInput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.LoginInput"
                         }
                     }
                 ],
@@ -792,7 +792,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/services.LoginOutput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.LoginOutput"
                         }
                     },
                     "401": {
@@ -913,7 +913,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/services.UpdateProfileInput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.UpdateProfileInput"
                         }
                     }
                 ],
@@ -1072,7 +1072,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/services.RefreshInput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.RefreshInput"
                         }
                     }
                 ],
@@ -1080,7 +1080,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/services.LoginOutput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.LoginOutput"
                         }
                     },
                     "401": {
@@ -1115,7 +1115,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/services.RegisterInput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.RegisterInput"
                         }
                     }
                 ],
@@ -1123,7 +1123,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/services.RegisterOutput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.RegisterOutput"
                         }
                     },
                     "400": {
@@ -1209,7 +1209,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/services.ResetPasswordInput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.ResetPasswordInput"
                         }
                     }
                 ],
@@ -1255,7 +1255,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/services.VerifyEmailInput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.VerifyEmailInput"
                         }
                     }
                 ],
@@ -1355,7 +1355,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/handlers.CreateNegotiationRequest"
+                            "$ref": "#/definitions/internal_handlers.CreateNegotiationRequest"
                         }
                     }
                 ],
@@ -1363,7 +1363,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/models.BargainingNegotiation"
+                            "$ref": "#/definitions/invoice-backend_internal_models.BargainingNegotiation"
                         }
                     },
                     "400": {
@@ -1415,7 +1415,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.BargainingNegotiation"
+                            "$ref": "#/definitions/invoice-backend_internal_models.BargainingNegotiation"
                         }
                     },
                     "404": {
@@ -1462,7 +1462,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/handlers.CounterOfferRequest"
+                            "$ref": "#/definitions/internal_handlers.CounterOfferRequest"
                         }
                     }
                 ],
@@ -1704,7 +1704,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/services.CreateBusinessInput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.CreateBusinessInput"
                         }
                     }
                 ],
@@ -1712,7 +1712,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/models.BusinessProfile"
+                            "$ref": "#/definitions/invoice-backend_internal_models.BusinessProfile"
                         }
                     },
                     "400": {
@@ -1773,7 +1773,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.BusinessProfile"
+                            "$ref": "#/definitions/invoice-backend_internal_models.BusinessProfile"
                         }
                     },
                     "404": {
@@ -1818,7 +1818,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/services.UpdateBusinessInput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.UpdateBusinessInput"
                         }
                     }
                 ],
@@ -1826,7 +1826,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.BusinessProfile"
+                            "$ref": "#/definitions/invoice-backend_internal_models.BusinessProfile"
                         }
                     },
                     "400": {
@@ -2030,7 +2030,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/services.CreateCustomerInput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.CreateCustomerInput"
                         }
                     }
                 ],
@@ -2038,7 +2038,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/models.Customer"
+                            "$ref": "#/definitions/invoice-backend_internal_models.Customer"
                         }
                     },
                     "400": {
@@ -2092,7 +2092,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/models.Customer"
+                                "$ref": "#/definitions/invoice-backend_internal_models.Customer"
                             }
                         }
                     },
@@ -2151,7 +2151,7 @@ const docTemplate = `{
                         "schema": {
                             "type": "array",
                             "items": {
-                                "$ref": "#/definitions/services.CreateCustomerInput"
+                                "$ref": "#/definitions/invoice-backend_internal_services.CreateCustomerInput"
                             }
                         }
                     }
@@ -2215,7 +2215,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.Customer"
+                            "$ref": "#/definitions/invoice-backend_internal_models.Customer"
                         }
                     },
                     "404": {
@@ -2260,7 +2260,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/services.UpdateCustomerInput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.UpdateCustomerInput"
                         }
                     }
                 ],
@@ -2268,7 +2268,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.Customer"
+                            "$ref": "#/definitions/invoice-backend_internal_models.Customer"
                         }
                     },
                     "400": {
@@ -2420,7 +2420,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/services.CreateInvoiceInput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.CreateInvoiceInput"
                         }
                     }
                 ],
@@ -2428,7 +2428,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/models.Invoice"
+                            "$ref": "#/definitions/invoice-backend_internal_models.Invoice"
                         }
                     },
                     "400": {
@@ -2535,7 +2535,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.Invoice"
+                            "$ref": "#/definitions/invoice-backend_internal_models.Invoice"
                         }
                     },
                     "404": {
@@ -2580,7 +2580,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/services.UpdateInvoiceInput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.UpdateInvoiceInput"
                         }
                     }
                 ],
@@ -2588,7 +2588,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.Invoice"
+                            "$ref": "#/definitions/invoice-backend_internal_models.Invoice"
                         }
                     },
                     "400": {
@@ -2955,7 +2955,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/services.CreatePaymentInput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.CreatePaymentInput"
                         }
                     }
                 ],
@@ -2963,7 +2963,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/models.Payment"
+                            "$ref": "#/definitions/invoice-backend_internal_models.Payment"
                         }
                     },
                     "400": {
@@ -3015,7 +3015,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.Payment"
+                            "$ref": "#/definitions/invoice-backend_internal_models.Payment"
                         }
                     },
                     "404": {
@@ -3060,7 +3060,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/services.UpdatePaymentInput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.UpdatePaymentInput"
                         }
                     }
                 ],
@@ -3068,7 +3068,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.Payment"
+                            "$ref": "#/definitions/invoice-backend_internal_models.Payment"
                         }
                     },
                     "400": {
@@ -3220,7 +3220,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/services.CreateProductInput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.CreateProductInput"
                         }
                     }
                 ],
@@ -3228,7 +3228,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/models.Product"
+                            "$ref": "#/definitions/invoice-backend_internal_models.Product"
                         }
                     },
                     "400": {
@@ -3280,7 +3280,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.Product"
+                            "$ref": "#/definitions/invoice-backend_internal_models.Product"
                         }
                     },
                     "404": {
@@ -3325,7 +3325,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/services.UpdateProductInput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.UpdateProductInput"
                         }
                     }
                 ],
@@ -3333,7 +3333,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.Product"
+                            "$ref": "#/definitions/invoice-backend_internal_models.Product"
                         }
                     },
                     "400": {
@@ -3479,7 +3479,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/services.StockAdjustmentInput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.StockAdjustmentInput"
                         }
                     }
                 ],
@@ -3487,7 +3487,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.Product"
+                            "$ref": "#/definitions/invoice-backend_internal_models.Product"
                         }
                     },
                     "400": {
@@ -3538,7 +3538,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.Subscription"
+                            "$ref": "#/definitions/invoice-backend_internal_models.Subscription"
                         }
                     },
                     "400": {
@@ -3591,7 +3591,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/services.UpdateSubscriptionInput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.UpdateSubscriptionInput"
                         }
                     }
                 ],
@@ -3599,7 +3599,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.Subscription"
+                            "$ref": "#/definitions/invoice-backend_internal_models.Subscription"
                         }
                     },
                     "400": {
@@ -3646,7 +3646,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/services.CreateSubscriptionInput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.CreateSubscriptionInput"
                         }
                     }
                 ],
@@ -3654,7 +3654,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/models.Subscription"
+                            "$ref": "#/definitions/invoice-backend_internal_models.Subscription"
                         }
                     },
                     "400": {
@@ -3768,7 +3768,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/services.CreateTeamMemberInput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.CreateTeamMemberInput"
                         }
                     }
                 ],
@@ -3776,7 +3776,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/models.TeamMember"
+                            "$ref": "#/definitions/invoice-backend_internal_models.TeamMember"
                         }
                     },
                     "400": {
@@ -3828,7 +3828,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.TeamMember"
+                            "$ref": "#/definitions/invoice-backend_internal_models.TeamMember"
                         }
                     },
                     "404": {
@@ -3873,7 +3873,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/services.UpdateTeamMemberInput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.UpdateTeamMemberInput"
                         }
                     }
                 ],
@@ -3881,7 +3881,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.TeamMember"
+                            "$ref": "#/definitions/invoice-backend_internal_models.TeamMember"
                         }
                     },
                     "400": {
@@ -4033,7 +4033,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/services.CreateVendorInput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.CreateVendorInput"
                         }
                     }
                 ],
@@ -4041,7 +4041,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/models.Vendor"
+                            "$ref": "#/definitions/invoice-backend_internal_models.Vendor"
                         }
                     },
                     "400": {
@@ -4093,7 +4093,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.Vendor"
+                            "$ref": "#/definitions/invoice-backend_internal_models.Vendor"
                         }
                     },
                     "404": {
@@ -4138,7 +4138,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/services.UpdateVendorInput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.UpdateVendorInput"
                         }
                     }
                 ],
@@ -4146,7 +4146,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.Vendor"
+                            "$ref": "#/definitions/invoice-backend_internal_models.Vendor"
                         }
                     },
                     "400": {
@@ -4284,7 +4284,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/services.CreateWebhookInput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.CreateWebhookInput"
                         }
                     }
                 ],
@@ -4292,7 +4292,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/models.Webhook"
+                            "$ref": "#/definitions/invoice-backend_internal_models.Webhook"
                         }
                     },
                     "400": {
@@ -4344,7 +4344,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.Webhook"
+                            "$ref": "#/definitions/invoice-backend_internal_models.Webhook"
                         }
                     },
                     "404": {
@@ -4389,7 +4389,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/services.UpdateWebhookInput"
+                            "$ref": "#/definitions/invoice-backend_internal_services.UpdateWebhookInput"
                         }
                     }
                 ],
@@ -4397,7 +4397,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.Webhook"
+                            "$ref": "#/definitions/invoice-backend_internal_models.Webhook"
                         }
                     },
                     "400": {
@@ -4461,7 +4461,7 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "handlers.CounterOfferRequest": {
+        "internal_handlers.CounterOfferRequest": {
             "type": "object",
             "required": [
                 "action",
@@ -4490,7 +4490,7 @@ const docTemplate = `{
                 }
             }
         },
-        "handlers.CreateAgentConfigRequest": {
+        "internal_handlers.CreateAgentConfigRequest": {
             "type": "object",
             "required": [
                 "agent_id",
@@ -4501,11 +4501,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "config": {
-                    "$ref": "#/definitions/models.AgentConfig"
+                    "$ref": "#/definitions/invoice-backend_internal_models.AgentConfig"
                 }
             }
         },
-        "handlers.CreateDefaultConfigRequest": {
+        "internal_handlers.CreateDefaultConfigRequest": {
             "type": "object",
             "required": [
                 "agent_id",
@@ -4524,7 +4524,7 @@ const docTemplate = `{
                 }
             }
         },
-        "handlers.CreateNegotiationRequest": {
+        "internal_handlers.CreateNegotiationRequest": {
             "type": "object",
             "required": [
                 "buyer_agent_id",
@@ -4551,21 +4551,21 @@ const docTemplate = `{
                 }
             }
         },
-        "handlers.UpdateAgentConfigRequest": {
+        "internal_handlers.UpdateAgentConfigRequest": {
             "type": "object",
             "properties": {
                 "buyer_config": {
-                    "$ref": "#/definitions/services.UpdateBuyerConfigRequest"
+                    "$ref": "#/definitions/invoice-backend_internal_services.UpdateBuyerConfigRequest"
                 },
                 "seller_config": {
-                    "$ref": "#/definitions/services.UpdateSellerConfigRequest"
+                    "$ref": "#/definitions/invoice-backend_internal_services.UpdateSellerConfigRequest"
                 },
                 "volatility": {
                     "type": "number"
                 }
             }
         },
-        "models.Agent": {
+        "invoice-backend_internal_models.Agent": {
             "type": "object",
             "required": [
                 "business_id",
@@ -4581,13 +4581,13 @@ const docTemplate = `{
                 "agent_capabilities": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/models.AgentCapability"
+                        "$ref": "#/definitions/invoice-backend_internal_models.AgentCapability"
                     }
                 },
                 "agent_transactions": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/models.AgentTransaction"
+                        "$ref": "#/definitions/invoice-backend_internal_models.AgentTransaction"
                     }
                 },
                 "business_id": {
@@ -4618,7 +4618,7 @@ const docTemplate = `{
                 "marketplace_products": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/models.MarketplaceProduct"
+                        "$ref": "#/definitions/invoice-backend_internal_models.MarketplaceProduct"
                     }
                 },
                 "name": {
@@ -4645,7 +4645,7 @@ const docTemplate = `{
                 }
             }
         },
-        "models.AgentCapability": {
+        "invoice-backend_internal_models.AgentCapability": {
             "type": "object",
             "required": [
                 "agent_id",
@@ -4673,24 +4673,24 @@ const docTemplate = `{
                 }
             }
         },
-        "models.AgentConfig": {
+        "invoice-backend_internal_models.AgentConfig": {
             "type": "object",
             "properties": {
                 "buyer_config": {
-                    "$ref": "#/definitions/models.BuyerConfig"
+                    "$ref": "#/definitions/invoice-backend_internal_models.BuyerConfig"
                 },
                 "seller_config": {
-                    "$ref": "#/definitions/models.SellerConfig"
+                    "$ref": "#/definitions/invoice-backend_internal_models.SellerConfig"
                 },
                 "type": {
-                    "$ref": "#/definitions/models.AgentType"
+                    "$ref": "#/definitions/invoice-backend_internal_models.AgentType"
                 },
                 "volatility": {
                     "type": "number"
                 }
             }
         },
-        "models.AgentTransaction": {
+        "invoice-backend_internal_models.AgentTransaction": {
             "type": "object",
             "required": [
                 "agent_id",
@@ -4731,7 +4731,7 @@ const docTemplate = `{
                 }
             }
         },
-        "models.AgentType": {
+        "invoice-backend_internal_models.AgentType": {
             "type": "string",
             "enum": [
                 "buyer",
@@ -4742,7 +4742,7 @@ const docTemplate = `{
                 "AgentTypeSeller"
             ]
         },
-        "models.BargainingNegotiation": {
+        "invoice-backend_internal_models.BargainingNegotiation": {
             "type": "object",
             "required": [
                 "buyer_agent_id",
@@ -4757,7 +4757,7 @@ const docTemplate = `{
             ],
             "properties": {
                 "buyer_agent": {
-                    "$ref": "#/definitions/models.Agent"
+                    "$ref": "#/definitions/invoice-backend_internal_models.Agent"
                 },
                 "buyer_agent_id": {
                     "type": "string"
@@ -4802,7 +4802,7 @@ const docTemplate = `{
                     "minimum": 0
                 },
                 "seller_agent": {
-                    "$ref": "#/definitions/models.Agent"
+                    "$ref": "#/definitions/invoice-backend_internal_models.Agent"
                 },
                 "seller_agent_id": {
                     "type": "string"
@@ -4830,7 +4830,7 @@ const docTemplate = `{
                 }
             }
         },
-        "models.BusinessProfile": {
+        "invoice-backend_internal_models.BusinessProfile": {
             "type": "object",
             "required": [
                 "currency",
@@ -4896,7 +4896,7 @@ const docTemplate = `{
                 }
             }
         },
-        "models.BuyerConfig": {
+        "invoice-backend_internal_models.BuyerConfig": {
             "type": "object",
             "properties": {
                 "acceptance_threshold": {
@@ -4912,7 +4912,7 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "delivery_preferences": {
-                    "$ref": "#/definitions/models.DeliveryPref"
+                    "$ref": "#/definitions/invoice-backend_internal_models.DeliveryPref"
                 },
                 "max_discount_percent": {
                     "type": "number"
@@ -4946,7 +4946,7 @@ const docTemplate = `{
                 }
             }
         },
-        "models.Customer": {
+        "invoice-backend_internal_models.Customer": {
             "type": "object",
             "required": [
                 "business_id",
@@ -5010,7 +5010,7 @@ const docTemplate = `{
                 }
             }
         },
-        "models.DeliveryPref": {
+        "invoice-backend_internal_models.DeliveryPref": {
             "type": "object",
             "properties": {
                 "insurance_required": {
@@ -5030,7 +5030,7 @@ const docTemplate = `{
                 }
             }
         },
-        "models.DiscountTier": {
+        "invoice-backend_internal_models.DiscountTier": {
             "type": "object",
             "properties": {
                 "discount_percent": {
@@ -5041,7 +5041,7 @@ const docTemplate = `{
                 }
             }
         },
-        "models.Invoice": {
+        "invoice-backend_internal_models.Invoice": {
             "type": "object",
             "required": [
                 "business_id",
@@ -5089,7 +5089,7 @@ const docTemplate = `{
                 "items": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/models.InvoiceItem"
+                        "$ref": "#/definitions/invoice-backend_internal_models.InvoiceItem"
                     }
                 },
                 "notes": {
@@ -5138,7 +5138,7 @@ const docTemplate = `{
                 }
             }
         },
-        "models.InvoiceItem": {
+        "invoice-backend_internal_models.InvoiceItem": {
             "type": "object",
             "required": [
                 "description",
@@ -5186,7 +5186,7 @@ const docTemplate = `{
                 }
             }
         },
-        "models.MarketplaceProduct": {
+        "invoice-backend_internal_models.MarketplaceProduct": {
             "type": "object",
             "required": [
                 "agent_id",
@@ -5241,7 +5241,7 @@ const docTemplate = `{
                 }
             }
         },
-        "models.Payment": {
+        "invoice-backend_internal_models.Payment": {
             "type": "object",
             "required": [
                 "amount",
@@ -5295,7 +5295,7 @@ const docTemplate = `{
                 }
             }
         },
-        "models.Product": {
+        "invoice-backend_internal_models.Product": {
             "type": "object",
             "required": [
                 "business_id",
@@ -5359,7 +5359,7 @@ const docTemplate = `{
                 }
             }
         },
-        "models.SeasonalAdj": {
+        "invoice-backend_internal_models.SeasonalAdj": {
             "type": "object",
             "properties": {
                 "effective_from": {
@@ -5376,7 +5376,7 @@ const docTemplate = `{
                 }
             }
         },
-        "models.SellerConfig": {
+        "invoice-backend_internal_models.SellerConfig": {
             "type": "object",
             "properties": {
                 "acceptance_threshold": {
@@ -5413,17 +5413,17 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "seasonal_adjustments": {
-                    "$ref": "#/definitions/models.SeasonalAdj"
+                    "$ref": "#/definitions/invoice-backend_internal_models.SeasonalAdj"
                 },
                 "volume_discount_tiers": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/models.DiscountTier"
+                        "$ref": "#/definitions/invoice-backend_internal_models.DiscountTier"
                     }
                 }
             }
         },
-        "models.Subscription": {
+        "invoice-backend_internal_models.Subscription": {
             "type": "object",
             "required": [
                 "business_id",
@@ -5488,7 +5488,7 @@ const docTemplate = `{
                 }
             }
         },
-        "models.TeamMember": {
+        "invoice-backend_internal_models.TeamMember": {
             "type": "object",
             "required": [
                 "business_id",
@@ -5531,7 +5531,7 @@ const docTemplate = `{
                 }
             }
         },
-        "models.Vendor": {
+        "invoice-backend_internal_models.Vendor": {
             "type": "object",
             "required": [
                 "business_id",
@@ -5599,7 +5599,7 @@ const docTemplate = `{
                 }
             }
         },
-        "models.Webhook": {
+        "invoice-backend_internal_models.Webhook": {
             "type": "object",
             "required": [
                 "business_id",
@@ -5643,7 +5643,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.AgentLearningData": {
+        "invoice-backend_internal_services.AgentLearningData": {
             "type": "object",
             "properties": {
                 "agentID": {
@@ -5677,7 +5677,7 @@ const docTemplate = `{
                 "outcomes": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/services.NegotiationOutcome"
+                        "$ref": "#/definitions/invoice-backend_internal_services.NegotiationOutcome"
                     }
                 },
                 "preferredStrategies": {
@@ -5696,7 +5696,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.BargainingDecision": {
+        "invoice-backend_internal_services.BargainingDecision": {
             "type": "object",
             "properties": {
                 "action": {
@@ -5714,11 +5714,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "suggestedRange": {
-                    "$ref": "#/definitions/services.PriceRange"
+                    "$ref": "#/definitions/invoice-backend_internal_services.PriceRange"
                 }
             }
         },
-        "services.ChangePasswordInput": {
+        "invoice-backend_internal_services.ChangePasswordInput": {
             "type": "object",
             "required": [
                 "new_password",
@@ -5734,7 +5734,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.CreateBusinessInput": {
+        "invoice-backend_internal_services.CreateBusinessInput": {
             "type": "object",
             "required": [
                 "email",
@@ -5777,7 +5777,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.CreateCustomerInput": {
+        "invoice-backend_internal_services.CreateCustomerInput": {
             "type": "object",
             "required": [
                 "business_id",
@@ -5824,7 +5824,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.CreateInvoiceInput": {
+        "invoice-backend_internal_services.CreateInvoiceInput": {
             "type": "object",
             "required": [
                 "business_id",
@@ -5846,7 +5846,7 @@ const docTemplate = `{
                     "type": "array",
                     "minItems": 1,
                     "items": {
-                        "$ref": "#/definitions/services.CreateInvoiceItemInput"
+                        "$ref": "#/definitions/invoice-backend_internal_services.CreateInvoiceItemInput"
                     }
                 },
                 "notes": {
@@ -5854,7 +5854,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.CreateInvoiceItemInput": {
+        "invoice-backend_internal_services.CreateInvoiceItemInput": {
             "type": "object",
             "required": [
                 "description",
@@ -5879,7 +5879,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.CreatePaymentInput": {
+        "invoice-backend_internal_services.CreatePaymentInput": {
             "type": "object",
             "required": [
                 "amount",
@@ -5907,7 +5907,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.CreateProductInput": {
+        "invoice-backend_internal_services.CreateProductInput": {
             "type": "object",
             "required": [
                 "business_id",
@@ -5946,7 +5946,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.CreateSubscriptionInput": {
+        "invoice-backend_internal_services.CreateSubscriptionInput": {
             "type": "object",
             "required": [
                 "business_id",
@@ -5967,7 +5967,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.CreateTeamMemberInput": {
+        "invoice-backend_internal_services.CreateTeamMemberInput": {
             "type": "object",
             "required": [
                 "business_id",
@@ -5991,7 +5991,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.CreateVendorInput": {
+        "invoice-backend_internal_services.CreateVendorInput": {
             "type": "object",
             "required": [
                 "business_id",
@@ -6035,7 +6035,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.CreateWebhookInput": {
+        "invoice-backend_internal_services.CreateWebhookInput": {
             "type": "object",
             "required": [
                 "business_id",
@@ -6066,7 +6066,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.ForgotPasswordInput": {
+        "invoice-backend_internal_services.ForgotPasswordInput": {
             "type": "object",
             "required": [
                 "email"
@@ -6077,7 +6077,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.LoginInput": {
+        "invoice-backend_internal_services.LoginInput": {
             "type": "object",
             "required": [
                 "email",
@@ -6092,7 +6092,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.LoginOutput": {
+        "invoice-backend_internal_services.LoginOutput": {
             "type": "object",
             "properties": {
                 "access_token": {
@@ -6109,7 +6109,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.NegotiationOutcome": {
+        "invoice-backend_internal_services.NegotiationOutcome": {
             "type": "object",
             "properties": {
                 "finalAmount": {
@@ -6147,7 +6147,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.PriceRange": {
+        "invoice-backend_internal_services.PriceRange": {
             "type": "object",
             "properties": {
                 "max": {
@@ -6160,7 +6160,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.RefreshInput": {
+        "invoice-backend_internal_services.RefreshInput": {
             "type": "object",
             "required": [
                 "refresh_token"
@@ -6171,7 +6171,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.RegisterInput": {
+        "invoice-backend_internal_services.RegisterInput": {
             "type": "object",
             "required": [
                 "email",
@@ -6192,7 +6192,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.RegisterOutput": {
+        "invoice-backend_internal_services.RegisterOutput": {
             "type": "object",
             "properties": {
                 "message": {
@@ -6203,7 +6203,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.ResetPasswordInput": {
+        "invoice-backend_internal_services.ResetPasswordInput": {
             "type": "object",
             "required": [
                 "confirmation_code",
@@ -6223,7 +6223,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.StockAdjustmentInput": {
+        "invoice-backend_internal_services.StockAdjustmentInput": {
             "type": "object",
             "required": [
                 "quantity"
@@ -6237,7 +6237,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.UpdateBusinessInput": {
+        "invoice-backend_internal_services.UpdateBusinessInput": {
             "type": "object",
             "properties": {
                 "address": {
@@ -6275,7 +6275,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.UpdateBuyerConfigRequest": {
+        "invoice-backend_internal_services.UpdateBuyerConfigRequest": {
             "type": "object",
             "required": [
                 "acceptance_threshold",
@@ -6345,7 +6345,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.UpdateCustomerInput": {
+        "invoice-backend_internal_services.UpdateCustomerInput": {
             "type": "object",
             "properties": {
                 "address": {
@@ -6383,7 +6383,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.UpdateInvoiceInput": {
+        "invoice-backend_internal_services.UpdateInvoiceInput": {
             "type": "object",
             "properties": {
                 "due_date": {
@@ -6394,7 +6394,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.UpdatePaymentInput": {
+        "invoice-backend_internal_services.UpdatePaymentInput": {
             "type": "object",
             "properties": {
                 "amount": {
@@ -6411,7 +6411,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.UpdateProductInput": {
+        "invoice-backend_internal_services.UpdateProductInput": {
             "type": "object",
             "properties": {
                 "currency": {
@@ -6437,7 +6437,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.UpdateProfileInput": {
+        "invoice-backend_internal_services.UpdateProfileInput": {
             "type": "object",
             "required": [
                 "name"
@@ -6452,7 +6452,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.UpdateSellerConfigRequest": {
+        "invoice-backend_internal_services.UpdateSellerConfigRequest": {
             "type": "object",
             "required": [
                 "acceptance_threshold",
@@ -6509,7 +6509,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.UpdateSubscriptionInput": {
+        "invoice-backend_internal_services.UpdateSubscriptionInput": {
             "type": "object",
             "properties": {
                 "plan": {
@@ -6520,7 +6520,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.UpdateTeamMemberInput": {
+        "invoice-backend_internal_services.UpdateTeamMemberInput": {
             "type": "object",
             "required": [
                 "role"
@@ -6536,7 +6536,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.UpdateVendorInput": {
+        "invoice-backend_internal_services.UpdateVendorInput": {
             "type": "object",
             "properties": {
                 "address": {
@@ -6571,7 +6571,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.UpdateWebhookInput": {
+        "invoice-backend_internal_services.UpdateWebhookInput": {
             "type": "object",
             "properties": {
                 "events": {
@@ -6594,7 +6594,7 @@ const docTemplate = `{
                 }
             }
         },
-        "services.VerifyEmailInput": {
+        "invoice-backend_internal_services.VerifyEmailInput": {
             "type": "object",
             "required": [
                 "code",

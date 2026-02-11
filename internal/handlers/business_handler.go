@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"invoice-backend/internal/middleware"
+	"invoice-backend/internal/models"
 	"invoice-backend/internal/services"
 	"invoice-backend/internal/utils"
 	"invoice-backend/pkg/logger"
