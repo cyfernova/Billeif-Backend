@@ -353,7 +353,7 @@ func (h *AgentConfigHandler) CreateDefaultConfig(c *gin.Context) {
 // @Failure 400 {object} map[string]string
 // @Failure 404 {object} map[string]string
 // @Failure 500 {object} map[string]string
-// @Router /agents/mentee/recommendation/{negotiation_id} [get]
+// @Router /agents/config/mentee/recommendation/{negotiation_id} [get]
 func (h *AgentConfigHandler) GetMenteeRecommendation(c *gin.Context) {
 	negotiationID := c.Param("negotiation_id")
 	agentType := c.Query("agent_type")
@@ -388,7 +388,7 @@ func (h *AgentConfigHandler) GetMenteeRecommendation(c *gin.Context) {
 // @Param agent_id path string true "Agent ID"
 // @Success 200 {object} services.AgentLearningData
 // @Failure 500 {object} map[string]string
-// @Router /agents/mentee/learning/{agent_id} [get]
+// @Router /agents/config/mentee/learning/{agent_id} [get]
 func (h *AgentConfigHandler) GetMenteeLearningData(c *gin.Context) {
 	agentID := c.Param("agent_id")
 
@@ -409,7 +409,7 @@ func (h *AgentConfigHandler) GetMenteeLearningData(c *gin.Context) {
 // @Param agent_id path string true "Agent ID"
 // @Success 204
 // @Failure 500 {object} map[string]string
-// @Router /agents/mentee/learning/{agent_id} [delete]
+// @Router /agents/config/mentee/learning/{agent_id} [delete]
 func (h *AgentConfigHandler) ResetMenteeLearning(c *gin.Context) {
 	agentID := c.Param("agent_id")
 
@@ -429,7 +429,7 @@ func (h *AgentConfigHandler) ResetMenteeLearning(c *gin.Context) {
 // @Security BearerAuth
 // @Success 200 {file} file
 // @Failure 500 {object} map[string]string
-// @Router /agents/mentee/export [get]
+// @Router /agents/config/mentee/export [get]
 func (h *AgentConfigHandler) ExportMenteeData(c *gin.Context) {
 	data, err := h.mentee.ExportLearningData(c.Request.Context())
 	if err != nil {
@@ -450,7 +450,7 @@ func (h *AgentConfigHandler) ExportMenteeData(c *gin.Context) {
 // @Success 200 {object} map[string]string
 // @Failure 400 {object} map[string]string
 // @Failure 500 {object} map[string]string
-// @Router /agents/mentee/import [post]
+// @Router /agents/config/mentee/import [post]
 func (h *AgentConfigHandler) ImportMenteeData(c *gin.Context) {
 	data, err := c.GetRawData()
 	if err != nil {

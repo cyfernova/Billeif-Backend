@@ -45,6 +45,19 @@ type UpdateProductRequest struct {
 	Categories     []string `json:"categories"`
 }
 
+// ListProducts lists marketplace products
+// @Summary List products
+// @Description List marketplace products with optional category and agent filters.
+// @Tags Marketplace
+// @Produce json
+// @Security BearerAuth
+// @Param category query string false "Category filter"
+// @Param agent_id query string false "Agent ID filter"
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page" default(10)
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /marketplace/products [get]
 func (h *MarketplaceHandler) ListProducts(c *gin.Context) {
 	page, limit := utils.ParsePagination(c)
 	category := c.Query("category")
@@ -72,6 +85,18 @@ func (h *MarketplaceHandler) ListProducts(c *gin.Context) {
 	})
 }
 
+// SearchProducts searches marketplace products
+// @Summary Search products
+// @Description Search marketplace products by query string.
+// @Tags Marketplace
+// @Produce json
+// @Security BearerAuth
+// @Param q query string false "Search query"
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page" default(10)
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /marketplace/products/search [get]
 func (h *MarketplaceHandler) SearchProducts(c *gin.Context) {
 	query := c.Query("q")
 	page, limit := utils.ParsePagination(c)
@@ -90,6 +115,16 @@ func (h *MarketplaceHandler) SearchProducts(c *gin.Context) {
 	})
 }
 
+// GetProduct retrieves a product by ID
+// @Summary Get product
+// @Description Retrieve a specific marketplace product by its ID.
+// @Tags Marketplace
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Product ID"
+// @Success 200 {object} models.MarketplaceProduct
+// @Failure 404 {object} map[string]string
+// @Router /marketplace/products/{id} [get]
 func (h *MarketplaceHandler) GetProduct(c *gin.Context) {
 	id := c.Param("id")
 
@@ -102,6 +137,17 @@ func (h *MarketplaceHandler) GetProduct(c *gin.Context) {
 	c.JSON(http.StatusOK, product)
 }
 
+// GetAvailableProducts retrieves all available products
+// @Summary Get available products
+// @Description Retrieve all currently available marketplace products.
+// @Tags Marketplace
+// @Produce json
+// @Security BearerAuth
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page" default(10)
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /marketplace/products/available [get]
 func (h *MarketplaceHandler) GetAvailableProducts(c *gin.Context) {
 	page, limit := utils.ParsePagination(c)
 
@@ -119,6 +165,19 @@ func (h *MarketplaceHandler) GetAvailableProducts(c *gin.Context) {
 	})
 }
 
+// GetMerchantProducts retrieves products for a merchant agent
+// @Summary Get merchant products
+// @Description Retrieve all products belonging to a specific merchant agent.
+// @Tags Marketplace
+// @Produce json
+// @Security BearerAuth
+// @Param agent_id query string true "Agent ID"
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page" default(10)
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /marketplace/merchant/products [get]
 func (h *MarketplaceHandler) GetMerchantProducts(c *gin.Context) {
 	agentID := c.Query("agent_id")
 	if agentID == "" {
@@ -142,6 +201,19 @@ func (h *MarketplaceHandler) GetMerchantProducts(c *gin.Context) {
 	})
 }
 
+// AddProduct adds a new product to the marketplace
+// @Summary Add product
+// @Description Add a new product to the marketplace for a merchant agent.
+// @Tags Marketplace
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param agent_id query string true "Agent ID"
+// @Param input body CreateProductRequest true "Product details"
+// @Success 201 {object} models.MarketplaceProduct
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /marketplace/merchant/products [post]
 func (h *MarketplaceHandler) AddProduct(c *gin.Context) {
 	agentID := c.Query("agent_id")
 	if agentID == "" {
@@ -182,6 +254,20 @@ func (h *MarketplaceHandler) AddProduct(c *gin.Context) {
 	c.JSON(http.StatusCreated, product)
 }
 
+// UpdateProduct updates an existing product
+// @Summary Update product
+// @Description Update an existing marketplace product.
+// @Tags Marketplace
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Product ID"
+// @Param input body UpdateProductRequest true "Product update details"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /marketplace/merchant/products/{id} [put]
 func (h *MarketplaceHandler) UpdateProduct(c *gin.Context) {
 	id := c.Param("id")
 
@@ -232,6 +318,18 @@ func (h *MarketplaceHandler) UpdateProduct(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "product updated successfully"})
 }
 
+// GetUserOrders retrieves orders for the authenticated user
+// @Summary Get user orders
+// @Description Retrieve orders for the authenticated user, optionally filtered by status.
+// @Tags Marketplace
+// @Produce json
+// @Security BearerAuth
+// @Param status query string false "Order status filter"
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page" default(10)
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /marketplace/orders [get]
 func (h *MarketplaceHandler) GetUserOrders(c *gin.Context) {
 	userID := c.GetString("user_id")
 	page, limit := utils.ParsePagination(c)
@@ -260,6 +358,18 @@ func (h *MarketplaceHandler) GetUserOrders(c *gin.Context) {
 	})
 }
 
+// GetOrdersByStatus retrieves orders filtered by status
+// @Summary Get orders by status
+// @Description Retrieve orders for the authenticated user filtered by a specific status.
+// @Tags Marketplace
+// @Produce json
+// @Security BearerAuth
+// @Param status path string true "Order status"
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page" default(10)
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /marketplace/orders/status/{status} [get]
 func (h *MarketplaceHandler) GetOrdersByStatus(c *gin.Context) {
 	userID := c.GetString("user_id")
 	status := c.Param("status")
@@ -279,6 +389,15 @@ func (h *MarketplaceHandler) GetOrdersByStatus(c *gin.Context) {
 	})
 }
 
+// GetMarketplaceStats retrieves marketplace statistics
+// @Summary Get marketplace stats
+// @Description Retrieve overall marketplace statistics.
+// @Tags Marketplace
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /marketplace/stats [get]
 func (h *MarketplaceHandler) GetMarketplaceStats(c *gin.Context) {
 	stats, err := h.svc.GetMarketplaceStats(c.Request.Context())
 	if err != nil {
