@@ -5,10 +5,11 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	gorillaws "github.com/gorilla/websocket"
 	"invoice-backend/pkg/logger"
 	"invoice-backend/pkg/websocket"
+
+	"github.com/gin-gonic/gin"
+	gorillaws "github.com/gorilla/websocket"
 )
 
 // WebSocketHandler handles WebSocket upgrade requests
@@ -82,8 +83,8 @@ func (h *WebSocketHandler) HandleConnection(c *gin.Context) {
 		Sender:    "system",
 		Timestamp: time.Now(),
 		Data: map[string]interface{}{
-			"message": "connected",
-			"server_time": time.Now(),
+			"message":      "connected",
+			"server_time":  time.Now(),
 			"client_count": h.hub.GetClientCount(),
 		},
 	}
@@ -174,11 +175,11 @@ func (h *WebSocketHandler) BroadcastTaskUpdate(userID string, taskID string, sta
 // BroadcastToUsers sends a message to multiple users
 func (h *WebSocketHandler) BroadcastToUsers(userIDs []string, messageType websocket.MessageType, data interface{}) error {
 	msg := &websocket.Message{
-		Type:      messageType,
-		Sender:    "system",
+		Type:       messageType,
+		Sender:     "system",
 		Recipients: userIDs,
-		Timestamp: time.Now(),
-		Data:      data,
+		Timestamp:  time.Now(),
+		Data:       data,
 	}
 
 	h.hub.BroadcastToUsers(userIDs, msg)
@@ -242,11 +243,11 @@ func (h *WebSocketHandler) SendNotification(c *gin.Context) {
 	}
 
 	msg := &websocket.Message{
-		Type:      websocket.MessageType(request.MessageType),
-		Sender:    "system",
+		Type:       websocket.MessageType(request.MessageType),
+		Sender:     "system",
 		Recipients: []string{userID},
-		Timestamp: time.Now(),
-		Data:      request.Data,
+		Timestamp:  time.Now(),
+		Data:       request.Data,
 	}
 
 	h.hub.BroadcastToUser(userID, msg)
@@ -282,7 +283,7 @@ func (h *WebSocketHandler) SendNotificationToAll(c *gin.Context) {
 	h.hub.BroadcastToAll(msg)
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "notification sent to all clients",
+		"message":      "notification sent to all clients",
 		"client_count": h.hub.GetClientCount(),
 	})
 }
@@ -294,8 +295,8 @@ func (h *WebSocketHandler) GetConnectedUsers(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"connected_users": users,
-		"count":          len(users),
-		"timestamp":      time.Now(),
+		"count":           len(users),
+		"timestamp":       time.Now(),
 	})
 }
 

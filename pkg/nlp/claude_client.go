@@ -19,8 +19,8 @@ type ClaudeClient struct {
 
 // ClaudeRequest represents a request to Claude API
 type ClaudeRequest struct {
-	Model     string        `json:"model"`
-	MaxTokens int           `json:"max_tokens"`
+	Model     string          `json:"model"`
+	MaxTokens int             `json:"max_tokens"`
 	Messages  []ClaudeMessage `json:"messages"`
 }
 

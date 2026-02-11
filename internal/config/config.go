@@ -18,8 +18,8 @@ type Config struct {
 	S3             S3Config       `mapstructure:"S3"`
 	SQS            SQSConfig      `mapstructure:"SQS"`
 	Sentry         SentryConfig   `mapstructure:"SENTRY"`
-	AllowedOrigins []string  `mapstructure:"ALLOWED_ORIGINS"`
-	LLM            LLMConfig `mapstructure:"LLM"`
+	AllowedOrigins []string       `mapstructure:"ALLOWED_ORIGINS"`
+	LLM            LLMConfig      `mapstructure:"LLM"`
 }
 
 type LLMConfig struct {
@@ -97,7 +97,6 @@ func Load() (*Config, error) {
 	viper.AddConfigPath(".")
 	viper.AddConfigPath("..")
 	viper.AutomaticEnv()
-
 
 	// Explicitly bind environment variables for nested config
 	viper.BindEnv("ENVIRONMENT")

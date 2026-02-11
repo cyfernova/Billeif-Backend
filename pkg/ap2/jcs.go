@@ -166,9 +166,9 @@ func CartMandateCanonicalData(userID, agentID string, items []interface{}, total
 // PaymentMandateCanonicalData creates canonical representation of payment mandate
 func PaymentMandateCanonicalData(userID, cartMandateID string, amount float64) ([]byte, error) {
 	data := map[string]interface{}{
-		"user_id":           userID,
-		"cart_mandate_id":   cartMandateID,
-		"amount":            amount,
+		"user_id":         userID,
+		"cart_mandate_id": cartMandateID,
+		"amount":          amount,
 	}
 	return CanonicalizeJSON(data)
 }

@@ -39,19 +39,19 @@ func BuildAgentCard(
 	publicKey *string,
 ) *AgentCard {
 	return &AgentCard{
-		Name:             name,
-		Description:      description,
-		Endpoint:         endpoint,
-		Type:             agentType,
-		Capabilities:     capabilities,
-		PricingModel:     pricingModel,
-		Currencies:       currencies,
-		Jurisdictions:    jurisdictions,
-		Languages:        languages,
-		Version:          "1.0", // AP2 spec version
-		PublicKey:        publicKey,
-		CreatedAt:        time.Now(),
-		UpdatedAt:        time.Now(),
+		Name:          name,
+		Description:   description,
+		Endpoint:      endpoint,
+		Type:          agentType,
+		Capabilities:  capabilities,
+		PricingModel:  pricingModel,
+		Currencies:    currencies,
+		Jurisdictions: jurisdictions,
+		Languages:     languages,
+		Version:       "1.0", // AP2 spec version
+		PublicKey:     publicKey,
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
 	}
 }
 
@@ -105,10 +105,10 @@ func ValidateAgentCard(card *AgentCard) error {
 	}
 
 	validTypes := map[string]bool{
-		"shopping":             true,
-		"merchant":             true,
-		"credential_provider":  true,
-		"payment_processor":    true,
+		"shopping":            true,
+		"merchant":            true,
+		"credential_provider": true,
+		"payment_processor":   true,
 	}
 
 	if !validTypes[card.Type] {

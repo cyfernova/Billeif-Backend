@@ -195,20 +195,20 @@ func (c *A2AClient) BroadcastMessage(ctx context.Context, endpoints []string, ms
 
 // ClientConfig holds configuration for the A2A client
 type ClientConfig struct {
-	Timeout      time.Duration
-	MaxRetries   int
-	Idempotent   bool // If true, messages have idempotency guarantees
-	BufferSize   int  // Size of message buffer
-	Compression  bool // Enable message compression
+	Timeout     time.Duration
+	MaxRetries  int
+	Idempotent  bool // If true, messages have idempotency guarantees
+	BufferSize  int  // Size of message buffer
+	Compression bool // Enable message compression
 }
 
 // DefaultClientConfig returns default client configuration
 func DefaultClientConfig() *ClientConfig {
 	return &ClientConfig{
-		Timeout:    30 * time.Second,
-		MaxRetries: 3,
-		Idempotent: true,
-		BufferSize: 1000,
+		Timeout:     30 * time.Second,
+		MaxRetries:  3,
+		Idempotent:  true,
+		BufferSize:  1000,
 		Compression: false,
 	}
 }

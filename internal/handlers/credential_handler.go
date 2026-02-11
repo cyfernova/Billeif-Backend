@@ -178,4 +178,3 @@ func (h *CredentialHandler) ValidateToken(c *gin.Context) {
 
 	c.JSON(http.StatusOK, credentialToken)
 }
-

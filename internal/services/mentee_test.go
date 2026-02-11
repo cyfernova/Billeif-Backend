@@ -5,9 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"invoice-backend/pkg/logger"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"invoice-backend/pkg/logger"
 )
 
 func TestMentee_CalculateVolatility(t *testing.T) {

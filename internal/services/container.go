@@ -34,7 +34,7 @@ type Container struct {
 	Marketplace        *MarketplaceService
 	ProductMatching    *ProductMatchingService
 	IntentProcessing   *IntentProcessingService
-	AgentDiscovery *AgentDiscoveryService
+	AgentDiscovery     *AgentDiscoveryService
 	LLM                *LLMService
 	A2ATask            *A2ATaskService
 	A2APush            *A2APushService

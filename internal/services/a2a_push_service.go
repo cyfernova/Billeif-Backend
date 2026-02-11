@@ -28,20 +28,20 @@ type A2APushService struct {
 
 // PushConfig represents a push notification configuration stored in the database
 type PushConfig struct {
-	ID             string    `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
-	AgentID        string    `gorm:"not null;index" json:"agent_id"`
-	WebhookURL     string    `gorm:"column:webhook_url;not null" json:"webhook_url"`
-	Secret         string    `gorm:"column:secret" json:"-"`
-	Headers        string    `gorm:"type:jsonb;default:'{}'" json:"-"`
-	Events         []string  `gorm:"-" json:"events"`
-	EventsJSON     string    `gorm:"column:events;type:text[]" json:"-"`
-	Authentication string    `gorm:"type:jsonb;default:'{}'" json:"-"`
-	IsActive       bool      `gorm:"default:true" json:"is_active"`
-	FailureCount   int       `gorm:"default:0" json:"failure_count"`
+	ID             string     `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
+	AgentID        string     `gorm:"not null;index" json:"agent_id"`
+	WebhookURL     string     `gorm:"column:webhook_url;not null" json:"webhook_url"`
+	Secret         string     `gorm:"column:secret" json:"-"`
+	Headers        string     `gorm:"type:jsonb;default:'{}'" json:"-"`
+	Events         []string   `gorm:"-" json:"events"`
+	EventsJSON     string     `gorm:"column:events;type:text[]" json:"-"`
+	Authentication string     `gorm:"type:jsonb;default:'{}'" json:"-"`
+	IsActive       bool       `gorm:"default:true" json:"is_active"`
+	FailureCount   int        `gorm:"default:0" json:"failure_count"`
 	LastFailureAt  *time.Time `json:"last_failure_at,omitempty"`
 	LastSuccessAt  *time.Time `json:"last_success_at,omitempty"`
-	CreatedAt      time.Time `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt      time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+	CreatedAt      time.Time  `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt      time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
 // TableName returns the table name for GORM

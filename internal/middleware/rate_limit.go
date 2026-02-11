@@ -29,7 +29,7 @@ func NewRateLimiter(interval time.Duration, maxHits int) *RateLimiter {
 	rl := &RateLimiter{
 		limits:   make(map[string]*userLimit),
 		interval: interval,
-		maxHits: maxHits,
+		maxHits:  maxHits,
 	}
 
 	// Start cleanup goroutine to remove old entries
@@ -96,7 +96,7 @@ func AgentCreationRateLimit() gin.HandlerFunc {
 
 		if !limiter.isAllowed(userID) {
 			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error": "agent creation rate limit exceeded",
+				"error":   "agent creation rate limit exceeded",
 				"message": fmt.Sprintf("maximum 10 agents per hour. Please try again in an hour"),
 			})
 			c.Abort()
@@ -122,7 +122,7 @@ func ShoppingIntentRateLimit() gin.HandlerFunc {
 
 		if !limiter.isAllowed(userID) {
 			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error": "too many requests",
+				"error":   "too many requests",
 				"message": "you have exceeded the request limit. please try again shortly",
 			})
 			c.Abort()
@@ -148,7 +148,7 @@ func PaymentRateLimit() gin.HandlerFunc {
 
 		if !limiter.isAllowed(userID) {
 			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error": "payment processing rate limit exceeded",
+				"error":   "payment processing rate limit exceeded",
 				"message": "you are processing payments too quickly. please wait a moment before trying again",
 			})
 			c.Abort()

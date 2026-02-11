@@ -19,8 +19,8 @@ type AgentCardV03 struct {
 	Provider *AgentProvider `json:"provider,omitempty"`
 
 	// Version information
-	Version          string `json:"version,omitempty"` // Agent version
-	ProtocolVersion  string `json:"protocolVersion"`   // A2A protocol version (e.g., "0.3")
+	Version         string `json:"version,omitempty"` // Agent version
+	ProtocolVersion string `json:"protocolVersion"`   // A2A protocol version (e.g., "0.3")
 
 	// Capabilities
 	Capabilities AgentCapabilitiesV03 `json:"capabilities"`
@@ -118,20 +118,20 @@ type AgentSkill struct {
 
 // JSONSchema represents a JSON Schema definition
 type JSONSchema struct {
-	Type        string                 `json:"type,omitempty"`
-	Description string                 `json:"description,omitempty"`
-	Properties  map[string]*JSONSchema `json:"properties,omitempty"`
-	Required    []string               `json:"required,omitempty"`
-	Items       *JSONSchema            `json:"items,omitempty"`
-	Enum        []interface{}          `json:"enum,omitempty"`
-	Default     interface{}            `json:"default,omitempty"`
-	Format      string                 `json:"format,omitempty"`
-	Minimum     *float64               `json:"minimum,omitempty"`
-	Maximum     *float64               `json:"maximum,omitempty"`
-	MinLength   *int                   `json:"minLength,omitempty"`
-	MaxLength   *int                   `json:"maxLength,omitempty"`
-	Pattern     string                 `json:"pattern,omitempty"`
-	AdditionalProperties interface{}   `json:"additionalProperties,omitempty"`
+	Type                 string                 `json:"type,omitempty"`
+	Description          string                 `json:"description,omitempty"`
+	Properties           map[string]*JSONSchema `json:"properties,omitempty"`
+	Required             []string               `json:"required,omitempty"`
+	Items                *JSONSchema            `json:"items,omitempty"`
+	Enum                 []interface{}          `json:"enum,omitempty"`
+	Default              interface{}            `json:"default,omitempty"`
+	Format               string                 `json:"format,omitempty"`
+	Minimum              *float64               `json:"minimum,omitempty"`
+	Maximum              *float64               `json:"maximum,omitempty"`
+	MinLength            *int                   `json:"minLength,omitempty"`
+	MaxLength            *int                   `json:"maxLength,omitempty"`
+	Pattern              string                 `json:"pattern,omitempty"`
+	AdditionalProperties interface{}            `json:"additionalProperties,omitempty"`
 }
 
 // SkillExample provides example inputs/outputs for a skill
@@ -180,8 +180,8 @@ type OAuthFlow struct {
 
 // AgentInterface defines a protocol binding for the agent
 type AgentInterface struct {
-	Protocol    string `json:"protocol"`    // "http+json", "grpc", "websocket"
-	URL         string `json:"url"`         // Base URL for this interface
+	Protocol    string `json:"protocol"` // "http+json", "grpc", "websocket"
+	URL         string `json:"url"`      // Base URL for this interface
 	Description string `json:"description,omitempty"`
 
 	// HTTP specific

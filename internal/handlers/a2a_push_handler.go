@@ -121,13 +121,13 @@ func (h *A2APushHandler) GetPushConfig(c *gin.Context) {
 	response := make([]map[string]interface{}, len(configs))
 	for i, cfg := range configs {
 		response[i] = map[string]interface{}{
-			"id":              cfg.ID,
-			"webhookUrl":      cfg.WebhookURL,
-			"isActive":        cfg.IsActive,
-			"failureCount":    cfg.FailureCount,
-			"lastFailureAt":   cfg.LastFailureAt,
-			"lastSuccessAt":   cfg.LastSuccessAt,
-			"createdAt":       cfg.CreatedAt,
+			"id":            cfg.ID,
+			"webhookUrl":    cfg.WebhookURL,
+			"isActive":      cfg.IsActive,
+			"failureCount":  cfg.FailureCount,
+			"lastFailureAt": cfg.LastFailureAt,
+			"lastSuccessAt": cfg.LastSuccessAt,
+			"createdAt":     cfg.CreatedAt,
 		}
 	}
 
@@ -158,14 +158,14 @@ func (h *A2APushHandler) GetPushConfigByID(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, map[string]interface{}{
-		"id":              config.ID,
-		"agentId":         config.AgentID,
-		"webhookUrl":      config.WebhookURL,
-		"isActive":        config.IsActive,
-		"failureCount":    config.FailureCount,
-		"lastFailureAt":   config.LastFailureAt,
-		"lastSuccessAt":   config.LastSuccessAt,
-		"createdAt":       config.CreatedAt,
+		"id":            config.ID,
+		"agentId":       config.AgentID,
+		"webhookUrl":    config.WebhookURL,
+		"isActive":      config.IsActive,
+		"failureCount":  config.FailureCount,
+		"lastFailureAt": config.LastFailureAt,
+		"lastSuccessAt": config.LastSuccessAt,
+		"createdAt":     config.CreatedAt,
 	})
 }
 

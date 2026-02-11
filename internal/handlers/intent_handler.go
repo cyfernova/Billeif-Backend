@@ -3,9 +3,10 @@ package handlers
 import (
 	"net/http"
 
-	"github.com/gin-gonic/gin"
 	"invoice-backend/internal/services"
 	"invoice-backend/pkg/logger"
+
+	"github.com/gin-gonic/gin"
 )
 
 // IntentHandler handles intent processing endpoints
@@ -28,8 +29,8 @@ func (h *IntentHandler) ProcessIntent(c *gin.Context) {
 	userID := c.GetString("user_id")
 
 	var req struct {
-		Intent  string `json:"intent" binding:"required"`
-		MaxResults int   `json:"max_results,omitempty"`
+		Intent     string `json:"intent" binding:"required"`
+		MaxResults int    `json:"max_results,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -97,10 +98,10 @@ func (h *IntentHandler) ValidateIntent(c *gin.Context) {
 	result := h.intentProcessing.ProcessIntent(c.Request.Context(), parseReq)
 
 	c.JSON(http.StatusOK, gin.H{
-		"valid":             result.Success,
-		"confidence":        result.ParseResult.Confidence,
-		"matched_products":  result.MatchResults.TotalMatched,
-		"error":             result.Error,
+		"valid":            result.Success,
+		"confidence":       result.ParseResult.Confidence,
+		"matched_products": result.MatchResults.TotalMatched,
+		"error":            result.Error,
 	})
 }
 

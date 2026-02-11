@@ -20,20 +20,20 @@ type MessageType string
 
 const (
 	// Task message types
-	MessageTypeTaskStart    MessageType = "task.start"
-	MessageTypeTaskData     MessageType = "task.data"
-	MessageTypeTaskStatus   MessageType = "task.status"
-	MessageTypeTaskResult   MessageType = "task.result"
-	MessageTypeTaskError    MessageType = "task.error"
-	MessageTypeTaskCancel   MessageType = "task.cancel"
+	MessageTypeTaskStart  MessageType = "task.start"
+	MessageTypeTaskData   MessageType = "task.data"
+	MessageTypeTaskStatus MessageType = "task.status"
+	MessageTypeTaskResult MessageType = "task.result"
+	MessageTypeTaskError  MessageType = "task.error"
+	MessageTypeTaskCancel MessageType = "task.cancel"
 
 	// Negotiation message types
-	MessageTypeNegotiateStart    MessageType = "negotiate.start"
-	MessageTypeNegotiateAccept   MessageType = "negotiate.accept"
-	MessageTypeNegotiateReject   MessageType = "negotiate.reject"
+	MessageTypeNegotiateStart  MessageType = "negotiate.start"
+	MessageTypeNegotiateAccept MessageType = "negotiate.accept"
+	MessageTypeNegotiateReject MessageType = "negotiate.reject"
 
 	// Query/Response message types
-	MessageTypeQueryCapabilities MessageType = "query.capabilities"
+	MessageTypeQueryCapabilities    MessageType = "query.capabilities"
 	MessageTypeResponseCapabilities MessageType = "response.capabilities"
 )
 
@@ -43,30 +43,30 @@ const MessageVersion = "1.0"
 // A2AMessage is the base message structure for agent-to-agent communication
 type A2AMessage struct {
 	// Protocol information
-	Version     string      `json:"version"`     // Protocol version (e.g., "1.0")
-	MessageID   string      `json:"message_id"`  // Unique message identifier (UUID)
-	TaskID      string      `json:"task_id"`     // Task identifier linking related messages
+	Version     string      `json:"version"`      // Protocol version (e.g., "1.0")
+	MessageID   string      `json:"message_id"`   // Unique message identifier (UUID)
+	TaskID      string      `json:"task_id"`      // Task identifier linking related messages
 	MessageType MessageType `json:"message_type"` // Type of message (task.start, task.result, etc.)
 
 	// Agent information
-	SenderID       string `json:"sender_id"`       // Sending agent ID
-	SenderEndpoint string `json:"sender_endpoint"` // Sending agent's endpoint for replies
-	ReceiverID     string `json:"receiver_id"`     // Receiving agent ID
+	SenderID         string `json:"sender_id"`         // Sending agent ID
+	SenderEndpoint   string `json:"sender_endpoint"`   // Sending agent's endpoint for replies
+	ReceiverID       string `json:"receiver_id"`       // Receiving agent ID
 	ReceiverEndpoint string `json:"receiver_endpoint"` // Receiving agent's endpoint
 
 	// Payload and context
-	Payload    json.RawMessage       `json:"payload"`     // Message-specific data
+	Payload    json.RawMessage        `json:"payload"`     // Message-specific data
 	Metadata   map[string]interface{} `json:"metadata"`    // Additional context
-	RetryCount int                   `json:"retry_count"` // Number of retry attempts
+	RetryCount int                    `json:"retry_count"` // Number of retry attempts
 
 	// Security and signatures
-	Signature   string `json:"signature"`   // ECDSA signature of message (RFC 8785 JCS)
-	PublicKey   string `json:"public_key"`  // Sender's public key for verification
+	Signature string `json:"signature"`  // ECDSA signature of message (RFC 8785 JCS)
+	PublicKey string `json:"public_key"` // Sender's public key for verification
 
 	// Timestamps and timing
-	CreatedAt   time.Time `json:"created_at"`   // Message creation time
-	ExpiresAt   time.Time `json:"expires_at"`   // Message expiration time
-	TimeoutMs   int       `json:"timeout_ms"`   // Expected response timeout in milliseconds
+	CreatedAt time.Time `json:"created_at"` // Message creation time
+	ExpiresAt time.Time `json:"expires_at"` // Message expiration time
+	TimeoutMs int       `json:"timeout_ms"` // Expected response timeout in milliseconds
 
 	// Status tracking
 	Status    string `json:"status"`     // Current message status (pending, delivered, processed, failed)
@@ -89,45 +89,45 @@ type TaskStartPayload struct {
 
 // TaskDataPayload represents the payload for task.data messages
 type TaskDataPayload struct {
-	SequenceNumber int                 `json:"sequence_number"`
-	DataType       string              `json:"data_type"` // json, binary, text
-	Data           json.RawMessage     `json:"data"`
+	SequenceNumber int                    `json:"sequence_number"`
+	DataType       string                 `json:"data_type"` // json, binary, text
+	Data           json.RawMessage        `json:"data"`
 	Metadata       map[string]interface{} `json:"metadata,omitempty"`
-	IsLastChunk    bool                `json:"is_last_chunk"`
+	IsLastChunk    bool                   `json:"is_last_chunk"`
 }
 
 // TaskStatusPayload represents the payload for task.status messages
 type TaskStatusPayload struct {
-	Status      string  `json:"status"` // pending, in_progress, paused, completed, failed
-	ProgressPct int     `json:"progress_pct"` // 0-100
-	Message     string  `json:"message,omitempty"`
-	EstimatedTimeRemainingMs int `json:"estimated_time_remaining_ms,omitempty"`
+	Status                   string `json:"status"`       // pending, in_progress, paused, completed, failed
+	ProgressPct              int    `json:"progress_pct"` // 0-100
+	Message                  string `json:"message,omitempty"`
+	EstimatedTimeRemainingMs int    `json:"estimated_time_remaining_ms,omitempty"`
 }
 
 // TaskResultPayload represents the payload for task.result messages
 type TaskResultPayload struct {
-	Status         string              `json:"status"` // success, partial_success, failed
-	ResultData     json.RawMessage     `json:"result_data,omitempty"`
-	Metrics        map[string]interface{} `json:"metrics,omitempty"`
-	ExecutionTimeMs int                `json:"execution_time_ms"`
+	Status          string                 `json:"status"` // success, partial_success, failed
+	ResultData      json.RawMessage        `json:"result_data,omitempty"`
+	Metrics         map[string]interface{} `json:"metrics,omitempty"`
+	ExecutionTimeMs int                    `json:"execution_time_ms"`
 }
 
 // TaskErrorPayload represents the payload for task.error messages
 type TaskErrorPayload struct {
-	ErrorCode    string              `json:"error_code"`
-	ErrorMessage string              `json:"error_message"`
+	ErrorCode    string                 `json:"error_code"`
+	ErrorMessage string                 `json:"error_message"`
 	ErrorDetails map[string]interface{} `json:"error_details,omitempty"`
-	Recoverable  bool                `json:"recoverable"` // Can task be retried?
-	RetryAfterMs *int                `json:"retry_after_ms,omitempty"`
+	Recoverable  bool                   `json:"recoverable"` // Can task be retried?
+	RetryAfterMs *int                   `json:"retry_after_ms,omitempty"`
 }
 
 // CapabilitiesPayload represents the payload for capability queries/responses
 type CapabilitiesPayload struct {
-	Capabilities []string `json:"capabilities"`
-	Version      string   `json:"version"`
-	MaxConcurrentTasks int `json:"max_concurrent_tasks"`
-	SupportedDataTypes []string `json:"supported_data_types"`
-	RateLimits   map[string]interface{} `json:"rate_limits,omitempty"`
+	Capabilities       []string               `json:"capabilities"`
+	Version            string                 `json:"version"`
+	MaxConcurrentTasks int                    `json:"max_concurrent_tasks"`
+	SupportedDataTypes []string               `json:"supported_data_types"`
+	RateLimits         map[string]interface{} `json:"rate_limits,omitempty"`
 }
 
 // NewA2AMessage creates a new A2A message with default values
@@ -216,16 +216,16 @@ func (m *A2AMessage) Validate() error {
 
 	// Validate message type
 	validTypes := map[MessageType]bool{
-		MessageTypeTaskStart:    true,
-		MessageTypeTaskData:     true,
-		MessageTypeTaskStatus:   true,
-		MessageTypeTaskResult:   true,
-		MessageTypeTaskError:    true,
-		MessageTypeTaskCancel:   true,
-		MessageTypeNegotiateStart: true,
-		MessageTypeNegotiateAccept: true,
-		MessageTypeNegotiateReject: true,
-		MessageTypeQueryCapabilities: true,
+		MessageTypeTaskStart:            true,
+		MessageTypeTaskData:             true,
+		MessageTypeTaskStatus:           true,
+		MessageTypeTaskResult:           true,
+		MessageTypeTaskError:            true,
+		MessageTypeTaskCancel:           true,
+		MessageTypeNegotiateStart:       true,
+		MessageTypeNegotiateAccept:      true,
+		MessageTypeNegotiateReject:      true,
+		MessageTypeQueryCapabilities:    true,
 		MessageTypeResponseCapabilities: true,
 	}
 
