@@ -30,11 +30,14 @@ func NewAdminHandler(email *services.EmailService, log *logger.Logger) *AdminHan
 // @Failure 500 {object} map[string]string
 // @Router /admin/local-emails [get]
 func (h *AdminHandler) ListEmails(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("admin_handler").With("operation", "list_emails")
 	emails, err := h.email.ListAllCapturedEmails(c.Request.Context())
 	if err != nil {
+		log.Error("failed to list captured emails", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("captured emails listed", "count", len(emails))
 
 	c.JSON(http.StatusOK, gin.H{"emails": emails})
 }

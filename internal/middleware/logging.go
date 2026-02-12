@@ -11,8 +11,19 @@ import (
 func Logger(log *logger.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
-		path := c.Request.URL.Path
-		query := c.Request.URL.RawQuery
+		route := c.FullPath()
+		if route == "" {
+			route = c.Request.URL.Path
+		}
+		requestID := GetRequestID(c)
+		requestLog := log.With(
+			"request_id", requestID,
+			"method", c.Request.Method,
+			"route", route,
+			"path", c.Request.URL.Path,
+			"client_ip", c.ClientIP(),
+		)
+		c.Request = c.Request.WithContext(logger.ToContext(c.Request.Context(), requestLog))
 
 		c.Next()
 
@@ -20,31 +31,37 @@ func Logger(log *logger.Logger) gin.HandlerFunc {
 		status := c.Writer.Status()
 
 		fields := []interface{}{
+			"request_id", requestID,
 			"status", status,
 			"method", c.Request.Method,
-			"path", path,
-			"query", query,
+			"route", route,
+			"path", c.Request.URL.Path,
 			"ip", c.ClientIP(),
-			"latency", latency.String(),
+			"duration_ms", latency.Milliseconds(),
 			"user_agent", c.Request.UserAgent(),
-			"request_id", GetRequestID(c),
 		}
 
 		if userID, exists := c.Get("user_id"); exists {
 			fields = append(fields, "user_id", userID)
 		}
+		if businessID, exists := c.Get("business_id"); exists && businessID != "" {
+			fields = append(fields, "business_id", businessID)
+		}
+		if role, exists := c.Get("role"); exists && role != "" {
+			fields = append(fields, "role", role)
+		}
 
 		if len(c.Errors) > 0 {
-			log.Error("request completed with errors", append(fields, "errors", c.Errors.String())...)
+			requestLog.Error("request completed with errors", append(fields, "errors", c.Errors.String())...)
 			return
 		}
 
 		if status >= 500 {
-			log.Error("request completed", fields...)
+			requestLog.Error("request completed", fields...)
 		} else if status >= 400 {
-			log.Warn("request completed", fields...)
+			requestLog.Warn("request completed", fields...)
 		} else {
-			log.Info("request completed", fields...)
+			requestLog.Info("request completed", fields...)
 		}
 	}
 }

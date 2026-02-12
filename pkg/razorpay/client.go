@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"invoice-backend/pkg/logger"
 )
 
 type Client struct {
@@ -15,6 +17,7 @@ type Client struct {
 	webhookSecret string
 	baseURL       string
 	httpClient    *http.Client
+	log           *logger.Logger
 }
 
 type Config struct {
@@ -25,7 +28,7 @@ type Config struct {
 	Timeout       time.Duration
 }
 
-func NewClient(cfg *Config) *Client {
+func NewClient(cfg *Config, log *logger.Logger) *Client {
 	baseURL := cfg.BaseURL
 	if baseURL == "" {
 		baseURL = "https://api.razorpay.com/v1"
@@ -34,6 +37,9 @@ func NewClient(cfg *Config) *Client {
 	timeout := cfg.Timeout
 	if timeout == 0 {
 		timeout = 30 * time.Second
+	}
+	if log == nil {
+		log = logger.Global()
 	}
 
 	return &Client{
@@ -44,6 +50,7 @@ func NewClient(cfg *Config) *Client {
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
+		log: log.Named("razorpay_client"),
 	}
 }
 
@@ -138,289 +145,156 @@ type CaptureParams struct {
 }
 
 func (c *Client) CreateOrder(params *OrderParams) (*Order, error) {
-	body, err := json.Marshal(params)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal order params: %w", err)
-	}
-
-	req, err := http.NewRequest("POST", c.baseURL+"/orders", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.SetBasicAuth(c.key, c.secret)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("razorpay API error: %s", string(respBody))
-	}
-
 	var order Order
-	if err := json.Unmarshal(respBody, &order); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	if err := c.request("POST", "/orders", params, &order); err != nil {
+		return nil, err
 	}
 
 	return &order, nil
 }
 
 func (c *Client) GetOrder(orderID string) (*Order, error) {
-	req, err := http.NewRequest("GET", c.baseURL+"/orders/"+orderID, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.SetBasicAuth(c.key, c.secret)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("razorpay API error: %s", string(respBody))
-	}
-
 	var order Order
-	if err := json.Unmarshal(respBody, &order); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	if err := c.request("GET", "/orders/"+orderID, nil, &order); err != nil {
+		return nil, err
 	}
 
 	return &order, nil
 }
 
 func (c *Client) CreateCustomer(params *CustomerParams) (*Customer, error) {
-	body, err := json.Marshal(params)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal customer params: %w", err)
-	}
-
-	req, err := http.NewRequest("POST", c.baseURL+"/customers", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.SetBasicAuth(c.key, c.secret)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("razorpay API error: %s", string(respBody))
-	}
-
 	var customer Customer
-	if err := json.Unmarshal(respBody, &customer); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	if err := c.request("POST", "/customers", params, &customer); err != nil {
+		return nil, err
 	}
 
 	return &customer, nil
 }
 
 func (c *Client) CreateToken(params *TokenParams) (*Token, error) {
-	body, err := json.Marshal(params)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal token params: %w", err)
-	}
-
-	req, err := http.NewRequest("POST", c.baseURL+"/tokens", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.SetBasicAuth(c.key, c.secret)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("razorpay API error: %s", string(respBody))
-	}
-
 	var token Token
-	if err := json.Unmarshal(respBody, &token); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	if err := c.request("POST", "/tokens", params, &token); err != nil {
+		return nil, err
 	}
 
 	return &token, nil
 }
 
 func (c *Client) CreatePayment(params *PaymentParams) (*Payment, error) {
-	body, err := json.Marshal(params)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal payment params: %w", err)
-	}
-
-	req, err := http.NewRequest("POST", c.baseURL+"/payments", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.SetBasicAuth(c.key, c.secret)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("razorpay API error: %s", string(respBody))
-	}
-
 	var payment Payment
-	if err := json.Unmarshal(respBody, &payment); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	if err := c.request("POST", "/payments", params, &payment); err != nil {
+		return nil, err
 	}
 
 	return &payment, nil
 }
 
 func (c *Client) CapturePayment(params *CaptureParams) (*Payment, error) {
-	body, err := json.Marshal(params)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal capture params: %w", err)
-	}
-
-	req, err := http.NewRequest("POST", c.baseURL+"/payments/"+params.PaymentID+"/capture", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.SetBasicAuth(c.key, c.secret)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("razorpay API error: %s", string(respBody))
-	}
-
 	var payment Payment
-	if err := json.Unmarshal(respBody, &payment); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	if err := c.request("POST", "/payments/"+params.PaymentID+"/capture", params, &payment); err != nil {
+		return nil, err
 	}
 
 	return &payment, nil
 }
 
 func (c *Client) GetPayment(paymentID string) (*Payment, error) {
-	req, err := http.NewRequest("GET", c.baseURL+"/payments/"+paymentID, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.SetBasicAuth(c.key, c.secret)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("razorpay API error: %s", string(respBody))
-	}
-
 	var payment Payment
-	if err := json.Unmarshal(respBody, &payment); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	if err := c.request("GET", "/payments/"+paymentID, nil, &payment); err != nil {
+		return nil, err
 	}
 
 	return &payment, nil
 }
 
 func (c *Client) RefundPayment(params *RefundParams) (*Refund, error) {
-	body, err := json.Marshal(params)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal refund params: %w", err)
-	}
-
-	req, err := http.NewRequest("POST", c.baseURL+"/refunds", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.SetBasicAuth(c.key, c.secret)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("razorpay API error: %s", string(respBody))
-	}
-
 	var refund Refund
-	if err := json.Unmarshal(respBody, &refund); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	if err := c.request("POST", "/refunds", params, &refund); err != nil {
+		return nil, err
 	}
 
 	return &refund, nil
 }
 
 func (c *Client) GetRefund(refundID string) (*Refund, error) {
-	req, err := http.NewRequest("GET", c.baseURL+"/refunds/"+refundID, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+	var refund Refund
+	if err := c.request("GET", "/refunds/"+refundID, nil, &refund); err != nil {
+		return nil, err
 	}
 
-	req.SetBasicAuth(c.key, c.secret)
+	return &refund, nil
+}
+
+func (c *Client) request(method, path string, payload interface{}, out interface{}) error {
+	start := time.Now()
+	req, err := c.buildRequest(method, path, payload)
+	if err != nil {
+		c.log.Error("failed to build Razorpay request", "method", method, "path", path, "error", err)
+		return err
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
+		c.log.Error("failed Razorpay API call",
+			"method", method,
+			"path", path,
+			"duration_ms", time.Since(start).Milliseconds(),
+			"error", err,
+		)
+		return fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
-
+	duration := time.Since(start)
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("razorpay API error: %s", string(respBody))
+		c.log.Error("Razorpay API returned non-200",
+			"method", method,
+			"path", path,
+			"status_code", resp.StatusCode,
+			"duration_ms", duration.Milliseconds(),
+		)
+		return fmt.Errorf("razorpay API error: %s", string(respBody))
 	}
 
-	var refund Refund
-	if err := json.Unmarshal(respBody, &refund); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	if out != nil {
+		if err := json.Unmarshal(respBody, out); err != nil {
+			c.log.Error("failed to decode Razorpay response",
+				"method", method,
+				"path", path,
+				"duration_ms", duration.Milliseconds(),
+				"error", err,
+			)
+			return fmt.Errorf("failed to unmarshal response: %w", err)
+		}
 	}
 
-	return &refund, nil
+	c.log.Debug("Razorpay API call completed",
+		"method", method,
+		"path", path,
+		"status_code", resp.StatusCode,
+		"duration_ms", duration.Milliseconds(),
+	)
+	return nil
+}
+
+func (c *Client) buildRequest(method, path string, payload interface{}) (*http.Request, error) {
+	var body io.Reader
+	if payload != nil {
+		jsonBody, err := json.Marshal(payload)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal request payload: %w", err)
+		}
+		body = bytes.NewReader(jsonBody)
+	}
+
+	req, err := http.NewRequest(method, c.baseURL+path, body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.SetBasicAuth(c.key, c.secret)
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return req, nil
 }

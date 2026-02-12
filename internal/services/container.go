@@ -78,11 +78,21 @@ func NewContainer(
 	agentSvc := NewAgentService(ap2Repo, ap2Signer, log)
 	menteeSvc := NewMenteeService(log)
 
-	a2aPushSvc := NewA2APushService(db, log)
+	a2aPushSvc := NewA2APushService(db, ap2Repo, log)
 	a2aTaskSvc := NewA2ATaskService(db, log, a2aPushSvc)
 	workflowSvc := NewWorkflowService(db, log, emailSvc, a2aPushSvc)
 	bargainingSvc := NewBargainingService(ap2Repo, a2aClient, agentSvc, menteeSvc, log)
 	agentConfigSvc := NewAgentConfigService(".well-known", log)
+	credentialProviderSvc, err := NewCredentialProviderService(ap2Repo, cfg.Credentials.EncryptionKey, log)
+	if err != nil {
+		log.Fatal("failed to initialize credential provider service", "error", err)
+	}
+
+	log.Info("service container initialized",
+		"components", 30,
+		"llm_model", cfg.LLM.Model,
+		"workflow_enabled", workflowSvc != nil,
+	)
 
 	return &Container{
 		Auth:               NewAuthService(cfg, userRepo, aws, emailSvc, s3Svc, log),
@@ -102,7 +112,7 @@ func NewContainer(
 		Agent:              agentSvc,
 		ShoppingAgent:      NewShoppingAgentService(ap2Repo, agentSvc, intentProcessingSvc, ap2Signer, ap2MandateSvc, a2aClient, log),
 		MerchantAgent:      NewMerchantAgentService(ap2Repo, log),
-		CredentialProvider: NewCredentialProviderService(ap2Repo, log),
+		CredentialProvider: credentialProviderSvc,
 		PaymentProcessor:   NewPaymentProcessorService(ap2Repo, log),
 		Marketplace:        marketplaceSvc,
 		ProductMatching:    productMatchingSvc,

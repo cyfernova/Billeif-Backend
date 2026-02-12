@@ -603,7 +603,9 @@ func (s *WorkflowService) executeSellAction(ctx context.Context, workflow *Workf
 func (s *WorkflowService) executeNotifyAction(ctx context.Context, workflow *Workflow) (map[string]interface{}, error) {
 	// Parse notification settings
 	var settings NotificationSettings
-	json.Unmarshal(workflow.NotificationSettings, &settings)
+	if err := json.Unmarshal(workflow.NotificationSettings, &settings); err != nil {
+		s.log.Warn("failed to unmarshal notification settings", "workflow_id", workflow.ID, "error", err)
+	}
 
 	result := map[string]interface{}{
 		"action":     "notify",
@@ -634,7 +636,10 @@ func (s *WorkflowService) executeNotifyAction(ctx context.Context, workflow *Wor
 // sendWorkflowNotification sends a notification about workflow execution
 func (s *WorkflowService) sendWorkflowNotification(ctx context.Context, workflow *Workflow, run *WorkflowRun) {
 	var settings NotificationSettings
-	json.Unmarshal(workflow.NotificationSettings, &settings)
+	if err := json.Unmarshal(workflow.NotificationSettings, &settings); err != nil {
+		s.log.Warn("failed to unmarshal notification settings", "workflow_id", workflow.ID, "error", err)
+		return
+	}
 
 	if !settings.InApp && !settings.Email {
 		return
@@ -654,7 +659,9 @@ func (s *WorkflowService) sendWorkflowNotification(ctx context.Context, workflow
 
 	if settings.Email && s.emailService != nil {
 		for _, email := range settings.Emails {
-			s.emailService.SendEmail(ctx, email, subject, body)
+			if err := s.emailService.SendEmail(ctx, email, subject, body); err != nil {
+				s.log.Error("failed to send workflow notification email", "email", email, "error", err)
+			}
 		}
 	}
 }

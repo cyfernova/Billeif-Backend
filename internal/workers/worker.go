@@ -60,20 +60,25 @@ func (w *Worker) processPaymentQueue(ctx context.Context) {
 }
 
 func (w *Worker) processQueue(ctx context.Context, queueURL string, handler func(context.Context, string) error) {
+	log := w.log.Named("queue_worker").With("queue_url", queueURL)
 	for {
 		select {
 		case <-w.stopCh:
+			log.Info("queue worker stopped")
 			return
 		case <-ctx.Done():
+			log.Info("queue worker context canceled")
 			return
 		default:
 		}
 
 		if queueURL == "" {
+			log.Warn("queue URL not configured; sleeping")
 			time.Sleep(5 * time.Second)
 			continue
 		}
 
+		receiveStart := time.Now()
 		result, err := w.sqs.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
 			QueueUrl:            aws.String(queueURL),
 			MaxNumberOfMessages: 10,
@@ -81,14 +86,15 @@ func (w *Worker) processQueue(ctx context.Context, queueURL string, handler func
 			VisibilityTimeout:   30,
 		})
 		if err != nil {
-			w.log.Error("failed to receive messages", "queue", queueURL, "error", err)
+			log.Error("failed to receive messages", "error", err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
+		log.Debug("received messages", "count", len(result.Messages), "duration_ms", time.Since(receiveStart).Milliseconds())
 
 		for _, msg := range result.Messages {
 			if err := handler(ctx, *msg.Body); err != nil {
-				w.log.Error("failed to process message", "queue", queueURL, "error", err)
+				log.Error("failed to process message", "error", err)
 				continue
 			}
 
@@ -97,8 +103,10 @@ func (w *Worker) processQueue(ctx context.Context, queueURL string, handler func
 				ReceiptHandle: msg.ReceiptHandle,
 			})
 			if err != nil {
-				w.log.Error("failed to delete message", "queue", queueURL, "error", err)
+				log.Error("failed to delete message", "error", err)
+				continue
 			}
+			log.Debug("message deleted from queue")
 		}
 	}
 }
@@ -163,8 +171,10 @@ func (w *Worker) handlePaymentMessage(ctx context.Context, body string) error {
 }
 
 func (w *Worker) SendToQueue(ctx context.Context, queueURL string, message interface{}) error {
+	log := logger.FromContext(ctx).With("component", "worker", "operation", "send_to_queue", "queue_url", queueURL)
 	body, err := json.Marshal(message)
 	if err != nil {
+		log.Error("failed to marshal queue message", "error", err)
 		return err
 	}
 
@@ -172,12 +182,19 @@ func (w *Worker) SendToQueue(ctx context.Context, queueURL string, message inter
 		QueueUrl:    aws.String(queueURL),
 		MessageBody: aws.String(string(body)),
 	})
+	if err != nil {
+		log.Error("failed to send queue message", "error", err)
+		return err
+	}
+	log.Debug("queue message sent", "body_size", len(body))
 	return err
 }
 
 func (w *Worker) SendToQueueWithDelay(ctx context.Context, queueURL string, message interface{}, delaySeconds int32) error {
+	log := logger.FromContext(ctx).With("component", "worker", "operation", "send_to_queue_with_delay", "queue_url", queueURL, "delay_seconds", delaySeconds)
 	body, err := json.Marshal(message)
 	if err != nil {
+		log.Error("failed to marshal delayed queue message", "error", err)
 		return err
 	}
 
@@ -186,5 +203,10 @@ func (w *Worker) SendToQueueWithDelay(ctx context.Context, queueURL string, mess
 		MessageBody:  aws.String(string(body)),
 		DelaySeconds: delaySeconds,
 	})
+	if err != nil {
+		log.Error("failed to send delayed queue message", "error", err)
+		return err
+	}
+	log.Debug("delayed queue message sent", "body_size", len(body))
 	return err
 }

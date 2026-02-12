@@ -42,13 +42,18 @@ type Handler struct {
 }
 
 func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log *logger.Logger) *Handler {
+	log = log.Named("handlers")
 	// Create A2A client (uses SignatureService internally)
-	sigSvc, _ := ap2.NewSignatureService()
+	sigSvc, err := ap2.NewSignatureService()
+	if err != nil {
+		log.Error("failed to initialize A2A signature service", "error", err)
+	}
 	a2aClient := a2a.NewA2AClient(sigSvc, log)
 
 	// Create WebSocket hub
 	wsHub := websocket.NewHub(log)
 	wsHub.Run()
+	log.Info("handler container initialized")
 
 	return &Handler{
 		Auth:           NewAuthHandler(svcs.Auth, log),
@@ -65,12 +70,12 @@ func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log 
 		Health:         NewHealthHandler(log),
 		Admin:          NewAdminHandler(svcs.Email, log),
 		Agent:          NewAgentHandler(svcs.Agent, log),
-		ShoppingAgent:  NewShoppingAgentHandler(svcs.ShoppingAgent, log),
+		ShoppingAgent:  NewShoppingAgentHandler(svcs.ShoppingAgent, repos.AP2, log),
 		Credential:     NewCredentialHandler(svcs.CredentialProvider, repos.AP2, cfg, log),
 		Marketplace:    NewMarketplaceHandler(svcs.Marketplace, repos.AP2, log),
 		AgentDiscovery: NewAgentDiscoveryHandler(svcs.AgentDiscovery, log),
 		Intent:         NewIntentHandler(svcs.IntentProcessing, log),
-		A2AMessage:     NewA2AMessageHandler(svcs.ShoppingAgent, svcs.MerchantAgent, svcs.CredentialProvider, svcs.PaymentProcessor, svcs.Marketplace, a2aClient, log),
+		A2AMessage:     NewA2AMessageHandler(svcs.ShoppingAgent, svcs.MerchantAgent, svcs.CredentialProvider, svcs.PaymentProcessor, svcs.Marketplace, a2aClient, sigSvc, log),
 		WebSocket:      NewWebSocketHandler(wsHub, log),
 		LLM:            NewLLMHandler(svcs.LLM, log),
 		WellKnown:      NewWellKnownHandler(cfg, log),

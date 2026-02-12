@@ -1,12 +1,17 @@
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
+	"strings"
 )
 
 func validate(cfg *Config) error {
 	if cfg.Environment == "" {
 		return fmt.Errorf("ENVIRONMENT is required")
+	}
+	if err := validateLogging(cfg.Logging); err != nil {
+		return err
 	}
 
 	if cfg.Database.Host == "" {
@@ -52,6 +57,48 @@ func validate(cfg *Config) error {
 	}
 	if cfg.SQS.PaymentQueue == "" {
 		return fmt.Errorf("SQS_PAYMENT_QUEUE is required")
+	}
+	if cfg.Credentials.EncryptionKey == "" {
+		return fmt.Errorf("CREDENTIAL_ENCRYPTION_KEY is required")
+	}
+	key, err := base64.StdEncoding.DecodeString(cfg.Credentials.EncryptionKey)
+	if err != nil {
+		return fmt.Errorf("CREDENTIAL_ENCRYPTION_KEY must be base64 encoded: %w", err)
+	}
+	if len(key) != 32 {
+		return fmt.Errorf("CREDENTIAL_ENCRYPTION_KEY must decode to exactly 32 bytes")
+	}
+
+	return nil
+}
+
+func validateLogging(logging LoggingConfig) error {
+	level := strings.ToLower(strings.TrimSpace(logging.Level))
+	switch level {
+	case "debug", "info", "warn", "error":
+	default:
+		return fmt.Errorf("LOG_LEVEL must be one of: debug, info, warn, error")
+	}
+
+	format := strings.ToLower(strings.TrimSpace(logging.Format))
+	switch format {
+	case "json", "console":
+	default:
+		return fmt.Errorf("LOG_FORMAT must be one of: json, console")
+	}
+
+	if logging.SamplingInitial < 0 {
+		return fmt.Errorf("LOG_SAMPLING_INITIAL must be >= 0")
+	}
+	if logging.SamplingThereafter < 0 {
+		return fmt.Errorf("LOG_SAMPLING_THEREAFTER must be >= 0")
+	}
+
+	stackLevel := strings.ToLower(strings.TrimSpace(logging.StacktraceLevel))
+	switch stackLevel {
+	case "debug", "info", "warn", "error", "dpanic", "panic", "fatal":
+	default:
+		return fmt.Errorf("LOG_STACKTRACE_LEVEL must be one of: debug, info, warn, error, dpanic, panic, fatal")
 	}
 
 	return nil

@@ -42,6 +42,22 @@ CREATE TABLE agent_transactions (
     created_at TIMESTAMP DEFAULT NOW()
 );
 
+-- Credential Management (must be created before payment_mandates which references it)
+CREATE TABLE payment_credentials (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    credential_type VARCHAR(50) NOT NULL CHECK (credential_type IN ('razorpay_card', 'razorpay_upi', 'razorpay_wallet')),
+    razorpay_customer_id VARCHAR(100),
+    masked_card_number VARCHAR(50),
+    card_brand VARCHAR(50),
+    encrypted_data TEXT,
+    is_default BOOLEAN DEFAULT FALSE,
+    is_active BOOLEAN DEFAULT TRUE,
+    expires_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
 -- AP2 Mandates
 CREATE TABLE intent_mandates (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -85,22 +101,6 @@ CREATE TABLE payment_mandates (
     status VARCHAR(50) DEFAULT 'pending' CHECK (status IN ('pending', 'authorized', 'captured', 'failed', 'refunded')),
     processed_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT NOW()
-);
-
--- Credential Management
-CREATE TABLE payment_credentials (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    credential_type VARCHAR(50) NOT NULL CHECK (credential_type IN ('razorpay_card', 'razorpay_upi', 'razorpay_wallet')),
-    razorpay_customer_id VARCHAR(100),
-    masked_card_number VARCHAR(50),
-    card_brand VARCHAR(50),
-    encrypted_data TEXT,
-    is_default BOOLEAN DEFAULT FALSE,
-    is_active BOOLEAN DEFAULT TRUE,
-    expires_at TIMESTAMP,
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
 );
 
 CREATE TABLE credential_tokens (

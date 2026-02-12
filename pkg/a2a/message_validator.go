@@ -79,6 +79,10 @@ func (v *MessageValidator) VerifySignature(msg *A2AMessage) error {
 
 // verifySignature verifies the signature of a message
 func (v *MessageValidator) verifySignature(msg *A2AMessage) error {
+	if v.signatureSvc == nil {
+		return fmt.Errorf("signature service is not configured")
+	}
+
 	if msg.Signature == "" {
 		return fmt.Errorf("message has no signature")
 	}
@@ -122,6 +126,10 @@ func (v *MessageValidator) verifySignature(msg *A2AMessage) error {
 
 // SignMessage signs a message with the signature service
 func (v *MessageValidator) SignMessage(msg *A2AMessage, sigSvc *ap2.SignatureService) error {
+	if sigSvc == nil {
+		return fmt.Errorf("signature service is not configured")
+	}
+
 	// Build data for signing (exclude existing signature)
 	dataForSigning := map[string]interface{}{
 		"version":           msg.Version,

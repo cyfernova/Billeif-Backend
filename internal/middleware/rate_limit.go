@@ -1,10 +1,11 @@
 package middleware
 
 import (
-	"fmt"
 	"net/http"
 	"sync"
 	"time"
+
+	"invoice-backend/pkg/logger"
 
 	"github.com/gin-gonic/gin"
 )
@@ -87,15 +88,17 @@ func AgentCreationRateLimit() gin.HandlerFunc {
 	limiter := NewRateLimiter(time.Hour, 10)
 
 	return func(c *gin.Context) {
+		log := logger.FromContext(c.Request.Context()).Named("rate_limit")
 		clientIP := c.ClientIP()
 		if clientIP == "" {
 			clientIP = "unknown"
 		}
 
 		if !limiter.isAllowed(clientIP) {
+			log.Warn("agent creation rate limit exceeded", "client_ip", clientIP)
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error":   "agent creation rate limit exceeded",
-				"message": fmt.Sprintf("maximum 10 agents per hour. Please try again in an hour"),
+				"message": "maximum 10 agents per hour. Please try again in an hour",
 			})
 			c.Abort()
 			return
@@ -111,14 +114,17 @@ func ShoppingIntentRateLimit() gin.HandlerFunc {
 	limiter := NewRateLimiter(time.Minute, 100)
 
 	return func(c *gin.Context) {
+		log := logger.FromContext(c.Request.Context()).Named("rate_limit")
 		userID := c.GetString("user_id")
 		if userID == "" {
+			log.Warn("shopping intent rate limit check failed: unauthenticated")
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
 			c.Abort()
 			return
 		}
 
 		if !limiter.isAllowed(userID) {
+			log.Warn("shopping intent rate limit exceeded", "user_id", userID)
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error":   "too many requests",
 				"message": "you have exceeded the request limit. please try again shortly",
@@ -137,14 +143,17 @@ func PaymentRateLimit() gin.HandlerFunc {
 	limiter := NewRateLimiter(time.Minute, 20)
 
 	return func(c *gin.Context) {
+		log := logger.FromContext(c.Request.Context()).Named("rate_limit")
 		userID := c.GetString("user_id")
 		if userID == "" {
+			log.Warn("payment rate limit check failed: unauthenticated")
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
 			c.Abort()
 			return
 		}
 
 		if !limiter.isAllowed(userID) {
+			log.Warn("payment rate limit exceeded", "user_id", userID)
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error":   "payment processing rate limit exceeded",
 				"message": "you are processing payments too quickly. please wait a moment before trying again",

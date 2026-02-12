@@ -47,10 +47,12 @@ type CounterOfferRequest struct {
 // @Failure 500 {object} map[string]string
 // @Router /bargaining/negotiations [post]
 func (h *BargainingHandler) CreateNegotiation(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("bargaining_handler").With("operation", "create_negotiation")
 	userID := c.GetString("user_id")
 
 	var req CreateNegotiationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Warn("invalid create negotiation payload", "error", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -67,9 +69,11 @@ func (h *BargainingHandler) CreateNegotiation(c *gin.Context) {
 	var negotiation *models.BargainingNegotiation
 	negotiation, err := h.svc.CreateNegotiation(c.Request.Context(), createReq)
 	if err != nil {
+		log.Error("failed to create negotiation", "error", err, "buyer_agent_id", req.BuyerAgentID, "seller_agent_id", req.SellerAgentID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("negotiation created", "negotiation_id", negotiation.ID)
 
 	c.JSON(http.StatusCreated, negotiation)
 }
@@ -85,11 +89,13 @@ func (h *BargainingHandler) CreateNegotiation(c *gin.Context) {
 // @Failure 404 {object} map[string]string
 // @Router /bargaining/negotiations/{id} [get]
 func (h *BargainingHandler) GetNegotiation(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("bargaining_handler").With("operation", "get_negotiation")
 	id := c.Param("id")
 
 	var negotiation *models.BargainingNegotiation
 	negotiation, err := h.svc.GetNegotiation(c.Request.Context(), id)
 	if err != nil {
+		log.Error("failed to get negotiation", "error", err, "negotiation_id", id)
 		c.JSON(http.StatusNotFound, gin.H{"error": "negotiation not found"})
 		return
 	}
@@ -109,14 +115,17 @@ func (h *BargainingHandler) GetNegotiation(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /bargaining/negotiations [get]
 func (h *BargainingHandler) ListNegotiations(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("bargaining_handler").With("operation", "list_negotiations")
 	userID := c.GetString("user_id")
 	page, limit := utils.ParsePagination(c)
 
 	negotiations, total, err := h.svc.GetNegotiationsByUser(c.Request.Context(), userID, page, limit)
 	if err != nil {
+		log.Error("failed to list negotiations", "error", err, "user_id", userID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Debug("negotiations listed", "count", len(negotiations), "total", total)
 
 	c.JSON(http.StatusOK, gin.H{
 		"data":  negotiations,
@@ -142,10 +151,12 @@ func (h *BargainingHandler) ListNegotiations(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /bargaining/negotiations/{id}/counteroffer [post]
 func (h *BargainingHandler) SubmitCounterOffer(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("bargaining_handler").With("operation", "submit_counter_offer")
 	negotiationID := c.Param("id")
 
 	var req CounterOfferRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Warn("invalid counter offer payload", "error", err, "negotiation_id", negotiationID)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -160,6 +171,7 @@ func (h *BargainingHandler) SubmitCounterOffer(c *gin.Context) {
 	var negotiation *models.BargainingNegotiation
 	round, negotiation, err := h.svc.SubmitCounterOffer(c.Request.Context(), negotiationID, counterOfferReq)
 	if err != nil {
+		log.Error("failed to submit counter offer", "error", err, "negotiation_id", negotiationID, "action", req.Action)
 		statusCode := http.StatusInternalServerError
 		if err == services.ErrNegotiationExpired {
 			statusCode = http.StatusGone
@@ -172,6 +184,7 @@ func (h *BargainingHandler) SubmitCounterOffer(c *gin.Context) {
 		c.JSON(statusCode, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("counter offer processed", "negotiation_id", negotiationID, "round_number", round.RoundNumber, "action", req.Action)
 
 	c.JSON(http.StatusOK, gin.H{
 		"round":       round,
@@ -190,13 +203,16 @@ func (h *BargainingHandler) SubmitCounterOffer(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /bargaining/negotiations/{id}/rounds [get]
 func (h *BargainingHandler) GetNegotiationRounds(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("bargaining_handler").With("operation", "get_negotiation_rounds")
 	negotiationID := c.Param("id")
 
 	rounds, err := h.svc.GetNegotiationRounds(c.Request.Context(), negotiationID)
 	if err != nil {
+		log.Error("failed to get negotiation rounds", "error", err, "negotiation_id", negotiationID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Debug("negotiation rounds fetched", "negotiation_id", negotiationID, "count", len(rounds))
 
 	c.JSON(http.StatusOK, gin.H{
 		"rounds": rounds,
@@ -216,10 +232,12 @@ func (h *BargainingHandler) GetNegotiationRounds(c *gin.Context) {
 // @Failure 404 {object} map[string]string
 // @Router /bargaining/negotiations/{id}/suggest [get]
 func (h *BargainingHandler) GetSuggestedCounterOffer(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("bargaining_handler").With("operation", "get_suggested_counter_offer")
 	negotiationID := c.Param("id")
 	agentType := c.Query("agent_type")
 
 	if agentType != "buyer" && agentType != "seller" {
+		log.Warn("invalid agent_type for suggestion", "agent_type", agentType)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "agent_type must be 'buyer' or 'seller'"})
 		return
 	}
@@ -227,6 +245,7 @@ func (h *BargainingHandler) GetSuggestedCounterOffer(c *gin.Context) {
 	var negotiation *models.BargainingNegotiation
 	negotiation, err := h.svc.GetNegotiation(c.Request.Context(), negotiationID)
 	if err != nil {
+		log.Error("failed to load negotiation for suggestion", "error", err, "negotiation_id", negotiationID)
 		c.JSON(http.StatusNotFound, gin.H{"error": "negotiation not found"})
 		return
 	}
@@ -237,4 +256,5 @@ func (h *BargainingHandler) GetSuggestedCounterOffer(c *gin.Context) {
 		"suggested_amount": suggestedAmount,
 		"agent_type":       agentType,
 	})
+	log.Debug("counter offer suggestion generated", "negotiation_id", negotiationID, "agent_type", agentType)
 }

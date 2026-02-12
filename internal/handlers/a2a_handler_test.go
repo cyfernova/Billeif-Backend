@@ -36,6 +36,7 @@ func TestHandleMessage(t *testing.T) {
 		nil, // payment processor
 		mockMarketplace,
 		a2aClient,
+		sigSvc,
 		log,
 	)
 
@@ -79,6 +80,19 @@ func TestMessageValidation(t *testing.T) {
 
 	if !result.IsValid {
 		t.Errorf("expected message to be valid, got errors: %v", result.Errors)
+	}
+}
+
+func TestMessageValidationWithNilSignerAndSignature(t *testing.T) {
+	validator := a2a.NewMessageValidator(nil)
+	msg := a2a.NewA2AMessage("agent-1", "agent-2", a2a.MessageTypeTaskStart)
+	msg.TaskID = "task-123"
+	msg.Signature = "invalid"
+	msg.PublicKey = "invalid"
+
+	result := validator.ValidateMessage(msg)
+	if result.IsValid {
+		t.Errorf("expected validation to fail when signature service is nil")
 	}
 }
 
