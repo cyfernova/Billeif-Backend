@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -49,13 +50,32 @@ import (
 // @name Authorization
 
 func main() {
-	log := logger.New()
+	bootstrapLog := logger.New().Named("bootstrap")
 	ctx := context.Background()
 
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatal("failed to load config", "error", err)
+		bootstrapLog.Fatal("failed to load config", "error", err)
 	}
+
+	log := logger.NewWithConfig(logger.Config{
+		Environment:        cfg.Environment,
+		Level:              cfg.Logging.Level,
+		Format:             cfg.Logging.Format,
+		SamplingInitial:    cfg.Logging.SamplingInitial,
+		SamplingThereafter: cfg.Logging.SamplingThereafter,
+		StacktraceLevel:    cfg.Logging.StacktraceLevel,
+	}).Named("api")
+	logger.SetGlobal(log)
+	defer log.Sync()
+
+	log.Info("application startup",
+		"service", "invoice-backend",
+		"environment", cfg.Environment,
+		"log_level", cfg.Logging.Level,
+		"log_format", cfg.Logging.Format,
+		"sentry_enabled", cfg.Sentry.DSN != "",
+	)
 
 	// Initialize Sentry early for production error tracking
 	if err := initSentry(cfg, log); err != nil {
@@ -64,16 +84,16 @@ func main() {
 	}
 	defer pkgsentry.Flush(2 * time.Second)
 
-	if cfg.Environment == "prod" {
+	if logger.IsProductionEnvironment(cfg.Environment) {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	db, err := initDatabase(cfg)
+	db, err := initDatabase(cfg, log)
 	if err != nil {
 		log.Fatal("failed to connect to database", "error", err)
 	}
 
-	awsClients, err := awsclients.New(ctx, cfg.AWS)
+	awsClients, err := awsclients.New(ctx, cfg.AWS, log.Named("awsclients"))
 	if err != nil {
 		log.Fatal("failed to initialize AWS clients", "error", err)
 	}
@@ -95,7 +115,7 @@ func main() {
 	}
 
 	go func() {
-		log.Info("starting server", "port", cfg.Server.Port)
+		log.Info("starting http server", "port", cfg.Server.Port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal("failed to start server", "error", err)
 		}
@@ -116,7 +136,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Info("shutting down server...")
+	log.Info("shutdown initiated")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -129,10 +149,10 @@ func main() {
 		log.Error("metrics server forced to shutdown", "error", err)
 	}
 
-	log.Info("server exited")
+	log.Info("shutdown complete")
 }
 
-func initDatabase(cfg *config.Config) (*gorm.DB, error) {
+func initDatabase(cfg *config.Config, log *logger.Logger) (*gorm.DB, error) {
 	dsn := fmt.Sprintf(
 		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 		cfg.Database.Host,
@@ -142,7 +162,21 @@ func initDatabase(cfg *config.Config) (*gorm.DB, error) {
 		cfg.Database.Name,
 		cfg.Database.SSLMode,
 	)
-	return gorm.Open(postgres.Open(dsn), &gorm.Config{})
+
+	gormLevel := "warn"
+	if strings.EqualFold(cfg.Logging.Level, "debug") || strings.EqualFold(cfg.Logging.Level, "info") {
+		gormLevel = cfg.Logging.Level
+	}
+
+	return gorm.Open(postgres.Open(dsn), &gorm.Config{
+		Logger: logger.NewGORMLogger(log, logger.GORMOptions{
+			Environment:               cfg.Environment,
+			SlowThreshold:             200 * time.Millisecond,
+			Level:                     gormLevel,
+			IgnoreRecordNotFoundError: true,
+			IncludeQuery:              !logger.IsProductionEnvironment(cfg.Environment),
+		}),
+	})
 }
 
 type Repositories struct {

@@ -28,6 +28,7 @@ type CreateWebhookInput struct {
 }
 
 func (s *WebhookService) Create(ctx context.Context, input CreateWebhookInput) (*models.Webhook, error) {
+	log := logger.FromContext(ctx).With("service", "webhook", "operation", "create", "business_id", input.BusinessID)
 	webhook := &models.Webhook{
 		BusinessID: input.BusinessID,
 		Name:       input.Name,
@@ -38,18 +39,33 @@ func (s *WebhookService) Create(ctx context.Context, input CreateWebhookInput) (
 	}
 
 	if err := s.repo.Create(ctx, webhook); err != nil {
+		log.Error("failed to create webhook", "error", err)
 		return nil, fmt.Errorf("failed to create webhook: %w", err)
 	}
 
+	log.Info("webhook created", "webhook_id", webhook.ID)
 	return webhook, nil
 }
 
 func (s *WebhookService) Get(ctx context.Context, id string) (*models.Webhook, error) {
-	return s.repo.GetByID(ctx, id)
+	log := logger.FromContext(ctx).With("service", "webhook", "operation", "get", "webhook_id", id)
+	webhook, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		log.Error("failed to get webhook", "error", err)
+		return nil, err
+	}
+	return webhook, nil
 }
 
 func (s *WebhookService) List(ctx context.Context, businessID string) ([]*models.Webhook, error) {
-	return s.repo.GetByBusinessID(ctx, businessID)
+	log := logger.FromContext(ctx).With("service", "webhook", "operation", "list", "business_id", businessID)
+	webhooks, err := s.repo.GetByBusinessID(ctx, businessID)
+	if err != nil {
+		log.Error("failed to list webhooks", "error", err)
+		return nil, err
+	}
+	log.Debug("listed webhooks", "count", len(webhooks))
+	return webhooks, nil
 }
 
 type UpdateWebhookInput struct {
@@ -61,8 +77,10 @@ type UpdateWebhookInput struct {
 }
 
 func (s *WebhookService) Update(ctx context.Context, id string, input UpdateWebhookInput) (*models.Webhook, error) {
+	log := logger.FromContext(ctx).With("service", "webhook", "operation", "update", "webhook_id", id)
 	webhook, err := s.repo.GetByID(ctx, id)
 	if err != nil {
+		log.Error("failed to load webhook for update", "error", err)
 		return nil, err
 	}
 
@@ -83,12 +101,20 @@ func (s *WebhookService) Update(ctx context.Context, id string, input UpdateWebh
 	}
 
 	if err := s.repo.Update(ctx, webhook); err != nil {
+		log.Error("failed to update webhook", "error", err)
 		return nil, err
 	}
 
+	log.Info("webhook updated", "webhook_id", webhook.ID)
 	return webhook, nil
 }
 
 func (s *WebhookService) Delete(ctx context.Context, id string) error {
-	return s.repo.Delete(ctx, id)
+	log := logger.FromContext(ctx).With("service", "webhook", "operation", "delete", "webhook_id", id)
+	if err := s.repo.Delete(ctx, id); err != nil {
+		log.Error("failed to delete webhook", "error", err)
+		return err
+	}
+	log.Info("webhook deleted", "webhook_id", id)
+	return nil
 }

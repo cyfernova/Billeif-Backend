@@ -14,7 +14,7 @@ type RazorpayService struct {
 
 func NewRazorpayService(cfg *Config, log *logger.Logger) *RazorpayService {
 	return &RazorpayService{
-		client: NewClient(cfg),
+		client: NewClient(cfg, log),
 		log:    log,
 	}
 }

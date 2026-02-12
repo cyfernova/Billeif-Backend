@@ -24,8 +24,10 @@ type CreateSubscriptionInput struct {
 }
 
 func (s *SubscriptionService) Create(ctx context.Context, input CreateSubscriptionInput) (*models.Subscription, error) {
+	log := logger.FromContext(ctx).With("service", "subscription", "operation", "create", "business_id", input.BusinessID, "plan", input.Plan)
 	existing, _ := s.repo.GetByBusinessID(ctx, input.BusinessID)
 	if existing != nil {
+		log.Warn("subscription already exists for business")
 		return nil, fmt.Errorf("subscription already exists for this business")
 	}
 
@@ -36,18 +38,32 @@ func (s *SubscriptionService) Create(ctx context.Context, input CreateSubscripti
 	}
 
 	if err := s.repo.Create(ctx, subscription); err != nil {
+		log.Error("failed to create subscription", "error", err)
 		return nil, fmt.Errorf("failed to create subscription: %w", err)
 	}
 
+	log.Info("subscription created", "subscription_id", subscription.ID)
 	return subscription, nil
 }
 
 func (s *SubscriptionService) Get(ctx context.Context, id string) (*models.Subscription, error) {
-	return s.repo.GetByID(ctx, id)
+	log := logger.FromContext(ctx).With("service", "subscription", "operation", "get", "subscription_id", id)
+	subscription, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		log.Error("failed to get subscription", "error", err)
+		return nil, err
+	}
+	return subscription, nil
 }
 
 func (s *SubscriptionService) GetByBusinessID(ctx context.Context, businessID string) (*models.Subscription, error) {
-	return s.repo.GetByBusinessID(ctx, businessID)
+	log := logger.FromContext(ctx).With("service", "subscription", "operation", "get_by_business", "business_id", businessID)
+	subscription, err := s.repo.GetByBusinessID(ctx, businessID)
+	if err != nil {
+		log.Error("failed to get subscription by business", "error", err)
+		return nil, err
+	}
+	return subscription, nil
 }
 
 type UpdateSubscriptionInput struct {
@@ -56,8 +72,10 @@ type UpdateSubscriptionInput struct {
 }
 
 func (s *SubscriptionService) Update(ctx context.Context, businessID string, input UpdateSubscriptionInput) (*models.Subscription, error) {
+	log := logger.FromContext(ctx).With("service", "subscription", "operation", "update", "business_id", businessID)
 	subscription, err := s.repo.GetByBusinessID(ctx, businessID)
 	if err != nil {
+		log.Error("failed to load subscription for update", "error", err)
 		return nil, err
 	}
 
@@ -69,8 +87,10 @@ func (s *SubscriptionService) Update(ctx context.Context, businessID string, inp
 	}
 
 	if err := s.repo.Update(ctx, subscription); err != nil {
+		log.Error("failed to update subscription", "error", err)
 		return nil, err
 	}
 
+	log.Info("subscription updated", "subscription_id", subscription.ID, "plan", subscription.Plan, "status", subscription.Status)
 	return subscription, nil
 }

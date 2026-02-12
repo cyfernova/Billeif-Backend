@@ -33,8 +33,10 @@ func NewSubscriptionHandler(svc *services.SubscriptionService, log *logger.Logge
 // @Failure 500 {object} map[string]string
 // @Router /subscriptions [post]
 func (h *SubscriptionHandler) Create(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("subscription_handler").With("operation", "create")
 	var input services.CreateSubscriptionInput
 	if err := c.ShouldBindJSON(&input); err != nil {
+		log.Warn("invalid create subscription payload", "error", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -42,9 +44,11 @@ func (h *SubscriptionHandler) Create(c *gin.Context) {
 	var subscription *models.Subscription
 	subscription, err := h.svc.Create(c.Request.Context(), input)
 	if err != nil {
+		log.Error("failed to create subscription", "error", err, "business_id", input.BusinessID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("subscription created", "subscription_id", subscription.ID, "business_id", subscription.BusinessID)
 
 	c.JSON(http.StatusCreated, subscription)
 }
@@ -61,11 +65,13 @@ func (h *SubscriptionHandler) Create(c *gin.Context) {
 // @Failure 404 {object} map[string]string
 // @Router /subscriptions [get]
 func (h *SubscriptionHandler) Get(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("subscription_handler").With("operation", "get")
 	businessID := middleware.GetBusinessID(c)
 	if businessID == "" {
 		businessID = c.Query("business_id")
 	}
 	if businessID == "" {
+		log.Warn("missing business_id for subscription lookup")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "business_id is required"})
 		return
 	}
@@ -73,9 +79,11 @@ func (h *SubscriptionHandler) Get(c *gin.Context) {
 	var subscription *models.Subscription
 	subscription, err := h.svc.GetByBusinessID(c.Request.Context(), businessID)
 	if err != nil {
+		log.Error("failed to get subscription", "error", err, "business_id", businessID)
 		c.JSON(http.StatusNotFound, gin.H{"error": "subscription not found"})
 		return
 	}
+	log.Debug("subscription fetched", "subscription_id", subscription.ID, "business_id", businessID)
 
 	c.JSON(http.StatusOK, subscription)
 }
@@ -94,17 +102,20 @@ func (h *SubscriptionHandler) Get(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /subscriptions [put]
 func (h *SubscriptionHandler) Update(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("subscription_handler").With("operation", "update")
 	businessID := middleware.GetBusinessID(c)
 	if businessID == "" {
 		businessID = c.Query("business_id")
 	}
 	if businessID == "" {
+		log.Warn("missing business_id for subscription update")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "business_id is required"})
 		return
 	}
 
 	var input services.UpdateSubscriptionInput
 	if err := c.ShouldBindJSON(&input); err != nil {
+		log.Warn("invalid update subscription payload", "error", err, "business_id", businessID)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -112,9 +123,11 @@ func (h *SubscriptionHandler) Update(c *gin.Context) {
 	var subscription *models.Subscription
 	subscription, err := h.svc.Update(c.Request.Context(), businessID, input)
 	if err != nil {
+		log.Error("failed to update subscription", "error", err, "business_id", businessID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("subscription updated", "subscription_id", subscription.ID, "business_id", businessID)
 
 	c.JSON(http.StatusOK, subscription)
 }

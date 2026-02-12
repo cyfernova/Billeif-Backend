@@ -23,6 +23,10 @@ func NewMarketplaceHandler(svc *services.MarketplaceService, ap2Repo interfaces.
 	return &MarketplaceHandler{svc: svc, ap2Repo: ap2Repo, log: log}
 }
 
+func (h *MarketplaceHandler) reqLog(c *gin.Context, operation string) *logger.Logger {
+	return logger.FromContext(c.Request.Context()).Named("marketplace_handler").With("operation", operation)
+}
+
 type CreateProductRequest struct {
 	Name           string   `json:"name" binding:"required"`
 	Description    string   `json:"description"`
@@ -59,6 +63,7 @@ type UpdateProductRequest struct {
 // @Failure 500 {object} map[string]string
 // @Router /marketplace/products [get]
 func (h *MarketplaceHandler) ListProducts(c *gin.Context) {
+	log := h.reqLog(c, "list_products")
 	page, limit := utils.ParsePagination(c)
 	category := c.Query("category")
 	agentID := c.Query("agent_id")
@@ -73,9 +78,11 @@ func (h *MarketplaceHandler) ListProducts(c *gin.Context) {
 
 	products, total, err := h.svc.ListProducts(c.Request.Context(), filters, page, limit)
 	if err != nil {
+		log.Error("failed to list marketplace products", "error", err, "filters", filters)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Debug("marketplace products listed", "count", len(products), "total", total)
 
 	c.JSON(http.StatusOK, gin.H{
 		"data":  products,
@@ -98,14 +105,17 @@ func (h *MarketplaceHandler) ListProducts(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /marketplace/products/search [get]
 func (h *MarketplaceHandler) SearchProducts(c *gin.Context) {
+	log := h.reqLog(c, "search_products")
 	query := c.Query("q")
 	page, limit := utils.ParsePagination(c)
 
 	products, total, err := h.svc.SearchProducts(c.Request.Context(), query, page, limit)
 	if err != nil {
+		log.Error("failed to search marketplace products", "error", err, "query", query)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Debug("marketplace products search completed", "query", query, "count", len(products), "total", total)
 
 	c.JSON(http.StatusOK, gin.H{
 		"data":  products,
@@ -126,10 +136,12 @@ func (h *MarketplaceHandler) SearchProducts(c *gin.Context) {
 // @Failure 404 {object} map[string]string
 // @Router /marketplace/products/{id} [get]
 func (h *MarketplaceHandler) GetProduct(c *gin.Context) {
+	log := h.reqLog(c, "get_product")
 	id := c.Param("id")
 
 	product, err := h.svc.GetProduct(c.Request.Context(), id)
 	if err != nil {
+		log.Error("failed to get marketplace product", "error", err, "product_id", id)
 		c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
 		return
 	}
@@ -149,13 +161,16 @@ func (h *MarketplaceHandler) GetProduct(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /marketplace/products/available [get]
 func (h *MarketplaceHandler) GetAvailableProducts(c *gin.Context) {
+	log := h.reqLog(c, "get_available_products")
 	page, limit := utils.ParsePagination(c)
 
 	products, total, err := h.svc.GetAvailableProducts(c.Request.Context(), page, limit)
 	if err != nil {
+		log.Error("failed to get available marketplace products", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Debug("available marketplace products listed", "count", len(products), "total", total)
 
 	c.JSON(http.StatusOK, gin.H{
 		"data":  products,
@@ -179,8 +194,10 @@ func (h *MarketplaceHandler) GetAvailableProducts(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /marketplace/merchant/products [get]
 func (h *MarketplaceHandler) GetMerchantProducts(c *gin.Context) {
+	log := h.reqLog(c, "get_merchant_products")
 	agentID := c.Query("agent_id")
 	if agentID == "" {
+		log.Warn("missing agent_id query param")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "agent_id parameter is required"})
 		return
 	}
@@ -189,9 +206,11 @@ func (h *MarketplaceHandler) GetMerchantProducts(c *gin.Context) {
 
 	products, total, err := h.svc.GetMerchantProducts(c.Request.Context(), agentID, page, limit)
 	if err != nil {
+		log.Error("failed to get merchant products", "error", err, "agent_id", agentID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Debug("merchant products listed", "agent_id", agentID, "count", len(products), "total", total)
 
 	c.JSON(http.StatusOK, gin.H{
 		"data":  products,
@@ -215,14 +234,17 @@ func (h *MarketplaceHandler) GetMerchantProducts(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /marketplace/merchant/products [post]
 func (h *MarketplaceHandler) AddProduct(c *gin.Context) {
+	log := h.reqLog(c, "add_product")
 	agentID := c.Query("agent_id")
 	if agentID == "" {
+		log.Warn("missing agent_id query param")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "agent_id parameter is required"})
 		return
 	}
 
 	var req CreateProductRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Warn("invalid add product payload", "error", err, "agent_id", agentID)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -247,9 +269,11 @@ func (h *MarketplaceHandler) AddProduct(c *gin.Context) {
 	}
 
 	if err := h.ap2Repo.CreateMarketplaceProduct(c.Request.Context(), product); err != nil {
+		log.Error("failed to create marketplace product", "error", err, "agent_id", agentID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("marketplace product created", "product_id", product.ID, "agent_id", agentID)
 
 	c.JSON(http.StatusCreated, product)
 }
@@ -269,16 +293,19 @@ func (h *MarketplaceHandler) AddProduct(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /marketplace/merchant/products/{id} [put]
 func (h *MarketplaceHandler) UpdateProduct(c *gin.Context) {
+	log := h.reqLog(c, "update_product")
 	id := c.Param("id")
 
 	product, err := h.ap2Repo.GetMarketplaceProductByID(c.Request.Context(), id)
 	if err != nil {
+		log.Error("failed to load marketplace product for update", "error", err, "product_id", id)
 		c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
 		return
 	}
 
 	var req UpdateProductRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Warn("invalid update product payload", "error", err, "product_id", id)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -311,9 +338,11 @@ func (h *MarketplaceHandler) UpdateProduct(c *gin.Context) {
 	}
 
 	if err := h.ap2Repo.UpdateMarketplaceProduct(c.Request.Context(), product); err != nil {
+		log.Error("failed to update marketplace product", "error", err, "product_id", id)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("marketplace product updated", "product_id", id)
 
 	c.JSON(http.StatusOK, gin.H{"message": "product updated successfully"})
 }
@@ -331,6 +360,7 @@ func (h *MarketplaceHandler) UpdateProduct(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /marketplace/orders [get]
 func (h *MarketplaceHandler) GetUserOrders(c *gin.Context) {
+	log := h.reqLog(c, "get_user_orders")
 	userID := c.GetString("user_id")
 	page, limit := utils.ParsePagination(c)
 	status := c.Query("status")
@@ -346,9 +376,11 @@ func (h *MarketplaceHandler) GetUserOrders(c *gin.Context) {
 	}
 
 	if err != nil {
+		log.Error("failed to get user marketplace orders", "error", err, "user_id", userID, "status", status)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Debug("user marketplace orders listed", "user_id", userID, "count", len(orders), "total", total)
 
 	c.JSON(http.StatusOK, gin.H{
 		"data":  orders,
@@ -371,15 +403,18 @@ func (h *MarketplaceHandler) GetUserOrders(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /marketplace/orders/status/{status} [get]
 func (h *MarketplaceHandler) GetOrdersByStatus(c *gin.Context) {
+	log := h.reqLog(c, "get_orders_by_status")
 	userID := c.GetString("user_id")
 	status := c.Param("status")
 	page, limit := utils.ParsePagination(c)
 
 	orders, total, err := h.svc.GetOrdersByStatus(c.Request.Context(), userID, status, page, limit)
 	if err != nil {
+		log.Error("failed to get orders by status", "error", err, "user_id", userID, "status", status)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Debug("orders by status listed", "status", status, "count", len(orders), "total", total)
 
 	c.JSON(http.StatusOK, gin.H{
 		"data":  orders,
@@ -399,23 +434,29 @@ func (h *MarketplaceHandler) GetOrdersByStatus(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /marketplace/stats [get]
 func (h *MarketplaceHandler) GetMarketplaceStats(c *gin.Context) {
+	log := h.reqLog(c, "get_marketplace_stats")
 	stats, err := h.svc.GetMarketplaceStats(c.Request.Context())
 	if err != nil {
+		log.Error("failed to get marketplace stats", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Debug("marketplace stats fetched")
 
 	c.JSON(http.StatusOK, stats)
 }
 
 func (h *MarketplaceHandler) GetProductDetails(c *gin.Context) {
+	log := h.reqLog(c, "get_product_details")
 	id := c.Param("id")
 
 	product, err := h.svc.GetProduct(c.Request.Context(), id)
 	if err != nil {
+		log.Error("failed to get marketplace product details", "error", err, "product_id", id)
 		c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
 		return
 	}
+	log.Debug("marketplace product details fetched", "product_id", id)
 
 	c.JSON(http.StatusOK, product)
 }

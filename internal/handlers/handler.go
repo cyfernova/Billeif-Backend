@@ -42,6 +42,7 @@ type Handler struct {
 }
 
 func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log *logger.Logger) *Handler {
+	log = log.Named("handlers")
 	// Create A2A client (uses SignatureService internally)
 	sigSvc, _ := ap2.NewSignatureService()
 	a2aClient := a2a.NewA2AClient(sigSvc, log)
@@ -49,6 +50,7 @@ func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log 
 	// Create WebSocket hub
 	wsHub := websocket.NewHub(log)
 	wsHub.Run()
+	log.Info("handler container initialized")
 
 	return &Handler{
 		Auth:           NewAuthHandler(svcs.Auth, log),

@@ -33,8 +33,10 @@ func NewLedgerHandler(svc *services.LedgerService, log *logger.Logger) *LedgerHa
 // @Failure 500 {object} map[string]string
 // @Router /ledger [get]
 func (h *LedgerHandler) List(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("ledger_handler").With("operation", "list")
 	businessID := c.Query("business_id")
 	if businessID == "" {
+		log.Warn("missing business_id query param")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "business_id is required"})
 		return
 	}
@@ -43,9 +45,11 @@ func (h *LedgerHandler) List(c *gin.Context) {
 
 	entries, total, err := h.svc.List(c.Request.Context(), businessID, page, limit)
 	if err != nil {
+		log.Error("failed to list ledger entries", "error", err, "business_id", businessID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Debug("ledger entries listed", "business_id", businessID, "count", len(entries), "total", total)
 
 	c.JSON(http.StatusOK, gin.H{
 		"data":  entries,
@@ -67,17 +71,21 @@ func (h *LedgerHandler) List(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /ledger/balance [get]
 func (h *LedgerHandler) Balance(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("ledger_handler").With("operation", "balance")
 	businessID := c.Query("business_id")
 	if businessID == "" {
+		log.Warn("missing business_id query param")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "business_id is required"})
 		return
 	}
 
 	balance, err := h.svc.GetBalance(c.Request.Context(), businessID)
 	if err != nil {
+		log.Error("failed to get ledger balance", "error", err, "business_id", businessID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Debug("ledger balance fetched", "business_id", businessID)
 
 	c.JSON(http.StatusOK, gin.H{"balance": balance})
 }

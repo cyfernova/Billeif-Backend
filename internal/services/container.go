@@ -84,6 +84,12 @@ func NewContainer(
 	bargainingSvc := NewBargainingService(ap2Repo, a2aClient, agentSvc, menteeSvc, log)
 	agentConfigSvc := NewAgentConfigService(".well-known", log)
 
+	log.Info("service container initialized",
+		"components", 30,
+		"llm_model", cfg.LLM.Model,
+		"workflow_enabled", workflowSvc != nil,
+	)
+
 	return &Container{
 		Auth:               NewAuthService(cfg, userRepo, aws, emailSvc, s3Svc, log),
 		BusinessAuth:       NewBusinessAuthService(businessRepo, teamRepo, log),

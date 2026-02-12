@@ -33,8 +33,10 @@ func NewCustomerHandler(svc *services.CustomerService, log *logger.Logger) *Cust
 // @Failure 500 {object} map[string]string
 // @Router /customers [post]
 func (h *CustomerHandler) Create(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("customer_handler").With("operation", "create")
 	var input services.CreateCustomerInput
 	if err := c.ShouldBindJSON(&input); err != nil {
+		log.Warn("invalid create customer payload", "error", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -42,9 +44,11 @@ func (h *CustomerHandler) Create(c *gin.Context) {
 	var customer *models.Customer
 	customer, err := h.svc.Create(c.Request.Context(), input)
 	if err != nil {
+		log.Error("failed to create customer", "error", err, "business_id", input.BusinessID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("customer created", "customer_id", customer.ID, "business_id", customer.BusinessID)
 
 	c.JSON(http.StatusCreated, customer)
 }
@@ -60,10 +64,12 @@ func (h *CustomerHandler) Create(c *gin.Context) {
 // @Failure 404 {object} map[string]string
 // @Router /customers/{id} [get]
 func (h *CustomerHandler) Get(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("customer_handler").With("operation", "get")
 	id := c.Param("id")
 	var customer *models.Customer
 	customer, err := h.svc.Get(c.Request.Context(), id)
 	if err != nil {
+		log.Error("failed to get customer", "error", err, "customer_id", id)
 		c.JSON(http.StatusNotFound, gin.H{"error": "customer not found"})
 		return
 	}
@@ -85,8 +91,10 @@ func (h *CustomerHandler) Get(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /customers [get]
 func (h *CustomerHandler) List(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("customer_handler").With("operation", "list")
 	businessID := c.Query("business_id")
 	if businessID == "" {
+		log.Warn("missing business_id query param")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "business_id is required"})
 		return
 	}
@@ -95,9 +103,11 @@ func (h *CustomerHandler) List(c *gin.Context) {
 
 	customers, total, err := h.svc.List(c.Request.Context(), businessID, page, limit)
 	if err != nil {
+		log.Error("failed to list customers", "error", err, "business_id", businessID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Debug("customers listed", "business_id", businessID, "count", len(customers), "total", total)
 
 	c.JSON(http.StatusOK, gin.H{
 		"data":  customers,
@@ -121,9 +131,11 @@ func (h *CustomerHandler) List(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /customers/{id} [put]
 func (h *CustomerHandler) Update(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("customer_handler").With("operation", "update")
 	id := c.Param("id")
 	var input services.UpdateCustomerInput
 	if err := c.ShouldBindJSON(&input); err != nil {
+		log.Warn("invalid update customer payload", "error", err, "customer_id", id)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -131,9 +143,11 @@ func (h *CustomerHandler) Update(c *gin.Context) {
 	var customer *models.Customer
 	customer, err := h.svc.Update(c.Request.Context(), id, input)
 	if err != nil {
+		log.Error("failed to update customer", "error", err, "customer_id", id)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("customer updated", "customer_id", customer.ID)
 
 	c.JSON(http.StatusOK, customer)
 }
@@ -149,11 +163,14 @@ func (h *CustomerHandler) Update(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /customers/{id} [delete]
 func (h *CustomerHandler) Delete(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("customer_handler").With("operation", "delete")
 	id := c.Param("id")
 	if err := h.svc.Delete(c.Request.Context(), id); err != nil {
+		log.Error("failed to delete customer", "error", err, "customer_id", id)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("customer deleted", "customer_id", id)
 
 	c.JSON(http.StatusNoContent, nil)
 }
@@ -172,23 +189,28 @@ func (h *CustomerHandler) Delete(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /customers/import [post]
 func (h *CustomerHandler) Import(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("customer_handler").With("operation", "import")
 	businessID := c.Query("business_id")
 	if businessID == "" {
+		log.Warn("missing business_id query param")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "business_id is required"})
 		return
 	}
 
 	var customers []services.CreateCustomerInput
 	if err := c.ShouldBindJSON(&customers); err != nil {
+		log.Warn("invalid import customer payload", "error", err, "business_id", businessID)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
 	count, err := h.svc.Import(c.Request.Context(), businessID, customers)
 	if err != nil {
+		log.Error("failed to import customers", "error", err, "business_id", businessID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("customers imported", "business_id", businessID, "imported_count", count)
 
 	c.JSON(http.StatusOK, gin.H{"imported": count})
 }
@@ -205,8 +227,10 @@ func (h *CustomerHandler) Import(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /customers/export [get]
 func (h *CustomerHandler) Export(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("customer_handler").With("operation", "export")
 	businessID := c.Query("business_id")
 	if businessID == "" {
+		log.Warn("missing business_id query param")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "business_id is required"})
 		return
 	}
@@ -214,9 +238,11 @@ func (h *CustomerHandler) Export(c *gin.Context) {
 	var customers []*models.Customer
 	customers, err := h.svc.Export(c.Request.Context(), businessID)
 	if err != nil {
+		log.Error("failed to export customers", "error", err, "business_id", businessID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("customers exported", "business_id", businessID, "count", len(customers))
 
 	c.JSON(http.StatusOK, customers)
 }

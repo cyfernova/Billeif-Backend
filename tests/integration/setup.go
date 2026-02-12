@@ -64,7 +64,7 @@ func SetupTestEnv(t *testing.T) *TestEnv {
 		},
 	}
 
-	awsClients, err := awsclients.New(ctx, cfg.AWS)
+	awsClients, err := awsclients.New(ctx, cfg.AWS, log)
 	if err != nil {
 		t.Fatalf("Failed to create AWS clients: %v", err)
 	}

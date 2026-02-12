@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
@@ -9,6 +10,7 @@ import (
 
 type Config struct {
 	Environment    string         `mapstructure:"ENVIRONMENT"`
+	Logging        LoggingConfig  `mapstructure:"LOGGING"`
 	Server         ServerConfig   `mapstructure:"SERVER"`
 	Database       DatabaseConfig `mapstructure:"DATABASE"`
 	Redis          RedisConfig    `mapstructure:"REDIS"`
@@ -20,6 +22,14 @@ type Config struct {
 	Sentry         SentryConfig   `mapstructure:"SENTRY"`
 	AllowedOrigins []string       `mapstructure:"ALLOWED_ORIGINS"`
 	LLM            LLMConfig      `mapstructure:"LLM"`
+}
+
+type LoggingConfig struct {
+	Level              string `mapstructure:"LEVEL"`
+	Format             string `mapstructure:"FORMAT"`
+	SamplingInitial    int    `mapstructure:"SAMPLING_INITIAL"`
+	SamplingThereafter int    `mapstructure:"SAMPLING_THEREAFTER"`
+	StacktraceLevel    string `mapstructure:"STACKTRACE_LEVEL"`
 }
 
 type LLMConfig struct {
@@ -100,6 +110,11 @@ func Load() (*Config, error) {
 
 	// Explicitly bind environment variables for nested config
 	viper.BindEnv("ENVIRONMENT")
+	viper.BindEnv("LOGGING.LEVEL", "LOG_LEVEL")
+	viper.BindEnv("LOGGING.FORMAT", "LOG_FORMAT")
+	viper.BindEnv("LOGGING.SAMPLING_INITIAL", "LOG_SAMPLING_INITIAL")
+	viper.BindEnv("LOGGING.SAMPLING_THEREAFTER", "LOG_SAMPLING_THEREAFTER")
+	viper.BindEnv("LOGGING.STACKTRACE_LEVEL", "LOG_STACKTRACE_LEVEL")
 	viper.BindEnv("SERVER.PORT", "SERVER_PORT")
 	viper.BindEnv("SERVER.BASE_URL", "SERVER_BASE_URL")
 	viper.BindEnv("SERVER.READ_TIMEOUT", "SERVER_READ_TIMEOUT")
@@ -165,6 +180,27 @@ func setDefaults(cfg *Config) {
 	if cfg.Environment == "" {
 		cfg.Environment = "dev"
 	}
+	if cfg.Logging.Level == "" {
+		if isProductionEnv(cfg.Environment) {
+			cfg.Logging.Level = "info"
+		} else {
+			cfg.Logging.Level = "debug"
+		}
+	}
+	if cfg.Logging.Format == "" {
+		if isProductionEnv(cfg.Environment) {
+			cfg.Logging.Format = "json"
+		} else {
+			cfg.Logging.Format = "console"
+		}
+	}
+	if cfg.Logging.SamplingInitial == 0 && cfg.Logging.SamplingThereafter == 0 && isProductionEnv(cfg.Environment) {
+		cfg.Logging.SamplingInitial = 100
+		cfg.Logging.SamplingThereafter = 100
+	}
+	if cfg.Logging.StacktraceLevel == "" {
+		cfg.Logging.StacktraceLevel = "error"
+	}
 	if cfg.Server.Port == 0 {
 		cfg.Server.Port = 8080
 	}
@@ -204,4 +240,9 @@ func setDefaults(cfg *Config) {
 	if cfg.LLM.Timeout == 0 {
 		cfg.LLM.Timeout = 60
 	}
+}
+
+func isProductionEnv(env string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(env))
+	return normalized == "prod" || normalized == "production"
 }

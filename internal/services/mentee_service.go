@@ -137,7 +137,7 @@ func (m *MenteeService) calculateInformedDecision(agentType string, currentAmoun
 		decision.ProposedAmount = math.Max(targetAmount, initialAmount*0.7)
 		decision.Action = "counteroffer"
 
-		if round >= maxRounds || decision.ProposedAmount <= currentAmount*1.02 {
+		if round >= maxRounds || currentAmount <= decision.ProposedAmount*1.02 {
 			decision.Action = "accept"
 			decision.ProposedAmount = currentAmount
 		}
@@ -157,7 +157,7 @@ func (m *MenteeService) calculateInformedDecision(agentType string, currentAmoun
 		decision.ProposedAmount = math.Min(targetAmount, initialAmount*1.25)
 		decision.Action = "counteroffer"
 
-		if round >= maxRounds || decision.ProposedAmount >= currentAmount*0.98 {
+		if round >= maxRounds || currentAmount >= decision.ProposedAmount*0.98 {
 			decision.Action = "accept"
 			decision.ProposedAmount = currentAmount
 		}
@@ -184,7 +184,7 @@ func (m *MenteeService) calculateSelfBasedDecision(agentType string, currentAmou
 		decision.ProposedAmount = math.Max(targetAmount, initialAmount*0.75)
 		decision.Action = "counteroffer"
 
-		if round >= maxRounds-1 || decision.ProposedAmount <= currentAmount*1.03 {
+		if round >= maxRounds-1 || currentAmount <= decision.ProposedAmount*1.03 {
 			decision.Action = "accept"
 			decision.ProposedAmount = currentAmount
 		}
@@ -198,7 +198,7 @@ func (m *MenteeService) calculateSelfBasedDecision(agentType string, currentAmou
 		decision.ProposedAmount = math.Min(targetAmount, initialAmount*1.2)
 		decision.Action = "counteroffer"
 
-		if round >= maxRounds-1 || decision.ProposedAmount >= currentAmount*0.97 {
+		if round >= maxRounds-1 || currentAmount >= decision.ProposedAmount*0.97 {
 			decision.Action = "accept"
 			decision.ProposedAmount = currentAmount
 		}
@@ -218,7 +218,7 @@ func (m *MenteeService) calculateBaseDecision(agentType string, currentAmount fl
 		decision.ProposedAmount = math.Max(targetAmount, initialAmount*0.8)
 		decision.Action = "counteroffer"
 
-		if round >= maxRounds || decision.ProposedAmount <= currentAmount*1.05 {
+		if round >= maxRounds || currentAmount <= decision.ProposedAmount*1.05 {
 			decision.Action = "accept"
 			decision.ProposedAmount = currentAmount
 		}
@@ -228,7 +228,7 @@ func (m *MenteeService) calculateBaseDecision(agentType string, currentAmount fl
 		decision.ProposedAmount = math.Min(targetAmount, initialAmount*1.15)
 		decision.Action = "counteroffer"
 
-		if round >= maxRounds || decision.ProposedAmount >= currentAmount*0.95 {
+		if round >= maxRounds || currentAmount >= decision.ProposedAmount*0.95 {
 			decision.Action = "accept"
 			decision.ProposedAmount = currentAmount
 		}
@@ -288,7 +288,7 @@ func (m *MenteeService) calculateAverageMarkup(data *AgentLearningData) float64 
 
 	for _, outcome := range data.Outcomes {
 		if data.AgentType == "buyer" {
-			markup := (outcome.InitialAmount / outcome.FinalAmount) - 1.0
+			markup := (outcome.FinalAmount / outcome.InitialAmount) - 1.0
 			weight := math.Pow(m.decayFactor, time.Since(outcome.Timestamp).Hours()/24.0)
 			totalMarkup += markup * weight
 			weightedSum += weight
@@ -319,7 +319,7 @@ func (m *MenteeService) updateLearningMetrics(data *AgentLearningData) {
 				discount := 1.0 - (outcome.FinalAmount / outcome.InitialAmount)
 				totalDiscount += discount
 			} else {
-				markup := (outcome.InitialAmount / outcome.FinalAmount) - 1.0
+				markup := (outcome.FinalAmount / outcome.InitialAmount) - 1.0
 				totalMarkup += markup
 			}
 		}
@@ -334,10 +334,7 @@ func (m *MenteeService) updateLearningMetrics(data *AgentLearningData) {
 	}
 
 	totalOutcomes := float64(len(data.Outcomes))
-	data.Confidence = math.Min(0.95, totalOutcomes/20.0)
-	if data.Confidence < 0.1 {
-		data.Confidence = 0.1
-	}
+	data.Confidence = math.Min(0.95, 0.1+totalOutcomes*0.25)
 
 	data.Volatility = m.calculateVolatility(data)
 

@@ -35,14 +35,17 @@ func NewBusinessHandler(svc *services.BusinessService, log *logger.Logger) *Busi
 // @Failure 500 {object} map[string]string
 // @Router /business-profiles [post]
 func (h *BusinessHandler) Create(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("business_handler").With("operation", "create")
 	userID := middleware.GetUserID(c)
 	if userID == "" {
+		log.Warn("unauthorized create business request")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
 	}
 
 	var input services.CreateBusinessInput
 	if err := c.ShouldBindBodyWithJSON(&input); err != nil {
+		log.Warn("invalid create business payload", "error", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -50,9 +53,11 @@ func (h *BusinessHandler) Create(c *gin.Context) {
 	var business *models.BusinessProfile
 	business, err := h.svc.Create(c.Request.Context(), userID, input)
 	if err != nil {
+		log.Error("failed to create business", "error", err, "owner_id", userID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("business created", "business_id", business.ID, "owner_id", userID)
 
 	c.JSON(http.StatusCreated, business)
 }
@@ -68,10 +73,12 @@ func (h *BusinessHandler) Create(c *gin.Context) {
 // @Failure 404 {object} map[string]string
 // @Router /business-profiles/{id} [get]
 func (h *BusinessHandler) Get(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("business_handler").With("operation", "get")
 	id := c.Param("id")
 	var business *models.BusinessProfile
 	business, err := h.svc.Get(c.Request.Context(), id)
 	if err != nil {
+		log.Error("failed to get business", "error", err, "business_id", id)
 		c.JSON(http.StatusNotFound, gin.H{"error": "business not found"})
 		return
 	}
@@ -92,8 +99,10 @@ func (h *BusinessHandler) Get(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /business-profiles [get]
 func (h *BusinessHandler) List(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("business_handler").With("operation", "list")
 	userID := middleware.GetUserID(c)
 	if userID == "" {
+		log.Warn("unauthorized list businesses request")
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
 	}
@@ -102,9 +111,11 @@ func (h *BusinessHandler) List(c *gin.Context) {
 
 	businesses, total, err := h.svc.List(c.Request.Context(), userID, page, limit)
 	if err != nil {
+		log.Error("failed to list businesses", "error", err, "owner_id", userID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Debug("businesses listed", "owner_id", userID, "count", len(businesses), "total", total)
 
 	c.JSON(http.StatusOK, gin.H{
 		"data":  businesses,
@@ -128,9 +139,11 @@ func (h *BusinessHandler) List(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /business-profiles/{id} [put]
 func (h *BusinessHandler) Update(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("business_handler").With("operation", "update")
 	id := c.Param("id")
 	var input services.UpdateBusinessInput
 	if err := c.ShouldBindBodyWithJSON(&input); err != nil {
+		log.Warn("invalid update business payload", "error", err, "business_id", id)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -138,9 +151,11 @@ func (h *BusinessHandler) Update(c *gin.Context) {
 	var business *models.BusinessProfile
 	business, err := h.svc.Update(c.Request.Context(), id, input)
 	if err != nil {
+		log.Error("failed to update business", "error", err, "business_id", id)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("business updated", "business_id", business.ID)
 
 	c.JSON(http.StatusOK, business)
 }
@@ -156,11 +171,14 @@ func (h *BusinessHandler) Update(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /business-profiles/{id} [delete]
 func (h *BusinessHandler) Delete(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("business_handler").With("operation", "delete")
 	id := c.Param("id")
 	if err := h.svc.Delete(c.Request.Context(), id); err != nil {
+		log.Error("failed to delete business", "error", err, "business_id", id)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("business deleted", "business_id", id)
 
 	c.JSON(http.StatusNoContent, nil)
 }
@@ -177,6 +195,7 @@ func (h *BusinessHandler) Delete(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /business-profiles/{id}/logo [post]
 func (h *BusinessHandler) UploadLogo(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("business_handler").With("operation", "upload_logo")
 	id := c.Param("id")
 	contentType := c.GetHeader("Content-Type")
 	if contentType == "" {
@@ -185,9 +204,11 @@ func (h *BusinessHandler) UploadLogo(c *gin.Context) {
 
 	url, err := h.svc.GetLogoUploadURL(c.Request.Context(), id, contentType)
 	if err != nil {
+		log.Error("failed to generate business logo upload URL", "error", err, "business_id", id)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("business logo upload URL generated", "business_id", id)
 
 	c.JSON(http.StatusOK, gin.H{"upload_url": url})
 }

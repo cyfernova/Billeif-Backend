@@ -33,8 +33,10 @@ func NewPaymentHandler(svc *services.PaymentService, log *logger.Logger) *Paymen
 // @Failure 500 {object} map[string]string
 // @Router /payments [post]
 func (h *PaymentHandler) Create(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("payment_handler").With("operation", "create")
 	var input services.CreatePaymentInput
 	if err := c.ShouldBindJSON(&input); err != nil {
+		log.Warn("invalid create payment payload", "error", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -42,9 +44,11 @@ func (h *PaymentHandler) Create(c *gin.Context) {
 	var payment *models.Payment
 	payment, err := h.svc.Create(c.Request.Context(), input)
 	if err != nil {
+		log.Error("failed to create payment", "error", err, "invoice_id", input.InvoiceID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("payment created", "payment_id", payment.ID, "invoice_id", payment.InvoiceID)
 
 	c.JSON(http.StatusCreated, payment)
 }
@@ -60,10 +64,12 @@ func (h *PaymentHandler) Create(c *gin.Context) {
 // @Failure 404 {object} map[string]string
 // @Router /payments/{id} [get]
 func (h *PaymentHandler) Get(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("payment_handler").With("operation", "get")
 	id := c.Param("id")
 	var payment *models.Payment
 	payment, err := h.svc.Get(c.Request.Context(), id)
 	if err != nil {
+		log.Error("failed to get payment", "error", err, "payment_id", id)
 		c.JSON(http.StatusNotFound, gin.H{"error": "payment not found"})
 		return
 	}
@@ -85,8 +91,10 @@ func (h *PaymentHandler) Get(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /payments [get]
 func (h *PaymentHandler) List(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("payment_handler").With("operation", "list")
 	invoiceID := c.Query("invoice_id")
 	if invoiceID == "" {
+		log.Warn("missing invoice_id query param")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invoice_id is required"})
 		return
 	}
@@ -95,9 +103,11 @@ func (h *PaymentHandler) List(c *gin.Context) {
 
 	payments, total, err := h.svc.ListByInvoice(c.Request.Context(), invoiceID, page, limit)
 	if err != nil {
+		log.Error("failed to list payments", "error", err, "invoice_id", invoiceID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Debug("payments listed", "invoice_id", invoiceID, "count", len(payments), "total", total)
 
 	c.JSON(http.StatusOK, gin.H{
 		"data":  payments,
@@ -121,9 +131,11 @@ func (h *PaymentHandler) List(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /payments/{id} [put]
 func (h *PaymentHandler) Update(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("payment_handler").With("operation", "update")
 	id := c.Param("id")
 	var input services.UpdatePaymentInput
 	if err := c.ShouldBindJSON(&input); err != nil {
+		log.Warn("invalid update payment payload", "error", err, "payment_id", id)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -131,9 +143,11 @@ func (h *PaymentHandler) Update(c *gin.Context) {
 	var payment *models.Payment
 	payment, err := h.svc.Update(c.Request.Context(), id, input)
 	if err != nil {
+		log.Error("failed to update payment", "error", err, "payment_id", id)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("payment updated", "payment_id", payment.ID)
 
 	c.JSON(http.StatusOK, payment)
 }
@@ -149,11 +163,14 @@ func (h *PaymentHandler) Update(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /payments/{id} [delete]
 func (h *PaymentHandler) Delete(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("payment_handler").With("operation", "delete")
 	id := c.Param("id")
 	if err := h.svc.Delete(c.Request.Context(), id); err != nil {
+		log.Error("failed to delete payment", "error", err, "payment_id", id)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("payment deleted", "payment_id", id)
 
 	c.JSON(http.StatusNoContent, nil)
 }

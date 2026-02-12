@@ -4,6 +4,7 @@ import (
 	"context"
 
 	appconfig "invoice-backend/internal/config"
+	"invoice-backend/pkg/logger"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -25,9 +26,16 @@ type Config struct {
 	SNS      *sns.Client
 }
 
-func New(ctx context.Context, cfg appconfig.AWSConfig) (*Config, error) {
+func New(ctx context.Context, cfg appconfig.AWSConfig, log *logger.Logger) (*Config, error) {
+	if log == nil {
+		log = logger.Global()
+	}
+	log = log.Named("aws_clients")
+	log.Info("initializing AWS clients", "region", cfg.Region, "custom_endpoint", cfg.Endpoint != "")
+
 	awsCfg, err := loadConfig(ctx, cfg)
 	if err != nil {
+		log.Error("failed to load AWS SDK config", "error", err, "region", cfg.Region)
 		return nil, err
 	}
 
@@ -40,6 +48,7 @@ func New(ctx context.Context, cfg appconfig.AWSConfig) (*Config, error) {
 		SNS:      sns.NewFromConfig(awsCfg),
 	}
 
+	log.Info("AWS clients initialized")
 	return clients, nil
 }
 

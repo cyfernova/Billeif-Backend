@@ -32,8 +32,10 @@ type CreateProductInput struct {
 }
 
 func (s *ProductService) Create(ctx context.Context, input CreateProductInput) (*models.Product, error) {
+	log := logger.FromContext(ctx).With("service", "product", "operation", "create", "business_id", input.BusinessID, "sku", input.SKU)
 	existing, _ := s.repo.GetBySKU(ctx, input.BusinessID, input.SKU)
 	if existing != nil {
+		log.Warn("duplicate SKU rejected")
 		return nil, fmt.Errorf("product with SKU %s already exists", input.SKU)
 	}
 
@@ -58,22 +60,43 @@ func (s *ProductService) Create(ctx context.Context, input CreateProductInput) (
 	}
 
 	if err := s.repo.Create(ctx, product); err != nil {
+		log.Error("failed to create product", "error", err)
 		return nil, fmt.Errorf("failed to create product: %w", err)
 	}
 
+	log.Info("product created", "product_id", product.ID)
 	return product, nil
 }
 
 func (s *ProductService) Get(ctx context.Context, id string) (*models.Product, error) {
-	return s.repo.GetByID(ctx, id)
+	log := logger.FromContext(ctx).With("service", "product", "operation", "get", "product_id", id)
+	product, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		log.Error("failed to get product", "error", err)
+		return nil, err
+	}
+	return product, nil
 }
 
 func (s *ProductService) GetBySKU(ctx context.Context, businessID, sku string) (*models.Product, error) {
-	return s.repo.GetBySKU(ctx, businessID, sku)
+	log := logger.FromContext(ctx).With("service", "product", "operation", "get_by_sku", "business_id", businessID, "sku", sku)
+	product, err := s.repo.GetBySKU(ctx, businessID, sku)
+	if err != nil {
+		log.Error("failed to get product by SKU", "error", err)
+		return nil, err
+	}
+	return product, nil
 }
 
 func (s *ProductService) List(ctx context.Context, businessID string, page, limit int) ([]*models.Product, int64, error) {
-	return s.repo.GetByBusinessID(ctx, businessID, page, limit)
+	log := logger.FromContext(ctx).With("service", "product", "operation", "list", "business_id", businessID, "page", page, "limit", limit)
+	products, total, err := s.repo.GetByBusinessID(ctx, businessID, page, limit)
+	if err != nil {
+		log.Error("failed to list products", "error", err)
+		return nil, 0, err
+	}
+	log.Debug("listed products", "count", len(products), "total", total)
+	return products, total, nil
 }
 
 type UpdateProductInput struct {
@@ -87,8 +110,10 @@ type UpdateProductInput struct {
 }
 
 func (s *ProductService) Update(ctx context.Context, id string, input UpdateProductInput) (*models.Product, error) {
+	log := logger.FromContext(ctx).With("service", "product", "operation", "update", "product_id", id)
 	product, err := s.repo.GetByID(ctx, id)
 	if err != nil {
+		log.Error("failed to load product for update", "error", err)
 		return nil, err
 	}
 
@@ -115,14 +140,22 @@ func (s *ProductService) Update(ctx context.Context, id string, input UpdateProd
 	}
 
 	if err := s.repo.Update(ctx, product); err != nil {
+		log.Error("failed to update product", "error", err)
 		return nil, err
 	}
 
+	log.Info("product updated", "product_id", product.ID)
 	return product, nil
 }
 
 func (s *ProductService) Delete(ctx context.Context, id string) error {
-	return s.repo.Delete(ctx, id)
+	log := logger.FromContext(ctx).With("service", "product", "operation", "delete", "product_id", id)
+	if err := s.repo.Delete(ctx, id); err != nil {
+		log.Error("failed to delete product", "error", err)
+		return err
+	}
+	log.Info("product deleted", "product_id", id)
+	return nil
 }
 
 type StockAdjustmentInput struct {
@@ -131,22 +164,44 @@ type StockAdjustmentInput struct {
 }
 
 func (s *ProductService) AdjustStock(ctx context.Context, productID string, input StockAdjustmentInput) (*models.Product, error) {
+	log := logger.FromContext(ctx).With("service", "product", "operation", "adjust_stock", "product_id", productID, "quantity", input.Quantity)
 	if err := s.repo.AdjustStock(ctx, productID, input.Quantity); err != nil {
+		log.Error("failed to adjust stock", "error", err)
 		return nil, err
 	}
-	return s.repo.GetByID(ctx, productID)
+	product, err := s.repo.GetByID(ctx, productID)
+	if err != nil {
+		log.Error("failed to load product after stock adjustment", "error", err)
+		return nil, err
+	}
+	log.Info("product stock adjusted", "product_id", productID, "stock_level", product.StockLevel)
+	return product, nil
 }
 
 func (s *ProductService) GetImageUploadURL(ctx context.Context, productID, contentType string) (string, error) {
+	log := logger.FromContext(ctx).With("service", "product", "operation", "get_image_upload_url", "product_id", productID)
 	key := fmt.Sprintf("products/%s/image", productID)
-	return s.s3.GeneratePresignedUploadURL(ctx, "product-images", key, contentType, 3600)
+	url, err := s.s3.GeneratePresignedUploadURL(ctx, "product-images", key, contentType, 3600)
+	if err != nil {
+		log.Error("failed to generate image upload URL", "error", err)
+		return "", err
+	}
+	log.Debug("generated image upload URL", "product_id", productID)
+	return url, nil
 }
 
 func (s *ProductService) UpdateImageURL(ctx context.Context, productID, imageURL string) error {
+	log := logger.FromContext(ctx).With("service", "product", "operation", "update_image_url", "product_id", productID)
 	product, err := s.repo.GetByID(ctx, productID)
 	if err != nil {
+		log.Error("failed to load product for image update", "error", err)
 		return err
 	}
 	product.ImageURL = imageURL
-	return s.repo.Update(ctx, product)
+	if err := s.repo.Update(ctx, product); err != nil {
+		log.Error("failed to persist product image URL", "error", err)
+		return err
+	}
+	log.Info("product image URL updated", "product_id", productID)
+	return nil
 }

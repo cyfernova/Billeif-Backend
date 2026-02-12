@@ -33,6 +33,7 @@ type CreateVendorInput struct {
 }
 
 func (s *VendorService) Create(ctx context.Context, input CreateVendorInput) (*models.Vendor, error) {
+	log := logger.FromContext(ctx).With("service", "vendor", "operation", "create", "business_id", input.BusinessID)
 	vendor := &models.Vendor{
 		BusinessID:   input.BusinessID,
 		Name:         input.Name,
@@ -48,18 +49,33 @@ func (s *VendorService) Create(ctx context.Context, input CreateVendorInput) (*m
 	}
 
 	if err := s.repo.Create(ctx, vendor); err != nil {
+		log.Error("failed to create vendor", "error", err)
 		return nil, fmt.Errorf("failed to create vendor: %w", err)
 	}
 
+	log.Info("vendor created", "vendor_id", vendor.ID)
 	return vendor, nil
 }
 
 func (s *VendorService) Get(ctx context.Context, id string) (*models.Vendor, error) {
-	return s.repo.GetByID(ctx, id)
+	log := logger.FromContext(ctx).With("service", "vendor", "operation", "get", "vendor_id", id)
+	vendor, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		log.Error("failed to get vendor", "error", err)
+		return nil, err
+	}
+	return vendor, nil
 }
 
 func (s *VendorService) List(ctx context.Context, businessID string, page, limit int) ([]*models.Vendor, int64, error) {
-	return s.repo.GetByBusinessID(ctx, businessID, page, limit)
+	log := logger.FromContext(ctx).With("service", "vendor", "operation", "list", "business_id", businessID, "page", page, "limit", limit)
+	vendors, total, err := s.repo.GetByBusinessID(ctx, businessID, page, limit)
+	if err != nil {
+		log.Error("failed to list vendors", "error", err)
+		return nil, 0, err
+	}
+	log.Debug("listed vendors", "count", len(vendors), "total", total)
+	return vendors, total, nil
 }
 
 type UpdateVendorInput struct {
@@ -76,8 +92,10 @@ type UpdateVendorInput struct {
 }
 
 func (s *VendorService) Update(ctx context.Context, id string, input UpdateVendorInput) (*models.Vendor, error) {
+	log := logger.FromContext(ctx).With("service", "vendor", "operation", "update", "vendor_id", id)
 	vendor, err := s.repo.GetByID(ctx, id)
 	if err != nil {
+		log.Error("failed to load vendor for update", "error", err)
 		return nil, err
 	}
 
@@ -113,12 +131,20 @@ func (s *VendorService) Update(ctx context.Context, id string, input UpdateVendo
 	}
 
 	if err := s.repo.Update(ctx, vendor); err != nil {
+		log.Error("failed to update vendor", "error", err)
 		return nil, err
 	}
 
+	log.Info("vendor updated", "vendor_id", vendor.ID)
 	return vendor, nil
 }
 
 func (s *VendorService) Delete(ctx context.Context, id string) error {
-	return s.repo.Delete(ctx, id)
+	log := logger.FromContext(ctx).With("service", "vendor", "operation", "delete", "vendor_id", id)
+	if err := s.repo.Delete(ctx, id); err != nil {
+		log.Error("failed to delete vendor", "error", err)
+		return err
+	}
+	log.Info("vendor deleted", "vendor_id", id)
+	return nil
 }

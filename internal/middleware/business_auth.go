@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"invoice-backend/internal/services"
+	"invoice-backend/pkg/logger"
 
 	"github.com/gin-gonic/gin"
 )
@@ -12,8 +13,10 @@ import (
 // It checks the business_id from query params or path params.
 func BusinessAuth(authSvc *services.BusinessAuthService) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		log := logger.FromContext(c.Request.Context()).Named("business_auth")
 		userID := GetUserID(c)
 		if userID == "" {
+			log.Warn("business access denied: user not authenticated")
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
 			return
 		}
@@ -26,6 +29,7 @@ func BusinessAuth(authSvc *services.BusinessAuthService) gin.HandlerFunc {
 		}
 
 		if !authSvc.UserHasBusinessAccess(c.Request.Context(), userID, businessID) {
+			log.Warn("business access denied", "user_id", userID, "business_id", businessID)
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "access denied to this business"})
 			return
 		}

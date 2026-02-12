@@ -5,11 +5,11 @@ import (
 	"errors"
 	"time"
 
+	"invoice-backend/pkg/logger"
 	"gorm.io/gorm"
 
 	"invoice-backend/internal/models"
 	interfaces "invoice-backend/internal/repositories/interfaces"
-	"invoice-backend/pkg/logger"
 )
 
 type ap2Repository struct {
@@ -20,7 +20,7 @@ type ap2Repository struct {
 func NewAP2Repository(db *gorm.DB) interfaces.AP2Repository {
 	return &ap2Repository{
 		db:  db,
-		log: logger.New(), // Create default logger
+		log: logger.Global().Named("ap2_repository"),
 	}
 }
 
