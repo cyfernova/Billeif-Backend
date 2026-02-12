@@ -316,9 +316,6 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			googleAuth.POST("/google", h.Auth.GoogleLogin)
 		}
 
-		// Public agent creation endpoint (no auth required)
-		api.POST("/agents", middleware.AgentCreationRateLimit(), h.Agent.CreateAgent)
-
 		protected := api.Group("")
 		protected.Use(middleware.Auth(cfg.Cognito, log))
 		protected.Use(middleware.BusinessAuth(svcs.BusinessAuth))
@@ -424,6 +421,7 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 			agents := protected.Group("/agents")
 			{
+				agents.POST("", middleware.AgentCreationRateLimit(), h.Agent.CreateAgent)
 				agents.GET("", h.Agent.ListAgents)
 				agents.GET("/:id", h.Agent.GetAgent)
 				agents.PUT("/:id", h.Agent.UpdateAgent)

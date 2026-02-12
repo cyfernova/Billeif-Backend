@@ -6999,7 +6999,6 @@ const docTemplate = `{
                 "business_id",
                 "events",
                 "name",
-                "secret",
                 "url"
             ],
             "properties": {
@@ -7025,9 +7024,6 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 255,
                     "minLength": 2
-                },
-                "secret": {
-                    "type": "string"
                 },
                 "updated_at": {
                     "type": "string"
@@ -7174,7 +7170,6 @@ const docTemplate = `{
         "services.CreateCustomerInput": {
             "type": "object",
             "required": [
-                "business_id",
                 "email",
                 "name"
             ],
@@ -7221,7 +7216,6 @@ const docTemplate = `{
         "services.CreateInvoiceInput": {
             "type": "object",
             "required": [
-                "business_id",
                 "customer_id",
                 "due_date",
                 "items"
@@ -7304,7 +7298,6 @@ const docTemplate = `{
         "services.CreateProductInput": {
             "type": "object",
             "required": [
-                "business_id",
                 "name",
                 "price",
                 "sku"
@@ -7343,7 +7336,6 @@ const docTemplate = `{
         "services.CreateSubscriptionInput": {
             "type": "object",
             "required": [
-                "business_id",
                 "plan"
             ],
             "properties": {
@@ -7364,7 +7356,6 @@ const docTemplate = `{
         "services.CreateTeamMemberInput": {
             "type": "object",
             "required": [
-                "business_id",
                 "role",
                 "user_id"
             ],
@@ -7388,7 +7379,6 @@ const docTemplate = `{
         "services.CreateVendorInput": {
             "type": "object",
             "required": [
-                "business_id",
                 "email",
                 "name"
             ],
@@ -7432,10 +7422,8 @@ const docTemplate = `{
         "services.CreateWebhookInput": {
             "type": "object",
             "required": [
-                "business_id",
                 "events",
                 "name",
-                "secret",
                 "url"
             ],
             "properties": {

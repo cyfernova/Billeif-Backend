@@ -195,13 +195,9 @@ func (s *ShoppingAgentService) CompleteCheckout(ctx context.Context, req *Checko
 
 	// Verify intent mandate if linked
 	if cartMandate.IntentMandateID != nil {
-		_, err := s.ap2Repo.GetIntentMandateByID(ctx, *cartMandate.IntentMandateID)
-		if err == nil {
-			// TODO: Verify intent mandate is still valid
-			// if err := s.verifier.VerifyIntentMandate(intentMandate, intentMandate.Signature, intentMandate.PublicKey); err != nil {
-			//	s.log.Warn("intent mandate verification failed", "mandate_id", intentMandate.ID, "error", err)
-			//	return nil, fmt.Errorf("intent mandate invalid: %w", err)
-			// }
+		// TODO: Verify intent mandate is still valid once signature verification is implemented
+		if _, err := s.ap2Repo.GetIntentMandateByID(ctx, *cartMandate.IntentMandateID); err != nil {
+			s.log.Warn("intent mandate not found", "mandate_id", *cartMandate.IntentMandateID, "error", err)
 		}
 	}
 

@@ -3,9 +3,11 @@ package postgres
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"invoice-backend/pkg/logger"
+
 	"gorm.io/gorm"
 
 	"invoice-backend/internal/models"
@@ -398,12 +400,19 @@ func (r *ap2Repository) SetDefaultCredential(ctx context.Context, userID, creden
 
 // Credential Tokens
 func (r *ap2Repository) CreateCredentialToken(ctx context.Context, token *models.CredentialToken) error {
+	if token.TokenHash == "" && token.Token != "" {
+		token.TokenHash = token.Token
+	}
 	return r.db.WithContext(ctx).Create(token).Error
 }
 
 func (r *ap2Repository) GetCredentialToken(ctx context.Context, tokenStr string) (*models.CredentialToken, error) {
 	var token models.CredentialToken
-	err := r.db.WithContext(ctx).Where("token = ? AND is_used = ? AND expires_at > NOW()", tokenStr, false).First(&token).Error
+	err := r.db.WithContext(ctx).Where("token_hash = ? AND is_used = ? AND expires_at > NOW()", tokenStr, false).First(&token).Error
+	// Backward compatibility before token_hash migration is applied.
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "token_hash") {
+		err = r.db.WithContext(ctx).Where("token = ? AND is_used = ? AND expires_at > NOW()", tokenStr, false).First(&token).Error
+	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, errors.New("token not found or expired")
 	}

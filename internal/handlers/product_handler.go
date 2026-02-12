@@ -34,12 +34,17 @@ func NewProductHandler(svc *services.ProductService, log *logger.Logger) *Produc
 // @Router /products [post]
 func (h *ProductHandler) Create(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "create")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	var input services.CreateProductInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		log.Warn("invalid create product payload", "error", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	input.BusinessID = businessID
 
 	var product *models.Product
 	product, err := h.svc.Create(c.Request.Context(), input)
@@ -65,9 +70,13 @@ func (h *ProductHandler) Create(c *gin.Context) {
 // @Router /products/{id} [get]
 func (h *ProductHandler) Get(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "get")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
 	var product *models.Product
-	product, err := h.svc.Get(c.Request.Context(), id)
+	product, err := h.svc.GetByBusiness(c.Request.Context(), businessID, id)
 	if err != nil {
 		log.Error("failed to get product", "error", err, "product_id", id)
 		c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
@@ -92,10 +101,8 @@ func (h *ProductHandler) Get(c *gin.Context) {
 // @Router /products [get]
 func (h *ProductHandler) List(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "list")
-	businessID := c.Query("business_id")
-	if businessID == "" {
-		log.Warn("missing business_id query param")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "business_id is required"})
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
 		return
 	}
 
@@ -132,6 +139,10 @@ func (h *ProductHandler) List(c *gin.Context) {
 // @Router /products/{id} [put]
 func (h *ProductHandler) Update(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "update")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
 	var input services.UpdateProductInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -141,9 +152,13 @@ func (h *ProductHandler) Update(c *gin.Context) {
 	}
 
 	var product *models.Product
-	product, err := h.svc.Update(c.Request.Context(), id, input)
+	product, err := h.svc.UpdateByBusiness(c.Request.Context(), businessID, id, input)
 	if err != nil {
 		log.Error("failed to update product", "error", err, "product_id", id)
+		if isNotFoundErr(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -164,9 +179,17 @@ func (h *ProductHandler) Update(c *gin.Context) {
 // @Router /products/{id} [delete]
 func (h *ProductHandler) Delete(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "delete")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
-	if err := h.svc.Delete(c.Request.Context(), id); err != nil {
+	if err := h.svc.DeleteByBusiness(c.Request.Context(), businessID, id); err != nil {
 		log.Error("failed to delete product", "error", err, "product_id", id)
+		if isNotFoundErr(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -188,15 +211,23 @@ func (h *ProductHandler) Delete(c *gin.Context) {
 // @Router /products/{id}/image [post]
 func (h *ProductHandler) UploadImage(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "upload_image")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
 	contentType := c.GetHeader("Content-Type")
 	if contentType == "" {
 		contentType = "image/png"
 	}
 
-	url, err := h.svc.GetImageUploadURL(c.Request.Context(), id, contentType)
+	url, err := h.svc.GetImageUploadURLByBusiness(c.Request.Context(), businessID, id, contentType)
 	if err != nil {
 		log.Error("failed to generate product image upload URL", "error", err, "product_id", id)
+		if isNotFoundErr(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -220,6 +251,10 @@ func (h *ProductHandler) UploadImage(c *gin.Context) {
 // @Router /products/{id}/stock [post]
 func (h *ProductHandler) AdjustStock(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "adjust_stock")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
 	var input services.StockAdjustmentInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -228,9 +263,13 @@ func (h *ProductHandler) AdjustStock(c *gin.Context) {
 		return
 	}
 
-	product, err := h.svc.AdjustStock(c.Request.Context(), id, input)
+	product, err := h.svc.AdjustStockByBusiness(c.Request.Context(), businessID, id, input)
 	if err != nil {
 		log.Error("failed to adjust stock", "error", err, "product_id", id)
+		if isNotFoundErr(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

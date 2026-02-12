@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -99,7 +98,7 @@ func AgentCreationRateLimit() gin.HandlerFunc {
 			log.Warn("agent creation rate limit exceeded", "client_ip", clientIP)
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error":   "agent creation rate limit exceeded",
-				"message": fmt.Sprintf("maximum 10 agents per hour. Please try again in an hour"),
+				"message": "maximum 10 agents per hour. Please try again in an hour",
 			})
 			c.Abort()
 			return

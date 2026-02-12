@@ -34,12 +34,17 @@ func NewTeamHandler(svc *services.TeamService, log *logger.Logger) *TeamHandler 
 // @Router /teams [post]
 func (h *TeamHandler) Create(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("team_handler").With("operation", "create")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	var input services.CreateTeamMemberInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		log.Warn("invalid create team member payload", "error", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	input.BusinessID = businessID
 
 	var member *models.TeamMember
 	member, err := h.svc.Create(c.Request.Context(), input)
@@ -65,9 +70,13 @@ func (h *TeamHandler) Create(c *gin.Context) {
 // @Router /teams/{id} [get]
 func (h *TeamHandler) Get(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("team_handler").With("operation", "get")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
 	var member *models.TeamMember
-	member, err := h.svc.Get(c.Request.Context(), id)
+	member, err := h.svc.GetByBusiness(c.Request.Context(), businessID, id)
 	if err != nil {
 		log.Error("failed to get team member", "error", err, "team_member_id", id)
 		c.JSON(http.StatusNotFound, gin.H{"error": "team member not found"})
@@ -92,10 +101,8 @@ func (h *TeamHandler) Get(c *gin.Context) {
 // @Router /teams [get]
 func (h *TeamHandler) List(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("team_handler").With("operation", "list")
-	businessID := c.Query("business_id")
-	if businessID == "" {
-		log.Warn("missing business_id query param")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "business_id is required"})
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
 		return
 	}
 
@@ -132,6 +139,10 @@ func (h *TeamHandler) List(c *gin.Context) {
 // @Router /teams/{id} [put]
 func (h *TeamHandler) Update(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("team_handler").With("operation", "update")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
 	var input services.UpdateTeamMemberInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -141,9 +152,13 @@ func (h *TeamHandler) Update(c *gin.Context) {
 	}
 
 	var member *models.TeamMember
-	member, err := h.svc.Update(c.Request.Context(), id, input)
+	member, err := h.svc.UpdateByBusiness(c.Request.Context(), businessID, id, input)
 	if err != nil {
 		log.Error("failed to update team member", "error", err, "team_member_id", id)
+		if isNotFoundErr(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "team member not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -164,9 +179,17 @@ func (h *TeamHandler) Update(c *gin.Context) {
 // @Router /teams/{id} [delete]
 func (h *TeamHandler) Delete(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("team_handler").With("operation", "delete")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
-	if err := h.svc.Delete(c.Request.Context(), id); err != nil {
+	if err := h.svc.DeleteByBusiness(c.Request.Context(), businessID, id); err != nil {
 		log.Error("failed to delete team member", "error", err, "team_member_id", id)
+		if isNotFoundErr(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "team member not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

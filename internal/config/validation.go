@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
 	"strings"
 )
@@ -56,6 +57,16 @@ func validate(cfg *Config) error {
 	}
 	if cfg.SQS.PaymentQueue == "" {
 		return fmt.Errorf("SQS_PAYMENT_QUEUE is required")
+	}
+	if cfg.Credentials.EncryptionKey == "" {
+		return fmt.Errorf("CREDENTIAL_ENCRYPTION_KEY is required")
+	}
+	key, err := base64.StdEncoding.DecodeString(cfg.Credentials.EncryptionKey)
+	if err != nil {
+		return fmt.Errorf("CREDENTIAL_ENCRYPTION_KEY must be base64 encoded: %w", err)
+	}
+	if len(key) != 32 {
+		return fmt.Errorf("CREDENTIAL_ENCRYPTION_KEY must decode to exactly 32 bytes")
 	}
 
 	return nil

@@ -77,11 +77,6 @@ func (h *WorkflowHandler) CreateWorkflow(c *gin.Context) {
 		IsEnabled:   true,
 	}
 
-	// Set notification settings if provided
-	if req.NotificationSettings != nil {
-		// Will be serialized in BeforeSave
-	}
-
 	if err := h.workflowService.CreateWorkflow(c.Request.Context(), workflow); err != nil {
 		h.log.Error("failed to create workflow", "error", err, "user_id", userID)
 		c.JSON(http.StatusInternalServerError, gin.H{

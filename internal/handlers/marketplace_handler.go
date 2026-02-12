@@ -201,6 +201,14 @@ func (h *MarketplaceHandler) GetMerchantProducts(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "agent_id parameter is required"})
 		return
 	}
+	agent, ok := requireOwnedAgent(c, h.ap2Repo, agentID)
+	if !ok {
+		return
+	}
+	if agent.Type != "merchant" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+		return
+	}
 
 	page, limit := utils.ParsePagination(c)
 
@@ -239,6 +247,14 @@ func (h *MarketplaceHandler) AddProduct(c *gin.Context) {
 	if agentID == "" {
 		log.Warn("missing agent_id query param")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "agent_id parameter is required"})
+		return
+	}
+	agent, ok := requireOwnedAgent(c, h.ap2Repo, agentID)
+	if !ok {
+		return
+	}
+	if agent.Type != "merchant" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
 		return
 	}
 
@@ -300,6 +316,9 @@ func (h *MarketplaceHandler) UpdateProduct(c *gin.Context) {
 	if err != nil {
 		log.Error("failed to load marketplace product for update", "error", err, "product_id", id)
 		c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
+		return
+	}
+	if _, ok := requireOwnedAgent(c, h.ap2Repo, product.AgentID); !ok {
 		return
 	}
 

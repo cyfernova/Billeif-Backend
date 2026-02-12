@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"invoice-backend/internal/models"
@@ -68,6 +69,17 @@ func (s *BusinessService) Get(ctx context.Context, id string) (*models.BusinessP
 	if err != nil {
 		log.Error("failed to get business", "error", err)
 		return nil, err
+	}
+	return business, nil
+}
+
+func (s *BusinessService) GetByOwner(ctx context.Context, userID, businessID string) (*models.BusinessProfile, error) {
+	business, err := s.Get(ctx, businessID)
+	if err != nil {
+		return nil, err
+	}
+	if business.OwnerID != userID {
+		return nil, errors.New("business not found")
 	}
 	return business, nil
 }
@@ -145,6 +157,53 @@ func (s *BusinessService) Update(ctx context.Context, id string, input UpdateBus
 	return business, nil
 }
 
+func (s *BusinessService) UpdateByOwner(ctx context.Context, userID, id string, input UpdateBusinessInput) (*models.BusinessProfile, error) {
+	log := logger.FromContext(ctx).With("service", "business", "operation", "update", "business_id", id, "owner_id", userID)
+	business, err := s.GetByOwner(ctx, userID, id)
+	if err != nil {
+		log.Error("failed to load business for scoped update", "error", err)
+		return nil, err
+	}
+
+	if input.Name != "" {
+		business.Name = input.Name
+	}
+	if input.Email != "" {
+		business.Email = input.Email
+	}
+	if input.Phone != "" {
+		business.Phone = input.Phone
+	}
+	if input.Address != "" {
+		business.Address = input.Address
+	}
+	if input.City != "" {
+		business.City = input.City
+	}
+	if input.State != "" {
+		business.State = input.State
+	}
+	if input.Country != "" {
+		business.Country = input.Country
+	}
+	if input.ZipCode != "" {
+		business.PostalCode = input.ZipCode
+	}
+	if input.TaxID != "" {
+		business.TaxID = input.TaxID
+	}
+	if input.Currency != "" {
+		business.Currency = input.Currency
+	}
+
+	if err := s.repo.Update(ctx, business); err != nil {
+		log.Error("failed to update business", "error", err)
+		return nil, err
+	}
+	log.Info("business updated", "business_id", business.ID)
+	return business, nil
+}
+
 func (s *BusinessService) Delete(ctx context.Context, id string) error {
 	log := logger.FromContext(ctx).With("service", "business", "operation", "delete", "business_id", id)
 	if err := s.repo.Delete(ctx, id); err != nil {
@@ -152,6 +211,21 @@ func (s *BusinessService) Delete(ctx context.Context, id string) error {
 		return err
 	}
 	log.Info("business deleted", "business_id", id)
+	return nil
+}
+
+func (s *BusinessService) DeleteByOwner(ctx context.Context, userID, id string) error {
+	log := logger.FromContext(ctx).With("service", "business", "operation", "delete", "business_id", id, "owner_id", userID)
+	business, err := s.GetByOwner(ctx, userID, id)
+	if err != nil {
+		log.Error("failed to load business for scoped delete", "error", err)
+		return err
+	}
+	if err := s.repo.Delete(ctx, business.ID); err != nil {
+		log.Error("failed to delete business", "error", err)
+		return err
+	}
+	log.Info("business deleted", "business_id", business.ID)
 	return nil
 }
 
@@ -165,6 +239,13 @@ func (s *BusinessService) GetLogoUploadURL(ctx context.Context, businessID, cont
 	}
 	log.Debug("generated business logo upload URL")
 	return url, nil
+}
+
+func (s *BusinessService) GetLogoUploadURLByOwner(ctx context.Context, userID, businessID, contentType string) (string, error) {
+	if _, err := s.GetByOwner(ctx, userID, businessID); err != nil {
+		return "", err
+	}
+	return s.GetLogoUploadURL(ctx, businessID, contentType)
 }
 
 func (s *BusinessService) UpdateLogoURL(ctx context.Context, businessID, logoURL string) error {

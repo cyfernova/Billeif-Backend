@@ -2,8 +2,10 @@ package handlers
 
 import (
 	"net/http"
+	"time"
 
 	"invoice-backend/internal/config"
+	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/internal/services"
 	"invoice-backend/pkg/logger"
@@ -41,6 +43,29 @@ type AddPaymentMethodRequest struct {
 	IsDefault          bool   `json:"is_default"`
 }
 
+type PaymentMethodResponse struct {
+	ID                 string     `json:"id"`
+	CredentialType     string     `json:"credential_type"`
+	RazorpayCustomerID *string    `json:"razorpay_customer_id,omitempty"`
+	MaskedCardNumber   *string    `json:"masked_card_number,omitempty"`
+	CardBrand          *string    `json:"card_brand,omitempty"`
+	IsDefault          bool       `json:"is_default"`
+	IsActive           bool       `json:"is_active"`
+	ExpiresAt          *time.Time `json:"expires_at,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
+}
+
+type CredentialTokenResponse struct {
+	ID               string    `json:"id"`
+	CredentialID     string    `json:"credential_id"`
+	PaymentMandateID *string   `json:"payment_mandate_id,omitempty"`
+	Token            string    `json:"token,omitempty"`
+	ExpiresAt        time.Time `json:"expires_at"`
+	IsUsed           bool      `json:"is_used"`
+	CreatedAt        time.Time `json:"created_at"`
+}
+
 func (h *CredentialHandler) AddPaymentMethod(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("credential_handler").With("operation", "add_payment_method")
 	userID := c.GetString("user_id")
@@ -70,7 +95,7 @@ func (h *CredentialHandler) AddPaymentMethod(c *gin.Context) {
 	}
 	log.Info("payment method added", "credential_id", credential.ID)
 
-	c.JSON(http.StatusCreated, credential)
+	c.JSON(http.StatusCreated, toPaymentMethodResponse(credential))
 }
 
 func (h *CredentialHandler) ListPaymentMethods(c *gin.Context) {
@@ -85,7 +110,11 @@ func (h *CredentialHandler) ListPaymentMethods(c *gin.Context) {
 	}
 	log.Debug("payment methods listed", "count", len(credentials))
 
-	c.JSON(http.StatusOK, credentials)
+	response := make([]PaymentMethodResponse, 0, len(credentials))
+	for _, credential := range credentials {
+		response = append(response, toPaymentMethodResponse(credential))
+	}
+	c.JSON(http.StatusOK, response)
 }
 
 func (h *CredentialHandler) GetPaymentMethod(c *gin.Context) {
@@ -106,7 +135,7 @@ func (h *CredentialHandler) GetPaymentMethod(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, credential)
+	c.JSON(http.StatusOK, toPaymentMethodResponse(credential))
 }
 
 func (h *CredentialHandler) SetDefaultPaymentMethod(c *gin.Context) {
@@ -167,7 +196,7 @@ func (h *CredentialHandler) GenerateToken(c *gin.Context) {
 	}
 	log.Info("credential token generated", "token_id", token.ID)
 
-	c.JSON(http.StatusCreated, token)
+	c.JSON(http.StatusCreated, toCredentialTokenResponse(token, true))
 }
 
 func (h *CredentialHandler) GetDefaultPaymentMethod(c *gin.Context) {
@@ -181,7 +210,7 @@ func (h *CredentialHandler) GetDefaultPaymentMethod(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, credential)
+	c.JSON(http.StatusOK, toPaymentMethodResponse(credential))
 }
 
 func (h *CredentialHandler) ValidateToken(c *gin.Context) {
@@ -202,5 +231,35 @@ func (h *CredentialHandler) ValidateToken(c *gin.Context) {
 	}
 	log.Debug("credential token validated", "token_id", credentialToken.ID)
 
-	c.JSON(http.StatusOK, credentialToken)
+	c.JSON(http.StatusOK, toCredentialTokenResponse(credentialToken, false))
+}
+
+func toPaymentMethodResponse(credential *models.PaymentCredential) PaymentMethodResponse {
+	return PaymentMethodResponse{
+		ID:                 credential.ID,
+		CredentialType:     credential.CredentialType,
+		RazorpayCustomerID: credential.RazorpayCustomerID,
+		MaskedCardNumber:   credential.MaskedCardNumber,
+		CardBrand:          credential.CardBrand,
+		IsDefault:          credential.IsDefault,
+		IsActive:           credential.IsActive,
+		ExpiresAt:          credential.ExpiresAt,
+		CreatedAt:          credential.CreatedAt,
+		UpdatedAt:          credential.UpdatedAt,
+	}
+}
+
+func toCredentialTokenResponse(token *models.CredentialToken, includeToken bool) CredentialTokenResponse {
+	response := CredentialTokenResponse{
+		ID:               token.ID,
+		CredentialID:     token.CredentialID,
+		PaymentMandateID: token.PaymentMandateID,
+		ExpiresAt:        token.ExpiresAt,
+		IsUsed:           token.IsUsed,
+		CreatedAt:        token.CreatedAt,
+	}
+	if includeToken {
+		response.Token = token.Token
+	}
+	return response
 }

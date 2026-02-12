@@ -19,7 +19,7 @@ func NewSubscriptionService(repo interfaces.SubscriptionRepository, log *logger.
 }
 
 type CreateSubscriptionInput struct {
-	BusinessID string `json:"business_id" binding:"required,uuid"`
+	BusinessID string `json:"business_id,omitempty"`
 	Plan       string `json:"plan" binding:"required,oneof=free starter professional enterprise"`
 }
 

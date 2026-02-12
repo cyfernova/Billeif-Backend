@@ -34,12 +34,17 @@ func NewCustomerHandler(svc *services.CustomerService, log *logger.Logger) *Cust
 // @Router /customers [post]
 func (h *CustomerHandler) Create(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("customer_handler").With("operation", "create")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	var input services.CreateCustomerInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		log.Warn("invalid create customer payload", "error", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	input.BusinessID = businessID
 
 	var customer *models.Customer
 	customer, err := h.svc.Create(c.Request.Context(), input)
@@ -65,9 +70,13 @@ func (h *CustomerHandler) Create(c *gin.Context) {
 // @Router /customers/{id} [get]
 func (h *CustomerHandler) Get(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("customer_handler").With("operation", "get")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
 	var customer *models.Customer
-	customer, err := h.svc.Get(c.Request.Context(), id)
+	customer, err := h.svc.GetByBusiness(c.Request.Context(), businessID, id)
 	if err != nil {
 		log.Error("failed to get customer", "error", err, "customer_id", id)
 		c.JSON(http.StatusNotFound, gin.H{"error": "customer not found"})
@@ -92,10 +101,8 @@ func (h *CustomerHandler) Get(c *gin.Context) {
 // @Router /customers [get]
 func (h *CustomerHandler) List(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("customer_handler").With("operation", "list")
-	businessID := c.Query("business_id")
-	if businessID == "" {
-		log.Warn("missing business_id query param")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "business_id is required"})
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
 		return
 	}
 
@@ -132,6 +139,10 @@ func (h *CustomerHandler) List(c *gin.Context) {
 // @Router /customers/{id} [put]
 func (h *CustomerHandler) Update(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("customer_handler").With("operation", "update")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
 	var input services.UpdateCustomerInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -141,9 +152,13 @@ func (h *CustomerHandler) Update(c *gin.Context) {
 	}
 
 	var customer *models.Customer
-	customer, err := h.svc.Update(c.Request.Context(), id, input)
+	customer, err := h.svc.UpdateByBusiness(c.Request.Context(), businessID, id, input)
 	if err != nil {
 		log.Error("failed to update customer", "error", err, "customer_id", id)
+		if isNotFoundErr(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "customer not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -164,9 +179,17 @@ func (h *CustomerHandler) Update(c *gin.Context) {
 // @Router /customers/{id} [delete]
 func (h *CustomerHandler) Delete(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("customer_handler").With("operation", "delete")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
-	if err := h.svc.Delete(c.Request.Context(), id); err != nil {
+	if err := h.svc.DeleteByBusiness(c.Request.Context(), businessID, id); err != nil {
 		log.Error("failed to delete customer", "error", err, "customer_id", id)
+		if isNotFoundErr(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "customer not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -190,10 +213,8 @@ func (h *CustomerHandler) Delete(c *gin.Context) {
 // @Router /customers/import [post]
 func (h *CustomerHandler) Import(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("customer_handler").With("operation", "import")
-	businessID := c.Query("business_id")
-	if businessID == "" {
-		log.Warn("missing business_id query param")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "business_id is required"})
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
 		return
 	}
 
@@ -228,10 +249,8 @@ func (h *CustomerHandler) Import(c *gin.Context) {
 // @Router /customers/export [get]
 func (h *CustomerHandler) Export(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("customer_handler").With("operation", "export")
-	businessID := c.Query("business_id")
-	if businessID == "" {
-		log.Warn("missing business_id query param")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "business_id is required"})
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
 		return
 	}
 

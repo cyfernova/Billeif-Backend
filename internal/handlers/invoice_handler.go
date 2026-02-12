@@ -33,15 +33,20 @@ func NewInvoiceHandler(svc *services.InvoiceService, log *logger.Logger) *Invoic
 // @Router /invoices [post]
 func (h *InvoiceHandler) Create(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("invoice_handler").With("operation", "create")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	var input services.CreateInvoiceInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		log.Warn("invalid create invoice payload", "error", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	input.BusinessID = businessID
 
 	var invoice *models.Invoice
-	invoice, err := h.svc.Create(c.Request.Context(), input)
+	invoice, err := h.svc.CreateByBusiness(c.Request.Context(), businessID, input)
 	if err != nil {
 		log.Error("failed to create invoice", "error", err, "business_id", input.BusinessID, "customer_id", input.CustomerID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -64,9 +69,13 @@ func (h *InvoiceHandler) Create(c *gin.Context) {
 // @Router /invoices/{id} [get]
 func (h *InvoiceHandler) Get(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("invoice_handler").With("operation", "get")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
 	var invoice *models.Invoice
-	invoice, err := h.svc.Get(c.Request.Context(), id)
+	invoice, err := h.svc.GetByBusiness(c.Request.Context(), businessID, id)
 	if err != nil {
 		log.Error("failed to get invoice", "error", err, "invoice_id", id)
 		c.JSON(http.StatusNotFound, gin.H{"error": "invoice not found"})
@@ -91,10 +100,8 @@ func (h *InvoiceHandler) Get(c *gin.Context) {
 // @Router /invoices [get]
 func (h *InvoiceHandler) List(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("invoice_handler").With("operation", "list")
-	businessID := c.Query("business_id")
-	if businessID == "" {
-		log.Warn("missing business_id query param")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "business_id is required"})
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
 		return
 	}
 
@@ -131,6 +138,10 @@ func (h *InvoiceHandler) List(c *gin.Context) {
 // @Router /invoices/{id} [put]
 func (h *InvoiceHandler) Update(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("invoice_handler").With("operation", "update")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
 	var input services.UpdateInvoiceInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -140,9 +151,13 @@ func (h *InvoiceHandler) Update(c *gin.Context) {
 	}
 
 	var invoice *models.Invoice
-	invoice, err := h.svc.Update(c.Request.Context(), id, input)
+	invoice, err := h.svc.UpdateByBusiness(c.Request.Context(), businessID, id, input)
 	if err != nil {
 		log.Error("failed to update invoice", "error", err, "invoice_id", id)
+		if isNotFoundErr(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "invoice not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -163,9 +178,17 @@ func (h *InvoiceHandler) Update(c *gin.Context) {
 // @Router /invoices/{id} [delete]
 func (h *InvoiceHandler) Delete(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("invoice_handler").With("operation", "delete")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
-	if err := h.svc.Delete(c.Request.Context(), id); err != nil {
+	if err := h.svc.DeleteByBusiness(c.Request.Context(), businessID, id); err != nil {
 		log.Error("failed to delete invoice", "error", err, "invoice_id", id)
+		if isNotFoundErr(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "invoice not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -186,9 +209,17 @@ func (h *InvoiceHandler) Delete(c *gin.Context) {
 // @Router /invoices/{id}/send [post]
 func (h *InvoiceHandler) Send(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("invoice_handler").With("operation", "send")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
-	if err := h.svc.Send(c.Request.Context(), id); err != nil {
+	if err := h.svc.SendByBusiness(c.Request.Context(), businessID, id); err != nil {
 		log.Error("failed to send invoice", "error", err, "invoice_id", id)
+		if isNotFoundErr(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "invoice not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -209,10 +240,18 @@ func (h *InvoiceHandler) Send(c *gin.Context) {
 // @Router /invoices/{id}/pdf [get]
 func (h *InvoiceHandler) GetPDF(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("invoice_handler").With("operation", "get_pdf")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
-	url, err := h.svc.GetPDFURL(c.Request.Context(), id)
+	url, err := h.svc.GetPDFURLByBusiness(c.Request.Context(), businessID, id)
 	if err != nil {
 		log.Error("failed to get invoice PDF URL", "error", err, "invoice_id", id)
+		if isNotFoundErr(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "invoice not found"})
+			return
+		}
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
@@ -234,10 +273,8 @@ func (h *InvoiceHandler) GetPDF(c *gin.Context) {
 // @Router /invoices/next-number [get]
 func (h *InvoiceHandler) NextNumber(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("invoice_handler").With("operation", "next_number")
-	businessID := c.Query("business_id")
-	if businessID == "" {
-		log.Warn("missing business_id query param")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "business_id is required"})
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
 		return
 	}
 

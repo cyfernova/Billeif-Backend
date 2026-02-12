@@ -4,7 +4,6 @@ import (
 	"invoice-backend/internal/models"
 	"net/http"
 
-	"invoice-backend/internal/middleware"
 	"invoice-backend/internal/services"
 	"invoice-backend/pkg/logger"
 
@@ -34,12 +33,17 @@ func NewSubscriptionHandler(svc *services.SubscriptionService, log *logger.Logge
 // @Router /subscriptions [post]
 func (h *SubscriptionHandler) Create(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("subscription_handler").With("operation", "create")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	var input services.CreateSubscriptionInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		log.Warn("invalid create subscription payload", "error", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	input.BusinessID = businessID
 
 	var subscription *models.Subscription
 	subscription, err := h.svc.Create(c.Request.Context(), input)
@@ -66,13 +70,8 @@ func (h *SubscriptionHandler) Create(c *gin.Context) {
 // @Router /subscriptions [get]
 func (h *SubscriptionHandler) Get(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("subscription_handler").With("operation", "get")
-	businessID := middleware.GetBusinessID(c)
-	if businessID == "" {
-		businessID = c.Query("business_id")
-	}
-	if businessID == "" {
-		log.Warn("missing business_id for subscription lookup")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "business_id is required"})
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
 		return
 	}
 
@@ -103,13 +102,8 @@ func (h *SubscriptionHandler) Get(c *gin.Context) {
 // @Router /subscriptions [put]
 func (h *SubscriptionHandler) Update(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("subscription_handler").With("operation", "update")
-	businessID := middleware.GetBusinessID(c)
-	if businessID == "" {
-		businessID = c.Query("business_id")
-	}
-	if businessID == "" {
-		log.Warn("missing business_id for subscription update")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "business_id is required"})
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
 		return
 	}
 
@@ -124,6 +118,10 @@ func (h *SubscriptionHandler) Update(c *gin.Context) {
 	subscription, err := h.svc.Update(c.Request.Context(), businessID, input)
 	if err != nil {
 		log.Error("failed to update subscription", "error", err, "business_id", businessID)
+		if isNotFoundErr(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "subscription not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

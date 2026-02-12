@@ -34,10 +34,8 @@ func NewLedgerHandler(svc *services.LedgerService, log *logger.Logger) *LedgerHa
 // @Router /ledger [get]
 func (h *LedgerHandler) List(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("ledger_handler").With("operation", "list")
-	businessID := c.Query("business_id")
-	if businessID == "" {
-		log.Warn("missing business_id query param")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "business_id is required"})
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
 		return
 	}
 
@@ -72,10 +70,8 @@ func (h *LedgerHandler) List(c *gin.Context) {
 // @Router /ledger/balance [get]
 func (h *LedgerHandler) Balance(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("ledger_handler").With("operation", "balance")
-	businessID := c.Query("business_id")
-	if businessID == "" {
-		log.Warn("missing business_id query param")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "business_id is required"})
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
 		return
 	}
 

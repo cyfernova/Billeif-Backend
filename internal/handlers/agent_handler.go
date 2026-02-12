@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 
+	"invoice-backend/internal/middleware"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/services"
 	"invoice-backend/internal/utils"
@@ -47,26 +48,19 @@ type AddCapabilityRequest struct {
 
 func (h *AgentHandler) CreateAgent(c *gin.Context) {
 	log := h.reqLog(c, "create_agent")
-	userID := c.GetString("user_id")
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 
 	var req CreateAgentRequest
 	if err := c.ShouldBindBodyWithJSON(&req); err != nil {
 		log.Warn("invalid create agent payload", "error", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Resolve business_id: JWT claim → BusinessAuth middleware → request body
-	businessID := c.GetString("business_id")
-	if businessID == "" {
-		businessID = c.GetString("validated_business_id")
-	}
-	if businessID == "" {
-		businessID = req.BusinessID
-	}
-	if businessID == "" {
-		log.Warn("missing business_id for agent creation")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "business_id is required"})
 		return
 	}
 
@@ -90,6 +84,7 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
+		merchantReq.BusinessID = businessID
 		merchantReq.Name = req.Name
 		merchantReq.Description = req.Description
 		agent, err = h.svc.CreateMerchantAgent(c.Request.Context(), &merchantReq)
@@ -111,27 +106,30 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 
 func (h *AgentHandler) ListAgents(c *gin.Context) {
 	log := h.reqLog(c, "list_agents")
-	businessID := c.Query("business_id")
-	userID := c.GetString("user_id")
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
 	page, limit := utils.ParsePagination(c)
 
-	var agents interface{}
+	var agents []*models.Agent
 	var total int64
 	var err error
+	selectedBusinessID := ""
 
-	if businessID != "" {
-		agents, total, err = h.svc.GetAgentsByBusiness(c.Request.Context(), businessID, page, limit)
-	} else {
-		if userID == "" {
-			log.Warn("list agents unauthorized: missing user_id")
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+	if c.Query("business_id") != "" {
+		businessID, ok := requireBusinessScope(c)
+		if !ok {
 			return
 		}
+		selectedBusinessID = businessID
+		agents, total, err = h.svc.GetAgentsByBusiness(c.Request.Context(), businessID, page, limit)
+	} else {
 		agents, total, err = h.svc.GetAgentsByUser(c.Request.Context(), userID, page, limit)
 	}
 
 	if err != nil {
-		log.Error("failed to list agents", "error", err, "business_id", businessID, "user_id", userID)
+		log.Error("failed to list agents", "error", err, "business_id", selectedBusinessID, "user_id", userID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -148,10 +146,8 @@ func (h *AgentHandler) ListAgents(c *gin.Context) {
 func (h *AgentHandler) GetAgent(c *gin.Context) {
 	log := h.reqLog(c, "get_agent")
 	id := c.Param("id")
-	agent, err := h.svc.GetAgentByID(c.Request.Context(), id)
-	if err != nil {
-		log.Error("failed to get agent", "error", err, "agent_id", id)
-		c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+	agent, ok := h.loadOwnedAgent(c, log, id)
+	if !ok {
 		return
 	}
 
@@ -161,6 +157,9 @@ func (h *AgentHandler) GetAgent(c *gin.Context) {
 func (h *AgentHandler) UpdateAgent(c *gin.Context) {
 	log := h.reqLog(c, "update_agent")
 	id := c.Param("id")
+	if _, ok := h.loadOwnedAgent(c, log, id); !ok {
+		return
+	}
 
 	var req UpdateAgentRequest
 	if err := c.ShouldBindBodyWithJSON(&req); err != nil {
@@ -196,6 +195,9 @@ func (h *AgentHandler) UpdateAgent(c *gin.Context) {
 func (h *AgentHandler) DeleteAgent(c *gin.Context) {
 	log := h.reqLog(c, "delete_agent")
 	id := c.Param("id")
+	if _, ok := h.loadOwnedAgent(c, log, id); !ok {
+		return
+	}
 	if err := h.svc.DeleteAgent(c.Request.Context(), id); err != nil {
 		log.Error("failed to delete agent", "error", err, "agent_id", id)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -209,6 +211,9 @@ func (h *AgentHandler) DeleteAgent(c *gin.Context) {
 func (h *AgentHandler) AddCapability(c *gin.Context) {
 	log := h.reqLog(c, "add_capability")
 	id := c.Param("id")
+	if _, ok := h.loadOwnedAgent(c, log, id); !ok {
+		return
+	}
 
 	var req AddCapabilityRequest
 	if err := c.ShouldBindBodyWithJSON(&req); err != nil {
@@ -230,6 +235,9 @@ func (h *AgentHandler) AddCapability(c *gin.Context) {
 func (h *AgentHandler) ListCapabilities(c *gin.Context) {
 	log := h.reqLog(c, "list_capabilities")
 	id := c.Param("id")
+	if _, ok := h.loadOwnedAgent(c, log, id); !ok {
+		return
+	}
 	capabilities, err := h.svc.GetAgentCapabilities(c.Request.Context(), id)
 	if err != nil {
 		log.Error("failed to list capabilities", "error", err, "agent_id", id)
@@ -243,6 +251,10 @@ func (h *AgentHandler) ListCapabilities(c *gin.Context) {
 
 func (h *AgentHandler) RemoveCapability(c *gin.Context) {
 	log := h.reqLog(c, "remove_capability")
+	id := c.Param("id")
+	if _, ok := h.loadOwnedAgent(c, log, id); !ok {
+		return
+	}
 	capabilityID := c.Param("capability_id")
 
 	if err := h.svc.RemoveCapability(c.Request.Context(), capabilityID); err != nil {
@@ -258,6 +270,9 @@ func (h *AgentHandler) RemoveCapability(c *gin.Context) {
 func (h *AgentHandler) GetAgentCapabilities(c *gin.Context) {
 	log := h.reqLog(c, "get_agent_capabilities")
 	id := c.Param("id")
+	if _, ok := h.loadOwnedAgent(c, log, id); !ok {
+		return
+	}
 	capabilities, err := h.svc.GetAgentCapabilities(c.Request.Context(), id)
 	if err != nil {
 		log.Error("failed to get agent capabilities", "error", err, "agent_id", id)
@@ -271,28 +286,20 @@ func (h *AgentHandler) GetAgentCapabilities(c *gin.Context) {
 
 func (h *AgentHandler) ValidateAgentPermissions(c *gin.Context) {
 	log := h.reqLog(c, "validate_agent_permissions")
-	userID := c.GetString("user_id")
-	if userID == "" {
-		log.Warn("permission validation unauthorized: missing user_id")
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
-		return
-	}
-
 	agentID := c.Param("id")
-
-	hasPermission, err := h.svc.ValidateAgentPermission(userID, agentID)
-	if err != nil {
-		log.Error("failed to validate agent permission", "error", err, "agent_id", agentID, "user_id", userID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if _, ok := h.loadOwnedAgent(c, log, agentID); !ok {
+		c.JSON(http.StatusOK, gin.H{"has_permission": false})
 		return
 	}
-	log.Debug("agent permission validated", "agent_id", agentID, "user_id", userID, "has_permission", hasPermission)
-
-	c.JSON(http.StatusOK, gin.H{"has_permission": hasPermission})
+	c.JSON(http.StatusOK, gin.H{"has_permission": true})
 }
 
 func (h *AgentHandler) GetActiveAgents(c *gin.Context) {
 	log := h.reqLog(c, "get_active_agents")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	agentType := c.Query("type")
 	if agentType == "" {
 		log.Warn("missing type query param for active agents")
@@ -300,20 +307,28 @@ func (h *AgentHandler) GetActiveAgents(c *gin.Context) {
 		return
 	}
 
-	agents, err := h.svc.GetActiveAgentsByType(c.Request.Context(), agentType)
+	agents, _, err := h.svc.GetAgentsByBusiness(c.Request.Context(), businessID, 1, 1000)
 	if err != nil {
 		log.Error("failed to get active agents", "error", err, "type", agentType)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	log.Debug("active agents fetched", "type", agentType, "count", len(agents))
-
-	c.JSON(http.StatusOK, agents)
+	filtered := make([]*models.Agent, 0, len(agents))
+	for _, agent := range agents {
+		if agent.IsActive && agent.Type == agentType {
+			filtered = append(filtered, agent)
+		}
+	}
+	log.Debug("active agents fetched", "type", agentType, "count", len(filtered))
+	c.JSON(http.StatusOK, filtered)
 }
 
 func (h *AgentHandler) CreateCredentialProviderAgent(c *gin.Context) {
 	log := h.reqLog(c, "create_credential_provider_agent")
-	businessID := c.GetString("business_id")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 
 	var req struct {
 		Name        string `json:"name" binding:"required"`
@@ -338,7 +353,10 @@ func (h *AgentHandler) CreateCredentialProviderAgent(c *gin.Context) {
 
 func (h *AgentHandler) CreatePaymentProcessorAgent(c *gin.Context) {
 	log := h.reqLog(c, "create_payment_processor_agent")
-	businessID := c.GetString("business_id")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 
 	var req struct {
 		Name        string `json:"name" binding:"required"`
@@ -364,6 +382,9 @@ func (h *AgentHandler) CreatePaymentProcessorAgent(c *gin.Context) {
 func (h *AgentHandler) UpdateAgentStatus(c *gin.Context) {
 	log := h.reqLog(c, "update_agent_status")
 	id := c.Param("id")
+	if _, ok := h.loadOwnedAgent(c, log, id); !ok {
+		return
+	}
 
 	var req struct {
 		IsActive bool `json:"is_active" binding:"required"`
@@ -390,19 +411,40 @@ func (h *AgentHandler) GetAgentByType(c *gin.Context) {
 	agentType := c.Param("type")
 	page, limit := utils.ParsePagination(c)
 
-	userID := c.GetString("user_id")
-	if userID == "" {
-		log.Warn("get agent by type unauthorized: missing user_id")
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+	userID, ok := requireUserScope(c)
+	if !ok {
 		return
 	}
 
-	var agents interface{}
+	var agents []*models.Agent
 	var total int64
 	var err error
 
-	if agentType == "shopping" || agentType == "merchant" {
-		agents, total, err = h.svc.GetAgentsByUser(c.Request.Context(), userID, page, limit)
+	if agentType == "shopping" {
+		agents, _, err = h.svc.GetAgentsByUser(c.Request.Context(), userID, page, limit)
+		filtered := make([]*models.Agent, 0, len(agents))
+		for _, agent := range agents {
+			if agent.Type == "shopping" {
+				filtered = append(filtered, agent)
+			}
+		}
+		agents = filtered
+		total = int64(len(filtered))
+	} else if agentType == "merchant" {
+		businessID := middleware.GetEffectiveBusinessID(c)
+		if businessID == "" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "business scope required"})
+			return
+		}
+		agents, _, err = h.svc.GetAgentsByBusiness(c.Request.Context(), businessID, page, limit)
+		filtered := make([]*models.Agent, 0, len(agents))
+		for _, agent := range agents {
+			if agent.Type == "merchant" {
+				filtered = append(filtered, agent)
+			}
+		}
+		agents = filtered
+		total = int64(len(filtered))
 	} else {
 		log.Warn("invalid agent type", "type", agentType)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid agent type"})
@@ -422,4 +464,23 @@ func (h *AgentHandler) GetAgentByType(c *gin.Context) {
 		"page":  page,
 		"limit": limit,
 	})
+}
+
+func (h *AgentHandler) loadOwnedAgent(c *gin.Context, log *logger.Logger, agentID string) (*models.Agent, bool) {
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return nil, false
+	}
+	businessID := middleware.GetEffectiveBusinessID(c)
+	agent, err := h.svc.GetAgentByID(c.Request.Context(), agentID)
+	if err != nil {
+		log.Error("failed to get agent", "error", err, "agent_id", agentID)
+		c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+		return nil, false
+	}
+	if agent.OwnerID != userID && (businessID == "" || agent.BusinessID != businessID) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+		return nil, false
+	}
+	return agent, true
 }

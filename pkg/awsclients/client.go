@@ -40,12 +40,36 @@ func New(ctx context.Context, cfg appconfig.AWSConfig, log *logger.Logger) (*Con
 	}
 
 	clients := &Config{
-		Cognito:  cognitoidentityprovider.NewFromConfig(awsCfg),
-		DynamoDB: dynamodb.NewFromConfig(awsCfg),
-		S3:       s3.NewFromConfig(awsCfg),
-		SES:      ses.NewFromConfig(awsCfg),
-		SQS:      sqs.NewFromConfig(awsCfg),
-		SNS:      sns.NewFromConfig(awsCfg),
+		Cognito: cognitoidentityprovider.NewFromConfig(awsCfg, func(o *cognitoidentityprovider.Options) {
+			if cfg.Endpoint != "" {
+				o.BaseEndpoint = aws.String(cfg.Endpoint)
+			}
+		}),
+		DynamoDB: dynamodb.NewFromConfig(awsCfg, func(o *dynamodb.Options) {
+			if cfg.Endpoint != "" {
+				o.BaseEndpoint = aws.String(cfg.Endpoint)
+			}
+		}),
+		S3: s3.NewFromConfig(awsCfg, func(o *s3.Options) {
+			if cfg.Endpoint != "" {
+				o.BaseEndpoint = aws.String(cfg.Endpoint)
+			}
+		}),
+		SES: ses.NewFromConfig(awsCfg, func(o *ses.Options) {
+			if cfg.Endpoint != "" {
+				o.BaseEndpoint = aws.String(cfg.Endpoint)
+			}
+		}),
+		SQS: sqs.NewFromConfig(awsCfg, func(o *sqs.Options) {
+			if cfg.Endpoint != "" {
+				o.BaseEndpoint = aws.String(cfg.Endpoint)
+			}
+		}),
+		SNS: sns.NewFromConfig(awsCfg, func(o *sns.Options) {
+			if cfg.Endpoint != "" {
+				o.BaseEndpoint = aws.String(cfg.Endpoint)
+			}
+		}),
 	}
 
 	log.Info("AWS clients initialized")
@@ -63,18 +87,6 @@ func loadConfig(ctx context.Context, cfg appconfig.AWSConfig) (aws.Config, error
 			cfg.SecretKey,
 			"",
 		)))
-	}
-
-	if cfg.Endpoint != "" {
-		loaders = append(loaders, config.WithEndpointResolverWithOptions(
-			aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-				return aws.Endpoint{
-					URL:               cfg.Endpoint,
-					SigningRegion:     cfg.Region,
-					HostnameImmutable: true,
-				}, nil
-			}),
-		))
 	}
 
 	return config.LoadDefaultConfig(ctx, loaders...)

@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"time"
 
@@ -91,7 +91,7 @@ func (s *LLMService) Chat(ctx context.Context, messages []ChatMessage) (string, 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := ioutil.ReadAll(resp.Body)
+		bodyBytes, _ := io.ReadAll(resp.Body)
 		log.Error("LLM API returned non-200",
 			"status_code", resp.StatusCode,
 			"duration_ms", time.Since(start).Milliseconds(),
