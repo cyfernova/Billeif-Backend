@@ -11,6 +11,22 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func extractProductIDs(config map[string]interface{}) []string {
+	if config == nil {
+		return nil
+	}
+	if productIDs, ok := config["product_ids"].([]interface{}); ok {
+		var ids []string
+		for _, id := range productIDs {
+			if s, ok := id.(string); ok {
+				ids = append(ids, s)
+			}
+		}
+		return ids
+	}
+	return nil
+}
+
 type AgentHandler struct {
 	svc *services.AgentService
 	log *logger.Logger
@@ -25,6 +41,7 @@ type CreateAgentRequest struct {
 	Name        string                 `json:"name" binding:"required"`
 	Description string                 `json:"description"`
 	Config      map[string]interface{} `json:"config"`
+	BusinessID  string                 `json:"business_id"`
 }
 
 type UpdateAgentRequest struct {
@@ -50,6 +67,10 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 		return
 	}
 
+	if req.BusinessID != "" {
+		businessID = req.BusinessID
+	}
+
 	var agent *models.Agent
 	var err error
 
@@ -63,15 +84,13 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 			Config:      req.Config,
 		}
 		agent, err = h.svc.CreatePersonalAgent(c.Request.Context(), personalReq)
-	case "merchant":
-		var merchantReq services.CreateMerchantAgentRequest
-		if err := c.ShouldBindJSON(&merchantReq); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		merchantReq.Name = req.Name
-		merchantReq.Description = req.Description
-		agent, err = h.svc.CreateMerchantAgent(c.Request.Context(), &merchantReq)
+	case "merchant", "selling":
+		agent, err = h.svc.CreateMerchantAgent(c.Request.Context(), &services.CreateMerchantAgentRequest{
+			BusinessID:  businessID,
+			Name:        req.Name,
+			Description: req.Description,
+			ProductIDs:  extractProductIDs(req.Config),
+		})
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid agent type"})
 		return
