@@ -12,6 +12,22 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func extractProductIDs(config map[string]interface{}) []string {
+	if config == nil {
+		return nil
+	}
+	if productIDs, ok := config["product_ids"].([]interface{}); ok {
+		var ids []string
+		for _, id := range productIDs {
+			if s, ok := id.(string); ok {
+				ids = append(ids, s)
+			}
+		}
+		return ids
+	}
+	return nil
+}
+
 type AgentHandler struct {
 	svc *services.AgentService
 	log *logger.Logger
@@ -48,20 +64,18 @@ type AddCapabilityRequest struct {
 
 func (h *AgentHandler) CreateAgent(c *gin.Context) {
 	log := h.reqLog(c, "create_agent")
-	userID, ok := requireUserScope(c)
-	if !ok {
-		return
-	}
-	businessID, ok := requireBusinessScope(c)
-	if !ok {
-		return
-	}
+	businessID := c.GetString("business_id")
+	userID := c.GetString("user_id")
 
 	var req CreateAgentRequest
-	if err := c.ShouldBindBodyWithJSON(&req); err != nil {
+	if err := c.ShouldBindJSON(&req); err != nil {
 		log.Warn("invalid create agent payload", "error", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	if req.BusinessID != "" {
+		businessID = req.BusinessID
 	}
 
 	var agent *models.Agent
@@ -78,16 +92,17 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 		}
 		agent, err = h.svc.CreatePersonalAgent(c.Request.Context(), personalReq)
 	case "merchant":
-		var merchantReq services.CreateMerchantAgentRequest
-		if err := c.ShouldBindBodyWithJSON(&merchantReq); err != nil {
-			log.Warn("invalid create merchant agent payload", "error", err)
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		if businessID == "" {
+			log.Warn("business_id required for merchant agent")
+			c.JSON(http.StatusBadRequest, gin.H{"error": "business_id is required for merchant agents"})
 			return
 		}
-		merchantReq.BusinessID = businessID
-		merchantReq.Name = req.Name
-		merchantReq.Description = req.Description
-		agent, err = h.svc.CreateMerchantAgent(c.Request.Context(), &merchantReq)
+		agent, err = h.svc.CreateMerchantAgent(c.Request.Context(), &services.CreateMerchantAgentRequest{
+			BusinessID:  businessID,
+			Name:        req.Name,
+			Description: req.Description,
+			ProductIDs:  extractProductIDs(req.Config),
+		})
 	default:
 		log.Warn("invalid agent type", "type", req.Type)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid agent type"})
