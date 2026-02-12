@@ -25,6 +25,7 @@ type CreateAgentRequest struct {
 	Name        string                 `json:"name" binding:"required"`
 	Description string                 `json:"description"`
 	Config      map[string]interface{} `json:"config"`
+	BusinessID  string                 `json:"business_id"`
 }
 
 type UpdateAgentRequest struct {
@@ -41,12 +42,24 @@ type AddCapabilityRequest struct {
 }
 
 func (h *AgentHandler) CreateAgent(c *gin.Context) {
-	businessID := c.GetString("business_id")
 	userID := c.GetString("user_id")
 
 	var req CreateAgentRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBindBodyWithJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Resolve business_id: JWT claim → BusinessAuth middleware → request body
+	businessID := c.GetString("business_id")
+	if businessID == "" {
+		businessID = c.GetString("validated_business_id")
+	}
+	if businessID == "" {
+		businessID = req.BusinessID
+	}
+	if businessID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "business_id is required"})
 		return
 	}
 
@@ -65,7 +78,7 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 		agent, err = h.svc.CreatePersonalAgent(c.Request.Context(), personalReq)
 	case "merchant":
 		var merchantReq services.CreateMerchantAgentRequest
-		if err := c.ShouldBindJSON(&merchantReq); err != nil {
+		if err := c.ShouldBindBodyWithJSON(&merchantReq); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
@@ -132,7 +145,7 @@ func (h *AgentHandler) UpdateAgent(c *gin.Context) {
 	id := c.Param("id")
 
 	var req UpdateAgentRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBindBodyWithJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -173,7 +186,7 @@ func (h *AgentHandler) AddCapability(c *gin.Context) {
 	id := c.Param("id")
 
 	var req AddCapabilityRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBindBodyWithJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -260,7 +273,7 @@ func (h *AgentHandler) CreateCredentialProviderAgent(c *gin.Context) {
 		Name        string `json:"name" binding:"required"`
 		Description string `json:"description" binding:"required"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBindBodyWithJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -281,7 +294,7 @@ func (h *AgentHandler) CreatePaymentProcessorAgent(c *gin.Context) {
 		Name        string `json:"name" binding:"required"`
 		Description string `json:"description" binding:"required"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBindBodyWithJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -301,7 +314,7 @@ func (h *AgentHandler) UpdateAgentStatus(c *gin.Context) {
 	var req struct {
 		IsActive bool `json:"is_active" binding:"required"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBindBodyWithJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
