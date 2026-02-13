@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	_ "time/tzdata"
 
 	"invoice-backend/internal/config"
 	"invoice-backend/internal/handlers"
