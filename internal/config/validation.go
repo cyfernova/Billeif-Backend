@@ -75,14 +75,14 @@ func validate(cfg *Config) error {
 func validateLogging(logging LoggingConfig) error {
 	level := strings.ToLower(strings.TrimSpace(logging.Level))
 	switch level {
-	case "debug", "info", "warn", "error":
+	case "", "debug", "info", "warn", "error":
 	default:
 		return fmt.Errorf("LOG_LEVEL must be one of: debug, info, warn, error")
 	}
 
 	format := strings.ToLower(strings.TrimSpace(logging.Format))
 	switch format {
-	case "json", "console":
+	case "", "json", "console":
 	default:
 		return fmt.Errorf("LOG_FORMAT must be one of: json, console")
 	}
