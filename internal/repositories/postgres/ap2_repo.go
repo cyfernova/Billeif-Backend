@@ -314,6 +314,21 @@ func (r *ap2Repository) DeleteAgent(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Delete(&models.Agent{}, id).Error
 }
 
+func (r *ap2Repository) CreateAgentWithCapabilities(ctx context.Context, agent *models.Agent, capabilities []*models.AgentCapability) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(agent).Error; err != nil {
+			return err
+		}
+		for _, cap := range capabilities {
+			cap.AgentID = agent.ID
+			if err := tx.Create(cap).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 // Agent Capabilities
 func (r *ap2Repository) CreateAgentCapability(ctx context.Context, capability *models.AgentCapability) error {
 	return r.db.WithContext(ctx).Create(capability).Error

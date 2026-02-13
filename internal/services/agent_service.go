@@ -66,21 +66,11 @@ func (s *AgentService) CreatePersonalAgent(ctx context.Context, req *CreatePerso
 		IsActive:     true,
 	}
 
-	if err := s.ap2Repo.CreateAgent(ctx, agent); err != nil {
-		s.log.Error("failed to create agent", "error", err, "user_id", req.UserID)
-		return nil, fmt.Errorf("failed to create agent: %w", err)
-	}
+	agentCapabilities := s.buildCapabilities(s.getShoppingCapabilityList())
 
-	for _, cap := range s.getShoppingCapabilityList() {
-		agentCapability := &models.AgentCapability{
-			AgentID:        agent.ID,
-			CapabilityType: cap.Type,
-			Description:    &cap.Description,
-			Config:         s.marshalConfig(cap.Config),
-		}
-		if err := s.ap2Repo.CreateAgentCapability(ctx, agentCapability); err != nil {
-			s.log.Error("failed to create agent capability", "error", err, "capability", cap.Type)
-		}
+	if err := s.ap2Repo.CreateAgentWithCapabilities(ctx, agent, agentCapabilities); err != nil {
+		s.log.Error("failed to create agent with capabilities", "error", err, "user_id", req.UserID)
+		return nil, fmt.Errorf("failed to create agent: %w", err)
 	}
 
 	s.log.Info("created personal agent", "agent_id", agent.ID, "user_id", req.UserID)
@@ -106,21 +96,11 @@ func (s *AgentService) CreateMerchantAgent(ctx context.Context, req *CreateMerch
 		IsActive:     true,
 	}
 
-	if err := s.ap2Repo.CreateAgent(ctx, agent); err != nil {
-		s.log.Error("failed to create merchant agent", "error", err, "business_id", req.BusinessID)
-		return nil, fmt.Errorf("failed to create merchant agent: %w", err)
-	}
+	agentCapabilities := s.buildCapabilities(s.getMerchantCapabilityList())
 
-	for _, cap := range s.getMerchantCapabilityList() {
-		agentCapability := &models.AgentCapability{
-			AgentID:        agent.ID,
-			CapabilityType: cap.Type,
-			Description:    &cap.Description,
-			Config:         s.marshalConfig(cap.Config),
-		}
-		if err := s.ap2Repo.CreateAgentCapability(ctx, agentCapability); err != nil {
-			s.log.Error("failed to create agent capability", "error", err, "capability", cap.Type)
-		}
+	if err := s.ap2Repo.CreateAgentWithCapabilities(ctx, agent, agentCapabilities); err != nil {
+		s.log.Error("failed to create merchant agent with capabilities", "error", err, "business_id", req.BusinessID)
+		return nil, fmt.Errorf("failed to create merchant agent: %w", err)
 	}
 
 	s.log.Info("created merchant agent", "agent_id", agent.ID, "business_id", req.BusinessID)
@@ -298,6 +278,19 @@ func (s *AgentService) getMerchantCapabilityList() []AgentCapability {
 			Config:      map[string]interface{}{},
 		},
 	}
+}
+
+func (s *AgentService) buildCapabilities(caps []AgentCapability) []*models.AgentCapability {
+	result := make([]*models.AgentCapability, len(caps))
+	for i, cap := range caps {
+		desc := cap.Description
+		result[i] = &models.AgentCapability{
+			CapabilityType: cap.Type,
+			Description:    &desc,
+			Config:         s.marshalConfig(cap.Config),
+		}
+	}
+	return result
 }
 
 func (s *AgentService) marshalCapabilities(capabilities []AgentCapability) string {

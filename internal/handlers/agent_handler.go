@@ -68,7 +68,7 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 	userID := c.GetString("user_id")
 
 	var req CreateAgentRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBindBodyWithJSON(&req); err != nil {
 		log.Warn("invalid create agent payload", "error", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -76,6 +76,12 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 
 	if req.BusinessID != "" {
 		businessID = req.BusinessID
+	}
+
+	if businessID == "" {
+		log.Warn("business_id is required")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "business_id is required"})
+		return
 	}
 
 	var agent *models.Agent
@@ -92,11 +98,6 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 		}
 		agent, err = h.svc.CreatePersonalAgent(c.Request.Context(), personalReq)
 	case "merchant":
-		if businessID == "" {
-			log.Warn("business_id required for merchant agent")
-			c.JSON(http.StatusBadRequest, gin.H{"error": "business_id is required for merchant agents"})
-			return
-		}
 		agent, err = h.svc.CreateMerchantAgent(c.Request.Context(), &services.CreateMerchantAgentRequest{
 			BusinessID:  businessID,
 			Name:        req.Name,
