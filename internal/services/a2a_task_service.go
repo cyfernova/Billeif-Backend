@@ -89,7 +89,9 @@ func (s *A2ATaskService) SendTask(ctx context.Context, req *a2a.SendTaskRequest,
 
 	// Process the task
 	if err := s.processTask(ctx, task); err != nil {
-		task.SetState(a2a.TaskStateFailed, err.Error())
+		if stateErr := task.SetState(a2a.TaskStateFailed, err.Error()); stateErr != nil {
+			s.log.Error("failed to set task state", "task_id", task.ID, "error", stateErr)
+		}
 	}
 
 	// Save task to database
@@ -134,7 +136,9 @@ func (s *A2ATaskService) StreamTask(ctx context.Context, req *a2a.SendTaskReques
 	// Process task with streaming
 	err := s.processTaskWithStreaming(ctx, task, events)
 	if err != nil {
-		task.SetState(a2a.TaskStateFailed, err.Error())
+		if stateErr := task.SetState(a2a.TaskStateFailed, err.Error()); stateErr != nil {
+			s.log.Error("failed to set task state", "task_id", task.ID, "error", stateErr)
+		}
 		s.sendStateEvent(events, task)
 	}
 
@@ -304,7 +308,9 @@ func (s *A2ATaskService) processTask(ctx context.Context, task *a2a.Task) error 
 			// Create agent response
 			responseText := fmt.Sprintf("Received your message. Task %s is being processed.", task.ID)
 			task.AddMessage(a2a.NewTextMessage(a2a.MessageRoleAgent, responseText))
-			task.SetState(a2a.TaskStateCompleted, "Task completed successfully")
+			if stateErr := task.SetState(a2a.TaskStateCompleted, "Task completed successfully"); stateErr != nil {
+				s.log.Error("failed to set task state", "task_id", task.ID, "error", stateErr)
+			}
 		}
 	}
 
@@ -328,7 +334,9 @@ func (s *A2ATaskService) processTaskWithStreaming(ctx context.Context, task *a2a
 	// In production, this would be actual task processing
 
 	// Update to working state
-	task.SetState(a2a.TaskStateWorking, "Processing task")
+	if stateErr := task.SetState(a2a.TaskStateWorking, "Processing task"); stateErr != nil {
+		s.log.Error("failed to set task state", "task_id", task.ID, "error", stateErr)
+	}
 	s.sendStateEvent(events, task)
 
 	// Simulate processing with response messages
@@ -377,7 +385,9 @@ func (s *A2ATaskService) processTaskWithStreaming(ctx context.Context, task *a2a
 	}
 
 	// Complete task
-	task.SetState(a2a.TaskStateCompleted, "Task completed successfully")
+	if stateErr := task.SetState(a2a.TaskStateCompleted, "Task completed successfully"); stateErr != nil {
+		s.log.Error("failed to set task state", "task_id", task.ID, "error", stateErr)
+	}
 	s.sendStateEvent(events, task)
 
 	return nil
@@ -441,7 +451,11 @@ func (s *A2ATaskService) notifyStateChange(ctx context.Context, task *a2a.Task) 
 	// Send push notification if configured
 	if s.pushService != nil {
 		if pushConfig, ok := task.Metadata["push_config"].(*a2a.PushNotificationConfig); ok {
-			go s.pushService.SendNotification(ctx, pushConfig, "state_change", event)
+			go func() {
+				if err := s.pushService.SendNotification(ctx, pushConfig, "state_change", event); err != nil {
+					s.log.Error("failed to send push notification", "task_id", task.ID, "error", err)
+				}
+			}()
 		}
 	}
 }

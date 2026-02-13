@@ -26,22 +26,22 @@ func NewWorkflowHandler(workflowService *services.WorkflowService, log *logger.L
 
 // CreateWorkflowRequest represents a request to create a workflow
 type CreateWorkflowRequest struct {
-	Name                 string                       `json:"name" binding:"required"`
-	Description          string                       `json:"description,omitempty"`
-	AgentID              *string                      `json:"agentId,omitempty"`
-	Trigger              *services.WorkflowTrigger    `json:"trigger" binding:"required"`
-	Action               *services.WorkflowAction     `json:"action" binding:"required"`
+	Name                 string                         `json:"name" binding:"required"`
+	Description          string                         `json:"description,omitempty"`
+	AgentID              *string                        `json:"agentId,omitempty"`
+	Trigger              *services.WorkflowTrigger      `json:"trigger" binding:"required"`
+	Action               *services.WorkflowAction       `json:"action" binding:"required"`
 	NotificationSettings *services.NotificationSettings `json:"notificationSettings,omitempty"`
 }
 
 // UpdateWorkflowRequest represents a request to update a workflow
 type UpdateWorkflowRequest struct {
-	Name                 *string                       `json:"name,omitempty"`
-	Description          *string                       `json:"description,omitempty"`
-	Trigger              *services.WorkflowTrigger     `json:"trigger,omitempty"`
-	Action               *services.WorkflowAction      `json:"action,omitempty"`
+	Name                 *string                        `json:"name,omitempty"`
+	Description          *string                        `json:"description,omitempty"`
+	Trigger              *services.WorkflowTrigger      `json:"trigger,omitempty"`
+	Action               *services.WorkflowAction       `json:"action,omitempty"`
 	NotificationSettings *services.NotificationSettings `json:"notificationSettings,omitempty"`
-	IsEnabled            *bool                         `json:"isEnabled,omitempty"`
+	IsEnabled            *bool                          `json:"isEnabled,omitempty"`
 }
 
 // CreateWorkflow handles POST /workflows
@@ -75,11 +75,6 @@ func (h *WorkflowHandler) CreateWorkflow(c *gin.Context) {
 		Action:      req.Action,
 		Status:      services.WorkflowStatusActive,
 		IsEnabled:   true,
-	}
-
-	// Set notification settings if provided
-	if req.NotificationSettings != nil {
-		// Will be serialized in BeforeSave
 	}
 
 	if err := h.workflowService.CreateWorkflow(c.Request.Context(), workflow); err != nil {

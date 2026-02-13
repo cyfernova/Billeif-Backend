@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"invoice-backend/internal/models"
+
+	"github.com/google/uuid"
 )
 
 type VerifiableCredential struct {
@@ -252,11 +254,5 @@ func ConvertCredentialToModel(vc *VerifiableCredential, userID string) (*models.
 }
 
 func generateUUID() string {
-	return fmt.Sprintf("%x-%x-%x-%x-%x",
-		time.Now().UnixNano(),
-		time.Now().UnixNano()>>32,
-		time.Now().UnixNano()>>48,
-		time.Now().UnixNano()>>56,
-		time.Now().UnixNano()>>64,
-	)
+	return uuid.New().String()
 }

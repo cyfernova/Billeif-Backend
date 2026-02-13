@@ -150,14 +150,17 @@ func Auth(cfg config.CognitoConfig, log *logger.Logger) gin.HandlerFunc {
 	}
 
 	return func(c *gin.Context) {
+		reqLog := logger.FromContext(c.Request.Context()).Named("auth_middleware")
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
+			reqLog.Warn("missing authorization header")
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing authorization header"})
 			return
 		}
 
 		parts := strings.SplitN(authHeader, " ", 2)
 		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+			reqLog.Warn("invalid authorization header format")
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid authorization header format"})
 			return
 		}
@@ -175,18 +178,20 @@ func Auth(cfg config.CognitoConfig, log *logger.Logger) gin.HandlerFunc {
 		})
 
 		if err != nil {
-			log.Warn("token validation failed", "error", err, "request_id", GetRequestID(c))
+			reqLog.Warn("token validation failed", "error", err)
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 			return
 		}
 
 		claims, ok := token.Claims.(*CognitoClaims)
 		if !ok || !token.Valid {
+			reqLog.Warn("invalid token claims")
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token claims"})
 			return
 		}
 
 		if claims.TokenUse != "access" && claims.TokenUse != "id" {
+			reqLog.Warn("invalid token type", "token_use", claims.TokenUse)
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token type"})
 			return
 		}
@@ -199,6 +204,11 @@ func Auth(cfg config.CognitoConfig, log *logger.Logger) gin.HandlerFunc {
 		c.Set("role", claims.Role)
 		c.Set("picture", claims.Picture)
 		c.Set("name", claims.Name)
+		c.Request = c.Request.WithContext(logger.ToContext(c.Request.Context(), reqLog.With(
+			"user_id", claims.Subject,
+			"business_id", claims.BusinessID,
+			"role", claims.Role,
+		)))
 
 		c.Next()
 	}

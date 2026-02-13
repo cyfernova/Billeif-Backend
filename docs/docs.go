@@ -76,6 +76,553 @@ const docTemplate = `{
                 ]
             }
         },
+        "/agents/config": {
+            "get": {
+                "description": "Returns all agent configurations for the authenticated user.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent Configuration"
+                ],
+                "summary": "Get all agent configurations",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "post": {
+                "description": "Create or update a bargaining agent configuration for buyer or seller agents.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent Configuration"
+                ],
+                "summary": "Create agent configuration",
+                "parameters": [
+                    {
+                        "description": "Agent configuration",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CreateAgentConfigRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/models.AgentConfig"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/agents/config/default": {
+            "post": {
+                "description": "Creates a default bargaining configuration for a buyer or seller agent.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent Configuration"
+                ],
+                "summary": "Create default configuration",
+                "parameters": [
+                    {
+                        "description": "Default config request",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CreateDefaultConfigRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/models.AgentConfig"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/agents/config/mentee/export": {
+            "get": {
+                "description": "Exports all mentee learning data as a JSON file.",
+                "tags": [
+                    "Agent Configuration"
+                ],
+                "summary": "Export mentee learning data",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/agents/config/mentee/import": {
+            "post": {
+                "description": "Imports mentee learning data from a JSON file.",
+                "tags": [
+                    "Agent Configuration"
+                ],
+                "summary": "Import mentee learning data",
+                "parameters": [
+                    {
+                        "type": "file",
+                        "description": "JSON file with mentee learning data",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/agents/config/mentee/learning/{agent_id}": {
+            "get": {
+                "description": "Returns the mentee's learning data for a specific agent.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent Configuration"
+                ],
+                "summary": "Get mentee learning data",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Agent ID",
+                        "name": "agent_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/services.AgentLearningData"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "delete": {
+                "description": "Resets the mentee's learning data for a specific agent.",
+                "tags": [
+                    "Agent Configuration"
+                ],
+                "summary": "Reset mentee learning data",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Agent ID",
+                        "name": "agent_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/agents/config/mentee/recommendation/{negotiation_id}": {
+            "get": {
+                "description": "Returns the mentee's recommendation for the next bargaining action.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent Configuration"
+                ],
+                "summary": "Get mentee recommendation",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Negotiation ID",
+                        "name": "negotiation_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "enum": [
+                            "buyer",
+                            "seller"
+                        ],
+                        "type": "string",
+                        "description": "Agent type (buyer or seller)",
+                        "name": "agent_type",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/services.BargainingDecision"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/agents/config/{agent_id}": {
+            "get": {
+                "description": "Returns the configuration for a specific agent.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent Configuration"
+                ],
+                "summary": "Get agent configuration",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Agent ID",
+                        "name": "agent_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.AgentConfig"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "put": {
+                "description": "Update the bargaining configuration for a specific agent.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent Configuration"
+                ],
+                "summary": "Update agent configuration",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Agent ID",
+                        "name": "agent_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Agent configuration updates",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.UpdateAgentConfigRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.AgentConfig"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "delete": {
+                "description": "Deletes the configuration for a specific agent.",
+                "tags": [
+                    "Agent Configuration"
+                ],
+                "summary": "Delete agent configuration",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Agent ID",
+                        "name": "agent_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/auth/change-password": {
             "post": {
                 "description": "Change the password of the authenticated user.",
@@ -187,7 +734,8 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.User"
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     },
                     "401": {
@@ -310,7 +858,8 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.User"
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     },
                     "401": {
@@ -367,11 +916,118 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.User"
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/auth/profile-picture": {
+            "put": {
+                "description": "Updates the user's profile picture URL after successful upload.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Update profile picture URL",
+                "parameters": [
+                    {
+                        "description": "Profile picture URL",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "profile_picture_url": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "post": {
+                "description": "Returns a presigned S3 URL to upload a profile picture.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Upload profile picture",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "MIME type (default: image/png)",
+                        "name": "Content-Type",
+                        "in": "header"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -623,6 +1279,346 @@ const docTemplate = `{
                         }
                     }
                 }
+            }
+        },
+        "/bargaining/negotiations": {
+            "get": {
+                "description": "Returns a list of negotiations belonging to the authenticated user.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Bargaining"
+                ],
+                "summary": "List negotiations",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Page size",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "post": {
+                "description": "Create a new bargaining negotiation between buyer and seller agents.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Bargaining"
+                ],
+                "summary": "Create negotiation",
+                "parameters": [
+                    {
+                        "description": "Negotiation details",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CreateNegotiationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/models.BargainingNegotiation"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/bargaining/negotiations/{id}": {
+            "get": {
+                "description": "Returns the details of a specific negotiation.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Bargaining"
+                ],
+                "summary": "Get negotiation",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Negotiation ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.BargainingNegotiation"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/bargaining/negotiations/{id}/counteroffer": {
+            "post": {
+                "description": "Submit a counter offer, accept, or reject a negotiation round.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Bargaining"
+                ],
+                "summary": "Submit counter offer",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Negotiation ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Counter offer details",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CounterOfferRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "410": {
+                        "description": "Gone",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/bargaining/negotiations/{id}/rounds": {
+            "get": {
+                "description": "Returns all rounds for a specific negotiation.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Bargaining"
+                ],
+                "summary": "Get negotiation rounds",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Negotiation ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/bargaining/negotiations/{id}/suggest": {
+            "get": {
+                "description": "Returns a suggested counter offer amount based on negotiation state and agent type.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Bargaining"
+                ],
+                "summary": "Get suggested counter offer",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Negotiation ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "enum": [
+                            "buyer",
+                            "seller"
+                        ],
+                        "type": "string",
+                        "description": "Agent type (buyer or seller)",
+                        "name": "agent_type",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
             }
         },
         "/business-profiles": {
@@ -1334,6 +2330,757 @@ const docTemplate = `{
                 ]
             }
         },
+        "/discovery/agents": {
+            "get": {
+                "description": "Search for agents using various filters like type, capability, jurisdiction, and currency.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Discovery"
+                ],
+                "summary": "Discover agents",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Search query",
+                        "name": "query",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Agent type filter",
+                        "name": "type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Capability filter",
+                        "name": "capability",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Jurisdiction filter",
+                        "name": "jurisdiction",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Currency filter",
+                        "name": "currency",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Items per page",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/discovery/agents/by-capability": {
+            "get": {
+                "description": "Retrieve agents that have specific capabilities.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Discovery"
+                ],
+                "summary": "Get agents by capability",
+                "parameters": [
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "collectionFormat": "csv",
+                        "description": "Capability filter (can specify multiple)",
+                        "name": "capability",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Items per page",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/discovery/agents/public": {
+            "get": {
+                "description": "Retrieve all publicly available agents with pagination.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Discovery"
+                ],
+                "summary": "Get public agents",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Items per page",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/discovery/agents/register": {
+            "post": {
+                "description": "Register an agent in the discovery registry.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Discovery"
+                ],
+                "summary": "Register agent",
+                "parameters": [
+                    {
+                        "description": "Agent registration details",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/services.RegisterAgentRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/discovery/agents/verified": {
+            "get": {
+                "description": "Retrieve all verified agents, optionally filtered by type.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Discovery"
+                ],
+                "summary": "Get verified agents",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Agent type filter",
+                        "name": "type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Items per page",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/discovery/agents/{agentID}": {
+            "get": {
+                "description": "Retrieve a specific agent's registry entry by agent ID.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Discovery"
+                ],
+                "summary": "Get agent registry entry",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Agent ID",
+                        "name": "agentID",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/discovery/agents/{registryID}/activate": {
+            "post": {
+                "description": "Activate a previously deactivated agent. Requires admin role.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Discovery"
+                ],
+                "summary": "Activate agent",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Registry ID",
+                        "name": "registryID",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/discovery/agents/{registryID}/deactivate": {
+            "post": {
+                "description": "Deactivate an agent in the registry. Requires admin role.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Discovery"
+                ],
+                "summary": "Deactivate agent",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Registry ID",
+                        "name": "registryID",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/discovery/agents/{registryID}/health-check": {
+            "post": {
+                "description": "Perform a health check on a registered agent. Requires admin role.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Discovery"
+                ],
+                "summary": "Health check agent",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Registry ID",
+                        "name": "registryID",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/discovery/agents/{registryID}/inquiry": {
+            "post": {
+                "description": "Record an inquiry event for a registered agent.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Discovery"
+                ],
+                "summary": "Record agent inquiry",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Registry ID",
+                        "name": "registryID",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/discovery/agents/{registryID}/integration": {
+            "post": {
+                "description": "Record an integration event for a registered agent.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Discovery"
+                ],
+                "summary": "Record agent integration",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Registry ID",
+                        "name": "registryID",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/discovery/agents/{registryID}/rate": {
+            "post": {
+                "description": "Submit a rating and optional review for an agent.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Discovery"
+                ],
+                "summary": "Rate agent",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Registry ID",
+                        "name": "registryID",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Rating details (rating: 1-5, review: optional string)",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/discovery/agents/{registryID}/unverify": {
+            "post": {
+                "description": "Remove verification from an agent. Requires admin role.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Discovery"
+                ],
+                "summary": "Unverify agent",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Registry ID",
+                        "name": "registryID",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/discovery/agents/{registryID}/verify": {
+            "post": {
+                "description": "Mark an agent as verified. Requires admin role.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Discovery"
+                ],
+                "summary": "Verify agent",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Registry ID",
+                        "name": "registryID",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/invoices": {
             "get": {
                 "description": "Returns a list of invoices belonging to a specific business.",
@@ -1850,6 +3597,575 @@ const docTemplate = `{
                             "additionalProperties": {
                                 "type": "string"
                             }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/marketplace/merchant/products": {
+            "get": {
+                "description": "Retrieve all products belonging to a specific merchant agent.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Marketplace"
+                ],
+                "summary": "Get merchant products",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Agent ID",
+                        "name": "agent_id",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Items per page",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "post": {
+                "description": "Add a new product to the marketplace for a merchant agent.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Marketplace"
+                ],
+                "summary": "Add product",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Agent ID",
+                        "name": "agent_id",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "description": "Product details",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CreateProductRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/models.MarketplaceProduct"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/marketplace/merchant/products/{id}": {
+            "put": {
+                "description": "Update an existing marketplace product.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Marketplace"
+                ],
+                "summary": "Update product",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Product ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Product update details",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.UpdateProductRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/marketplace/orders": {
+            "get": {
+                "description": "Retrieve orders for the authenticated user, optionally filtered by status.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Marketplace"
+                ],
+                "summary": "Get user orders",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Order status filter",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Items per page",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/marketplace/orders/status/{status}": {
+            "get": {
+                "description": "Retrieve orders for the authenticated user filtered by a specific status.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Marketplace"
+                ],
+                "summary": "Get orders by status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Order status",
+                        "name": "status",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Items per page",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/marketplace/products": {
+            "get": {
+                "description": "List marketplace products with optional category and agent filters.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Marketplace"
+                ],
+                "summary": "List products",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Category filter",
+                        "name": "category",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Agent ID filter",
+                        "name": "agent_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Items per page",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/marketplace/products/available": {
+            "get": {
+                "description": "Retrieve all currently available marketplace products.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Marketplace"
+                ],
+                "summary": "Get available products",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Items per page",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/marketplace/products/search": {
+            "get": {
+                "description": "Search marketplace products by query string.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Marketplace"
+                ],
+                "summary": "Search products",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Search query",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Items per page",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/marketplace/products/{id}": {
+            "get": {
+                "description": "Retrieve a specific marketplace product by its ID.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Marketplace"
+                ],
+                "summary": "Get product",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Product ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.MarketplaceProduct"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/marketplace/stats": {
+            "get": {
+                "description": "Retrieve overall marketplace statistics.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Marketplace"
+                ],
+                "summary": "Get marketplace stats",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     },
                     "500": {
@@ -3465,6 +5781,449 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "handlers.CounterOfferRequest": {
+            "type": "object",
+            "required": [
+                "action",
+                "agent_id",
+                "proposed_amount"
+            ],
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": [
+                        "counteroffer",
+                        "accept",
+                        "reject"
+                    ]
+                },
+                "agent_id": {
+                    "type": "string"
+                },
+                "proposed_amount": {
+                    "type": "number",
+                    "minimum": 0
+                },
+                "reason": {
+                    "type": "string",
+                    "maxLength": 500
+                }
+            }
+        },
+        "handlers.CreateAgentConfigRequest": {
+            "type": "object",
+            "required": [
+                "agent_id",
+                "config"
+            ],
+            "properties": {
+                "agent_id": {
+                    "type": "string"
+                },
+                "config": {
+                    "$ref": "#/definitions/models.AgentConfig"
+                }
+            }
+        },
+        "handlers.CreateDefaultConfigRequest": {
+            "type": "object",
+            "required": [
+                "agent_id",
+                "type"
+            ],
+            "properties": {
+                "agent_id": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string",
+                    "enum": [
+                        "buyer",
+                        "seller"
+                    ]
+                }
+            }
+        },
+        "handlers.CreateNegotiationRequest": {
+            "type": "object",
+            "required": [
+                "buyer_agent_id",
+                "initial_amount",
+                "seller_agent_id"
+            ],
+            "properties": {
+                "buyer_agent_id": {
+                    "type": "string"
+                },
+                "initial_amount": {
+                    "type": "number"
+                },
+                "marketplace_order_id": {
+                    "type": "string"
+                },
+                "max_rounds": {
+                    "type": "integer",
+                    "maximum": 10,
+                    "minimum": 1
+                },
+                "seller_agent_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.CreateProductRequest": {
+            "type": "object",
+            "required": [
+                "name",
+                "price"
+            ],
+            "properties": {
+                "categories": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "images": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "inventory_count": {
+                    "type": "integer"
+                },
+                "is_available": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "price": {
+                    "type": "number"
+                }
+            }
+        },
+        "handlers.UpdateAgentConfigRequest": {
+            "type": "object",
+            "properties": {
+                "buyer_config": {
+                    "$ref": "#/definitions/services.UpdateBuyerConfigRequest"
+                },
+                "seller_config": {
+                    "$ref": "#/definitions/services.UpdateSellerConfigRequest"
+                },
+                "volatility": {
+                    "type": "number"
+                }
+            }
+        },
+        "handlers.UpdateProductRequest": {
+            "type": "object",
+            "properties": {
+                "categories": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "images": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "inventory_count": {
+                    "type": "integer"
+                },
+                "is_available": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "price": {
+                    "type": "number"
+                }
+            }
+        },
+        "models.Agent": {
+            "type": "object",
+            "required": [
+                "business_id",
+                "name",
+                "owner_id",
+                "type"
+            ],
+            "properties": {
+                "a2a_endpoint": {
+                    "type": "string",
+                    "maxLength": 500
+                },
+                "agent_capabilities": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.AgentCapability"
+                    }
+                },
+                "agent_transactions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.AgentTransaction"
+                    }
+                },
+                "business_id": {
+                    "type": "string"
+                },
+                "capabilities": {
+                    "type": "string"
+                },
+                "config": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string",
+                    "maxLength": 1000
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_active": {
+                    "type": "boolean"
+                },
+                "is_public": {
+                    "type": "boolean"
+                },
+                "marketplace_products": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.MarketplaceProduct"
+                    }
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 2
+                },
+                "owner_id": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string",
+                    "enum": [
+                        "buyer",
+                        "seller",
+                        "shopping",
+                        "merchant",
+                        "credential_provider",
+                        "payment_processor"
+                    ]
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.AgentCapability": {
+            "type": "object",
+            "required": [
+                "agent_id",
+                "capability_type"
+            ],
+            "properties": {
+                "agent_id": {
+                    "type": "string"
+                },
+                "capability_type": {
+                    "type": "string"
+                },
+                "config": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string",
+                    "maxLength": 500
+                },
+                "id": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.AgentConfig": {
+            "type": "object",
+            "properties": {
+                "buyer_config": {
+                    "$ref": "#/definitions/models.BuyerConfig"
+                },
+                "seller_config": {
+                    "$ref": "#/definitions/models.SellerConfig"
+                },
+                "type": {
+                    "$ref": "#/definitions/models.AgentType"
+                },
+                "volatility": {
+                    "type": "number"
+                }
+            }
+        },
+        "models.AgentTransaction": {
+            "type": "object",
+            "required": [
+                "agent_id",
+                "mandate_id",
+                "status",
+                "transaction_type",
+                "user_id"
+            ],
+            "properties": {
+                "agent_id": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "mandate_id": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "transaction_type": {
+                    "type": "string",
+                    "enum": [
+                        "intent",
+                        "cart",
+                        "payment"
+                    ]
+                },
+                "user_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.AgentType": {
+            "type": "string",
+            "enum": [
+                "buyer",
+                "seller"
+            ],
+            "x-enum-varnames": [
+                "AgentTypeBuyer",
+                "AgentTypeSeller"
+            ]
+        },
+        "models.BargainingNegotiation": {
+            "type": "object",
+            "required": [
+                "buyer_agent_id",
+                "buyer_volatility",
+                "current_amount",
+                "initial_amount",
+                "max_rounds",
+                "seller_agent_id",
+                "seller_volatility",
+                "status",
+                "user_id"
+            ],
+            "properties": {
+                "buyer_agent": {
+                    "$ref": "#/definitions/models.Agent"
+                },
+                "buyer_agent_id": {
+                    "type": "string"
+                },
+                "buyer_volatility": {
+                    "type": "number",
+                    "maximum": 1,
+                    "minimum": 0
+                },
+                "completed_at": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "current_amount": {
+                    "type": "number",
+                    "minimum": 0
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "initial_amount": {
+                    "type": "number"
+                },
+                "marketplace_order_id": {
+                    "type": "string"
+                },
+                "max_rounds": {
+                    "type": "integer",
+                    "maximum": 10,
+                    "minimum": 1
+                },
+                "metadata": {
+                    "type": "string"
+                },
+                "rounds": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "seller_agent": {
+                    "$ref": "#/definitions/models.Agent"
+                },
+                "seller_agent_id": {
+                    "type": "string"
+                },
+                "seller_volatility": {
+                    "type": "number",
+                    "maximum": 1,
+                    "minimum": 0
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "initiated",
+                        "in_progress",
+                        "accepted",
+                        "rejected",
+                        "expired"
+                    ]
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "string"
+                }
+            }
+        },
         "models.BusinessProfile": {
             "type": "object",
             "required": [
@@ -3507,6 +6266,9 @@ const docTemplate = `{
                     "maxLength": 255,
                     "minLength": 2
                 },
+                "owner_id": {
+                    "type": "string"
+                },
                 "phone": {
                     "type": "string",
                     "maxLength": 50
@@ -3525,6 +6287,56 @@ const docTemplate = `{
                 },
                 "updated_at": {
                     "type": "string"
+                }
+            }
+        },
+        "models.BuyerConfig": {
+            "type": "object",
+            "properties": {
+                "acceptance_threshold": {
+                    "type": "number"
+                },
+                "blacklisted_vendors": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "budget_limit": {
+                    "type": "number"
+                },
+                "delivery_preferences": {
+                    "$ref": "#/definitions/models.DeliveryPref"
+                },
+                "max_discount_percent": {
+                    "type": "number"
+                },
+                "max_rounds": {
+                    "type": "integer"
+                },
+                "min_discount_percent": {
+                    "type": "number"
+                },
+                "patience_level": {
+                    "type": "number"
+                },
+                "payment_terms": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "preferred_products": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "risk_tolerance": {
+                    "type": "number"
+                },
+                "target_discount": {
+                    "type": "number"
                 }
             }
         },
@@ -3589,6 +6401,37 @@ const docTemplate = `{
                 },
                 "updated_at": {
                     "type": "string"
+                }
+            }
+        },
+        "models.DeliveryPref": {
+            "type": "object",
+            "properties": {
+                "insurance_required": {
+                    "type": "boolean"
+                },
+                "max_delivery_days": {
+                    "type": "integer"
+                },
+                "preferred_carriers": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "tracking_required": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "models.DiscountTier": {
+            "type": "object",
+            "properties": {
+                "discount_percent": {
+                    "type": "number"
+                },
+                "min_quantity": {
+                    "type": "integer"
                 }
             }
         },
@@ -3737,6 +6580,61 @@ const docTemplate = `{
                 }
             }
         },
+        "models.MarketplaceProduct": {
+            "type": "object",
+            "required": [
+                "agent_id",
+                "currency",
+                "name",
+                "price"
+            ],
+            "properties": {
+                "agent_id": {
+                    "type": "string"
+                },
+                "categories": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string",
+                    "maxLength": 2000
+                },
+                "id": {
+                    "type": "string"
+                },
+                "images": {
+                    "type": "string"
+                },
+                "inventory_count": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "is_available": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 2
+                },
+                "price": {
+                    "type": "number",
+                    "minimum": 0
+                },
+                "product_id": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
         "models.Payment": {
             "type": "object",
             "required": [
@@ -3855,6 +6753,70 @@ const docTemplate = `{
                 }
             }
         },
+        "models.SeasonalAdj": {
+            "type": "object",
+            "properties": {
+                "effective_from": {
+                    "type": "string"
+                },
+                "effective_to": {
+                    "type": "string"
+                },
+                "multiplier": {
+                    "type": "number"
+                },
+                "season": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.SellerConfig": {
+            "type": "object",
+            "properties": {
+                "acceptance_threshold": {
+                    "type": "number"
+                },
+                "customer_loyalty_factor": {
+                    "type": "number"
+                },
+                "inventory_pressure": {
+                    "type": "number"
+                },
+                "max_markup_percent": {
+                    "type": "number"
+                },
+                "max_rounds": {
+                    "type": "integer"
+                },
+                "min_acceptable_price": {
+                    "type": "number"
+                },
+                "payment_terms": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "preferred_customers": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "sales_volume_goal": {
+                    "type": "number"
+                },
+                "seasonal_adjustments": {
+                    "$ref": "#/definitions/models.SeasonalAdj"
+                },
+                "volume_discount_tiers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.DiscountTier"
+                    }
+                }
+            }
+        },
         "models.Subscription": {
             "type": "object",
             "required": [
@@ -3963,48 +6925,6 @@ const docTemplate = `{
                 }
             }
         },
-        "models.User": {
-            "type": "object",
-            "required": [
-                "cognito_id",
-                "email",
-                "name",
-                "role"
-            ],
-            "properties": {
-                "business_id": {
-                    "type": "string"
-                },
-                "cognito_id": {
-                    "type": "string"
-                },
-                "created_at": {
-                    "type": "string"
-                },
-                "email": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string",
-                    "maxLength": 255,
-                    "minLength": 2
-                },
-                "role": {
-                    "type": "string",
-                    "enum": [
-                        "admin",
-                        "accountant",
-                        "viewer"
-                    ]
-                },
-                "updated_at": {
-                    "type": "string"
-                }
-            }
-        },
         "models.Vendor": {
             "type": "object",
             "required": [
@@ -4079,7 +6999,6 @@ const docTemplate = `{
                 "business_id",
                 "events",
                 "name",
-                "secret",
                 "url"
             ],
             "properties": {
@@ -4106,14 +7025,86 @@ const docTemplate = `{
                     "maxLength": 255,
                     "minLength": 2
                 },
-                "secret": {
-                    "type": "string"
-                },
                 "updated_at": {
                     "type": "string"
                 },
                 "url": {
                     "type": "string"
+                }
+            }
+        },
+        "services.AgentLearningData": {
+            "type": "object",
+            "properties": {
+                "agentID": {
+                    "type": "string"
+                },
+                "agentType": {
+                    "type": "string"
+                },
+                "averageDiscount": {
+                    "type": "number",
+                    "format": "float64"
+                },
+                "averageMarkup": {
+                    "type": "number",
+                    "format": "float64"
+                },
+                "confidence": {
+                    "type": "number",
+                    "format": "float64"
+                },
+                "lastUpdated": {
+                    "type": "string"
+                },
+                "learnedParameters": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "number",
+                        "format": "float64"
+                    }
+                },
+                "outcomes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/services.NegotiationOutcome"
+                    }
+                },
+                "preferredStrategies": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "successRate": {
+                    "type": "number",
+                    "format": "float64"
+                },
+                "volatility": {
+                    "type": "number",
+                    "format": "float64"
+                }
+            }
+        },
+        "services.BargainingDecision": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "confidence": {
+                    "type": "number",
+                    "format": "float64"
+                },
+                "proposedAmount": {
+                    "type": "number",
+                    "format": "float64"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "suggestedRange": {
+                    "$ref": "#/definitions/services.PriceRange"
                 }
             }
         },
@@ -4179,7 +7170,6 @@ const docTemplate = `{
         "services.CreateCustomerInput": {
             "type": "object",
             "required": [
-                "business_id",
                 "email",
                 "name"
             ],
@@ -4226,7 +7216,6 @@ const docTemplate = `{
         "services.CreateInvoiceInput": {
             "type": "object",
             "required": [
-                "business_id",
                 "customer_id",
                 "due_date",
                 "items"
@@ -4309,7 +7298,6 @@ const docTemplate = `{
         "services.CreateProductInput": {
             "type": "object",
             "required": [
-                "business_id",
                 "name",
                 "price",
                 "sku"
@@ -4348,7 +7336,6 @@ const docTemplate = `{
         "services.CreateSubscriptionInput": {
             "type": "object",
             "required": [
-                "business_id",
                 "plan"
             ],
             "properties": {
@@ -4369,7 +7356,6 @@ const docTemplate = `{
         "services.CreateTeamMemberInput": {
             "type": "object",
             "required": [
-                "business_id",
                 "role",
                 "user_id"
             ],
@@ -4393,7 +7379,6 @@ const docTemplate = `{
         "services.CreateVendorInput": {
             "type": "object",
             "required": [
-                "business_id",
                 "email",
                 "name"
             ],
@@ -4437,10 +7422,8 @@ const docTemplate = `{
         "services.CreateWebhookInput": {
             "type": "object",
             "required": [
-                "business_id",
                 "events",
                 "name",
-                "secret",
                 "url"
             ],
             "properties": {
@@ -4508,6 +7491,57 @@ const docTemplate = `{
                 }
             }
         },
+        "services.NegotiationOutcome": {
+            "type": "object",
+            "properties": {
+                "finalAmount": {
+                    "type": "number",
+                    "format": "float64"
+                },
+                "initialAmount": {
+                    "type": "number",
+                    "format": "float64"
+                },
+                "negotiationID": {
+                    "type": "string"
+                },
+                "opponentID": {
+                    "type": "string"
+                },
+                "opponentType": {
+                    "type": "string"
+                },
+                "rounds": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "strategy": {
+                    "type": "string"
+                },
+                "timestamp": {
+                    "type": "string"
+                },
+                "volatilityFactor": {
+                    "type": "number",
+                    "format": "float64"
+                }
+            }
+        },
+        "services.PriceRange": {
+            "type": "object",
+            "properties": {
+                "max": {
+                    "type": "number",
+                    "format": "float64"
+                },
+                "min": {
+                    "type": "number",
+                    "format": "float64"
+                }
+            }
+        },
         "services.RefreshInput": {
             "type": "object",
             "required": [
@@ -4516,6 +7550,69 @@ const docTemplate = `{
             "properties": {
                 "refresh_token": {
                     "type": "string"
+                }
+            }
+        },
+        "services.RegisterAgentRequest": {
+            "type": "object",
+            "properties": {
+                "a2a_endpoint": {
+                    "type": "string"
+                },
+                "agent_id": {
+                    "type": "string"
+                },
+                "agent_type": {
+                    "type": "string"
+                },
+                "capabilities": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "currencies": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "description": {
+                    "type": "string"
+                },
+                "domain": {
+                    "type": "string"
+                },
+                "is_public": {
+                    "type": "boolean"
+                },
+                "jurisdictions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                },
+                "pricing_model": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "public_key": {
+                    "type": "string"
+                },
+                "supported_languages": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -4623,6 +7720,76 @@ const docTemplate = `{
                 }
             }
         },
+        "services.UpdateBuyerConfigRequest": {
+            "type": "object",
+            "required": [
+                "acceptance_threshold",
+                "max_discount_percent",
+                "max_rounds",
+                "min_discount_percent",
+                "patience_level",
+                "risk_tolerance",
+                "target_discount"
+            ],
+            "properties": {
+                "acceptance_threshold": {
+                    "type": "number",
+                    "maximum": 1,
+                    "minimum": 0
+                },
+                "blacklisted_vendors": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "budget_limit": {
+                    "type": "number"
+                },
+                "max_discount_percent": {
+                    "type": "number",
+                    "maximum": 100,
+                    "minimum": 0
+                },
+                "max_rounds": {
+                    "type": "integer",
+                    "maximum": 20,
+                    "minimum": 1
+                },
+                "min_discount_percent": {
+                    "type": "number",
+                    "maximum": 100,
+                    "minimum": 0
+                },
+                "patience_level": {
+                    "type": "number",
+                    "maximum": 1,
+                    "minimum": 0
+                },
+                "payment_terms": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "preferred_products": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "risk_tolerance": {
+                    "type": "number",
+                    "maximum": 1,
+                    "minimum": 0
+                },
+                "target_discount": {
+                    "type": "number",
+                    "maximum": 100,
+                    "minimum": 0
+                }
+            }
+        },
         "services.UpdateCustomerInput": {
             "type": "object",
             "properties": {
@@ -4724,6 +7891,66 @@ const docTemplate = `{
                 "name": {
                     "type": "string",
                     "minLength": 2
+                },
+                "profile_picture_url": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.UpdateSellerConfigRequest": {
+            "type": "object",
+            "required": [
+                "acceptance_threshold",
+                "customer_loyalty_factor",
+                "inventory_pressure",
+                "max_markup_percent",
+                "max_rounds",
+                "min_acceptable_price"
+            ],
+            "properties": {
+                "acceptance_threshold": {
+                    "type": "number",
+                    "maximum": 1,
+                    "minimum": 0
+                },
+                "customer_loyalty_factor": {
+                    "type": "number",
+                    "maximum": 2,
+                    "minimum": 0
+                },
+                "inventory_pressure": {
+                    "type": "number",
+                    "maximum": 1,
+                    "minimum": 0
+                },
+                "max_markup_percent": {
+                    "type": "number",
+                    "maximum": 200,
+                    "minimum": 0
+                },
+                "max_rounds": {
+                    "type": "integer",
+                    "maximum": 20,
+                    "minimum": 1
+                },
+                "min_acceptable_price": {
+                    "type": "number",
+                    "minimum": 0
+                },
+                "payment_terms": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "preferred_customers": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "sales_volume_goal": {
+                    "type": "number"
                 }
             }
         },

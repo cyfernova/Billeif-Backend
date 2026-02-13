@@ -62,22 +62,22 @@ type Part interface {
 
 // TextPart represents a text content part
 type TextPart struct {
-	Type    PartType `json:"type"`
-	Text    string   `json:"text"`
-	MimeType string  `json:"mimeType,omitempty"`
+	Type     PartType `json:"type"`
+	Text     string   `json:"text"`
+	MimeType string   `json:"mimeType,omitempty"`
 }
 
 func (p TextPart) GetType() PartType { return PartTypeText }
 
 // FilePart represents a file content part
 type FilePart struct {
-	Type      PartType `json:"type"`
-	FileID    string   `json:"fileId,omitempty"`
-	FileName  string   `json:"fileName"`
-	MimeType  string   `json:"mimeType"`
-	Size      int64    `json:"size,omitempty"`
-	URL       string   `json:"url,omitempty"`
-	Data      string   `json:"data,omitempty"` // Base64 encoded for inline files
+	Type     PartType `json:"type"`
+	FileID   string   `json:"fileId,omitempty"`
+	FileName string   `json:"fileName"`
+	MimeType string   `json:"mimeType"`
+	Size     int64    `json:"size,omitempty"`
+	URL      string   `json:"url,omitempty"`
+	Data     string   `json:"data,omitempty"` // Base64 encoded for inline files
 }
 
 func (p FilePart) GetType() PartType { return PartTypeFile }
@@ -142,9 +142,9 @@ func (pw PartWrapper) MarshalJSON() ([]byte, error) {
 
 // Message represents a message in A2A v0.3 task communication
 type Message struct {
-	Role      MessageRole   `json:"role"`
-	Parts     []PartWrapper `json:"parts"`
-	Timestamp time.Time     `json:"timestamp,omitempty"`
+	Role      MessageRole            `json:"role"`
+	Parts     []PartWrapper          `json:"parts"`
+	Timestamp time.Time              `json:"timestamp,omitempty"`
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 }
 
@@ -185,8 +185,8 @@ type Artifact struct {
 	Description string                 `json:"description,omitempty"`
 	MimeType    string                 `json:"mimeType"`
 	Parts       []PartWrapper          `json:"parts,omitempty"`
-	Index       int                    `json:"index,omitempty"` // For ordered artifacts
-	Append      bool                   `json:"append,omitempty"` // Whether to append to existing
+	Index       int                    `json:"index,omitempty"`     // For ordered artifacts
+	Append      bool                   `json:"append,omitempty"`    // Whether to append to existing
 	LastChunk   bool                   `json:"lastChunk,omitempty"` // Last chunk of streaming artifact
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 	CreatedAt   time.Time              `json:"createdAt"`
@@ -220,8 +220,8 @@ type Task struct {
 	SourceAgentID string `json:"sourceAgentId,omitempty" gorm:"type:uuid;index"`
 
 	// History tracking
-	History      []TaskHistoryEntry `json:"history,omitempty" gorm:"-"`
-	HistoryJSON  json.RawMessage    `json:"-" gorm:"column:history;type:jsonb;default:'[]'"`
+	History     []TaskHistoryEntry `json:"history,omitempty" gorm:"-"`
+	HistoryJSON json.RawMessage    `json:"-" gorm:"column:history;type:jsonb;default:'[]'"`
 
 	// Timestamps
 	CreatedAt time.Time `json:"createdAt" gorm:"autoCreateTime"`
@@ -365,18 +365,18 @@ func (t *Task) SetMetadata(key string, value interface{}) {
 
 // SendTaskRequest represents a request to send a task
 type SendTaskRequest struct {
-	ID            string                 `json:"id,omitempty"` // Optional, generated if not provided
-	SessionID     string                 `json:"sessionId,omitempty"`
-	Message       Message                `json:"message"`
-	TargetAgentID string                 `json:"targetAgentId,omitempty"`
-	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	ID            string                  `json:"id,omitempty"` // Optional, generated if not provided
+	SessionID     string                  `json:"sessionId,omitempty"`
+	Message       Message                 `json:"message"`
+	TargetAgentID string                  `json:"targetAgentId,omitempty"`
+	Metadata      map[string]interface{}  `json:"metadata,omitempty"`
 	PushConfig    *PushNotificationConfig `json:"pushNotification,omitempty"`
 }
 
 // SendTaskResponse represents the response to a send task request
 type SendTaskResponse struct {
-	Task    *Task  `json:"task,omitempty"`
-	Error   *TaskError `json:"error,omitempty"`
+	Task  *Task      `json:"task,omitempty"`
+	Error *TaskError `json:"error,omitempty"`
 }
 
 // TaskError represents an error in task processing
@@ -388,14 +388,14 @@ type TaskError struct {
 
 // Common error codes
 const (
-	ErrorCodeTaskNotFound      = "TASK_NOT_FOUND"
-	ErrorCodeInvalidRequest    = "INVALID_REQUEST"
-	ErrorCodeUnauthorized      = "UNAUTHORIZED"
-	ErrorCodeAgentUnavailable  = "AGENT_UNAVAILABLE"
-	ErrorCodeTaskCancelled     = "TASK_CANCELLED"
-	ErrorCodeInternalError     = "INTERNAL_ERROR"
-	ErrorCodeRateLimited       = "RATE_LIMITED"
-	ErrorCodeInputRequired     = "INPUT_REQUIRED"
+	ErrorCodeTaskNotFound     = "TASK_NOT_FOUND"
+	ErrorCodeInvalidRequest   = "INVALID_REQUEST"
+	ErrorCodeUnauthorized     = "UNAUTHORIZED"
+	ErrorCodeAgentUnavailable = "AGENT_UNAVAILABLE"
+	ErrorCodeTaskCancelled    = "TASK_CANCELLED"
+	ErrorCodeInternalError    = "INTERNAL_ERROR"
+	ErrorCodeRateLimited      = "RATE_LIMITED"
+	ErrorCodeInputRequired    = "INPUT_REQUIRED"
 )
 
 // ListTasksRequest represents a request to list tasks
@@ -416,23 +416,23 @@ type ListTasksResponse struct {
 
 // CancelTaskRequest represents a request to cancel a task
 type CancelTaskRequest struct {
-	TaskID  string `json:"taskId"`
-	Reason  string `json:"reason,omitempty"`
+	TaskID string `json:"taskId"`
+	Reason string `json:"reason,omitempty"`
 }
 
 // PushNotificationConfig represents push notification configuration for a task
 type PushNotificationConfig struct {
-	URL           string            `json:"url"`
-	Headers       map[string]string `json:"headers,omitempty"`
-	Events        []string          `json:"events,omitempty"` // e.g., "state_change", "message", "artifact"
-	Authentication *AuthConfig      `json:"authentication,omitempty"`
+	URL            string            `json:"url"`
+	Headers        map[string]string `json:"headers,omitempty"`
+	Events         []string          `json:"events,omitempty"` // e.g., "state_change", "message", "artifact"
+	Authentication *AuthConfig       `json:"authentication,omitempty"`
 }
 
 // AuthConfig represents authentication for push notifications
 type AuthConfig struct {
-	Type   string            `json:"type"` // "bearer", "api_key", "basic"
-	Token  string            `json:"token,omitempty"`
-	Header string            `json:"header,omitempty"` // For api_key type
+	Type        string            `json:"type"` // "bearer", "api_key", "basic"
+	Token       string            `json:"token,omitempty"`
+	Header      string            `json:"header,omitempty"`      // For api_key type
 	Credentials map[string]string `json:"credentials,omitempty"` // For basic auth
 }
 

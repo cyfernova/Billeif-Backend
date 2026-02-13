@@ -7,10 +7,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
+	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/a2a"
 	"invoice-backend/pkg/logger"
 
@@ -21,6 +26,7 @@ import (
 // A2APushService handles push notification delivery for A2A tasks
 type A2APushService struct {
 	db         *gorm.DB
+	ap2Repo    interfaces.AP2Repository
 	log        *logger.Logger
 	httpClient *http.Client
 	maxRetries int
@@ -28,20 +34,20 @@ type A2APushService struct {
 
 // PushConfig represents a push notification configuration stored in the database
 type PushConfig struct {
-	ID             string    `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
-	AgentID        string    `gorm:"not null;index" json:"agent_id"`
-	WebhookURL     string    `gorm:"column:webhook_url;not null" json:"webhook_url"`
-	Secret         string    `gorm:"column:secret" json:"-"`
-	Headers        string    `gorm:"type:jsonb;default:'{}'" json:"-"`
-	Events         []string  `gorm:"-" json:"events"`
-	EventsJSON     string    `gorm:"column:events;type:text[]" json:"-"`
-	Authentication string    `gorm:"type:jsonb;default:'{}'" json:"-"`
-	IsActive       bool      `gorm:"default:true" json:"is_active"`
-	FailureCount   int       `gorm:"default:0" json:"failure_count"`
+	ID             string     `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
+	AgentID        string     `gorm:"not null;index" json:"agent_id"`
+	WebhookURL     string     `gorm:"column:webhook_url;not null" json:"webhook_url"`
+	Secret         string     `gorm:"column:secret" json:"-"`
+	Headers        string     `gorm:"type:jsonb;default:'{}'" json:"-"`
+	Events         []string   `gorm:"-" json:"events"`
+	EventsJSON     string     `gorm:"column:events;type:text[]" json:"-"`
+	Authentication string     `gorm:"type:jsonb;default:'{}'" json:"-"`
+	IsActive       bool       `gorm:"default:true" json:"is_active"`
+	FailureCount   int        `gorm:"default:0" json:"failure_count"`
 	LastFailureAt  *time.Time `json:"last_failure_at,omitempty"`
 	LastSuccessAt  *time.Time `json:"last_success_at,omitempty"`
-	CreatedAt      time.Time `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt      time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+	CreatedAt      time.Time  `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt      time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
 // TableName returns the table name for GORM
@@ -58,11 +64,17 @@ type PushNotification struct {
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 }
 
+var (
+	ErrPushConfigNotFound = errors.New("push config not found")
+	ErrUnsafeWebhookURL   = errors.New("unsafe webhook URL")
+)
+
 // NewA2APushService creates a new push notification service
-func NewA2APushService(db *gorm.DB, log *logger.Logger) *A2APushService {
+func NewA2APushService(db *gorm.DB, ap2Repo interfaces.AP2Repository, log *logger.Logger) *A2APushService {
 	return &A2APushService{
-		db:  db,
-		log: log,
+		db:      db,
+		ap2Repo: ap2Repo,
+		log:     log,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -75,6 +87,9 @@ func (s *A2APushService) ConfigurePush(ctx context.Context, agentID string, conf
 	// Validate webhook URL
 	if config.URL == "" {
 		return nil, fmt.Errorf("webhook URL is required")
+	}
+	if err := validateWebhookURL(ctx, config.URL); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrUnsafeWebhookURL, err)
 	}
 
 	// Marshal headers and auth
@@ -110,7 +125,7 @@ func (s *A2APushService) GetPushConfig(ctx context.Context, configID string) (*P
 	result := s.db.WithContext(ctx).Where("id = ?", configID).First(&config)
 	if result.Error != nil {
 		if result.Error == gorm.ErrRecordNotFound {
-			return nil, fmt.Errorf("push config not found")
+			return nil, ErrPushConfigNotFound
 		}
 		return nil, result.Error
 	}
@@ -134,14 +149,54 @@ func (s *A2APushService) DeletePushConfig(ctx context.Context, configID string) 
 		return result.Error
 	}
 	if result.RowsAffected == 0 {
-		return fmt.Errorf("push config not found")
+		return ErrPushConfigNotFound
 	}
 	s.log.Info("push config deleted", "config_id", configID)
 	return nil
 }
 
+func (s *A2APushService) ConfigurePushForScope(ctx context.Context, agentID, userID, businessID string, config *a2a.PushNotificationConfig) (*PushConfig, error) {
+	if err := s.ensureAgentAccess(ctx, agentID, userID, businessID); err != nil {
+		return nil, err
+	}
+	return s.ConfigurePush(ctx, agentID, config)
+}
+
+func (s *A2APushService) GetPushConfigsByAgentForScope(ctx context.Context, agentID, userID, businessID string) ([]*PushConfig, error) {
+	if err := s.ensureAgentAccess(ctx, agentID, userID, businessID); err != nil {
+		return nil, err
+	}
+	return s.GetPushConfigsByAgent(ctx, agentID)
+}
+
+func (s *A2APushService) GetPushConfigForScope(ctx context.Context, configID, userID, businessID string) (*PushConfig, error) {
+	config, err := s.GetPushConfig(ctx, configID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.ensureAgentAccess(ctx, config.AgentID, userID, businessID); err != nil {
+		return nil, err
+	}
+	return config, nil
+}
+
+func (s *A2APushService) DeletePushConfigForScope(ctx context.Context, configID, userID, businessID string) error {
+	config, err := s.GetPushConfig(ctx, configID)
+	if err != nil {
+		return err
+	}
+	if err := s.ensureAgentAccess(ctx, config.AgentID, userID, businessID); err != nil {
+		return err
+	}
+	return s.DeletePushConfig(ctx, configID)
+}
+
 // SendNotification sends a push notification to a webhook
 func (s *A2APushService) SendNotification(ctx context.Context, config *a2a.PushNotificationConfig, event string, data interface{}) error {
+	if err := validateWebhookURL(ctx, config.URL); err != nil {
+		return fmt.Errorf("%w: %v", ErrUnsafeWebhookURL, err)
+	}
+
 	notification := PushNotification{
 		ID:        uuid.New().String(),
 		Event:     event,
@@ -226,11 +281,17 @@ func (s *A2APushService) SendNotificationToAgent(ctx context.Context, agentID, e
 	for _, config := range configs {
 		// Parse headers
 		var headers map[string]string
-		json.Unmarshal([]byte(config.Headers), &headers)
+		if err := json.Unmarshal([]byte(config.Headers), &headers); err != nil {
+			s.log.Warn("failed to parse push headers", "config_id", config.ID, "error", err)
+			continue
+		}
 
 		// Parse authentication
 		var auth a2a.AuthConfig
-		json.Unmarshal([]byte(config.Authentication), &auth)
+		if err := json.Unmarshal([]byte(config.Authentication), &auth); err != nil {
+			s.log.Warn("failed to parse push authentication", "config_id", config.ID, "error", err)
+			continue
+		}
 
 		pushConfig := &a2a.PushNotificationConfig{
 			URL:            config.WebhookURL,
@@ -312,4 +373,65 @@ func SignPayload(payload []byte, secret string) string {
 func VerifySignature(payload []byte, signature, secret string) bool {
 	expected := SignPayload(payload, secret)
 	return hmac.Equal([]byte(expected), []byte(signature))
+}
+
+func (s *A2APushService) ensureAgentAccess(ctx context.Context, agentID, userID, businessID string) error {
+	agent, err := s.ap2Repo.GetAgentByID(ctx, agentID)
+	if err != nil {
+		return ErrPushConfigNotFound
+	}
+	if agent.OwnerID == userID {
+		return nil
+	}
+	if businessID != "" && agent.BusinessID == businessID {
+		return nil
+	}
+	return ErrPushConfigNotFound
+}
+
+func validateWebhookURL(ctx context.Context, rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	if !strings.EqualFold(parsed.Scheme, "https") {
+		return fmt.Errorf("webhook URL must use https")
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "" {
+		return fmt.Errorf("webhook host is required")
+	}
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".internal") {
+		return fmt.Errorf("local or internal hosts are not allowed")
+	}
+
+	if ip := net.ParseIP(host); ip != nil {
+		if isDeniedIP(ip) {
+			return fmt.Errorf("private or local IP addresses are not allowed")
+		}
+		return nil
+	}
+
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	if err != nil {
+		return fmt.Errorf("failed to resolve webhook host")
+	}
+	for _, ip := range ips {
+		if isDeniedIP(ip) {
+			return fmt.Errorf("private or local IP addresses are not allowed")
+		}
+	}
+	return nil
+}
+
+func isDeniedIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	return ip.IsLoopback() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsPrivate() ||
+		ip.IsUnspecified() ||
+		ip.IsMulticast()
 }

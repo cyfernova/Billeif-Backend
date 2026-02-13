@@ -4,6 +4,7 @@ import (
 	"context"
 
 	appconfig "invoice-backend/internal/config"
+	"invoice-backend/pkg/logger"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -25,21 +26,53 @@ type Config struct {
 	SNS      *sns.Client
 }
 
-func New(ctx context.Context, cfg appconfig.AWSConfig) (*Config, error) {
+func New(ctx context.Context, cfg appconfig.AWSConfig, log *logger.Logger) (*Config, error) {
+	if log == nil {
+		log = logger.Global()
+	}
+	log = log.Named("aws_clients")
+	log.Info("initializing AWS clients", "region", cfg.Region, "custom_endpoint", cfg.Endpoint != "")
+
 	awsCfg, err := loadConfig(ctx, cfg)
 	if err != nil {
+		log.Error("failed to load AWS SDK config", "error", err, "region", cfg.Region)
 		return nil, err
 	}
 
 	clients := &Config{
-		Cognito:  cognitoidentityprovider.NewFromConfig(awsCfg),
-		DynamoDB: dynamodb.NewFromConfig(awsCfg),
-		S3:       s3.NewFromConfig(awsCfg),
-		SES:      ses.NewFromConfig(awsCfg),
-		SQS:      sqs.NewFromConfig(awsCfg),
-		SNS:      sns.NewFromConfig(awsCfg),
+		Cognito: cognitoidentityprovider.NewFromConfig(awsCfg, func(o *cognitoidentityprovider.Options) {
+			if cfg.Endpoint != "" {
+				o.BaseEndpoint = aws.String(cfg.Endpoint)
+			}
+		}),
+		DynamoDB: dynamodb.NewFromConfig(awsCfg, func(o *dynamodb.Options) {
+			if cfg.Endpoint != "" {
+				o.BaseEndpoint = aws.String(cfg.Endpoint)
+			}
+		}),
+		S3: s3.NewFromConfig(awsCfg, func(o *s3.Options) {
+			if cfg.Endpoint != "" {
+				o.BaseEndpoint = aws.String(cfg.Endpoint)
+			}
+		}),
+		SES: ses.NewFromConfig(awsCfg, func(o *ses.Options) {
+			if cfg.Endpoint != "" {
+				o.BaseEndpoint = aws.String(cfg.Endpoint)
+			}
+		}),
+		SQS: sqs.NewFromConfig(awsCfg, func(o *sqs.Options) {
+			if cfg.Endpoint != "" {
+				o.BaseEndpoint = aws.String(cfg.Endpoint)
+			}
+		}),
+		SNS: sns.NewFromConfig(awsCfg, func(o *sns.Options) {
+			if cfg.Endpoint != "" {
+				o.BaseEndpoint = aws.String(cfg.Endpoint)
+			}
+		}),
 	}
 
+	log.Info("AWS clients initialized")
 	return clients, nil
 }
 
@@ -54,18 +87,6 @@ func loadConfig(ctx context.Context, cfg appconfig.AWSConfig) (aws.Config, error
 			cfg.SecretKey,
 			"",
 		)))
-	}
-
-	if cfg.Endpoint != "" {
-		loaders = append(loaders, config.WithEndpointResolverWithOptions(
-			aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-				return aws.Endpoint{
-					URL:               cfg.Endpoint,
-					SigningRegion:     cfg.Region,
-					HostnameImmutable: true,
-				}, nil
-			}),
-		))
 	}
 
 	return config.LoadDefaultConfig(ctx, loaders...)

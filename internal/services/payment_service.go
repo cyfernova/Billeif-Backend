@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -87,11 +88,44 @@ func (s *PaymentService) Create(ctx context.Context, input CreatePaymentInput) (
 	return payment, nil
 }
 
+func (s *PaymentService) CreateByBusiness(ctx context.Context, businessID string, input CreatePaymentInput) (*models.Payment, error) {
+	invoice, err := s.invoiceRepo.GetByID(ctx, input.InvoiceID)
+	if err != nil {
+		return nil, fmt.Errorf("invoice not found: %w", err)
+	}
+	if invoice.BusinessID != businessID {
+		return nil, errors.New("invoice not found")
+	}
+	return s.Create(ctx, input)
+}
+
 func (s *PaymentService) Get(ctx context.Context, id string) (*models.Payment, error) {
 	return s.repo.GetByID(ctx, id)
 }
 
+func (s *PaymentService) GetByBusiness(ctx context.Context, businessID, id string) (*models.Payment, error) {
+	payment, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if payment.BusinessID != businessID {
+		return nil, errors.New("payment not found")
+	}
+	return payment, nil
+}
+
 func (s *PaymentService) ListByInvoice(ctx context.Context, invoiceID string, page, limit int) ([]*models.Payment, int64, error) {
+	return s.repo.GetByInvoiceID(ctx, invoiceID, page, limit)
+}
+
+func (s *PaymentService) ListByInvoiceAndBusiness(ctx context.Context, businessID, invoiceID string, page, limit int) ([]*models.Payment, int64, error) {
+	invoice, err := s.invoiceRepo.GetByID(ctx, invoiceID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("invoice not found: %w", err)
+	}
+	if invoice.BusinessID != businessID {
+		return nil, 0, errors.New("invoice not found")
+	}
 	return s.repo.GetByInvoiceID(ctx, invoiceID, page, limit)
 }
 
@@ -128,6 +162,39 @@ func (s *PaymentService) Update(ctx context.Context, id string, input UpdatePaym
 	return payment, nil
 }
 
+func (s *PaymentService) UpdateByBusiness(ctx context.Context, businessID, id string, input UpdatePaymentInput) (*models.Payment, error) {
+	payment, err := s.GetByBusiness(ctx, businessID, id)
+	if err != nil {
+		return nil, err
+	}
+
+	if input.Amount > 0 {
+		payment.Amount = input.Amount
+	}
+	if input.PaymentMethod != "" {
+		payment.PaymentMethod = input.PaymentMethod
+	}
+	if input.Reference != "" {
+		payment.Reference = input.Reference
+	}
+	if input.Notes != "" {
+		payment.Notes = input.Notes
+	}
+
+	if err := s.repo.Update(ctx, payment); err != nil {
+		return nil, err
+	}
+	return payment, nil
+}
+
 func (s *PaymentService) Delete(ctx context.Context, id string) error {
 	return s.repo.Delete(ctx, id)
+}
+
+func (s *PaymentService) DeleteByBusiness(ctx context.Context, businessID, id string) error {
+	payment, err := s.GetByBusiness(ctx, businessID, id)
+	if err != nil {
+		return err
+	}
+	return s.repo.Delete(ctx, payment.ID)
 }

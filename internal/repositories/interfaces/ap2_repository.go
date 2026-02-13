@@ -2,6 +2,7 @@ package interfaces
 
 import (
 	"context"
+	"time"
 
 	"invoice-backend/internal/models"
 )
@@ -40,6 +41,8 @@ type AP2Repository interface {
 	GetActiveAgentsByType(ctx context.Context, agentType string) ([]*models.Agent, error)
 	UpdateAgent(ctx context.Context, agent *models.Agent) error
 	DeleteAgent(ctx context.Context, id string) error
+
+	CreateAgentWithCapabilities(ctx context.Context, agent *models.Agent, capabilities []*models.AgentCapability) error
 
 	// Agent Capabilities
 	CreateAgentCapability(ctx context.Context, capability *models.AgentCapability) error
@@ -121,4 +124,18 @@ type AP2Repository interface {
 	IncrementAgentSearchFound(ctx context.Context, agentRegistryID string) error
 	IncrementAgentInquiries(ctx context.Context, agentRegistryID string) error
 	IncrementAgentIntegrations(ctx context.Context, agentRegistryID string) error
+
+	// Bargaining Negotiations
+	CreateBargainingNegotiation(ctx context.Context, negotiation *models.BargainingNegotiation) error
+	GetBargainingNegotiationByID(ctx context.Context, id string) (*models.BargainingNegotiation, error)
+	GetNegotiationsByUser(ctx context.Context, userID string, page, limit int) ([]*models.BargainingNegotiation, int64, error)
+	GetNegotiationsByAgent(ctx context.Context, agentID string, page, limit int) ([]*models.BargainingNegotiation, int64, error)
+	UpdateNegotiationStatus(ctx context.Context, id, status string) error
+	UpdateNegotiationAmountAndRounds(ctx context.Context, id string, amount float64, rounds int, status string) error
+	CompleteNegotiation(ctx context.Context, id, status string, finalAmount float64, completedAt *time.Time) error
+
+	// Bargaining Rounds
+	CreateBargainingRound(ctx context.Context, round *models.BargainingRound) error
+	GetBargainingRounds(ctx context.Context, negotiationID string) ([]*models.BargainingRound, error)
+	GetBargainingRoundsByAgent(ctx context.Context, agentID string, page, limit int) ([]*models.BargainingRound, int64, error)
 }

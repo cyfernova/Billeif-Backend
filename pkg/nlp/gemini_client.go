@@ -24,8 +24,8 @@ type GeminiRequest struct {
 
 // GeminiContent represents content in a Gemini request
 type GeminiContent struct {
-	Role  string            `json:"role"`
-	Parts []GeminiPart      `json:"parts"`
+	Role  string       `json:"role"`
+	Parts []GeminiPart `json:"parts"`
 }
 
 // GeminiPart represents a part in Gemini content
@@ -36,8 +36,8 @@ type GeminiPart struct {
 // GeminiResponse represents a response from Gemini API
 type GeminiResponse struct {
 	Candidates []struct {
-		Content GeminiContent `json:"content"`
-		FinishReason string `json:"finishReason"`
+		Content      GeminiContent `json:"content"`
+		FinishReason string        `json:"finishReason"`
 	} `json:"candidates"`
 	Error *struct {
 		Code    int    `json:"code"`

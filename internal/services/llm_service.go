@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"time"
 
@@ -59,6 +59,9 @@ type ChatResponse struct {
 
 // Chat sends a chat request to the LLM
 func (s *LLMService) Chat(ctx context.Context, messages []ChatMessage) (string, error) {
+	log := logger.FromContext(ctx).With("service", "llm", "operation", "chat", "message_count", len(messages))
+	start := time.Now()
+
 	reqBody := ChatRequest{
 		Model:    s.config.Model,
 		Messages: messages,
@@ -67,11 +70,13 @@ func (s *LLMService) Chat(ctx context.Context, messages []ChatMessage) (string, 
 
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
+		log.Error("failed to marshal LLM request", "error", err)
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", s.config.APIURL, bytes.NewBuffer(jsonBody))
 	if err != nil {
+		log.Error("failed to create LLM request", "error", err)
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
@@ -80,29 +85,45 @@ func (s *LLMService) Chat(ctx context.Context, messages []ChatMessage) (string, 
 
 	resp, err := s.client.Do(req)
 	if err != nil {
+		log.Error("failed to call LLM API", "error", err, "duration_ms", time.Since(start).Milliseconds())
 		return "", fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := ioutil.ReadAll(resp.Body)
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		log.Error("LLM API returned non-200",
+			"status_code", resp.StatusCode,
+			"duration_ms", time.Since(start).Milliseconds(),
+			"response_size", len(bodyBytes),
+		)
 		return "", fmt.Errorf("API returned error: %s - %s", resp.Status, string(bodyBytes))
 	}
 
 	var chatResp ChatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
+		log.Error("failed to decode LLM response", "error", err, "duration_ms", time.Since(start).Milliseconds())
 		return "", fmt.Errorf("failed to decode response: %w", err)
 	}
 
 	if len(chatResp.Choices) == 0 {
+		log.Warn("LLM response contained no choices", "duration_ms", time.Since(start).Milliseconds())
 		return "", fmt.Errorf("no choices in response")
 	}
 
+	log.Info("LLM chat completed",
+		"duration_ms", time.Since(start).Milliseconds(),
+		"model", chatResp.Model,
+		"choice_count", len(chatResp.Choices),
+	)
 	return chatResp.Choices[0].Message.Content, nil
 }
 
 // ProcessAgentIntent processes a user intent with agent context
 func (s *LLMService) ProcessAgentIntent(ctx context.Context, intent string, contextInfo string) (string, error) {
+	log := logger.FromContext(ctx).With("service", "llm", "operation", "process_agent_intent")
+	log.Debug("processing agent intent", "intent_length", len(intent), "has_context", contextInfo != "")
+
 	systemPrompt := `# AI Assistant Idea Generator - Base Template
 
 ## Core Purpose
@@ -134,5 +155,12 @@ For each assistant idea, provide:
 		{Role: "user", Content: intent},
 	}
 
-	return s.Chat(ctx, messages)
+	response, err := s.Chat(ctx, messages)
+	if err != nil {
+		log.Error("agent intent processing failed", "error", err)
+		return "", err
+	}
+
+	log.Info("agent intent processed", "response_length", len(response))
+	return response, nil
 }

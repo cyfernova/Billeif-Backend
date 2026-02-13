@@ -37,16 +37,23 @@ type Handler struct {
 	A2ATask        *A2ATaskHandler
 	A2APush        *A2APushHandler
 	Workflow       *WorkflowHandler
+	Bargaining     *BargainingHandler
+	AgentConfig    *AgentConfigHandler
 }
 
 func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log *logger.Logger) *Handler {
+	log = log.Named("handlers")
 	// Create A2A client (uses SignatureService internally)
-	sigSvc, _ := ap2.NewSignatureService()
+	sigSvc, err := ap2.NewSignatureService()
+	if err != nil {
+		log.Error("failed to initialize A2A signature service", "error", err)
+	}
 	a2aClient := a2a.NewA2AClient(sigSvc, log)
 
 	// Create WebSocket hub
 	wsHub := websocket.NewHub(log)
 	wsHub.Run()
+	log.Info("handler container initialized")
 
 	return &Handler{
 		Auth:           NewAuthHandler(svcs.Auth, log),
@@ -63,18 +70,20 @@ func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log 
 		Health:         NewHealthHandler(log),
 		Admin:          NewAdminHandler(svcs.Email, log),
 		Agent:          NewAgentHandler(svcs.Agent, log),
-		ShoppingAgent:  NewShoppingAgentHandler(svcs.ShoppingAgent, log),
-		Credential:     NewCredentialHandler(svcs.CredentialProvider, repos.AP2, svcs.Razorpay, cfg, log),
+		ShoppingAgent:  NewShoppingAgentHandler(svcs.ShoppingAgent, repos.AP2, log),
+		Credential:     NewCredentialHandler(svcs.CredentialProvider, repos.AP2, cfg, log),
 		Marketplace:    NewMarketplaceHandler(svcs.Marketplace, repos.AP2, log),
 		AgentDiscovery: NewAgentDiscoveryHandler(svcs.AgentDiscovery, log),
 		Intent:         NewIntentHandler(svcs.IntentProcessing, log),
-		A2AMessage:     NewA2AMessageHandler(svcs.ShoppingAgent, svcs.MerchantAgent, svcs.CredentialProvider, svcs.PaymentProcessor, svcs.Marketplace, a2aClient, log),
+		A2AMessage:     NewA2AMessageHandler(svcs.ShoppingAgent, svcs.MerchantAgent, svcs.CredentialProvider, svcs.PaymentProcessor, svcs.Marketplace, a2aClient, sigSvc, log),
 		WebSocket:      NewWebSocketHandler(wsHub, log),
 		LLM:            NewLLMHandler(svcs.LLM, log),
 		WellKnown:      NewWellKnownHandler(cfg, log),
 		A2ATask:        NewA2ATaskHandler(svcs.A2ATask, log),
 		A2APush:        NewA2APushHandler(svcs.A2APush, log),
 		Workflow:       NewWorkflowHandler(svcs.Workflow, log),
+		Bargaining:     NewBargainingHandler(svcs.Bargaining, log),
+		AgentConfig:    NewAgentConfigHandler(svcs.AgentConfig, svcs.Agent, svcs.Bargaining, svcs.Mentee, log),
 	}
 }
 

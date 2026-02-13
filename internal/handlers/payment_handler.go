@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"invoice-backend/internal/models"
 	"net/http"
 
 	"invoice-backend/internal/services"
@@ -32,17 +33,26 @@ func NewPaymentHandler(svc *services.PaymentService, log *logger.Logger) *Paymen
 // @Failure 500 {object} map[string]string
 // @Router /payments [post]
 func (h *PaymentHandler) Create(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("payment_handler").With("operation", "create")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	var input services.CreatePaymentInput
 	if err := c.ShouldBindJSON(&input); err != nil {
+		log.Warn("invalid create payment payload", "error", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	payment, err := h.svc.Create(c.Request.Context(), input)
+	var payment *models.Payment
+	payment, err := h.svc.CreateByBusiness(c.Request.Context(), businessID, input)
 	if err != nil {
+		log.Error("failed to create payment", "error", err, "invoice_id", input.InvoiceID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("payment created", "payment_id", payment.ID, "invoice_id", payment.InvoiceID)
 
 	c.JSON(http.StatusCreated, payment)
 }
@@ -58,9 +68,16 @@ func (h *PaymentHandler) Create(c *gin.Context) {
 // @Failure 404 {object} map[string]string
 // @Router /payments/{id} [get]
 func (h *PaymentHandler) Get(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("payment_handler").With("operation", "get")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
-	payment, err := h.svc.Get(c.Request.Context(), id)
+	var payment *models.Payment
+	payment, err := h.svc.GetByBusiness(c.Request.Context(), businessID, id)
 	if err != nil {
+		log.Error("failed to get payment", "error", err, "payment_id", id)
 		c.JSON(http.StatusNotFound, gin.H{"error": "payment not found"})
 		return
 	}
@@ -82,19 +99,31 @@ func (h *PaymentHandler) Get(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /payments [get]
 func (h *PaymentHandler) List(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("payment_handler").With("operation", "list")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	invoiceID := c.Query("invoice_id")
 	if invoiceID == "" {
+		log.Warn("missing invoice_id query param")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invoice_id is required"})
 		return
 	}
 
 	page, limit := utils.ParsePagination(c)
 
-	payments, total, err := h.svc.ListByInvoice(c.Request.Context(), invoiceID, page, limit)
+	payments, total, err := h.svc.ListByInvoiceAndBusiness(c.Request.Context(), businessID, invoiceID, page, limit)
 	if err != nil {
+		log.Error("failed to list payments", "error", err, "invoice_id", invoiceID)
+		if isNotFoundErr(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "invoice not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Debug("payments listed", "invoice_id", invoiceID, "count", len(payments), "total", total)
 
 	c.JSON(http.StatusOK, gin.H{
 		"data":  payments,
@@ -118,18 +147,31 @@ func (h *PaymentHandler) List(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /payments/{id} [put]
 func (h *PaymentHandler) Update(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("payment_handler").With("operation", "update")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
 	var input services.UpdatePaymentInput
 	if err := c.ShouldBindJSON(&input); err != nil {
+		log.Warn("invalid update payment payload", "error", err, "payment_id", id)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	payment, err := h.svc.Update(c.Request.Context(), id, input)
+	var payment *models.Payment
+	payment, err := h.svc.UpdateByBusiness(c.Request.Context(), businessID, id, input)
 	if err != nil {
+		log.Error("failed to update payment", "error", err, "payment_id", id)
+		if isNotFoundErr(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "payment not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("payment updated", "payment_id", payment.ID)
 
 	c.JSON(http.StatusOK, payment)
 }
@@ -145,11 +187,22 @@ func (h *PaymentHandler) Update(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /payments/{id} [delete]
 func (h *PaymentHandler) Delete(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("payment_handler").With("operation", "delete")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
-	if err := h.svc.Delete(c.Request.Context(), id); err != nil {
+	if err := h.svc.DeleteByBusiness(c.Request.Context(), businessID, id); err != nil {
+		log.Error("failed to delete payment", "error", err, "payment_id", id)
+		if isNotFoundErr(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "payment not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("payment deleted", "payment_id", id)
 
 	c.JSON(http.StatusNoContent, nil)
 }

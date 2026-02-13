@@ -9,6 +9,7 @@ import (
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/services"
 	"invoice-backend/pkg/a2a"
+	"invoice-backend/pkg/ap2"
 	"invoice-backend/pkg/logger"
 
 	"github.com/gin-gonic/gin"
@@ -27,6 +28,7 @@ type A2AMessageHandler struct {
 	payment     *services.PaymentProcessorService
 	marketplace MarketplaceProvider
 	a2aClient   *a2a.A2AClient
+	signature   *ap2.SignatureService
 	log         *logger.Logger
 }
 
@@ -38,6 +40,7 @@ func NewA2AMessageHandler(
 	payment *services.PaymentProcessorService,
 	marketplace MarketplaceProvider,
 	a2aClient *a2a.A2AClient,
+	signature *ap2.SignatureService,
 	log *logger.Logger,
 ) *A2AMessageHandler {
 	return &A2AMessageHandler{
@@ -47,6 +50,7 @@ func NewA2AMessageHandler(
 		payment:     payment,
 		marketplace: marketplace,
 		a2aClient:   a2aClient,
+		signature:   signature,
 		log:         log,
 	}
 }
@@ -64,8 +68,13 @@ func (h *A2AMessageHandler) HandleMessage(c *gin.Context) {
 		return
 	}
 
+	if msg.Signature == "" || msg.PublicKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "signed messages are required"})
+		return
+	}
+
 	// Validate message
-	validator := a2a.NewMessageValidator(nil) // In production, pass real SignatureService
+	validator := a2a.NewMessageValidator(h.signature)
 	validation := validator.ValidateMessage(&msg)
 	if !validation.IsValid {
 		h.log.Warn("A2A message validation failed", "message_id", msg.MessageID, "errors", validation.Errors)
@@ -126,7 +135,7 @@ func (h *A2AMessageHandler) handleTaskStart(c *gin.Context, msg *a2a.A2AMessage)
 	}
 
 	// Validate payload
-	validator := a2a.NewMessageValidator(nil)
+	validator := a2a.NewMessageValidator(h.signature)
 	if err := validator.ValidateTaskStartPayload(&payload); err != nil {
 		return nil, fmt.Errorf("invalid task start payload: %w", err)
 	}
@@ -288,7 +297,7 @@ func (h *A2AMessageHandler) handleTaskData(c *gin.Context, msg *a2a.A2AMessage) 
 		return nil, fmt.Errorf("failed to extract task data payload: %w", err)
 	}
 
-	validator := a2a.NewMessageValidator(nil)
+	validator := a2a.NewMessageValidator(h.signature)
 	if err := validator.ValidateTaskDataPayload(&payload); err != nil {
 		return nil, fmt.Errorf("invalid task data payload: %w", err)
 	}
@@ -320,7 +329,7 @@ func (h *A2AMessageHandler) handleTaskStatus(c *gin.Context, msg *a2a.A2AMessage
 		return nil, fmt.Errorf("failed to extract task status payload: %w", err)
 	}
 
-	validator := a2a.NewMessageValidator(nil)
+	validator := a2a.NewMessageValidator(h.signature)
 	if err := validator.ValidateTaskStatusPayload(&payload); err != nil {
 		return nil, fmt.Errorf("invalid task status payload: %w", err)
 	}
@@ -343,7 +352,7 @@ func (h *A2AMessageHandler) handleTaskResult(c *gin.Context, msg *a2a.A2AMessage
 		return nil, fmt.Errorf("failed to extract task result payload: %w", err)
 	}
 
-	validator := a2a.NewMessageValidator(nil)
+	validator := a2a.NewMessageValidator(h.signature)
 	if err := validator.ValidateTaskResultPayload(&payload); err != nil {
 		return nil, fmt.Errorf("invalid task result payload: %w", err)
 	}
@@ -366,7 +375,7 @@ func (h *A2AMessageHandler) handleTaskError(c *gin.Context, msg *a2a.A2AMessage)
 		return nil, fmt.Errorf("failed to extract task error payload: %w", err)
 	}
 
-	validator := a2a.NewMessageValidator(nil)
+	validator := a2a.NewMessageValidator(h.signature)
 	if err := validator.ValidateTaskErrorPayload(&payload); err != nil {
 		return nil, fmt.Errorf("invalid task error payload: %w", err)
 	}

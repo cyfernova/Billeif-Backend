@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"unicode/utf8"
 )
 
 var (
@@ -166,45 +165,9 @@ func CartMandateCanonicalData(userID, agentID string, items []interface{}, total
 // PaymentMandateCanonicalData creates canonical representation of payment mandate
 func PaymentMandateCanonicalData(userID, cartMandateID string, amount float64) ([]byte, error) {
 	data := map[string]interface{}{
-		"user_id":           userID,
-		"cart_mandate_id":   cartMandateID,
-		"amount":            amount,
+		"user_id":         userID,
+		"cart_mandate_id": cartMandateID,
+		"amount":          amount,
 	}
 	return CanonicalizeJSON(data)
-}
-
-// EscapeString applies RFC 8785 string escaping rules
-// This is called by json.Marshal, so we don't need to implement it separately
-// but it's here for reference and potential custom encoding
-func escapeString(s string) string {
-	result := strings.Builder{}
-	for _, r := range s {
-		switch r {
-		case '"':
-			result.WriteString(`\"`)
-		case '\\':
-			result.WriteString(`\\`)
-		case '\b':
-			result.WriteString(`\b`)
-		case '\f':
-			result.WriteString(`\f`)
-		case '\n':
-			result.WriteString(`\n`)
-		case '\r':
-			result.WriteString(`\r`)
-		case '\t':
-			result.WriteString(`\t`)
-		default:
-			if r < 0x20 || (r >= 0x7F && r <= 0x9F) {
-				// Control characters must be escaped
-				fmt.Fprintf(&result, `\u%04x`, r)
-			} else if !utf8.ValidRune(r) {
-				// Invalid Unicode
-				result.WriteString(`\ufffd`)
-			} else {
-				result.WriteRune(r)
-			}
-		}
-	}
-	return result.String()
 }

@@ -1,246 +1,145 @@
-# Invoice Backend
+## Features
 
-Production-grade Golang backend for an invoice/billing platform, running on LocalStack with Terraform.
+- Invoice creation, tracking, and PDF export
+- Payment processing with Razorpay integration
+- Double-entry accounting ledger
+- Multi-tenant business profiles with team management
+- Agent lifecycle management and discovery registry
+- Agent-to-Agent (A2A) protocol v0.3 with streaming and push notifications
+- Shopping agent with cart and checkout
+- Bargaining and counter-offer negotiation
+- Workflow automation (create, run, pause, resume)
+- LLM integration (Claude, Gemini)
+- WebSocket real-time notifications
+- SQS-based async job processing
+- Cognito JWT authentication with role-based access control
 
-## Quick Start
+## Tech Stack
 
-```bash
-# Start infrastructure
-make localstack-up
-make infra-apply
-make migrate-up
+- **Language:** Go 1.24
+- **Framework:** Gin
+- **ORM:** GORM
+- **Database:** PostgreSQL 16
+- **Cache:** Redis 7
+- **Auth:** AWS Cognito (JWT)
+- **Cloud:** AWS (S3, SQS, SES, SNS, DynamoDB)
+- **Payments:** Razorpay
+- **Monitoring:** Sentry, Prometheus
+- **Docs:** Swagger / OpenAPI
 
-# Initialize test resources
-./scripts/init-aws-resources.sh
+## Installation
 
-# Run the application
-make run
-```
-
-## Prerequisites
-
-- Go 1.21+
-- Docker & Docker Compose
-- Terraform & tflocal (`pip install terraform-local`)
-- golang-migrate (`brew install golang-migrate`)
-- awslocal (`pip install awscli-local`)
-
-## Architecture
-
-```
-cmd/api/              # Application entry point
-internal/
-├── config/           # Viper configuration
-├── middleware/       # Gin middleware (auth, RBAC, logging, rate-limit, sentry)
-├── models/           # GORM domain models
-├── handlers/         # HTTP handlers
-├── services/         # Business logic
-├── repositories/     # Data access layer
-├── workers/          # SQS background workers
-└── utils/            # Helpers (JWT, pagination, errors)
-pkg/
-├── awsclients/       # AWS SDK v2 with LocalStack support
-├── logger/           # Zap structured logging
-└── sentry/           # Sentry error tracking integration
-infrastructure/
-├── terraform/        # IaC: Cognito, DynamoDB, S3, SES, SNS/SQS
-└── localstack/       # Init scripts
-```
-
-## Makefile Commands
+**Prerequisites:** Go 1.24+, PostgreSQL 16, Redis 7, AWS credentials.
 
 ```bash
-make localstack-up    # Start LocalStack, Postgres, Redis
-make infra-apply      # Apply Terraform via tflocal
-make build            # Build binary
-make run              # Run app locally
-make test             # Run unit tests
-make integration-test # Full integration test suite
-make migrate-up       # Run database migrations
-make lint             # Run golangci-lint
+git clone <repo-url>
+cd invoice-backend
+cp .env.example .env    # configure your environment
+make deps               # download and tidy modules
+make migration-up       # apply database migrations
+make run                # start the server on :8080
 ```
+
+### Docker
+
+```bash
+make docker-up          # starts PostgreSQL, Redis, and the API
+make docker-down        # stops and removes containers
+```
+
+## Usage
+
+```bash
+make run                # run the API server
+make build              # build binary to .build/api
+make test               # unit tests with race detection
+make test-integration   # integration tests (requires Docker)
+make lint               # run golangci-lint
+make fmt                # format code (goimports + go fmt)
+make swagger            # regenerate Swagger docs
+```
+
+Run a single test:
+
+```bash
+go test -v -run TestFunctionName ./internal/services/...
+```
+
+### Database Migrations
+
+```bash
+make migration-up                     # apply all pending migrations
+make migration-down                   # rollback one migration
+make migration-create NAME=add_xyz    # create new migration files
+```
+
+## Configuration
+
+Viper-based configuration loaded from `.env` with environment variable overrides. Key sections:
+
+- **Server** -- port, base URL, timeouts
+- **Database** -- PostgreSQL connection, SSL mode
+- **Redis** -- host, port, password
+- **Cognito** -- user pool ID, client ID, JWKS refresh rate
+- **AWS** -- region, credentials, S3 buckets, SQS queues
+- **Razorpay** -- API key, secret, webhook secret
+- **Sentry** -- DSN, sample rates
+- **LLM** -- API key, model, timeout
+
+See `internal/config/config.go` for the full configuration struct.
 
 ## API Endpoints
 
-### Authentication
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/v1/auth/register` | Register user |
-| POST | `/api/v1/auth/login` | Login |
-| POST | `/api/v1/auth/logout` | Logout |
-| POST | `/api/v1/auth/refresh` | Refresh token |
-| POST | `/api/v1/auth/forgot-password` | Request password reset |
-| POST | `/api/v1/auth/reset-password` | Reset password |
-| GET | `/api/v1/auth/me` | Get current user |
+All routes are under `/api/v1` unless noted otherwise.
 
-### Business
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/v1/business-profiles` | List businesses |
-| POST | `/api/v1/business-profiles` | Create business |
-| GET | `/api/v1/business-profiles/:id` | Get business |
-| PUT | `/api/v1/business-profiles/:id` | Update business |
-| POST | `/api/v1/business-profiles/:id/logo` | Get logo upload URL |
+- `/auth` -- registration, login, token refresh, password reset
+- `/business-profiles` -- business entity CRUD
+- `/customers` -- customer management, import/export
+- `/vendors` -- vendor management
+- `/products` -- product catalog with inventory and images
+- `/invoices` -- invoice CRUD, PDF generation, sending
+- `/payments` -- payment tracking and processing
+- `/ledger` -- double-entry accounting ledger
+- `/teams` -- team member management
+- `/agents` -- agent lifecycle, shopping, credentials, configuration
+- `/discovery` -- agent registry, verification, health checks
+- `/marketplace` -- product listings, merchant management, orders
+- `/a2a/v0.3` -- Agent-to-Agent protocol (tasks, streaming, subscriptions)
+- `/bargaining` -- negotiations and counter-offers
+- `/llm` -- chat and agent-assist
+- `/workflows` -- workflow automation
+- `/ws` -- WebSocket connections and notifications
+- `/webhooks` -- event subscriptions
 
-### Invoices
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/v1/invoices` | List invoices |
-| POST | `/api/v1/invoices` | Create invoice |
-| GET | `/api/v1/invoices/:id` | Get invoice |
-| POST | `/api/v1/invoices/:id/send` | Send invoice email |
-| GET | `/api/v1/invoices/:id/pdf` | Get PDF URL |
+Additional: `GET /health`, `GET /swagger/*`, `GET /.well-known/agent.json`.
 
-Full API docs: `openapi/openapi.yaml`
+## Project Structure
 
-## Example Workflows
-
-### Register and Login
-```bash
-# Register
-curl -X POST http://localhost:8080/api/v1/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"email":"user@example.com","password":"Password123!","name":"Test User"}'
-
-# Login
-curl -X POST http://localhost:8080/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"user@example.com","password":"Password123!"}'
-# Save the access_token from response
+```
+cmd/api/                 Entry point and router setup
+internal/
+  handlers/              HTTP handlers
+  services/              Business logic (container-based DI)
+  repositories/
+    interfaces/          Repository contracts
+    postgres/            PostgreSQL implementations
+  models/                GORM entities
+  middleware/            Auth, RBAC, CORS, rate limiting, logging
+  workers/               SQS background job processors
+  config/                Configuration loading and validation
+pkg/
+  a2a/                   Agent-to-Agent protocol
+  awsclients/            AWS SDK wrappers
+  nlp/                   LLM clients (Claude, Gemini)
+  razorpay/              Payment gateway
+  websocket/             Real-time connections
+migrations/              SQL migration files (golang-migrate format)
+infrastructure/          Terraform IaC
 ```
 
-### Create Business and Invoice
-```bash
-export TOKEN="<access_token>"
+## Contributing
 
-# Create business
-curl -X POST http://localhost:8080/api/v1/business-profiles \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"My Business","email":"biz@example.com"}'
-
-# Create customer
-curl -X POST http://localhost:8080/api/v1/customers \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"business_id":"<biz_id>","name":"Customer","email":"cust@example.com"}'
-
-# Create invoice
-curl -X POST http://localhost:8080/api/v1/invoices \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "business_id":"<biz_id>",
-    "customer_id":"<cust_id>",
-    "due_date":"2025-01-31T00:00:00Z",
-    "items":[{"description":"Service","quantity":1,"unit_price":100}]
-  }'
-```
-
-## Production Migration
-
-To switch from LocalStack to real AWS:
-
-1. **Remove LocalStack endpoint override**:
-   ```bash
-   # .env
-   AWS_LOCALSTACK=false
-   # Remove AWS_ENDPOINT
-   ```
-
-2. **Set real AWS credentials**:
-   ```bash
-   AWS_ACCESS_KEY_ID=<real_key>
-   AWS_SECRET_ACCESS_KEY=<real_secret>
-   AWS_REGION=us-east-1
-   ```
-
-3. **Update Cognito config**:
-   ```bash
-   COGNITO_USER_POOL_ID=<real_pool_id>
-   COGNITO_CLIENT_ID=<real_client_id>
-   ```
-
-4. **Run standard Terraform** (not tflocal):
-   ```bash
-   cd infrastructure/terraform
-   terraform init
-   terraform apply
-   ```
-
-## Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| ENVIRONMENT | dev/staging/prod | dev |
-| SERVER_PORT | HTTP port | 8080 |
-| DATABASE_HOST | Postgres host | localhost |
-| DATABASE_PORT | Postgres port | 5432 |
-| AWS_LOCALSTACK | Use LocalStack | true |
-| AWS_ENDPOINT | LocalStack URL | http://localhost:4566 |
-| COGNITO_USER_POOL_ID | Cognito pool ID | - |
-| COGNITO_CLIENT_ID | Cognito client ID | - |
-| SENTRY_DSN | Sentry Data Source Name | - |
-| SENTRY_SAMPLE_RATE | Error sample rate (0.0-1.0) | 1.0 |
-| SENTRY_TRACES_SAMPLE_RATE | Performance trace rate | 0.2 |
-| SENTRY_ENABLE_TRACING | Enable performance tracing | false |
-| SENTRY_DEBUG | Debug mode for Sentry SDK | false |
-
-## Error Tracking (Sentry)
-
-Sentry is integrated for production error tracking and performance monitoring.
-
-### Configuration
-
-Add your Sentry DSN to `.env`:
-```bash
-SENTRY_DSN=https://your-key@sentry.io/project-id
-SENTRY_SAMPLE_RATE=1.0          # Capture 100% of errors
-SENTRY_TRACES_SAMPLE_RATE=0.2   # Sample 20% of transactions
-SENTRY_ENABLE_TRACING=true      # Enable performance monitoring
-```
-
-### Features
-
-- **Automatic panic capture** with full stack traces
-- **Request context** (method, path, headers, query params)
-- **User context** when authenticated
-- **Performance monitoring** with transaction tracing
-- **Breadcrumbs** for debugging
-- **Runtime enrichment** (Go version, memory stats, goroutine count)
-
-### Usage in Handlers
-
-```go
-import "invoice-backend/internal/middleware"
-
-// Capture errors with context
-func (h *Handler) SomeEndpoint(c *gin.Context) {
-    err := someOperation()
-    if err != nil {
-        middleware.SentryErrorHandler(c, err,
-            map[string]string{"operation": "some_operation"},
-            map[string]interface{}{"input": input},
-        )
-        c.JSON(500, gin.H{"error": "failed"})
-        return
-    }
-}
-
-// Add breadcrumbs for debugging
-middleware.AddSentryBreadcrumb(c, "db", "queried users", sentry.LevelInfo, nil)
-```
-
-## Testing
-
-```bash
-# Unit tests with coverage
-make test-coverage
-
-# Integration tests (requires running infra)
-make integration-test
-```
-
-## License
-
-MIT
+1. Fork the repository and create a feature branch.
+2. Run `make fmt` and `make lint` before committing.
+3. Ensure `make test` passes.
+4. Open a pull request against `main`.

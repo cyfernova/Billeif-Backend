@@ -30,6 +30,8 @@ func NewS3Service(cfg *config.Config, aws *awsclients.Config, log *logger.Logger
 }
 
 func (s *S3Service) GeneratePresignedUploadURL(ctx context.Context, bucket, key, contentType string, expiresIn int64) (string, error) {
+	log := logger.FromContext(ctx).With("service", "s3", "operation", "presign_upload", "bucket", bucket, "key", key)
+	start := time.Now()
 	presignClient := s3.NewPresignClient(s.client)
 
 	request, err := presignClient.PresignPutObject(ctx, &s3.PutObjectInput{
@@ -39,13 +41,17 @@ func (s *S3Service) GeneratePresignedUploadURL(ctx context.Context, bucket, key,
 	}, s3.WithPresignExpires(time.Duration(expiresIn)*time.Second))
 
 	if err != nil {
+		log.Error("failed to generate S3 upload URL", "error", err)
 		return "", fmt.Errorf("failed to generate presigned URL: %w", err)
 	}
 
+	log.Debug("generated S3 upload URL", "expires_in_seconds", expiresIn, "duration_ms", time.Since(start).Milliseconds())
 	return request.URL, nil
 }
 
 func (s *S3Service) GeneratePresignedDownloadURL(ctx context.Context, bucket, key string, expiresIn int64) (string, error) {
+	log := logger.FromContext(ctx).With("service", "s3", "operation", "presign_download", "bucket", bucket, "key", key)
+	start := time.Now()
 	presignClient := s3.NewPresignClient(s.client)
 
 	request, err := presignClient.PresignGetObject(ctx, &s3.GetObjectInput{
@@ -54,49 +60,77 @@ func (s *S3Service) GeneratePresignedDownloadURL(ctx context.Context, bucket, ke
 	}, s3.WithPresignExpires(time.Duration(expiresIn)*time.Second))
 
 	if err != nil {
+		log.Error("failed to generate S3 download URL", "error", err)
 		return "", fmt.Errorf("failed to generate presigned URL: %w", err)
 	}
 
+	log.Debug("generated S3 download URL", "expires_in_seconds", expiresIn, "duration_ms", time.Since(start).Milliseconds())
 	return request.URL, nil
 }
 
 func (s *S3Service) Upload(ctx context.Context, bucket, key string, data []byte, contentType string) error {
+	log := logger.FromContext(ctx).With("service", "s3", "operation", "upload", "bucket", bucket, "key", key)
+	start := time.Now()
 	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:      aws.String(bucket),
 		Key:         aws.String(key),
 		Body:        bytes.NewReader(data),
 		ContentType: aws.String(contentType),
 	})
+	if err != nil {
+		log.Error("S3 upload failed", "error", err, "size_bytes", len(data), "duration_ms", time.Since(start).Milliseconds())
+		return err
+	}
+	log.Info("S3 upload completed", "size_bytes", len(data), "duration_ms", time.Since(start).Milliseconds())
 	return err
 }
 
 func (s *S3Service) Download(ctx context.Context, bucket, key string) ([]byte, error) {
+	log := logger.FromContext(ctx).With("service", "s3", "operation", "download", "bucket", bucket, "key", key)
+	start := time.Now()
 	result, err := s.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
 	if err != nil {
+		log.Error("S3 download failed", "error", err)
 		return nil, err
 	}
 	defer result.Body.Close()
 
-	return io.ReadAll(result.Body)
+	data, err := io.ReadAll(result.Body)
+	if err != nil {
+		log.Error("failed reading S3 object body", "error", err, "duration_ms", time.Since(start).Milliseconds())
+		return nil, err
+	}
+
+	log.Debug("S3 download completed", "size_bytes", len(data), "duration_ms", time.Since(start).Milliseconds())
+	return data, nil
 }
 
 func (s *S3Service) Delete(ctx context.Context, bucket, key string) error {
+	log := logger.FromContext(ctx).With("service", "s3", "operation", "delete", "bucket", bucket, "key", key)
 	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
+	if err != nil {
+		log.Error("S3 delete failed", "error", err)
+		return err
+	}
+	log.Info("S3 object deleted")
 	return err
 }
 
 func (s *S3Service) ListObjects(ctx context.Context, bucket, prefix string) ([]string, error) {
+	log := logger.FromContext(ctx).With("service", "s3", "operation", "list_objects", "bucket", bucket, "prefix", prefix)
+	start := time.Now()
 	result, err := s.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
 		Bucket: aws.String(bucket),
 		Prefix: aws.String(prefix),
 	})
 	if err != nil {
+		log.Error("S3 list objects failed", "error", err)
 		return nil, err
 	}
 
@@ -104,6 +138,7 @@ func (s *S3Service) ListObjects(ctx context.Context, bucket, prefix string) ([]s
 	for _, obj := range result.Contents {
 		keys = append(keys, *obj.Key)
 	}
+	log.Debug("S3 list objects completed", "count", len(keys), "duration_ms", time.Since(start).Milliseconds())
 	return keys, nil
 }
 

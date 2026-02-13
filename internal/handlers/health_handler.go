@@ -17,6 +17,7 @@ func NewHealthHandler(log *logger.Logger) *HealthHandler {
 }
 
 func (h *HealthHandler) Check(c *gin.Context) {
+	logger.FromContext(c.Request.Context()).Named("health_handler").Debug("health check request")
 	message := `
  __          __                                  _  _                _ 
  \ \        / /                                 | |(_)              | |

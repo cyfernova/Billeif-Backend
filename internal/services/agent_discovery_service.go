@@ -187,7 +187,9 @@ func (s *AgentDiscoveryService) GetAgentRegistry(ctx context.Context, agentID st
 	}
 
 	// Increment view count
-	s.ap2Repo.IncrementAgentViews(ctx, registry.ID.String())
+	if err := s.ap2Repo.IncrementAgentViews(ctx, registry.ID.String()); err != nil {
+		s.log.Warn("failed to increment agent views", "agent_id", agentID, "error", err)
+	}
 
 	return registry, nil
 }

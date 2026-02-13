@@ -22,8 +22,8 @@ func NewMessageValidator(signatureSvc *ap2.SignatureService) *MessageValidator {
 
 // ValidationResult represents the result of message validation
 type ValidationResult struct {
-	IsValid bool
-	Errors  []string
+	IsValid  bool
+	Errors   []string
 	Warnings []string
 }
 
@@ -79,6 +79,10 @@ func (v *MessageValidator) VerifySignature(msg *A2AMessage) error {
 
 // verifySignature verifies the signature of a message
 func (v *MessageValidator) verifySignature(msg *A2AMessage) error {
+	if v.signatureSvc == nil {
+		return fmt.Errorf("signature service is not configured")
+	}
+
 	if msg.Signature == "" {
 		return fmt.Errorf("message has no signature")
 	}
@@ -89,23 +93,23 @@ func (v *MessageValidator) verifySignature(msg *A2AMessage) error {
 
 	// Build canonicalization data (exclude signature)
 	dataForVerification := map[string]interface{}{
-		"version":        msg.Version,
-		"message_id":     msg.MessageID,
-		"task_id":        msg.TaskID,
-		"message_type":   msg.MessageType,
-		"sender_id":      msg.SenderID,
-		"sender_endpoint": msg.SenderEndpoint,
-		"receiver_id":    msg.ReceiverID,
+		"version":           msg.Version,
+		"message_id":        msg.MessageID,
+		"task_id":           msg.TaskID,
+		"message_type":      msg.MessageType,
+		"sender_id":         msg.SenderID,
+		"sender_endpoint":   msg.SenderEndpoint,
+		"receiver_id":       msg.ReceiverID,
 		"receiver_endpoint": msg.ReceiverEndpoint,
-		"payload":        msg.Payload,
-		"metadata":       msg.Metadata,
-		"retry_count":    msg.RetryCount,
-		"created_at":     msg.CreatedAt.Unix(),
-		"expires_at":     msg.ExpiresAt.Unix(),
-		"timeout_ms":     msg.TimeoutMs,
-		"status":         msg.Status,
-		"correlation_id": msg.CorrelationID,
-		"reference_id":   msg.ReferenceID,
+		"payload":           msg.Payload,
+		"metadata":          msg.Metadata,
+		"retry_count":       msg.RetryCount,
+		"created_at":        msg.CreatedAt.Unix(),
+		"expires_at":        msg.ExpiresAt.Unix(),
+		"timeout_ms":        msg.TimeoutMs,
+		"status":            msg.Status,
+		"correlation_id":    msg.CorrelationID,
+		"reference_id":      msg.ReferenceID,
 	}
 
 	// Verify using SignatureService with canonical JSON
@@ -122,25 +126,29 @@ func (v *MessageValidator) verifySignature(msg *A2AMessage) error {
 
 // SignMessage signs a message with the signature service
 func (v *MessageValidator) SignMessage(msg *A2AMessage, sigSvc *ap2.SignatureService) error {
+	if sigSvc == nil {
+		return fmt.Errorf("signature service is not configured")
+	}
+
 	// Build data for signing (exclude existing signature)
 	dataForSigning := map[string]interface{}{
-		"version":        msg.Version,
-		"message_id":     msg.MessageID,
-		"task_id":        msg.TaskID,
-		"message_type":   msg.MessageType,
-		"sender_id":      msg.SenderID,
-		"sender_endpoint": msg.SenderEndpoint,
-		"receiver_id":    msg.ReceiverID,
+		"version":           msg.Version,
+		"message_id":        msg.MessageID,
+		"task_id":           msg.TaskID,
+		"message_type":      msg.MessageType,
+		"sender_id":         msg.SenderID,
+		"sender_endpoint":   msg.SenderEndpoint,
+		"receiver_id":       msg.ReceiverID,
 		"receiver_endpoint": msg.ReceiverEndpoint,
-		"payload":        msg.Payload,
-		"metadata":       msg.Metadata,
-		"retry_count":    msg.RetryCount,
-		"created_at":     msg.CreatedAt.Unix(),
-		"expires_at":     msg.ExpiresAt.Unix(),
-		"timeout_ms":     msg.TimeoutMs,
-		"status":         msg.Status,
-		"correlation_id": msg.CorrelationID,
-		"reference_id":   msg.ReferenceID,
+		"payload":           msg.Payload,
+		"metadata":          msg.Metadata,
+		"retry_count":       msg.RetryCount,
+		"created_at":        msg.CreatedAt.Unix(),
+		"expires_at":        msg.ExpiresAt.Unix(),
+		"timeout_ms":        msg.TimeoutMs,
+		"status":            msg.Status,
+		"correlation_id":    msg.CorrelationID,
+		"reference_id":      msg.ReferenceID,
 	}
 
 	// Sign the message
@@ -227,9 +235,9 @@ func (v *MessageValidator) ValidateTaskStatusPayload(payload *TaskStatusPayload)
 // ValidateTaskResultPayload validates a task result payload
 func (v *MessageValidator) ValidateTaskResultPayload(payload *TaskResultPayload) error {
 	validStatuses := map[string]bool{
-		"success":           true,
-		"partial_success":   true,
-		"failed":            true,
+		"success":         true,
+		"partial_success": true,
+		"failed":          true,
 	}
 
 	if !validStatuses[payload.Status] {

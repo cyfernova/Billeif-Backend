@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS business_profiles (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    owner_id VARCHAR(255) NOT NULL,
     name VARCHAR(255) NOT NULL,
     email VARCHAR(255) NOT NULL,
     phone VARCHAR(50),
@@ -18,3 +19,4 @@ CREATE TABLE IF NOT EXISTS business_profiles (
 );
 
 CREATE INDEX idx_business_profiles_deleted_at ON business_profiles(deleted_at);
+CREATE INDEX idx_business_profiles_owner_id ON business_profiles(owner_id);

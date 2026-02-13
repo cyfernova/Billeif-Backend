@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"invoice-backend/internal/models"
@@ -19,7 +20,7 @@ func NewCustomerService(repo interfaces.CustomerRepository, log *logger.Logger) 
 }
 
 type CreateCustomerInput struct {
-	BusinessID   string  `json:"business_id" binding:"required,uuid"`
+	BusinessID   string  `json:"business_id,omitempty"`
 	Name         string  `json:"name" binding:"required,min=2"`
 	Email        string  `json:"email" binding:"required,email"`
 	Phone        string  `json:"phone"`
@@ -57,6 +58,17 @@ func (s *CustomerService) Create(ctx context.Context, input CreateCustomerInput)
 
 func (s *CustomerService) Get(ctx context.Context, id string) (*models.Customer, error) {
 	return s.repo.GetByID(ctx, id)
+}
+
+func (s *CustomerService) GetByBusiness(ctx context.Context, businessID, id string) (*models.Customer, error) {
+	customer, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if customer.BusinessID != businessID {
+		return nil, errors.New("customer not found")
+	}
+	return customer, nil
 }
 
 func (s *CustomerService) List(ctx context.Context, businessID string, page, limit int) ([]*models.Customer, int64, error) {
@@ -121,8 +133,60 @@ func (s *CustomerService) Update(ctx context.Context, id string, input UpdateCus
 	return customer, nil
 }
 
+func (s *CustomerService) UpdateByBusiness(ctx context.Context, businessID, id string, input UpdateCustomerInput) (*models.Customer, error) {
+	customer, err := s.GetByBusiness(ctx, businessID, id)
+	if err != nil {
+		return nil, err
+	}
+
+	if input.Name != "" {
+		customer.Name = input.Name
+	}
+	if input.Email != "" {
+		customer.Email = input.Email
+	}
+	if input.Phone != "" {
+		customer.Phone = input.Phone
+	}
+	if input.Address != "" {
+		customer.Address = input.Address
+	}
+	if input.City != "" {
+		customer.City = input.City
+	}
+	if input.State != "" {
+		customer.State = input.State
+	}
+	if input.Country != "" {
+		customer.Country = input.Country
+	}
+	if input.ZipCode != "" {
+		customer.PostalCode = input.ZipCode
+	}
+	if input.TaxID != "" {
+		customer.TaxID = input.TaxID
+	}
+	if input.CreditLimit > 0 {
+		customer.CreditLimit = input.CreditLimit
+	}
+
+	if err := s.repo.Update(ctx, customer); err != nil {
+		return nil, err
+	}
+
+	return customer, nil
+}
+
 func (s *CustomerService) Delete(ctx context.Context, id string) error {
 	return s.repo.Delete(ctx, id)
+}
+
+func (s *CustomerService) DeleteByBusiness(ctx context.Context, businessID, id string) error {
+	customer, err := s.GetByBusiness(ctx, businessID, id)
+	if err != nil {
+		return err
+	}
+	return s.repo.Delete(ctx, customer.ID)
 }
 
 func (s *CustomerService) Import(ctx context.Context, businessID string, customers []CreateCustomerInput) (int, error) {

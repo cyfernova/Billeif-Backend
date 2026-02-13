@@ -5,7 +5,9 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -23,15 +25,24 @@ var (
 )
 
 type CredentialProviderService struct {
-	ap2Repo interfaces.AP2Repository
-	log     *logger.Logger
+	ap2Repo       interfaces.AP2Repository
+	encryptionKey []byte
+	log           *logger.Logger
 }
 
-func NewCredentialProviderService(ap2Repo interfaces.AP2Repository, log *logger.Logger) *CredentialProviderService {
-	return &CredentialProviderService{
-		ap2Repo: ap2Repo,
-		log:     log,
+func NewCredentialProviderService(ap2Repo interfaces.AP2Repository, encryptionKey string, log *logger.Logger) (*CredentialProviderService, error) {
+	key, err := base64.StdEncoding.DecodeString(encryptionKey)
+	if err != nil {
+		return nil, fmt.Errorf("invalid credential encryption key encoding: %w", err)
 	}
+	if len(key) != 32 {
+		return nil, errors.New("credential encryption key must decode to 32 bytes")
+	}
+	return &CredentialProviderService{
+		ap2Repo:       ap2Repo,
+		encryptionKey: key,
+		log:           log,
+	}, nil
 }
 
 type AddPaymentMethodRequest struct {
@@ -166,11 +177,13 @@ func (s *CredentialProviderService) GenerateCredentialToken(ctx context.Context,
 		s.log.Error("failed to generate token", "error", err, "credential_id", req.CredentialID)
 		return nil, fmt.Errorf("failed to generate token: %w", err)
 	}
+	tokenHash := hashToken(token)
 
 	credentialToken := &models.CredentialToken{
 		CredentialID:     req.CredentialID,
 		PaymentMandateID: &req.PaymentMandateID,
-		Token:            token,
+		Token:            tokenHash,
+		TokenHash:        tokenHash,
 		ExpiresAt:        time.Now().Add(30 * time.Minute),
 		IsUsed:           false,
 	}
@@ -180,12 +193,14 @@ func (s *CredentialProviderService) GenerateCredentialToken(ctx context.Context,
 		return nil, fmt.Errorf("failed to create credential token: %w", err)
 	}
 
+	// Return raw token once to caller; only hash is persisted.
+	credentialToken.Token = token
 	s.log.Info("generated credential token", "token_id", credentialToken.ID, "credential_id", req.CredentialID)
 	return credentialToken, nil
 }
 
 func (s *CredentialProviderService) ValidateToken(ctx context.Context, token string) (*models.CredentialToken, error) {
-	credentialToken, err := s.ap2Repo.GetCredentialToken(ctx, token)
+	credentialToken, err := s.ap2Repo.GetCredentialToken(ctx, hashToken(token))
 	if err != nil {
 		return nil, errors.New("invalid or expired token")
 	}
@@ -208,8 +223,7 @@ func (s *CredentialProviderService) UseToken(ctx context.Context, tokenID string
 }
 
 func (s *CredentialProviderService) encryptCredential(plaintext string) (string, error) {
-	key := []byte("32-byte-long-secret-key!")
-	block, err := aes.NewCipher(key)
+	block, err := aes.NewCipher(s.encryptionKey)
 	if err != nil {
 		return "", err
 	}
@@ -254,6 +268,7 @@ func generateSecureToken() (string, error) {
 	return base64.URLEncoding.EncodeToString(b), nil
 }
 
-func getTokenExpiration() string {
-	return "30m"
+func hashToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }

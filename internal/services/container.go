@@ -7,7 +7,6 @@ import (
 	"invoice-backend/pkg/ap2"
 	"invoice-backend/pkg/awsclients"
 	"invoice-backend/pkg/logger"
-	"invoice-backend/pkg/razorpay"
 
 	"gorm.io/gorm"
 )
@@ -35,12 +34,14 @@ type Container struct {
 	Marketplace        *MarketplaceService
 	ProductMatching    *ProductMatchingService
 	IntentProcessing   *IntentProcessingService
-	Razorpay           *razorpay.RazorpayService
 	AgentDiscovery     *AgentDiscoveryService
 	LLM                *LLMService
 	A2ATask            *A2ATaskService
 	A2APush            *A2APushService
 	Workflow           *WorkflowService
+	Mentee             *MenteeService
+	Bargaining         *BargainingService
+	AgentConfig        *AgentConfigService
 }
 
 func NewContainer(
@@ -69,22 +70,29 @@ func NewContainer(
 	ap2MandateSvc := ap2.NewMandateService(ap2MandateSigner, ap2MandateVerifier)
 	a2aSigner, _ := ap2.NewSignatureService()
 	a2aClient := a2a.NewA2AClient(a2aSigner, log)
-	razorpaySvc := razorpay.NewRazorpayService(&razorpay.Config{
-		Key:           cfg.Razorpay.Key,
-		Secret:        cfg.Razorpay.Secret,
-		WebhookSecret: cfg.Razorpay.WebhookSecret,
-	}, log)
-
 	marketplaceSvc := NewMarketplaceService(ap2Repo, log)
 	productMatchingSvc := NewProductMatchingService(marketplaceSvc, log)
 	intentProcessingSvc, _ := NewIntentProcessingService(productMatchingSvc, marketplaceSvc, log)
 	llmSvc := NewLLMService(cfg.LLM, log)
 
 	agentSvc := NewAgentService(ap2Repo, ap2Signer, log)
+	menteeSvc := NewMenteeService(log)
 
-	a2aPushSvc := NewA2APushService(db, log)
+	a2aPushSvc := NewA2APushService(db, ap2Repo, log)
 	a2aTaskSvc := NewA2ATaskService(db, log, a2aPushSvc)
 	workflowSvc := NewWorkflowService(db, log, emailSvc, a2aPushSvc)
+	bargainingSvc := NewBargainingService(ap2Repo, a2aClient, agentSvc, menteeSvc, log)
+	agentConfigSvc := NewAgentConfigService(".well-known", log)
+	credentialProviderSvc, err := NewCredentialProviderService(ap2Repo, cfg.Credentials.EncryptionKey, log)
+	if err != nil {
+		log.Fatal("failed to initialize credential provider service", "error", err)
+	}
+
+	log.Info("service container initialized",
+		"components", 30,
+		"llm_model", cfg.LLM.Model,
+		"workflow_enabled", workflowSvc != nil,
+	)
 
 	return &Container{
 		Auth:               NewAuthService(cfg, userRepo, aws, emailSvc, s3Svc, log),
@@ -104,16 +112,18 @@ func NewContainer(
 		Agent:              agentSvc,
 		ShoppingAgent:      NewShoppingAgentService(ap2Repo, agentSvc, intentProcessingSvc, ap2Signer, ap2MandateSvc, a2aClient, log),
 		MerchantAgent:      NewMerchantAgentService(ap2Repo, log),
-		CredentialProvider: NewCredentialProviderService(ap2Repo, log),
+		CredentialProvider: credentialProviderSvc,
 		PaymentProcessor:   NewPaymentProcessorService(ap2Repo, log),
 		Marketplace:        marketplaceSvc,
 		ProductMatching:    productMatchingSvc,
 		IntentProcessing:   intentProcessingSvc,
-		Razorpay:           razorpaySvc,
 		AgentDiscovery:     NewAgentDiscoveryService(ap2Repo, log),
 		LLM:                llmSvc,
 		A2ATask:            a2aTaskSvc,
 		A2APush:            a2aPushSvc,
 		Workflow:           workflowSvc,
+		Mentee:             menteeSvc,
+		Bargaining:         bargainingSvc,
+		AgentConfig:        agentConfigSvc,
 	}
 }

@@ -39,7 +39,17 @@ func (h *AgentDiscoveryHandler) GetAgentCard(c *gin.Context) {
 }
 
 // RegisterAgent registers an agent in the discovery registry
-// POST /api/v1/agents/register
+// @Summary Register agent
+// @Description Register an agent in the discovery registry.
+// @Tags Discovery
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body services.RegisterAgentRequest true "Agent registration details"
+// @Success 201 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /discovery/agents/register [post]
 func (h *AgentDiscoveryHandler) RegisterAgent(c *gin.Context) {
 	userID := c.GetString("user_id")
 
@@ -61,7 +71,21 @@ func (h *AgentDiscoveryHandler) RegisterAgent(c *gin.Context) {
 }
 
 // DiscoverAgents searches for agents
-// GET /api/v1/discovery/agents?query=...&type=...&capability=...&page=1&limit=10
+// @Summary Discover agents
+// @Description Search for agents using various filters like type, capability, jurisdiction, and currency.
+// @Tags Discovery
+// @Produce json
+// @Security BearerAuth
+// @Param query query string false "Search query"
+// @Param type query string false "Agent type filter"
+// @Param capability query string false "Capability filter"
+// @Param jurisdiction query string false "Jurisdiction filter"
+// @Param currency query string false "Currency filter"
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page" default(10)
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /discovery/agents [get]
 func (h *AgentDiscoveryHandler) DiscoverAgents(c *gin.Context) {
 	query := c.DefaultQuery("query", "")
 	agentType := c.DefaultQuery("type", "")
@@ -116,7 +140,16 @@ func (h *AgentDiscoveryHandler) DiscoverAgents(c *gin.Context) {
 }
 
 // GetPublicAgents retrieves all public agents
-// GET /api/v1/discovery/public-agents?page=1&limit=10
+// @Summary Get public agents
+// @Description Retrieve all publicly available agents with pagination.
+// @Tags Discovery
+// @Produce json
+// @Security BearerAuth
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page" default(10)
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /discovery/agents/public [get]
 func (h *AgentDiscoveryHandler) GetPublicAgents(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
@@ -144,7 +177,17 @@ func (h *AgentDiscoveryHandler) GetPublicAgents(c *gin.Context) {
 }
 
 // GetVerifiedAgents retrieves all verified agents
-// GET /api/v1/discovery/agents/verified?type=...&page=1&limit=10
+// @Summary Get verified agents
+// @Description Retrieve all verified agents, optionally filtered by type.
+// @Tags Discovery
+// @Produce json
+// @Security BearerAuth
+// @Param type query string false "Agent type filter"
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page" default(10)
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /discovery/agents/verified [get]
 func (h *AgentDiscoveryHandler) GetVerifiedAgents(c *gin.Context) {
 	agentType := c.DefaultQuery("type", "")
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
@@ -173,7 +216,18 @@ func (h *AgentDiscoveryHandler) GetVerifiedAgents(c *gin.Context) {
 }
 
 // GetAgentsByCapability retrieves agents with specific capabilities
-// GET /api/v1/discovery/agents/by-capability?capability=...&page=1&limit=10
+// @Summary Get agents by capability
+// @Description Retrieve agents that have specific capabilities.
+// @Tags Discovery
+// @Produce json
+// @Security BearerAuth
+// @Param capability query []string true "Capability filter (can specify multiple)"
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page" default(10)
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /discovery/agents/by-capability [get]
 func (h *AgentDiscoveryHandler) GetAgentsByCapability(c *gin.Context) {
 	capabilities := c.QueryArray("capability")
 
@@ -208,7 +262,15 @@ func (h *AgentDiscoveryHandler) GetAgentsByCapability(c *gin.Context) {
 }
 
 // GetAgentRegistry retrieves an agent's registry entry
-// GET /api/v1/discovery/agents/:agentID
+// @Summary Get agent registry entry
+// @Description Retrieve a specific agent's registry entry by agent ID.
+// @Tags Discovery
+// @Produce json
+// @Security BearerAuth
+// @Param agentID path string true "Agent ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 404 {object} map[string]string
+// @Router /discovery/agents/{agentID} [get]
 func (h *AgentDiscoveryHandler) GetAgentRegistry(c *gin.Context) {
 	agentID := c.Param("agentID")
 
@@ -223,7 +285,15 @@ func (h *AgentDiscoveryHandler) GetAgentRegistry(c *gin.Context) {
 }
 
 // VerifyAgent marks an agent as verified (admin only)
-// POST /api/v1/discovery/agents/:registryID/verify
+// @Summary Verify agent
+// @Description Mark an agent as verified. Requires admin role.
+// @Tags Discovery
+// @Produce json
+// @Security BearerAuth
+// @Param registryID path string true "Registry ID"
+// @Success 200 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /discovery/agents/{registryID}/verify [post]
 func (h *AgentDiscoveryHandler) VerifyAgent(c *gin.Context) {
 	registryID := c.Param("registryID")
 
@@ -237,7 +307,15 @@ func (h *AgentDiscoveryHandler) VerifyAgent(c *gin.Context) {
 }
 
 // UnverifyAgent removes verification from an agent (admin only)
-// POST /api/v1/discovery/agents/:registryID/unverify
+// @Summary Unverify agent
+// @Description Remove verification from an agent. Requires admin role.
+// @Tags Discovery
+// @Produce json
+// @Security BearerAuth
+// @Param registryID path string true "Registry ID"
+// @Success 200 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /discovery/agents/{registryID}/unverify [post]
 func (h *AgentDiscoveryHandler) UnverifyAgent(c *gin.Context) {
 	registryID := c.Param("registryID")
 
@@ -251,7 +329,15 @@ func (h *AgentDiscoveryHandler) UnverifyAgent(c *gin.Context) {
 }
 
 // DeactivateAgent deactivates an agent
-// POST /api/v1/discovery/agents/:registryID/deactivate
+// @Summary Deactivate agent
+// @Description Deactivate an agent in the registry. Requires admin role.
+// @Tags Discovery
+// @Produce json
+// @Security BearerAuth
+// @Param registryID path string true "Registry ID"
+// @Success 200 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /discovery/agents/{registryID}/deactivate [post]
 func (h *AgentDiscoveryHandler) DeactivateAgent(c *gin.Context) {
 	registryID := c.Param("registryID")
 
@@ -265,7 +351,15 @@ func (h *AgentDiscoveryHandler) DeactivateAgent(c *gin.Context) {
 }
 
 // ActivateAgent activates a deactivated agent
-// POST /api/v1/discovery/agents/:registryID/activate
+// @Summary Activate agent
+// @Description Activate a previously deactivated agent. Requires admin role.
+// @Tags Discovery
+// @Produce json
+// @Security BearerAuth
+// @Param registryID path string true "Registry ID"
+// @Success 200 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /discovery/agents/{registryID}/activate [post]
 func (h *AgentDiscoveryHandler) ActivateAgent(c *gin.Context) {
 	registryID := c.Param("registryID")
 
@@ -279,7 +373,15 @@ func (h *AgentDiscoveryHandler) ActivateAgent(c *gin.Context) {
 }
 
 // HealthCheck performs a health check on an agent
-// POST /api/v1/discovery/agents/:registryID/health-check
+// @Summary Health check agent
+// @Description Perform a health check on a registered agent. Requires admin role.
+// @Tags Discovery
+// @Produce json
+// @Security BearerAuth
+// @Param registryID path string true "Registry ID"
+// @Success 200 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /discovery/agents/{registryID}/health-check [post]
 func (h *AgentDiscoveryHandler) HealthCheck(c *gin.Context) {
 	registryID := c.Param("registryID")
 
@@ -293,7 +395,18 @@ func (h *AgentDiscoveryHandler) HealthCheck(c *gin.Context) {
 }
 
 // RateAgent rates an agent
-// POST /api/v1/discovery/agents/:registryID/rate
+// @Summary Rate agent
+// @Description Submit a rating and optional review for an agent.
+// @Tags Discovery
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param registryID path string true "Registry ID"
+// @Param input body object true "Rating details (rating: 1-5, review: optional string)"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /discovery/agents/{registryID}/rate [post]
 func (h *AgentDiscoveryHandler) RateAgent(c *gin.Context) {
 	registryID := c.Param("registryID")
 
@@ -317,7 +430,15 @@ func (h *AgentDiscoveryHandler) RateAgent(c *gin.Context) {
 }
 
 // RecordInquiry records an inquiry for an agent
-// POST /api/v1/discovery/agents/:registryID/inquiry
+// @Summary Record agent inquiry
+// @Description Record an inquiry event for a registered agent.
+// @Tags Discovery
+// @Produce json
+// @Security BearerAuth
+// @Param registryID path string true "Registry ID"
+// @Success 200 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /discovery/agents/{registryID}/inquiry [post]
 func (h *AgentDiscoveryHandler) RecordInquiry(c *gin.Context) {
 	registryID := c.Param("registryID")
 
@@ -331,7 +452,15 @@ func (h *AgentDiscoveryHandler) RecordInquiry(c *gin.Context) {
 }
 
 // RecordIntegration records an integration for an agent
-// POST /api/v1/discovery/agents/:registryID/integration
+// @Summary Record agent integration
+// @Description Record an integration event for a registered agent.
+// @Tags Discovery
+// @Produce json
+// @Security BearerAuth
+// @Param registryID path string true "Registry ID"
+// @Success 200 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /discovery/agents/{registryID}/integration [post]
 func (h *AgentDiscoveryHandler) RecordIntegration(c *gin.Context) {
 	registryID := c.Param("registryID")
 

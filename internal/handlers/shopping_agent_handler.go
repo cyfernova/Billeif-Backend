@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"invoice-backend/internal/models"
+	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/internal/services"
 	"invoice-backend/internal/utils"
 	"invoice-backend/pkg/logger"
@@ -12,12 +13,13 @@ import (
 )
 
 type ShoppingAgentHandler struct {
-	svc *services.ShoppingAgentService
-	log *logger.Logger
+	svc     *services.ShoppingAgentService
+	ap2Repo interfaces.AP2Repository
+	log     *logger.Logger
 }
 
-func NewShoppingAgentHandler(svc *services.ShoppingAgentService, log *logger.Logger) *ShoppingAgentHandler {
-	return &ShoppingAgentHandler{svc: svc, log: log}
+func NewShoppingAgentHandler(svc *services.ShoppingAgentService, ap2Repo interfaces.AP2Repository, log *logger.Logger) *ShoppingAgentHandler {
+	return &ShoppingAgentHandler{svc: svc, ap2Repo: ap2Repo, log: log}
 }
 
 type SearchProductsRequest struct {
@@ -79,6 +81,14 @@ func (h *ShoppingAgentHandler) CreateCart(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "agent_id parameter is required"})
 		return
 	}
+	agent, ok := requireOwnedAgent(c, h.ap2Repo, shoppingAgentID)
+	if !ok {
+		return
+	}
+	if agent.Type != "shopping" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+		return
+	}
 
 	var req CreateCartRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -114,6 +124,14 @@ func (h *ShoppingAgentHandler) AddToCart(c *gin.Context) {
 
 	if shoppingAgentID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "agent_id parameter is required"})
+		return
+	}
+	agent, ok := requireOwnedAgent(c, h.ap2Repo, shoppingAgentID)
+	if !ok {
+		return
+	}
+	if agent.Type != "shopping" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
 		return
 	}
 

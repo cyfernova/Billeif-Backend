@@ -196,12 +196,12 @@ type RuleBasedIntentParser struct {
 func NewRuleBasedIntentParser() *RuleBasedIntentParser {
 	return &RuleBasedIntentParser{
 		patterns: map[string][]string{
-			"phone":     {"electronics", "smartphones"},
-			"laptop":    {"electronics", "computers"},
-			"shirt":     {"clothing", "apparel"},
-			"shoes":     {"footwear", "shoes"},
-			"book":      {"books", "media"},
-			"watch":     {"electronics", "accessories"},
+			"phone":      {"electronics", "smartphones"},
+			"laptop":     {"electronics", "computers"},
+			"shirt":      {"clothing", "apparel"},
+			"shoes":      {"footwear", "shoes"},
+			"book":       {"books", "media"},
+			"watch":      {"electronics", "accessories"},
 			"headphones": {"electronics", "audio"},
 		},
 	}

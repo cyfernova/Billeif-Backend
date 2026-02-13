@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"invoice-backend/pkg/logger"
+
+	"github.com/gorilla/websocket"
 )
 
 const (
@@ -66,9 +67,9 @@ func (c *Client) ReadPump() {
 	}()
 
 	c.conn.SetReadLimit(maxMessageSize)
-	c.conn.SetReadDeadline(time.Now().Add(pongWait))
+	_ = c.conn.SetReadDeadline(time.Now().Add(pongWait))
 	c.conn.SetPongHandler(func(string) error {
-		c.conn.SetReadDeadline(time.Now().Add(pongWait))
+		_ = c.conn.SetReadDeadline(time.Now().Add(pongWait))
 		c.lastPingAt = time.Now()
 		return nil
 	})
@@ -105,10 +106,10 @@ func (c *Client) WritePump() {
 	for {
 		select {
 		case msg, ok := <-c.send:
-			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			_ = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
 				// Hub closed the channel
-				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				_ = c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
 
@@ -118,7 +119,7 @@ func (c *Client) WritePump() {
 			}
 
 		case <-ticker.C:
-			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			_ = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				c.log.Error("failed to send ping", "user_id", c.UserID, "error", err)
 				return
@@ -180,7 +181,7 @@ func (c *Client) handleOrderStatusQuery(msg *Message) {
 		Sender:    "system",
 		Timestamp: time.Now(),
 		Data: map[string]interface{}{
-			"status": "delivered",
+			"status":             "delivered",
 			"estimated_delivery": time.Now().Add(2 * 24 * time.Hour),
 		},
 	}
@@ -292,7 +293,7 @@ const (
 	MessageTypeHeartbeat MessageType = "heartbeat"
 
 	// Order messages
-	MessageTypeOrderStatusQuery MessageType = "order_status_query"
+	MessageTypeOrderStatusQuery  MessageType = "order_status_query"
 	MessageTypeOrderStatusUpdate MessageType = "order_status_update"
 	MessageTypeOrderCreated      MessageType = "order_created"
 
@@ -313,20 +314,20 @@ const (
 
 // OrderStatusUpdate represents an order status update message
 type OrderStatusUpdate struct {
-	OrderID        string    `json:"order_id"`
-	Status         string    `json:"status"`
-	UpdatedAt      time.Time `json:"updated_at"`
-	Message        string    `json:"message,omitempty"`
+	OrderID           string     `json:"order_id"`
+	Status            string     `json:"status"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+	Message           string     `json:"message,omitempty"`
 	EstimatedDelivery *time.Time `json:"estimated_delivery,omitempty"`
 }
 
 // PaymentUpdateData represents a payment update message
 type PaymentUpdateData struct {
-	OrderID    string  `json:"order_id"`
-	Amount     float64 `json:"amount"`
-	Status     string  `json:"status"`
-	Error      string  `json:"error,omitempty"`
-	RazorpayID string  `json:"razorpay_id,omitempty"`
+	OrderID    string    `json:"order_id"`
+	Amount     float64   `json:"amount"`
+	Status     string    `json:"status"`
+	Error      string    `json:"error,omitempty"`
+	RazorpayID string    `json:"razorpay_id,omitempty"`
 	Timestamp  time.Time `json:"timestamp"`
 }
 
@@ -340,12 +341,12 @@ type AgentActionData struct {
 
 // TaskUpdateData represents a task update message
 type TaskUpdateData struct {
-	TaskID       string                 `json:"task_id"`
-	Status       string                 `json:"status"`
-	Progress     int                    `json:"progress"`
-	Message      string                 `json:"message,omitempty"`
-	Data         map[string]interface{} `json:"data,omitempty"`
-	Timestamp    time.Time              `json:"timestamp"`
+	TaskID    string                 `json:"task_id"`
+	Status    string                 `json:"status"`
+	Progress  int                    `json:"progress"`
+	Message   string                 `json:"message,omitempty"`
+	Data      map[string]interface{} `json:"data,omitempty"`
+	Timestamp time.Time              `json:"timestamp"`
 }
 
 // NewOrderStatusUpdateMessage creates a new order status update message

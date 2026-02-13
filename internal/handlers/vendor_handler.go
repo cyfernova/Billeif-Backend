@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"invoice-backend/internal/models"
 	"net/http"
 
 	"invoice-backend/internal/services"
@@ -32,17 +33,27 @@ func NewVendorHandler(svc *services.VendorService, log *logger.Logger) *VendorHa
 // @Failure 500 {object} map[string]string
 // @Router /vendors [post]
 func (h *VendorHandler) Create(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("vendor_handler").With("operation", "create")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	var input services.CreateVendorInput
 	if err := c.ShouldBindJSON(&input); err != nil {
+		log.Warn("invalid create vendor payload", "error", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	input.BusinessID = businessID
 
+	var vendor *models.Vendor
 	vendor, err := h.svc.Create(c.Request.Context(), input)
 	if err != nil {
+		log.Error("failed to create vendor", "error", err, "business_id", input.BusinessID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("vendor created", "vendor_id", vendor.ID, "business_id", vendor.BusinessID)
 
 	c.JSON(http.StatusCreated, vendor)
 }
@@ -58,9 +69,16 @@ func (h *VendorHandler) Create(c *gin.Context) {
 // @Failure 404 {object} map[string]string
 // @Router /vendors/{id} [get]
 func (h *VendorHandler) Get(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("vendor_handler").With("operation", "get")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
-	vendor, err := h.svc.Get(c.Request.Context(), id)
+	var vendor *models.Vendor
+	vendor, err := h.svc.GetByBusiness(c.Request.Context(), businessID, id)
 	if err != nil {
+		log.Error("failed to get vendor", "error", err, "vendor_id", id)
 		c.JSON(http.StatusNotFound, gin.H{"error": "vendor not found"})
 		return
 	}
@@ -82,9 +100,9 @@ func (h *VendorHandler) Get(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /vendors [get]
 func (h *VendorHandler) List(c *gin.Context) {
-	businessID := c.Query("business_id")
-	if businessID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "business_id is required"})
+	log := logger.FromContext(c.Request.Context()).Named("vendor_handler").With("operation", "list")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
 		return
 	}
 
@@ -92,9 +110,11 @@ func (h *VendorHandler) List(c *gin.Context) {
 
 	vendors, total, err := h.svc.List(c.Request.Context(), businessID, page, limit)
 	if err != nil {
+		log.Error("failed to list vendors", "error", err, "business_id", businessID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Debug("vendors listed", "business_id", businessID, "count", len(vendors), "total", total)
 
 	c.JSON(http.StatusOK, gin.H{
 		"data":  vendors,
@@ -118,18 +138,31 @@ func (h *VendorHandler) List(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /vendors/{id} [put]
 func (h *VendorHandler) Update(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("vendor_handler").With("operation", "update")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
 	var input services.UpdateVendorInput
 	if err := c.ShouldBindJSON(&input); err != nil {
+		log.Warn("invalid update vendor payload", "error", err, "vendor_id", id)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	vendor, err := h.svc.Update(c.Request.Context(), id, input)
+	var vendor *models.Vendor
+	vendor, err := h.svc.UpdateByBusiness(c.Request.Context(), businessID, id, input)
 	if err != nil {
+		log.Error("failed to update vendor", "error", err, "vendor_id", id)
+		if isNotFoundErr(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "vendor not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("vendor updated", "vendor_id", vendor.ID)
 
 	c.JSON(http.StatusOK, vendor)
 }
@@ -145,11 +178,22 @@ func (h *VendorHandler) Update(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /vendors/{id} [delete]
 func (h *VendorHandler) Delete(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("vendor_handler").With("operation", "delete")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
-	if err := h.svc.Delete(c.Request.Context(), id); err != nil {
+	if err := h.svc.DeleteByBusiness(c.Request.Context(), businessID, id); err != nil {
+		log.Error("failed to delete vendor", "error", err, "vendor_id", id)
+		if isNotFoundErr(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "vendor not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("vendor deleted", "vendor_id", id)
 
 	c.JSON(http.StatusNoContent, nil)
 }

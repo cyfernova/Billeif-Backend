@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"invoice-backend/internal/models"
@@ -19,7 +20,7 @@ func NewVendorService(repo interfaces.VendorRepository, log *logger.Logger) *Ven
 }
 
 type CreateVendorInput struct {
-	BusinessID   string `json:"business_id" binding:"required,uuid"`
+	BusinessID   string `json:"business_id,omitempty"`
 	Name         string `json:"name" binding:"required,min=2"`
 	Email        string `json:"email" binding:"required,email"`
 	Phone        string `json:"phone"`
@@ -33,6 +34,7 @@ type CreateVendorInput struct {
 }
 
 func (s *VendorService) Create(ctx context.Context, input CreateVendorInput) (*models.Vendor, error) {
+	log := logger.FromContext(ctx).With("service", "vendor", "operation", "create", "business_id", input.BusinessID)
 	vendor := &models.Vendor{
 		BusinessID:   input.BusinessID,
 		Name:         input.Name,
@@ -48,18 +50,44 @@ func (s *VendorService) Create(ctx context.Context, input CreateVendorInput) (*m
 	}
 
 	if err := s.repo.Create(ctx, vendor); err != nil {
+		log.Error("failed to create vendor", "error", err)
 		return nil, fmt.Errorf("failed to create vendor: %w", err)
 	}
 
+	log.Info("vendor created", "vendor_id", vendor.ID)
 	return vendor, nil
 }
 
 func (s *VendorService) Get(ctx context.Context, id string) (*models.Vendor, error) {
-	return s.repo.GetByID(ctx, id)
+	log := logger.FromContext(ctx).With("service", "vendor", "operation", "get", "vendor_id", id)
+	vendor, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		log.Error("failed to get vendor", "error", err)
+		return nil, err
+	}
+	return vendor, nil
+}
+
+func (s *VendorService) GetByBusiness(ctx context.Context, businessID, id string) (*models.Vendor, error) {
+	vendor, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if vendor.BusinessID != businessID {
+		return nil, errors.New("vendor not found")
+	}
+	return vendor, nil
 }
 
 func (s *VendorService) List(ctx context.Context, businessID string, page, limit int) ([]*models.Vendor, int64, error) {
-	return s.repo.GetByBusinessID(ctx, businessID, page, limit)
+	log := logger.FromContext(ctx).With("service", "vendor", "operation", "list", "business_id", businessID, "page", page, "limit", limit)
+	vendors, total, err := s.repo.GetByBusinessID(ctx, businessID, page, limit)
+	if err != nil {
+		log.Error("failed to list vendors", "error", err)
+		return nil, 0, err
+	}
+	log.Debug("listed vendors", "count", len(vendors), "total", total)
+	return vendors, total, nil
 }
 
 type UpdateVendorInput struct {
@@ -76,8 +104,10 @@ type UpdateVendorInput struct {
 }
 
 func (s *VendorService) Update(ctx context.Context, id string, input UpdateVendorInput) (*models.Vendor, error) {
+	log := logger.FromContext(ctx).With("service", "vendor", "operation", "update", "vendor_id", id)
 	vendor, err := s.repo.GetByID(ctx, id)
 	if err != nil {
+		log.Error("failed to load vendor for update", "error", err)
 		return nil, err
 	}
 
@@ -113,12 +143,83 @@ func (s *VendorService) Update(ctx context.Context, id string, input UpdateVendo
 	}
 
 	if err := s.repo.Update(ctx, vendor); err != nil {
+		log.Error("failed to update vendor", "error", err)
 		return nil, err
 	}
 
+	log.Info("vendor updated", "vendor_id", vendor.ID)
+	return vendor, nil
+}
+
+func (s *VendorService) UpdateByBusiness(ctx context.Context, businessID, id string, input UpdateVendorInput) (*models.Vendor, error) {
+	log := logger.FromContext(ctx).With("service", "vendor", "operation", "update", "vendor_id", id, "business_id", businessID)
+	vendor, err := s.GetByBusiness(ctx, businessID, id)
+	if err != nil {
+		log.Error("failed to load vendor for scoped update", "error", err)
+		return nil, err
+	}
+
+	if input.Name != "" {
+		vendor.Name = input.Name
+	}
+	if input.Email != "" {
+		vendor.Email = input.Email
+	}
+	if input.Phone != "" {
+		vendor.Phone = input.Phone
+	}
+	if input.Address != "" {
+		vendor.Address = input.Address
+	}
+	if input.City != "" {
+		vendor.City = input.City
+	}
+	if input.State != "" {
+		vendor.State = input.State
+	}
+	if input.Country != "" {
+		vendor.Country = input.Country
+	}
+	if input.PostalCode != "" {
+		vendor.PostalCode = input.PostalCode
+	}
+	if input.TaxID != "" {
+		vendor.TaxID = input.TaxID
+	}
+	if input.PaymentTerms != "" {
+		vendor.PaymentTerms = input.PaymentTerms
+	}
+
+	if err := s.repo.Update(ctx, vendor); err != nil {
+		log.Error("failed to update vendor", "error", err)
+		return nil, err
+	}
+
+	log.Info("vendor updated", "vendor_id", vendor.ID)
 	return vendor, nil
 }
 
 func (s *VendorService) Delete(ctx context.Context, id string) error {
-	return s.repo.Delete(ctx, id)
+	log := logger.FromContext(ctx).With("service", "vendor", "operation", "delete", "vendor_id", id)
+	if err := s.repo.Delete(ctx, id); err != nil {
+		log.Error("failed to delete vendor", "error", err)
+		return err
+	}
+	log.Info("vendor deleted", "vendor_id", id)
+	return nil
+}
+
+func (s *VendorService) DeleteByBusiness(ctx context.Context, businessID, id string) error {
+	log := logger.FromContext(ctx).With("service", "vendor", "operation", "delete", "vendor_id", id, "business_id", businessID)
+	vendor, err := s.GetByBusiness(ctx, businessID, id)
+	if err != nil {
+		log.Error("failed to load vendor for scoped delete", "error", err)
+		return err
+	}
+	if err := s.repo.Delete(ctx, vendor.ID); err != nil {
+		log.Error("failed to delete vendor", "error", err)
+		return err
+	}
+	log.Info("vendor deleted", "vendor_id", vendor.ID)
+	return nil
 }

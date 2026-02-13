@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"invoice-backend/internal/models"
 	"net/http"
 
 	"invoice-backend/internal/services"
@@ -32,17 +33,27 @@ func NewProductHandler(svc *services.ProductService, log *logger.Logger) *Produc
 // @Failure 500 {object} map[string]string
 // @Router /products [post]
 func (h *ProductHandler) Create(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "create")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	var input services.CreateProductInput
 	if err := c.ShouldBindJSON(&input); err != nil {
+		log.Warn("invalid create product payload", "error", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	input.BusinessID = businessID
 
+	var product *models.Product
 	product, err := h.svc.Create(c.Request.Context(), input)
 	if err != nil {
+		log.Error("failed to create product", "error", err, "business_id", input.BusinessID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("product created", "product_id", product.ID, "business_id", product.BusinessID)
 
 	c.JSON(http.StatusCreated, product)
 }
@@ -58,9 +69,16 @@ func (h *ProductHandler) Create(c *gin.Context) {
 // @Failure 404 {object} map[string]string
 // @Router /products/{id} [get]
 func (h *ProductHandler) Get(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "get")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
-	product, err := h.svc.Get(c.Request.Context(), id)
+	var product *models.Product
+	product, err := h.svc.GetByBusiness(c.Request.Context(), businessID, id)
 	if err != nil {
+		log.Error("failed to get product", "error", err, "product_id", id)
 		c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
 		return
 	}
@@ -82,9 +100,9 @@ func (h *ProductHandler) Get(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /products [get]
 func (h *ProductHandler) List(c *gin.Context) {
-	businessID := c.Query("business_id")
-	if businessID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "business_id is required"})
+	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "list")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
 		return
 	}
 
@@ -92,9 +110,11 @@ func (h *ProductHandler) List(c *gin.Context) {
 
 	products, total, err := h.svc.List(c.Request.Context(), businessID, page, limit)
 	if err != nil {
+		log.Error("failed to list products", "error", err, "business_id", businessID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Debug("products listed", "business_id", businessID, "count", len(products), "total", total)
 
 	c.JSON(http.StatusOK, gin.H{
 		"data":  products,
@@ -118,18 +138,31 @@ func (h *ProductHandler) List(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /products/{id} [put]
 func (h *ProductHandler) Update(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "update")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
 	var input services.UpdateProductInput
 	if err := c.ShouldBindJSON(&input); err != nil {
+		log.Warn("invalid update product payload", "error", err, "product_id", id)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	product, err := h.svc.Update(c.Request.Context(), id, input)
+	var product *models.Product
+	product, err := h.svc.UpdateByBusiness(c.Request.Context(), businessID, id, input)
 	if err != nil {
+		log.Error("failed to update product", "error", err, "product_id", id)
+		if isNotFoundErr(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("product updated", "product_id", product.ID)
 
 	c.JSON(http.StatusOK, product)
 }
@@ -145,11 +178,22 @@ func (h *ProductHandler) Update(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /products/{id} [delete]
 func (h *ProductHandler) Delete(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "delete")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
-	if err := h.svc.Delete(c.Request.Context(), id); err != nil {
+	if err := h.svc.DeleteByBusiness(c.Request.Context(), businessID, id); err != nil {
+		log.Error("failed to delete product", "error", err, "product_id", id)
+		if isNotFoundErr(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("product deleted", "product_id", id)
 
 	c.JSON(http.StatusNoContent, nil)
 }
@@ -166,17 +210,28 @@ func (h *ProductHandler) Delete(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /products/{id}/image [post]
 func (h *ProductHandler) UploadImage(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "upload_image")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
 	contentType := c.GetHeader("Content-Type")
 	if contentType == "" {
 		contentType = "image/png"
 	}
 
-	url, err := h.svc.GetImageUploadURL(c.Request.Context(), id, contentType)
+	url, err := h.svc.GetImageUploadURLByBusiness(c.Request.Context(), businessID, id, contentType)
 	if err != nil {
+		log.Error("failed to generate product image upload URL", "error", err, "product_id", id)
+		if isNotFoundErr(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("product image upload URL generated", "product_id", id)
 
 	c.JSON(http.StatusOK, gin.H{"upload_url": url})
 }
@@ -195,18 +250,30 @@ func (h *ProductHandler) UploadImage(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /products/{id}/stock [post]
 func (h *ProductHandler) AdjustStock(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "adjust_stock")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
 	var input services.StockAdjustmentInput
 	if err := c.ShouldBindJSON(&input); err != nil {
+		log.Warn("invalid stock adjustment payload", "error", err, "product_id", id)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	product, err := h.svc.AdjustStock(c.Request.Context(), id, input)
+	product, err := h.svc.AdjustStockByBusiness(c.Request.Context(), businessID, id, input)
 	if err != nil {
+		log.Error("failed to adjust stock", "error", err, "product_id", id)
+		if isNotFoundErr(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	log.Info("product stock adjusted", "product_id", id, "stock_level", product.StockLevel)
 
 	c.JSON(http.StatusOK, product)
 }
