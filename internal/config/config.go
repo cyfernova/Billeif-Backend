@@ -116,6 +116,7 @@ func Load() (*Config, error) {
 	// Sensible defaults for logging
 	viper.SetDefault("LOGGING.LEVEL", "info")
 	viper.SetDefault("LOGGING.FORMAT", "json")
+	viper.SetDefault("LOGGING.STACKTRACE_LEVEL", "error")
 
 	// Explicitly bind environment variables for nested config
 	_ = viper.BindEnv("ENVIRONMENT")

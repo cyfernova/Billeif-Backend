@@ -96,7 +96,7 @@ func validateLogging(logging LoggingConfig) error {
 
 	stackLevel := strings.ToLower(strings.TrimSpace(logging.StacktraceLevel))
 	switch stackLevel {
-	case "debug", "info", "warn", "error", "dpanic", "panic", "fatal":
+	case "", "debug", "info", "warn", "error", "dpanic", "panic", "fatal":
 	default:
 		return fmt.Errorf("LOG_STACKTRACE_LEVEL must be one of: debug, info, warn, error, dpanic, panic, fatal")
 	}
