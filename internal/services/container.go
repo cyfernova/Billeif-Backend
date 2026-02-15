@@ -42,6 +42,7 @@ type Container struct {
 	Mentee             *MenteeService
 	Bargaining         *BargainingService
 	AgentConfig        *AgentConfigService
+	A2ABargaining      *A2ABargainingService
 }
 
 func NewContainer(
@@ -82,6 +83,7 @@ func NewContainer(
 	a2aTaskSvc := NewA2ATaskService(db, log, a2aPushSvc)
 	workflowSvc := NewWorkflowService(db, log, emailSvc, a2aPushSvc)
 	bargainingSvc := NewBargainingService(ap2Repo, a2aClient, agentSvc, menteeSvc, log)
+	a2aBargainingSvc := NewA2ABargainingService(a2aClient, bargainingSvc, menteeSvc, log)
 	agentConfigSvc := NewAgentConfigService(".well-known", log)
 	credentialProviderSvc, err := NewCredentialProviderService(ap2Repo, cfg.Credentials.EncryptionKey, log)
 	if err != nil {
@@ -89,7 +91,7 @@ func NewContainer(
 	}
 
 	log.Info("service container initialized",
-		"components", 30,
+		"components", 31,
 		"llm_model", cfg.LLM.Model,
 		"workflow_enabled", workflowSvc != nil,
 	)
@@ -125,5 +127,6 @@ func NewContainer(
 		Mentee:             menteeSvc,
 		Bargaining:         bargainingSvc,
 		AgentConfig:        agentConfigSvc,
+		A2ABargaining:      a2aBargainingSvc,
 	}
 }

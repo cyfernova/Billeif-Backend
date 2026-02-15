@@ -610,6 +610,14 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			bargaining.GET("/negotiations/:id/suggest", h.Bargaining.GetSuggestedCounterOffer)
 		}
 
+		// A2A Bargaining endpoints
+		a2aBargaining := protected.Group("/a2a-bargaining")
+		{
+			a2aBargaining.POST("/start", h.A2ABargaining.StartNegotiation)
+			a2aBargaining.GET("/progress/:sessionId", h.A2ABargaining.GetSessionProgress)
+			a2aBargaining.POST("/stop/:sessionId", h.A2ABargaining.StopNegotiation)
+		}
+
 		admin := api.Group("/admin")
 		admin.Use(middleware.Auth(cfg.Cognito, log))
 		admin.Use(middleware.RequireRole("admin"))

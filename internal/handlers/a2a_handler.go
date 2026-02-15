@@ -22,14 +22,15 @@ type MarketplaceProvider interface {
 
 // A2AMessageHandler handles agent-to-agent communication
 type A2AMessageHandler struct {
-	shopping    *services.ShoppingAgentService
-	merchant    *services.MerchantAgentService
-	credential  *services.CredentialProviderService
-	payment     *services.PaymentProcessorService
-	marketplace MarketplaceProvider
-	a2aClient   *a2a.A2AClient
-	signature   *ap2.SignatureService
-	log         *logger.Logger
+	shopping      *services.ShoppingAgentService
+	merchant      *services.MerchantAgentService
+	credential    *services.CredentialProviderService
+	payment       *services.PaymentProcessorService
+	marketplace   MarketplaceProvider
+	a2aClient     *a2a.A2AClient
+	signature     *ap2.SignatureService
+	a2aBargaining *services.A2ABargainingService
+	log           *logger.Logger
 }
 
 // NewA2AMessageHandler creates a new A2A message handler
@@ -41,17 +42,19 @@ func NewA2AMessageHandler(
 	marketplace MarketplaceProvider,
 	a2aClient *a2a.A2AClient,
 	signature *ap2.SignatureService,
+	a2aBargaining *services.A2ABargainingService,
 	log *logger.Logger,
 ) *A2AMessageHandler {
 	return &A2AMessageHandler{
-		shopping:    shopping,
-		merchant:    merchant,
-		credential:  credential,
-		payment:     payment,
-		marketplace: marketplace,
-		a2aClient:   a2aClient,
-		signature:   signature,
-		log:         log,
+		shopping:      shopping,
+		merchant:      merchant,
+		credential:    credential,
+		payment:       payment,
+		marketplace:   marketplace,
+		a2aClient:     a2aClient,
+		signature:     signature,
+		a2aBargaining: a2aBargaining,
+		log:           log,
 	}
 }
 
@@ -122,6 +125,72 @@ func (h *A2AMessageHandler) routeMessage(c *gin.Context, msg *a2a.A2AMessage) (*
 	default:
 		return nil, fmt.Errorf("unsupported message type: %s", msg.MessageType)
 	}
+}
+
+func (h *A2AMessageHandler) handleNegotiateStart(c *gin.Context, msg *a2a.A2AMessage) (*a2a.A2AMessage, error) {
+	h.log.Info("handling negotiate.start message", "message_id", msg.MessageID, "sender", msg.SenderID, "receiver", msg.ReceiverID)
+
+	var payload map[string]interface{}
+	if err := a2a.ExtractPayload(msg, &payload); err != nil {
+		return nil, fmt.Errorf("failed to extract negotiation payload: %w", err)
+	}
+
+	negotiationID, ok := payload["negotiation_id"].(string)
+	if !ok {
+		return nil, fmt.Errorf("missing negotiation_id in payload")
+	}
+
+	roundNumber, ok := payload["round_number"].(float64)
+	if !ok {
+		return nil, fmt.Errorf("missing round_number in payload")
+	}
+
+	currentAmount, ok := payload["current_amount"].(float64)
+	if !ok {
+		return nil, fmt.Errorf("missing current_amount in payload")
+	}
+
+	agentType, ok := payload["agent_type"].(string)
+	if !ok {
+		return nil, fmt.Errorf("missing agent_type in payload")
+	}
+
+	action, ok := payload["action"].(string)
+	if !ok {
+		return nil, fmt.Errorf("missing action in payload")
+	}
+
+	reason, _ := payload["reason"].(string)
+	confidence, _ := payload["confidence"].(float64)
+
+	h.log.Info("processing A2A bargaining counteroffer",
+		"negotiation_id", negotiationID,
+		"round", roundNumber,
+		"agent_type", agentType,
+		"action", action,
+		"amount", currentAmount)
+
+	response := a2a.NewA2AMessage(msg.ReceiverID, msg.SenderID, a2a.MessageTypeNegotiateAccept)
+	response.TaskID = msg.TaskID
+	response.CorrelationID = msg.CorrelationID
+	response.ReferenceID = &msg.MessageID
+
+	if _, err := response.WithPayload(map[string]interface{}{
+		"negotiation_id": negotiationID,
+		"round_number":   roundNumber,
+		"current_amount": currentAmount,
+		"agent_type":     agentType,
+		"action":         action,
+		"reason":         reason,
+		"confidence":     confidence,
+		"accepted":       true,
+	}); err != nil {
+		return nil, fmt.Errorf("failed to set response payload: %w", err)
+	}
+
+	h.log.Info("A2A bargaining counteroffer acknowledged", "message_id", msg.MessageID, "negotiation_id", negotiationID)
+
+	return response, nil
 }
 
 // handleTaskStart processes task.start messages
@@ -441,30 +510,6 @@ func (h *A2AMessageHandler) handleQueryCapabilities(c *gin.Context, msg *a2a.A2A
 
 	if _, err := response.WithPayload(capPayload); err != nil {
 		return nil, fmt.Errorf("failed to set capabilities payload: %w", err)
-	}
-
-	return response, nil
-}
-
-// handleNegotiateStart processes negotiate.start messages
-func (h *A2AMessageHandler) handleNegotiateStart(c *gin.Context, msg *a2a.A2AMessage) (*a2a.A2AMessage, error) {
-	h.log.Info("received negotiation start", "message_id", msg.MessageID, "sender", msg.SenderID)
-
-	// Accept negotiation
-	response := a2a.NewA2AMessage(msg.ReceiverID, msg.SenderID, a2a.MessageTypeNegotiateAccept)
-	response.CorrelationID = msg.CorrelationID
-	response.ReferenceID = &msg.MessageID
-
-	if _, err := response.WithPayload(map[string]interface{}{
-		"negotiation_accepted": true,
-		"protocol_version":     "1.0",
-		"supported_features": []string{
-			"message_signing",
-			"retry_logic",
-			"task_correlation",
-		},
-	}); err != nil {
-		return nil, fmt.Errorf("failed to set negotiation payload: %w", err)
 	}
 
 	return response, nil

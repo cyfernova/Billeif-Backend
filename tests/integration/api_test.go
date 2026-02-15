@@ -46,6 +46,31 @@ func (c *APIClient) Get(t *testing.T, path string) (*http.Response, map[string]i
 	return c.Request(t, "GET", path, nil)
 }
 
+func (c *APIClient) Delete(t *testing.T, path string) (*http.Response, map[string]interface{}) {
+	return c.Request(t, "DELETE", path, nil)
+}
+
+func (c *APIClient) GetArray(t *testing.T, path string) (*http.Response, []interface{}) {
+	var bodyReader *bytes.Buffer
+	req, err := http.NewRequest("GET", c.BaseURL+path, bodyReader)
+	require.NoError(t, err)
+
+	req.Header.Set("Content-Type", "application/json")
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+
+	resp, err := c.Client.Do(req)
+	require.NoError(t, err)
+
+	var result []interface{}
+	if resp.StatusCode != http.StatusNoContent {
+		json.NewDecoder(resp.Body).Decode(&result)
+	}
+
+	return resp, result
+}
+
 func (c *APIClient) Request(t *testing.T, method, path string, body interface{}) (*http.Response, map[string]interface{}) {
 	var bodyReader *bytes.Buffer
 	if body != nil {

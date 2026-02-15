@@ -37,6 +37,7 @@ func TestHandleMessage(t *testing.T) {
 		mockMarketplace,
 		a2aClient,
 		sigSvc,
+		nil, // a2a bargaining
 		log,
 	)
 

@@ -39,6 +39,7 @@ type Handler struct {
 	Workflow       *WorkflowHandler
 	Bargaining     *BargainingHandler
 	AgentConfig    *AgentConfigHandler
+	A2ABargaining  *A2ABargainingHandler
 }
 
 func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log *logger.Logger) *Handler {
@@ -75,7 +76,7 @@ func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log 
 		Marketplace:    NewMarketplaceHandler(svcs.Marketplace, repos.AP2, log),
 		AgentDiscovery: NewAgentDiscoveryHandler(svcs.AgentDiscovery, log),
 		Intent:         NewIntentHandler(svcs.IntentProcessing, log),
-		A2AMessage:     NewA2AMessageHandler(svcs.ShoppingAgent, svcs.MerchantAgent, svcs.CredentialProvider, svcs.PaymentProcessor, svcs.Marketplace, a2aClient, sigSvc, log),
+		A2AMessage:     NewA2AMessageHandler(svcs.ShoppingAgent, svcs.MerchantAgent, svcs.CredentialProvider, svcs.PaymentProcessor, svcs.Marketplace, a2aClient, sigSvc, svcs.A2ABargaining, log),
 		WebSocket:      NewWebSocketHandler(wsHub, log),
 		LLM:            NewLLMHandler(svcs.LLM, log),
 		WellKnown:      NewWellKnownHandler(cfg, log),
@@ -84,6 +85,7 @@ func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log 
 		Workflow:       NewWorkflowHandler(svcs.Workflow, log),
 		Bargaining:     NewBargainingHandler(svcs.Bargaining, log),
 		AgentConfig:    NewAgentConfigHandler(svcs.AgentConfig, svcs.Agent, svcs.Bargaining, svcs.Mentee, log),
+		A2ABargaining:  NewA2ABargainingHandler(svcs.A2ABargaining, svcs.Agent, log),
 	}
 }
 
