@@ -26,15 +26,17 @@ type BargainingService struct {
 	a2aClient    *a2a.A2AClient
 	agentService *AgentService
 	mentee       *MenteeService
+	llm          *LLMService
 	log          *logger.Logger
 }
 
-func NewBargainingService(ap2Repo interfaces.AP2Repository, a2aClient *a2a.A2AClient, agentService *AgentService, mentee *MenteeService, log *logger.Logger) *BargainingService {
+func NewBargainingService(ap2Repo interfaces.AP2Repository, a2aClient *a2a.A2AClient, agentService *AgentService, mentee *MenteeService, llm *LLMService, log *logger.Logger) *BargainingService {
 	return &BargainingService{
 		ap2Repo:      ap2Repo,
 		a2aClient:    a2aClient,
 		agentService: agentService,
 		mentee:       mentee,
+		llm:          llm,
 		log:          log,
 	}
 }
@@ -510,4 +512,255 @@ func (s *BargainingService) notifyAgentNegotiationComplete(ctx context.Context, 
 	if _, err := s.a2aClient.StartTask(ctx, *receiverAgent.A2AEndpoint, agent.ID, receiverID, taskPayload); err != nil {
 		s.log.Error("failed to send negotiation complete notification", "error", err, "receiver_id", receiverID)
 	}
+}
+
+type LLMBargainingRequest struct {
+	AgentID       string  `json:"agent_id"`
+	AgentType     string  `json:"agent_type"`
+	NegotiationID string  `json:"negotiation_id"`
+	CurrentAmount float64 `json:"current_amount"`
+	InitialAmount float64 `json:"initial_amount"`
+	Round         int     `json:"round"`
+	MaxRounds     int     `json:"max_rounds"`
+	OpponentID    string  `json:"opponent_id"`
+	HistoryRounds int     `json:"history_rounds"`
+}
+
+type LLMBargainingResponse struct {
+	Action         string  `json:"action"`
+	ProposedAmount float64 `json:"proposed_amount"`
+	Reason         string  `json:"reason"`
+	Confidence     float64 `json:"confidence"`
+}
+
+func (s *BargainingService) GetLLMBargainingDecision(ctx context.Context, agentID, agentType, negotiationID string) (*LLMBargainingResponse, error) {
+	if s.llm == nil {
+		return nil, fmt.Errorf("LLM service not available")
+	}
+
+	negotiation, err := s.GetNegotiation(ctx, negotiationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get negotiation: %w", err)
+	}
+
+	rounds, err := s.ap2Repo.GetBargainingRounds(ctx, negotiationID)
+	if err != nil {
+		s.log.Warn("failed to get negotiation rounds", "error", err)
+		rounds = []*models.BargainingRound{}
+	}
+
+	agent, err := s.agentService.GetAgentByID(ctx, agentID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get agent: %w", err)
+	}
+
+	var opponentID string
+	if agentType == "buyer" {
+		opponentID = negotiation.SellerAgentID
+	} else {
+		opponentID = negotiation.BuyerAgentID
+	}
+
+	opponentAgent, err := s.agentService.GetAgentByID(ctx, opponentID)
+	if err != nil {
+		s.log.Warn("failed to get opponent agent", "error", err)
+	}
+	_ = opponentAgent
+
+	agentConfig := make(map[string]interface{})
+	if agent.Config != "" {
+		json.Unmarshal([]byte(agent.Config), &agentConfig)
+	}
+
+	contextText := fmt.Sprintf(`# Bargaining Strategy Advisor
+
+You are an AI bargaining assistant helping an agent make optimal negotiation decisions.
+
+## Your Role
+Analyze current negotiation state and provide a strategic recommendation for next move.
+
+## Agent Types
+- Buyer: Wants to minimize price, can accept any price lower than current
+- Seller: Wants to maximize price, can accept any price higher than current
+
+## Decision Options
+1. counteroffer: Propose a new amount (decrease if buyer, increase if seller)
+2. accept: Agree to current amount (negotiation ends successfully)
+3. reject: Walk away from negotiation (ends without agreement)
+
+## Strategic Considerations
+- Consider round number (early rounds can be more aggressive)
+- Current amount vs initial amount (total concession so far)
+- Remaining rounds (less rounds = more urgency)
+- Volatility factors (higher volatility = more flexibility)
+- Historical patterns from opponent (if available)
+
+## Response Format
+Respond with ONLY valid JSON:
+{
+  "action": "counteroffer|accept|reject",
+  "proposed_amount": <number>,
+  "reason": "<brief strategic reasoning>",
+  "confidence": <0.0-1.0>
+}
+
+## Constraints
+- proposed_amount must be positive
+- For buyers: proposed_amount must be less than or equal to current_amount (and ideally greater than or equal to 30%% of initial)
+- For sellers: proposed_amount must be greater than or equal to current_amount (and ideally less than or equal to 150%% of initial)
+- Confidence should reflect your certainty in the recommendation
+
+## Current Negotiation Context
+- Agent ID: %s
+- Agent Type: %s
+- Opponent ID: %s
+- Current Amount: %.2f
+- Initial Amount: %.2f
+- Round: %d / %d
+- Buyer Volatility: %.2f
+- Seller Volatility: %.2f
+- Previous Rounds: %d
+`, agentID, agentType, opponentID, negotiation.CurrentAmount, negotiation.InitialAmount, negotiation.Rounds, negotiation.MaxRounds, negotiation.BuyerVolatility, negotiation.SellerVolatility, len(rounds))
+
+	if len(agentConfig) > 0 {
+		if volatility, ok := agentConfig["volatility"].(float64); ok {
+			contextText += fmt.Sprintf("\n- Agent Volatility: %.2f", volatility)
+		}
+		if strategies, ok := agentConfig["preferred_strategies"].([]interface{}); ok {
+			contextText += "\n- Preferred Strategies: "
+			for i, s := range strategies {
+				if i > 0 {
+					contextText += ", "
+				}
+				contextText += fmt.Sprintf("%v", s)
+			}
+		}
+	}
+
+	messages := []ChatMessage{
+		{Role: "system", Content: contextText},
+		{Role: "user", Content: fmt.Sprintf("What should I do next in this negotiation? Current state: round %d/%d, amount %.2f/%.2f", negotiation.Rounds, negotiation.MaxRounds, negotiation.CurrentAmount, negotiation.InitialAmount)},
+	}
+
+	response, err := s.llm.Chat(ctx, messages)
+	if err != nil {
+		s.log.Error("LLM bargaining decision failed", "error", err)
+		return nil, fmt.Errorf("failed to get LLM decision: %w", err)
+	}
+
+	var result LLMBargainingResponse
+	if err := json.Unmarshal([]byte(response), &result); err != nil {
+		s.log.Error("failed to parse LLM bargaining response", "error", err, "response", response)
+		result.Action = "counteroffer"
+		if agentType == "buyer" {
+			result.ProposedAmount = s.calculateFallbackCounterOffer(negotiation, agentType)
+		} else {
+			markup := negotiation.CurrentAmount/negotiation.InitialAmount - 1.0
+			result.ProposedAmount = negotiation.InitialAmount * (1.0 + markup*0.95)
+		}
+		result.Reason = "Using fallback calculation (LLM parsing failed)"
+		result.Confidence = 0.5
+	}
+
+	s.log.Info("LLM bargaining decision generated",
+		"negotiation_id", negotiationID,
+		"agent_id", agentID,
+		"agent_type", agentType,
+		"action", result.Action,
+		"proposed_amount", result.ProposedAmount,
+		"confidence", result.Confidence)
+
+	return &result, nil
+}
+
+func (s *BargainingService) GetLLMNegotiationSummary(ctx context.Context, negotiationID string) (string, error) {
+	if s.llm == nil {
+		return "", fmt.Errorf("LLM service not available")
+	}
+
+	negotiation, err := s.GetNegotiation(ctx, negotiationID)
+	if err != nil {
+		return "", fmt.Errorf("failed to get negotiation: %w", err)
+	}
+
+	rounds, err := s.ap2Repo.GetBargainingRounds(ctx, negotiationID)
+	if err != nil {
+		s.log.Warn("failed to get negotiation rounds", "error", err)
+		rounds = []*models.BargainingRound{}
+	}
+
+	buyerAgent, _ := s.agentService.GetAgentByID(ctx, negotiation.BuyerAgentID)
+	sellerAgent, _ := s.agentService.GetAgentByID(ctx, negotiation.SellerAgentID)
+
+	roundsData := make([]map[string]interface{}, len(rounds))
+	for i, r := range rounds {
+		roundsData[i] = map[string]interface{}{
+			"round":      r.RoundNumber,
+			"agent_type": r.AgentType,
+			"action":     r.Action,
+			"amount":     r.ProposedAmount,
+			"volatility": r.VolatilityFactor,
+		}
+	}
+
+	roundsJSON, _ := json.Marshal(roundsData)
+
+	systemPrompt := fmt.Sprintf(`# Negotiation Summary Generator
+
+Generate a concise, human-readable summary of a bargaining negotiation session.
+
+## Output Format
+Provide a clear summary in 2-3 paragraphs covering:
+1. The negotiation journey (initial position, key counteroffers)
+2. Final outcome and what led to it
+3. Any notable patterns or strategies observed
+
+## Context Information
+
+Negotiation Details:
+- ID: %s
+- Status: %s
+- Buyer Agent: %s (Volatility: %.2f)
+- Seller Agent: %s (Volatility: %.2f)
+- Initial Amount: %.2f
+- Final Amount: %.2f
+- Rounds: %d / %d
+- Created: %s
+
+Rounds History:
+%s
+`,
+		negotiation.ID,
+		negotiation.Status,
+		safeAgentName(buyerAgent), negotiation.BuyerVolatility,
+		safeAgentName(sellerAgent), negotiation.SellerVolatility,
+		negotiation.InitialAmount,
+		negotiation.CurrentAmount,
+		negotiation.Rounds,
+		negotiation.MaxRounds,
+		negotiation.CreatedAt.Format("2006-01-02 15:04"),
+		string(roundsJSON),
+	)
+
+	messages := []ChatMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: "Please summarize this negotiation session in 2-3 paragraphs, highlighting key strategies and final outcome."},
+	}
+
+	summary, err := s.llm.Chat(ctx, messages)
+	if err != nil {
+		s.log.Error("LLM negotiation summary failed", "error", err)
+		return "", fmt.Errorf("failed to get LLM summary: %w", err)
+	}
+
+	s.log.Info("LLM negotiation summary generated", "negotiation_id", negotiationID, "summary_length", len(summary))
+
+	return summary, nil
+}
+
+func safeAgentName(agent *models.Agent) string {
+	if agent == nil {
+		return "Unknown"
+	}
+	return agent.Name
 }

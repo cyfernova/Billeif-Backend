@@ -1,774 +1,350 @@
-# A2A Agent-to-Agent Bargaining Protocol - Complete Guide
+# Bargaining Negotiations API Test Cases
 
 ## Overview
-
-This guide provides complete step-by-step instructions for testing **automated agent-to-agent bargaining** where buyer and seller agents negotiate prices automatically via A2A protocol, using configurations from `.well-known/agents.json`.
-
-## Base URL
-```
-http://localhost:8080/api/v1
-```
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────┐
-│          A2A Automated Bargaining System           │
-├─────────────────────────────────────────────────────────┤
-│                                                       │
-│  ┌──────────────┐    ┌──────────────┐              │
-│  │ Buyer Agent  │◄──►│ Seller Agent  │              │
-│  └──────────────┘    └──────────────┘              │
-│         │                     │                     │
-│         ▼                     ▼                     │
-│  ┌───────────────────────────────┐               │
-│  │  A2A Bargaining Service      │               │
-│  │  - Reads agents.json         │               │
-│  │  - Generates counteroffers    │               │
-│  │  - Sends A2A messages       │               │
-│  │  - Mentee AI decisions      │               │
-│  └───────────┬───────────────────┘               │
-│              │                                  │
-│              ▼                                  │
-│  ┌───────────────────────┐               │
-│  │  Mentee Service       │               │
-│  │  (AI Decisions)      │               │
-│  └───────────────────────┘               │
-│                                                 │
-└─────────────────────────────────────────────────┘
-```
-
-## Prerequisites
-
-1. Authentication token (Bearer token from `/api/v1/auth/login`)
-2. Buyer agent created (type: "shopping")
-3. Seller agent created (type: "merchant")
-4. `.well-known/agents.json` configured
-5. Authorization header: `Authorization: Bearer <your_token>`
+This document contains comprehensive test cases for the bargaining negotiations API endpoints in the invoice-backend application.
 
 ---
 
-## agents.json Configuration
+## Endpoint 1: POST /api/v1/bargaining/negotiations
 
-The agents.json file contains:
+### Description
+Creates a new bargaining negotiation between a buyer agent and a seller agent.
 
-### Agent Type Configurations
-```json
-{
-  "agent_types": {
-    "buyer": {
-      "name": "Buyer Agent",
-      "description": "Agent configured for purchasing goods and services",
-      "default_config": {
-        "volatility": 0.5,
-        "max_discount_target": 0.25,
-        "min_discount_acceptable": 0.05,
-        "auto_accept_threshold": 0.85,
-        "negotiation_rounds": 5
-      },
-      "capabilities": [
-        "price_negotiation",
-        "bulk_order_pricing"
-      ]
-    },
-    "seller": {
-      "name": "Seller Agent",
-      "description": "Agent configured for selling goods and services",
-      "default_config": {
-        "volatility": 0.4,
-        "min_margin_target": 0.15,
-        "max_markup_allowed": 0.30,
-        "auto_reject_below_margin": 0.10,
-        "negotiation_rounds": 5
-      },
-      "capabilities": [
-        "price_optimization",
-        "volume_pricing"
-      ]
-    }
-  }
-}
+### Request Headers
+```
+Content-Type: application/json
+Authorization: Bearer <jwt_token>
 ```
 
-### Bargaining Parameters
+### Request Body
 ```json
 {
-  "bargaining_parameters": {
-    "buyer": {
-      "initial_offer_discount": 0.15,
-      "discount_increment": 0.03,
-      "acceptance_threshold": 0.90,
-      "walk_away_threshold": 0.30
-    },
-    "seller": {
-      "initial_markup": 0.20,
-      "markup_decrement": 0.02,
-      "acceptance_threshold": 0.95,
-      "minimum_margin": 0.10
-    }
-  }
-}
-```
-
-### Mentee Configuration
-```json
-{
-  "mentee_config": {
-    "learning_rate": 0.05,
-    "decay_factor": 0.95,
-    "max_history_size": 100,
-    "confidence_threshold": 0.7,
-    "adaptive_strategy": true,
-    "opponent_learning": true,
-    "self_learning": true
-  }
-}
-```
-
-### A2A Configuration
-```json
-{
-  "a2a_config": {
-    "message_format": "v0.3",
-    "timeout_seconds": 30,
-    "retry_attempts": 3,
-    "retry_delay_ms": 1000
-  }
-}
-```
-
----
-
-## New API Endpoints
-
-### 1. Start A2A Automated Negotiation
-**Endpoint:** `POST /api/v1/a2a-bargaining/start`
-
-**Description:** Starts automated A2A negotiation between buyer and seller agents that reads configuration from agents.json.
-
-**Request:**
-```bash
-curl -X POST http://localhost:8080/api/v1/a2a-bargaining/start \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <YOUR_JWT_TOKEN>" \
-  -d '{
-    "buyer_agent_id": "<BUYER_AGENT_ID>",
-    "seller_agent_id": "<SELLER_AGENT_ID>",
-    "initial_amount": 100.00,
-    "max_rounds": 5
-  }'
-```
-
-**Response:**
-```json
-{
-  "session_id": "a2a-nego-1234567890",
-  "buyer_agent": {
-    "id": "<BUYER_AGENT_ID>",
-    "name": "Buyer Agent",
-    "type": "shopping",
-    "endpoint": "http://localhost:8080/api/v1/a2a/message"
-  },
-  "seller_agent": {
-    "id": "<SELLER_AGENT_ID>",
-    "name": "Seller Agent",
-    "type": "merchant",
-    "endpoint": "http://localhost:8080/api/v1/a2a/message"
-  },
-  "initial_amount": 100.00,
-  "current_amount": 100.00,
-  "round": 0,
+  "buyer_agent_id": "550e8400-e29b-41d4-a716-446655440000",
+  "seller_agent_id": "550e8400-e29b-41d4-a716-446655440001",
+  "initial_amount": 1000.00,
   "max_rounds": 5,
-  "status": "running",
-  "start_time": "2024-02-10T10:00:00Z"
+  "marketplace_order_id": "660e8400-e29b-41d4-a716-446655440002"
 }
 ```
 
----
+### Validation Rules
+- `buyer_agent_id`: Required, valid UUID format
+- `seller_agent_id`: Required, valid UUID format
+- `initial_amount`: Required, must be greater than 0
+- `max_rounds`: Optional, if provided must be between 1 and 10 (inclusive), defaults to 5 if not provided
+- `marketplace_order_id`: Optional, valid UUID format if provided
 
-### 2. Get Negotiation Progress
-**Endpoint:** `GET /api/v1/a2a-bargaining/progress/:sessionId`
-
-**Description:** Returns current progress of an A2A bargaining session.
-
-**Request:**
-```bash
-curl -X GET http://localhost:8080/api/v1/a2a-bargaining/progress/<SESSION_ID> \
-  -H "Authorization: Bearer <YOUR_JWT_TOKEN>"
-```
-
-**Response:**
+### Success Response (201 Created)
 ```json
 {
-  "negotiation_id": "<SESSION_ID>",
-  "round": 3,
-  "current_amount": 88.00,
-  "action": "in_progress",
-  "actor": "seller",
-  "timestamp": "2024-02-10T10:03:00Z"
+  "id": "negotiation-123",
+  "buyer_agent_id": "550e8400-e29b-41d4-a716-446655440000",
+  "seller_agent_id": "550e8400-e29b-41d4-a716-446655440001",
+  "user_id": "user-123",
+  "initial_amount": 1000.00,
+  "current_amount": 1000.00,
+  "buyer_volatility": 0.5,
+  "seller_volatility": 0.5,
+  "status": "initiated",
+  "rounds": 0,
+  "max_rounds": 5,
+  "expires_at": "2024-01-16T15:04:05Z",
+  "created_at": "2024-01-15T15:04:05Z",
+  "updated_at": "2024-01-15T15:04:05Z"
 }
 ```
 
-**Response States:**
-- `round: -1` - Session not found
-- `action: "not_found"` - Session not found
-- `action: "completed"` - Negotiation finished
-- `action: "in_progress"` - Negotiation running
+### Error Responses
 
----
-
-### 3. Stop Negotiation
-**Endpoint:** `POST /api/v1/a2a-bargaining/stop/:sessionId`
-
-**Description:** Stops an active A2A bargaining session.
-
-**Request:**
-```bash
-curl -X POST http://localhost:8080/api/v1/a2a-bargaining/stop/<SESSION_ID> \
-  -H "Authorization: Bearer <YOUR_JWT_TOKEN>"
-```
-
-**Response:**
+**400 Bad Request - Invalid input**
 ```json
 {
-  "message": "Negotiation stopped",
-  "session_id": "<SESSION_ID>",
-  "status": "stopped"
+  "error": "Key: 'CreateNegotiationRequest.BuyerAgentID' Error:Field validation for 'BuyerAgentID' failed on the 'required' tag"
 }
 ```
 
----
-
-## A2A Message Protocol for Bargaining
-
-### Message Types
-
-#### negotiate.start
-**Purpose:** Initiates bargaining session between agents
-
-**Payload:**
+**500 Internal Server Error - Failed to create negotiation**
 ```json
 {
-  "negotiation_id": "a2a-nego-1234567890",
-  "round_number": 1,
-  "current_amount": 85.00,
-  "previous_amount": 100.00,
-  "agent_type": "buyer",
-  "action": "counteroffer",
-  "reason": "Price is too high",
-  "confidence": 0.75
+  "error": "failed to create negotiation: error details"
 }
 ```
 
-**Action Types:**
-- `"counteroffer"` - Propose new amount
-- `"accept"` - Accept current offer
-- `"reject"` - Reject negotiation
+---
 
-#### negotiate.accept
-**Purpose:** Acknowledges and accepts a bargaining counteroffer
+## LLM-Powered Bargaining Test Cases
 
-**Response Payload:**
+### Test Case 31: LLM Bargaining Decision - Valid Request
+```bash
+curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/negotiation-123/llm-decision?agent_id=buyer-agent-uuid&agent_type=buyer" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+Expected: 200 OK with LLM-generated decision
 ```json
 {
-  "negotiation_id": "a2a-nego-1234567890",
-  "round_number": 3,
-  "current_amount": 92.00,
-  "agent_type": "seller",
-  "action": "accept",
-  "reason": "Within acceptance threshold",
-  "confidence": 0.90,
-  "accepted": true
+  "decision": "counteroffer",
+  "proposed_amount": 950.00,
+  "reason": "Given seller's pattern of accepting at 15%% markup, buyer should counteroffer with 5%% discount. Remaining rounds (4/5) support this aggressive approach.",
+  "confidence": 0.82,
+  "negotiation_id": "negotiation-123",
+  "agent_id": "buyer-agent-uuid",
+  "agent_type": "buyer"
 }
 ```
 
 ---
 
-## Automated Negotiation Flow
-
-### Complete Workflow
-
-```
-┌─────────────────────────────────────────────────────────┐
-│ Step 1: Start Negotiation                          │
-│ POST /api/v1/a2a-bargaining/start                    │
-│ → Reads agents.json configs                           │
-│ → Creates session with initial amount                    │
-│ → Returns session_id                                 │
-├─────────────────────────────────────────────────────────┤
-│ Step 2: Automated Loop (runs in background)          │
-│                                                      │
-│   Round 1: Buyer's Turn                              │
-│   ├─ Reads buyer config from agents.json             │
-│   ├─ Mentee service generates decision               │
-│   ├─ Creates counteroffer: $100 → $85              │
-│   ├─ Sends A2A message to seller agent              │
-│   ├─ Waits 1 second                               │
-│   └─ Returns A2A negotiate.accept                  │
-│                                                      │
-│   Round 2: Seller's Turn                              │
-│   ├─ Reads seller config from agents.json             │
-│   ├─ Mentee service generates decision               │
-│   ├─ Creates counteroffer: $85 → $92              │
-│   ├─ Sends A2A message to buyer agent               │
-│   ├─ Waits 1 second                               │
-│   └─ Returns A2A negotiate.accept                  │
-│                                                      │
-│   Round 3: Buyer's Turn                              │
-│   ├─ Mentee generates decision based on learning      │
-│   ├─ Creates counteroffer: $92 → $88              │
-│   ├─ Sends A2A message to seller agent              │
-│   └─ Returns A2A negotiate.accept                  │
-│                                                      │
-│   ... continues until:                                  │
-│   - Buyer or seller accepts                         │
-│   - Max rounds reached                             │
-│   - Session stopped manually                         │
-├─────────────────────────────────────────────────────────┤
-│ Step 3: Monitor Progress                             │
-│ GET /api/v1/a2a-bargaining/progress/<session_id>         │
-│ → Returns current round and amount                    │
-├─────────────────────────────────────────────────────────┤
-│ Step 4: Stop (Optional)                             │
-│ POST /api/v1/a2a-bargaining/stop/<session_id>         │
-│ → Stops automated negotiation loop                    │
-└─────────────────────────────────────────────────────────┘
-```
-
----
-
-## Decision Making Logic
-
-### Buyer Agent Strategy
-
-Based on agents.json configuration:
-
-```
-Buyer Parameters:
-  - initial_offer_discount: 0.15 (start with 15% off)
-  - discount_increment: 0.03 (increase discount by 3% each round)
-  - acceptance_threshold: 0.90 (accept if within 10% of counteroffer)
-  - walk_away_threshold: 0.30 (won't go below 30% off)
-
-Mentee Decision:
-  - If knows opponent patterns: Use historical data
-  - If knows own patterns: Use learning data
-  - Otherwise: Use base mathematical formula
-
-Accept Conditions:
-  - Current price >= counteroffer * 0.90
-  - Round >= max_rounds - 1
-  - Confidence > 0.85
-```
-
-### Seller Agent Strategy
-
-Based on agents.json configuration:
-
-```
-Seller Parameters:
-  - initial_markup: 0.20 (start with 20% markup)
-  - markup_decrement: 0.02 (decrease markup by 2% each round)
-  - acceptance_threshold: 0.95 (accept if within 5% of counteroffer)
-  - minimum_margin: 0.10 (won't go below 10% margin)
-
-Mentee Decision:
-  - If knows opponent patterns: Use historical data
-  - If knows own patterns: Use learning data
-  - Otherwise: Use base mathematical formula
-
-Accept Conditions:
-  - Current price <= counteroffer * 0.95
-  - Round >= max_rounds - 1
-  - Confidence > 0.85
-```
-
----
-
-## Complete Test Script
-
+### Test Case 32: LLM Bargaining Decision - Missing Agent ID
 ```bash
-#!/bin/bash
-
-API_URL="http://localhost:8080/api/v1"
-TOKEN="<YOUR_JWT_TOKEN>"
-
-echo "=== Step 1: Create buyer agent ==="
-BUYER_RESPONSE=$(curl -s -X POST $API_URL/agents \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{
-    "type": "shopping",
-    "name": "Test Buyer Agent",
-    "description": "Buyer for A2A bargaining test",
-    "config": {"volatility": 0.4}
-  }')
-
-BUYER_AGENT_ID=$(echo $BUYER_RESPONSE | jq -r '.id')
-echo "Buyer Agent ID: $BUYER_AGENT_ID"
-
-echo ""
-echo "=== Step 2: Create seller agent ==="
-SELLER_RESPONSE=$(curl -s -X POST $API_URL/agents \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{
-    "type": "merchant",
-    "name": "Test Seller Agent",
-    "description": "Seller for A2A bargaining test",
-    "config": {"volatility": 0.3}
-  }')
-
-SELLER_AGENT_ID=$(echo $SELLER_RESPONSE | jq -r '.id')
-echo "Seller Agent ID: $SELLER_AGENT_ID"
-
-echo ""
-echo "=== Step 3: Start A2A automated negotiation ==="
-START_RESPONSE=$(curl -s -X POST $API_URL/a2a-bargaining/start \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d "{
-    \"buyer_agent_id\": \"$BUYER_AGENT_ID\",
-    \"seller_agent_id\": \"$SELLER_AGENT_ID\",
-    \"initial_amount\": 100.00,
-    \"max_rounds\": 5
-  }")
-
-SESSION_ID=$(echo $START_RESPONSE | jq -r '.session_id')
-STATUS=$(echo $START_RESPONSE | jq -r '.status')
-echo "Session ID: $SESSION_ID"
-echo "Status: $STATUS"
-
-echo ""
-echo "=== Step 4: Monitor negotiation progress ==="
-for i in {1..10}; do
-    echo "Checking progress... (attempt $i)"
-    
-    PROGRESS=$(curl -s -X GET $API_URL/a2a-bargaining/progress/$SESSION_ID \
-      -H "Authorization: Bearer $TOKEN")
-    
-    ROUND=$(echo $PROGRESS | jq -r '.round')
-    CURRENT_AMOUNT=$(echo $PROGRESS | jq -r '.current_amount')
-    ACTION=$(echo $PROGRESS | jq -r '.action')
-    ACTOR=$(echo $PROGRESS | jq -r '.actor')
-    
-    echo "Round: $ROUND, Amount: $CURRENT_AMOUNT, Actor: $ACTOR, Action: $ACTION"
-    
-    if [ "$ACTION" == "completed" ] || [ "$ROUND" -eq 5 ]; then
-        echo ""
-        echo "=== Negotiation Completed! ==="
-        echo "Final Amount: $CURRENT_AMOUNT"
-        break
-    fi
-    
-    sleep 2
-done
-
-echo ""
-echo "=== Test Complete ==="
+curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/negotiation-123/llm-decision?agent_type=buyer" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
----
-
-## Expected Negotiation Example
-
-### Scenario: Initial $100, 5 Rounds
-
-| Round | Actor  | Action         | Amount | Notes |
-|-------|--------|----------------|--------|--------|
-| 0 | -      | Negotiation started | $100.00 | Initial price |
-| 1 | Buyer  | Counteroffer     | $85.00 | 15% discount (from config) |
-| 2 | Seller | Counteroffer     | $92.00 | 20% markup (from config) |
-| 3 | Buyer  | Counteroffer     | $88.00 | Adjusted based on mentee |
-| 4 | Seller | Counteroffer     | $90.00 | Decreased markup, close to min |
-| 5 | Buyer  | Accept          | $90.00 | Within acceptance threshold |
-
-**Final Result:** $90.00 (10% discount from initial)
-
----
-
-## A2A Message Exchange Example
-
-### Round 1: Buyer → Seller
-
-**Buyer sends:**
-```json
-POST /api/v1/a2a/message
-{
-  "version": "1.0",
-  "message_id": "msg-buyer-001",
-  "message_type": "negotiate.start",
-  "sender_id": "<BUYER_AGENT_ID>",
-  "receiver_id": "<SELLER_AGENT_ID>",
-  "sender_endpoint": "http://localhost:8080/api/v1/a2a/message",
-  "receiver_endpoint": "http://localhost:8080/api/v1/a2a/message",
-  "task_id": "task-001",
-  "payload": {
-    "negotiation_id": "a2a-nego-1234567890",
-    "round_number": 1,
-    "current_amount": 85.00,
-    "previous_amount": 100.00,
-    "agent_type": "buyer",
-    "action": "counteroffer",
-    "reason": "Initial 15% discount",
-    "confidence": 0.75
-  },
-  "signature": "<ECDSA_SIGNATURE>",
-  "public_key": "<BUYER_PUBLIC_KEY>",
-  "created_at": "2024-02-10T10:00:00Z",
-  "expires_at": "2024-02-10T10:30:00Z",
-  "timeout_ms": 30000
-}
-```
-
-**Seller responds:**
+Expected: 400 Bad Request
 ```json
 {
-  "version": "1.0",
-  "message_id": "msg-seller-001",
-  "message_type": "negotiate.accept",
-  "sender_id": "<SELLER_AGENT_ID>",
-  "receiver_id": "<BUYER_AGENT_ID>",
-  "payload": {
-    "negotiation_id": "a2a-nego-1234567890",
-    "round_number": 1,
-    "current_amount": 85.00,
-    "agent_type": "seller",
-    "action": "counteroffer",
-    "confidence": 0.80,
-    "accepted": true
-  },
-  "signature": "<ECDSA_SIGNATURE>",
-  "public_key": "<SELLER_PUBLIC_KEY>",
-  ...
+  "error": "agent_id is required"
 }
 ```
 
 ---
 
-## Agents.json Configuration Options
-
-### Volatility Levels
-
-**Low (0.0 - 0.3):**
-- Conservative counteroffers
-- Smaller discount/markup changes
-- Slower to reach agreement
-- More predictable behavior
-
-**Medium (0.3 - 0.7):**
-- Balanced counteroffers
-- Moderate discount/markup changes
-- Good balance of speed and predictability
-
-**High (0.7 - 1.0):**
-- Aggressive counteroffers
-- Larger discount/markup changes
-- Faster negotiations (may walk away)
-- Less predictable behavior
-
-### Bargaining Styles
-
-**Buyer Styles:**
-- `"moderate"` - Balanced approach, gradual discounts
-- `"aggressive"` - Large discounts quickly
-- `"conservative"` - Small discounts, slow negotiations
-
-**Seller Styles:**
-- `"firm"` - Strong margins, slow to accept
-- `"flexible"` - Lower margins, quick to accept
-- `"dynamic"` - Adaptive based on round count
-
----
-
-## Error Handling
-
-### 1. Agent Not Found
+### Test Case 33: LLM Bargaining Decision - Missing Agent Type
 ```bash
-Error: 404 Not Found
-{
-  "error": "buyer agent not found"
-}
+curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/negotiation-123/llm-decision?agent_id=buyer-agent-uuid" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
-**Solution:** Verify agent IDs and create agents first
-
-### 2. Invalid Agent Type
-```bash
-Error: 400 Bad Request
-{
-  "error": "buyer agent must be of type 'shopping'"
-}
-```
-
-**Solution:** Ensure buyer is type "shopping" and seller is type "merchant"
-
-### 3. Session Not Found
-```bash
-Error: 404 Not Found
-{
-  "error": "negotiation session not found"
-}
-```
-
-**Solution:** Verify session_id from start negotiation response
-
-### 4. A2A Message Failed
-**Logs:**
-```
-ERROR failed to send A2A counteroffer session_id=a2a-nego-123 round=2 error=dial tcp connection refused
-```
-
-**Behavior:** System retries 3 times with 1s delay, then logs error and continues
-
----
-
-## Monitoring and Debugging
-
-### Check Agent Logs
-```bash
-# Follow logs for A2A bargaining
-tail -f /path/to/logs/app.log | grep -i "a2a.*bargaining"
-```
-
-### Check Negotiation Sessions
-```bash
-# Monitor active sessions
-GET /api/v1/a2a-bargaining/progress/*
-# Returns status of all sessions
-```
-
-### Check Mentee Learning
-```bash
-# Export mentee learning data
-GET /api/v1/agent-config/export
-# Returns JSON with agent learning metrics
-```
-
----
-
-## Benefits of A2A Automated Bargaining
-
-### 1. **Zero Manual Intervention**
-- One API call starts entire negotiation
-- Agents negotiate automatically until completion
-- No manual counteroffers needed
-
-### 2. **Configuration-Driven**
-- All strategies in agents.json
-- Easy to adjust agent behavior
-- No code changes needed for strategy tuning
-
-### 3. **AI-Powered Decisions**
-- Mentee service makes smart decisions
-- Learns from opponent patterns
-- Improves over time
-
-### 4. **A2A Protocol Compliant**
-- Uses standard A2A message format
-- Supports digital signatures
-- Retry and timeout handling built-in
-
-### 5. **Real-Time Monitoring**
-- Check progress anytime
-- See current round and amount
-- Stop negotiation manually if needed
-
----
-
-## Comparison: Manual vs A2A Automated
-
-| Aspect | Manual Negotiation | A2A Automated Negotiation |
-|--------|-------------------|---------------------------|
-| **User Effort** | High (many API calls) | Low (1 API call) |
-| **Time to Complete** | Variable (user-dependent) | Consistent (configurable) |
-| **Decision Quality** | User-dependent | AI-powered, learning-based |
-| **Scalability** | Poor (manual for each) | Excellent (automated) |
-| **Monitoring** | Manual checking | Real-time progress API |
-| **Consistency** | Varies by user | Config-driven, consistent |
-| **Error Handling** | User must retry | Automatic retries built-in |
-
----
-
-## Configuration Tuning Guide
-
-### To Make Agent More Aggressive
-
-Edit `.well-known/agents.json`:
+Expected: 400 Bad Request
 ```json
 {
-  "agent_types": {
-    "buyer": {
-      "default_config": {
-        "volatility": 0.8,
-        "bargaining_style": "aggressive"
-      }
-    },
-    "seller": {
-      "default_config": {
-        "volatility": 0.7,
-        "bargaining_style": "dynamic"
-      }
-    }
-  }
-}
-```
-
-### To Make Agent More Conservative
-
-Edit `.well-known/agents.json`:
-```json
-{
-  "agent_types": {
-    "buyer": {
-      "default_config": {
-        "volatility": 0.2,
-        "bargaining_style": "conservative"
-      }
-    },
-    "seller": {
-      "default_config": {
-        "volatility": 0.2,
-        "bargaining_style": "firm"
-      }
-    }
-  }
-}
-```
-
-### To Speed Up Negotiations
-
-Edit `bargaining_parameters`:
-```json
-{
-  "bargaining_parameters": {
-    "buyer": {
-      "acceptance_threshold": 0.80,
-      "discount_increment": 0.05
-    },
-    "seller": {
-      "acceptance_threshold": 0.90,
-      "markup_decrement": 0.03
-    }
-  }
+  "error": "agent_type must be 'buyer' or 'seller'"
 }
 ```
 
 ---
 
-## Summary
+### Test Case 34: LLM Bargaining Decision - Invalid Agent Type
+```bash
+curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/negotiation-123/llm-decision?agent_id=buyer-agent-uuid&agent_type=invalid" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
 
-This A2A bargaining protocol provides:
+Expected: 400 Bad Request
+```json
+{
+  "error": "agent_type must be 'buyer' or 'seller'"
+}
+```
 
-1. ✅ **Automated Negotiation** - Agents negotiate automatically via A2A messages
-2. ✅ **Configuration-Driven** - All strategies from agents.json
-3. ✅ **AI-Powered** - Mentee service makes intelligent decisions
-4. ✅ **Zero Manual Work** - One API call to start, agents handle rest
-5. ✅ **Real-Time Monitoring** - Check progress anytime via GET endpoint
-6. ✅ **A2A Compliant** - Uses standard A2A message protocol with signatures
-7. ✅ **Learning System** - Mentee improves decisions over time
-8. ✅ **Flexible Configuration** - Easy to tune agent behavior via JSON config
+---
 
-**Complete user journey:** Create agents → Start negotiation (1 call) → Monitor progress → Get final result
+### Test Case 35: LLM Bargaining Decision - Negotiation Not Found
+```bash
+curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/non-existent/llm-decision?agent_id=buyer-agent-uuid&agent_type=buyer" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
 
-No manual counteroffers required - agents negotiate automatically until agreement or timeout!
+Expected: 404 Not Found
+```json
+{
+  "error": "negotiation not found"
+}
+```
+
+---
+
+### Test Case 36: LLM Bargaining Decision - Seller Counteroffer Request
+```bash
+curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/negotiation-123/llm-decision?agent_id=seller-agent-uuid&agent_type=seller" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+Expected: 200 OK with seller's counteroffer (higher amount)
+```json
+{
+  "decision": "counteroffer",
+  "proposed_amount": 1025.00,
+  "reason": "Seller should counteroffer with 2.5%% markup given buyer's pattern of aggressive early discounts. Round 1 of 5 provides flexibility to negotiate upward.",
+  "confidence": 0.78,
+  "negotiation_id": "negotiation-123",
+  "agent_id": "seller-agent-uuid",
+  "agent_type": "seller"
+}
+```
+
+---
+
+### Test Case 37: LLM Bargaining Decision - Buyer Should Accept
+```bash
+curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/negotiation-123/llm-decision?agent_id=buyer-agent-uuid&agent_type=buyer" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+Expected: 200 OK with accept decision (favorable terms reached)
+```json
+{
+  "decision": "accept",
+  "proposed_amount": 900.00,
+  "reason": "Buyer should accept current offer. Seller's volatility is low (0.3) and this is the final round with favorable price. 10%% discount from initial aligns with buyer's budget.",
+  "confidence": 0.88,
+  "negotiation_id": "negotiation-123",
+  "agent_id": "buyer-agent-uuid",
+  "agent_type": "buyer"
+}
+```
+
+---
+
+### Test Case 38: LLM Bargaining Decision - Seller Should Reject
+```bash
+curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/negotiation-123/llm-decision?agent_id=seller-agent-uuid&agent_type=seller" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+Expected: 200 OK with reject decision
+```json
+{
+  "decision": "reject",
+  "proposed_amount": 950.00,
+  "reason": "Seller should reject this negotiation. Buyer is asking for unreasonably low price (50%% below initial) despite no historical pattern supporting such aggressive offers. Better to end negotiation than concede.",
+  "confidence": 0.75,
+  "negotiation_id": "negotiation-123",
+  "agent_id": "seller-agent-uuid",
+  "agent_type": "seller"
+}
+```
+
+---
+
+### Test Case 39: LLM Negotiation Summary - Valid Request
+```bash
+curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/negotiation-123/llm-summary" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+Expected: 200 OK with LLM-generated summary
+```json
+{
+  "negotiation_id": "negotiation-123",
+  "summary": "The negotiation began with a buyer offering $1000.00 for a product. The seller countered at $1050.00, citing shipping costs. The buyer negotiated down to $975.00. The seller accepted this offer, concluding the negotiation successfully. Throughout the session, both agents showed consistent behavior with no hardline tactics. Final agreed price of $975.00 represents a 2.5%% discount from the initial ask."
+}
+```
+
+---
+
+### Test Case 40: LLM Negotiation Summary - Missing Negotiation ID
+```bash
+curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/llm-summary" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+Expected: 400 Bad Request
+```json
+{
+  "error": "negotiation_id is required"
+}
+```
+
+---
+
+### Test Case 41: LLM Negotiation Summary - Negotiation Not Found
+```bash
+curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/non-existent/llm-summary" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+Expected: 404 Not Found
+```json
+{
+  "error": "negotiation not found"
+}
+```
+
+---
+
+### Test Case 42: LLM Negotiation Summary - Completed Negotiation
+```bash
+curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/completed-negotiation-123/llm-summary" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+Expected: 200 OK with summary of completed negotiation
+```json
+{
+  "negotiation_id": "completed-negotiation-123",
+  "summary": "The negotiation concluded successfully with both parties reaching agreement. The buyer initiated at $1200.00 for the item. After 3 rounds of negotiation, the parties agreed on $1050.00. Key factors that led to success: 1) Both agents maintained consistent positions, 2) Reasonable concessions from both sides (buyer moved 12.5%%, seller moved -5%%), 3) Clear communication of constraints and flexibility. The final price represents a 12.5%% discount from initial ask, which both parties viewed as fair given product quality and market conditions."
+}
+```
+
+---
+
+### Test Case 43: LLM Negotiation Summary - Expired Negotiation
+```bash
+curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/expired-negotiation-123/llm-summary" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+Expected: 200 OK with summary noting expiration
+```json
+{
+  "negotiation_id": "expired-negotiation-123",
+  "summary": "The negotiation expired without reaching agreement. The buyer and seller exchanged offers over 3 rounds but could not close the gap. Buyer's last offer was $850.00 (15%% below initial), while seller's lowest acceptable price was $950.00. Key observations: 1) Neither party was willing to make final concession, 2) Time pressure increased as expiration approached, 3) Communication breakdown occurred in final round when buyer failed to respond within the 24-hour window. The negotiation expired due to lack of engagement rather than fundamental disagreement on terms."
+}
+```
+
+---
+
+## LLM Integration Notes
+
+### When LLM is Available
+The LLM-powered endpoints provide enhanced decision-making by:
+
+1. **Contextual Analysis**: LLM considers full negotiation state including:
+   - All previous rounds and their outcomes
+   - Current position relative to initial amount
+   - Remaining rounds and urgency
+   - Volatility factors of both agents
+   - Agent-specific preferences and historical patterns
+
+2. **Strategic Reasoning**: LLM provides human-readable explanations for decisions:
+   - Why counteroffer or accept is recommended
+   - What patterns or strategies it observed
+   - How confidence in the recommendation was calculated
+
+3. **Adaptive Behavior**: Unlike formula-based fallback, LLM can:
+   - Recognize unusual negotiation patterns
+   - Adjust strategy based on opponent's behavior
+   - Handle edge cases more intelligently
+   - Provide nuanced reasoning beyond simple rules
+
+### When LLM is Unavailable
+If the LLM service is not configured, endpoints fall back to:
+- Formula-based calculations using volatility factors
+- Predefined discount/markup ranges
+- Standard counteroffer strategies
+- Fallback summary generation
+
+### Configuration
+LLM integration is controlled by the `LLM` section in configuration:
+- `API_URL`: LLM provider endpoint (e.g., OpenAI, Anthropic, etc.)
+- `API_KEY`: Authentication token
+- `Model`: Model name to use
+- `Timeout`: Request timeout in seconds
+
+### Performance Considerations
+- LLM calls add ~2-5 seconds of latency per request
+- Consider caching for frequently accessed negotiations
+- Implement request throttling if LLM has rate limits
+- Monitor LLM API costs as usage scales
+
+---
+
+### HTTP Status Codes Summary
+- **200 OK**: Successful GET requests or successful counter offer
+- **201 Created**: Negotiation successfully created
+- **400 Bad Request**: Validation error in request
+- **404 Not Found**: Resource (negotiation) not found
+- **410 Gone**: Negotiation has expired
+- **500 Internal Server Error**: Server-side error

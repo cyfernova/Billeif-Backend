@@ -258,3 +258,93 @@ func (h *BargainingHandler) GetSuggestedCounterOffer(c *gin.Context) {
 	})
 	log.Debug("counter offer suggestion generated", "negotiation_id", negotiationID, "agent_type", agentType)
 }
+
+// GetLLMBargainingDecision uses LLM to generate strategic bargaining recommendations
+// @Summary Get LLM-powered bargaining decision
+// @Tags Bargaining
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Negotiation ID"
+// @Param agent_id query string true "Agent ID requesting the decision"
+// @Param agent_type query string true "Agent type (buyer or seller)" Enums(buyer, seller)
+// @Success 200 {object} map[string]interface{}
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /bargaining/negotiations/{id}/llm-decision [get]
+func (h *BargainingHandler) GetLLMBargainingDecision(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("bargaining_handler").With("operation", "llm_bargaining_decision")
+
+	negotiationID := c.Param("id")
+	agentID := c.Query("agent_id")
+	agentType := c.Query("agent_type")
+
+	if negotiationID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "negotiation_id is required"})
+		return
+	}
+
+	if agentID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "agent_id is required"})
+		return
+	}
+
+	if agentType != "buyer" && agentType != "seller" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "agent_type must be 'buyer' or 'seller'"})
+		return
+	}
+
+	decision, err := h.svc.GetLLMBargainingDecision(c.Request.Context(), agentID, agentType, negotiationID)
+	if err != nil {
+		log.Error("failed to get LLM bargaining decision", "error", err, "negotiation_id", negotiationID, "agent_id", agentID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	log.Info("LLM bargaining decision retrieved", "negotiation_id", negotiationID, "agent_id", agentID, "agent_type", agentType, "action", decision.Action)
+
+	c.JSON(http.StatusOK, gin.H{
+		"decision":        decision.Action,
+		"proposed_amount": decision.ProposedAmount,
+		"reason":          decision.Reason,
+		"confidence":      decision.Confidence,
+		"negotiation_id":  negotiationID,
+		"agent_id":        agentID,
+		"agent_type":      agentType,
+	})
+}
+
+// GetLLMNegotiationSummary generates AI summary of negotiation session
+// @Summary Get LLM-powered negotiation summary
+// @Tags Bargaining
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Negotiation ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /bargaining/negotiations/{id}/llm-summary [get]
+func (h *BargainingHandler) GetLLMNegotiationSummary(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("bargaining_handler").With("operation", "llm_negotiation_summary")
+
+	negotiationID := c.Param("id")
+
+	if negotiationID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "negotiation_id is required"})
+		return
+	}
+
+	summary, err := h.svc.GetLLMNegotiationSummary(c.Request.Context(), negotiationID)
+	if err != nil {
+		log.Error("failed to get LLM negotiation summary", "error", err, "negotiation_id", negotiationID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	log.Info("LLM negotiation summary retrieved", "negotiation_id", negotiationID, "summary_length", len(summary))
+
+	c.JSON(http.StatusOK, gin.H{
+		"negotiation_id": negotiationID,
+		"summary":        summary,
+	})
+}

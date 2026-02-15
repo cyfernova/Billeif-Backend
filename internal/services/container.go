@@ -82,7 +82,7 @@ func NewContainer(
 	a2aPushSvc := NewA2APushService(db, ap2Repo, log)
 	a2aTaskSvc := NewA2ATaskService(db, log, a2aPushSvc)
 	workflowSvc := NewWorkflowService(db, log, emailSvc, a2aPushSvc)
-	bargainingSvc := NewBargainingService(ap2Repo, a2aClient, agentSvc, menteeSvc, log)
+	bargainingSvc := NewBargainingService(ap2Repo, a2aClient, agentSvc, menteeSvc, llmSvc, log)
 	a2aBargainingSvc := NewA2ABargainingService(a2aClient, bargainingSvc, menteeSvc, log)
 	agentConfigSvc := NewAgentConfigService(".well-known", log)
 	credentialProviderSvc, err := NewCredentialProviderService(ap2Repo, cfg.Credentials.EncryptionKey, log)
