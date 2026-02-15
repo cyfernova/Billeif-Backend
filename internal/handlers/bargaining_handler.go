@@ -265,17 +265,17 @@ func (h *BargainingHandler) GetSuggestedCounterOffer(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Security BearerAuth
-// @Param id path string true "Negotiation ID"
+// @Param negotiation_id query string true "Negotiation ID"
 // @Param agent_id query string true "Agent ID requesting the decision"
 // @Param agent_type query string true "Agent type (buyer or seller)" Enums(buyer, seller)
 // @Success 200 {object} map[string]interface{}
 // @Failure 404 {object} map[string]string
 // @Failure 500 {object} map[string]string
-// @Router /bargaining/negotiations/{id}/llm-decision [get]
+// @Router /bargaining/negotiations/llm-decision [get]
 func (h *BargainingHandler) GetLLMBargainingDecision(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("bargaining_handler").With("operation", "llm_bargaining_decision")
 
-	negotiationID := c.Param("id")
+	negotiationID := c.Query("negotiation_id")
 	agentID := c.Query("agent_id")
 	agentType := c.Query("agent_type")
 
@@ -319,15 +319,15 @@ func (h *BargainingHandler) GetLLMBargainingDecision(c *gin.Context) {
 // @Tags Bargaining
 // @Produce json
 // @Security BearerAuth
-// @Param id path string true "Negotiation ID"
+// @Param negotiation_id query string true "Negotiation ID"
 // @Success 200 {object} map[string]interface{}
 // @Failure 404 {object} map[string]string
 // @Failure 500 {object} map[string]string
-// @Router /bargaining/negotiations/{id}/llm-summary [get]
+// @Router /bargaining/negotiations/llm-summary [get]
 func (h *BargainingHandler) GetLLMNegotiationSummary(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("bargaining_handler").With("operation", "llm_negotiation_summary")
 
-	negotiationID := c.Param("id")
+	negotiationID := c.Query("negotiation_id")
 
 	if negotiationID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "negotiation_id is required"})

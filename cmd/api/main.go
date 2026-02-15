@@ -608,8 +608,8 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			bargaining.POST("/negotiations/:id/counteroffer", h.Bargaining.SubmitCounterOffer)
 			bargaining.GET("/negotiations/:id/rounds", h.Bargaining.GetNegotiationRounds)
 			bargaining.GET("/negotiations/:id/suggest", h.Bargaining.GetSuggestedCounterOffer)
-			bargaining.GET("/negotiations/:id/llm-decision", h.Bargaining.GetLLMBargainingDecision)
-			bargaining.GET("/negotiations/:id/llm-summary", h.Bargaining.GetLLMNegotiationSummary)
+			bargaining.GET("/negotiations/llm-decision", h.Bargaining.GetLLMBargainingDecision)
+			bargaining.GET("/negotiations/llm-summary", h.Bargaining.GetLLMNegotiationSummary)
 		}
 
 		// A2A Bargaining endpoints

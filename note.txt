@@ -76,7 +76,7 @@ Authorization: Bearer <jwt_token>
 
 ### Test Case 31: LLM Bargaining Decision - Valid Request
 ```bash
-curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/negotiation-123/llm-decision?agent_id=buyer-agent-uuid&agent_type=buyer" \
+curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/llm-decision?negotiation_id=negotiation-123&agent_id=buyer-agent-uuid&agent_type=buyer" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
@@ -97,7 +97,7 @@ Expected: 200 OK with LLM-generated decision
 
 ### Test Case 32: LLM Bargaining Decision - Missing Agent ID
 ```bash
-curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/negotiation-123/llm-decision?agent_type=buyer" \
+curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/llm-decision?negotiation_id=negotiation-123&agent_type=buyer" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
@@ -112,7 +112,7 @@ Expected: 400 Bad Request
 
 ### Test Case 33: LLM Bargaining Decision - Missing Agent Type
 ```bash
-curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/negotiation-123/llm-decision?agent_id=buyer-agent-uuid" \
+curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/llm-decision?negotiation_id=negotiation-123&agent_id=buyer-agent-uuid" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
@@ -127,7 +127,7 @@ Expected: 400 Bad Request
 
 ### Test Case 34: LLM Bargaining Decision - Invalid Agent Type
 ```bash
-curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/negotiation-123/llm-decision?agent_id=buyer-agent-uuid&agent_type=invalid" \
+curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/llm-decision?negotiation_id=negotiation-123&agent_id=buyer-agent-uuid&agent_type=invalid" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
@@ -142,7 +142,7 @@ Expected: 400 Bad Request
 
 ### Test Case 35: LLM Bargaining Decision - Negotiation Not Found
 ```bash
-curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/non-existent/llm-decision?agent_id=buyer-agent-uuid&agent_type=buyer" \
+curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/llm-decision?negotiation_id=non-existent&agent_id=buyer-agent-uuid&agent_type=buyer" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
@@ -157,7 +157,7 @@ Expected: 404 Not Found
 
 ### Test Case 36: LLM Bargaining Decision - Seller Counteroffer Request
 ```bash
-curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/negotiation-123/llm-decision?agent_id=seller-agent-uuid&agent_type=seller" \
+curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/llm-decision?negotiation_id=negotiation-123&agent_id=seller-agent-uuid&agent_type=seller" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
@@ -178,7 +178,7 @@ Expected: 200 OK with seller's counteroffer (higher amount)
 
 ### Test Case 37: LLM Bargaining Decision - Buyer Should Accept
 ```bash
-curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/negotiation-123/llm-decision?agent_id=buyer-agent-uuid&agent_type=buyer" \
+curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/llm-decision?negotiation_id=negotiation-123&agent_id=buyer-agent-uuid&agent_type=buyer" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
@@ -199,7 +199,7 @@ Expected: 200 OK with accept decision (favorable terms reached)
 
 ### Test Case 38: LLM Bargaining Decision - Seller Should Reject
 ```bash
-curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/negotiation-123/llm-decision?agent_id=seller-agent-uuid&agent_type=seller" \
+curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/llm-decision?negotiation_id=negotiation-123&agent_id=seller-agent-uuid&agent_type=seller" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
@@ -220,7 +220,7 @@ Expected: 200 OK with reject decision
 
 ### Test Case 39: LLM Negotiation Summary - Valid Request
 ```bash
-curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/negotiation-123/llm-summary" \
+curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/llm-summary?negotiation_id=negotiation-123" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
@@ -251,7 +251,7 @@ Expected: 400 Bad Request
 
 ### Test Case 41: LLM Negotiation Summary - Negotiation Not Found
 ```bash
-curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/non-existent/llm-summary" \
+curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/llm-summary?negotiation_id=non-existent" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
@@ -266,7 +266,7 @@ Expected: 404 Not Found
 
 ### Test Case 42: LLM Negotiation Summary - Completed Negotiation
 ```bash
-curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/completed-negotiation-123/llm-summary" \
+curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/llm-summary?negotiation_id=completed-negotiation-123" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
@@ -282,7 +282,7 @@ Expected: 200 OK with summary of completed negotiation
 
 ### Test Case 43: LLM Negotiation Summary - Expired Negotiation
 ```bash
-curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/expired-negotiation-123/llm-summary" \
+curl -X GET "http://localhost:8080/api/v1/bargaining/negotiations/llm-summary?negotiation_id=expired-negotiation-123" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
