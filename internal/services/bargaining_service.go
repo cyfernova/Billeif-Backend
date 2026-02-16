@@ -144,23 +144,28 @@ func (s *BargainingService) SubmitCounterOffer(ctx context.Context, negotiationI
 		return nil, nil, ErrMaxRoundsExceeded
 	}
 
-	agent, err := s.agentService.GetAgentByID(ctx, req.AgentID)
+	buyerAgent, sellerAgent, err := s.resolveNegotiationAgents(ctx, negotiation)
 	if err != nil {
-		return nil, nil, fmt.Errorf("agent not found: %w", err)
+		return nil, nil, err
 	}
 
 	var agentType string
 	var volatility float64
+	var agent *models.Agent
 
 	if req.AgentID == negotiation.BuyerAgentID {
 		agentType = "buyer"
 		volatility = negotiation.BuyerVolatility
+		agent = buyerAgent
 	} else if req.AgentID == negotiation.SellerAgentID {
 		agentType = "seller"
 		volatility = negotiation.SellerVolatility
+		agent = sellerAgent
 	} else {
 		return nil, nil, errors.New("agent is not part of this negotiation")
 	}
+
+	receiverAgent := s.getCounterpartyAgent(negotiation, agent, buyerAgent, sellerAgent)
 
 	if req.Action == "accept" {
 		round := &models.BargainingRound{
@@ -191,7 +196,7 @@ func (s *BargainingService) SubmitCounterOffer(ctx context.Context, negotiationI
 
 		s.log.Info("negotiation accepted", "negotiation_id", negotiationID, "agent_type", agentType, "amount", req.ProposedAmount)
 
-		go s.notifyAgentNegotiationComplete(ctx, negotiation, agent, "accepted")
+		go s.notifyAgentNegotiationComplete(ctx, negotiation, agent, receiverAgent, "accepted")
 
 		return round, negotiation, nil
 	}
@@ -223,7 +228,7 @@ func (s *BargainingService) SubmitCounterOffer(ctx context.Context, negotiationI
 
 		s.log.Info("negotiation rejected", "negotiation_id", negotiationID, "agent_type", agentType)
 
-		go s.notifyAgentNegotiationComplete(ctx, negotiation, agent, "rejected")
+		go s.notifyAgentNegotiationComplete(ctx, negotiation, agent, receiverAgent, "rejected")
 
 		return round, negotiation, nil
 	}
@@ -259,7 +264,7 @@ func (s *BargainingService) SubmitCounterOffer(ctx context.Context, negotiationI
 
 		s.log.Info("counteroffer submitted", "negotiation_id", negotiationID, "agent_type", agentType, "amount", req.ProposedAmount, "round", negotiation.Rounds)
 
-		go s.notifyAgentCounterOffer(ctx, negotiation, agent, round)
+		go s.notifyAgentCounterOffer(ctx, negotiation, agent, receiverAgent, round)
 
 		return round, negotiation, nil
 	}
@@ -436,20 +441,45 @@ func (s *BargainingService) marshalMetadata(metadata map[string]interface{}) str
 	return string(data)
 }
 
-func (s *BargainingService) notifyAgentCounterOffer(ctx context.Context, negotiation *models.BargainingNegotiation, agent *models.Agent, round *models.BargainingRound) {
-	var receiverID string
-	if agent.ID == negotiation.BuyerAgentID {
-		receiverID = negotiation.SellerAgentID
-	} else {
-		receiverID = negotiation.BuyerAgentID
+func (s *BargainingService) resolveNegotiationAgents(ctx context.Context, negotiation *models.BargainingNegotiation) (*models.Agent, *models.Agent, error) {
+	buyerAgent := negotiation.BuyerAgent
+	if buyerAgent == nil || buyerAgent.ID == "" {
+		var err error
+		buyerAgent, err = s.agentService.GetAgentByID(ctx, negotiation.BuyerAgentID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("buyer agent not found: %w", err)
+		}
 	}
 
-	receiverAgent, err := s.agentService.GetAgentByID(ctx, receiverID)
-	if err != nil {
-		s.log.Error("failed to get receiver agent for notification", "error", err, "receiver_id", receiverID)
+	sellerAgent := negotiation.SellerAgent
+	if sellerAgent == nil || sellerAgent.ID == "" {
+		var err error
+		sellerAgent, err = s.agentService.GetAgentByID(ctx, negotiation.SellerAgentID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("seller agent not found: %w", err)
+		}
+	}
+
+	return buyerAgent, sellerAgent, nil
+}
+
+func (s *BargainingService) getCounterpartyAgent(negotiation *models.BargainingNegotiation, agent, buyerAgent, sellerAgent *models.Agent) *models.Agent {
+	if agent == nil {
+		return nil
+	}
+	if agent.ID == negotiation.BuyerAgentID {
+		return sellerAgent
+	}
+	return buyerAgent
+}
+
+func (s *BargainingService) notifyAgentCounterOffer(ctx context.Context, negotiation *models.BargainingNegotiation, agent, receiverAgent *models.Agent, round *models.BargainingRound) {
+	if receiverAgent == nil {
+		s.log.Warn("receiver agent missing for counteroffer notification", "negotiation_id", negotiation.ID)
 		return
 	}
 
+	receiverID := receiverAgent.ID
 	if receiverAgent.A2AEndpoint == nil {
 		s.log.Warn("receiver agent has no A2A endpoint", "receiver_id", receiverID)
 		return
@@ -476,20 +506,13 @@ func (s *BargainingService) notifyAgentCounterOffer(ctx context.Context, negotia
 	}
 }
 
-func (s *BargainingService) notifyAgentNegotiationComplete(ctx context.Context, negotiation *models.BargainingNegotiation, agent *models.Agent, outcome string) {
-	var receiverID string
-	if agent.ID == negotiation.BuyerAgentID {
-		receiverID = negotiation.SellerAgentID
-	} else {
-		receiverID = negotiation.BuyerAgentID
-	}
-
-	receiverAgent, err := s.agentService.GetAgentByID(ctx, receiverID)
-	if err != nil {
-		s.log.Error("failed to get receiver agent for notification", "error", err, "receiver_id", receiverID)
+func (s *BargainingService) notifyAgentNegotiationComplete(ctx context.Context, negotiation *models.BargainingNegotiation, agent, receiverAgent *models.Agent, outcome string) {
+	if receiverAgent == nil {
+		s.log.Warn("receiver agent missing for completion notification", "negotiation_id", negotiation.ID)
 		return
 	}
 
+	receiverID := receiverAgent.ID
 	if receiverAgent.A2AEndpoint == nil {
 		s.log.Warn("receiver agent has no A2A endpoint", "receiver_id", receiverID)
 		return
@@ -549,27 +572,30 @@ func (s *BargainingService) GetLLMBargainingDecision(ctx context.Context, agentI
 		rounds = []*models.BargainingRound{}
 	}
 
-	agent, err := s.agentService.GetAgentByID(ctx, agentID)
+	buyerAgent, sellerAgent, err := s.resolveNegotiationAgents(ctx, negotiation)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get agent: %w", err)
+		return nil, fmt.Errorf("failed to resolve negotiation agents: %w", err)
 	}
 
+	var agent *models.Agent
 	var opponentID string
-	if agentType == "buyer" {
-		opponentID = negotiation.SellerAgentID
-	} else {
-		opponentID = negotiation.BuyerAgentID
-	}
 
-	opponentAgent, err := s.agentService.GetAgentByID(ctx, opponentID)
-	if err != nil {
-		s.log.Warn("failed to get opponent agent", "error", err)
+	switch agentID {
+	case negotiation.BuyerAgentID:
+		agent = buyerAgent
+		opponentID = negotiation.SellerAgentID
+	case negotiation.SellerAgentID:
+		agent = sellerAgent
+		opponentID = negotiation.BuyerAgentID
+	default:
+		return nil, errors.New("agent is not part of this negotiation")
 	}
-	_ = opponentAgent
 
 	agentConfig := make(map[string]interface{})
 	if agent.Config != "" {
-		json.Unmarshal([]byte(agent.Config), &agentConfig)
+		if err := json.Unmarshal([]byte(agent.Config), &agentConfig); err != nil {
+			s.log.Warn("failed to parse agent config", "error", err, "agent_id", agent.ID)
+		}
 	}
 
 	contextText := fmt.Sprintf(`# Bargaining Strategy Advisor
@@ -689,8 +715,12 @@ func (s *BargainingService) GetLLMNegotiationSummary(ctx context.Context, negoti
 		rounds = []*models.BargainingRound{}
 	}
 
-	buyerAgent, _ := s.agentService.GetAgentByID(ctx, negotiation.BuyerAgentID)
-	sellerAgent, _ := s.agentService.GetAgentByID(ctx, negotiation.SellerAgentID)
+	buyerAgent, sellerAgent, err := s.resolveNegotiationAgents(ctx, negotiation)
+	if err != nil {
+		s.log.Warn("failed to resolve negotiation agents for summary", "error", err, "negotiation_id", negotiationID)
+		buyerAgent = nil
+		sellerAgent = nil
+	}
 
 	roundsData := make([]map[string]interface{}, len(rounds))
 	for i, r := range rounds {

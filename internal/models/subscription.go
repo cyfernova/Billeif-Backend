@@ -10,7 +10,7 @@ type Subscription struct {
 	ID              string         `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
 	BusinessID      string         `gorm:"not null;index" json:"business_id" validate:"required,uuid"`
 	Plan            string         `gorm:"not null;size:50" json:"plan" validate:"required,oneof=free starter professional enterprise"`
-	Status          string         `gorm:"not null;size:50;default:'active'" json:"status" validate:"required,oneof=active canceled expired"`
+	Status          string         `gorm:"not null;size:50;default:'active';index" json:"status" validate:"required,oneof=active canceled expired"`
 	MaxInvoices     int64          `gorm:"default:10" json:"max_invoices" validate:"gte=0"`
 	MaxCustomers    int64          `gorm:"default:10" json:"max_customers" validate:"gte=0"`
 	MaxUsers        int64          `gorm:"default:3" json:"max_users" validate:"gte=0"`

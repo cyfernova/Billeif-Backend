@@ -40,9 +40,9 @@ type AgentRegistry struct {
 	PricingModel datatypes.JSON `gorm:"type:jsonb;default:'{}'" json:"pricing_model"`
 
 	// Registration metadata
-	IsVerified bool `gorm:"default:false" json:"is_verified"`
-	IsActive   bool `gorm:"default:true" json:"is_active"`
-	IsPublic   bool `gorm:"default:false" json:"is_public"`
+	IsVerified bool `gorm:"default:false;index:idx_agent_registry_verified,priority:1" json:"is_verified"`
+	IsActive   bool `gorm:"default:true;index:idx_agent_registry_public,priority:2" json:"is_active"`
+	IsPublic   bool `gorm:"default:false;index:idx_agent_registry_public,priority:1" json:"is_public"`
 
 	// Health checking
 	LastHealthCheck    *time.Time `gorm:"type:timestamp" json:"last_health_check"`
@@ -63,7 +63,7 @@ type AgentRegistry struct {
 	VerifiedAt *time.Time `gorm:"type:timestamp" json:"verified_at"`
 	CreatedAt  time.Time  `gorm:"type:timestamp;default:NOW()" json:"created_at"`
 	UpdatedAt  time.Time  `gorm:"type:timestamp;default:NOW()" json:"updated_at"`
-	DeletedAt  *time.Time `gorm:"type:timestamp" json:"deleted_at,omitempty"`
+	DeletedAt  *time.Time `gorm:"type:timestamp;index:idx_agent_registry_verified,priority:2;index:idx_agent_registry_public,priority:3" json:"deleted_at,omitempty"`
 }
 
 // TableName specifies the table name for GORM

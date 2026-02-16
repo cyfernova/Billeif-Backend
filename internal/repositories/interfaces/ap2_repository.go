@@ -35,6 +35,7 @@ type AP2Repository interface {
 	// Agents
 	CreateAgent(ctx context.Context, agent *models.Agent) error
 	GetAgentByID(ctx context.Context, id string) (*models.Agent, error)
+	HasAgentOwnership(ctx context.Context, ownerID, agentID string) (bool, error)
 	GetAgentsByUser(ctx context.Context, userID string, page, limit int) ([]*models.Agent, int64, error)
 	GetAgentsByBusiness(ctx context.Context, businessID string, page, limit int) ([]*models.Agent, int64, error)
 	GetAgentsByType(ctx context.Context, agentType string, page, limit int) ([]*models.Agent, int64, error)
@@ -78,6 +79,7 @@ type AP2Repository interface {
 	CreateOrder(ctx context.Context, order *models.MarketplaceOrder) error
 	GetOrderByID(ctx context.Context, id string) (*models.MarketplaceOrder, error)
 	GetOrdersByUser(ctx context.Context, userID string, page, limit int) ([]*models.MarketplaceOrder, int64, error)
+	GetOrdersByUserAndStatus(ctx context.Context, userID, status string, page, limit int) ([]*models.MarketplaceOrder, int64, error)
 	GetOrdersByAgent(ctx context.Context, agentID string, page, limit int) ([]*models.MarketplaceOrder, int64, error)
 	UpdateOrder(ctx context.Context, order *models.MarketplaceOrder) error
 	UpdateOrderStatus(ctx context.Context, orderID, status string) error

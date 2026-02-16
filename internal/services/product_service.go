@@ -255,13 +255,9 @@ func (s *ProductService) AdjustStockByBusiness(ctx context.Context, businessID, 
 		log.Error("failed to adjust stock", "error", err)
 		return nil, err
 	}
-	updated, err := s.GetByBusiness(ctx, businessID, product.ID)
-	if err != nil {
-		log.Error("failed to load product after stock adjustment", "error", err)
-		return nil, err
-	}
-	log.Info("product stock adjusted", "product_id", productID, "stock_level", updated.StockLevel)
-	return updated, nil
+	product.StockLevel += input.Quantity
+	log.Info("product stock adjusted", "product_id", productID, "stock_level", product.StockLevel)
+	return product, nil
 }
 
 func (s *ProductService) GetImageUploadURL(ctx context.Context, productID, contentType string) (string, error) {

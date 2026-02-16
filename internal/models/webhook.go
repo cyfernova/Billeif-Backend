@@ -13,7 +13,7 @@ type Webhook struct {
 	URL           string         `gorm:"not null;size:500" json:"url" validate:"required,url"`
 	Events        string         `gorm:"not null;type:text" json:"events" validate:"required"`
 	Secret        string         `gorm:"not null;size:255" json:"-" validate:"required"`
-	IsActive      bool           `gorm:"default:true" json:"is_active"`
+	IsActive      bool           `gorm:"default:true;index" json:"is_active"`
 	LastTriggered *time.Time     `json:"last_triggered,omitempty"`
 	CreatedAt     time.Time      `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt     time.Time      `gorm:"autoUpdateTime" json:"updated_at"`

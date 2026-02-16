@@ -90,19 +90,7 @@ func (s *MarketplaceService) GetUserOrders(ctx context.Context, userID string, p
 }
 
 func (s *MarketplaceService) GetOrdersByStatus(ctx context.Context, userID, status string, page, limit int) ([]*models.MarketplaceOrder, int64, error) {
-	orders, total, err := s.ap2Repo.GetOrdersByUser(ctx, userID, page, limit)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	filteredOrders := make([]*models.MarketplaceOrder, 0)
-	for _, order := range orders {
-		if order.Status == status {
-			filteredOrders = append(filteredOrders, order)
-		}
-	}
-
-	return filteredOrders, total, nil
+	return s.ap2Repo.GetOrdersByUserAndStatus(ctx, userID, status, page, limit)
 }
 
 func (s *MarketplaceService) GetMarketplaceStats(ctx context.Context) (map[string]interface{}, error) {

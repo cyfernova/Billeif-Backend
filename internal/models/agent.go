@@ -11,7 +11,7 @@ type Agent struct {
 	OwnerID      string         `gorm:"not null;index" json:"owner_id" validate:"required,uuid"`
 	BusinessID   string         `gorm:"not null;index" json:"business_id" validate:"required,uuid"`
 	Name         string         `gorm:"not null;size:255" json:"name" validate:"required,min=2,max=255"`
-	Type         string         `gorm:"not null;size:50" json:"type" validate:"required,oneof=buyer seller shopping merchant credential_provider payment_processor"`
+	Type         string         `gorm:"not null;size:50;index" json:"type" validate:"required,oneof=buyer seller shopping merchant credential_provider payment_processor"`
 	Description  *string        `gorm:"type:text" json:"description,omitempty" validate:"omitempty,max=1000"`
 	Capabilities string         `gorm:"type:jsonb;not null;default:'[]'" json:"capabilities"`
 	Config       string         `gorm:"type:jsonb;not null;default:'{}'" json:"config"`

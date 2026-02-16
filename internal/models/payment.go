@@ -12,7 +12,7 @@ type Payment struct {
 	InvoiceID     string         `gorm:"not null;index" json:"invoice_id" validate:"required,uuid"`
 	Amount        float64        `gorm:"not null;type:decimal(15,2)" json:"amount" validate:"required,gt=0"`
 	Currency      string         `gorm:"not null;size:3;default:'USD'" json:"currency" validate:"required,len=3"`
-	PaymentDate   time.Time      `gorm:"not null" json:"payment_date" validate:"required"`
+	PaymentDate   time.Time      `gorm:"not null;index" json:"payment_date" validate:"required"`
 	PaymentMethod string         `gorm:"not null;size:50" json:"payment_method" validate:"required,max=50"`
 	Reference     string         `gorm:"size:100" json:"reference,omitempty" validate:"omitempty,max=100"`
 	ReceiptURL    string         `gorm:"size:500" json:"receipt_url,omitempty"`

@@ -12,7 +12,7 @@ type TeamMember struct {
 	UserID      string         `gorm:"not null;index" json:"user_id" validate:"required,uuid"`
 	Role        string         `gorm:"not null;size:50" json:"role" validate:"required,oneof=admin accountant viewer"`
 	InviteEmail string         `gorm:"size:255" json:"invite_email,omitempty" validate:"omitempty,email,max=255"`
-	InviteToken string         `gorm:"size:255" json:"invite_token,omitempty"`
+	InviteToken string         `gorm:"size:255;index" json:"invite_token,omitempty"`
 	JoinedAt    *time.Time     `json:"joined_at,omitempty"`
 	CreatedAt   time.Time      `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt   time.Time      `gorm:"autoUpdateTime" json:"updated_at"`

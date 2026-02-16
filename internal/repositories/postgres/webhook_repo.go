@@ -33,7 +33,11 @@ func (r *webhookRepository) GetByID(ctx context.Context, id string) (*models.Web
 
 func (r *webhookRepository) GetByBusinessID(ctx context.Context, businessID string) ([]*models.Webhook, error) {
 	var webhooks []models.Webhook
-	err := r.db.WithContext(ctx).Where("business_id = ? AND deleted_at IS NULL", businessID).Find(&webhooks).Error
+	err := r.db.WithContext(ctx).
+		Where("business_id = ? AND deleted_at IS NULL", businessID).
+		Order("created_at DESC").
+		Limit(defaultUnpaginatedQueryLimit).
+		Find(&webhooks).Error
 	if err != nil {
 		return nil, err
 	}

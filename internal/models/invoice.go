@@ -11,9 +11,9 @@ type Invoice struct {
 	BusinessID  string         `gorm:"not null;index" json:"business_id" validate:"required,uuid"`
 	CustomerID  string         `gorm:"not null;index" json:"customer_id" validate:"required,uuid"`
 	InvoiceNo   string         `gorm:"not null;uniqueIndex:idx_business_invoice;size:50" json:"invoice_no" validate:"required,max=50"`
-	InvoiceDate time.Time      `gorm:"not null" json:"invoice_date" validate:"required"`
+	InvoiceDate time.Time      `gorm:"not null;index" json:"invoice_date" validate:"required"`
 	DueDate     time.Time      `json:"due_date,omitempty" validate:"omitempty"`
-	Status      string         `gorm:"not null;size:50;default:'draft'" json:"status" validate:"required,oneof=draft sent paid overdue void canceled"`
+	Status      string         `gorm:"not null;size:50;default:'draft';index" json:"status" validate:"required,oneof=draft sent paid overdue void canceled"`
 	Currency    string         `gorm:"not null;size:3;default:'USD'" json:"currency" validate:"required,len=3"`
 	Subtotal    float64        `gorm:"type:decimal(15,2);default:0" json:"subtotal" validate:"gte=0"`
 	Tax         float64        `gorm:"type:decimal(15,2);default:0" json:"tax" validate:"gte=0"`

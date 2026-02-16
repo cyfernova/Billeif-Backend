@@ -65,7 +65,11 @@ func (r *teamMemberRepository) Delete(ctx context.Context, id string) error {
 
 func (r *teamMemberRepository) GetByUserID(ctx context.Context, userID string) ([]*models.TeamMember, error) {
 	var members []models.TeamMember
-	err := r.db.WithContext(ctx).Where("user_id = ? AND deleted_at IS NULL", userID).Find(&members).Error
+	err := r.db.WithContext(ctx).
+		Where("user_id = ? AND deleted_at IS NULL", userID).
+		Order("created_at DESC").
+		Limit(defaultUnpaginatedQueryLimit).
+		Find(&members).Error
 	if err != nil {
 		return nil, err
 	}

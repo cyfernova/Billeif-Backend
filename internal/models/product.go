@@ -19,7 +19,7 @@ type Product struct {
 	MinStock    int64          `gorm:"default:0" json:"min_stock" validate:"gte=0"`
 	ImageURL    string         `gorm:"size:500" json:"image_url,omitempty"`
 	ImageKey    string         `gorm:"size:255" json:"image_key,omitempty"`
-	IsActive    bool           `gorm:"default:true" json:"is_active"`
+	IsActive    bool           `gorm:"default:true;index" json:"is_active"`
 	CreatedAt   time.Time      `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt   time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
 	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`

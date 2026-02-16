@@ -17,7 +17,7 @@ type BargainingNegotiation struct {
 	Status             string     `gorm:"not null;size:50;default:initiated;index" json:"status" validate:"required,oneof=initiated in_progress accepted rejected expired"`
 	Rounds             int        `gorm:"default:0" json:"rounds" validate:"gte=0"`
 	MaxRounds          int        `gorm:"default:5" json:"max_rounds" validate:"required,gte=1,lte=10"`
-	ExpiresAt          time.Time  `gorm:"not null" json:"expires_at"`
+	ExpiresAt          time.Time  `gorm:"not null;index" json:"expires_at"`
 	Metadata           string     `gorm:"type:jsonb;not null;default:'{}'" json:"metadata"`
 	CreatedAt          time.Time  `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt          time.Time  `gorm:"autoUpdateTime" json:"updated_at"`

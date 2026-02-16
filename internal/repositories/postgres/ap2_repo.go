@@ -19,6 +19,8 @@ type ap2Repository struct {
 	log *logger.Logger
 }
 
+const defaultUnpaginatedQueryLimit = 500
+
 func NewAP2Repository(db *gorm.DB) interfaces.AP2Repository {
 	return &ap2Repository{
 		db:  db,
@@ -138,6 +140,8 @@ func (r *ap2Repository) GetPendingCartMandates(ctx context.Context, merchantID s
 	var mandates []models.CartMandate
 	err := r.db.WithContext(ctx).
 		Where("merchant_id = ? AND status = ?", merchantID, "pending").
+		Order("created_at DESC").
+		Limit(defaultUnpaginatedQueryLimit).
 		Find(&mandates).Error
 	if err != nil {
 		return nil, err
@@ -225,6 +229,17 @@ func (r *ap2Repository) GetAgentByID(ctx context.Context, id string) (*models.Ag
 	return &agent, err
 }
 
+func (r *ap2Repository) HasAgentOwnership(ctx context.Context, ownerID, agentID string) (bool, error) {
+	var count int64
+	if err := r.db.WithContext(ctx).
+		Model(&models.Agent{}).
+		Where("owner_id = ? AND id = ? AND deleted_at IS NULL", ownerID, agentID).
+		Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 func (r *ap2Repository) GetAgentsByUser(ctx context.Context, userID string, page, limit int) ([]*models.Agent, int64, error) {
 	var agents []models.Agent
 	var total int64
@@ -295,6 +310,7 @@ func (r *ap2Repository) GetActiveAgentsByType(ctx context.Context, agentType str
 	var agents []models.Agent
 	err := r.db.WithContext(ctx).
 		Where("type = ? AND is_active = ? AND deleted_at IS NULL", agentType, true).
+		Limit(defaultUnpaginatedQueryLimit).
 		Find(&agents).Error
 	if err != nil {
 		return nil, err
@@ -336,6 +352,7 @@ func (r *ap2Repository) CreateAgentCapability(ctx context.Context, capability *m
 
 func (r *ap2Repository) GetCapabilitiesByAgent(ctx context.Context, agentID string) ([]*models.AgentCapability, error) {
 	var capabilities []models.AgentCapability
+	// Capabilities are intentionally fetched without LIMIT because cardinality is expected to stay small.
 	err := r.db.WithContext(ctx).Where("agent_id = ?", agentID).Find(&capabilities).Error
 	if err != nil {
 		return nil, err
@@ -358,7 +375,11 @@ func (r *ap2Repository) CreatePaymentCredential(ctx context.Context, credential 
 
 func (r *ap2Repository) GetPaymentCredentialsByUser(ctx context.Context, userID string) ([]*models.PaymentCredential, error) {
 	var credentials []models.PaymentCredential
-	err := r.db.WithContext(ctx).Where("user_id = ?", userID).Find(&credentials).Error
+	err := r.db.WithContext(ctx).
+		Where("user_id = ?", userID).
+		Order("created_at DESC").
+		Limit(defaultUnpaginatedQueryLimit).
+		Find(&credentials).Error
 	if err != nil {
 		return nil, err
 	}
@@ -442,6 +463,8 @@ func (r *ap2Repository) GetValidTokensByCredential(ctx context.Context, credenti
 	var tokens []models.CredentialToken
 	err := r.db.WithContext(ctx).
 		Where("credential_id = ? AND is_used = ? AND expires_at > NOW()", credentialID, false).
+		Order("expires_at DESC").
+		Limit(defaultUnpaginatedQueryLimit).
 		Find(&tokens).Error
 	if err != nil {
 		return nil, err
@@ -592,6 +615,28 @@ func (r *ap2Repository) GetOrdersByUser(ctx context.Context, userID string, page
 
 	offset := (page - 1) * limit
 	query := r.db.WithContext(ctx).Model(&models.MarketplaceOrder{}).Where("user_id = ?", userID)
+
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	if err := query.Order("created_at DESC").Offset(offset).Limit(limit).Find(&orders).Error; err != nil {
+		return nil, 0, err
+	}
+
+	result := make([]*models.MarketplaceOrder, len(orders))
+	for i := range orders {
+		result[i] = &orders[i]
+	}
+	return result, total, nil
+}
+
+func (r *ap2Repository) GetOrdersByUserAndStatus(ctx context.Context, userID, status string, page, limit int) ([]*models.MarketplaceOrder, int64, error) {
+	var orders []models.MarketplaceOrder
+	var total int64
+
+	offset := (page - 1) * limit
+	query := r.db.WithContext(ctx).Model(&models.MarketplaceOrder{}).Where("user_id = ? AND status = ?", userID, status)
 
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -882,6 +927,7 @@ func (r *ap2Repository) CreateBargainingRound(ctx context.Context, round *models
 
 func (r *ap2Repository) GetBargainingRounds(ctx context.Context, negotiationID string) ([]*models.BargainingRound, error) {
 	var rounds []models.BargainingRound
+	// Negotiations are bounded by max rounds, so returning the full history here is intentional.
 	err := r.db.WithContext(ctx).
 		Where("negotiation_id = ?", negotiationID).
 		Order("round_number ASC").

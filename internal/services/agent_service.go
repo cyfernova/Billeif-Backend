@@ -414,14 +414,5 @@ func (s *AgentService) getDefaultPaymentProcessorCapabilities() string {
 }
 
 func (s *AgentService) ValidateAgentPermission(userID, agentID string) (bool, error) {
-	agents, _, err := s.ap2Repo.GetAgentsByUser(context.Background(), userID, 1, 1)
-	if err != nil {
-		return false, err
-	}
-	for _, agent := range agents {
-		if agent.ID == agentID {
-			return true, nil
-		}
-	}
-	return false, nil
+	return s.ap2Repo.HasAgentOwnership(context.Background(), userID, agentID)
 }

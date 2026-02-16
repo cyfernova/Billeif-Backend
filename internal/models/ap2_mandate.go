@@ -13,7 +13,7 @@ type IntentMandate struct {
 	Signature             string    `gorm:"type:varchar(1000);not null" json:"signature" validate:"required"`
 	PublicKey             *string   `gorm:"type:varchar(500)" json:"public_key,omitempty" validate:"omitempty,max=500"`
 	ExpiresAt             time.Time `gorm:"not null;index" json:"expires_at" validate:"required"`
-	Status                string    `gorm:"size:50;default:active" json:"status" validate:"required,oneof=active revoked expired"`
+	Status                string    `gorm:"size:50;default:active;index" json:"status" validate:"required,oneof=active revoked expired"`
 	CreatedAt             time.Time `gorm:"autoCreateTime" json:"created_at"`
 
 	CartMandates []CartMandate `gorm:"foreignKey:IntentMandateID" json:"cart_mandates,omitempty"`
@@ -34,7 +34,7 @@ type CartMandate struct {
 	Currency          string    `gorm:"not null;size:3;default:INR" json:"currency" validate:"required,len=3"`
 	Signature         string    `gorm:"type:varchar(1000);not null" json:"signature" validate:"required"`
 	MerchantSignature *string   `gorm:"type:varchar(1000)" json:"merchant_signature,omitempty" validate:"omitempty,max=1000"`
-	Status            string    `gorm:"size:50;default:pending" json:"status" validate:"required,oneof=pending signed rejected expired"`
+	Status            string    `gorm:"size:50;default:pending;index" json:"status" validate:"required,oneof=pending signed rejected expired"`
 	ExpiresAt         time.Time `gorm:"not null;index" json:"expires_at" validate:"required"`
 	CreatedAt         time.Time `gorm:"autoCreateTime" json:"created_at"`
 
@@ -55,7 +55,7 @@ type PaymentMandate struct {
 	Signature         string     `gorm:"type:varchar(1000);not null" json:"signature" validate:"required"`
 	RazorpayOrderID   *string    `gorm:"size:100;index" json:"razorpay_order_id,omitempty" validate:"omitempty,max=100"`
 	RazorpayPaymentID *string    `gorm:"size:100" json:"razorpay_payment_id,omitempty" validate:"omitempty,max=100"`
-	Status            string     `gorm:"size:50;default:pending" json:"status" validate:"required,oneof=pending authorized captured failed refunded"`
+	Status            string     `gorm:"size:50;default:pending;index" json:"status" validate:"required,oneof=pending authorized captured failed refunded"`
 	ProcessedAt       *time.Time `json:"processed_at,omitempty"`
 	CreatedAt         time.Time  `gorm:"autoCreateTime" json:"created_at"`
 }
