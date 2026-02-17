@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"invoice-backend/internal/models"
@@ -69,25 +68,8 @@ func (s *ProductService) Create(ctx context.Context, input CreateProductInput) (
 	return product, nil
 }
 
-func (s *ProductService) Get(ctx context.Context, id string) (*models.Product, error) {
-	log := logger.FromContext(ctx).With("service", "product", "operation", "get", "product_id", id)
-	product, err := s.repo.GetByID(ctx, id)
-	if err != nil {
-		log.Error("failed to get product", "error", err)
-		return nil, err
-	}
-	return product, nil
-}
-
 func (s *ProductService) GetByBusiness(ctx context.Context, businessID, id string) (*models.Product, error) {
-	product, err := s.repo.GetByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if product.BusinessID != businessID {
-		return nil, errors.New("product not found")
-	}
-	return product, nil
+	return s.repo.GetByID(ctx, id, businessID)
 }
 
 func (s *ProductService) GetBySKU(ctx context.Context, businessID, sku string) (*models.Product, error) {
@@ -119,45 +101,6 @@ type UpdateProductInput struct {
 	Currency    string  `json:"currency"`
 	Unit        string  `json:"unit"`
 	MinStock    int64   `json:"min_stock"`
-}
-
-func (s *ProductService) Update(ctx context.Context, id string, input UpdateProductInput) (*models.Product, error) {
-	log := logger.FromContext(ctx).With("service", "product", "operation", "update", "product_id", id)
-	product, err := s.repo.GetByID(ctx, id)
-	if err != nil {
-		log.Error("failed to load product for update", "error", err)
-		return nil, err
-	}
-
-	if input.Name != "" {
-		product.Name = input.Name
-	}
-	if input.SKU != "" {
-		product.SKU = input.SKU
-	}
-	if input.Description != "" {
-		product.Description = input.Description
-	}
-	if input.Price > 0 {
-		product.Price = input.Price
-	}
-	if input.Currency != "" {
-		product.Currency = input.Currency
-	}
-	if input.Unit != "" {
-		product.Unit = input.Unit
-	}
-	if input.MinStock >= 0 {
-		product.MinStock = input.MinStock
-	}
-
-	if err := s.repo.Update(ctx, product); err != nil {
-		log.Error("failed to update product", "error", err)
-		return nil, err
-	}
-
-	log.Info("product updated", "product_id", product.ID)
-	return product, nil
 }
 
 func (s *ProductService) UpdateByBusiness(ctx context.Context, businessID, id string, input UpdateProductInput) (*models.Product, error) {
@@ -229,21 +172,6 @@ type StockAdjustmentInput struct {
 	Reason   string `json:"reason"`
 }
 
-func (s *ProductService) AdjustStock(ctx context.Context, productID string, input StockAdjustmentInput) (*models.Product, error) {
-	log := logger.FromContext(ctx).With("service", "product", "operation", "adjust_stock", "product_id", productID, "quantity", input.Quantity)
-	if err := s.repo.AdjustStock(ctx, productID, input.Quantity); err != nil {
-		log.Error("failed to adjust stock", "error", err)
-		return nil, err
-	}
-	product, err := s.repo.GetByID(ctx, productID)
-	if err != nil {
-		log.Error("failed to load product after stock adjustment", "error", err)
-		return nil, err
-	}
-	log.Info("product stock adjusted", "product_id", productID, "stock_level", product.StockLevel)
-	return product, nil
-}
-
 func (s *ProductService) AdjustStockByBusiness(ctx context.Context, businessID, productID string, input StockAdjustmentInput) (*models.Product, error) {
 	log := logger.FromContext(ctx).With("service", "product", "operation", "adjust_stock", "product_id", productID, "quantity", input.Quantity, "business_id", businessID)
 	product, err := s.GetByBusiness(ctx, businessID, productID)
@@ -279,9 +207,9 @@ func (s *ProductService) GetImageUploadURLByBusiness(ctx context.Context, busine
 	return s.GetImageUploadURL(ctx, productID, contentType)
 }
 
-func (s *ProductService) UpdateImageURL(ctx context.Context, productID, imageURL string) error {
+func (s *ProductService) UpdateImageURL(ctx context.Context, businessID, productID, imageURL string) error {
 	log := logger.FromContext(ctx).With("service", "product", "operation", "update_image_url", "product_id", productID)
-	product, err := s.repo.GetByID(ctx, productID)
+	product, err := s.repo.GetByID(ctx, productID, businessID)
 	if err != nil {
 		log.Error("failed to load product for image update", "error", err)
 		return err

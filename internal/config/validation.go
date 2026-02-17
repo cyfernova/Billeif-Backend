@@ -31,6 +31,30 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("REDIS_HOST is required")
 	}
 
+	isProd := isProductionEnv(cfg.Environment)
+
+	// Require Redis password in production
+	if isProd && cfg.Redis.Password == "" {
+		return fmt.Errorf("REDIS_PASSWORD is required in production")
+	}
+
+	// Validate SSL config: if enabled, cert and key paths must be set
+	if cfg.Server.SSLEnabled {
+		if cfg.Server.SSLCertPath == "" {
+			return fmt.Errorf("SSL_CERT_PATH is required when SSL_ENABLED is true")
+		}
+		if cfg.Server.SSLKeyPath == "" {
+			return fmt.Errorf("SSL_KEY_PATH is required when SSL_ENABLED is true")
+		}
+	}
+
+	// Reject wildcard origins when credentials are allowed (CORS safety)
+	for _, origin := range cfg.AllowedOrigins {
+		if strings.Contains(origin, "*") {
+			return fmt.Errorf("wildcard origins (\"*\") are not allowed when AllowCredentials is enabled; got %q", origin)
+		}
+	}
+
 	if cfg.AWS.Region == "" {
 		return fmt.Errorf("AWS_REGION is required")
 	}

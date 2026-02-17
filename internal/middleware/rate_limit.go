@@ -10,7 +10,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RateLimiter implements a simple token bucket rate limiter
+// RateLimiter implements a simple in-memory token bucket rate limiter.
+// NOTE: This limiter is per-process. In a multi-instance deployment (e.g. ECS),
+// each instance maintains its own counters — callers effectively get N * maxHits
+// across the fleet. Replace with a Redis-backed implementation (e.g. go-redis/redis_rate)
+// for distributed enforcement.
 type RateLimiter struct {
 	mu       sync.Mutex
 	limits   map[string]*userLimit
@@ -128,6 +132,32 @@ func ShoppingIntentRateLimit() gin.HandlerFunc {
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error":   "too many requests",
 				"message": "you have exceeded the request limit. please try again shortly",
+			})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+
+// AuthRateLimit returns middleware that limits authentication attempts per IP.
+// login: 5/min, register/forgot-password/resend-verification: 3/hr.
+func AuthRateLimit(maxHits int, interval time.Duration) gin.HandlerFunc {
+	limiter := NewRateLimiter(interval, maxHits)
+
+	return func(c *gin.Context) {
+		clientIP := c.ClientIP()
+		if clientIP == "" {
+			clientIP = "unknown"
+		}
+
+		if !limiter.isAllowed(clientIP) {
+			log := logger.FromContext(c.Request.Context()).Named("rate_limit")
+			log.Warn("auth rate limit exceeded", "client_ip", clientIP, "path", c.Request.URL.Path)
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error":   "too many requests",
+				"message": "rate limit exceeded. please try again later",
 			})
 			c.Abort()
 			return

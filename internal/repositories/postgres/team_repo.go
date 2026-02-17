@@ -22,9 +22,9 @@ func (r *teamMemberRepository) Create(ctx context.Context, member *models.TeamMe
 	return r.db.WithContext(ctx).Create(member).Error
 }
 
-func (r *teamMemberRepository) GetByID(ctx context.Context, id string) (*models.TeamMember, error) {
+func (r *teamMemberRepository) GetByID(ctx context.Context, id, businessID string) (*models.TeamMember, error) {
 	var member models.TeamMember
-	err := r.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", id).First(&member).Error
+	err := r.db.WithContext(ctx).Where("id = ? AND business_id = ? AND deleted_at IS NULL", id, businessID).First(&member).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, errors.New("team member not found")
 	}

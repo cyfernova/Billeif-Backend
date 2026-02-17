@@ -12,6 +12,31 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// allowedAgentConfigKeys defines the only keys that may appear in agent config payloads.
+var allowedAgentConfigKeys = map[string]bool{
+	"type":                 true,
+	"product_ids":          true,
+	"volatility":           true,
+	"preferred_strategies": true,
+	"max_budget":           true,
+	"auto_approve":         true,
+	"notification_url":     true,
+}
+
+// sanitizeAgentConfig strips unknown keys from the config map to prevent mass-assignment.
+func sanitizeAgentConfig(config map[string]interface{}) map[string]interface{} {
+	if config == nil {
+		return nil
+	}
+	clean := make(map[string]interface{}, len(config))
+	for k, v := range config {
+		if allowedAgentConfigKeys[k] {
+			clean[k] = v
+		}
+	}
+	return clean
+}
+
 func extractProductIDs(config map[string]interface{}) []string {
 	if config == nil {
 		return nil
@@ -83,6 +108,8 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "business_id is required"})
 		return
 	}
+
+	req.Config = sanitizeAgentConfig(req.Config)
 
 	var agent *models.Agent
 	var err error
@@ -195,7 +222,7 @@ func (h *AgentHandler) UpdateAgent(c *gin.Context) {
 		updates["is_active"] = *req.IsActive
 	}
 	if req.Config != nil {
-		updates["config"] = req.Config
+		updates["config"] = sanitizeAgentConfig(req.Config)
 	}
 
 	if err := h.svc.UpdateAgent(c.Request.Context(), id, updates); err != nil {

@@ -22,9 +22,9 @@ func (r *customerRepository) Create(ctx context.Context, customer *models.Custom
 	return r.db.WithContext(ctx).Create(customer).Error
 }
 
-func (r *customerRepository) GetByID(ctx context.Context, id string) (*models.Customer, error) {
+func (r *customerRepository) GetByID(ctx context.Context, id, businessID string) (*models.Customer, error) {
 	var customer models.Customer
-	err := r.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", id).First(&customer).Error
+	err := r.db.WithContext(ctx).Where("id = ? AND business_id = ? AND deleted_at IS NULL", id, businessID).First(&customer).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, errors.New("customer not found")
 	}

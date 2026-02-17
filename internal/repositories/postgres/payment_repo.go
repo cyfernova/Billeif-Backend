@@ -22,9 +22,9 @@ func (r *paymentRepository) Create(ctx context.Context, payment *models.Payment)
 	return r.db.WithContext(ctx).Create(payment).Error
 }
 
-func (r *paymentRepository) GetByID(ctx context.Context, id string) (*models.Payment, error) {
+func (r *paymentRepository) GetByID(ctx context.Context, id, businessID string) (*models.Payment, error) {
 	var payment models.Payment
-	err := r.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", id).First(&payment).Error
+	err := r.db.WithContext(ctx).Where("id = ? AND business_id = ? AND deleted_at IS NULL", id, businessID).First(&payment).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, errors.New("payment not found")
 	}

@@ -2,11 +2,34 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
 
 	"invoice-backend/internal/middleware"
 
 	"github.com/gin-gonic/gin"
 )
+
+var allowedImageTypes = map[string]bool{
+	"image/png":     true,
+	"image/jpeg":    true,
+	"image/gif":     true,
+	"image/webp":    true,
+	"image/svg+xml": true,
+}
+
+// validateImageContentType checks that the Content-Type header is an allowed image MIME type.
+// Returns the validated content type and true, or aborts the request and returns false.
+func validateImageContentType(c *gin.Context) (string, bool) {
+	ct := strings.ToLower(strings.TrimSpace(c.GetHeader("Content-Type")))
+	if ct == "" {
+		ct = "image/png"
+	}
+	if !allowedImageTypes[ct] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported content type; allowed: image/png, image/jpeg, image/gif, image/webp, image/svg+xml"})
+		return "", false
+	}
+	return ct, true
+}
 
 func requireBusinessScope(c *gin.Context) (string, bool) {
 	businessID := middleware.GetEffectiveBusinessID(c)

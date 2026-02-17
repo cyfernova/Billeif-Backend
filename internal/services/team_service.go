@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"invoice-backend/internal/models"
@@ -42,25 +41,8 @@ func (s *TeamService) Create(ctx context.Context, input CreateTeamMemberInput) (
 	return member, nil
 }
 
-func (s *TeamService) Get(ctx context.Context, id string) (*models.TeamMember, error) {
-	log := logger.FromContext(ctx).With("service", "team", "operation", "get", "team_member_id", id)
-	member, err := s.repo.GetByID(ctx, id)
-	if err != nil {
-		log.Error("failed to get team member", "error", err)
-		return nil, err
-	}
-	return member, nil
-}
-
 func (s *TeamService) GetByBusiness(ctx context.Context, businessID, id string) (*models.TeamMember, error) {
-	member, err := s.Get(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if member.BusinessID != businessID {
-		return nil, errors.New("team member not found")
-	}
-	return member, nil
+	return s.repo.GetByID(ctx, id, businessID)
 }
 
 func (s *TeamService) List(ctx context.Context, businessID string, page, limit int) ([]*models.TeamMember, int64, error) {
@@ -76,25 +58,6 @@ func (s *TeamService) List(ctx context.Context, businessID string, page, limit i
 
 type UpdateTeamMemberInput struct {
 	Role string `json:"role" binding:"required,oneof=admin accountant viewer"`
-}
-
-func (s *TeamService) Update(ctx context.Context, id string, input UpdateTeamMemberInput) (*models.TeamMember, error) {
-	log := logger.FromContext(ctx).With("service", "team", "operation", "update", "team_member_id", id)
-	member, err := s.repo.GetByID(ctx, id)
-	if err != nil {
-		log.Error("failed to load team member for update", "error", err)
-		return nil, err
-	}
-
-	member.Role = input.Role
-
-	if err := s.repo.Update(ctx, member); err != nil {
-		log.Error("failed to update team member", "error", err)
-		return nil, err
-	}
-
-	log.Info("team member updated", "team_member_id", member.ID, "role", member.Role)
-	return member, nil
 }
 
 func (s *TeamService) UpdateByBusiness(ctx context.Context, businessID, id string, input UpdateTeamMemberInput) (*models.TeamMember, error) {

@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 
+	"invoice-backend/internal/middleware"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/internal/services"
@@ -176,8 +177,9 @@ func (h *ShoppingAgentHandler) Checkout(c *gin.Context) {
 
 func (h *ShoppingAgentHandler) GetCart(c *gin.Context) {
 	cartID := c.Param("id")
+	userID := middleware.GetUserID(c)
 
-	cartMandate, err := h.svc.GetCartMandate(c.Request.Context(), cartID)
+	cartMandate, err := h.svc.GetCartMandate(c.Request.Context(), cartID, userID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "cart not found"})
 		return

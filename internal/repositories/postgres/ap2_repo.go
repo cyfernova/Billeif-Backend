@@ -33,9 +33,9 @@ func (r *ap2Repository) CreateIntentMandate(ctx context.Context, mandate *models
 	return r.db.WithContext(ctx).Create(mandate).Error
 }
 
-func (r *ap2Repository) GetIntentMandateByID(ctx context.Context, id string) (*models.IntentMandate, error) {
+func (r *ap2Repository) GetIntentMandateByID(ctx context.Context, id, userID string) (*models.IntentMandate, error) {
 	var mandate models.IntentMandate
-	err := r.db.WithContext(ctx).Preload("CartMandates").Where("id = ?", id).First(&mandate).Error
+	err := r.db.WithContext(ctx).Preload("CartMandates").Where("id = ? AND user_id = ?", id, userID).First(&mandate).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, errors.New("intent mandate not found")
 	}
@@ -92,9 +92,18 @@ func (r *ap2Repository) CreateCartMandate(ctx context.Context, mandate *models.C
 	return r.db.WithContext(ctx).Create(mandate).Error
 }
 
-func (r *ap2Repository) GetCartMandateByID(ctx context.Context, id string) (*models.CartMandate, error) {
+func (r *ap2Repository) GetCartMandateByID(ctx context.Context, id, userID string) (*models.CartMandate, error) {
 	var mandate models.CartMandate
-	err := r.db.WithContext(ctx).Preload("PaymentMandates").Where("id = ?", id).First(&mandate).Error
+	err := r.db.WithContext(ctx).Preload("PaymentMandates").Where("id = ? AND user_id = ?", id, userID).First(&mandate).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, errors.New("cart mandate not found")
+	}
+	return &mandate, err
+}
+
+func (r *ap2Repository) GetCartMandateByMerchant(ctx context.Context, id, merchantID string) (*models.CartMandate, error) {
+	var mandate models.CartMandate
+	err := r.db.WithContext(ctx).Preload("PaymentMandates").Where("id = ? AND merchant_id = ?", id, merchantID).First(&mandate).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, errors.New("cart mandate not found")
 	}

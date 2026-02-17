@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -33,8 +32,8 @@ type CreatePaymentInput struct {
 	Notes         string  `json:"notes"`
 }
 
-func (s *PaymentService) Create(ctx context.Context, input CreatePaymentInput) (*models.Payment, error) {
-	invoice, err := s.invoiceRepo.GetByID(ctx, input.InvoiceID)
+func (s *PaymentService) Create(ctx context.Context, businessID string, input CreatePaymentInput) (*models.Payment, error) {
+	invoice, err := s.invoiceRepo.GetByID(ctx, input.InvoiceID, businessID)
 	if err != nil {
 		return nil, fmt.Errorf("invoice not found: %w", err)
 	}
@@ -89,29 +88,11 @@ func (s *PaymentService) Create(ctx context.Context, input CreatePaymentInput) (
 }
 
 func (s *PaymentService) CreateByBusiness(ctx context.Context, businessID string, input CreatePaymentInput) (*models.Payment, error) {
-	invoice, err := s.invoiceRepo.GetByID(ctx, input.InvoiceID)
-	if err != nil {
-		return nil, fmt.Errorf("invoice not found: %w", err)
-	}
-	if invoice.BusinessID != businessID {
-		return nil, errors.New("invoice not found")
-	}
-	return s.Create(ctx, input)
-}
-
-func (s *PaymentService) Get(ctx context.Context, id string) (*models.Payment, error) {
-	return s.repo.GetByID(ctx, id)
+	return s.Create(ctx, businessID, input)
 }
 
 func (s *PaymentService) GetByBusiness(ctx context.Context, businessID, id string) (*models.Payment, error) {
-	payment, err := s.repo.GetByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if payment.BusinessID != businessID {
-		return nil, errors.New("payment not found")
-	}
-	return payment, nil
+	return s.repo.GetByID(ctx, id, businessID)
 }
 
 func (s *PaymentService) ListByInvoice(ctx context.Context, invoiceID string, page, limit int) ([]*models.Payment, int64, error) {
@@ -119,12 +100,9 @@ func (s *PaymentService) ListByInvoice(ctx context.Context, invoiceID string, pa
 }
 
 func (s *PaymentService) ListByInvoiceAndBusiness(ctx context.Context, businessID, invoiceID string, page, limit int) ([]*models.Payment, int64, error) {
-	invoice, err := s.invoiceRepo.GetByID(ctx, invoiceID)
+	_, err := s.invoiceRepo.GetByID(ctx, invoiceID, businessID)
 	if err != nil {
 		return nil, 0, fmt.Errorf("invoice not found: %w", err)
-	}
-	if invoice.BusinessID != businessID {
-		return nil, 0, errors.New("invoice not found")
 	}
 	return s.repo.GetByInvoiceID(ctx, invoiceID, page, limit)
 }
@@ -134,32 +112,6 @@ type UpdatePaymentInput struct {
 	PaymentMethod string  `json:"payment_method"`
 	Reference     string  `json:"reference"`
 	Notes         string  `json:"notes"`
-}
-
-func (s *PaymentService) Update(ctx context.Context, id string, input UpdatePaymentInput) (*models.Payment, error) {
-	payment, err := s.repo.GetByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-
-	if input.Amount > 0 {
-		payment.Amount = input.Amount
-	}
-	if input.PaymentMethod != "" {
-		payment.PaymentMethod = input.PaymentMethod
-	}
-	if input.Reference != "" {
-		payment.Reference = input.Reference
-	}
-	if input.Notes != "" {
-		payment.Notes = input.Notes
-	}
-
-	if err := s.repo.Update(ctx, payment); err != nil {
-		return nil, err
-	}
-
-	return payment, nil
 }
 
 func (s *PaymentService) UpdateByBusiness(ctx context.Context, businessID, id string, input UpdatePaymentInput) (*models.Payment, error) {

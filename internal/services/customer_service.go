@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"invoice-backend/internal/models"
@@ -56,19 +55,8 @@ func (s *CustomerService) Create(ctx context.Context, input CreateCustomerInput)
 	return customer, nil
 }
 
-func (s *CustomerService) Get(ctx context.Context, id string) (*models.Customer, error) {
-	return s.repo.GetByID(ctx, id)
-}
-
 func (s *CustomerService) GetByBusiness(ctx context.Context, businessID, id string) (*models.Customer, error) {
-	customer, err := s.repo.GetByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if customer.BusinessID != businessID {
-		return nil, errors.New("customer not found")
-	}
-	return customer, nil
+	return s.repo.GetByID(ctx, id, businessID)
 }
 
 func (s *CustomerService) List(ctx context.Context, businessID string, page, limit int) ([]*models.Customer, int64, error) {
@@ -87,50 +75,6 @@ type UpdateCustomerInput struct {
 	TaxID        string  `json:"tax_id"`
 	CreditLimit  float64 `json:"credit_limit"`
 	PaymentTerms int     `json:"payment_terms"`
-}
-
-func (s *CustomerService) Update(ctx context.Context, id string, input UpdateCustomerInput) (*models.Customer, error) {
-	customer, err := s.repo.GetByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-
-	if input.Name != "" {
-		customer.Name = input.Name
-	}
-	if input.Email != "" {
-		customer.Email = input.Email
-	}
-	if input.Phone != "" {
-		customer.Phone = input.Phone
-	}
-	if input.Address != "" {
-		customer.Address = input.Address
-	}
-	if input.City != "" {
-		customer.City = input.City
-	}
-	if input.State != "" {
-		customer.State = input.State
-	}
-	if input.Country != "" {
-		customer.Country = input.Country
-	}
-	if input.ZipCode != "" {
-		customer.PostalCode = input.ZipCode
-	}
-	if input.TaxID != "" {
-		customer.TaxID = input.TaxID
-	}
-	if input.CreditLimit > 0 {
-		customer.CreditLimit = input.CreditLimit
-	}
-
-	if err := s.repo.Update(ctx, customer); err != nil {
-		return nil, err
-	}
-
-	return customer, nil
 }
 
 func (s *CustomerService) UpdateByBusiness(ctx context.Context, businessID, id string, input UpdateCustomerInput) (*models.Customer, error) {
@@ -202,7 +146,9 @@ func (s *CustomerService) Import(ctx context.Context, businessID string, custome
 	return count, nil
 }
 
+const maxExportRecords = 5000
+
 func (s *CustomerService) Export(ctx context.Context, businessID string) ([]*models.Customer, error) {
-	customers, _, err := s.repo.GetByBusinessID(ctx, businessID, 1, 10000)
+	customers, _, err := s.repo.GetByBusinessID(ctx, businessID, 1, maxExportRecords)
 	return customers, err
 }

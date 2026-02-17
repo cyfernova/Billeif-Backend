@@ -168,13 +168,9 @@ type CheckoutRequest struct {
 }
 
 func (s *ShoppingAgentService) CompleteCheckout(ctx context.Context, req *CheckoutRequest) (*models.PaymentMandate, error) {
-	cartMandate, err := s.ap2Repo.GetCartMandateByID(ctx, req.CartMandateID)
+	cartMandate, err := s.ap2Repo.GetCartMandateByID(ctx, req.CartMandateID, req.UserID)
 	if err != nil {
 		return nil, ErrCartMandateNotFound
-	}
-
-	if cartMandate.UserID != req.UserID {
-		return nil, errors.New("unauthorized: cart mandate does not belong to user")
 	}
 
 	// CRITICAL: Verify mandate is not expired
@@ -196,7 +192,7 @@ func (s *ShoppingAgentService) CompleteCheckout(ctx context.Context, req *Checko
 	// Verify intent mandate if linked
 	if cartMandate.IntentMandateID != nil {
 		// TODO: Verify intent mandate is still valid once signature verification is implemented
-		if _, err := s.ap2Repo.GetIntentMandateByID(ctx, *cartMandate.IntentMandateID); err != nil {
+		if _, err := s.ap2Repo.GetIntentMandateByID(ctx, *cartMandate.IntentMandateID, req.UserID); err != nil {
 			s.log.Warn("intent mandate not found", "mandate_id", *cartMandate.IntentMandateID, "error", err)
 		}
 	}
@@ -217,8 +213,8 @@ func (s *ShoppingAgentService) CompleteCheckout(ctx context.Context, req *Checko
 	return paymentMandate, nil
 }
 
-func (s *ShoppingAgentService) GetCartMandate(ctx context.Context, cartMandateID string) (*models.CartMandate, error) {
-	cartMandate, err := s.ap2Repo.GetCartMandateByID(ctx, cartMandateID)
+func (s *ShoppingAgentService) GetCartMandate(ctx context.Context, cartMandateID, userID string) (*models.CartMandate, error) {
+	cartMandate, err := s.ap2Repo.GetCartMandateByID(ctx, cartMandateID, userID)
 	if err != nil {
 		return nil, ErrCartMandateNotFound
 	}
@@ -243,8 +239,8 @@ func (s *ShoppingAgentService) GetOrderDetails(ctx context.Context, orderID stri
 	return s.ap2Repo.GetOrderByID(ctx, orderID)
 }
 
-func (s *ShoppingAgentService) CreateOrderFromCart(ctx context.Context, cartMandateID string) (*models.MarketplaceOrder, error) {
-	cartMandate, err := s.ap2Repo.GetCartMandateByID(ctx, cartMandateID)
+func (s *ShoppingAgentService) CreateOrderFromCart(ctx context.Context, cartMandateID, userID string) (*models.MarketplaceOrder, error) {
+	cartMandate, err := s.ap2Repo.GetCartMandateByID(ctx, cartMandateID, userID)
 	if err != nil {
 		return nil, ErrCartMandateNotFound
 	}

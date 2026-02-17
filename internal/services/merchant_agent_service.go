@@ -234,13 +234,9 @@ func (s *MerchantAgentService) GetPendingCarts(ctx context.Context, merchantAgen
 }
 
 func (s *MerchantAgentService) RespondToCart(ctx context.Context, cartMandateID, merchantAgentID, status, merchantSignature string) error {
-	cartMandate, err := s.ap2Repo.GetCartMandateByID(ctx, cartMandateID)
+	cartMandate, err := s.ap2Repo.GetCartMandateByMerchant(ctx, cartMandateID, merchantAgentID)
 	if err != nil {
 		return fmt.Errorf("cart mandate not found: %w", err)
-	}
-
-	if cartMandate.MerchantID == nil || *cartMandate.MerchantID != merchantAgentID {
-		return ErrUnauthorized
 	}
 
 	if status == "signed" && merchantSignature != "" {

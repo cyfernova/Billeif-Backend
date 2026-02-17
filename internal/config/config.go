@@ -57,6 +57,9 @@ type ServerConfig struct {
 	BaseURL      string `mapstructure:"BASE_URL"`
 	ReadTimeout  int    `mapstructure:"READ_TIMEOUT"`
 	WriteTimeout int    `mapstructure:"WRITE_TIMEOUT"`
+	SSLEnabled   bool   `mapstructure:"SSL_ENABLED"`
+	SSLCertPath  string `mapstructure:"SSL_CERT_PATH"`
+	SSLKeyPath   string `mapstructure:"SSL_KEY_PATH"`
 }
 
 type DatabaseConfig struct {
@@ -129,6 +132,9 @@ func Load() (*Config, error) {
 	_ = viper.BindEnv("SERVER.BASE_URL", "SERVER_BASE_URL")
 	_ = viper.BindEnv("SERVER.READ_TIMEOUT", "SERVER_READ_TIMEOUT")
 	_ = viper.BindEnv("SERVER.WRITE_TIMEOUT", "SERVER_WRITE_TIMEOUT")
+	_ = viper.BindEnv("SERVER.SSL_ENABLED", "SSL_ENABLED")
+	_ = viper.BindEnv("SERVER.SSL_CERT_PATH", "SSL_CERT_PATH")
+	_ = viper.BindEnv("SERVER.SSL_KEY_PATH", "SSL_KEY_PATH")
 	_ = viper.BindEnv("DATABASE.HOST", "DATABASE_HOST")
 	_ = viper.BindEnv("DATABASE.PORT", "DATABASE_PORT")
 	_ = viper.BindEnv("DATABASE.USER", "DATABASE_USER")
@@ -225,7 +231,11 @@ func setDefaults(cfg *Config) {
 		cfg.Database.Port = 5432
 	}
 	if cfg.Database.SSLMode == "" {
-		cfg.Database.SSLMode = "disable"
+		if isProductionEnv(cfg.Environment) {
+			cfg.Database.SSLMode = "require"
+		} else {
+			cfg.Database.SSLMode = "disable"
+		}
 	}
 	if cfg.Redis.Port == 0 {
 		cfg.Redis.Port = 6379

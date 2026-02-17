@@ -135,7 +135,7 @@ func (w *Worker) handleInvoiceMessage(ctx context.Context, body string) error {
 }
 
 func (w *Worker) generateInvoicePDF(ctx context.Context, invoiceID string) error {
-	invoice, err := w.svc.Invoice.Get(ctx, invoiceID)
+	invoice, err := w.svc.Invoice.GetForWorker(ctx, invoiceID)
 	if err != nil {
 		return err
 	}

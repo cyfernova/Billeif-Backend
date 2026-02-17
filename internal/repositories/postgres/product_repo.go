@@ -22,9 +22,9 @@ func (r *productRepository) Create(ctx context.Context, product *models.Product)
 	return r.db.WithContext(ctx).Create(product).Error
 }
 
-func (r *productRepository) GetByID(ctx context.Context, id string) (*models.Product, error) {
+func (r *productRepository) GetByID(ctx context.Context, id, businessID string) (*models.Product, error) {
 	var product models.Product
-	err := r.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", id).First(&product).Error
+	err := r.db.WithContext(ctx).Where("id = ? AND business_id = ? AND deleted_at IS NULL", id, businessID).First(&product).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, errors.New("product not found")
 	}

@@ -46,16 +46,6 @@ func (s *SubscriptionService) Create(ctx context.Context, input CreateSubscripti
 	return subscription, nil
 }
 
-func (s *SubscriptionService) Get(ctx context.Context, id string) (*models.Subscription, error) {
-	log := logger.FromContext(ctx).With("service", "subscription", "operation", "get", "subscription_id", id)
-	subscription, err := s.repo.GetByID(ctx, id)
-	if err != nil {
-		log.Error("failed to get subscription", "error", err)
-		return nil, err
-	}
-	return subscription, nil
-}
-
 func (s *SubscriptionService) GetByBusinessID(ctx context.Context, businessID string) (*models.Subscription, error) {
 	log := logger.FromContext(ctx).With("service", "subscription", "operation", "get_by_business", "business_id", businessID)
 	subscription, err := s.repo.GetByBusinessID(ctx, businessID)

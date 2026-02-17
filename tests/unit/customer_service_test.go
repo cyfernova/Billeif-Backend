@@ -21,8 +21,8 @@ func (m *MockCustomerRepo) Create(ctx context.Context, customer *models.Customer
 	return args.Error(0)
 }
 
-func (m *MockCustomerRepo) GetByID(ctx context.Context, id string) (*models.Customer, error) {
-	args := m.Called(ctx, id)
+func (m *MockCustomerRepo) GetByID(ctx context.Context, id, businessID string) (*models.Customer, error) {
+	args := m.Called(ctx, id, businessID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -68,7 +68,7 @@ func TestCustomerService_Create(t *testing.T) {
 	mockRepo.AssertExpectations(t)
 }
 
-func TestCustomerService_Get(t *testing.T) {
+func TestCustomerService_GetByBusiness(t *testing.T) {
 	mockRepo := new(MockCustomerRepo)
 	log := logger.New()
 	svc := services.NewCustomerService(mockRepo, log)
@@ -81,9 +81,9 @@ func TestCustomerService_Get(t *testing.T) {
 		Email:      "customer@test.com",
 	}
 
-	mockRepo.On("GetByID", ctx, "cust-123").Return(expected, nil)
+	mockRepo.On("GetByID", ctx, "cust-123", "biz-123").Return(expected, nil)
 
-	customer, err := svc.Get(ctx, "cust-123")
+	customer, err := svc.GetByBusiness(ctx, "biz-123", "cust-123")
 
 	assert.NoError(t, err)
 	assert.Equal(t, expected.ID, customer.ID)

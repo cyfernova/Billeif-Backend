@@ -3,7 +3,6 @@ package services
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -67,12 +66,9 @@ type CreateInvoiceInput struct {
 }
 
 func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (*models.Invoice, error) {
-	customer, err := s.customerRepo.GetByID(ctx, input.CustomerID)
+	_, err := s.customerRepo.GetByID(ctx, input.CustomerID, input.BusinessID)
 	if err != nil {
 		return nil, fmt.Errorf("customer not found: %w", err)
-	}
-	if customer.BusinessID != input.BusinessID {
-		return nil, errors.New("customer not found")
 	}
 
 	invoiceNo, err := s.generateInvoiceNumber(ctx, input.BusinessID)
@@ -161,20 +157,13 @@ func (s *InvoiceService) queuePDFGeneration(invoiceID string) {
 	}
 }
 
-func (s *InvoiceService) Get(ctx context.Context, id string) (*models.Invoice, error) {
-	// GetByID already preloads Items, no need to call GetItems separately
-	return s.repo.GetByID(ctx, id)
+func (s *InvoiceService) GetByBusiness(ctx context.Context, businessID, id string) (*models.Invoice, error) {
+	return s.repo.GetByID(ctx, id, businessID)
 }
 
-func (s *InvoiceService) GetByBusiness(ctx context.Context, businessID, id string) (*models.Invoice, error) {
-	invoice, err := s.repo.GetByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if invoice.BusinessID != businessID {
-		return nil, errors.New("invoice not found")
-	}
-	return invoice, nil
+// GetForWorker fetches an invoice without tenant scoping. Only for trusted internal callers (workers).
+func (s *InvoiceService) GetForWorker(ctx context.Context, id string) (*models.Invoice, error) {
+	return s.repo.GetByIDInternal(ctx, id)
 }
 
 func (s *InvoiceService) List(ctx context.Context, businessID string, page, limit int) ([]*models.Invoice, int64, error) {
@@ -184,30 +173,6 @@ func (s *InvoiceService) List(ctx context.Context, businessID string, page, limi
 type UpdateInvoiceInput struct {
 	DueDate time.Time `json:"due_date"`
 	Notes   string    `json:"notes"`
-}
-
-func (s *InvoiceService) Update(ctx context.Context, id string, input UpdateInvoiceInput) (*models.Invoice, error) {
-	invoice, err := s.repo.GetByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-
-	if invoice.Status != "draft" {
-		return nil, fmt.Errorf("cannot update invoice with status: %s", invoice.Status)
-	}
-
-	if !input.DueDate.IsZero() {
-		invoice.DueDate = input.DueDate
-	}
-	if input.Notes != "" {
-		invoice.Notes = input.Notes
-	}
-
-	if err := s.repo.Update(ctx, invoice); err != nil {
-		return nil, err
-	}
-
-	return invoice, nil
 }
 
 func (s *InvoiceService) UpdateByBusiness(ctx context.Context, businessID, id string, input UpdateInvoiceInput) (*models.Invoice, error) {
@@ -233,19 +198,6 @@ func (s *InvoiceService) UpdateByBusiness(ctx context.Context, businessID, id st
 	return invoice, nil
 }
 
-func (s *InvoiceService) Delete(ctx context.Context, id string) error {
-	invoice, err := s.repo.GetByID(ctx, id)
-	if err != nil {
-		return err
-	}
-
-	if invoice.Status != "draft" {
-		return fmt.Errorf("cannot delete invoice with status: %s", invoice.Status)
-	}
-
-	return s.repo.Delete(ctx, id)
-}
-
 func (s *InvoiceService) DeleteByBusiness(ctx context.Context, businessID, id string) error {
 	invoice, err := s.GetByBusiness(ctx, businessID, id)
 	if err != nil {
@@ -261,40 +213,15 @@ func (s *InvoiceService) UpdateStatus(ctx context.Context, id, status string) er
 	return s.repo.UpdateStatus(ctx, id, status)
 }
 
-func (s *InvoiceService) Send(ctx context.Context, id string) error {
-	invoice, err := s.Get(ctx, id)
-	if err != nil {
-		return err
-	}
-
-	customer, err := s.customerRepo.GetByID(ctx, invoice.CustomerID)
-	if err != nil {
-		return err
-	}
-
-	if err := s.repo.UpdateStatus(ctx, id, "sent"); err != nil {
-		return err
-	}
-
-	subject := fmt.Sprintf("Invoice %s", invoice.InvoiceNo)
-	body := fmt.Sprintf("Please find attached invoice %s for amount %s%.2f",
-		invoice.InvoiceNo, invoice.Currency, invoice.Total)
-
-	return s.email.SendEmail(ctx, customer.Email, subject, body)
-}
-
 func (s *InvoiceService) SendByBusiness(ctx context.Context, businessID, id string) error {
 	invoice, err := s.GetByBusiness(ctx, businessID, id)
 	if err != nil {
 		return err
 	}
 
-	customer, err := s.customerRepo.GetByID(ctx, invoice.CustomerID)
+	customer, err := s.customerRepo.GetByID(ctx, invoice.CustomerID, businessID)
 	if err != nil {
 		return err
-	}
-	if customer.BusinessID != businessID {
-		return errors.New("customer not found")
 	}
 
 	if err := s.repo.UpdateStatus(ctx, id, "sent"); err != nil {
@@ -304,19 +231,6 @@ func (s *InvoiceService) SendByBusiness(ctx context.Context, businessID, id stri
 	subject := fmt.Sprintf("Invoice %s", invoice.InvoiceNo)
 	body := fmt.Sprintf("Please find attached invoice %s for amount %s%.2f", invoice.InvoiceNo, invoice.Currency, invoice.Total)
 	return s.email.SendEmail(ctx, customer.Email, subject, body)
-}
-
-func (s *InvoiceService) GetPDFURL(ctx context.Context, invoiceID string) (string, error) {
-	invoice, err := s.repo.GetByID(ctx, invoiceID)
-	if err != nil {
-		return "", err
-	}
-
-	if invoice.PDFURL != "" {
-		return invoice.PDFURL, nil
-	}
-
-	return "", fmt.Errorf("PDF not yet generated")
 }
 
 func (s *InvoiceService) GetPDFURLByBusiness(ctx context.Context, businessID, invoiceID string) (string, error) {
@@ -334,13 +248,10 @@ func (s *InvoiceService) GetNextNumber(ctx context.Context, businessID string) (
 	return s.generateInvoiceNumber(ctx, businessID)
 }
 
+// UpdatePDFUrl is called by the internal worker (no tenant context).
+// Uses direct column update rather than tenant-scoped GetByID.
 func (s *InvoiceService) UpdatePDFUrl(ctx context.Context, invoiceID, pdfURL string) error {
-	invoice, err := s.repo.GetByID(ctx, invoiceID)
-	if err != nil {
-		return err
-	}
-	invoice.PDFURL = pdfURL
-	return s.repo.Update(ctx, invoice)
+	return s.repo.UpdatePDFURL(ctx, invoiceID, pdfURL)
 }
 
 type Invoice = models.Invoice

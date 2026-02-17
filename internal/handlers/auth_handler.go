@@ -384,9 +384,9 @@ func (h *AuthHandler) UploadProfilePicture(c *gin.Context) {
 		return
 	}
 
-	contentType := c.GetHeader("Content-Type")
-	if contentType == "" {
-		contentType = "image/png"
+	contentType, ok := validateImageContentType(c)
+	if !ok {
+		return
 	}
 
 	url, err := h.svc.GetProfilePictureUploadURL(c.Request.Context(), userID, contentType)

@@ -216,9 +216,9 @@ func (h *ProductHandler) UploadImage(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
-	contentType := c.GetHeader("Content-Type")
-	if contentType == "" {
-		contentType = "image/png"
+	contentType, ok2 := validateImageContentType(c)
+	if !ok2 {
+		return
 	}
 
 	url, err := h.svc.GetImageUploadURLByBusiness(c.Request.Context(), businessID, id, contentType)

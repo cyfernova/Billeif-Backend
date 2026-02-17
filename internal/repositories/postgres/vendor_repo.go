@@ -22,9 +22,9 @@ func (r *vendorRepository) Create(ctx context.Context, vendor *models.Vendor) er
 	return r.db.WithContext(ctx).Create(vendor).Error
 }
 
-func (r *vendorRepository) GetByID(ctx context.Context, id string) (*models.Vendor, error) {
+func (r *vendorRepository) GetByID(ctx context.Context, id, businessID string) (*models.Vendor, error) {
 	var vendor models.Vendor
-	err := r.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", id).First(&vendor).Error
+	err := r.db.WithContext(ctx).Where("id = ? AND business_id = ? AND deleted_at IS NULL", id, businessID).First(&vendor).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, errors.New("vendor not found")
 	}

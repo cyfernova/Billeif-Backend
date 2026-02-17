@@ -10,7 +10,7 @@ import (
 type AP2Repository interface {
 	// Intent Mandates
 	CreateIntentMandate(ctx context.Context, mandate *models.IntentMandate) error
-	GetIntentMandateByID(ctx context.Context, id string) (*models.IntentMandate, error)
+	GetIntentMandateByID(ctx context.Context, id, userID string) (*models.IntentMandate, error)
 	GetActiveIntentMandatesByUser(ctx context.Context, userID string) ([]*models.IntentMandate, error)
 	GetIntentMandatesByAgent(ctx context.Context, agentID string, page, limit int) ([]*models.IntentMandate, int64, error)
 	UpdateIntentMandateStatus(ctx context.Context, id, status string) error
@@ -18,7 +18,8 @@ type AP2Repository interface {
 
 	// Cart Mandates
 	CreateCartMandate(ctx context.Context, mandate *models.CartMandate) error
-	GetCartMandateByID(ctx context.Context, id string) (*models.CartMandate, error)
+	GetCartMandateByID(ctx context.Context, id, userID string) (*models.CartMandate, error)
+	GetCartMandateByMerchant(ctx context.Context, id, merchantID string) (*models.CartMandate, error)
 	GetCartMandatesByUser(ctx context.Context, userID string, page, limit int) ([]*models.CartMandate, int64, error)
 	UpdateCartMandate(ctx context.Context, mandate *models.CartMandate) error
 	SignCartMandate(ctx context.Context, id, signature string) error

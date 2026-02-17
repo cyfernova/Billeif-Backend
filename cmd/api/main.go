@@ -116,14 +116,23 @@ func main() {
 	}
 
 	go func() {
-		log.Info("starting http server", "port", cfg.Server.Port)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatal("failed to start server", "error", err)
+		if cfg.Server.SSLEnabled {
+			log.Info("starting https server", "port", cfg.Server.Port)
+			if err := srv.ListenAndServeTLS(cfg.Server.SSLCertPath, cfg.Server.SSLKeyPath); err != nil && err != http.ErrServerClosed {
+				log.Fatal("failed to start server", "error", err)
+			}
+		} else {
+			log.Info("starting http server", "port", cfg.Server.Port)
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Fatal("failed to start server", "error", err)
+			}
 		}
 	}()
 
+	// Bind metrics to localhost only to prevent external access.
+	// In production, use a sidecar or internal network to scrape metrics.
 	metricsSrv := &http.Server{
-		Addr:    ":9090",
+		Addr:    "127.0.0.1:9090",
 		Handler: promhttp.Handler(),
 	}
 	go func() {
@@ -154,22 +163,23 @@ func main() {
 }
 
 func initDatabase(cfg *config.Config, log *logger.Logger) (*gorm.DB, error) {
-	dsn := fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		cfg.Database.Host,
-		cfg.Database.Port,
-		cfg.Database.User,
-		cfg.Database.Password,
-		cfg.Database.Name,
-		cfg.Database.SSLMode,
-	)
-
 	gormLevel := "warn"
 	if strings.EqualFold(cfg.Logging.Level, "debug") || strings.EqualFold(cfg.Logging.Level, "info") {
 		gormLevel = cfg.Logging.Level
 	}
 
-	return gorm.Open(postgres.Open(dsn), &gorm.Config{
+	return gorm.Open(postgres.New(postgres.Config{
+		DSN: fmt.Sprintf(
+			"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+			cfg.Database.Host,
+			cfg.Database.Port,
+			cfg.Database.User,
+			cfg.Database.Password,
+			cfg.Database.Name,
+			cfg.Database.SSLMode,
+		),
+		PreferSimpleProtocol: true,
+	}), &gorm.Config{
 		Logger: logger.NewGORMLogger(log, logger.GORMOptions{
 			Environment:               cfg.Environment,
 			SlowThreshold:             200 * time.Millisecond,
@@ -267,19 +277,26 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 		router.Use(middleware.SentryMiddleware())
 	}
 
+	router.Use(middleware.SecurityHeaders())
 	router.Use(middleware.RequestID())
 	router.Use(middleware.Logger(log))
+
+	isProd := logger.IsProductionEnvironment(cfg.Environment)
 
 	// Use Sentry-aware recovery if Sentry is enabled
 	if cfg.Sentry.DSN != "" {
 		router.Use(middleware.SentryRecovery(log))
 	} else {
-		router.Use(middleware.Recovery(log))
+		router.Use(middleware.RecoveryWithOptions(log, isProd))
 	}
 	router.Use(middleware.CORS(cfg))
 
 	router.GET("/health", h.Health.Check)
-	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+
+	// Only expose Swagger docs in non-production environments
+	if !isProd {
+		router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	}
 
 	// Well-known endpoints
 	router.GET("/.well-known/agent.json", h.WellKnown.GetAgentCard)
@@ -289,16 +306,19 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 	api := router.Group("/api/v1")
 	{
+		loginRL := middleware.AuthRateLimit(5, time.Minute)
+		sensitiveRL := middleware.AuthRateLimit(3, time.Hour)
+
 		auth := api.Group("/auth")
 		{
-			auth.POST("/register", h.Auth.Register)
-			auth.POST("/login", h.Auth.Login)
+			auth.POST("/register", sensitiveRL, h.Auth.Register)
+			auth.POST("/login", loginRL, h.Auth.Login)
 			auth.POST("/logout", h.Auth.Logout)
 			auth.POST("/refresh", h.Auth.Refresh)
-			auth.POST("/forgot-password", h.Auth.ForgotPassword)
-			auth.POST("/reset-password", h.Auth.ResetPassword)
+			auth.POST("/forgot-password", sensitiveRL, h.Auth.ForgotPassword)
+			auth.POST("/reset-password", sensitiveRL, h.Auth.ResetPassword)
 			auth.POST("/verify-email", h.Auth.VerifyEmail)
-			auth.POST("/resend-verification", h.Auth.ResendVerification)
+			auth.POST("/resend-verification", sensitiveRL, h.Auth.ResendVerification)
 			// POST /auth/google needs to be protected because we need to validate the ID token
 			// However, typically "login" endpoints are public.
 			// But here, the flow is: Frontend gets token -> Backend validates token -> Backend syncs user.

@@ -22,7 +22,16 @@ func (r *invoiceRepository) Create(ctx context.Context, invoice *models.Invoice)
 	return r.db.WithContext(ctx).Create(invoice).Error
 }
 
-func (r *invoiceRepository) GetByID(ctx context.Context, id string) (*models.Invoice, error) {
+func (r *invoiceRepository) GetByID(ctx context.Context, id, businessID string) (*models.Invoice, error) {
+	var invoice models.Invoice
+	err := r.db.WithContext(ctx).Preload("Items").Where("id = ? AND business_id = ? AND deleted_at IS NULL", id, businessID).First(&invoice).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, errors.New("invoice not found")
+	}
+	return &invoice, err
+}
+
+func (r *invoiceRepository) GetByIDInternal(ctx context.Context, id string) (*models.Invoice, error) {
 	var invoice models.Invoice
 	err := r.db.WithContext(ctx).Preload("Items").Where("id = ? AND deleted_at IS NULL", id).First(&invoice).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -84,6 +93,10 @@ func (r *invoiceRepository) Update(ctx context.Context, invoice *models.Invoice)
 
 func (r *invoiceRepository) UpdateStatus(ctx context.Context, invoiceID string, status string) error {
 	return r.db.WithContext(ctx).Model(&models.Invoice{}).Where("id = ?", invoiceID).Update("status", status).Error
+}
+
+func (r *invoiceRepository) UpdatePDFURL(ctx context.Context, invoiceID, pdfURL string) error {
+	return r.db.WithContext(ctx).Model(&models.Invoice{}).Where("id = ?", invoiceID).Update("pdf_url", pdfURL).Error
 }
 
 func (r *invoiceRepository) Delete(ctx context.Context, id string) error {

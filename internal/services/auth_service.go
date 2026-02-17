@@ -38,7 +38,7 @@ func NewAuthService(cfg *config.Config, userRepo interfaces.UserRepository, aws 
 
 type RegisterInput struct {
 	Email    string `json:"email" binding:"required,email"`
-	Password string `json:"password" binding:"required,min=8"`
+	Password string `json:"password" binding:"required,min=12"`
 	Name     string `json:"name" binding:"required,min=2"`
 }
 
@@ -189,8 +189,8 @@ func (s *AuthService) ForgotPassword(ctx context.Context, input ForgotPasswordIn
 
 type ResetPasswordInput struct {
 	Email            string `json:"email" binding:"required,email"`
-	ConfirmationCode string `json:"confirmation_code" binding:"required"`
-	NewPassword      string `json:"new_password" binding:"required,min=8"`
+	ConfirmationCode string `json:"confirmation_code" binding:"required,min=6,max=6"`
+	NewPassword      string `json:"new_password" binding:"required,min=12"`
 }
 
 func (s *AuthService) ResetPassword(ctx context.Context, input ResetPasswordInput) error {
@@ -279,7 +279,7 @@ func (s *AuthService) GetProfilePictureUploadURL(ctx context.Context, userID, co
 
 type ChangePasswordInput struct {
 	OldPassword string `json:"old_password" binding:"required"`
-	NewPassword string `json:"new_password" binding:"required,min=8"`
+	NewPassword string `json:"new_password" binding:"required,min=12"`
 }
 
 func (s *AuthService) ChangePassword(ctx context.Context, accessToken string, input ChangePasswordInput) error {

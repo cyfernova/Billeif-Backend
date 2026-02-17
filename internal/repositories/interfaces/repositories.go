@@ -26,7 +26,7 @@ type BusinessRepository interface {
 
 type CustomerRepository interface {
 	Create(ctx context.Context, customer *models.Customer) error
-	GetByID(ctx context.Context, id string) (*models.Customer, error)
+	GetByID(ctx context.Context, id, businessID string) (*models.Customer, error)
 	GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.Customer, int64, error)
 	Update(ctx context.Context, customer *models.Customer) error
 	Delete(ctx context.Context, id string) error
@@ -34,7 +34,7 @@ type CustomerRepository interface {
 
 type VendorRepository interface {
 	Create(ctx context.Context, vendor *models.Vendor) error
-	GetByID(ctx context.Context, id string) (*models.Vendor, error)
+	GetByID(ctx context.Context, id, businessID string) (*models.Vendor, error)
 	GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.Vendor, int64, error)
 	Update(ctx context.Context, vendor *models.Vendor) error
 	Delete(ctx context.Context, id string) error
@@ -42,7 +42,7 @@ type VendorRepository interface {
 
 type ProductRepository interface {
 	Create(ctx context.Context, product *models.Product) error
-	GetByID(ctx context.Context, id string) (*models.Product, error)
+	GetByID(ctx context.Context, id, businessID string) (*models.Product, error)
 	GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.Product, int64, error)
 	GetBySKU(ctx context.Context, businessID, sku string) (*models.Product, error)
 	Update(ctx context.Context, product *models.Product) error
@@ -52,18 +52,21 @@ type ProductRepository interface {
 
 type InvoiceRepository interface {
 	Create(ctx context.Context, invoice *models.Invoice) error
-	GetByID(ctx context.Context, id string) (*models.Invoice, error)
+	GetByID(ctx context.Context, id, businessID string) (*models.Invoice, error)
+	// GetByIDInternal fetches by ID without tenant scoping. Only for trusted internal callers (workers).
+	GetByIDInternal(ctx context.Context, id string) (*models.Invoice, error)
 	GetByInvoiceNo(ctx context.Context, businessID, invoiceNo string) (*models.Invoice, error)
 	GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.Invoice, int64, error)
 	GetItems(ctx context.Context, invoiceID string) ([]*models.InvoiceItem, error)
 	Update(ctx context.Context, invoice *models.Invoice) error
 	UpdateStatus(ctx context.Context, invoiceID string, status string) error
+	UpdatePDFURL(ctx context.Context, invoiceID, pdfURL string) error
 	Delete(ctx context.Context, id string) error
 }
 
 type PaymentRepository interface {
 	Create(ctx context.Context, payment *models.Payment) error
-	GetByID(ctx context.Context, id string) (*models.Payment, error)
+	GetByID(ctx context.Context, id, businessID string) (*models.Payment, error)
 	GetByInvoiceID(ctx context.Context, invoiceID string, page, limit int) ([]*models.Payment, int64, error)
 	Update(ctx context.Context, payment *models.Payment) error
 	Delete(ctx context.Context, id string) error
@@ -77,7 +80,7 @@ type LedgerRepository interface {
 
 type TeamMemberRepository interface {
 	Create(ctx context.Context, member *models.TeamMember) error
-	GetByID(ctx context.Context, id string) (*models.TeamMember, error)
+	GetByID(ctx context.Context, id, businessID string) (*models.TeamMember, error)
 	GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.TeamMember, int64, error)
 	Update(ctx context.Context, member *models.TeamMember) error
 	Delete(ctx context.Context, id string) error
@@ -86,7 +89,7 @@ type TeamMemberRepository interface {
 
 type WebhookRepository interface {
 	Create(ctx context.Context, webhook *models.Webhook) error
-	GetByID(ctx context.Context, id string) (*models.Webhook, error)
+	GetByID(ctx context.Context, id, businessID string) (*models.Webhook, error)
 	GetByBusinessID(ctx context.Context, businessID string) ([]*models.Webhook, error)
 	Update(ctx context.Context, webhook *models.Webhook) error
 	Delete(ctx context.Context, id string) error
@@ -94,7 +97,7 @@ type WebhookRepository interface {
 
 type SubscriptionRepository interface {
 	Create(ctx context.Context, subscription *models.Subscription) error
-	GetByID(ctx context.Context, id string) (*models.Subscription, error)
+	GetByID(ctx context.Context, id, businessID string) (*models.Subscription, error)
 	GetByBusinessID(ctx context.Context, businessID string) (*models.Subscription, error)
 	Update(ctx context.Context, subscription *models.Subscription) error
 }

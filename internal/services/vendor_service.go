@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"invoice-backend/internal/models"
@@ -58,25 +57,8 @@ func (s *VendorService) Create(ctx context.Context, input CreateVendorInput) (*m
 	return vendor, nil
 }
 
-func (s *VendorService) Get(ctx context.Context, id string) (*models.Vendor, error) {
-	log := logger.FromContext(ctx).With("service", "vendor", "operation", "get", "vendor_id", id)
-	vendor, err := s.repo.GetByID(ctx, id)
-	if err != nil {
-		log.Error("failed to get vendor", "error", err)
-		return nil, err
-	}
-	return vendor, nil
-}
-
 func (s *VendorService) GetByBusiness(ctx context.Context, businessID, id string) (*models.Vendor, error) {
-	vendor, err := s.repo.GetByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if vendor.BusinessID != businessID {
-		return nil, errors.New("vendor not found")
-	}
-	return vendor, nil
+	return s.repo.GetByID(ctx, id, businessID)
 }
 
 func (s *VendorService) List(ctx context.Context, businessID string, page, limit int) ([]*models.Vendor, int64, error) {
@@ -101,54 +83,6 @@ type UpdateVendorInput struct {
 	PostalCode   string `json:"postal_code"`
 	TaxID        string `json:"tax_id"`
 	PaymentTerms string `json:"payment_terms"`
-}
-
-func (s *VendorService) Update(ctx context.Context, id string, input UpdateVendorInput) (*models.Vendor, error) {
-	log := logger.FromContext(ctx).With("service", "vendor", "operation", "update", "vendor_id", id)
-	vendor, err := s.repo.GetByID(ctx, id)
-	if err != nil {
-		log.Error("failed to load vendor for update", "error", err)
-		return nil, err
-	}
-
-	if input.Name != "" {
-		vendor.Name = input.Name
-	}
-	if input.Email != "" {
-		vendor.Email = input.Email
-	}
-	if input.Phone != "" {
-		vendor.Phone = input.Phone
-	}
-	if input.Address != "" {
-		vendor.Address = input.Address
-	}
-	if input.City != "" {
-		vendor.City = input.City
-	}
-	if input.State != "" {
-		vendor.State = input.State
-	}
-	if input.Country != "" {
-		vendor.Country = input.Country
-	}
-	if input.PostalCode != "" {
-		vendor.PostalCode = input.PostalCode
-	}
-	if input.TaxID != "" {
-		vendor.TaxID = input.TaxID
-	}
-	if input.PaymentTerms != "" {
-		vendor.PaymentTerms = input.PaymentTerms
-	}
-
-	if err := s.repo.Update(ctx, vendor); err != nil {
-		log.Error("failed to update vendor", "error", err)
-		return nil, err
-	}
-
-	log.Info("vendor updated", "vendor_id", vendor.ID)
-	return vendor, nil
 }
 
 func (s *VendorService) UpdateByBusiness(ctx context.Context, businessID, id string, input UpdateVendorInput) (*models.Vendor, error) {

@@ -22,9 +22,9 @@ func (r *subscriptionRepository) Create(ctx context.Context, subscription *model
 	return r.db.WithContext(ctx).Create(subscription).Error
 }
 
-func (r *subscriptionRepository) GetByID(ctx context.Context, id string) (*models.Subscription, error) {
+func (r *subscriptionRepository) GetByID(ctx context.Context, id, businessID string) (*models.Subscription, error) {
 	var subscription models.Subscription
-	err := r.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", id).First(&subscription).Error
+	err := r.db.WithContext(ctx).Where("id = ? AND business_id = ? AND deleted_at IS NULL", id, businessID).First(&subscription).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, errors.New("subscription not found")
 	}

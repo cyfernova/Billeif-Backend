@@ -22,9 +22,9 @@ func (r *webhookRepository) Create(ctx context.Context, webhook *models.Webhook)
 	return r.db.WithContext(ctx).Create(webhook).Error
 }
 
-func (r *webhookRepository) GetByID(ctx context.Context, id string) (*models.Webhook, error) {
+func (r *webhookRepository) GetByID(ctx context.Context, id, businessID string) (*models.Webhook, error) {
 	var webhook models.Webhook
-	err := r.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", id).First(&webhook).Error
+	err := r.db.WithContext(ctx).Where("id = ? AND business_id = ? AND deleted_at IS NULL", id, businessID).First(&webhook).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, errors.New("webhook not found")
 	}
