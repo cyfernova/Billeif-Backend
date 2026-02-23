@@ -1,0 +1,1165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Invoice Backend Code Map</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    .controls {
+      width: 320px;
+      background: #1e293b;
+      border-right: 1px solid #334155;
+      padding: 16px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .controls h2 {
+      font-size: 14px;
+      font-weight: 600;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+
+    .preset-buttons {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .preset-btn {
+      background: #334155;
+      border: 1px solid #475569;
+      color: #e2e8f0;
+      padding: 8px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: all 0.2s;
+    }
+
+    .preset-btn:hover {
+      background: #475569;
+      border-color: #64748b;
+    }
+
+    .layer-toggles {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .layer-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 0;
+      cursor: pointer;
+    }
+
+    .layer-toggle input {
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+    }
+
+    .layer-toggle label {
+      cursor: pointer;
+      font-size: 13px;
+    }
+
+    .layer-indicator {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+    }
+
+    .connection-filters {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .conn-filter {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 0;
+      cursor: pointer;
+    }
+
+    .conn-filter input {
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+    }
+
+    .conn-filter label {
+      cursor: pointer;
+      font-size: 13px;
+    }
+
+    .conn-indicator {
+      width: 20px;
+      height: 3px;
+      border-radius: 2px;
+    }
+
+    .comments-section {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .comment-item {
+      background: #334155;
+      border: 1px solid #475569;
+      border-radius: 6px;
+      padding: 12px;
+    }
+
+    .comment-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+
+    .comment-target {
+      font-weight: 600;
+      font-size: 13px;
+      color: #f1f5f9;
+    }
+
+    .comment-delete {
+      background: #ef4444;
+      border: none;
+      color: white;
+      width: 20px;
+      height: 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .comment-delete:hover {
+      background: #dc2626;
+    }
+
+    .comment-text {
+      font-size: 12px;
+      color: #cbd5e1;
+      line-height: 1.4;
+    }
+
+    .comment-path {
+      font-size: 11px;
+      color: #94a3b8;
+      margin-top: 6px;
+      font-family: monospace;
+    }
+
+    .main-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .canvas-container {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      background: #0f172a;
+    }
+
+    #diagram-svg {
+      width: 100%;
+      height: 100%;
+    }
+
+    .legend {
+      position: absolute;
+      bottom: 16px;
+      left: 16px;
+      background: rgba(30, 41, 59, 0.9);
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 11px;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 4px 0;
+    }
+
+    .legend-line {
+      width: 24px;
+      height: 2px;
+    }
+
+    .zoom-controls {
+      position: absolute;
+      bottom: 16px;
+      right: 16px;
+      display: flex;
+      gap: 4px;
+    }
+
+    .zoom-btn {
+      background: #334155;
+      border: 1px solid #475569;
+      color: #e2e8f0;
+      width: 36px;
+      height: 36px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .zoom-btn:hover {
+      background: #475569;
+    }
+
+    .prompt-section {
+      background: #1e293b;
+      border-top: 1px solid #334155;
+      padding: 16px;
+    }
+
+    .prompt-text {
+      width: 100%;
+      min-height: 80px;
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      padding: 12px;
+      font-family: monospace;
+      font-size: 12px;
+      color: #e2e8f0;
+      resize: vertical;
+    }
+
+    .copy-btn {
+      margin-top: 8px;
+      background: #3b82f6;
+      border: none;
+      color: white;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .copy-btn:hover {
+      background: #2563eb;
+    }
+
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+
+    .modal {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 20px;
+      width: 420px;
+      max-width: 90vw;
+    }
+
+    .modal h3 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
+    .modal-label {
+      font-size: 12px;
+      color: #94a3b8;
+      margin-bottom: 4px;
+    }
+
+    .modal-value {
+      font-size: 13px;
+      font-family: monospace;
+      background: #0f172a;
+      padding: 8px;
+      border-radius: 4px;
+      margin-bottom: 16px;
+      word-break: break-all;
+    }
+
+    .modal textarea {
+      width: 100%;
+      min-height: 100px;
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      padding: 10px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 13px;
+      color: #e2e8f0;
+      resize: vertical;
+      margin-bottom: 16px;
+    }
+
+    .modal-buttons {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
+    .modal-btn {
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .modal-btn-cancel {
+      background: #334155;
+      border: 1px solid #475569;
+      color: #e2e8f0;
+    }
+
+    .modal-btn-cancel:hover {
+      background: #475569;
+    }
+
+    .modal-btn-save {
+      background: #3b82f6;
+      border: none;
+      color: white;
+    }
+
+    .modal-btn-save:hover {
+      background: #2563eb;
+    }
+
+    .node {
+      cursor: pointer;
+      transition: filter 0.2s;
+    }
+
+    .node:hover {
+      filter: brightness(1.2);
+    }
+
+    .node.has-comment rect {
+      stroke-width: 3;
+    }
+
+    .comment-count {
+      font-size: 10px;
+      fill: #ef4444;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <div class="controls">
+    <h2>View Presets</h2>
+    <div class="preset-buttons">
+      <button class="preset-btn" onclick="applyPreset('full')">Full System</button>
+      <button class="preset-btn" onclick="applyPreset('invoice')">Invoice Flow</button>
+      <button class="preset-btn" onclick="applyPreset('agent')">Agent Flow</button>
+      <button class="preset-btn" onclick="applyPreset('data')">Data Layer</button>
+    </div>
+
+    <h2>Visible Layers</h2>
+    <div class="layer-toggles">
+      <label class="layer-toggle">
+        <input type="checkbox" id="layer-entry" checked onchange="updateAll()">
+        <div class="layer-indicator" style="background: #fcd34d;"></div>
+        <span>Entry Point</span>
+      </label>
+      <label class="layer-toggle">
+        <input type="checkbox" id="layer-handlers" checked onchange="updateAll()">
+        <div class="layer-indicator" style="background: #fca5a5;"></div>
+        <span>Handlers</span>
+      </label>
+      <label class="layer-toggle">
+        <input type="checkbox" id="layer-middleware" checked onchange="updateAll()">
+        <div class="layer-indicator" style="background: #fdba74;"></div>
+        <span>Middleware</span>
+      </label>
+      <label class="layer-toggle">
+        <input type="checkbox" id="layer-services" checked onchange="updateAll()">
+        <div class="layer-indicator" style="background: #86efac;"></div>
+        <span>Services</span>
+      </label>
+      <label class="layer-toggle">
+        <input type="checkbox" id="layer-repositories" checked onchange="updateAll()">
+        <div class="layer-indicator" style="background: #93c5fd;"></div>
+        <span>Repositories</span>
+      </label>
+      <label class="layer-toggle">
+        <input type="checkbox" id="layer-models" checked onchange="updateAll()">
+        <div class="layer-indicator" style="background: #c4b5fd;"></div>
+        <span>Models</span>
+      </label>
+      <label class="layer-toggle">
+        <input type="checkbox" id="layer-workers" checked onchange="updateAll()">
+        <div class="layer-indicator" style="background: #f0abfc;"></div>
+        <span>Workers</span>
+      </label>
+      <label class="layer-toggle">
+        <input type="checkbox" id="layer-pkg" checked onchange="updateAll()">
+        <div class="layer-indicator" style="background: #fda4af;"></div>
+        <span>Packages</span>
+      </label>
+    </div>
+
+    <h2>Connection Types</h2>
+    <div class="connection-filters">
+      <label class="conn-filter">
+        <input type="checkbox" id="conn-http" checked onchange="updateAll()">
+        <div class="conn-indicator" style="background: #3b82f6;"></div>
+        <span>HTTP Request</span>
+      </label>
+      <label class="conn-filter">
+        <input type="checkbox" id="conn-call" checked onchange="updateAll()">
+        <div class="conn-indicator" style="background: #10b981; background-image: repeating-linear-gradient(90deg, #10b981, #10b981 4px, transparent 4px, transparent 8px);"></div>
+        <span>Service Call</span>
+      </label>
+      <label class="conn-filter">
+        <input type="checkbox" id="conn-db" checked onchange="updateAll()">
+        <div class="conn-indicator" style="background: #8b5cf6; background-image: repeating-linear-gradient(90deg, #8b5cf6, #8b5cf6 2px, transparent 2px, transparent 4px);"></div>
+        <span>Database</span>
+      </label>
+      <label class="conn-filter">
+        <input type="checkbox" id="conn-async" checked onchange="updateAll()">
+        <div class="conn-indicator" style="background: #f97316; background-image: repeating-linear-gradient(90deg, #f97316, #f97316 8px, transparent 8px, transparent 12px);"></div>
+        <span>Async/Queue</span>
+      </label>
+      <label class="conn-filter">
+        <input type="checkbox" id="conn-external" checked onchange="updateAll()">
+        <div class="conn-indicator" style="background: #64748b; background-image: repeating-linear-gradient(90deg, #64748b 0px, #64748b 2px, transparent 2px, transparent 4px);"></div>
+        <span>External API</span>
+      </label>
+    </div>
+
+    <h2>Comments (<span id="comment-count">0</span>)</h2>
+    <div class="comments-section" id="comments-list"></div>
+  </div>
+
+  <div class="main-content">
+    <div class="canvas-container">
+      <svg id="diagram-svg"></svg>
+      <div class="legend">
+        <div class="legend-item"><div class="legend-line" style="background: #3b82f6;"></div> HTTP Request</div>
+        <div class="legend-item"><div class="legend-line" style="background: #10b981; background-image: repeating-linear-gradient(90deg, #10b981, #10b981 4px, transparent 4px, transparent 8px);"></div> Service Call</div>
+        <div class="legend-item"><div class="legend-line" style="background: #8b5cf6; background-image: repeating-linear-gradient(90deg, #8b5cf6, #8b5cf6 2px, transparent 2px, transparent 4px);"></div> Database</div>
+        <div class="legend-item"><div class="legend-line" style="background: #f97316; background-image: repeating-linear-gradient(90deg, #f97316, #f97316 8px, transparent 8px, transparent 12px);"></div> Async/Queue</div>
+        <div class="legend-item"><div class="legend-line" style="background: #64748b; background-image: repeating-linear-gradient(90deg, #64748b 0px, #64748b 2px, transparent 2px, transparent 4px);"></div> External API</div>
+      </div>
+      <div class="zoom-controls">
+        <button class="zoom-btn" onclick="zoomIn()">+</button>
+        <button class="zoom-btn" onclick="zoomOut()">−</button>
+        <button class="zoom-btn" onclick="resetZoom()">⟲</button>
+      </div>
+    </div>
+    <div class="prompt-section">
+      <textarea class="prompt-text" id="prompt-output" readonly></textarea>
+      <button class="copy-btn" onclick="copyPrompt()">Copy Prompt</button>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="comment-modal">
+    <div class="modal">
+      <h3>Add Comment</h3>
+      <div class="modal-label">Component</div>
+      <div class="modal-value" id="modal-component"></div>
+      <div class="modal-label">File Path</div>
+      <div class="modal-value" id="modal-path"></div>
+      <textarea id="comment-input" placeholder="Enter your comment about this component..."></textarea>
+      <div class="modal-buttons">
+        <button class="modal-btn modal-btn-cancel" onclick="closeModal()">Cancel</button>
+        <button class="modal-btn modal-btn-save" onclick="saveComment()">Save Comment</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const DEFAULTS = {
+      scale: 1,
+      layers: {
+        entry: true,
+        handlers: true,
+        middleware: true,
+        services: true,
+        repositories: true,
+        models: true,
+        workers: true,
+        pkg: true
+      },
+      connections: {
+        http: true,
+        call: true,
+        db: true,
+        async: true,
+        external: true
+      }
+    };
+
+    const state = {
+      scale: 1,
+      layers: { ...DEFAULTS.layers },
+      connections: { ...DEFAULTS.connections },
+      comments: [],
+      selectedNode: null
+    };
+
+    const nodes = [
+      // Entry Point
+      { id: 'main', label: 'main.go', subtitle: 'cmd/api/main.go', x: 600, y: 40, w: 140, h: 45, layer: 'entry', color: '#fcd34d' },
+
+      // Middleware
+      { id: 'auth-mw', label: 'Auth', subtitle: 'middleware/auth.go', x: 320, y: 110, w: 100, h: 40, layer: 'middleware', color: '#fdba74' },
+      { id: 'business-mw', label: 'Business Auth', subtitle: 'middleware/business_auth.go', x: 430, y: 110, w: 120, h: 40, layer: 'middleware', color: '#fdba74' },
+      { id: 'rbac-mw', label: 'RBAC', subtitle: 'middleware/rbac.go', x: 560, y: 110, w: 100, h: 40, layer: 'middleware', color: '#fdba74' },
+      { id: 'rate-mw', label: 'Rate Limit', subtitle: 'middleware/rate_limit.go', x: 670, y: 110, w: 100, h: 40, layer: 'middleware', color: '#fdba74' },
+      { id: 'logging-mw', label: 'Logging', subtitle: 'middleware/logging.go', x: 780, y: 110, w: 100, h: 40, layer: 'middleware', color: '#fdba74' },
+      { id: 'cors-mw', label: 'CORS', subtitle: 'middleware/cors.go', x: 890, y: 110, w: 100, h: 40, layer: 'middleware', color: '#fdba74' },
+      { id: 'sentry-mw', label: 'Sentry', subtitle: 'middleware/sentry.go', x: 1000, y: 110, w: 100, h: 40, layer: 'middleware', color: '#fdba74' },
+
+      // Handlers
+      { id: 'auth-h', label: 'Auth Handler', subtitle: 'handlers/auth_handler.go', x: 100, y: 180, w: 120, h: 40, layer: 'handlers', color: '#fca5a5' },
+      { id: 'invoice-h', label: 'Invoice Handler', subtitle: 'handlers/invoice_handler.go', x: 230, y: 180, w: 130, h: 40, layer: 'handlers', color: '#fca5a5' },
+      { id: 'customer-h', label: 'Customer Handler', subtitle: 'handlers/customer_handler.go', x: 370, y: 180, w: 130, h: 40, layer: 'handlers', color: '#fca5a5' },
+      { id: 'product-h', label: 'Product Handler', subtitle: 'handlers/product_handler.go', x: 510, y: 180, w: 120, h: 40, layer: 'handlers', color: '#fca5a5' },
+      { id: 'payment-h', label: 'Payment Handler', subtitle: 'handlers/payment_handler.go', x: 640, y: 180, w: 130, h: 40, layer: 'handlers', color: '#fca5a5' },
+      { id: 'agent-h', label: 'Agent Handler', subtitle: 'handlers/agent_handler.go', x: 780, y: 180, w: 120, h: 40, layer: 'handlers', color: '#fca5a5' },
+      { id: 'a2a-h', label: 'A2A Handler', subtitle: 'handlers/a2a_task_handler.go', x: 910, y: 180, w: 120, h: 40, layer: 'handlers', color: '#fca5a5' },
+      { id: 'marketplace-h', label: 'Marketplace Handler', subtitle: 'handlers/marketplace_handler.go', x: 1040, y: 180, w: 150, h: 40, layer: 'handlers', color: '#fca5a5' },
+      { id: 'bargain-h', label: 'Bargaining Handler', subtitle: 'handlers/bargaining_handler.go', x: 1200, y: 180, w: 130, h: 40, layer: 'handlers', color: '#fca5a5' },
+      { id: 'workflow-h', label: 'Workflow Handler', subtitle: 'handlers/workflow_handler.go', x: 1340, y: 180, w: 130, h: 40, layer: 'handlers', color: '#fca5a5' },
+      { id: 'llm-h', label: 'LLM Handler', subtitle: 'handlers/llm_handler.go', x: 1480, y: 180, w: 110, h: 40, layer: 'handlers', color: '#fca5a5' },
+      { id: 'intent-h', label: 'Intent Handler', subtitle: 'handlers/intent_handler.go', x: 1600, y: 180, w: 110, h: 40, layer: 'handlers', color: '#fca5a5' },
+      { id: 'webhook-h', label: 'Webhook Handler', subtitle: 'handlers/webhook_handler.go', x: 1720, y: 180, w: 130, h: 40, layer: 'handlers', color: '#fca5a5' },
+
+      // Services
+      { id: 'auth-s', label: 'Auth Service', subtitle: 'services/auth_service.go', x: 100, y: 260, w: 120, h: 40, layer: 'services', color: '#86efac' },
+      { id: 'invoice-s', label: 'Invoice Service', subtitle: 'services/invoice_service.go', x: 230, y: 260, w: 130, h: 40, layer: 'services', color: '#86efac' },
+      { id: 'customer-s', label: 'Customer Service', subtitle: 'services/customer_service.go', x: 370, y: 260, w: 130, h: 40, layer: 'services', color: '#86efac' },
+      { id: 'product-s', label: 'Product Service', subtitle: 'services/product_service.go', x: 510, y: 260, w: 120, h: 40, layer: 'services', color: '#86efac' },
+      { id: 'payment-s', label: 'Payment Service', subtitle: 'services/payment_service.go', x: 640, y: 260, w: 130, h: 40, layer: 'services', color: '#86efac' },
+      { id: 'agent-s', label: 'Agent Service', subtitle: 'services/agent_service.go', x: 780, y: 260, w: 120, h: 40, layer: 'services', color: '#86efac' },
+      { id: 'a2a-task-s', label: 'A2A Task Service', subtitle: 'services/a2a_task_service.go', x: 910, y: 260, w: 120, h: 40, layer: 'services', color: '#86efac' },
+      { id: 'a2a-push-s', label: 'A2A Push Service', subtitle: 'services/a2a_push_service.go', x: 1040, y: 260, w: 120, h: 40, layer: 'services', color: '#86efac' },
+      { id: 'market-s', label: 'Marketplace Service', subtitle: 'services/marketplace_service.go', x: 1170, y: 260, w: 150, h: 40, layer: 'services', color: '#86efac' },
+      { id: 'bargain-s', label: 'Bargaining Service', subtitle: 'services/bargaining_service.go', x: 1330, y: 260, w: 130, h: 40, layer: 'services', color: '#86efac' },
+      { id: 'workflow-s', label: 'Workflow Service', subtitle: 'services/workflow_service.go', x: 1470, y: 260, w: 130, h: 40, layer: 'services', color: '#86efac' },
+      { id: 'llm-s', label: 'LLM Service', subtitle: 'services/llm_service.go', x: 1610, y: 260, w: 110, h: 40, layer: 'services', color: '#86efac' },
+      { id: 'intent-s', label: 'Intent Service', subtitle: 'services/intent_processing_service.go', x: 1730, y: 260, w: 120, h: 40, layer: 'services', color: '#86efac' },
+      { id: 'webhook-s', label: 'Webhook Service', subtitle: 'services/webhook_service.go', x: 1860, y: 260, w: 120, h: 40, layer: 'services', color: '#86efac' },
+      { id: 'container', label: 'DI Container', subtitle: 'services/container.go', x: 600, y: 320, w: 110, h: 35, layer: 'services', color: '#a7f3d0' },
+      { id: 'shopping-s', label: 'Shopping Agent', subtitle: 'services/shopping_agent_service.go', x: 750, y: 320, w: 130, h: 35, layer: 'services', color: '#86efac' },
+
+      // Repositories
+      { id: 'user-repo', label: 'User Repo', subtitle: 'postgres/user_repo.go', x: 80, y: 400, w: 110, h: 40, layer: 'repositories', color: '#93c5fd' },
+      { id: 'business-repo', label: 'Business Repo', subtitle: 'postgres/business_repo.go', x: 200, y: 400, w: 120, h: 40, layer: 'repositories', color: '#93c5fd' },
+      { id: 'customer-repo', label: 'Customer Repo', subtitle: 'postgres/customer_repo.go', x: 330, y: 400, w: 120, h: 40, layer: 'repositories', color: '#93c5fd' },
+      { id: 'product-repo', label: 'Product Repo', subtitle: 'postgres/product_repo.go', x: 460, y: 400, w: 110, h: 40, layer: 'repositories', color: '#93c5fd' },
+      { id: 'invoice-repo', label: 'Invoice Repo', subtitle: 'postgres/invoice_repo.go', x: 580, y: 400, w: 110, h: 40, layer: 'repositories', color: '#93c5fd' },
+      { id: 'payment-repo', label: 'Payment Repo', subtitle: 'postgres/payment_repo.go', x: 700, y: 400, w: 110, h: 40, layer: 'repositories', color: '#93c5fd' },
+      { id: 'agent-repo', label: 'Agent Registry Repo', subtitle: 'postgres/agent_registry_repo.go', x: 820, y: 400, w: 140, h: 40, layer: 'repositories', color: '#93c5fd' },
+      { id: 'webhook-repo', label: 'Webhook Repo', subtitle: 'postgres/webhook_repo.go', x: 970, y: 400, w: 110, h: 40, layer: 'repositories', color: '#93c5fd' },
+      { id: 'ap2-repo', label: 'AP2 Repo', subtitle: 'postgres/ap2_repo.go', x: 1090, y: 400, w: 100, h: 40, layer: 'repositories', color: '#93c5fd' },
+      { id: 'subscription-repo', label: 'Subscription Repo', subtitle: 'postgres/subscription_repo.go', x: 1200, y: 400, w: 140, h: 40, layer: 'repositories', color: '#93c5fd' },
+      { id: 'vendor-repo', label: 'Vendor Repo', subtitle: 'postgres/vendor_repo.go', x: 1350, y: 400, w: 110, h: 40, layer: 'repositories', color: '#93c5fd' },
+      { id: 'ledger-repo', label: 'Ledger Repo', subtitle: 'postgres/ledger_repo.go', x: 1470, y: 400, w: 110, h: 40, layer: 'repositories', color: '#93c5fd' },
+      { id: 'team-repo', label: 'Team Repo', subtitle: 'postgres/team_repo.go', x: 1590, y: 400, w: 100, h: 40, layer: 'repositories', color: '#93c5fd' },
+      { id: 'repo-interfaces', label: 'Repo Interfaces', subtitle: 'interfaces/repositories.go', x: 1700, y: 400, w: 120, h: 40, layer: 'repositories', color: '#bfdbfe' },
+
+      // Models
+      { id: 'user-m', label: 'User Model', subtitle: 'models/user.go', x: 80, y: 470, w: 100, h: 35, layer: 'models', color: '#c4b5fd' },
+      { id: 'business-m', label: 'Business Model', subtitle: 'models/business.go', x: 190, y: 470, w: 110, h: 35, layer: 'models', color: '#c4b5fd' },
+      { id: 'customer-m', label: 'Customer Model', subtitle: 'models/customer.go', x: 310, y: 470, w: 110, h: 35, layer: 'models', color: '#c4b5fd' },
+      { id: 'product-m', label: 'Product Model', subtitle: 'models/product.go', x: 430, y: 470, w: 100, h: 35, layer: 'models', color: '#c4b5fd' },
+      { id: 'invoice-m', label: 'Invoice Model', subtitle: 'models/invoice.go', x: 540, y: 470, w: 100, h: 35, layer: 'models', color: '#c4b5fd' },
+      { id: 'payment-m', label: 'Payment Model', subtitle: 'models/payment.go', x: 650, y: 470, w: 100, h: 35, layer: 'models', color: '#c4b5fd' },
+      { id: 'agent-m', label: 'Agent Model', subtitle: 'models/agent_registry.go', x: 760, y: 470, w: 110, h: 35, layer: 'models', color: '#c4b5fd' },
+      { id: 'webhook-m', label: 'Webhook Model', subtitle: 'models/webhook.go', x: 880, y: 470, w: 100, h: 35, layer: 'models', color: '#c4b5fd' },
+      { id: 'subscription-m', label: 'Subscription Model', subtitle: 'models/subscription.go', x: 990, y: 470, w: 120, h: 35, layer: 'models', color: '#c4b5fd' },
+      { id: 'vendor-m', label: 'Vendor Model', subtitle: 'models/vendor.go', x: 1120, y: 470, w: 100, h: 35, layer: 'models', color: '#c4b5fd' },
+
+      // Workers
+      { id: 'worker', label: 'Worker Pool', subtitle: 'workers/worker.go', x: 600, y: 540, w: 120, h: 35, layer: 'workers', color: '#f0abfc' },
+
+      // Packages
+      { id: 'aws-pkg', label: 'AWS Clients', subtitle: 'pkg/awsclients/', x: 100, y: 600, w: 110, h: 35, layer: 'pkg', color: '#fda4af' },
+      { id: 'logger-pkg', label: 'Logger', subtitle: 'pkg/logger/', x: 220, y: 600, w: 90, h: 35, layer: 'pkg', color: '#fda4af' },
+      { id: 'sentry-pkg', label: 'Sentry', subtitle: 'pkg/sentry/', x: 320, y: 600, w: 80, h: 35, layer: 'pkg', color: '#fda4af' },
+      { id: 'a2a-pkg', label: 'A2A Protocol', subtitle: 'pkg/a2a/', x: 410, y: 600, w: 100, h: 35, layer: 'pkg', color: '#fda4af' },
+      { id: 'ap2-pkg', label: 'AP2 Protocol', subtitle: 'pkg/ap2/', x: 520, y: 600, w: 100, h: 35, layer: 'pkg', color: '#fda4af' },
+      { id: 'razorpay-pkg', label: 'Razorpay', subtitle: 'pkg/razorpay/', x: 630, y: 600, w: 100, h: 35, layer: 'pkg', color: '#fda4af' },
+      { id: 'websocket-pkg', label: 'WebSocket', subtitle: 'pkg/websocket/', x: 740, y: 600, w: 100, h: 35, layer: 'pkg', color: '#fda4af' },
+
+      // External Services
+      { id: 'postgres-db', label: 'PostgreSQL', subtitle: 'external database', x: 400, y: 680, w: 120, h: 35, layer: 'pkg', color: '#374151' },
+      { id: 'redis-db', label: 'Redis', subtitle: 'external cache', x: 530, y: 680, w: 90, h: 35, layer: 'pkg', color: '#374151' },
+      { id: 'sqs', label: 'AWS SQS', subtitle: 'external queue', x: 630, y: 680, w: 90, h: 35, layer: 'pkg', color: '#374151' },
+      { id: 'cognito', label: 'Cognito', subtitle: 'external auth', x: 730, y: 680, w: 90, h: 35, layer: 'pkg', color: '#374151' },
+      { id: 's3', label: 'AWS S3', subtitle: 'file storage', x: 830, y: 680, w: 90, h: 35, layer: 'pkg', color: '#374151' },
+      { id: 'ses', label: 'AWS SES', subtitle: 'email service', x: 930, y: 680, w: 90, h: 35, layer: 'pkg', color: '#374151' },
+      { id: 'prometheus', label: 'Prometheus', subtitle: 'metrics', x: 1030, y: 680, w: 100, h: 35, layer: 'pkg', color: '#374151' },
+    ];
+
+    const connections = [
+      // HTTP Requests from entry
+      { from: 'main', to: 'auth-mw', type: 'http', label: '' },
+      { from: 'main', to: 'auth-h', type: 'http', label: '' },
+      { from: 'main', to: 'invoice-h', type: 'http', label: '' },
+      { from: 'main', to: 'agent-h', type: 'http', label: '' },
+      { from: 'main', to: 'marketplace-h', type: 'http', label: '' },
+      { from: 'main', to: 'bargain-h', type: 'http', label: '' },
+      { from: 'main', to: 'workflow-h', type: 'http', label: '' },
+      { from: 'main', to: 'llm-h', type: 'http', label: '' },
+      { from: 'main', to: 'a2a-h', type: 'http', label: '' },
+
+      // Middleware chain
+      { from: 'auth-mw', to: 'auth-h', type: 'call', label: '' },
+      { from: 'auth-mw', to: 'invoice-h', type: 'call', label: '' },
+      { from: 'auth-mw', to: 'customer-h', type: 'call', label: '' },
+      { from: 'auth-mw', to: 'agent-h', type: 'call', label: '' },
+      { from: 'business-mw', to: 'agent-h', type: 'call', label: '' },
+      { from: 'rbac-mw', to: 'agent-h', type: 'call', label: '' },
+      { from: 'rate-mw', to: 'agent-h', type: 'call', label: '' },
+      { from: 'sentry-mw', to: 'sentry-pkg', type: 'external', label: '' },
+
+      // Handler to Service calls
+      { from: 'auth-h', to: 'auth-s', type: 'call', label: '' },
+      { from: 'invoice-h', to: 'invoice-s', type: 'call', label: '' },
+      { from: 'customer-h', to: 'customer-s', type: 'call', label: '' },
+      { from: 'product-h', to: 'product-s', type: 'call', label: '' },
+      { from: 'payment-h', to: 'payment-s', type: 'call', label: '' },
+      { from: 'agent-h', to: 'agent-s', type: 'call', label: '' },
+      { from: 'marketplace-h', to: 'market-s', type: 'call', label: '' },
+      { from: 'bargain-h', to: 'bargain-s', type: 'call', label: '' },
+      { from: 'workflow-h', to: 'workflow-s', type: 'call', label: '' },
+      { from: 'llm-h', to: 'llm-s', type: 'call', label: '' },
+      { from: 'intent-h', to: 'intent-s', type: 'call', label: '' },
+      { from: 'webhook-h', to: 'webhook-s', type: 'call', label: '' },
+      { from: 'a2a-h', to: 'a2a-task-s', type: 'call', label: '' },
+      { from: 'a2a-h', to: 'a2a-push-s', type: 'call', label: '' },
+
+      // Service to Repository calls
+      { from: 'auth-s', to: 'user-repo', type: 'db', label: '' },
+      { from: 'auth-s', to: 'business-repo', type: 'db', label: '' },
+      { from: 'invoice-s', to: 'invoice-repo', type: 'db', label: '' },
+      { from: 'invoice-s', to: 'customer-repo', type: 'db', label: '' },
+      { from: 'customer-s', to: 'customer-repo', type: 'db', label: '' },
+      { from: 'product-s', to: 'product-repo', type: 'db', label: '' },
+      { from: 'payment-s', to: 'payment-repo', type: 'db', label: '' },
+      { from: 'agent-s', to: 'agent-repo', type: 'db', label: '' },
+      { from: 'market-s', to: 'product-repo', type: 'db', label: '' },
+      { from: 'market-s', to: 'vendor-repo', type: 'db', label: '' },
+      { from: 'webhook-s', to: 'webhook-repo', type: 'db', label: '' },
+      { from: 'a2a-task-s', to: 'ap2-repo', type: 'db', label: '' },
+      { from: 'shopping-s', to: 'product-repo', type: 'db', label: '' },
+
+      // Repository to Model (GORM mapping)
+      { from: 'user-repo', to: 'user-m', type: 'db', label: '' },
+      { from: 'business-repo', to: 'business-m', type: 'db', label: '' },
+      { from: 'customer-repo', to: 'customer-m', type: 'db', label: '' },
+      { from: 'product-repo', to: 'product-m', type: 'db', label: '' },
+      { from: 'invoice-repo', to: 'invoice-m', type: 'db', label: '' },
+      { from: 'payment-repo', to: 'payment-m', type: 'db', label: '' },
+      { from: 'agent-repo', to: 'agent-m', type: 'db', label: '' },
+      { from: 'webhook-repo', to: 'webhook-m', type: 'db', label: '' },
+      { from: 'subscription-repo', to: 'subscription-m', type: 'db', label: '' },
+      { from: 'vendor-repo', to: 'vendor-m', type: 'db', label: '' },
+
+      // All repos implement interfaces
+      { from: 'user-repo', to: 'repo-interfaces', type: 'db', label: '' },
+      { from: 'business-repo', to: 'repo-interfaces', type: 'db', label: '' },
+      { from: 'customer-repo', to: 'repo-interfaces', type: 'db', label: '' },
+      { from: 'product-repo', to: 'repo-interfaces', type: 'db', label: '' },
+      { from: 'invoice-repo', to: 'repo-interfaces', type: 'db', label: '' },
+      { from: 'payment-repo', to: 'repo-interfaces', type: 'db', label: '' },
+      { from: 'agent-repo', to: 'repo-interfaces', type: 'db', label: '' },
+      { from: 'webhook-repo', to: 'repo-interfaces', type: 'db', label: '' },
+      { from: 'ap2-repo', to: 'repo-interfaces', type: 'db', label: '' },
+      { from: 'subscription-repo', to: 'repo-interfaces', type: 'db', label: '' },
+      { from: 'vendor-repo', to: 'repo-interfaces', type: 'db', label: '' },
+      { from: 'ledger-repo', to: 'repo-interfaces', type: 'db', label: '' },
+      { from: 'team-repo', to: 'repo-interfaces', type: 'db', label: '' },
+
+      // Async/Queue connections
+      { from: 'invoice-s', to: 'worker', type: 'async', label: '' },
+      { from: 'webhook-s', to: 'worker', type: 'async', label: '' },
+      { from: 'a2a-task-s', to: 'worker', type: 'async', label: '' },
+      { from: 'worker', to: 'sqs', type: 'async', label: '' },
+
+      // External API calls
+      { from: 'auth-s', to: 'cognito', type: 'external', label: '' },
+      { from: 'payment-s', to: 'razorpay-pkg', type: 'external', label: '' },
+      { from: 'llm-s', to: 'aws-pkg', type: 'external', label: '' },
+      { from: 'a2a-task-s', to: 'a2a-pkg', type: 'external', label: '' },
+      { from: 'market-s', to: 'ap2-pkg', type: 'external', label: '' },
+      { from: 'webhook-s', to: 'ses', type: 'external', label: '' },
+      { from: 'shopping-s', to: 'ap2-pkg', type: 'external', label: '' },
+      { from: 'invoice-s', to: 's3', type: 'external', label: '' },
+
+      // Package dependencies
+      { from: 'aws-pkg', to: 'sqs', type: 'external', label: '' },
+      { from: 'aws-pkg', to: 's3', type: 'external', label: '' },
+      { from: 'aws-pkg', to: 'ses', type: 'external', label: '' },
+      { from: 'postgres-db', to: 'user-repo', type: 'db', label: '' },
+      { from: 'postgres-db', to: 'business-repo', type: 'db', label: '' },
+      { from: 'postgres-db', to: 'customer-repo', type: 'db', label: '' },
+      { from: 'postgres-db', to: 'product-repo', type: 'db', label: '' },
+      { from: 'postgres-db', to: 'invoice-repo', type: 'db', label: '' },
+      { from: 'postgres-db', to: 'payment-repo', type: 'db', label: '' },
+      { from: 'postgres-db', to: 'agent-repo', type: 'db', label: '' },
+      { from: 'postgres-db', to: 'webhook-repo', type: 'db', label: '' },
+      { from: 'postgres-db', to: 'ap2-repo', type: 'db', label: '' },
+      { from: 'postgres-db', to: 'subscription-repo', type: 'db', label: '' },
+      { from: 'postgres-db', to: 'vendor-repo', type: 'db', label: '' },
+      { from: 'postgres-db', to: 'ledger-repo', type: 'db', label: '' },
+      { from: 'postgres-db', to: 'team-repo', type: 'db', label: '' },
+
+      // Logging throughout
+      { from: 'main', to: 'logger-pkg', type: 'external', label: '' },
+      { from: 'worker', to: 'logger-pkg', type: 'external', label: '' },
+      { from: 'logging-mw', to: 'logger-pkg', type: 'external', label: '' },
+
+      // Sentry for error tracking
+      { from: 'main', to: 'sentry-pkg', type: 'external', label: '' },
+
+      // WebSocket for real-time
+      { from: 'agent-s', to: 'websocket-pkg', type: 'external', label: '' },
+
+      // Metrics
+      { from: 'main', to: 'prometheus', type: 'external', label: '' },
+
+      // DI Container relationships
+      { from: 'container', to: 'auth-s', type: 'call', label: '' },
+      { from: 'container', to: 'invoice-s', type: 'call', label: '' },
+      { from: 'container', to: 'customer-s', type: 'call', label: '' },
+      { from: 'container', to: 'product-s', type: 'call', label: '' },
+      { from: 'container', to: 'payment-s', type: 'call', label: '' },
+      { from: 'container', to: 'agent-s', type: 'call', label: '' },
+    ];
+
+    const CONNECTION_STYLES = {
+      http: { color: '#3b82f6', dasharray: '' },
+      call: { color: '#10b981', dasharray: '6,3' },
+      db: { color: '#8b5cf6', dasharray: '2,2' },
+      async: { color: '#f97316', dasharray: '8,4' },
+      external: { color: '#64748b', dasharray: '3,3' }
+    };
+
+    function updateAll() {
+      updateStateFromControls();
+      renderDiagram();
+      updatePrompt();
+      updateCommentsList();
+    }
+
+    function updateStateFromControls() {
+      state.layers.entry = document.getElementById('layer-entry').checked;
+      state.layers.handlers = document.getElementById('layer-handlers').checked;
+      state.layers.middleware = document.getElementById('layer-middleware').checked;
+      state.layers.services = document.getElementById('layer-services').checked;
+      state.layers.repositories = document.getElementById('layer-repositories').checked;
+      state.layers.models = document.getElementById('layer-models').checked;
+      state.layers.workers = document.getElementById('layer-workers').checked;
+      state.layers.pkg = document.getElementById('layer-pkg').checked;
+
+      state.connections.http = document.getElementById('conn-http').checked;
+      state.connections.call = document.getElementById('conn-call').checked;
+      state.connections.db = document.getElementById('conn-db').checked;
+      state.connections.async = document.getElementById('conn-async').checked;
+      state.connections.external = document.getElementById('conn-external').checked;
+    }
+
+    function renderDiagram() {
+      const svg = document.getElementById('diagram-svg');
+      svg.innerHTML = '';
+
+      const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+      Object.entries(CONNECTION_STYLES).forEach(([type, style]) => {
+        const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+        marker.setAttribute('id', `arrowhead-${type}`);
+        marker.setAttribute('markerWidth', '8');
+        marker.setAttribute('markerHeight', '6');
+        marker.setAttribute('refX', '7');
+        marker.setAttribute('refY', '3');
+        marker.setAttribute('orient', 'auto');
+        const polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+        polygon.setAttribute('points', '0 0, 8 3, 0 6');
+        polygon.setAttribute('fill', style.color);
+        marker.appendChild(polygon);
+        defs.appendChild(marker);
+      });
+      svg.appendChild(defs);
+
+      connections.forEach(conn => {
+        if (!state.connections[conn.type]) return;
+
+        const fromNode = nodes.find(n => n.id === conn.from);
+        const toNode = nodes.find(n => n.id === conn.to);
+
+        if (!fromNode || !toNode) return;
+        if (!state.layers[fromNode.layer] || !state.layers[toNode.layer]) return;
+
+        const style = CONNECTION_STYLES[conn.type];
+        const fromX = fromNode.x + fromNode.w / 2;
+        const fromY = fromNode.y + fromNode.h / 2;
+        const toX = toNode.x + toNode.w / 2;
+        const toY = toNode.y + toNode.h / 2;
+
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        const midY = (fromY + toY) / 2;
+        const d = `M ${fromX} ${fromY} C ${fromX} ${midY}, ${toX} ${midY}, ${toX} ${toY}`;
+        path.setAttribute('d', d);
+        path.setAttribute('stroke', style.color);
+        path.setAttribute('stroke-width', '2');
+        path.setAttribute('fill', 'none');
+        if (style.dasharray) {
+          path.setAttribute('stroke-dasharray', style.dasharray);
+        }
+        path.setAttribute('marker-end', `url(#arrowhead-${conn.type})`);
+        path.setAttribute('opacity', '0.6');
+        svg.appendChild(path);
+      });
+
+      nodes.forEach(node => {
+        if (!state.layers[node.layer]) return;
+
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        g.setAttribute('class', 'node');
+        g.setAttribute('transform', `scale(${state.scale})`);
+        g.onclick = () => openCommentModal(node);
+
+        const hasComment = state.comments.some(c => c.target === node.id);
+        if (hasComment) {
+          g.setAttribute('class', 'node has-comment');
+        }
+
+        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        rect.setAttribute('x', node.x);
+        rect.setAttribute('y', node.y);
+        rect.setAttribute('width', node.w);
+        rect.setAttribute('height', node.h);
+        rect.setAttribute('rx', '6');
+        rect.setAttribute('fill', node.color);
+        rect.setAttribute('stroke', hasComment ? '#ef4444' : '#475569');
+        rect.setAttribute('stroke-width', hasComment ? '3' : '1');
+        g.appendChild(rect);
+
+        const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        label.setAttribute('x', node.x + node.w / 2);
+        label.setAttribute('y', node.y + node.h / 2 - 4);
+        label.setAttribute('text-anchor', 'middle');
+        label.setAttribute('font-size', '11');
+        label.setAttribute('font-weight', '600');
+        label.setAttribute('fill', '#1e293b');
+        label.textContent = node.label;
+        g.appendChild(label);
+
+        const subtitle = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        subtitle.setAttribute('x', node.x + node.w / 2);
+        subtitle.setAttribute('y', node.y + node.h / 2 + 10);
+        subtitle.setAttribute('text-anchor', 'middle');
+        subtitle.setAttribute('font-size', '9');
+        subtitle.setAttribute('fill', '#475569');
+        subtitle.textContent = node.subtitle;
+        g.appendChild(subtitle);
+
+        if (hasComment) {
+          const count = state.comments.filter(c => c.target === node.id).length;
+          const countText = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          countText.setAttribute('cx', node.x + node.w - 8);
+          countText.setAttribute('cy', node.y + 8);
+          countText.setAttribute('r', '10');
+          countText.setAttribute('fill', '#ef4444');
+          g.appendChild(countText);
+
+          const countNum = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          countNum.setAttribute('class', 'comment-count');
+          countNum.setAttribute('x', node.x + node.w - 8);
+          countNum.setAttribute('y', node.y + 12);
+          countNum.setAttribute('text-anchor', 'middle');
+          countNum.textContent = count;
+          g.appendChild(countNum);
+        }
+
+        svg.appendChild(g);
+      });
+    }
+
+    function updatePrompt() {
+      const parts = [];
+      const visibleLayers = Object.entries(state.layers)
+        .filter(([layer, visible]) => visible)
+        .map(([layer]) => layer);
+
+      const layerNames = {
+        entry: 'Entry Point',
+        handlers: 'Handlers',
+        middleware: 'Middleware',
+        services: 'Services',
+        repositories: 'Repositories',
+        models: 'Models',
+        workers: 'Workers',
+        pkg: 'Packages'
+      };
+
+      parts.push(`This is Invoice Backend architecture, a production-grade Golang monolith using Gin, GORM, PostgreSQL, Redis, and AWS services.`);
+      parts.push(`API base path: /api/v1`);
+      parts.push(`Visible layers: ${visibleLayers.map(l => layerNames[l]).join(', ')}.`);
+
+      if (state.comments.length > 0) {
+        parts.push('\nFeedback on specific components:');
+        parts.push('');
+
+        state.comments.forEach(comment => {
+          const node = nodes.find(n => n.id === comment.target);
+          if (node) {
+            parts.push(`**${node.label}** (${node.subtitle}):`);
+            parts.push(comment.text);
+            parts.push('');
+          }
+        });
+      }
+
+      document.getElementById('prompt-output').value = parts.join('\n');
+    }
+
+    function updateCommentsList() {
+      const list = document.getElementById('comments-list');
+      document.getElementById('comment-count').textContent = state.comments.length;
+
+      list.innerHTML = '';
+
+      state.comments.forEach((comment, index) => {
+        const node = nodes.find(n => n.id === comment.target);
+        if (!node) return;
+
+        const item = document.createElement('div');
+        item.className = 'comment-item';
+
+        const header = document.createElement('div');
+        header.className = 'comment-header';
+
+        const target = document.createElement('div');
+        target.className = 'comment-target';
+        target.textContent = node.label;
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'comment-delete';
+        deleteBtn.textContent = '×';
+        deleteBtn.onclick = () => deleteComment(index);
+
+        header.appendChild(target);
+        header.appendChild(deleteBtn);
+
+        const text = document.createElement('div');
+        text.className = 'comment-text';
+        text.textContent = comment.text;
+
+        const path = document.createElement('div');
+        path.className = 'comment-path';
+        path.textContent = node.subtitle;
+
+        item.appendChild(header);
+        item.appendChild(text);
+        item.appendChild(path);
+        list.appendChild(item);
+      });
+    }
+
+    function openCommentModal(node) {
+      state.selectedNode = node;
+      document.getElementById('modal-component').textContent = node.label;
+      document.getElementById('modal-path').textContent = node.subtitle;
+      document.getElementById('comment-input').value = '';
+      document.getElementById('comment-modal').style.display = 'flex';
+      document.getElementById('comment-input').focus();
+    }
+
+    function closeModal() {
+      document.getElementById('comment-modal').style.display = 'none';
+      state.selectedNode = null;
+    }
+
+    function saveComment() {
+      const text = document.getElementById('comment-input').value.trim();
+      if (!text || !state.selectedNode) return;
+
+      state.comments.push({
+        id: Date.now(),
+        target: state.selectedNode.id,
+        targetLabel: state.selectedNode.label,
+        targetFile: state.selectedNode.subtitle,
+        text: text
+      });
+
+      closeModal();
+      updateAll();
+    }
+
+    function deleteComment(index) {
+      state.comments.splice(index, 1);
+      updateAll();
+    }
+
+    function applyPreset(preset) {
+      switch (preset) {
+        case 'full':
+          Object.keys(state.layers).forEach(layer => state.layers[layer] = true);
+          Object.keys(state.connections).forEach(conn => state.connections[conn] = true);
+          break;
+        case 'invoice':
+          state.layers.entry = true;
+          state.layers.handlers = true;
+          state.layers.services = true;
+          state.layers.repositories = true;
+          state.layers.models = true;
+          state.layers.middleware = true;
+          state.layers.workers = false;
+          state.layers.pkg = false;
+          state.connections.http = true;
+          state.connections.call = true;
+          state.connections.db = true;
+          state.connections.async = false;
+          state.connections.external = false;
+          break;
+        case 'agent':
+          state.layers.entry = true;
+          state.layers.handlers = true;
+          state.layers.services = true;
+          state.layers.repositories = true;
+          state.layers.models = true;
+          state.layers.middleware = true;
+          state.layers.workers = true;
+          state.layers.pkg = true;
+          state.connections.http = true;
+          state.connections.call = true;
+          state.connections.db = true;
+          state.connections.async = true;
+          state.connections.external = true;
+          break;
+        case 'data':
+          state.layers.entry = false;
+          state.layers.handlers = false;
+          state.layers.services = true;
+          state.layers.repositories = true;
+          state.layers.models = true;
+          state.layers.middleware = false;
+          state.layers.workers = false;
+          state.layers.pkg = false;
+          state.connections.http = false;
+          state.connections.call = true;
+          state.connections.db = true;
+          state.connections.async = false;
+          state.connections.external = false;
+          break;
+      }
+
+      updateControlsFromState();
+      updateAll();
+    }
+
+    function updateControlsFromState() {
+      document.getElementById('layer-entry').checked = state.layers.entry;
+      document.getElementById('layer-handlers').checked = state.layers.handlers;
+      document.getElementById('layer-middleware').checked = state.layers.middleware;
+      document.getElementById('layer-services').checked = state.layers.services;
+      document.getElementById('layer-repositories').checked = state.layers.repositories;
+      document.getElementById('layer-models').checked = state.layers.models;
+      document.getElementById('layer-workers').checked = state.layers.workers;
+      document.getElementById('layer-pkg').checked = state.layers.pkg;
+
+      document.getElementById('conn-http').checked = state.connections.http;
+      document.getElementById('conn-call').checked = state.connections.call;
+      document.getElementById('conn-db').checked = state.connections.db;
+      document.getElementById('conn-async').checked = state.connections.async;
+      document.getElementById('conn-external').checked = state.connections.external;
+    }
+
+    function zoomIn() {
+      state.scale = Math.min(state.scale + 0.1, 1.5);
+      renderDiagram();
+    }
+
+    function zoomOut() {
+      state.scale = Math.max(state.scale - 0.1, 0.5);
+      renderDiagram();
+    }
+
+    function resetZoom() {
+      state.scale = 1;
+      renderDiagram();
+    }
+
+    function copyPrompt() {
+      const textarea = document.getElementById('prompt-output');
+      textarea.select();
+      document.execCommand('copy');
+
+      const btn = document.querySelector('.copy-btn');
+      const originalText = btn.textContent;
+      btn.textContent = 'Copied!';
+      setTimeout(() => {
+        btn.textContent = originalText;
+      }, 1500);
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closeModal();
+      }
+      if (e.key === 'Enter' && document.getElementById('comment-modal').style.display === 'flex') {
+        saveComment();
+      }
+    });
+
+    updateAll();
+  </script>
+</body>
+</html>
