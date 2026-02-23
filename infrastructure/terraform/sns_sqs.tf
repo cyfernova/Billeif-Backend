@@ -18,6 +18,8 @@ resource "aws_sns_topic" "workflow_notifications" {
 # Mobile Push Notifications - FCM (Android)
 # Note: FCM API Key should be stored in AWS Secrets Manager for production
 resource "aws_sns_platform_application" "fcm" {
+  count = var.fcm_api_key != "" ? 1 : 0
+
   name                = "invoice-backend-fcm"
   platform            = "GCM"
   platform_credential = var.fcm_api_key
@@ -30,6 +32,8 @@ resource "aws_sns_platform_application" "fcm" {
 # Mobile Push Notifications - APNs (iOS)
 # Note: APNs credentials should be stored in AWS Secrets Manager for production
 resource "aws_sns_platform_application" "apns" {
+  count = var.apns_private_key != "" && var.apns_certificate != "" ? 1 : 0
+
   name                = "invoice-backend-apns"
   platform            = var.apns_sandbox ? "APNS_SANDBOX" : "APNS"
   platform_credential = var.apns_private_key

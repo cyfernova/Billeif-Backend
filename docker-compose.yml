@@ -21,22 +21,6 @@ services:
     networks:
       - invoice-network
 
-  # Redis Cache
-  redis:
-    image: redis:7-alpine
-    container_name: invoice-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - invoice-network
-
   # Backend API
   api:
     build:
@@ -49,16 +33,12 @@ services:
       DATABASE_HOST: postgres
       DATABASE_PORT: 5432
       DATABASE_SSL_MODE: disable
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
       SERVER_PORT: 8080
       ENVIRONMENT: ${ENVIRONMENT:-development}
     ports:
       - "8080:8080"
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     networks:
       - invoice-network
@@ -71,7 +51,6 @@ services:
 
 volumes:
   postgres_data:
-  redis_data:
 
 networks:
   invoice-network:

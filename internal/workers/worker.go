@@ -3,6 +3,7 @@ package workers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 
@@ -117,41 +118,50 @@ type InvoiceMessage struct {
 }
 
 func (w *Worker) handleInvoiceMessage(ctx context.Context, body string) error {
+	return ProcessInvoiceQueueMessage(ctx, w.cfg, w.svc, w.log, body)
+}
+
+// ProcessInvoiceQueueMessage handles one invoice queue message in a transport-agnostic way.
+func ProcessInvoiceQueueMessage(ctx context.Context, cfg *config.Config, svc *services.Container, log *logger.Logger, body string) error {
+	if cfg == nil || svc == nil || log == nil {
+		return fmt.Errorf("invalid dependencies for invoice queue processing")
+	}
+
 	var msg InvoiceMessage
 	if err := json.Unmarshal([]byte(body), &msg); err != nil {
 		return err
 	}
 
-	w.log.Info("processing invoice message", "type", msg.Type, "invoice_id", msg.InvoiceID)
+	log.Info("processing invoice message", "type", msg.Type, "invoice_id", msg.InvoiceID)
 
 	switch msg.Type {
 	case "generate_pdf":
-		return w.generateInvoicePDF(ctx, msg.InvoiceID)
+		return generateInvoicePDF(ctx, cfg, svc, msg.InvoiceID)
 	default:
-		w.log.Warn("unknown invoice message type", "type", msg.Type)
+		log.Warn("unknown invoice message type", "type", msg.Type)
 	}
 
 	return nil
 }
 
-func (w *Worker) generateInvoicePDF(ctx context.Context, invoiceID string) error {
-	invoice, err := w.svc.Invoice.GetForWorker(ctx, invoiceID)
+func generateInvoicePDF(ctx context.Context, cfg *config.Config, svc *services.Container, invoiceID string) error {
+	invoice, err := svc.Invoice.GetForWorker(ctx, invoiceID)
 	if err != nil {
 		return err
 	}
 
-	pdfContent := w.buildInvoicePDFHTML(invoice)
+	pdfContent := buildInvoicePDFHTML(invoice)
 
 	key := "invoices/" + invoiceID + "/invoice.pdf"
-	if err := w.svc.S3.Upload(ctx, w.cfg.S3.BucketInvoices, key, []byte(pdfContent), "application/pdf"); err != nil {
+	if err := svc.S3.Upload(ctx, cfg.S3.BucketInvoices, key, []byte(pdfContent), "application/pdf"); err != nil {
 		return err
 	}
 
-	pdfURL := w.svc.S3.GetObjectURL(w.cfg.S3.BucketInvoices, key)
-	return w.svc.Invoice.UpdatePDFUrl(ctx, invoiceID, pdfURL)
+	pdfURL := svc.S3.GetObjectURL(cfg.S3.BucketInvoices, key)
+	return svc.Invoice.UpdatePDFUrl(ctx, invoiceID, pdfURL)
 }
 
-func (w *Worker) buildInvoicePDFHTML(invoice *services.Invoice) string {
+func buildInvoicePDFHTML(invoice *services.Invoice) string {
 	return `<html><body><h1>Invoice</h1><p>Invoice generation placeholder</p></body></html>`
 }
 
@@ -161,12 +171,22 @@ type PaymentMessage struct {
 }
 
 func (w *Worker) handlePaymentMessage(ctx context.Context, body string) error {
+	return ProcessPaymentQueueMessage(ctx, w.log, body)
+}
+
+// ProcessPaymentQueueMessage handles one payment queue message in a transport-agnostic way.
+func ProcessPaymentQueueMessage(ctx context.Context, log *logger.Logger, body string) error {
+	_ = ctx
+	if log == nil {
+		return fmt.Errorf("invalid dependencies for payment queue processing")
+	}
+
 	var msg PaymentMessage
 	if err := json.Unmarshal([]byte(body), &msg); err != nil {
 		return err
 	}
 
-	w.log.Info("processing payment message", "type", msg.Type, "payment_id", msg.PaymentID)
+	log.Info("processing payment message", "type", msg.Type, "payment_id", msg.PaymentID)
 	return nil
 }
 

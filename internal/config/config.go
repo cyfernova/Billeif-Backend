@@ -15,6 +15,8 @@ type Config struct {
 	Database       DatabaseConfig    `mapstructure:"DATABASE"`
 	Redis          RedisConfig       `mapstructure:"REDIS"`
 	AWS            AWSConfig         `mapstructure:"AWS"`
+	SSM            SSMConfig         `mapstructure:"SSM"`
+	WebSocket      WebSocketConfig   `mapstructure:"WEBSOCKET"`
 	Cognito        CognitoConfig     `mapstructure:"COGNITO"`
 	JWT            JWTConfig         `mapstructure:"JWT"`
 	S3             S3Config          `mapstructure:"S3"`
@@ -85,6 +87,17 @@ type AWSConfig struct {
 	Endpoint  string `mapstructure:"ENDPOINT"`
 }
 
+type SSMConfig struct {
+	DatabaseUserParam            string `mapstructure:"DATABASE_USER_PARAM"`
+	DatabasePasswordParam        string `mapstructure:"DATABASE_PASSWORD_PARAM"`
+	CredentialEncryptionKeyParam string `mapstructure:"CREDENTIAL_ENCRYPTION_KEY_PARAM"`
+}
+
+type WebSocketConfig struct {
+	APIEndpoint      string `mapstructure:"API_ENDPOINT"`
+	ConnectionsTable string `mapstructure:"CONNECTIONS_TABLE"`
+}
+
 type CognitoConfig struct {
 	UserPoolID      string        `mapstructure:"USER_POOL_ID"`
 	ClientID        string        `mapstructure:"CLIENT_ID"`
@@ -149,6 +162,11 @@ func Load() (*Config, error) {
 	_ = viper.BindEnv("AWS.ACCESS_KEY_ID", "AWS_ACCESS_KEY_ID")
 	_ = viper.BindEnv("AWS.SECRET_ACCESS_KEY", "AWS_SECRET_ACCESS_KEY")
 	_ = viper.BindEnv("AWS.ENDPOINT", "AWS_ENDPOINT")
+	_ = viper.BindEnv("SSM.DATABASE_USER_PARAM", "DATABASE_USER_SSM_PARAM")
+	_ = viper.BindEnv("SSM.DATABASE_PASSWORD_PARAM", "DATABASE_PASSWORD_SSM_PARAM")
+	_ = viper.BindEnv("SSM.CREDENTIAL_ENCRYPTION_KEY_PARAM", "CREDENTIAL_ENCRYPTION_KEY_SSM_PARAM")
+	_ = viper.BindEnv("WEBSOCKET.API_ENDPOINT", "WEBSOCKET_API_ENDPOINT")
+	_ = viper.BindEnv("WEBSOCKET.CONNECTIONS_TABLE", "WEBSOCKET_CONNECTIONS_TABLE")
 	_ = viper.BindEnv("COGNITO.USER_POOL_ID", "COGNITO_USER_POOL_ID")
 	_ = viper.BindEnv("COGNITO.CLIENT_ID", "COGNITO_CLIENT_ID")
 	_ = viper.BindEnv("COGNITO.REGION", "COGNITO_REGION")
@@ -182,6 +200,10 @@ func Load() (*Config, error) {
 	var cfg Config
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	if err := resolveSSMParameters(&cfg); err != nil {
+		return nil, fmt.Errorf("failed to resolve SSM parameters: %w", err)
 	}
 
 	if err := validate(&cfg); err != nil {
@@ -242,6 +264,9 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.AWS.Region == "" {
 		cfg.AWS.Region = "us-east-1"
+	}
+	if cfg.WebSocket.ConnectionsTable == "" {
+		cfg.WebSocket.ConnectionsTable = "invoice-backend-ws-connections"
 	}
 	if cfg.JWT.AccessTokenExpiry == 0 {
 		cfg.JWT.AccessTokenExpiry = time.Hour

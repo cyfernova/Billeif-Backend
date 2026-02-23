@@ -1,4 +1,3 @@
-# RDS Subnet Group - Public subnets only for external access
 resource "aws_db_subnet_group" "public" {
   name        = "${var.project_name}-db-public-subnet-group"
   description = "Public database subnet group for ${var.project_name}"
@@ -9,43 +8,34 @@ resource "aws_db_subnet_group" "public" {
   }
 }
 
-# RDS PostgreSQL Instance
 resource "aws_db_instance" "main" {
   identifier = "${var.project_name}-postgres"
 
-  # Engine
-  engine               = "postgres"
-  engine_version       = "16.3"
-  instance_class       = var.db_instance_class
-  parameter_group_name = "default.postgres16"
+  engine         = "postgres"
+  engine_version = "16.3"
+  instance_class = var.db_instance_class
 
-  # Storage
   allocated_storage     = 20
-  max_allocated_storage = 100
-  storage_type          = "gp3"
+  max_allocated_storage = 20
+  storage_type          = "gp2"
   storage_encrypted     = true
 
-  # Database
   db_name  = var.db_name
   username = var.db_username
   password = var.db_password
   port     = 5432
 
-  # Network
   db_subnet_group_name   = aws_db_subnet_group.public.name
   vpc_security_group_ids = [aws_security_group.rds.id]
   publicly_accessible    = true
-  multi_az               = var.environment == "prod" ? true : false
+  multi_az               = false
 
-  # Backup
-  backup_retention_period = 7
+  backup_retention_period = var.environment == "prod" ? 3 : 1
   backup_window           = "03:00-04:00"
   maintenance_window      = "Mon:04:00-Mon:05:00"
 
-  # Performance Insights
   performance_insights_enabled = false
 
-  # Deletion Protection
   deletion_protection       = var.environment == "prod" ? true : false
   skip_final_snapshot       = var.environment != "prod"
   final_snapshot_identifier = var.environment == "prod" ? "${var.project_name}-final-snapshot" : null

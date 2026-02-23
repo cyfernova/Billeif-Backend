@@ -15,13 +15,17 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ses"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
 )
 
 type Config struct {
+	SDKConfig aws.Config
+
 	Cognito  *cognitoidentityprovider.Client
 	DynamoDB *dynamodb.Client
 	S3       *s3.Client
 	SES      *ses.Client
+	SSM      *ssm.Client
 	SQS      *sqs.Client
 	SNS      *sns.Client
 }
@@ -40,6 +44,7 @@ func New(ctx context.Context, cfg appconfig.AWSConfig, log *logger.Logger) (*Con
 	}
 
 	clients := &Config{
+		SDKConfig: awsCfg,
 		Cognito: cognitoidentityprovider.NewFromConfig(awsCfg, func(o *cognitoidentityprovider.Options) {
 			if cfg.Endpoint != "" {
 				o.BaseEndpoint = aws.String(cfg.Endpoint)
@@ -56,6 +61,11 @@ func New(ctx context.Context, cfg appconfig.AWSConfig, log *logger.Logger) (*Con
 			}
 		}),
 		SES: ses.NewFromConfig(awsCfg, func(o *ses.Options) {
+			if cfg.Endpoint != "" {
+				o.BaseEndpoint = aws.String(cfg.Endpoint)
+			}
+		}),
+		SSM: ssm.NewFromConfig(awsCfg, func(o *ssm.Options) {
 			if cfg.Endpoint != "" {
 				o.BaseEndpoint = aws.String(cfg.Endpoint)
 			}

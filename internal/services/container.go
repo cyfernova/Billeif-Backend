@@ -12,37 +12,38 @@ import (
 )
 
 type Container struct {
-	Auth               *AuthService
-	BusinessAuth       *BusinessAuthService
-	Business           *BusinessService
-	Customer           *CustomerService
-	Vendor             *VendorService
-	Product            *ProductService
-	Invoice            *InvoiceService
-	Payment            *PaymentService
-	Ledger             *LedgerService
-	Team               *TeamService
-	Webhook            *WebhookService
-	Subscription       *SubscriptionService
-	S3                 *S3Service
-	Email              *EmailService
-	Agent              *AgentService
-	ShoppingAgent      *ShoppingAgentService
-	MerchantAgent      *MerchantAgentService
-	CredentialProvider *CredentialProviderService
-	PaymentProcessor   *PaymentProcessorService
-	Marketplace        *MarketplaceService
-	ProductMatching    *ProductMatchingService
-	IntentProcessing   *IntentProcessingService
-	AgentDiscovery     *AgentDiscoveryService
-	LLM                *LLMService
-	A2ATask            *A2ATaskService
-	A2APush            *A2APushService
-	Workflow           *WorkflowService
-	Mentee             *MenteeService
-	Bargaining         *BargainingService
-	AgentConfig        *AgentConfigService
-	A2ABargaining      *A2ABargainingService
+	Auth                *AuthService
+	BusinessAuth        *BusinessAuthService
+	Business            *BusinessService
+	Customer            *CustomerService
+	Vendor              *VendorService
+	Product             *ProductService
+	Invoice             *InvoiceService
+	Payment             *PaymentService
+	Ledger              *LedgerService
+	Team                *TeamService
+	Webhook             *WebhookService
+	Subscription        *SubscriptionService
+	S3                  *S3Service
+	Email               *EmailService
+	Agent               *AgentService
+	ShoppingAgent       *ShoppingAgentService
+	MerchantAgent       *MerchantAgentService
+	CredentialProvider  *CredentialProviderService
+	PaymentProcessor    *PaymentProcessorService
+	Marketplace         *MarketplaceService
+	ProductMatching     *ProductMatchingService
+	IntentProcessing    *IntentProcessingService
+	AgentDiscovery      *AgentDiscoveryService
+	LLM                 *LLMService
+	A2ATask             *A2ATaskService
+	A2APush             *A2APushService
+	Workflow            *WorkflowService
+	Mentee              *MenteeService
+	Bargaining          *BargainingService
+	AgentConfig         *AgentConfigService
+	A2ABargaining       *A2ABargainingService
+	WebSocketConnection *WebSocketConnectionService
 }
 
 func NewContainer(
@@ -85,6 +86,7 @@ func NewContainer(
 	bargainingSvc := NewBargainingService(ap2Repo, a2aClient, agentSvc, menteeSvc, llmSvc, log)
 	a2aBargainingSvc := NewA2ABargainingService(a2aClient, bargainingSvc, menteeSvc, log)
 	agentConfigSvc := NewAgentConfigService(".well-known", log)
+	websocketConnectionSvc := NewWebSocketConnectionService(cfg, aws, log)
 	credentialProviderSvc, err := NewCredentialProviderService(ap2Repo, cfg.Credentials.EncryptionKey, log)
 	if err != nil {
 		log.Fatal("failed to initialize credential provider service", "error", err)
@@ -97,36 +99,37 @@ func NewContainer(
 	)
 
 	return &Container{
-		Auth:               NewAuthService(cfg, userRepo, aws, emailSvc, s3Svc, log),
-		BusinessAuth:       NewBusinessAuthService(businessRepo, teamRepo, log),
-		Business:           NewBusinessService(businessRepo, s3Svc, log),
-		Customer:           NewCustomerService(customerRepo, log),
-		Vendor:             NewVendorService(vendorRepo, log),
-		Product:            NewProductService(productRepo, s3Svc, log),
-		Invoice:            NewInvoiceService(cfg, invoiceRepo, productRepo, customerRepo, aws, s3Svc, emailSvc, log),
-		Payment:            NewPaymentService(db, paymentRepo, invoiceRepo, log),
-		Ledger:             NewLedgerService(ledgerRepo, log),
-		Team:               NewTeamService(teamRepo, log),
-		Webhook:            NewWebhookService(webhookRepo, log),
-		Subscription:       NewSubscriptionService(subscriptionRepo, log),
-		S3:                 s3Svc,
-		Email:              emailSvc,
-		Agent:              agentSvc,
-		ShoppingAgent:      NewShoppingAgentService(ap2Repo, agentSvc, intentProcessingSvc, ap2Signer, ap2MandateSvc, a2aClient, log),
-		MerchantAgent:      NewMerchantAgentService(ap2Repo, log),
-		CredentialProvider: credentialProviderSvc,
-		PaymentProcessor:   NewPaymentProcessorService(ap2Repo, log),
-		Marketplace:        marketplaceSvc,
-		ProductMatching:    productMatchingSvc,
-		IntentProcessing:   intentProcessingSvc,
-		AgentDiscovery:     NewAgentDiscoveryService(ap2Repo, log),
-		LLM:                llmSvc,
-		A2ATask:            a2aTaskSvc,
-		A2APush:            a2aPushSvc,
-		Workflow:           workflowSvc,
-		Mentee:             menteeSvc,
-		Bargaining:         bargainingSvc,
-		AgentConfig:        agentConfigSvc,
-		A2ABargaining:      a2aBargainingSvc,
+		Auth:                NewAuthService(cfg, userRepo, aws, emailSvc, s3Svc, log),
+		BusinessAuth:        NewBusinessAuthService(businessRepo, teamRepo, log),
+		Business:            NewBusinessService(businessRepo, s3Svc, log),
+		Customer:            NewCustomerService(customerRepo, log),
+		Vendor:              NewVendorService(vendorRepo, log),
+		Product:             NewProductService(productRepo, s3Svc, log),
+		Invoice:             NewInvoiceService(cfg, invoiceRepo, productRepo, customerRepo, aws, s3Svc, emailSvc, log),
+		Payment:             NewPaymentService(db, paymentRepo, invoiceRepo, log),
+		Ledger:              NewLedgerService(ledgerRepo, log),
+		Team:                NewTeamService(teamRepo, log),
+		Webhook:             NewWebhookService(webhookRepo, log),
+		Subscription:        NewSubscriptionService(subscriptionRepo, log),
+		S3:                  s3Svc,
+		Email:               emailSvc,
+		Agent:               agentSvc,
+		ShoppingAgent:       NewShoppingAgentService(ap2Repo, agentSvc, intentProcessingSvc, ap2Signer, ap2MandateSvc, a2aClient, log),
+		MerchantAgent:       NewMerchantAgentService(ap2Repo, log),
+		CredentialProvider:  credentialProviderSvc,
+		PaymentProcessor:    NewPaymentProcessorService(ap2Repo, log),
+		Marketplace:         marketplaceSvc,
+		ProductMatching:     productMatchingSvc,
+		IntentProcessing:    intentProcessingSvc,
+		AgentDiscovery:      NewAgentDiscoveryService(ap2Repo, log),
+		LLM:                 llmSvc,
+		A2ATask:             a2aTaskSvc,
+		A2APush:             a2aPushSvc,
+		Workflow:            workflowSvc,
+		Mentee:              menteeSvc,
+		Bargaining:          bargainingSvc,
+		AgentConfig:         agentConfigSvc,
+		A2ABargaining:       a2aBargainingSvc,
+		WebSocketConnection: websocketConnectionSvc,
 	}
 }

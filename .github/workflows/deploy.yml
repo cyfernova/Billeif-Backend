@@ -1,4 +1,4 @@
-name: Deploy to AWS ECS
+name: Build Lambda Artifacts
 
 on:
   push:
@@ -7,83 +7,35 @@ on:
       - master
   workflow_dispatch:
 
-env:
-  AWS_REGION: us-east-1
-  ECR_REPOSITORY: invoice-backend
-  ECS_CLUSTER: invoice-backend-cluster
-  ECS_SERVICE: invoice-backend-service
-  CONTAINER_NAME: invoice-backend
-
 jobs:
-  deploy:
-    name: Build and Deploy
+  build:
+    name: Build Serverless Artifacts
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6
+      - name: Set up Go
+        uses: actions/setup-go@v6
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          go-version-file: go.mod
+          cache: true
 
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+      - name: Run tests
+        run: go test ./...
 
-      - name: Build, tag, and push image to Amazon ECR
-        id: build-image
-        uses: docker/build-push-action@v6
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
+      - name: Build and package Lambda artifacts
+        run: make package-lambda
+
+      - name: Upload Lambda artifacts
+        uses: actions/upload-artifact@v4
         with:
-          context: .
-          push: true
-          tags: |
-            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
-            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Set image output
-        id: image-output
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        run: echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}" >> $GITHUB_OUTPUT
-
-      - name: Download current task definition
-        run: |
-          aws ecs describe-task-definition \
-            --task-definition ${{ env.CONTAINER_NAME }} \
-            --query 'taskDefinition' \
-            > task-definition.json
-
-      - name: Update task definition with new image
-        id: task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: task-definition.json
-          container-name: ${{ env.CONTAINER_NAME }}
-          image: ${{ steps.image-output.outputs.image }}
-
-      - name: Deploy to Amazon ECS
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
-        with:
-          task-definition: ${{ steps.task-def.outputs.task-definition }}
-          service: ${{ env.ECS_SERVICE }}
-          cluster: ${{ env.ECS_CLUSTER }}
-          wait-for-service-stability: false
-
-      - name: Output deployment info
-        run: |
-          echo "Deployment completed successfully!"
-          echo "Image: ${{ steps.image-output.outputs.image }}"
-          echo "Cluster: ${{ env.ECS_CLUSTER }}"
-          echo "Service: ${{ env.ECS_SERVICE }}"
+          name: lambda-artifacts
+          path: |
+            .build/lambda/http.zip
+            .build/lambda/a2a-stream.zip
+            .build/lambda/sqs-invoice.zip
+            .build/lambda/sqs-payment.zip
+            .build/lambda/ws.zip
+          if-no-files-found: error
