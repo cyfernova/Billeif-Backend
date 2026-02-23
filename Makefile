@@ -2,7 +2,9 @@
 -include .env
 export
 
-.PHONY: help infra-backend-init infra-init infra-apply infra-destroy infra-output build run test test-integration migrate-up migrate-down migrate-create migration-up migration-down migration-down-all migration-create migration-status fmt lint docker-build docker-up docker-down clean deps test-coverage swagger
+.PHONY: help infra-backend-init infra-init infra-apply infra-destroy infra-output build run test test-integration migrate-up migrate-down migrate-create migration-up migration-down migration-down-all migration-create migration-status fmt lint docker-build docker-up docker-down clean deps test-coverage swagger build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-payment build-lambda-ws package-lambda
+
+LAMBDA_BUILD_DIR := .build/lambda
 
 help:
 	@echo 'Usage: make [target]'
@@ -44,6 +46,35 @@ infra-output: ## Save Terraform output to file
 # Build targets
 build: ## Build the application
 	go build -o .build/api ./cmd/api
+
+build-lambda: build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-payment build-lambda-ws ## Build all Lambda binaries
+
+build-lambda-http: ## Build HTTP API Lambda bootstrap binary
+	mkdir -p $(LAMBDA_BUILD_DIR)/http
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(LAMBDA_BUILD_DIR)/http/bootstrap ./cmd/lambda/http
+
+build-lambda-a2a-stream: ## Build A2A stream Lambda bootstrap binary
+	mkdir -p $(LAMBDA_BUILD_DIR)/a2a-stream
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(LAMBDA_BUILD_DIR)/a2a-stream/bootstrap ./cmd/lambda/a2a-stream
+
+build-lambda-sqs-invoice: ## Build invoice SQS Lambda bootstrap binary
+	mkdir -p $(LAMBDA_BUILD_DIR)/sqs-invoice
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(LAMBDA_BUILD_DIR)/sqs-invoice/bootstrap ./cmd/lambda/sqs-invoice
+
+build-lambda-sqs-payment: ## Build payment SQS Lambda bootstrap binary
+	mkdir -p $(LAMBDA_BUILD_DIR)/sqs-payment
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(LAMBDA_BUILD_DIR)/sqs-payment/bootstrap ./cmd/lambda/sqs-payment
+
+build-lambda-ws: ## Build WebSocket Lambda bootstrap binary
+	mkdir -p $(LAMBDA_BUILD_DIR)/ws
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(LAMBDA_BUILD_DIR)/ws/bootstrap ./cmd/lambda/ws
+
+package-lambda: build-lambda ## Package Lambda artifacts into zip files
+	cd $(LAMBDA_BUILD_DIR)/http && zip -q -r ../http.zip bootstrap
+	cd $(LAMBDA_BUILD_DIR)/a2a-stream && zip -q -r ../a2a-stream.zip bootstrap
+	cd $(LAMBDA_BUILD_DIR)/sqs-invoice && zip -q -r ../sqs-invoice.zip bootstrap
+	cd $(LAMBDA_BUILD_DIR)/sqs-payment && zip -q -r ../sqs-payment.zip bootstrap
+	cd $(LAMBDA_BUILD_DIR)/ws && zip -q -r ../ws.zip bootstrap
 
 run: ## Run the application
 	go run ./cmd/api

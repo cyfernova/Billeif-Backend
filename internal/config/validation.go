@@ -27,17 +27,6 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("DATABASE_NAME is required")
 	}
 
-	if cfg.Redis.Host == "" {
-		return fmt.Errorf("REDIS_HOST is required")
-	}
-
-	isProd := isProductionEnv(cfg.Environment)
-
-	// Require Redis password in production
-	if isProd && cfg.Redis.Password == "" {
-		return fmt.Errorf("REDIS_PASSWORD is required in production")
-	}
-
 	// Validate SSL config: if enabled, cert and key paths must be set
 	if cfg.Server.SSLEnabled {
 		if cfg.Server.SSLCertPath == "" {

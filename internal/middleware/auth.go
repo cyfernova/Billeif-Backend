@@ -144,55 +144,75 @@ type CognitoClaims struct {
 
 var jwksCache *JWKSCache
 
-func Auth(cfg config.CognitoConfig, log *logger.Logger) gin.HandlerFunc {
+func ensureJWKSCache(cfg config.CognitoConfig) {
 	if jwksCache == nil {
 		jwksCache = NewJWKSCache(cfg.UserPoolID, cfg.Region, cfg.JWKSRefreshRate)
 	}
+}
+
+func parseAuthorizationHeader(authHeader string) (string, error) {
+	if authHeader == "" {
+		return "", fmt.Errorf("missing authorization header")
+	}
+
+	parts := strings.SplitN(authHeader, " ", 2)
+	if len(parts) == 1 {
+		return parts[0], nil
+	}
+	if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+		return "", fmt.Errorf("invalid authorization header format")
+	}
+	return parts[1], nil
+}
+
+// ValidateCognitoToken validates an access/id token and returns parsed claims.
+func ValidateCognitoToken(cfg config.CognitoConfig, tokenString string) (*CognitoClaims, error) {
+	ensureJWKSCache(cfg)
+
+	token, err := jwt.ParseWithClaims(tokenString, &CognitoClaims{}, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		kid, ok := token.Header["kid"].(string)
+		if !ok {
+			return nil, fmt.Errorf("kid not found in token header")
+		}
+		return jwksCache.GetKey(kid)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	claims, ok := token.Claims.(*CognitoClaims)
+	if !ok || !token.Valid {
+		return nil, fmt.Errorf("invalid token claims")
+	}
+	if claims.TokenUse != "access" && claims.TokenUse != "id" {
+		return nil, fmt.Errorf("invalid token type: %s", claims.TokenUse)
+	}
+
+	return claims, nil
+}
+
+// ValidateCognitoAuthorization validates a bearer authorization header and returns claims.
+func ValidateCognitoAuthorization(cfg config.CognitoConfig, authHeader string) (*CognitoClaims, error) {
+	tokenString, err := parseAuthorizationHeader(authHeader)
+	if err != nil {
+		return nil, err
+	}
+	return ValidateCognitoToken(cfg, tokenString)
+}
+
+func Auth(cfg config.CognitoConfig, log *logger.Logger) gin.HandlerFunc {
+	ensureJWKSCache(cfg)
 
 	return func(c *gin.Context) {
 		reqLog := logger.FromContext(c.Request.Context()).Named("auth_middleware")
 		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			reqLog.Warn("missing authorization header")
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing authorization header"})
-			return
-		}
-
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
-			reqLog.Warn("invalid authorization header format")
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid authorization header format"})
-			return
-		}
-
-		tokenString := parts[1]
-		token, err := jwt.ParseWithClaims(tokenString, &CognitoClaims{}, func(token *jwt.Token) (interface{}, error) {
-			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-			}
-			kid, ok := token.Header["kid"].(string)
-			if !ok {
-				return nil, fmt.Errorf("kid not found in token header")
-			}
-			return jwksCache.GetKey(kid)
-		})
-
+		claims, err := ValidateCognitoAuthorization(cfg, authHeader)
 		if err != nil {
 			reqLog.Warn("token validation failed", "error", err)
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
-			return
-		}
-
-		claims, ok := token.Claims.(*CognitoClaims)
-		if !ok || !token.Valid {
-			reqLog.Warn("invalid token claims")
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token claims"})
-			return
-		}
-
-		if claims.TokenUse != "access" && claims.TokenUse != "id" {
-			reqLog.Warn("invalid token type", "token_use", claims.TokenUse)
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token type"})
 			return
 		}
 

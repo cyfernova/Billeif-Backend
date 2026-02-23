@@ -244,3 +244,39 @@ resource "aws_dynamodb_table" "payments_cache" {
     type = "S"
   }
 }
+
+# WebSocket connection registry
+resource "aws_dynamodb_table" "ws_connections" {
+  name         = var.websocket_connections_table
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "connection_id"
+
+  attribute {
+    name = "connection_id"
+    type = "S"
+  }
+
+  attribute {
+    name = "user_id"
+    type = "S"
+  }
+
+  global_secondary_index {
+    name            = "user_id-index"
+    hash_key        = "user_id"
+    projection_type = "ALL"
+  }
+
+  ttl {
+    attribute_name = "ttl"
+    enabled        = false
+  }
+
+  point_in_time_recovery {
+    enabled = false
+  }
+
+  tags = {
+    Name = "${var.project_name}-ws-connections"
+  }
+}

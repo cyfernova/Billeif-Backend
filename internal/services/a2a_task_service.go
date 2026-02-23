@@ -131,7 +131,7 @@ func (s *A2ATaskService) StreamTask(ctx context.Context, req *a2a.SendTaskReques
 	task.AddMessage(req.Message)
 
 	// Send initial state event
-	s.sendStateEvent(events, task)
+	s.sendStateEvent(ctx, events, task)
 
 	// Process task with streaming
 	err := s.processTaskWithStreaming(ctx, task, events)
@@ -139,7 +139,7 @@ func (s *A2ATaskService) StreamTask(ctx context.Context, req *a2a.SendTaskReques
 		if stateErr := task.SetState(a2a.TaskStateFailed, err.Error()); stateErr != nil {
 			s.log.Error("failed to set task state", "task_id", task.ID, "error", stateErr)
 		}
-		s.sendStateEvent(events, task)
+		s.sendStateEvent(ctx, events, task)
 	}
 
 	// Save task
@@ -152,12 +152,12 @@ func (s *A2ATaskService) StreamTask(ctx context.Context, req *a2a.SendTaskReques
 		"task_id": task.ID,
 		"state":   task.State,
 	})
-	events <- a2a.StreamEvent{
+	s.emitStreamEvent(ctx, task.ID, events, a2a.StreamEvent{
 		ID:        uuid.New().String(),
 		Event:     a2a.StreamEventDone,
 		Data:      doneData,
 		Timestamp: time.Now(),
-	}
+	})
 
 	return err
 }
@@ -254,24 +254,28 @@ func (s *A2ATaskService) CancelTask(ctx context.Context, req *a2a.CancelTaskRequ
 
 // SubscribeTask subscribes to real-time updates for a task
 func (s *A2ATaskService) SubscribeTask(ctx context.Context, taskID string, events chan<- a2a.StreamEvent) error {
-	// Add subscriber
-	s.subscriberMutex.Lock()
-	s.subscribers[taskID] = append(s.subscribers[taskID], events)
-	s.subscriberMutex.Unlock()
+	return s.SubscribeTaskWithReplay(ctx, taskID, "", events)
+}
 
-	// Remove subscriber on context done
-	go func() {
-		<-ctx.Done()
-		s.subscriberMutex.Lock()
-		subs := s.subscribers[taskID]
-		for i, sub := range subs {
-			if sub == events {
-				s.subscribers[taskID] = append(subs[:i], subs[i+1:]...)
-				break
+// SubscribeTaskWithReplay subscribes to task updates and replays events after lastEventID.
+func (s *A2ATaskService) SubscribeTaskWithReplay(ctx context.Context, taskID, lastEventID string, events chan<- a2a.StreamEvent) error {
+	cursor := lastEventID
+
+	replayEvents, err := s.loadTaskEventsAfter(ctx, taskID, lastEventID, 500)
+	if err != nil {
+		s.log.Warn("failed to replay task events", "task_id", taskID, "error", err)
+	}
+	for _, event := range replayEvents {
+		select {
+		case events <- event:
+			cursor = event.ID
+			if event.Event == a2a.StreamEventDone || event.Event == a2a.StreamEventError {
+				return nil
 			}
+		case <-ctx.Done():
+			return nil
 		}
-		s.subscriberMutex.Unlock()
-	}()
+	}
 
 	// Send current state
 	task, err := s.GetTask(ctx, taskID)
@@ -279,11 +283,55 @@ func (s *A2ATaskService) SubscribeTask(ctx context.Context, taskID string, event
 		return err
 	}
 
-	s.sendStateEvent(events, task)
+	// If nothing was replayed, send current state to bootstrap subscription.
+	if len(replayEvents) == 0 {
+		s.sendCurrentStateEvent(events, task)
+		if task.State.IsTerminal() {
+			return nil
+		}
+	}
 
-	// Keep connection open until context is done or task completes
-	<-ctx.Done()
-	return nil
+	// Poll durable task event storage so subscriptions don't depend on in-memory process state.
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			newEvents, pollErr := s.loadTaskEventsAfter(ctx, taskID, cursor, 200)
+			if pollErr != nil {
+				s.log.Warn("failed polling task events", "task_id", taskID, "error", pollErr)
+				continue
+			}
+
+			for _, event := range newEvents {
+				select {
+				case events <- event:
+					cursor = event.ID
+					if event.Event == a2a.StreamEventDone || event.Event == a2a.StreamEventError {
+						return nil
+					}
+				case <-ctx.Done():
+					return nil
+				}
+			}
+
+			if len(newEvents) > 0 {
+				continue
+			}
+
+			currentTask, currentErr := s.GetTask(ctx, taskID)
+			if currentErr != nil {
+				s.log.Warn("failed to get task while polling subscription", "task_id", taskID, "error", currentErr)
+				continue
+			}
+			if currentTask.State.IsTerminal() {
+				return nil
+			}
+		}
+	}
 }
 
 // processTask processes a task based on its content
@@ -322,12 +370,12 @@ func (s *A2ATaskService) processTaskWithStreaming(ctx context.Context, task *a2a
 	// Emit message event for the initial message
 	if len(task.Messages) > 0 {
 		msgData, _ := json.Marshal(task.Messages[len(task.Messages)-1])
-		events <- a2a.StreamEvent{
+		s.emitStreamEvent(ctx, task.ID, events, a2a.StreamEvent{
 			ID:        uuid.New().String(),
 			Event:     a2a.StreamEventMessage,
 			Data:      msgData,
 			Timestamp: time.Now(),
-		}
+		})
 	}
 
 	// Simulate progressive processing with state updates
@@ -337,7 +385,7 @@ func (s *A2ATaskService) processTaskWithStreaming(ctx context.Context, task *a2a
 	if stateErr := task.SetState(a2a.TaskStateWorking, "Processing task"); stateErr != nil {
 		s.log.Error("failed to set task state", "task_id", task.ID, "error", stateErr)
 	}
-	s.sendStateEvent(events, task)
+	s.sendStateEvent(ctx, events, task)
 
 	// Simulate processing with response messages
 	select {
@@ -354,12 +402,12 @@ func (s *A2ATaskService) processTaskWithStreaming(ctx context.Context, task *a2a
 
 	// Emit message event
 	msgData, _ := json.Marshal(response)
-	events <- a2a.StreamEvent{
+	s.emitStreamEvent(ctx, task.ID, events, a2a.StreamEvent{
 		ID:        uuid.New().String(),
 		Event:     a2a.StreamEventMessage,
 		Data:      msgData,
 		Timestamp: time.Now(),
-	}
+	})
 
 	// Create artifact if applicable
 	artifact := a2a.NewArtifact("result", "application/json")
@@ -377,18 +425,18 @@ func (s *A2ATaskService) processTaskWithStreaming(ctx context.Context, task *a2a
 
 	// Emit artifact event
 	artifactData, _ := json.Marshal(artifact)
-	events <- a2a.StreamEvent{
+	s.emitStreamEvent(ctx, task.ID, events, a2a.StreamEvent{
 		ID:        uuid.New().String(),
 		Event:     a2a.StreamEventArtifact,
 		Data:      artifactData,
 		Timestamp: time.Now(),
-	}
+	})
 
 	// Complete task
 	if stateErr := task.SetState(a2a.TaskStateCompleted, "Task completed successfully"); stateErr != nil {
 		s.log.Error("failed to set task state", "task_id", task.ID, "error", stateErr)
 	}
-	s.sendStateEvent(events, task)
+	s.sendStateEvent(ctx, events, task)
 
 	return nil
 }
@@ -406,7 +454,22 @@ func (s *A2ATaskService) saveTask(ctx context.Context, task *a2a.Task) error {
 }
 
 // sendStateEvent sends a state change event
-func (s *A2ATaskService) sendStateEvent(events chan<- a2a.StreamEvent, task *a2a.Task) {
+func (s *A2ATaskService) sendStateEvent(ctx context.Context, events chan<- a2a.StreamEvent, task *a2a.Task) {
+	stateData, _ := json.Marshal(map[string]interface{}{
+		"task_id": task.ID,
+		"state":   task.State,
+		"history": task.History,
+	})
+
+	s.emitStreamEvent(ctx, task.ID, events, a2a.StreamEvent{
+		ID:        uuid.New().String(),
+		Event:     a2a.StreamEventState,
+		Data:      stateData,
+		Timestamp: time.Now(),
+	})
+}
+
+func (s *A2ATaskService) sendCurrentStateEvent(events chan<- a2a.StreamEvent, task *a2a.Task) {
 	stateData, _ := json.Marshal(map[string]interface{}{
 		"task_id": task.ID,
 		"state":   task.State,
@@ -419,6 +482,15 @@ func (s *A2ATaskService) sendStateEvent(events chan<- a2a.StreamEvent, task *a2a
 		Data:      stateData,
 		Timestamp: time.Now(),
 	}
+}
+
+func (s *A2ATaskService) emitStreamEvent(ctx context.Context, taskID string, events chan<- a2a.StreamEvent, event a2a.StreamEvent) {
+	persisted, err := s.recordStreamEvent(ctx, taskID, event)
+	if err != nil {
+		s.log.Warn("failed to persist task stream event", "task_id", taskID, "event_type", event.Event, "error", err)
+		persisted = event
+	}
+	events <- persisted
 }
 
 // notifyStateChange sends notifications for task state changes
@@ -439,6 +511,8 @@ func (s *A2ATaskService) notifyStateChange(ctx context.Context, task *a2a.Task) 
 		Data:      stateData,
 		Timestamp: time.Now(),
 	}
+
+	_, _ = s.recordStreamEvent(ctx, task.ID, event)
 
 	for _, sub := range subs {
 		select {

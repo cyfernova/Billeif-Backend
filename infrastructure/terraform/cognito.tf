@@ -56,7 +56,7 @@ resource "aws_cognito_user_pool_client" "main" {
   enable_token_revocation       = true
 
   # OAuth configuration for Google Sign-In
-  supported_identity_providers         = ["COGNITO", "Google"]
+  supported_identity_providers         = var.google_client_id != "" && var.google_client_secret != "" ? ["COGNITO", "Google"] : ["COGNITO"]
   callback_urls                        = ["myapp://callback", "http://localhost:3000/callback"]
   logout_urls                          = ["myapp://logout", "http://localhost:3000/logout"]
   allowed_oauth_flows_user_pool_client = true
@@ -69,7 +69,6 @@ resource "aws_cognito_user_pool_client" "main" {
     refresh_token = "days"
   }
 
-  depends_on = [aws_cognito_identity_provider.google]
 }
 
 resource "aws_cognito_user_group" "admin" {
@@ -101,6 +100,8 @@ resource "aws_cognito_user_pool_domain" "main" {
 
 # Google Identity Provider
 resource "aws_cognito_identity_provider" "google" {
+  count = var.google_client_id != "" && var.google_client_secret != "" ? 1 : 0
+
   user_pool_id  = aws_cognito_user_pool.main.id
   provider_name = "Google"
   provider_type = "Google"

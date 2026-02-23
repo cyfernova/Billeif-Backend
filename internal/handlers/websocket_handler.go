@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"time"
 
+	"invoice-backend/internal/services"
 	"invoice-backend/pkg/logger"
 	"invoice-backend/pkg/websocket"
 
@@ -12,72 +14,61 @@ import (
 	gorillaws "github.com/gorilla/websocket"
 )
 
-// WebSocketHandler handles WebSocket upgrade requests
+// WebSocketHandler handles WebSocket connection and notification management.
 type WebSocketHandler struct {
-	hub *websocket.Hub
-	log *logger.Logger
+	hub           *websocket.Hub
+	connectionSvc *services.WebSocketConnectionService
+	log           *logger.Logger
 }
 
-// NewWebSocketHandler creates a new WebSocket handler
-func NewWebSocketHandler(hub *websocket.Hub, log *logger.Logger) *WebSocketHandler {
+// NewWebSocketHandler creates a new WebSocket handler.
+func NewWebSocketHandler(hub *websocket.Hub, connectionSvc *services.WebSocketConnectionService, log *logger.Logger) *WebSocketHandler {
 	return &WebSocketHandler{
-		hub: hub,
-		log: log,
+		hub:           hub,
+		connectionSvc: connectionSvc,
+		log:           log,
 	}
 }
 
-// upgrader configures WebSocket upgrade options
 var upgrader = gorillaws.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		// In production, validate origin against allowed domains
 		return true
 	},
 }
 
-// HandleConnection handles WebSocket connection upgrades
+// HandleConnection handles local WebSocket connection upgrades.
 // GET /ws
 func (h *WebSocketHandler) HandleConnection(c *gin.Context) {
-	// Get user ID from context (set by authentication middleware)
 	userID, exists := c.Get("user_id")
 	if !exists {
 		h.log.Warn("websocket connection without user_id")
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "authentication required",
-		})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
 		return
 	}
 
 	userIDStr := userID.(string)
 	if userIDStr == "" {
 		h.log.Warn("websocket connection with empty user_id")
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "invalid user_id",
-		})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user_id"})
 		return
 	}
 
-	// Upgrade HTTP connection to WebSocket
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		h.log.Error("websocket upgrade failed", "user_id", userIDStr, "error", err)
 		return
 	}
 
-	// Create client
 	client := websocket.NewClient(userIDStr, conn, h.hub, h.log)
-
-	// Register client with hub
 	h.hub.RegisterClient(client)
 
 	h.log.Info("websocket client connected", "user_id", userIDStr, "remote_addr", c.RemoteIP(), "total_clients", h.hub.GetClientCount())
 
-	// Start read and write pumps
 	go client.ReadPump()
 	go client.WritePump()
 
-	// Send welcome message
 	welcomeMsg := &websocket.Message{
 		Type:      websocket.MessageTypeHeartbeat,
 		Sender:    "system",
@@ -94,116 +85,81 @@ func (h *WebSocketHandler) HandleConnection(c *gin.Context) {
 	}
 }
 
-// BroadcastOrderUpdate broadcasts an order status update to a user
 func (h *WebSocketHandler) BroadcastOrderUpdate(userID string, orderID string, status string, message string) error {
-	update := &websocket.OrderStatusUpdate{
-		OrderID:   orderID,
-		Status:    status,
-		UpdatedAt: time.Now(),
-		Message:   message,
-	}
-
+	update := &websocket.OrderStatusUpdate{OrderID: orderID, Status: status, UpdatedAt: time.Now(), Message: message}
 	msg := websocket.NewOrderStatusUpdateMessage(userID, update)
-	h.hub.BroadcastToUser(userID, msg)
-	return nil
+	return h.sendToUser(contextBackground(), userID, msg)
 }
 
-// BroadcastPaymentSuccess broadcasts a payment success notification
 func (h *WebSocketHandler) BroadcastPaymentSuccess(userID string, orderID string, amount float64, razorpayID string) error {
-	updateData := &websocket.PaymentUpdateData{
-		OrderID:    orderID,
-		Amount:     amount,
-		Status:     "success",
-		RazorpayID: razorpayID,
-		Timestamp:  time.Now(),
-	}
-
+	updateData := &websocket.PaymentUpdateData{OrderID: orderID, Amount: amount, Status: "success", RazorpayID: razorpayID, Timestamp: time.Now()}
 	msg := websocket.NewPaymentUpdateMessage(userID, updateData)
-	h.hub.BroadcastToUser(userID, msg)
 	h.log.Info("payment success notification sent", "user_id", userID, "order_id", orderID)
-	return nil
+	return h.sendToUser(contextBackground(), userID, msg)
 }
 
-// BroadcastPaymentFailure broadcasts a payment failure notification
 func (h *WebSocketHandler) BroadcastPaymentFailure(userID string, orderID string, amount float64, errorMsg string) error {
-	updateData := &websocket.PaymentUpdateData{
-		OrderID:   orderID,
-		Amount:    amount,
-		Status:    "failed",
-		Error:     errorMsg,
-		Timestamp: time.Now(),
-	}
-
+	updateData := &websocket.PaymentUpdateData{OrderID: orderID, Amount: amount, Status: "failed", Error: errorMsg, Timestamp: time.Now()}
 	msg := websocket.NewPaymentUpdateMessage(userID, updateData)
-	h.hub.BroadcastToUser(userID, msg)
 	h.log.Error("payment failure notification sent", "user_id", userID, "order_id", orderID, "error", errorMsg)
-	return nil
+	return h.sendToUser(contextBackground(), userID, msg)
 }
 
-// BroadcastAgentAction broadcasts an agent action notification
 func (h *WebSocketHandler) BroadcastAgentAction(userID string, agentID string, action string, data map[string]interface{}, status string) error {
-	actionData := &websocket.AgentActionData{
-		AgentID: agentID,
-		Action:  action,
-		Data:    data,
-		Status:  status,
-	}
-
+	actionData := &websocket.AgentActionData{AgentID: agentID, Action: action, Data: data, Status: status}
 	msg := websocket.NewAgentActionMessage(userID, actionData)
-	h.hub.BroadcastToUser(userID, msg)
 	h.log.Info("agent action notification sent", "user_id", userID, "agent_id", agentID, "action", action)
-	return nil
+	return h.sendToUser(contextBackground(), userID, msg)
 }
 
-// BroadcastTaskUpdate broadcasts a task status update
 func (h *WebSocketHandler) BroadcastTaskUpdate(userID string, taskID string, status string, progress int, message string, data map[string]interface{}) error {
-	updateData := &websocket.TaskUpdateData{
-		TaskID:    taskID,
-		Status:    status,
-		Progress:  progress,
-		Message:   message,
-		Data:      data,
-		Timestamp: time.Now(),
-	}
-
+	updateData := &websocket.TaskUpdateData{TaskID: taskID, Status: status, Progress: progress, Message: message, Data: data, Timestamp: time.Now()}
 	msg := websocket.NewTaskUpdateMessage(userID, updateData)
-	h.hub.BroadcastToUser(userID, msg)
 	h.log.Info("task update notification sent", "user_id", userID, "task_id", taskID, "status", status, "progress", progress)
-	return nil
+	return h.sendToUser(contextBackground(), userID, msg)
 }
 
-// BroadcastToUsers sends a message to multiple users
 func (h *WebSocketHandler) BroadcastToUsers(userIDs []string, messageType websocket.MessageType, data interface{}) error {
-	msg := &websocket.Message{
-		Type:       messageType,
-		Sender:     "system",
-		Recipients: userIDs,
-		Timestamp:  time.Now(),
-		Data:       data,
+	msg := &websocket.Message{Type: messageType, Sender: "system", Recipients: userIDs, Timestamp: time.Now(), Data: data}
+	if h.connectionSvc != nil {
+		for _, userID := range userIDs {
+			if err := h.connectionSvc.SendMessageToUser(contextBackground(), userID, msg); err != nil {
+				h.log.Warn("failed to send websocket message to user", "user_id", userID, "error", err)
+			}
+		}
+		return nil
 	}
-
 	h.hub.BroadcastToUsers(userIDs, msg)
 	return nil
 }
 
-// BroadcastToAll sends a message to all connected clients
 func (h *WebSocketHandler) BroadcastToAll(messageType websocket.MessageType, data interface{}) error {
-	msg := &websocket.Message{
-		Type:      messageType,
-		Sender:    "system",
-		Timestamp: time.Now(),
-		Data:      data,
+	msg := &websocket.Message{Type: messageType, Sender: "system", Timestamp: time.Now(), Data: data}
+	if h.connectionSvc != nil {
+		return h.connectionSvc.BroadcastToAll(contextBackground(), msg)
 	}
-
 	h.hub.BroadcastToAll(msg)
 	return nil
 }
 
-// GetStats returns WebSocket statistics
+// GetStats returns WebSocket statistics.
 // GET /ws/stats
 func (h *WebSocketHandler) GetStats(c *gin.Context) {
-	connectedUsers := h.hub.GetConnectedUsers()
+	if h.connectionSvc != nil {
+		count, countErr := h.connectionSvc.GetClientCount(c.Request.Context())
+		users, usersErr := h.connectionSvc.GetConnectedUsers(c.Request.Context())
+		if countErr == nil && usersErr == nil {
+			c.JSON(http.StatusOK, gin.H{
+				"connected_clients": count,
+				"connected_users":   users,
+				"timestamp":         time.Now(),
+			})
+			return
+		}
+		h.log.Warn("failed to get websocket stats from connection service", "count_error", countErr, "users_error", usersErr)
+	}
 
+	connectedUsers := h.hub.GetConnectedUsers()
 	c.JSON(http.StatusOK, gin.H{
 		"connected_clients": h.hub.GetClientCount(),
 		"connected_users":   connectedUsers,
@@ -211,21 +167,25 @@ func (h *WebSocketHandler) GetStats(c *gin.Context) {
 	})
 }
 
-// GetConnectionStatus checks if a user is connected
+// GetConnectionStatus checks if a user is connected.
 // GET /ws/status/:userID
 func (h *WebSocketHandler) GetConnectionStatus(c *gin.Context) {
 	userID := c.Param("userID")
 
-	isConnected := h.hub.IsClientConnected(userID)
+	if h.connectionSvc != nil {
+		isConnected, err := h.connectionSvc.IsUserConnected(c.Request.Context(), userID)
+		if err == nil {
+			c.JSON(http.StatusOK, gin.H{"user_id": userID, "is_connected": isConnected, "timestamp": time.Now()})
+			return
+		}
+		h.log.Warn("failed to get websocket connection status from connection service", "user_id", userID, "error", err)
+	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"user_id":      userID,
-		"is_connected": isConnected,
-		"timestamp":    time.Now(),
-	})
+	isConnected := h.hub.IsClientConnected(userID)
+	c.JSON(http.StatusOK, gin.H{"user_id": userID, "is_connected": isConnected, "timestamp": time.Now()})
 }
 
-// SendNotification sends a notification to a specific user
+// SendNotification sends a notification to a specific user.
 // POST /ws/notify/:userID
 func (h *WebSocketHandler) SendNotification(c *gin.Context) {
 	userID := c.Param("userID")
@@ -234,11 +194,8 @@ func (h *WebSocketHandler) SendNotification(c *gin.Context) {
 		MessageType string                 `json:"message_type" binding:"required"`
 		Data        map[string]interface{} `json:"data" binding:"required"`
 	}
-
 	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": fmt.Sprintf("invalid request: %v", err),
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid request: %v", err)})
 		return
 	}
 
@@ -250,64 +207,80 @@ func (h *WebSocketHandler) SendNotification(c *gin.Context) {
 		Data:       request.Data,
 	}
 
-	h.hub.BroadcastToUser(userID, msg)
+	if err := h.sendToUser(c.Request.Context(), userID, msg); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "notification sent",
-		"user_id": userID,
-	})
+	c.JSON(http.StatusOK, gin.H{"message": "notification sent", "user_id": userID})
 }
 
-// SendNotificationToAll broadcasts a notification to all connected clients
+// SendNotificationToAll broadcasts a notification to all connected clients.
 // POST /ws/notify-all
 func (h *WebSocketHandler) SendNotificationToAll(c *gin.Context) {
 	var request struct {
 		MessageType string                 `json:"message_type" binding:"required"`
 		Data        map[string]interface{} `json:"data" binding:"required"`
 	}
-
 	if err := c.ShouldBindJSON(&request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": fmt.Sprintf("invalid request: %v", err),
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid request: %v", err)})
 		return
 	}
 
-	msg := &websocket.Message{
-		Type:      websocket.MessageType(request.MessageType),
-		Sender:    "system",
-		Timestamp: time.Now(),
-		Data:      request.Data,
+	msg := &websocket.Message{Type: websocket.MessageType(request.MessageType), Sender: "system", Timestamp: time.Now(), Data: request.Data}
+	if h.connectionSvc != nil {
+		if err := h.connectionSvc.BroadcastToAll(c.Request.Context(), msg); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		count, _ := h.connectionSvc.GetClientCount(c.Request.Context())
+		c.JSON(http.StatusOK, gin.H{"message": "notification sent to all clients", "client_count": count})
+		return
 	}
 
 	h.hub.BroadcastToAll(msg)
-
-	c.JSON(http.StatusOK, gin.H{
-		"message":      "notification sent to all clients",
-		"client_count": h.hub.GetClientCount(),
-	})
+	c.JSON(http.StatusOK, gin.H{"message": "notification sent to all clients", "client_count": h.hub.GetClientCount()})
 }
 
-// GetConnectedUsers returns list of connected user IDs
+// GetConnectedUsers returns list of connected user IDs.
 // GET /ws/users
 func (h *WebSocketHandler) GetConnectedUsers(c *gin.Context) {
-	users := h.hub.GetConnectedUsers()
+	if h.connectionSvc != nil {
+		users, err := h.connectionSvc.GetConnectedUsers(c.Request.Context())
+		if err == nil {
+			c.JSON(http.StatusOK, gin.H{"connected_users": users, "count": len(users), "timestamp": time.Now()})
+			return
+		}
+		h.log.Warn("failed to list connected users from connection service", "error", err)
+	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"connected_users": users,
-		"count":           len(users),
-		"timestamp":       time.Now(),
-	})
+	users := h.hub.GetConnectedUsers()
+	c.JSON(http.StatusOK, gin.H{"connected_users": users, "count": len(users), "timestamp": time.Now()})
 }
 
-// HealthCheck performs a health check on the WebSocket hub
+// HealthCheck performs a health check on the WebSocket subsystem.
 // GET /ws/health
 func (h *WebSocketHandler) HealthCheck(c *gin.Context) {
-	clientCount := h.hub.GetClientCount()
+	if h.connectionSvc != nil {
+		count, err := h.connectionSvc.GetClientCount(c.Request.Context())
+		if err == nil {
+			c.JSON(http.StatusOK, gin.H{"status": "healthy", "connected_clients": count, "timestamp": time.Now()})
+			return
+		}
+		h.log.Warn("failed to get websocket health from connection service", "error", err)
+	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"status":            "healthy",
-		"connected_clients": clientCount,
-		"timestamp":         time.Now(),
-	})
+	c.JSON(http.StatusOK, gin.H{"status": "healthy", "connected_clients": h.hub.GetClientCount(), "timestamp": time.Now()})
+}
+
+func (h *WebSocketHandler) sendToUser(ctx context.Context, userID string, msg *websocket.Message) error {
+	if h.connectionSvc != nil {
+		return h.connectionSvc.SendMessageToUser(ctx, userID, msg)
+	}
+	h.hub.BroadcastToUser(userID, msg)
+	return nil
+}
+
+func contextBackground() context.Context {
+	return context.Background()
 }

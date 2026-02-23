@@ -77,7 +77,7 @@ func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log 
 		AgentDiscovery: NewAgentDiscoveryHandler(svcs.AgentDiscovery, log),
 		Intent:         NewIntentHandler(svcs.IntentProcessing, log),
 		A2AMessage:     NewA2AMessageHandler(svcs.ShoppingAgent, svcs.MerchantAgent, svcs.CredentialProvider, svcs.PaymentProcessor, svcs.Marketplace, a2aClient, sigSvc, svcs.A2ABargaining, log),
-		WebSocket:      NewWebSocketHandler(wsHub, log),
+		WebSocket:      NewWebSocketHandler(wsHub, svcs.WebSocketConnection, log),
 		LLM:            NewLLMHandler(svcs.LLM, log),
 		WellKnown:      NewWellKnownHandler(cfg, log),
 		A2ATask:        NewA2ATaskHandler(svcs.A2ATask, log),

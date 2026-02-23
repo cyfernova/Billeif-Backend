@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"invoice-backend/internal/services"
@@ -110,6 +111,8 @@ func (h *A2ATaskHandler) StreamTask(c *gin.Context) {
 	// Create event channel
 	events := make(chan a2a.StreamEvent, 100)
 	done := make(chan struct{})
+	keepAlive := time.NewTicker(15 * time.Second)
+	defer keepAlive.Stop()
 
 	// Start streaming task processing
 	go func() {
@@ -154,6 +157,13 @@ func (h *A2ATaskHandler) StreamTask(c *gin.Context) {
 			}
 			return true
 
+		case <-keepAlive.C:
+			_, _ = fmt.Fprint(w, ": keepalive\n\n")
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			return true
+
 		case <-c.Request.Context().Done():
 			h.log.Info("client disconnected from stream")
 			return false
@@ -167,7 +177,11 @@ func (h *A2ATaskHandler) StreamTask(c *gin.Context) {
 // GetTask handles GET /a2a/v0.3/tasks/:taskId
 // Returns the current state of a task
 func (h *A2ATaskHandler) GetTask(c *gin.Context) {
-	taskID := c.Param("taskId")
+	taskID, action := parseTaskAction(c.Param("taskId"))
+	if action == "subscribe" {
+		h.subscribeTask(c, taskID)
+		return
+	}
 	if taskID == "" {
 		c.JSON(http.StatusBadRequest, a2a.SendTaskResponse{
 			Error: &a2a.TaskError{
@@ -313,7 +327,11 @@ func (h *A2ATaskHandler) CancelTask(c *gin.Context) {
 // SubscribeTask handles GET /a2a/v0.3/tasks/:taskId:subscribe
 // Subscribes to real-time updates for a task via SSE
 func (h *A2ATaskHandler) SubscribeTask(c *gin.Context) {
-	taskID := c.Param("taskId")
+	taskID, _ := parseTaskAction(c.Param("taskId"))
+	h.subscribeTask(c, taskID)
+}
+
+func (h *A2ATaskHandler) subscribeTask(c *gin.Context, taskID string) {
 	if taskID == "" {
 		c.JSON(http.StatusBadRequest, a2a.SendTaskResponse{
 			Error: &a2a.TaskError{
@@ -358,13 +376,20 @@ func (h *A2ATaskHandler) SubscribeTask(c *gin.Context) {
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
+	c.Header("Vary", "Last-Event-ID")
 
 	// Create event channel
 	events := make(chan a2a.StreamEvent, 100)
+	keepAlive := time.NewTicker(15 * time.Second)
+	defer keepAlive.Stop()
+	lastEventID := c.GetHeader("Last-Event-ID")
+	if lastEventID == "" {
+		lastEventID = c.Query("last_event_id")
+	}
 
 	// Subscribe to task updates
 	go func() {
-		err := h.taskService.SubscribeTask(c.Request.Context(), taskID, events)
+		err := h.taskService.SubscribeTaskWithReplay(c.Request.Context(), taskID, lastEventID, events)
 		if err != nil {
 			h.log.Error("subscribe task error", "task_id", taskID, "error", err)
 		}
@@ -395,6 +420,23 @@ func (h *A2ATaskHandler) SubscribeTask(c *gin.Context) {
 		case <-c.Request.Context().Done():
 			h.log.Info("client disconnected from task subscription", "task_id", taskID)
 			return false
+
+		case <-keepAlive.C:
+			_, _ = fmt.Fprint(w, ": keepalive\n\n")
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			return true
 		}
 	})
+}
+
+func parseTaskAction(taskID string) (string, string) {
+	if strings.HasSuffix(taskID, ":subscribe") {
+		return strings.TrimSuffix(taskID, ":subscribe"), "subscribe"
+	}
+	if strings.HasSuffix(taskID, ":cancel") {
+		return strings.TrimSuffix(taskID, ":cancel"), "cancel"
+	}
+	return taskID, ""
 }

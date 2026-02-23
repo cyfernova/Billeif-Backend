@@ -36,16 +36,22 @@ variable "vpc_cidr" {
 }
 
 variable "availability_zones" {
-  description = "Availability zones for subnets"
+  description = "Availability zones for public subnets"
   type        = list(string)
   default     = ["us-east-1a", "us-east-1b"]
+}
+
+variable "db_allowed_cidr" {
+  description = "CIDR block allowed to access public RDS instance"
+  type        = string
+  default     = "0.0.0.0/0"
 }
 
 # RDS Configuration
 variable "db_instance_class" {
   description = "RDS instance class"
   type        = string
-  default     = "db.t3.micro"
+  default     = "db.t4g.micro"
 }
 
 variable "db_name" {
@@ -67,80 +73,11 @@ variable "db_password" {
   sensitive   = true
 }
 
-# ElastiCache Configuration
-variable "cache_node_type" {
-  description = "ElastiCache node type"
+# Lambda Artifacts
+variable "lambda_artifact_dir" {
+  description = "Directory containing built lambda zip artifacts"
   type        = string
-  default     = "cache.t3.micro"
-}
-
-variable "cache_num_nodes" {
-  description = "Number of cache nodes"
-  type        = number
-  default     = 1
-}
-
-# EC2 Configuration
-variable "ec2_instance_type" {
-  description = "EC2 instance type"
-  type        = string
-  default     = "t3.micro"
-}
-
-variable "ec2_key_name" {
-  description = "Name of the SSH key pair"
-  type        = string
-  default     = ""
-}
-
-variable "ssh_allowed_cidr" {
-  description = "CIDR block allowed to SSH"
-  type        = string
-  default     = "0.0.0.0/0"
-}
-
-# ECS Configuration
-variable "ecs_task_cpu" {
-  description = "CPU units for ECS task (256, 512, 1024, 2048, 4096)"
-  type        = number
-  default     = 512
-}
-
-variable "ecs_task_memory" {
-  description = "Memory for ECS task in MB (512, 1024, 2048, etc.)"
-  type        = number
-  default     = 1024
-}
-
-variable "ecs_desired_count" {
-  description = "Desired number of ECS tasks"
-  type        = number
-  default     = 2
-}
-
-variable "ecs_min_count" {
-  description = "Minimum number of ECS tasks for auto-scaling"
-  type        = number
-  default     = 2
-}
-
-variable "ecs_max_count" {
-  description = "Maximum number of ECS tasks for auto-scaling"
-  type        = number
-  default     = 10
-}
-
-variable "container_port" {
-  description = "Port the container exposes"
-  type        = number
-  default     = 8080
-}
-
-# SSL/TLS Configuration
-variable "acm_certificate_arn" {
-  description = "ARN of ACM certificate for HTTPS (optional)"
-  type        = string
-  default     = ""
+  default     = "../../.build/lambda"
 }
 
 # Monitoring Configuration
@@ -153,33 +90,49 @@ variable "alert_email" {
 variable "log_retention_days" {
   description = "Number of days to retain CloudWatch logs"
   type        = number
-  default     = 30
+  default     = 14
 }
 
 # Application Secrets
+variable "credential_encryption_key" {
+  description = "Base64-encoded 32-byte credential encryption key"
+  type        = string
+  sensitive   = true
+}
+
 variable "jwt_secret" {
-  description = "JWT secret for application authentication"
+  description = "JWT secret for compatibility with legacy integrations"
   type        = string
   sensitive   = true
   default     = "change-me-in-production-with-secure-secret"
 }
 
+# Cognito/OIDC
 variable "google_client_id" {
   description = "Google OAuth Client ID"
   type        = string
   sensitive   = true
+  default     = ""
 }
 
 variable "google_client_secret" {
   description = "Google OAuth Client Secret"
   type        = string
   sensitive   = true
+  default     = ""
 }
 
 variable "cognito_domain_prefix" {
   description = "Prefix for the Cognito User Pool Domain"
   type        = string
   default     = "invoice-backend-app"
+}
+
+# DynamoDB tables
+variable "websocket_connections_table" {
+  description = "DynamoDB table name for websocket connections"
+  type        = string
+  default     = "invoice-backend-ws-connections"
 }
 
 # Mobile Push Notification Configuration
@@ -191,7 +144,7 @@ variable "fcm_api_key" {
 }
 
 variable "apns_sandbox" {
-  description = "Whether to use APNs sandbox (true for development, false for production)"
+  description = "Whether to use APNs sandbox"
   type        = bool
   default     = true
 }
