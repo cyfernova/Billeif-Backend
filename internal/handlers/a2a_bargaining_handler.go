@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 
+	"invoice-backend/internal/config"
 	"invoice-backend/internal/services"
 	"invoice-backend/pkg/logger"
 
@@ -12,13 +13,15 @@ import (
 type A2ABargainingHandler struct {
 	a2aBargaining *services.A2ABargainingService
 	agentService  *services.AgentService
+	cfg           *config.Config
 	log           *logger.Logger
 }
 
-func NewA2ABargainingHandler(a2aBargaining *services.A2ABargainingService, agentService *services.AgentService, log *logger.Logger) *A2ABargainingHandler {
+func NewA2ABargainingHandler(a2aBargaining *services.A2ABargainingService, agentService *services.AgentService, cfg *config.Config, log *logger.Logger) *A2ABargainingHandler {
 	return &A2ABargainingHandler{
 		a2aBargaining: a2aBargaining,
 		agentService:  agentService,
+		cfg:           cfg,
 		log:           log,
 	}
 }
@@ -47,6 +50,13 @@ type AgentInfo struct {
 	Name     string `json:"name"`
 	Type     string `json:"type"`
 	Endpoint string `json:"endpoint"`
+}
+
+func (h *A2ABargainingHandler) defaultA2AMessageEndpoint() string {
+	if h.cfg == nil {
+		return "/api/v1/a2a/message"
+	}
+	return h.cfg.Server.A2AMessageEndpoint()
 }
 
 func (h *A2ABargainingHandler) StartNegotiation(c *gin.Context) {
@@ -98,12 +108,12 @@ func (h *A2ABargainingHandler) StartNegotiation(c *gin.Context) {
 		return
 	}
 
-	buyerEndpoint := "http://localhost:8080/api/v1/a2a/message"
+	buyerEndpoint := h.defaultA2AMessageEndpoint()
 	if buyerAgent.A2AEndpoint != nil {
 		buyerEndpoint = *buyerAgent.A2AEndpoint
 	}
 
-	sellerEndpoint := "http://localhost:8080/api/v1/a2a/message"
+	sellerEndpoint := h.defaultA2AMessageEndpoint()
 	if sellerAgent.A2AEndpoint != nil {
 		sellerEndpoint = *sellerAgent.A2AEndpoint
 	}

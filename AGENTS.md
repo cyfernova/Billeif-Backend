@@ -13,7 +13,7 @@ If both `AGENTS.md` and tool-specific files exist, follow all non-conflicting in
 - Database: PostgreSQL
 - Cache: Redis
 - Auth: AWS Cognito JWT
-- Entry point: `cmd/api/main.go`
+- Entry points: `cmd/lambda/http/main.go` (+ other handlers under `cmd/lambda/`)
 - API base path: `/api/v1`
 
 ## 2) Canonical Commands
@@ -21,10 +21,11 @@ If both `AGENTS.md` and tool-specific files exist, follow all non-conflicting in
 Use these first; avoid inventing custom alternatives when a Make target exists.
 
 ```bash
-make run                  # Start API server
-make build                # Build .build/api
+make run-local            # Run HTTP Lambda handler locally
+make build-lambda         # Build all Lambda bootstrap binaries
+make package-lambda       # Package Lambda artifacts
 make test                 # Unit tests (race + coverage)
-make test-integration     # Integration tests (Docker-backed)
+make test-integration     # Integration tests (requires local deps running)
 make lint                 # golangci-lint
 make fmt                  # go fmt + goimports
 make swagger              # Regenerate Swagger docs
@@ -41,17 +42,9 @@ go test -v ./tests/integration/... -run TestName -tags=integration
 Database migrations:
 
 ```bash
-make migration-up
-make migration-down
-make migration-create NAME=add_example_table
-make migration-status
-```
-
-Docker/local infra:
-
-```bash
-make docker-up
-make docker-down
+make migrate-up
+make migrate-down
+make migrate-create NAME=add_example_table
 ```
 
 ## 3) Agent Working Agreement
@@ -81,8 +74,8 @@ make docker-down
 
 ### Add a database-backed feature
 
-1. Create migration: `make migration-create NAME=...`
-2. Apply locally: `make migration-up`
+1. Create migration: `make migrate-create NAME=...`
+2. Apply locally: `make migrate-up`
 3. Add/adjust GORM models and repository logic.
 4. Add tests that validate migration-backed behavior.
 
@@ -95,7 +88,8 @@ make docker-down
 
 ## 5) Architecture Notes
 
-- `cmd/api/main.go`: wiring, router setup, graceful shutdown, workers startup.
+- `cmd/lambda/http/main.go`: API Gateway Lambda entrypoint for HTTP traffic.
+- `cmd/lambda/`: additional Lambda entrypoints (`a2a-stream`, `sqs-*`, `ws`).
 - `internal/config`: env-driven config via Viper.
 - `internal/middleware`: auth, RBAC, CORS, request ID, logging, recovery.
 - `internal/handlers`: route handlers and HTTP contracts.
@@ -179,8 +173,9 @@ Follow this shape for new domain work:
 
 ```text
 cmd/
-  api/
-    main.go
+  lambda/
+    http/
+      main.go
 internal/
   handlers/
     <domain>_handler.go

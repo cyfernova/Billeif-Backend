@@ -2,7 +2,7 @@
 -include .env
 export
 
-.PHONY: help infra-backend-init infra-init infra-apply infra-destroy infra-output build run test test-integration migrate-up migrate-down migrate-create migration-up migration-down migration-down-all migration-create migration-status fmt lint docker-build docker-up docker-down clean deps test-coverage swagger build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-payment build-lambda-ws package-lambda
+.PHONY: help infra-backend-init infra-init infra-apply infra-plan infra-destroy infra-output build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-payment build-lambda-ws package-lambda run-local test test-integration migrate-up migrate-down migrate-create fmt lint clean deps test-coverage swagger
 
 LAMBDA_BUILD_DIR := .build/lambda
 
@@ -44,9 +44,6 @@ infra-output: ## Save Terraform output to file
 	@echo "Terraform output saved to infrastructure/terraform/terraform_output.txt"
 
 # Build targets
-build: ## Build the application
-	go build -o .build/api ./cmd/api
-
 build-lambda: build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-payment build-lambda-ws ## Build all Lambda binaries
 
 build-lambda-http: ## Build HTTP API Lambda bootstrap binary
@@ -76,21 +73,15 @@ package-lambda: build-lambda ## Package Lambda artifacts into zip files
 	cd $(LAMBDA_BUILD_DIR)/sqs-payment && zip -q -r ../sqs-payment.zip bootstrap
 	cd $(LAMBDA_BUILD_DIR)/ws && zip -q -r ../ws.zip bootstrap
 
-run: ## Run the application
-	go run ./cmd/api
+run-local: ## Run the HTTP Lambda handler locally
+	go run ./cmd/lambda/http
 
 # Test targets
 test: ## Run unit tests
 	go test -v -race -cover ./...
 
-test-integration: ## Run integration tests
-	@echo "Starting local infrastructure..."
-	$(MAKE) docker-up
-	@sleep 10
-	@echo "Running integration tests..."
+test-integration: ## Run integration tests (requires local dependencies running)
 	go test -v -tags=integration ./tests/integration/...
-	@echo "Cleaning up..."
-	$(MAKE) docker-down
 
 # Migration targets (using golang-migrate CLI)
 migrate-up: ## Run database migrations up (using migrate CLI)
@@ -102,22 +93,6 @@ migrate-down: ## Run database migrations down (using migrate CLI)
 migrate-create: ## Create a new migration (usage: make migrate-create NAME=migration_name)
 	migrate create -ext sql -dir ./migrations -seq $(NAME)
 
-# GORM-based migration targets (using Go script)
-migration-up: ## Run database migrations up using Go script
-	go run ./cmd/api/migrations.go -direction=up
-
-migration-down: ## Run database migrations down using Go script (rolls back 1 by default)
-	go run ./cmd/api/migrations.go -direction=down
-
-migration-down-all: ## Roll back all migrations using Go script
-	go run ./cmd/api/migrations.go -direction=down -steps=999
-
-migration-create: ## Create new up/down SQL migration files (usage: make migration-create NAME=add_users_table)
-	go run ./cmd/api/migrations.go -create="$(NAME)"
-
-migration-status: ## Show migration status
-	go run ./cmd/api/migrations.go -direction=up -steps=0
-
 # Code quality targets
 fmt: ## Format Go code
 	go fmt ./...
@@ -125,16 +100,6 @@ fmt: ## Format Go code
 
 lint: ## Run linter
 	golangci-lint run --timeout=5m
-
-# Docker targets
-docker-build: ## Build Docker images
-	docker-compose build
-
-docker-up: ## Start Docker containers
-	docker-compose up --build -d
-
-docker-down: ## Stop Docker containers
-	docker-compose down
 
 # Utility targets
 clean: ## Clean build artifacts
@@ -151,4 +116,4 @@ test-coverage: ## Generate test coverage report
 	@echo "Coverage report generated: coverage.html"
 
 swagger: ## Generate Swagger documentation
-	swag init -g cmd/api/main.go -o docs/
+	swag init -g internal/app/runtime.go -o docs/

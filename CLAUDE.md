@@ -19,9 +19,7 @@ This file provides Claude Code guidance for this repository.
 
 ## Quick Start Context
 
-- Primary runtime entrypoint: `cmd/api/main.go`
-- Default API port: `:8080`
-- Metrics endpoint: `:9090`
+- Primary runtime entrypoints: `cmd/lambda/http/main.go` and `cmd/lambda/*`
 - Health endpoint: `GET /health`
 - Swagger endpoint: `GET /swagger/index.html`
 
@@ -30,8 +28,8 @@ Bootstrapping:
 ```bash
 cp .env.example .env
 make deps
-make migration-up
-make run
+make migrate-up
+make run-local
 ```
 
 ## What Claude Should Verify Before Handoff
@@ -54,12 +52,12 @@ make swagger
 ## Operational Notes
 
 - Configuration is loaded via Viper from `.env` + env vars (`internal/config/config.go`).
-- Worker processing starts in `main.go` via `internal/workers`.
+- Shared runtime wiring lives in `internal/app/runtime.go`.
 - Auth and tenant scoping depend on middleware context helpers:
   - `middleware.GetUserID(c)`
   - `middleware.GetBusinessID(c)`
   - `middleware.GetRole(c)`
-- Route groups live under `/api/v1` in `cmd/api/main.go`.
+- Route groups live under `/api/v1` in `internal/app/runtime.go`.
 
 ## Safe Defaults for Claude
 

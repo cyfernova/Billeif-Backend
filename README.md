@@ -36,24 +36,25 @@ git clone <repo-url>
 cd invoice-backend
 cp .env.example .env    # configure your environment
 make deps               # download and tidy modules
-make migration-up       # apply database migrations
-make run                # start the server on :8080
+make migrate-up         # apply database migrations
+make run-local          # run the HTTP Lambda handler locally
 ```
 
-### Docker
+### Local PostgreSQL (optional)
 
 ```bash
-make docker-up          # starts PostgreSQL, Redis, and the API
-make docker-down        # stops and removes containers
+docker compose up -d postgres
+docker compose down
 ```
 
 ## Usage
 
 ```bash
-make run                # run the API server
-make build              # build binary to .build/api
+make run-local          # run the HTTP Lambda handler locally
+make build-lambda       # build all Lambda bootstrap binaries
+make package-lambda     # package Lambda zip artifacts
 make test               # unit tests with race detection
-make test-integration   # integration tests (requires Docker)
+make test-integration   # integration tests (requires local deps running)
 make lint               # run golangci-lint
 make fmt                # format code (goimports + go fmt)
 make swagger            # regenerate Swagger docs
@@ -68,16 +69,16 @@ go test -v -run TestFunctionName ./internal/services/...
 ### Database Migrations
 
 ```bash
-make migration-up                     # apply all pending migrations
-make migration-down                   # rollback one migration
-make migration-create NAME=add_xyz    # create new migration files
+make migrate-up                     # apply all pending migrations
+make migrate-down                   # rollback one migration
+make migrate-create NAME=add_xyz    # create new migration files
 ```
 
 ## Configuration
 
 Viper-based configuration loaded from `.env` with environment variable overrides. Key sections:
 
-- **Server** -- port, base URL, timeouts
+- **Server** -- base URL and protocol-facing endpoints
 - **Database** -- PostgreSQL connection, SSL mode
 - **Redis** -- host, port, password
 - **Cognito** -- user pool ID, client ID, JWKS refresh rate
@@ -116,7 +117,13 @@ Additional: `GET /health`, `GET /swagger/*`, `GET /.well-known/agent.json`.
 ## Project Structure
 
 ```
-cmd/api/                 Entry point and router setup
+cmd/
+  lambda/
+    http/                API Gateway HTTP Lambda entrypoint
+    a2a-stream/          Streaming Lambda runtime entrypoint
+    sqs-invoice/         Invoice queue processor
+    sqs-payment/         Payment queue processor
+    ws/                  WebSocket Lambda handler
 internal/
   handlers/              HTTP handlers
   services/              Business logic (container-based DI)

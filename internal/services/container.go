@@ -114,7 +114,7 @@ func NewContainer(
 		S3:                  s3Svc,
 		Email:               emailSvc,
 		Agent:               agentSvc,
-		ShoppingAgent:       NewShoppingAgentService(ap2Repo, agentSvc, intentProcessingSvc, ap2Signer, ap2MandateSvc, a2aClient, log),
+		ShoppingAgent:       NewShoppingAgentService(ap2Repo, agentSvc, intentProcessingSvc, ap2Signer, ap2MandateSvc, a2aClient, cfg.Server.A2AMessageEndpoint(), log),
 		MerchantAgent:       NewMerchantAgentService(ap2Repo, log),
 		CredentialProvider:  credentialProviderSvc,
 		PaymentProcessor:    NewPaymentProcessorService(ap2Repo, log),

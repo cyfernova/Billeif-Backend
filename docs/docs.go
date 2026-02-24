@@ -7242,7 +7242,7 @@ const docTemplate = `{
             "properties": {
                 "new_password": {
                     "type": "string",
-                    "minLength": 8
+                    "minLength": 12
                 },
                 "old_password": {
                     "type": "string"
@@ -7758,7 +7758,7 @@ const docTemplate = `{
                 },
                 "password": {
                     "type": "string",
-                    "minLength": 8
+                    "minLength": 12
                 }
             }
         },
@@ -7782,14 +7782,16 @@ const docTemplate = `{
             ],
             "properties": {
                 "confirmation_code": {
-                    "type": "string"
+                    "type": "string",
+                    "maxLength": 6,
+                    "minLength": 6
                 },
                 "email": {
                     "type": "string"
                 },
                 "new_password": {
                     "type": "string",
-                    "minLength": 8
+                    "minLength": 12
                 }
             }
         },
@@ -8192,7 +8194,7 @@ const docTemplate = `{
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
 	Version:          "1.0",
-	Host:             "localhost:8080",
+	Host:             "",
 	BasePath:         "/api/v1",
 	Schemes:          []string{},
 	Title:            "Invoice Backend API",

@@ -27,16 +27,6 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("DATABASE_NAME is required")
 	}
 
-	// Validate SSL config: if enabled, cert and key paths must be set
-	if cfg.Server.SSLEnabled {
-		if cfg.Server.SSLCertPath == "" {
-			return fmt.Errorf("SSL_CERT_PATH is required when SSL_ENABLED is true")
-		}
-		if cfg.Server.SSLKeyPath == "" {
-			return fmt.Errorf("SSL_KEY_PATH is required when SSL_ENABLED is true")
-		}
-	}
-
 	// Reject wildcard origins when credentials are allowed (CORS safety)
 	for _, origin := range cfg.AllowedOrigins {
 		if strings.Contains(origin, "*") {

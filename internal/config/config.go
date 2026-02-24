@@ -55,13 +55,8 @@ type SentryConfig struct {
 }
 
 type ServerConfig struct {
-	Port         int    `mapstructure:"PORT"`
-	BaseURL      string `mapstructure:"BASE_URL"`
-	ReadTimeout  int    `mapstructure:"READ_TIMEOUT"`
-	WriteTimeout int    `mapstructure:"WRITE_TIMEOUT"`
-	SSLEnabled   bool   `mapstructure:"SSL_ENABLED"`
-	SSLCertPath  string `mapstructure:"SSL_CERT_PATH"`
-	SSLKeyPath   string `mapstructure:"SSL_KEY_PATH"`
+	Port    int    `mapstructure:"PORT"`
+	BaseURL string `mapstructure:"BASE_URL"`
 }
 
 type DatabaseConfig struct {
@@ -142,12 +137,7 @@ func Load() (*Config, error) {
 	_ = viper.BindEnv("LOGGING.SAMPLING_THEREAFTER", "LOG_SAMPLING_THEREAFTER")
 	_ = viper.BindEnv("LOGGING.STACKTRACE_LEVEL", "LOG_STACKTRACE_LEVEL")
 	_ = viper.BindEnv("SERVER.PORT", "SERVER_PORT")
-	_ = viper.BindEnv("SERVER.BASE_URL", "SERVER_BASE_URL")
-	_ = viper.BindEnv("SERVER.READ_TIMEOUT", "SERVER_READ_TIMEOUT")
-	_ = viper.BindEnv("SERVER.WRITE_TIMEOUT", "SERVER_WRITE_TIMEOUT")
-	_ = viper.BindEnv("SERVER.SSL_ENABLED", "SSL_ENABLED")
-	_ = viper.BindEnv("SERVER.SSL_CERT_PATH", "SSL_CERT_PATH")
-	_ = viper.BindEnv("SERVER.SSL_KEY_PATH", "SSL_KEY_PATH")
+	_ = viper.BindEnv("SERVER.BASE_URL", "SERVER_BASE_URL", "A2A_SERVER_DOMAIN")
 	_ = viper.BindEnv("DATABASE.HOST", "DATABASE_HOST")
 	_ = viper.BindEnv("DATABASE.PORT", "DATABASE_PORT")
 	_ = viper.BindEnv("DATABASE.USER", "DATABASE_USER")
@@ -240,15 +230,6 @@ func setDefaults(cfg *Config) {
 	if cfg.Logging.StacktraceLevel == "" {
 		cfg.Logging.StacktraceLevel = "error"
 	}
-	if cfg.Server.Port == 0 {
-		cfg.Server.Port = 8080
-	}
-	if cfg.Server.ReadTimeout == 0 {
-		cfg.Server.ReadTimeout = 30
-	}
-	if cfg.Server.WriteTimeout == 0 {
-		cfg.Server.WriteTimeout = 30
-	}
 	if cfg.Database.Port == 0 {
 		cfg.Database.Port = 5432
 	}
@@ -291,4 +272,30 @@ func setDefaults(cfg *Config) {
 func isProductionEnv(env string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(env))
 	return normalized == "prod" || normalized == "production"
+}
+
+const a2aMessagePath = "/api/v1/a2a/message"
+
+func (s ServerConfig) ResolveBaseURL() string {
+	baseURL := strings.TrimSpace(s.BaseURL)
+	if baseURL == "" {
+		return ""
+	}
+
+	baseURL = strings.TrimRight(baseURL, "/")
+	if strings.HasPrefix(baseURL, "http://") || strings.HasPrefix(baseURL, "https://") {
+		return baseURL
+	}
+	if strings.HasPrefix(baseURL, "localhost") || strings.HasPrefix(baseURL, "127.0.0.1") {
+		return "http://" + baseURL
+	}
+	return "https://" + baseURL
+}
+
+func (s ServerConfig) A2AMessageEndpoint() string {
+	baseURL := s.ResolveBaseURL()
+	if baseURL == "" {
+		return a2aMessagePath
+	}
+	return baseURL + a2aMessagePath
 }

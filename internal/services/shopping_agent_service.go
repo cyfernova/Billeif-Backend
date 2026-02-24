@@ -24,14 +24,15 @@ var (
 )
 
 type ShoppingAgentService struct {
-	ap2Repo    interfaces.AP2Repository
-	agentSvc   *AgentService
-	intentSvc  *IntentProcessingService
-	signer     *ap2.SignatureService
-	mandateSvc *ap2.MandateService
-	verifier   *ap2.MandateVerifier
-	a2aClient  *a2a.A2AClient
-	log        *logger.Logger
+	ap2Repo            interfaces.AP2Repository
+	agentSvc           *AgentService
+	intentSvc          *IntentProcessingService
+	signer             *ap2.SignatureService
+	mandateSvc         *ap2.MandateService
+	verifier           *ap2.MandateVerifier
+	a2aClient          *a2a.A2AClient
+	a2aMessageEndpoint string
+	log                *logger.Logger
 }
 
 func NewShoppingAgentService(
@@ -41,17 +42,23 @@ func NewShoppingAgentService(
 	signer *ap2.SignatureService,
 	mandateSvc *ap2.MandateService,
 	a2aClient *a2a.A2AClient,
+	a2aMessageEndpoint string,
 	log *logger.Logger,
 ) *ShoppingAgentService {
+	if a2aMessageEndpoint == "" {
+		a2aMessageEndpoint = "/api/v1/a2a/message"
+	}
+
 	return &ShoppingAgentService{
-		ap2Repo:    ap2Repo,
-		agentSvc:   agentSvc,
-		intentSvc:  intentSvc,
-		signer:     signer,
-		mandateSvc: mandateSvc,
-		a2aClient:  a2aClient,
-		verifier:   ap2.NewMandateVerifier(),
-		log:        log,
+		ap2Repo:            ap2Repo,
+		agentSvc:           agentSvc,
+		intentSvc:          intentSvc,
+		signer:             signer,
+		mandateSvc:         mandateSvc,
+		a2aClient:          a2aClient,
+		a2aMessageEndpoint: a2aMessageEndpoint,
+		verifier:           ap2.NewMandateVerifier(),
+		log:                log,
 	}
 }
 
@@ -417,7 +424,7 @@ func (s *ShoppingAgentService) ProcessCartWithMerchantA2A(ctx context.Context, m
 
 	// Create task.start message for cart processing
 	msg := a2a.NewA2AMessage("shopping-agent", "merchant-agent", a2a.MessageTypeTaskStart)
-	msg.WithEndpoints("http://localhost:8080/api/v1/a2a/message", merchantEndpoint)
+	msg.WithEndpoints(s.a2aMessageEndpoint, merchantEndpoint)
 
 	// Create task start payload
 	payload := &a2a.TaskStartPayload{
@@ -454,7 +461,7 @@ func (s *ShoppingAgentService) RequestPaymentProcessingA2A(ctx context.Context, 
 
 	// Create task.start message for payment processing
 	msg := a2a.NewA2AMessage("shopping-agent", "payment-processor", a2a.MessageTypeTaskStart)
-	msg.WithEndpoints("http://localhost:8080/api/v1/a2a/message", paymentEndpoint)
+	msg.WithEndpoints(s.a2aMessageEndpoint, paymentEndpoint)
 
 	// Create task start payload
 	payload := &a2a.TaskStartPayload{

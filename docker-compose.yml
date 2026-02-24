@@ -1,7 +1,4 @@
-version: '3.9'
-
 services:
-  # PostgreSQL Database
   postgres:
     image: postgres:16-alpine
     container_name: invoice-postgres
@@ -18,40 +15,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    networks:
-      - invoice-network
-
-  # Backend API
-  api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: invoice-api
-    env_file:
-      - .env
-    environment:
-      DATABASE_HOST: postgres
-      DATABASE_PORT: 5432
-      DATABASE_SSL_MODE: disable
-      SERVER_PORT: 8080
-      ENVIRONMENT: ${ENVIRONMENT:-development}
-    ports:
-      - "8080:8080"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - invoice-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    restart: unless-stopped
 
 volumes:
   postgres_data:
-
-networks:
-  invoice-network:
-    driver: bridge
