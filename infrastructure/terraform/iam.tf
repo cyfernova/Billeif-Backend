@@ -134,8 +134,7 @@ data "aws_iam_policy_document" "lambda_app" {
     ]
     resources = [
       aws_ssm_parameter.db_username.arn,
-      aws_ssm_parameter.db_password.arn,
-      aws_ssm_parameter.credential_encryption_key.arn
+      aws_ssm_parameter.db_password.arn
     ]
   }
 

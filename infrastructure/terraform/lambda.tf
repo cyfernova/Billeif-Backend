@@ -19,7 +19,6 @@ locals {
     DATABASE_SSL_MODE                   = "require"
     DATABASE_USER_SSM_PARAM             = aws_ssm_parameter.db_username.name
     DATABASE_PASSWORD_SSM_PARAM         = aws_ssm_parameter.db_password.name
-    CREDENTIAL_ENCRYPTION_KEY_SSM_PARAM = aws_ssm_parameter.credential_encryption_key.name
     S3_BUCKET_LOGOS                     = aws_s3_bucket.business_logos.id
     S3_BUCKET_INVOICES                  = aws_s3_bucket.invoices_pdf.id
     S3_BUCKET_PRODUCTS                  = aws_s3_bucket.product_images.id

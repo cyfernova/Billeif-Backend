@@ -94,12 +94,6 @@ variable "log_retention_days" {
 }
 
 # Application Secrets
-variable "credential_encryption_key" {
-  description = "Base64-encoded 32-byte credential encryption key"
-  type        = string
-  sensitive   = true
-}
-
 variable "jwt_secret" {
   description = "JWT secret for compatibility with legacy integrations"
   type        = string

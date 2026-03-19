@@ -113,11 +113,6 @@ output "db_password_ssm_parameter" {
   value       = aws_ssm_parameter.db_password.name
 }
 
-output "credential_encryption_key_ssm_parameter" {
-  description = "SSM parameter name for credential encryption key"
-  value       = aws_ssm_parameter.credential_encryption_key.name
-}
-
 output "websocket_connections_table" {
   description = "DynamoDB table name for WebSocket connections"
   value       = aws_dynamodb_table.ws_connections.name

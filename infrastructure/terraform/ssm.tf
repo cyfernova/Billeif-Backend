@@ -14,10 +14,3 @@ resource "aws_ssm_parameter" "db_password" {
   overwrite   = true
 }
 
-resource "aws_ssm_parameter" "credential_encryption_key" {
-  name        = "/${var.project_name}/${var.environment}/app/credential_encryption_key"
-  description = "Credential encryption key for ${var.project_name}"
-  type        = "SecureString"
-  value       = var.credential_encryption_key
-  overwrite   = true
-}

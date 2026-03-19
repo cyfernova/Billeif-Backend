@@ -2,7 +2,7 @@ terraform {
   required_version = ">= 1.0.0"
 
   backend "s3" {
-    bucket         = "invoice-backend-tfstate-20251229"
+    bucket         = "invoice-backend-tfstate-830283279729"
     key            = "terraform.tfstate"
     region         = "us-east-1"
     encrypt        = true
