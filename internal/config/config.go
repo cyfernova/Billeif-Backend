@@ -118,11 +118,32 @@ type SQSConfig struct {
 }
 
 func Load() (*Config, error) {
-	viper.SetConfigName(".env")
 	viper.SetConfigType("env")
 	viper.AddConfigPath(".")
 	viper.AddConfigPath("..")
 	viper.AutomaticEnv()
+
+	// Set up key replacer for underscores to dots for nested config
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+
+	// First try to read .env file if it exists
+	viper.SetConfigName(".env")
+	if err := viper.ReadInConfig(); err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return nil, fmt.Errorf("read .env: %w", err)
+		}
+	}
+
+	// Then try to merge .env.local if it exists (overrides .env values)
+	viper.SetConfigName(".env.local")
+	if err := viper.MergeInConfig(); err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return nil, fmt.Errorf("merge .env.local: %w", err)
+		}
+	}
+
+	// Reset config name for backward compatibility
+	viper.SetConfigName(".env")
 
 	// Sensible defaults for logging
 	viper.SetDefault("LOGGING.LEVEL", "info")
@@ -180,12 +201,6 @@ func Load() (*Config, error) {
 	_ = viper.BindEnv("LLM.MODEL", "LLM_MODEL")
 	_ = viper.BindEnv("LLM.TIMEOUT", "LLM_TIMEOUT")
 	_ = viper.BindEnv("CREDENTIALS.ENCRYPTION_KEY", "CREDENTIAL_ENCRYPTION_KEY")
-
-	if err := viper.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
-			return nil, fmt.Errorf("failed to read config: %w", err)
-		}
-	}
 
 	var cfg Config
 	if err := viper.Unmarshal(&cfg); err != nil {

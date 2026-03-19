@@ -73,8 +73,8 @@ package-lambda: build-lambda ## Package Lambda artifacts into zip files
 	cd $(LAMBDA_BUILD_DIR)/sqs-payment && zip -q -r ../sqs-payment.zip bootstrap
 	cd $(LAMBDA_BUILD_DIR)/ws && zip -q -r ../ws.zip bootstrap
 
-run-local: ## Run the HTTP Lambda handler locally
-	go run ./cmd/lambda/http
+run-local: ## Run the HTTP server locally
+	go run ./cmd/server
 
 # Test targets
 test: ## Run unit tests
@@ -85,10 +85,10 @@ test-integration: ## Run integration tests (requires local dependencies running)
 
 # Migration targets (using golang-migrate CLI)
 migrate-up: ## Run database migrations up (using migrate CLI)
-	migrate -path ./migrations -database "postgres://invoice_user:invoice_pass@localhost:5432/invoice_db?sslmode=disable" up
+	migrate -path ./migrations -database "postgres://invoice_user:invoice_pass@127.0.0.1:5432/invoice_db?sslmode=disable" up
 
 migrate-down: ## Run database migrations down (using migrate CLI)
-	migrate -path ./migrations -database "postgres://invoice_user:invoice_pass@localhost:5432/invoice_db?sslmode=disable" down
+	migrate -path ./migrations -database "postgres://invoice_user:invoice_pass@127.0.0.1:5432/invoice_db?sslmode=disable" down
 
 migrate-create: ## Create a new migration (usage: make migrate-create NAME=migration_name)
 	migrate create -ext sql -dir ./migrations -seq $(NAME)

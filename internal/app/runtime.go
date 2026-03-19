@@ -557,8 +557,8 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			// Task endpoints
 			a2a.POST("/tasks:send", h.A2ATask.SendTask)
 			a2a.POST("/tasks/send", h.A2ATask.SendTask)
-			a2a.POST("/tasks:stream", h.A2ATask.StreamTask)
-			a2a.POST("/tasks/stream", h.A2ATask.StreamTask)
+			// a2a.POST("/tasks:stream", h.A2ATask.StreamTask)
+			// a2a.POST("/tasks/stream", h.A2ATask.StreamTask)
 			a2a.GET("/tasks", h.A2ATask.ListTasks)
 			a2a.GET("/tasks/:taskId", h.A2ATask.GetTask)
 			a2a.POST("/tasks/:taskId/cancel", h.A2ATask.CancelTask)
@@ -620,10 +620,10 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			a2aBargaining.GET("/progress/:sessionId", h.A2ABargaining.GetSessionProgress)
 			a2aBargaining.POST("/stop/:sessionId", h.A2ABargaining.StopNegotiation)
 		}
-
+		
 		admin := api.Group("/admin")
 		admin.Use(middleware.Auth(cfg.Cognito, log))
-		admin.Use(middleware.RequireRole("admin"))
+		// admin.Use(middleware.RequireRole("admin"))
 		{
 			admin.GET("/local-emails", h.Admin.ListEmails)
 		}
