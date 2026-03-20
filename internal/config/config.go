@@ -83,6 +83,7 @@ type AWSConfig struct {
 }
 
 type SSMConfig struct {
+	DatabaseHostParam            string `mapstructure:"DATABASE_HOST_PARAM"`
 	DatabaseUserParam            string `mapstructure:"DATABASE_USER_PARAM"`
 	DatabasePasswordParam        string `mapstructure:"DATABASE_PASSWORD_PARAM"`
 	CredentialEncryptionKeyParam string `mapstructure:"CREDENTIAL_ENCRYPTION_KEY_PARAM"`
@@ -173,6 +174,7 @@ func Load() (*Config, error) {
 	_ = viper.BindEnv("AWS.ACCESS_KEY_ID", "AWS_ACCESS_KEY_ID")
 	_ = viper.BindEnv("AWS.SECRET_ACCESS_KEY", "AWS_SECRET_ACCESS_KEY")
 	_ = viper.BindEnv("AWS.ENDPOINT", "AWS_ENDPOINT")
+	_ = viper.BindEnv("SSM.DATABASE_HOST_PARAM", "DATABASE_HOST_SSM_PARAM")
 	_ = viper.BindEnv("SSM.DATABASE_USER_PARAM", "DATABASE_USER_SSM_PARAM")
 	_ = viper.BindEnv("SSM.DATABASE_PASSWORD_PARAM", "DATABASE_PASSWORD_SSM_PARAM")
 	_ = viper.BindEnv("SSM.CREDENTIAL_ENCRYPTION_KEY_PARAM", "CREDENTIAL_ENCRYPTION_KEY_SSM_PARAM")

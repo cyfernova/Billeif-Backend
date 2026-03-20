@@ -133,8 +133,9 @@ data "aws_iam_policy_document" "lambda_app" {
       "ssm:GetParameters"
     ]
     resources = [
-      aws_ssm_parameter.db_username.arn,
-      aws_ssm_parameter.db_password.arn
+      local.db_username_ssm_parameter_arn,
+      local.db_password_ssm_parameter_arn,
+      local.db_host_ssm_parameter_arn
     ]
   }
 

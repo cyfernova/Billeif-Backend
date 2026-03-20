@@ -99,10 +99,16 @@ resource "aws_api_gateway_resource" "api_v1_a2a_tasks" {
   path_part   = "tasks"
 }
 
-resource "aws_api_gateway_resource" "api_v1_a2a_task_subscribe" {
+resource "aws_api_gateway_resource" "api_v1_a2a_task_id" {
   rest_api_id = aws_api_gateway_rest_api.main.id
   parent_id   = aws_api_gateway_resource.api_v1_a2a_tasks.id
-  path_part   = "{taskId}:subscribe"
+  path_part   = "{taskId}"
+}
+
+resource "aws_api_gateway_resource" "api_v1_a2a_task_subscribe" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  parent_id   = aws_api_gateway_resource.api_v1_a2a_task_id.id
+  path_part   = "subscribe"
 }
 
 resource "aws_api_gateway_method" "api_v1_a2a_task_subscribe_get" {

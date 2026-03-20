@@ -60,6 +60,12 @@ variable "db_name" {
   default     = "invoice_db"
 }
 
+variable "db_port" {
+  description = "Database port"
+  type        = number
+  default     = 5432
+}
+
 variable "db_username" {
   description = "Database master username"
   type        = string
@@ -71,6 +77,11 @@ variable "db_password" {
   description = "Database master password"
   type        = string
   sensitive   = true
+
+  validation {
+    condition     = can(regex("^[\\x21-\\x7E]+$", var.db_password)) && length(regexall("[/@\"]", var.db_password)) == 0
+    error_message = "db_password must use printable ASCII without spaces and cannot contain '/', '@', or '\"'."
+  }
 }
 
 # Lambda Artifacts
@@ -78,6 +89,18 @@ variable "lambda_artifact_dir" {
   description = "Directory containing built lambda zip artifacts"
   type        = string
   default     = "../../.build/lambda"
+}
+
+variable "enable_lambda_reserved_concurrency" {
+  description = "Whether to apply reserved concurrency limits to Lambda functions. Disable this for low-quota AWS accounts."
+  type        = bool
+  default     = false
+}
+
+variable "worker_queue_visibility_timeout_seconds" {
+  description = "Visibility timeout for SQS worker queues. Keep this at least 6x the Lambda timeout plus batching window."
+  type        = number
+  default     = 365
 }
 
 # Monitoring Configuration

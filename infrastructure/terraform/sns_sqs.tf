@@ -87,13 +87,13 @@ resource "aws_iam_role_policy" "sns_feedback" {
 resource "aws_sqs_queue" "invoice_processing" {
   name                       = "invoice-processing-queue"
   message_retention_seconds  = 86400
-  visibility_timeout_seconds = 30
+  visibility_timeout_seconds = var.worker_queue_visibility_timeout_seconds
 }
 
 resource "aws_sqs_queue" "payment_processing" {
   name                       = "payment-processing-queue"
   message_retention_seconds  = 86400
-  visibility_timeout_seconds = 30
+  visibility_timeout_seconds = var.worker_queue_visibility_timeout_seconds
 }
 
 # Workflow Run Queue

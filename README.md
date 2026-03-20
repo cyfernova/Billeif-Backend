@@ -66,6 +66,38 @@ Run a single test:
 go test -v -run TestFunctionName ./internal/services/...
 ```
 
+### Infrastructure Deployment
+
+```bash
+make infra-plan          # package Lambda artifacts and preview Terraform changes
+make infra-apply         # package Lambda artifacts and apply Terraform changes
+```
+
+Worker queues use a shared SQS visibility timeout sized for the 60 second worker Lambda timeout plus batching window. If you change worker Lambda timeouts, update the queue timeout together.
+
+### Terraform Recovery After Partial Apply
+
+If `terraform apply` is interrupted while creating Lambdas, repair state before rerunning:
+
+```bash
+cd infrastructure/terraform
+terraform state show aws_lambda_function.api_http
+terraform state show aws_lambda_function.a2a_stream
+terraform state show aws_lambda_function.ws_handler
+terraform untaint aws_lambda_function.api_http
+terraform untaint aws_lambda_function.a2a_stream
+terraform untaint aws_lambda_function.ws_handler
+```
+
+If a Lambda already exists in AWS but is missing from Terraform state, import it instead of rerunning `apply` blindly:
+
+```bash
+cd infrastructure/terraform
+terraform import aws_lambda_function.api_http invoice-backend-api-http
+terraform import aws_lambda_function.a2a_stream invoice-backend-a2a-stream
+terraform import aws_lambda_function.ws_handler invoice-backend-ws-handler
+```
+
 ### Database Migrations
 
 ```bash

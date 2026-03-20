@@ -29,10 +29,10 @@ infra-backend-init: ## Create S3 bucket and DynamoDB table for Terraform backend
 infra-init: ## Initialize Terraform
 	cd infrastructure/terraform && terraform init
 
-infra-apply: ## Apply Terraform configuration
+infra-apply: package-lambda ## Package Lambda artifacts and apply Terraform configuration
 	cd infrastructure/terraform && terraform apply -auto-approve
 
-infra-plan: ## Plan Terraform configuration
+infra-plan: package-lambda ## Package Lambda artifacts and plan Terraform configuration
 	cd infrastructure/terraform && terraform plan
 
 infra-destroy: ## Destroy Terraform infrastructure

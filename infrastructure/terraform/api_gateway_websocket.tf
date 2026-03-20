@@ -49,7 +49,7 @@ resource "aws_apigatewayv2_deployment" "websocket" {
 resource "aws_apigatewayv2_stage" "websocket_default" {
   api_id        = aws_apigatewayv2_api.websocket.id
   name          = "$default"
-  auto_deploy   = true
+  auto_deploy   = false
   deployment_id = aws_apigatewayv2_deployment.websocket.id
 }
 

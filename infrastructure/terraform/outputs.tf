@@ -113,6 +113,11 @@ output "db_password_ssm_parameter" {
   value       = aws_ssm_parameter.db_password.name
 }
 
+output "db_host_ssm_parameter" {
+  description = "SSM parameter name for DB host"
+  value       = aws_ssm_parameter.db_host.name
+}
+
 output "websocket_connections_table" {
   description = "DynamoDB table name for WebSocket connections"
   value       = aws_dynamodb_table.ws_connections.name

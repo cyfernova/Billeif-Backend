@@ -16,6 +16,7 @@ func resolveSSMParameters(cfg *Config) error {
 	}
 
 	paramTargets := map[string]*string{
+		cfg.SSM.DatabaseHostParam:            &cfg.Database.Host,
 		cfg.SSM.DatabaseUserParam:            &cfg.Database.User,
 		cfg.SSM.DatabasePasswordParam:        &cfg.Database.Password,
 		cfg.SSM.CredentialEncryptionKeyParam: &cfg.Credentials.EncryptionKey,
