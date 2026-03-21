@@ -93,7 +93,8 @@ data "aws_iam_policy_document" "lambda_app" {
       "cognito-idp:ListUsers"
     ]
     resources = [
-      aws_cognito_user_pool.main.arn
+      aws_cognito_user_pool.main.arn,
+      aws_cognito_user_pool.phone.arn
     ]
   }
 
@@ -115,6 +116,7 @@ data "aws_iam_policy_document" "lambda_app" {
       aws_dynamodb_table.refresh_tokens.arn,
       aws_dynamodb_table.password_reset_tokens.arn,
       aws_dynamodb_table.mfa_codes.arn,
+      aws_dynamodb_table.phone_auth_cooldowns.arn,
       aws_dynamodb_table.customers_cache.arn,
       aws_dynamodb_table.vendors_cache.arn,
       aws_dynamodb_table.products_cache.arn,

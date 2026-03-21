@@ -95,10 +95,18 @@ type WebSocketConfig struct {
 }
 
 type CognitoConfig struct {
-	UserPoolID      string        `mapstructure:"USER_POOL_ID"`
-	ClientID        string        `mapstructure:"CLIENT_ID"`
-	Region          string        `mapstructure:"REGION"`
-	JWKSRefreshRate time.Duration `mapstructure:"JWKS_REFRESH_RATE"`
+	UserPoolID      string             `mapstructure:"USER_POOL_ID"`
+	ClientID        string             `mapstructure:"CLIENT_ID"`
+	Region          string             `mapstructure:"REGION"`
+	JWKSRefreshRate time.Duration      `mapstructure:"JWKS_REFRESH_RATE"`
+	Phone           CognitoPhoneConfig `mapstructure:"PHONE"`
+}
+
+type CognitoPhoneConfig struct {
+	UserPoolID       string `mapstructure:"USER_POOL_ID"`
+	ClientID         string `mapstructure:"CLIENT_ID"`
+	Region           string `mapstructure:"REGION"`
+	OTPCooldownTable string `mapstructure:"OTP_COOLDOWN_TABLE"`
 }
 
 type JWTConfig struct {
@@ -184,6 +192,10 @@ func Load() (*Config, error) {
 	_ = viper.BindEnv("COGNITO.CLIENT_ID", "COGNITO_CLIENT_ID")
 	_ = viper.BindEnv("COGNITO.REGION", "COGNITO_REGION")
 	_ = viper.BindEnv("COGNITO.JWKS_REFRESH_RATE", "COGNITO_JWKS_REFRESH_RATE")
+	_ = viper.BindEnv("COGNITO.PHONE.USER_POOL_ID", "COGNITO_PHONE_USER_POOL_ID")
+	_ = viper.BindEnv("COGNITO.PHONE.CLIENT_ID", "COGNITO_PHONE_CLIENT_ID")
+	_ = viper.BindEnv("COGNITO.PHONE.REGION", "COGNITO_PHONE_REGION")
+	_ = viper.BindEnv("COGNITO.PHONE.OTP_COOLDOWN_TABLE", "COGNITO_PHONE_OTP_COOLDOWN_TABLE")
 	_ = viper.BindEnv("JWT.ACCESS_TOKEN_EXPIRY", "JWT_ACCESS_TOKEN_EXPIRY")
 	_ = viper.BindEnv("JWT.REFRESH_TOKEN_EXPIRY", "JWT_REFRESH_TOKEN_EXPIRY")
 	_ = viper.BindEnv("S3.BUCKET_LOGOS", "S3_BUCKET_LOGOS")
@@ -277,6 +289,9 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Cognito.Region == "" {
 		cfg.Cognito.Region = "us-east-1"
+	}
+	if cfg.Cognito.Phone.Region == "" && cfg.Cognito.Phone.UserPoolID != "" {
+		cfg.Cognito.Phone.Region = "ap-south-1"
 	}
 	if len(cfg.AllowedOrigins) == 0 {
 		cfg.AllowedOrigins = []string{"http://localhost:3000"}

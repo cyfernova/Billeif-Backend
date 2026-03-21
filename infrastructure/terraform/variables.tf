@@ -28,6 +28,18 @@ variable "client_name" {
   default     = "invoice-platform-client"
 }
 
+variable "phone_user_pool_name" {
+  description = "Cognito User Pool name for India phone auth"
+  type        = string
+  default     = "invoice-platform-phone-pool"
+}
+
+variable "phone_client_name" {
+  description = "Cognito App Client name for India phone auth"
+  type        = string
+  default     = "invoice-platform-phone-client"
+}
+
 # VPC Configuration
 variable "vpc_cidr" {
   description = "CIDR block for VPC"
@@ -143,6 +155,48 @@ variable "cognito_domain_prefix" {
   description = "Prefix for the Cognito User Pool Domain"
   type        = string
   default     = "invoice-backend-app"
+}
+
+variable "india_sms_sender_id" {
+  description = "DLT-approved sender ID for India SMS delivery"
+  type        = string
+  default     = ""
+}
+
+variable "india_dlt_entity_id" {
+  description = "DLT entity ID for India SMS delivery"
+  type        = string
+  default     = ""
+}
+
+variable "india_signup_template_id" {
+  description = "DLT template ID for signup and verification SMS"
+  type        = string
+  default     = ""
+}
+
+variable "india_auth_template_id" {
+  description = "DLT template ID for authentication SMS"
+  type        = string
+  default     = ""
+}
+
+variable "india_signup_message_template" {
+  description = "Exact DLT-approved signup or verification SMS template. Use {####} where the OTP should appear."
+  type        = string
+  default     = "Your Invoice Backend verification code is {####}."
+}
+
+variable "india_auth_message_template" {
+  description = "Exact DLT-approved authentication SMS template. Use {####} where the OTP should appear."
+  type        = string
+  default     = "Your Invoice Backend login code is {####}."
+}
+
+variable "phone_auth_cooldown_table_name" {
+  description = "DynamoDB table used to throttle per-phone OTP requests"
+  type        = string
+  default     = "phone_auth_cooldowns"
 }
 
 # DynamoDB tables

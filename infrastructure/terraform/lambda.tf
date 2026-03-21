@@ -5,11 +5,12 @@ locals {
   websocket_api_invoke_url = "wss://${aws_apigatewayv2_api.websocket.id}.execute-api.${var.aws_region}.amazonaws.com/$default"
 
   lambda_artifacts = {
-    api_http    = "${var.lambda_artifact_dir}/http.zip"
-    a2a_stream  = "${var.lambda_artifact_dir}/a2a-stream.zip"
-    sqs_invoice = "${var.lambda_artifact_dir}/sqs-invoice.zip"
-    sqs_payment = "${var.lambda_artifact_dir}/sqs-payment.zip"
-    ws_handler  = "${var.lambda_artifact_dir}/ws.zip"
+    api_http          = "${var.lambda_artifact_dir}/http.zip"
+    a2a_stream        = "${var.lambda_artifact_dir}/a2a-stream.zip"
+    sqs_invoice       = "${var.lambda_artifact_dir}/sqs-invoice.zip"
+    sqs_payment       = "${var.lambda_artifact_dir}/sqs-payment.zip"
+    ws_handler        = "${var.lambda_artifact_dir}/ws.zip"
+    custom_sms_sender = "${var.lambda_artifact_dir}/custom-sms-sender.zip"
   }
 
   lambda_artifact_hashes = {
@@ -18,28 +19,32 @@ locals {
   }
 
   common_lambda_env = {
-    ENVIRONMENT                 = var.environment
-    LOG_LEVEL                   = "info"
-    LOG_FORMAT                  = "json"
-    SERVER_PORT                 = "8080"
-    DATABASE_HOST_SSM_PARAM     = local.db_host_ssm_parameter_name
-    DATABASE_PORT               = tostring(var.db_port)
-    DATABASE_NAME               = var.db_name
-    DATABASE_SSL_MODE           = "require"
-    DATABASE_USER_SSM_PARAM     = local.db_username_ssm_parameter_name
-    DATABASE_PASSWORD_SSM_PARAM = local.db_password_ssm_parameter_name
-    S3_BUCKET_LOGOS             = aws_s3_bucket.business_logos.id
-    S3_BUCKET_INVOICES          = aws_s3_bucket.invoices_pdf.id
-    S3_BUCKET_PRODUCTS          = aws_s3_bucket.product_images.id
-    S3_BUCKET_EMAIL_SINK        = aws_s3_bucket.email_sink.id
-    SQS_INVOICE_QUEUE           = aws_sqs_queue.invoice_processing.url
-    SQS_PAYMENT_QUEUE           = aws_sqs_queue.payment_processing.url
-    COGNITO_USER_POOL_ID        = aws_cognito_user_pool.main.id
-    COGNITO_CLIENT_ID           = aws_cognito_user_pool_client.main.id
-    COGNITO_REGION              = var.aws_region
-    JWT_ACCESS_TOKEN_EXPIRY     = "1h"
-    JWT_REFRESH_TOKEN_EXPIRY    = "720h"
-    WEBSOCKET_CONNECTIONS_TABLE = aws_dynamodb_table.ws_connections.name
+    ENVIRONMENT                      = var.environment
+    LOG_LEVEL                        = "info"
+    LOG_FORMAT                       = "json"
+    SERVER_PORT                      = "8080"
+    DATABASE_HOST_SSM_PARAM          = local.db_host_ssm_parameter_name
+    DATABASE_PORT                    = tostring(var.db_port)
+    DATABASE_NAME                    = var.db_name
+    DATABASE_SSL_MODE                = "require"
+    DATABASE_USER_SSM_PARAM          = local.db_username_ssm_parameter_name
+    DATABASE_PASSWORD_SSM_PARAM      = local.db_password_ssm_parameter_name
+    S3_BUCKET_LOGOS                  = aws_s3_bucket.business_logos.id
+    S3_BUCKET_INVOICES               = aws_s3_bucket.invoices_pdf.id
+    S3_BUCKET_PRODUCTS               = aws_s3_bucket.product_images.id
+    S3_BUCKET_EMAIL_SINK             = aws_s3_bucket.email_sink.id
+    SQS_INVOICE_QUEUE                = aws_sqs_queue.invoice_processing.url
+    SQS_PAYMENT_QUEUE                = aws_sqs_queue.payment_processing.url
+    COGNITO_USER_POOL_ID             = aws_cognito_user_pool.main.id
+    COGNITO_CLIENT_ID                = aws_cognito_user_pool_client.main.id
+    COGNITO_REGION                   = var.aws_region
+    COGNITO_PHONE_USER_POOL_ID       = aws_cognito_user_pool.phone.id
+    COGNITO_PHONE_CLIENT_ID          = aws_cognito_user_pool_client.phone.id
+    COGNITO_PHONE_REGION             = "ap-south-1"
+    COGNITO_PHONE_OTP_COOLDOWN_TABLE = aws_dynamodb_table.phone_auth_cooldowns.name
+    JWT_ACCESS_TOKEN_EXPIRY          = "1h"
+    JWT_REFRESH_TOKEN_EXPIRY         = "720h"
+    WEBSOCKET_CONNECTIONS_TABLE      = aws_dynamodb_table.ws_connections.name
   }
 }
 
@@ -208,6 +213,9 @@ resource "aws_lambda_function" "ws_handler" {
       COGNITO_USER_POOL_ID        = aws_cognito_user_pool.main.id
       COGNITO_CLIENT_ID           = aws_cognito_user_pool_client.main.id
       COGNITO_REGION              = var.aws_region
+      COGNITO_PHONE_USER_POOL_ID  = aws_cognito_user_pool.phone.id
+      COGNITO_PHONE_CLIENT_ID     = aws_cognito_user_pool_client.phone.id
+      COGNITO_PHONE_REGION        = "ap-south-1"
       WEBSOCKET_API_ENDPOINT      = local.websocket_api_invoke_url
       WEBSOCKET_CONNECTIONS_TABLE = aws_dynamodb_table.ws_connections.name
     }

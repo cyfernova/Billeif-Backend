@@ -32,8 +32,23 @@ func (r *userRepository) GetByID(ctx context.Context, id string) (*models.User, 
 }
 
 func (r *userRepository) GetByEmail(ctx context.Context, email string) (*models.User, error) {
+	if email == "" {
+		return nil, errors.New("user not found")
+	}
 	var user models.User
 	err := r.db.WithContext(ctx).Where("email = ? AND deleted_at IS NULL", email).First(&user).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, errors.New("user not found")
+	}
+	return &user, err
+}
+
+func (r *userRepository) GetByPhoneNumber(ctx context.Context, phoneNumber string) (*models.User, error) {
+	if phoneNumber == "" {
+		return nil, errors.New("user not found")
+	}
+	var user models.User
+	err := r.db.WithContext(ctx).Where("phone_number = ? AND deleted_at IS NULL", phoneNumber).First(&user).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, errors.New("user not found")
 	}

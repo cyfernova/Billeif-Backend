@@ -2,7 +2,11 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	"invoice-backend/internal/config"
@@ -14,26 +18,75 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider"
 	"github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider/types"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	dynamodbtypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/golang-jwt/jwt/v4"
+	"github.com/google/uuid"
 )
 
-type AuthService struct {
-	cfg      *config.Config
-	userRepo interfaces.UserRepository
-	cognito  *cognitoidentityprovider.Client
-	email    *EmailService
-	s3       *S3Service
-	log      *logger.Logger
+const (
+	phoneSignupCooldownPurpose  = "signup"
+	phoneResendCooldownPurpose  = "resend"
+	phoneLoginCooldownPurpose   = "login"
+	phoneOTPCooldownWindow      = time.Minute
+	phoneAuthDisabledMessage    = "phone authentication is not configured"
+	phoneAuthConflictMessage    = "phone number already registered"
+	phoneAuthEmailConflict      = "email already registered with another account"
+	phoneAuthRateLimitMessage   = "too many OTP requests, please wait before trying again"
+	phoneAuthGenericFailure     = "authentication failed"
+	defaultPhoneRegisterPrompt  = "OTP sent to your phone number"
+	defaultPhoneConfirmPrompt   = "phone number verified successfully"
+	defaultPhoneResendPrompt    = "verification code resent"
+	defaultPhoneChallengePrompt = "OTP sent to your phone number"
+)
+
+var indianMobileNumberPattern = regexp.MustCompile(`^[6-9][0-9]{9}$`)
+
+type cognitoIdentityProviderAPI interface {
+	ChangePassword(ctx context.Context, params *cognitoidentityprovider.ChangePasswordInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.ChangePasswordOutput, error)
+	ConfirmForgotPassword(ctx context.Context, params *cognitoidentityprovider.ConfirmForgotPasswordInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.ConfirmForgotPasswordOutput, error)
+	ConfirmSignUp(ctx context.Context, params *cognitoidentityprovider.ConfirmSignUpInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.ConfirmSignUpOutput, error)
+	ForgotPassword(ctx context.Context, params *cognitoidentityprovider.ForgotPasswordInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.ForgotPasswordOutput, error)
+	GlobalSignOut(ctx context.Context, params *cognitoidentityprovider.GlobalSignOutInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.GlobalSignOutOutput, error)
+	InitiateAuth(ctx context.Context, params *cognitoidentityprovider.InitiateAuthInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.InitiateAuthOutput, error)
+	ResendConfirmationCode(ctx context.Context, params *cognitoidentityprovider.ResendConfirmationCodeInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.ResendConfirmationCodeOutput, error)
+	RespondToAuthChallenge(ctx context.Context, params *cognitoidentityprovider.RespondToAuthChallengeInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.RespondToAuthChallengeOutput, error)
+	SignUp(ctx context.Context, params *cognitoidentityprovider.SignUpInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.SignUpOutput, error)
 }
 
-func NewAuthService(cfg *config.Config, userRepo interfaces.UserRepository, aws *awsclients.Config, email *EmailService, s3 *S3Service, log *logger.Logger) *AuthService {
-	return &AuthService{
+type AuthService struct {
+	cfg          *config.Config
+	userRepo     interfaces.UserRepository
+	cognito      cognitoIdentityProviderAPI
+	cognitoPhone cognitoIdentityProviderAPI
+	dynamoDB     *dynamodb.Client
+	email        *EmailService
+	s3           *S3Service
+	log          *logger.Logger
+}
+
+func NewAuthService(cfg *config.Config, userRepo interfaces.UserRepository, awsCfg *awsclients.Config, email *EmailService, s3 *S3Service, log *logger.Logger) *AuthService {
+	svc := &AuthService{
 		cfg:      cfg,
 		userRepo: userRepo,
-		cognito:  aws.Cognito,
+		cognito:  awsCfg.Cognito,
+		dynamoDB: awsCfg.DynamoDB,
 		email:    email,
 		s3:       s3,
 		log:      log,
 	}
+
+	if cfg != nil && cfg.Cognito.Phone.UserPoolID != "" && cfg.Cognito.Phone.ClientID != "" && awsCfg != nil {
+		phoneSDKConfig := awsCfg.SDKConfig
+		phoneSDKConfig.Region = cfg.Cognito.Phone.Region
+		svc.cognitoPhone = cognitoidentityprovider.NewFromConfig(phoneSDKConfig, func(o *cognitoidentityprovider.Options) {
+			if cfg.AWS.Endpoint != "" {
+				o.BaseEndpoint = aws.String(cfg.AWS.Endpoint)
+			}
+		})
+	}
+
+	return svc
 }
 
 type RegisterInput struct {
@@ -62,8 +115,7 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*Regis
 		return nil, fmt.Errorf("registration failed: %w", err)
 	}
 
-	// Use the actual Cognito UserSub (UUID) instead of email
-	cognitoID := input.Email // fallback to email if UserSub is nil
+	cognitoID := input.Email
 	if signUpResp.UserSub != nil {
 		cognitoID = *signUpResp.UserSub
 	}
@@ -109,25 +161,10 @@ func (s *AuthService) Login(ctx context.Context, input LoginInput) (*LoginOutput
 	})
 	if err != nil {
 		s.log.Warn("login failed", "email", input.Email, "error", err)
-		return nil, fmt.Errorf("authentication failed")
+		return nil, fmt.Errorf(phoneAuthGenericFailure)
 	}
 
-	if result.AuthenticationResult == nil {
-		return nil, fmt.Errorf("authentication result is nil")
-	}
-
-	authResult := result.AuthenticationResult
-	if authResult.AccessToken == nil || authResult.RefreshToken == nil || authResult.TokenType == nil {
-		s.log.Error("incomplete authentication result from Cognito")
-		return nil, fmt.Errorf("authentication failed: incomplete response")
-	}
-
-	return &LoginOutput{
-		AccessToken:  *authResult.AccessToken,
-		RefreshToken: *authResult.RefreshToken,
-		ExpiresIn:    authResult.ExpiresIn,
-		TokenType:    *authResult.TokenType,
-	}, nil
+	return loginOutputFromAuthResult(result.AuthenticationResult)
 }
 
 type RefreshInput struct {
@@ -146,26 +183,12 @@ func (s *AuthService) Refresh(ctx context.Context, input RefreshInput) (*LoginOu
 		return nil, fmt.Errorf("token refresh failed: %w", err)
 	}
 
-	if result.AuthenticationResult == nil {
-		return nil, fmt.Errorf("no authentication result")
-	}
-
-	authResult := result.AuthenticationResult
-	if authResult.AccessToken == nil || authResult.TokenType == nil {
-		s.log.Error("incomplete refresh result from Cognito")
-		return nil, fmt.Errorf("token refresh failed: incomplete response")
-	}
-
-	return &LoginOutput{
-		AccessToken:  *authResult.AccessToken,
-		RefreshToken: input.RefreshToken,
-		ExpiresIn:    authResult.ExpiresIn,
-		TokenType:    *authResult.TokenType,
-	}, nil
+	return loginOutputFromRefreshResult(result.AuthenticationResult, input.RefreshToken)
 }
 
 func (s *AuthService) Logout(ctx context.Context, accessToken string) error {
-	_, err := s.cognito.GlobalSignOut(ctx, &cognitoidentityprovider.GlobalSignOutInput{
+	client := s.cognitoClientForAccessToken(accessToken)
+	_, err := client.GlobalSignOut(ctx, &cognitoidentityprovider.GlobalSignOutInput{
 		AccessToken: aws.String(accessToken),
 	})
 	return err
@@ -230,11 +253,24 @@ func (s *AuthService) GetUser(ctx context.Context, userID string) (*models.User,
 }
 
 func (s *AuthService) GetUserByCognitoID(ctx context.Context, cognitoID string) (*models.User, error) {
-	return s.userRepo.GetByCognitoID(ctx, cognitoID)
+	user, err := s.userRepo.GetByCognitoID(ctx, cognitoID)
+	if err == nil {
+		return user, nil
+	}
+
+	if rawSubject, ok := rawCognitoSubject(cognitoID); ok {
+		return s.userRepo.GetByCognitoID(ctx, rawSubject)
+	}
+
+	return nil, err
 }
 
 func (s *AuthService) GetUserByEmail(ctx context.Context, email string) (*models.User, error) {
 	return s.userRepo.GetByEmail(ctx, email)
+}
+
+func (s *AuthService) GetUserByPhoneNumber(ctx context.Context, phoneNumber string) (*models.User, error) {
+	return s.userRepo.GetByPhoneNumber(ctx, phoneNumber)
 }
 
 func (s *AuthService) UpdateUserCognitoID(ctx context.Context, userID string, cognitoID string) error {
@@ -258,7 +294,9 @@ func (s *AuthService) UpdateProfile(ctx context.Context, userID string, input Up
 		return nil, err
 	}
 
-	user.Name = input.Name
+	if input.Name != "" {
+		user.Name = input.Name
+	}
 	if input.ProfilePictureURL != "" {
 		user.ProfilePictureURL = input.ProfilePictureURL
 	}
@@ -271,7 +309,6 @@ func (s *AuthService) UpdateProfile(ctx context.Context, userID string, input Up
 	return user, nil
 }
 
-// GetProfilePictureUploadURL generates a presigned URL for profile picture upload
 func (s *AuthService) GetProfilePictureUploadURL(ctx context.Context, userID, contentType string) (string, error) {
 	key := fmt.Sprintf("profile-pictures/%s/profile", userID)
 	return s.s3.GeneratePresignedUploadURL(ctx, "user-profile-pictures", key, contentType, 3600)
@@ -283,7 +320,8 @@ type ChangePasswordInput struct {
 }
 
 func (s *AuthService) ChangePassword(ctx context.Context, accessToken string, input ChangePasswordInput) error {
-	_, err := s.cognito.ChangePassword(ctx, &cognitoidentityprovider.ChangePasswordInput{
+	client := s.cognitoClientForAccessToken(accessToken)
+	_, err := client.ChangePassword(ctx, &cognitoidentityprovider.ChangePasswordInput{
 		AccessToken:      aws.String(accessToken),
 		PreviousPassword: aws.String(input.OldPassword),
 		ProposedPassword: aws.String(input.NewPassword),
@@ -299,10 +337,8 @@ type SyncGoogleUserInput struct {
 }
 
 func (s *AuthService) SyncGoogleUser(ctx context.Context, input SyncGoogleUserInput) (*models.User, error) {
-	// First check if user exists by Cognito ID
 	user, err := s.userRepo.GetByCognitoID(ctx, input.CognitoID)
 	if err == nil {
-		// Update profile picture if it changed
 		if input.ProfilePictureURL != "" && user.ProfilePictureURL != input.ProfilePictureURL {
 			user.ProfilePictureURL = input.ProfilePictureURL
 			user.UpdatedAt = time.Now()
@@ -313,11 +349,8 @@ func (s *AuthService) SyncGoogleUser(ctx context.Context, input SyncGoogleUserIn
 		return user, nil
 	}
 
-	// If not found by Cognito ID, check by Email
 	user, err = s.userRepo.GetByEmail(ctx, input.Email)
 	if err == nil {
-		// User exists but with different/no Cognito ID (or account linking needed)
-		// Update the existing user with the new Cognito ID
 		user.CognitoID = input.CognitoID
 		if input.Name != "" {
 			user.Name = input.Name
@@ -332,7 +365,6 @@ func (s *AuthService) SyncGoogleUser(ctx context.Context, input SyncGoogleUserIn
 		return user, nil
 	}
 
-	// Create new user
 	newUser := &models.User{
 		Email:             input.Email,
 		CognitoID:         input.CognitoID,
@@ -346,4 +378,374 @@ func (s *AuthService) SyncGoogleUser(ctx context.Context, input SyncGoogleUserIn
 	}
 
 	return newUser, nil
+}
+
+type PhoneRegisterInput struct {
+	PhoneNumber string `json:"phone_number" binding:"required"`
+	Name        string `json:"name" binding:"required,min=2"`
+	Email       string `json:"email,omitempty" binding:"omitempty,email"`
+}
+
+type PhoneRegisterOutput struct {
+	UserID      string `json:"user_id"`
+	PhoneNumber string `json:"phone_number"`
+	Message     string `json:"message"`
+}
+
+func (s *AuthService) PhoneRegister(ctx context.Context, input PhoneRegisterInput) (*PhoneRegisterOutput, error) {
+	if err := s.ensurePhoneAuthConfigured(); err != nil {
+		return nil, err
+	}
+
+	normalizedPhone, err := normalizeIndianPhoneNumber(input.PhoneNumber)
+	if err != nil {
+		return nil, err
+	}
+
+	normalizedEmail := normalizeOptionalEmail(input.Email)
+	if normalizedEmail != "" {
+		if _, err := s.userRepo.GetByEmail(ctx, normalizedEmail); err == nil {
+			return nil, fmt.Errorf(phoneAuthEmailConflict)
+		}
+	}
+	if _, err := s.userRepo.GetByPhoneNumber(ctx, normalizedPhone); err == nil {
+		return nil, fmt.Errorf(phoneAuthConflictMessage)
+	}
+
+	if err := s.enforcePhoneOTPCooldown(ctx, phoneSignupCooldownPurpose, normalizedPhone); err != nil {
+		return nil, err
+	}
+
+	userAttributes := []types.AttributeType{
+		{Name: aws.String("name"), Value: aws.String(strings.TrimSpace(input.Name))},
+		{Name: aws.String("phone_number"), Value: aws.String(normalizedPhone)},
+	}
+
+	signUpResp, err := s.cognitoPhone.SignUp(ctx, &cognitoidentityprovider.SignUpInput{
+		ClientId:       aws.String(s.cfg.Cognito.Phone.ClientID),
+		Username:       aws.String(generatePhonePoolUsername()),
+		UserAttributes: userAttributes,
+	})
+	if err != nil {
+		s.log.Warn("phone registration failed", "phone_number", maskPhoneNumber(normalizedPhone), "error", err)
+		return nil, fmt.Errorf("phone registration failed: %w", err)
+	}
+	if signUpResp.UserSub == nil || *signUpResp.UserSub == "" {
+		return nil, fmt.Errorf("phone registration failed: missing user identity")
+	}
+
+	user := &models.User{
+		Email:       normalizedEmail,
+		PhoneNumber: normalizedPhone,
+		CognitoID:   canonicalPhoneCognitoID(s.cfg.Cognito.Phone.UserPoolID, *signUpResp.UserSub),
+		Name:        strings.TrimSpace(input.Name),
+		Role:        "viewer",
+	}
+
+	if err := s.userRepo.Create(ctx, user); err != nil {
+		s.log.Error("failed to create phone user record", "phone_number", maskPhoneNumber(normalizedPhone), "error", err)
+		return nil, fmt.Errorf("failed to create user: %w", err)
+	}
+
+	return &PhoneRegisterOutput{
+		UserID:      user.ID,
+		PhoneNumber: normalizedPhone,
+		Message:     defaultPhoneRegisterPrompt,
+	}, nil
+}
+
+type PhoneConfirmInput struct {
+	PhoneNumber string `json:"phone_number" binding:"required"`
+	Code        string `json:"code" binding:"required,min=6,max=8"`
+}
+
+func (s *AuthService) PhoneConfirm(ctx context.Context, input PhoneConfirmInput) error {
+	if err := s.ensurePhoneAuthConfigured(); err != nil {
+		return err
+	}
+
+	normalizedPhone, err := normalizeIndianPhoneNumber(input.PhoneNumber)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.cognitoPhone.ConfirmSignUp(ctx, &cognitoidentityprovider.ConfirmSignUpInput{
+		ClientId:         aws.String(s.cfg.Cognito.Phone.ClientID),
+		Username:         aws.String(normalizedPhone),
+		ConfirmationCode: aws.String(strings.TrimSpace(input.Code)),
+	})
+	return err
+}
+
+func (s *AuthService) PhoneResendConfirmation(ctx context.Context, phoneNumber string) error {
+	if err := s.ensurePhoneAuthConfigured(); err != nil {
+		return err
+	}
+
+	normalizedPhone, err := normalizeIndianPhoneNumber(phoneNumber)
+	if err != nil {
+		return err
+	}
+	if err := s.enforcePhoneOTPCooldown(ctx, phoneResendCooldownPurpose, normalizedPhone); err != nil {
+		return err
+	}
+
+	_, err = s.cognitoPhone.ResendConfirmationCode(ctx, &cognitoidentityprovider.ResendConfirmationCodeInput{
+		ClientId: aws.String(s.cfg.Cognito.Phone.ClientID),
+		Username: aws.String(normalizedPhone),
+	})
+	return err
+}
+
+type PhoneLoginInput struct {
+	PhoneNumber string `json:"phone_number" binding:"required"`
+}
+
+type PhoneLoginChallengeOutput struct {
+	ChallengeName string `json:"challenge_name"`
+	Session       string `json:"session"`
+	Message       string `json:"message"`
+}
+
+func (s *AuthService) PhoneLogin(ctx context.Context, input PhoneLoginInput) (*PhoneLoginChallengeOutput, error) {
+	if err := s.ensurePhoneAuthConfigured(); err != nil {
+		return nil, err
+	}
+
+	normalizedPhone, err := normalizeIndianPhoneNumber(input.PhoneNumber)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.enforcePhoneOTPCooldown(ctx, phoneLoginCooldownPurpose, normalizedPhone); err != nil {
+		return nil, err
+	}
+
+	result, err := s.cognitoPhone.InitiateAuth(ctx, &cognitoidentityprovider.InitiateAuthInput{
+		ClientId: aws.String(s.cfg.Cognito.Phone.ClientID),
+		AuthFlow: types.AuthFlowTypeUserAuth,
+		AuthParameters: map[string]string{
+			"USERNAME":            normalizedPhone,
+			"PREFERRED_CHALLENGE": "SMS_OTP",
+		},
+	})
+	if err != nil {
+		s.log.Warn("phone login failed", "phone_number", maskPhoneNumber(normalizedPhone), "error", err)
+		return nil, fmt.Errorf(phoneAuthGenericFailure)
+	}
+	if result.Session == nil || *result.Session == "" {
+		return nil, fmt.Errorf("authentication failed: missing challenge session")
+	}
+
+	challengeName := string(result.ChallengeName)
+	if challengeName == "" {
+		challengeName = "SMS_OTP"
+	}
+
+	return &PhoneLoginChallengeOutput{
+		ChallengeName: challengeName,
+		Session:       *result.Session,
+		Message:       defaultPhoneChallengePrompt,
+	}, nil
+}
+
+type PhoneVerifyLoginInput struct {
+	PhoneNumber string `json:"phone_number" binding:"required"`
+	Code        string `json:"code" binding:"required,min=6,max=8"`
+	Session     string `json:"session" binding:"required"`
+}
+
+func (s *AuthService) PhoneVerifyLogin(ctx context.Context, input PhoneVerifyLoginInput) (*LoginOutput, error) {
+	if err := s.ensurePhoneAuthConfigured(); err != nil {
+		return nil, err
+	}
+
+	normalizedPhone, err := normalizeIndianPhoneNumber(input.PhoneNumber)
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := s.cognitoPhone.RespondToAuthChallenge(ctx, &cognitoidentityprovider.RespondToAuthChallengeInput{
+		ClientId:      aws.String(s.cfg.Cognito.Phone.ClientID),
+		ChallengeName: types.ChallengeNameTypeSmsOtp,
+		Session:       aws.String(strings.TrimSpace(input.Session)),
+		ChallengeResponses: map[string]string{
+			"USERNAME":     normalizedPhone,
+			"SMS_OTP_CODE": strings.TrimSpace(input.Code),
+		},
+	})
+	if err != nil {
+		s.log.Warn("phone OTP verification failed", "phone_number", maskPhoneNumber(normalizedPhone), "error", err)
+		return nil, fmt.Errorf(phoneAuthGenericFailure)
+	}
+
+	return loginOutputFromAuthResult(result.AuthenticationResult)
+}
+
+func (s *AuthService) PhoneRefresh(ctx context.Context, input RefreshInput) (*LoginOutput, error) {
+	if err := s.ensurePhoneAuthConfigured(); err != nil {
+		return nil, err
+	}
+
+	result, err := s.cognitoPhone.InitiateAuth(ctx, &cognitoidentityprovider.InitiateAuthInput{
+		ClientId: aws.String(s.cfg.Cognito.Phone.ClientID),
+		AuthFlow: types.AuthFlowTypeRefreshTokenAuth,
+		AuthParameters: map[string]string{
+			"REFRESH_TOKEN": input.RefreshToken,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("token refresh failed: %w", err)
+	}
+
+	return loginOutputFromRefreshResult(result.AuthenticationResult, input.RefreshToken)
+}
+
+func (s *AuthService) PhoneLogout(ctx context.Context, accessToken string) error {
+	if err := s.ensurePhoneAuthConfigured(); err != nil {
+		return err
+	}
+
+	_, err := s.cognitoPhone.GlobalSignOut(ctx, &cognitoidentityprovider.GlobalSignOutInput{
+		AccessToken: aws.String(accessToken),
+	})
+	return err
+}
+
+func (s *AuthService) ensurePhoneAuthConfigured() error {
+	if s.cognitoPhone == nil || s.cfg == nil || s.cfg.Cognito.Phone.UserPoolID == "" || s.cfg.Cognito.Phone.ClientID == "" {
+		return fmt.Errorf(phoneAuthDisabledMessage)
+	}
+	return nil
+}
+
+func (s *AuthService) cognitoClientForAccessToken(accessToken string) cognitoIdentityProviderAPI {
+	if s.cognitoPhone == nil || s.cfg == nil || s.cfg.Cognito.Phone.UserPoolID == "" || s.cfg.Cognito.Phone.Region == "" {
+		return s.cognito
+	}
+
+	claims := &jwt.RegisteredClaims{}
+	parser := jwt.Parser{}
+	if _, _, err := parser.ParseUnverified(accessToken, claims); err == nil && claims.Issuer == phonePoolIssuer(s.cfg.Cognito.Phone.Region, s.cfg.Cognito.Phone.UserPoolID) {
+		return s.cognitoPhone
+	}
+
+	return s.cognito
+}
+
+func (s *AuthService) enforcePhoneOTPCooldown(ctx context.Context, purpose, phoneNumber string) error {
+	if s.dynamoDB == nil || s.cfg == nil || s.cfg.Cognito.Phone.OTPCooldownTable == "" {
+		return nil
+	}
+
+	now := time.Now().Unix()
+	expiresAt := time.Now().Add(phoneOTPCooldownWindow).Unix()
+	cooldownKey := fmt.Sprintf("%s#%s", purpose, phoneNumber)
+
+	_, err := s.dynamoDB.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName: aws.String(s.cfg.Cognito.Phone.OTPCooldownTable),
+		Item: map[string]dynamodbtypes.AttributeValue{
+			"cooldown_key": &dynamodbtypes.AttributeValueMemberS{Value: cooldownKey},
+			"phone_number": &dynamodbtypes.AttributeValueMemberS{Value: phoneNumber},
+			"purpose":      &dynamodbtypes.AttributeValueMemberS{Value: purpose},
+			"expires_at":   &dynamodbtypes.AttributeValueMemberN{Value: strconv.FormatInt(expiresAt, 10)},
+		},
+		ConditionExpression: aws.String("attribute_not_exists(cooldown_key) OR expires_at < :now"),
+		ExpressionAttributeValues: map[string]dynamodbtypes.AttributeValue{
+			":now": &dynamodbtypes.AttributeValueMemberN{Value: strconv.FormatInt(now, 10)},
+		},
+	})
+	if err == nil {
+		return nil
+	}
+
+	var conditionalErr *dynamodbtypes.ConditionalCheckFailedException
+	if errors.As(err, &conditionalErr) {
+		return fmt.Errorf(phoneAuthRateLimitMessage)
+	}
+
+	s.log.Error("failed to enforce phone OTP cooldown", "phone_number", maskPhoneNumber(phoneNumber), "purpose", purpose, "error", err)
+	return fmt.Errorf("failed to apply phone OTP cooldown")
+}
+
+func loginOutputFromAuthResult(authResult *types.AuthenticationResultType) (*LoginOutput, error) {
+	if authResult == nil {
+		return nil, fmt.Errorf("authentication result is nil")
+	}
+	if authResult.AccessToken == nil || authResult.RefreshToken == nil || authResult.TokenType == nil {
+		return nil, fmt.Errorf("authentication failed: incomplete response")
+	}
+
+	return &LoginOutput{
+		AccessToken:  *authResult.AccessToken,
+		RefreshToken: *authResult.RefreshToken,
+		ExpiresIn:    authResult.ExpiresIn,
+		TokenType:    *authResult.TokenType,
+	}, nil
+}
+
+func loginOutputFromRefreshResult(authResult *types.AuthenticationResultType, refreshToken string) (*LoginOutput, error) {
+	if authResult == nil {
+		return nil, fmt.Errorf("no authentication result")
+	}
+	if authResult.AccessToken == nil || authResult.TokenType == nil {
+		return nil, fmt.Errorf("token refresh failed: incomplete response")
+	}
+
+	return &LoginOutput{
+		AccessToken:  *authResult.AccessToken,
+		RefreshToken: refreshToken,
+		ExpiresIn:    authResult.ExpiresIn,
+		TokenType:    *authResult.TokenType,
+	}, nil
+}
+
+func normalizeIndianPhoneNumber(input string) (string, error) {
+	trimmed := strings.TrimSpace(input)
+	replacer := strings.NewReplacer(" ", "", "-", "", "(", "", ")", "")
+	trimmed = replacer.Replace(trimmed)
+
+	switch {
+	case strings.HasPrefix(trimmed, "+91"):
+		trimmed = strings.TrimPrefix(trimmed, "+91")
+	case strings.HasPrefix(trimmed, "91") && len(trimmed) == 12:
+		trimmed = strings.TrimPrefix(trimmed, "91")
+	}
+
+	if !indianMobileNumberPattern.MatchString(trimmed) {
+		return "", fmt.Errorf("phone_number must be a valid Indian mobile number")
+	}
+
+	return "+91" + trimmed, nil
+}
+
+func normalizeOptionalEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
+func canonicalPhoneCognitoID(userPoolID, subject string) string {
+	return fmt.Sprintf("%s:%s", userPoolID, subject)
+}
+
+func rawCognitoSubject(cognitoID string) (string, bool) {
+	parts := strings.SplitN(cognitoID, ":", 2)
+	if len(parts) != 2 || parts[1] == "" {
+		return "", false
+	}
+	return parts[1], true
+}
+
+func phonePoolIssuer(region, userPoolID string) string {
+	return fmt.Sprintf("https://cognito-idp.%s.amazonaws.com/%s", region, userPoolID)
+}
+
+func generatePhonePoolUsername() string {
+	return "phone-" + uuid.NewString()
+}
+
+func maskPhoneNumber(phoneNumber string) string {
+	normalized := strings.TrimSpace(phoneNumber)
+	if len(normalized) <= 4 {
+		return "****"
+	}
+	return normalized[:3] + strings.Repeat("*", len(normalized)-7) + normalized[len(normalized)-4:]
 }

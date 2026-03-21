@@ -3,6 +3,7 @@ package middleware
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -69,7 +70,9 @@ func TestRequestLoggerInjectedAndCompletionLogged(t *testing.T) {
 
 func TestAuthInvalidTokenLogsWarning(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	jwksCache = nil
+	jwksCachesMu.Lock()
+	jwksCaches = map[string]*JWKSCache{}
+	jwksCachesMu.Unlock()
 
 	core, observed := observer.New(zapcore.DebugLevel)
 	log := logger.FromZap(zap.New(core))
@@ -77,7 +80,7 @@ func TestAuthInvalidTokenLogsWarning(t *testing.T) {
 	router := gin.New()
 	router.Use(RequestID())
 	router.Use(Logger(log))
-	router.Use(Auth(config.CognitoConfig{}, log))
+	router.Use(Auth(config.CognitoConfig{Region: "us-east-1", UserPoolID: "pool-123"}, log))
 	router.GET("/secure", func(c *gin.Context) {
 		c.String(http.StatusOK, "ok")
 	})
@@ -106,18 +109,24 @@ func TestAuthValidTokenEnrichesContextLogger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to generate RSA key: %v", err)
 	}
-
-	jwksCache = &JWKSCache{
-		keys: map[string]*rsa.PublicKey{
-			"test-kid": &privateKey.PublicKey,
+	cfg := config.CognitoConfig{Region: "us-east-1", UserPoolID: "pool-123", JWKSRefreshRate: time.Hour}
+	jwksCachesMu.Lock()
+	jwksCaches = map[string]*JWKSCache{
+		fmt.Sprintf("%s/.well-known/jwks.json", cognitoIssuer(cfg.Region, cfg.UserPoolID)): {
+			keys: map[string]*rsa.PublicKey{
+				"test-kid": &privateKey.PublicKey,
+			},
+			lastFetch: time.Now(),
+			ttl:       time.Hour,
+			jwksURL:   "memory",
 		},
-		lastFetch: time.Now(),
-		ttl:       time.Hour,
 	}
+	jwksCachesMu.Unlock()
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, &CognitoClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   "user-123",
+			Issuer:    cognitoIssuer(cfg.Region, cfg.UserPoolID),
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		},
 		TokenUse:   "access",
@@ -138,7 +147,7 @@ func TestAuthValidTokenEnrichesContextLogger(t *testing.T) {
 	router := gin.New()
 	router.Use(RequestID())
 	router.Use(Logger(log))
-	router.Use(Auth(config.CognitoConfig{}, log))
+	router.Use(Auth(cfg, log))
 	router.GET("/secure", func(c *gin.Context) {
 		logger.FromContext(c.Request.Context()).Info("inside-auth-handler")
 		c.String(http.StatusOK, "ok")

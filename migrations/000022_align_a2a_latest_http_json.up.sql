@@ -1,5 +1,7 @@
 -- Align persisted A2A storage with the latest HTTP+JSON task model.
 
+DROP VIEW IF EXISTS pending_a2a_tasks_view;
+
 ALTER TABLE a2a_tasks
     ALTER COLUMN state TYPE VARCHAR(32);
 

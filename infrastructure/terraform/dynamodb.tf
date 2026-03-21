@@ -74,6 +74,22 @@ resource "aws_dynamodb_table" "mfa_codes" {
   }
 }
 
+resource "aws_dynamodb_table" "phone_auth_cooldowns" {
+  name         = var.phone_auth_cooldown_table_name
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "cooldown_key"
+
+  attribute {
+    name = "cooldown_key"
+    type = "S"
+  }
+
+  ttl {
+    attribute_name = "expires_at"
+    enabled        = true
+  }
+}
+
 resource "aws_dynamodb_table" "customers_cache" {
   name         = "customers_cache"
   billing_mode = "PAY_PER_REQUEST"

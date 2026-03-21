@@ -72,6 +72,21 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("CREDENTIAL_ENCRYPTION_KEY must decode to exactly 32 bytes")
 	}
 
+	if cfg.Cognito.Phone.UserPoolID != "" || cfg.Cognito.Phone.ClientID != "" || cfg.Cognito.Phone.Region != "" {
+		if cfg.Cognito.Phone.UserPoolID == "" {
+			return fmt.Errorf("COGNITO_PHONE_USER_POOL_ID is required when phone auth is configured")
+		}
+		if cfg.Cognito.Phone.ClientID == "" {
+			return fmt.Errorf("COGNITO_PHONE_CLIENT_ID is required when phone auth is configured")
+		}
+		if cfg.Cognito.Phone.Region == "" {
+			return fmt.Errorf("COGNITO_PHONE_REGION is required when phone auth is configured")
+		}
+		if cfg.Cognito.Phone.OTPCooldownTable == "" {
+			return fmt.Errorf("COGNITO_PHONE_OTP_COOLDOWN_TABLE is required when phone auth is configured")
+		}
+	}
+
 	return nil
 }
 

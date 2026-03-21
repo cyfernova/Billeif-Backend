@@ -28,3 +28,16 @@ provider "aws" {
     }
   }
 }
+
+provider "aws" {
+  alias  = "ap_south_1"
+  region = "ap-south-1"
+
+  default_tags {
+    tags = {
+      Project     = var.project_name
+      Environment = var.environment
+      ManagedBy   = "Terraform"
+    }
+  }
+}

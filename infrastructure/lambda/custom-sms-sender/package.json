@@ -1,0 +1,10 @@
+{
+  "name": "custom-sms-sender",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@aws-crypto/client-node": "^4.2.1",
+    "@aws-sdk/client-sns": "^3.922.0"
+  }
+}

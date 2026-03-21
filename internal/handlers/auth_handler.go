@@ -72,6 +72,91 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// PhoneRegister registers a user with an Indian mobile number.
+func (h *AuthHandler) PhoneRegister(c *gin.Context) {
+	var input services.PhoneRegisterInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	result, err := h.svc.PhoneRegister(c.Request.Context(), input)
+	if err != nil {
+		c.JSON(statusCodeForAuthError(err, http.StatusBadRequest), gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, result)
+}
+
+// PhoneConfirm confirms a phone-based signup.
+func (h *AuthHandler) PhoneConfirm(c *gin.Context) {
+	var input services.PhoneConfirmInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := h.svc.PhoneConfirm(c.Request.Context(), input); err != nil {
+		c.JSON(statusCodeForAuthError(err, http.StatusBadRequest), gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "phone number verified successfully"})
+}
+
+// PhoneResendConfirmation resends the sign-up OTP.
+func (h *AuthHandler) PhoneResendConfirmation(c *gin.Context) {
+	var input struct {
+		PhoneNumber string `json:"phone_number" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := h.svc.PhoneResendConfirmation(c.Request.Context(), input.PhoneNumber); err != nil {
+		c.JSON(statusCodeForAuthError(err, http.StatusBadRequest), gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "verification code resent"})
+}
+
+// PhoneLogin starts the SMS OTP challenge.
+func (h *AuthHandler) PhoneLogin(c *gin.Context) {
+	var input services.PhoneLoginInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	result, err := h.svc.PhoneLogin(c.Request.Context(), input)
+	if err != nil {
+		c.JSON(statusCodeForAuthError(err, http.StatusUnauthorized), gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+// PhoneVerifyLogin verifies the SMS OTP and returns tokens.
+func (h *AuthHandler) PhoneVerifyLogin(c *gin.Context) {
+	var input services.PhoneVerifyLoginInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	result, err := h.svc.PhoneVerifyLogin(c.Request.Context(), input)
+	if err != nil {
+		c.JSON(statusCodeForAuthError(err, http.StatusUnauthorized), gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
 // Logout invalidates a user session
 // @Summary Logout user
 // @Description Revoke the user's access token and end the session.
@@ -116,6 +201,23 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	result, err := h.svc.Refresh(c.Request.Context(), input)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+// PhoneRefresh renews a phone-auth access token.
+func (h *AuthHandler) PhoneRefresh(c *gin.Context) {
+	var input services.RefreshInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	result, err := h.svc.PhoneRefresh(c.Request.Context(), input)
+	if err != nil {
+		c.JSON(statusCodeForAuthError(err, http.StatusUnauthorized), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -232,6 +334,7 @@ func (h *AuthHandler) ResendVerification(c *gin.Context) {
 func (h *AuthHandler) Me(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	email := middleware.GetEmail(c)
+	phoneNumber := c.GetString("phone_number")
 	if userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
@@ -251,6 +354,9 @@ func (h *AuthHandler) Me(c *gin.Context) {
 					_ = h.svc.UpdateUserCognitoID(c.Request.Context(), user.ID, userID)
 					user.CognitoID = userID // Update in response
 				}
+			}
+			if err != nil && phoneNumber != "" {
+				user, err = h.svc.GetUserByPhoneNumber(c.Request.Context(), phoneNumber)
 			}
 			if err != nil {
 				c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
@@ -327,6 +433,22 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "password changed successfully"})
+}
+
+// PhoneLogout invalidates a phone-authenticated session.
+func (h *AuthHandler) PhoneLogout(c *gin.Context) {
+	token := extractToken(c)
+	if token == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no token provided"})
+		return
+	}
+
+	if err := h.svc.PhoneLogout(c.Request.Context(), token); err != nil {
+		c.JSON(statusCodeForAuthError(err, http.StatusInternalServerError), gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "logged out successfully"})
 }
 
 // GoogleLogin handles Google OAuth login
@@ -447,4 +569,24 @@ func extractToken(c *gin.Context) string {
 		return ""
 	}
 	return parts[1]
+}
+
+func statusCodeForAuthError(err error, fallback int) int {
+	if err == nil {
+		return fallback
+	}
+
+	message := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(message, "already registered"):
+		return http.StatusConflict
+	case strings.Contains(message, "aliasexistsexception"):
+		return http.StatusConflict
+	case strings.Contains(message, "too many otp requests"):
+		return http.StatusTooManyRequests
+	case strings.Contains(message, "not configured"):
+		return http.StatusServiceUnavailable
+	default:
+		return fallback
+	}
 }

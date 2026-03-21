@@ -135,6 +135,11 @@ func loadWSConfig() *config.Config {
 			ClientID:        os.Getenv("COGNITO_CLIENT_ID"),
 			Region:          getEnvOrDefault("COGNITO_REGION", getEnvOrDefault("AWS_REGION", "us-east-1")),
 			JWKSRefreshRate: 10 * time.Minute,
+			Phone: config.CognitoPhoneConfig{
+				UserPoolID: getEnvOrDefault("COGNITO_PHONE_USER_POOL_ID", ""),
+				ClientID:   getEnvOrDefault("COGNITO_PHONE_CLIENT_ID", ""),
+				Region:     getEnvOrDefault("COGNITO_PHONE_REGION", ""),
+			},
 		},
 		WebSocket: config.WebSocketConfig{
 			APIEndpoint:      os.Getenv("WEBSOCKET_API_ENDPOINT"),

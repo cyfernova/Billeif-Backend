@@ -41,8 +41,7 @@ type JWKSCache struct {
 	jwksURL   string
 }
 
-func NewJWKSCache(poolID, region string, ttl time.Duration) *JWKSCache {
-	jwksURL := fmt.Sprintf("https://cognito-idp.%s.amazonaws.com/%s/.well-known/jwks.json", region, poolID)
+func NewJWKSCache(jwksURL string, ttl time.Duration) *JWKSCache {
 	return &JWKSCache{
 		keys:    make(map[string]*rsa.PublicKey),
 		ttl:     ttl,
@@ -91,6 +90,9 @@ func (c *JWKSCache) refresh() error {
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("fetch JWKS: unexpected status %d", resp.StatusCode)
+	}
 
 	var jwks JWKS
 	if err := json.NewDecoder(resp.Body).Decode(&jwks); err != nil {
@@ -133,23 +135,30 @@ func parseRSAPublicKey(k JWK) (*rsa.PublicKey, error) {
 
 type CognitoClaims struct {
 	jwt.RegisteredClaims
-	Email      string   `json:"email"`
-	Username   string   `json:"cognito:username"`
-	Groups     []string `json:"cognito:groups"`
-	TokenUse   string   `json:"token_use"`
-	BusinessID string   `json:"custom:businessId"`
-	Role       string   `json:"custom:role"`
-	Picture    string   `json:"picture"`
-	Name       string   `json:"name"`
+	Email       string   `json:"email"`
+	PhoneNumber string   `json:"phone_number"`
+	Username    string   `json:"cognito:username"`
+	Groups      []string `json:"cognito:groups"`
+	TokenUse    string   `json:"token_use"`
+	BusinessID  string   `json:"custom:businessId"`
+	Role        string   `json:"custom:role"`
+	Picture     string   `json:"picture"`
+	Name        string   `json:"name"`
 }
 
-var jwksCache *JWKSCache
-
-func ensureJWKSCache(cfg config.CognitoConfig) {
-	if jwksCache == nil {
-		jwksCache = NewJWKSCache(cfg.UserPoolID, cfg.Region, cfg.JWKSRefreshRate)
-	}
+type cognitoPool struct {
+	userPoolID          string
+	region              string
+	issuer              string
+	jwksURL             string
+	ttl                 time.Duration
+	canonicalizeSubject bool
 }
+
+var (
+	jwksCachesMu sync.Mutex
+	jwksCaches   = map[string]*JWKSCache{}
+)
 
 func parseAuthorizationHeader(authHeader string) (string, error) {
 	if authHeader == "" {
@@ -166,36 +175,11 @@ func parseAuthorizationHeader(authHeader string) (string, error) {
 	return parts[1], nil
 }
 
-// ValidateCognitoToken validates an access/id token and returns parsed claims.
 func ValidateCognitoToken(cfg config.CognitoConfig, tokenString string) (*CognitoClaims, error) {
-	ensureJWKSCache(cfg)
-
-	token, err := jwt.ParseWithClaims(tokenString, &CognitoClaims{}, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
-		kid, ok := token.Header["kid"].(string)
-		if !ok {
-			return nil, fmt.Errorf("kid not found in token header")
-		}
-		return jwksCache.GetKey(kid)
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	claims, ok := token.Claims.(*CognitoClaims)
-	if !ok || !token.Valid {
-		return nil, fmt.Errorf("invalid token claims")
-	}
-	if claims.TokenUse != "access" && claims.TokenUse != "id" {
-		return nil, fmt.Errorf("invalid token type: %s", claims.TokenUse)
-	}
-
-	return claims, nil
+	claims, _, err := validateCognitoTokenWithPools(tokenString, cognitoPoolsFromConfig(cfg))
+	return claims, err
 }
 
-// ValidateCognitoAuthorization validates a bearer authorization header and returns claims.
 func ValidateCognitoAuthorization(cfg config.CognitoConfig, authHeader string) (*CognitoClaims, error) {
 	tokenString, err := parseAuthorizationHeader(authHeader)
 	if err != nil {
@@ -205,8 +189,6 @@ func ValidateCognitoAuthorization(cfg config.CognitoConfig, authHeader string) (
 }
 
 func Auth(cfg config.CognitoConfig, log *logger.Logger) gin.HandlerFunc {
-	ensureJWKSCache(cfg)
-
 	return func(c *gin.Context) {
 		reqLog := logger.FromContext(c.Request.Context()).Named("auth_middleware")
 		authHeader := c.GetHeader("Authorization")
@@ -219,6 +201,7 @@ func Auth(cfg config.CognitoConfig, log *logger.Logger) gin.HandlerFunc {
 
 		c.Set("user_id", claims.Subject)
 		c.Set("email", claims.Email)
+		c.Set("phone_number", claims.PhoneNumber)
 		c.Set("username", claims.Username)
 		c.Set("groups", claims.Groups)
 		c.Set("business_id", claims.BusinessID)
@@ -284,4 +267,115 @@ func GetName(c *gin.Context) string {
 		return name.(string)
 	}
 	return ""
+}
+
+func cognitoPoolsFromConfig(cfg config.CognitoConfig) []cognitoPool {
+	ttl := cfg.JWKSRefreshRate
+	if ttl == 0 {
+		ttl = 10 * time.Minute
+	}
+
+	pools := []cognitoPool{
+		newCognitoPool(cfg.Region, cfg.UserPoolID, ttl, false),
+	}
+
+	if cfg.Phone.UserPoolID != "" && cfg.Phone.Region != "" {
+		pools = append(pools, newCognitoPool(cfg.Phone.Region, cfg.Phone.UserPoolID, ttl, true))
+	}
+
+	return pools
+}
+
+func newCognitoPool(region, userPoolID string, ttl time.Duration, canonicalizeSubject bool) cognitoPool {
+	return cognitoPool{
+		userPoolID:          userPoolID,
+		region:              region,
+		issuer:              cognitoIssuer(region, userPoolID),
+		jwksURL:             fmt.Sprintf("%s/.well-known/jwks.json", cognitoIssuer(region, userPoolID)),
+		ttl:                 ttl,
+		canonicalizeSubject: canonicalizeSubject,
+	}
+}
+
+func validateCognitoTokenWithPools(tokenString string, pools []cognitoPool) (*CognitoClaims, cognitoPool, error) {
+	unverifiedClaims, err := parseUnverifiedClaims(tokenString)
+	if err != nil {
+		return nil, cognitoPool{}, err
+	}
+
+	pool, ok := findCognitoPoolByIssuer(unverifiedClaims.Issuer, pools)
+	if !ok {
+		return nil, cognitoPool{}, fmt.Errorf("token issuer is not allowed")
+	}
+
+	cache := getJWKSCache(pool)
+	token, err := jwt.ParseWithClaims(tokenString, &CognitoClaims{}, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		kid, ok := token.Header["kid"].(string)
+		if !ok {
+			return nil, fmt.Errorf("kid not found in token header")
+		}
+		return cache.GetKey(kid)
+	})
+	if err != nil {
+		return nil, cognitoPool{}, err
+	}
+
+	claims, ok := token.Claims.(*CognitoClaims)
+	if !ok || !token.Valid {
+		return nil, cognitoPool{}, fmt.Errorf("invalid token claims")
+	}
+	if claims.Issuer != pool.issuer {
+		return nil, cognitoPool{}, fmt.Errorf("invalid token issuer")
+	}
+	if claims.TokenUse != "access" && claims.TokenUse != "id" {
+		return nil, cognitoPool{}, fmt.Errorf("invalid token type: %s", claims.TokenUse)
+	}
+	if pool.canonicalizeSubject {
+		claims.Subject = canonicalPhoneCognitoID(pool.userPoolID, claims.Subject)
+	}
+
+	return claims, pool, nil
+}
+
+func parseUnverifiedClaims(tokenString string) (*CognitoClaims, error) {
+	parser := jwt.Parser{}
+	claims := &CognitoClaims{}
+	if _, _, err := parser.ParseUnverified(tokenString, claims); err != nil {
+		return nil, err
+	}
+	return claims, nil
+}
+
+func findCognitoPoolByIssuer(issuer string, pools []cognitoPool) (cognitoPool, bool) {
+	for _, pool := range pools {
+		if pool.issuer == issuer {
+			return pool, true
+		}
+	}
+	return cognitoPool{}, false
+}
+
+func getJWKSCache(pool cognitoPool) *JWKSCache {
+	jwksCachesMu.Lock()
+	defer jwksCachesMu.Unlock()
+
+	cache, ok := jwksCaches[pool.jwksURL]
+	if ok {
+		return cache
+	}
+
+	cache = NewJWKSCache(pool.jwksURL, pool.ttl)
+	jwksCaches[pool.jwksURL] = cache
+	return cache
+}
+
+func cognitoIssuer(region, userPoolID string) string {
+	return fmt.Sprintf("https://cognito-idp.%s.amazonaws.com/%s", region, userPoolID)
+}
+
+func canonicalPhoneCognitoID(userPoolID, subject string) string {
+	return fmt.Sprintf("%s:%s", userPoolID, subject)
 }

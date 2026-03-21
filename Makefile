@@ -2,7 +2,7 @@
 -include .env
 export
 
-.PHONY: help infra-backend-init infra-init infra-apply infra-plan infra-destroy infra-output build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-payment build-lambda-ws package-lambda run-local test test-integration migrate-up migrate-down migrate-create fmt lint clean deps test-coverage swagger
+.PHONY: help infra-backend-init infra-init infra-apply infra-plan infra-destroy infra-output build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-payment build-lambda-ws build-lambda-custom-sms-sender package-lambda run-local test test-integration migrate-up migrate-down migrate-create fmt lint clean deps test-coverage swagger
 
 LAMBDA_BUILD_DIR := .build/lambda
 
@@ -66,12 +66,19 @@ build-lambda-ws: ## Build WebSocket Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/ws
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(LAMBDA_BUILD_DIR)/ws/bootstrap ./cmd/lambda/ws
 
-package-lambda: build-lambda ## Package Lambda artifacts into zip files
+build-lambda-custom-sms-sender: ## Build the Node.js custom SMS sender Lambda package
+	rm -rf $(LAMBDA_BUILD_DIR)/custom-sms-sender
+	mkdir -p $(LAMBDA_BUILD_DIR)/custom-sms-sender
+	cp -R infrastructure/lambda/custom-sms-sender/. $(LAMBDA_BUILD_DIR)/custom-sms-sender/
+	cd $(LAMBDA_BUILD_DIR)/custom-sms-sender && npm install --omit=dev --no-audit --no-fund
+
+package-lambda: build-lambda build-lambda-custom-sms-sender ## Package Lambda artifacts into zip files
 	cd $(LAMBDA_BUILD_DIR)/http && zip -q -r ../http.zip bootstrap
 	cd $(LAMBDA_BUILD_DIR)/a2a-stream && zip -q -r ../a2a-stream.zip bootstrap
 	cd $(LAMBDA_BUILD_DIR)/sqs-invoice && zip -q -r ../sqs-invoice.zip bootstrap
 	cd $(LAMBDA_BUILD_DIR)/sqs-payment && zip -q -r ../sqs-payment.zip bootstrap
 	cd $(LAMBDA_BUILD_DIR)/ws && zip -q -r ../ws.zip bootstrap
+	cd $(LAMBDA_BUILD_DIR)/custom-sms-sender && zip -q -r ../custom-sms-sender.zip .
 
 run-local: ## Run the HTTP server locally
 	go run ./cmd/server

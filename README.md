@@ -75,6 +75,21 @@ make infra-apply         # package Lambda artifacts and apply Terraform changes
 
 Worker queues use a shared SQS visibility timeout sized for the 60 second worker Lambda timeout plus batching window. If you change worker Lambda timeouts, update the queue timeout together.
 
+### India SMS OTP Setup
+
+India phone authentication requires AWS End User Messaging SMS registration and DLT-approved values before Terraform apply. Set these Terraform variables through `terraform.tfvars`, `*.auto.tfvars`, or `TF_VAR_*` environment variables:
+
+```hcl
+india_sms_sender_id          = "ABCDEF"
+india_dlt_entity_id          = "YOUR_PEID"
+india_signup_template_id     = "YOUR_SIGNUP_TEMPLATE_ID"
+india_auth_template_id       = "YOUR_AUTH_TEMPLATE_ID"
+india_signup_message_template = "Your Invoice Backend verification code is {####}."
+india_auth_message_template   = "Your Invoice Backend login code is {####}."
+```
+
+Use the exact DLT-approved message text, including case, spaces, and punctuation. The `{####}` placeholder is replaced with the Cognito OTP at send time.
+
 ### Terraform Recovery After Partial Apply
 
 If `terraform apply` is interrupted while creating Lambdas, repair state before rerunning:

@@ -103,6 +103,21 @@ output "client_id" {
   value       = aws_cognito_user_pool_client.main.id
 }
 
+output "phone_user_pool_id" {
+  description = "India phone-auth Cognito User Pool ID"
+  value       = aws_cognito_user_pool.phone.id
+}
+
+output "phone_client_id" {
+  description = "India phone-auth Cognito App Client ID"
+  value       = aws_cognito_user_pool_client.phone.id
+}
+
+output "phone_auth_cooldown_table" {
+  description = "DynamoDB table name for per-phone OTP cooldowns"
+  value       = aws_dynamodb_table.phone_auth_cooldowns.name
+}
+
 output "db_username_ssm_parameter" {
   description = "SSM parameter name for DB username"
   value       = aws_ssm_parameter.db_username.name

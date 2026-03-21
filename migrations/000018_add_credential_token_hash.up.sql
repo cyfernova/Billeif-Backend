@@ -1,3 +1,5 @@
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 ALTER TABLE credential_tokens
     ADD COLUMN IF NOT EXISTS token_hash VARCHAR(64);
 

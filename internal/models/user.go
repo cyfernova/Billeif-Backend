@@ -8,7 +8,8 @@ import (
 
 type User struct {
 	ID                string         `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
-	Email             string         `gorm:"uniqueIndex;not null;size:255" json:"email" validate:"required,email"`
+	Email             string         `gorm:"size:255" json:"email,omitempty" validate:"omitempty,email"`
+	PhoneNumber       string         `gorm:"size:20" json:"phone_number,omitempty" validate:"omitempty,max=20"`
 	CognitoID         string         `gorm:"uniqueIndex;not null;size:255" json:"cognito_id" validate:"required"`
 	Name              string         `gorm:"not null;size:255" json:"name" validate:"required,min=2,max=255"`
 	ProfilePictureURL string         `gorm:"size:2048" json:"profile_picture_url,omitempty"`
