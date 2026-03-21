@@ -45,7 +45,7 @@ resource "aws_api_gateway_integration" "proxy_any" {
   uri                     = aws_lambda_function.api_http.invoke_arn
 }
 
-# Dedicated SSE stream endpoint mapping for A2A task streaming.
+# Dedicated SSE stream endpoint mapping for latest A2A HTTP+JSON streaming.
 resource "aws_api_gateway_resource" "api" {
   rest_api_id = aws_api_gateway_rest_api.main.id
   parent_id   = aws_api_gateway_rest_api.main.root_resource_id
@@ -64,29 +64,23 @@ resource "aws_api_gateway_resource" "api_v1_a2a" {
   path_part   = "a2a"
 }
 
-resource "aws_api_gateway_resource" "api_v1_a2a_v03" {
+resource "aws_api_gateway_resource" "api_v1_a2a_message_stream" {
   rest_api_id = aws_api_gateway_rest_api.main.id
   parent_id   = aws_api_gateway_resource.api_v1_a2a.id
-  path_part   = "v0.3"
+  path_part   = "message:stream"
 }
 
-resource "aws_api_gateway_resource" "api_v1_a2a_tasks_stream" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  parent_id   = aws_api_gateway_resource.api_v1_a2a_v03.id
-  path_part   = "tasks:stream"
-}
-
-resource "aws_api_gateway_method" "api_v1_a2a_tasks_stream_post" {
+resource "aws_api_gateway_method" "api_v1_a2a_message_stream_post" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
-  resource_id   = aws_api_gateway_resource.api_v1_a2a_tasks_stream.id
+  resource_id   = aws_api_gateway_resource.api_v1_a2a_message_stream.id
   http_method   = "POST"
   authorization = "NONE"
 }
 
-resource "aws_api_gateway_integration" "api_v1_a2a_tasks_stream_post" {
+resource "aws_api_gateway_integration" "api_v1_a2a_message_stream_post" {
   rest_api_id             = aws_api_gateway_rest_api.main.id
-  resource_id             = aws_api_gateway_resource.api_v1_a2a_tasks_stream.id
-  http_method             = aws_api_gateway_method.api_v1_a2a_tasks_stream_post.http_method
+  resource_id             = aws_api_gateway_resource.api_v1_a2a_message_stream.id
+  http_method             = aws_api_gateway_method.api_v1_a2a_message_stream_post.http_method
   integration_http_method = "POST"
   type                    = "AWS_PROXY"
   uri                     = local.a2a_stream_invoke_uri
@@ -95,7 +89,7 @@ resource "aws_api_gateway_integration" "api_v1_a2a_tasks_stream_post" {
 
 resource "aws_api_gateway_resource" "api_v1_a2a_tasks" {
   rest_api_id = aws_api_gateway_rest_api.main.id
-  parent_id   = aws_api_gateway_resource.api_v1_a2a_v03.id
+  parent_id   = aws_api_gateway_resource.api_v1_a2a.id
   path_part   = "tasks"
 }
 
@@ -107,8 +101,8 @@ resource "aws_api_gateway_resource" "api_v1_a2a_task_id" {
 
 resource "aws_api_gateway_resource" "api_v1_a2a_task_subscribe" {
   rest_api_id = aws_api_gateway_rest_api.main.id
-  parent_id   = aws_api_gateway_resource.api_v1_a2a_task_id.id
-  path_part   = "subscribe"
+  parent_id   = aws_api_gateway_resource.api_v1_a2a_tasks.id
+  path_part   = "{taskId}:subscribe"
 }
 
 resource "aws_api_gateway_method" "api_v1_a2a_task_subscribe_get" {
@@ -135,7 +129,7 @@ resource "aws_api_gateway_deployment" "main" {
     redeploy = sha1(jsonencode([
       aws_api_gateway_integration.root_any.id,
       aws_api_gateway_integration.proxy_any.id,
-      aws_api_gateway_integration.api_v1_a2a_tasks_stream_post.id,
+      aws_api_gateway_integration.api_v1_a2a_message_stream_post.id,
       aws_api_gateway_integration.api_v1_a2a_task_subscribe_get.id
     ]))
   }

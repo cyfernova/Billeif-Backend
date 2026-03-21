@@ -11,13 +11,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// WellKnownHandler handles well-known endpoints including agent.json
 type WellKnownHandler struct {
 	config *config.Config
 	log    *logger.Logger
 }
 
-// NewWellKnownHandler creates a new well-known handler
 func NewWellKnownHandler(cfg *config.Config, log *logger.Logger) *WellKnownHandler {
 	return &WellKnownHandler{
 		config: cfg,
@@ -25,189 +23,98 @@ func NewWellKnownHandler(cfg *config.Config, log *logger.Logger) *WellKnownHandl
 	}
 }
 
-// GetAgentCard returns the Agent Card per A2A v0.3 specification
-// GET /.well-known/agent.json
 func (h *WellKnownHandler) GetAgentCard(c *gin.Context) {
-	baseURL := h.config.Server.BaseURL
+	baseURL := h.config.Server.ResolveBaseURL()
 	if baseURL == "" {
 		baseURL = fmt.Sprintf("http://localhost:%d", h.config.Server.Port)
 	}
 
-	// Build the agent card
-	agentCard := a2a.NewAgentCardV03(
+	a2aBaseURL := baseURL + "/api/v1/a2a"
+	card := a2a.NewAgentCard(
 		"Invoice Backend Agent",
-		"A multi-purpose agent for invoice management, marketplace operations, and payment processing. Supports shopping, merchant, and payment workflows via the A2A protocol.",
-		baseURL,
+		"A2A-enabled agent for marketplace, payment, and invoice workflows.",
+		"1.0.0",
 	)
 
-	// Set provider information
-	agentCard.WithProvider(
-		"Invoice Backend",
-		baseURL,
-		baseURL+"/assets/logo.png",
+	card.Provider = &a2a.AgentProvider{
+		Organization: "Invoice Backend",
+		URL:          baseURL,
+	}
+	card.SupportedInterfaces = []a2a.AgentInterface{
+		{
+			URL:             a2aBaseURL,
+			ProtocolBinding: a2a.ProtocolBindingHTTPJSON,
+			ProtocolVersion: a2a.SupportedVersion,
+		},
+	}
+	card.Capabilities = a2a.AgentCapabilities{
+		Streaming:         true,
+		PushNotifications: true,
+	}
+	card.DefaultInputModes = []string{"text/plain", "application/json"}
+	card.DefaultOutputModes = []string{"text/plain", "application/json"}
+	card.DocumentationURL = baseURL + "/swagger/index.html"
+	card.Skills = []a2a.AgentSkill{
+		{
+			ID:          "shopping.search",
+			Name:        "Shopping Search",
+			Description: "Find products, evaluate carts, and coordinate shopping flows.",
+			Tags:        []string{"shopping", "marketplace", "products"},
+			Examples: []string{
+				"Find the best invoice printer under $300",
+				"Process a cart with merchant-side validation",
+			},
+			InputModes:  []string{"text/plain", "application/json"},
+			OutputModes: []string{"text/plain", "application/json"},
+		},
+		{
+			ID:          "payment.process",
+			Name:        "Payment Processing",
+			Description: "Coordinate payment intents and payment-mandate processing.",
+			Tags:        []string{"payments", "checkout", "mandates"},
+			Examples: []string{
+				"Process a payment mandate for an approved cart",
+			},
+			InputModes:  []string{"text/plain", "application/json"},
+			OutputModes: []string{"text/plain", "application/json"},
+		},
+		{
+			ID:          "invoice.workflow",
+			Name:        "Invoice Workflow",
+			Description: "Create, update, and coordinate invoice-focused workflows.",
+			Tags:        []string{"invoice", "workflow", "automation"},
+			Examples: []string{
+				"Create an invoice workflow for a recurring customer",
+			},
+			InputModes:  []string{"text/plain", "application/json"},
+			OutputModes: []string{"text/plain", "application/json"},
+		},
+	}
+
+	oidcURL := fmt.Sprintf(
+		"https://cognito-idp.%s.amazonaws.com/%s/.well-known/openid-configuration",
+		h.config.Cognito.Region,
+		h.config.Cognito.UserPoolID,
 	)
-
-	// Set version
-	agentCard.Version = "1.0.0"
-
-	// Set capabilities
-	agentCard.WithCapabilities(a2a.AgentCapabilitiesV03{
-		Streaming:              true,
-		PushNotifications:      true,
-		ExtendedAgentCard:      true,
-		StateTransitionHistory: true,
-		MultiTurn:              true,
-		FileUpload:             false,
-		FileDownload:           true,
-		SupportedInputTypes:    []string{"application/json", "text/plain"},
-		SupportedOutputTypes:   []string{"application/json", "text/plain"},
-		RateLimits: &a2a.RateLimits{
-			RequestsPerMinute: 100,
-			RequestsPerHour:   1000,
-			MaxConcurrent:     10,
+	card.SecuritySchemes["bearerAuth"] = a2a.SecurityScheme{
+		HTTPAuthSecurityScheme: &a2a.HTTPAuthSecurityScheme{
+			Description:  "Cognito bearer token authentication",
+			Scheme:       "Bearer",
+			BearerFormat: "JWT",
 		},
-	})
-
-	// Add skills
-	agentCard.AddSkill(a2a.AgentSkill{
-		ID:          "search_products",
-		Name:        "Search Products",
-		Description: "Search for products in the marketplace by keyword, category, or filters",
-		Endpoint:    baseURL + "/a2a/v0.3/tasks:send",
-		InputSchema: &a2a.JSONSchema{
-			Type: "object",
-			Properties: map[string]*a2a.JSONSchema{
-				"query": {
-					Type:        "string",
-					Description: "Search query string",
-				},
-				"category": {
-					Type:        "string",
-					Description: "Product category filter",
-				},
-				"page": {
-					Type:        "integer",
-					Description: "Page number for pagination",
-				},
-				"limit": {
-					Type:        "integer",
-					Description: "Number of results per page",
-				},
-			},
-			Required: []string{"query"},
+	}
+	card.SecuritySchemes["oidc"] = a2a.SecurityScheme{
+		OpenIDConnectSecurityScheme: &a2a.OpenIDConnectSecurityScheme{
+			Description:      "Amazon Cognito OpenID Connect metadata",
+			OpenIDConnectURL: oidcURL,
 		},
-		OutputSchema: &a2a.JSONSchema{
-			Type: "object",
-			Properties: map[string]*a2a.JSONSchema{
-				"products": {
-					Type:        "array",
-					Description: "Array of matching products",
-				},
-				"total": {
-					Type:        "integer",
-					Description: "Total number of matching products",
-				},
-			},
-		},
-		Tags: []string{"marketplace", "search", "products"},
-	})
+	}
+	card.Security = []map[string][]string{
+		{"bearerAuth": {}},
+		{"oidc": {}},
+	}
 
-	agentCard.AddSkill(a2a.AgentSkill{
-		ID:          "create_cart",
-		Name:        "Create Shopping Cart",
-		Description: "Create a new shopping cart with products",
-		Endpoint:    baseURL + "/a2a/v0.3/tasks:send",
-		InputSchema: &a2a.JSONSchema{
-			Type: "object",
-			Properties: map[string]*a2a.JSONSchema{
-				"user_id": {
-					Type:        "string",
-					Description: "User ID for the cart",
-				},
-				"items": {
-					Type:        "array",
-					Description: "Array of cart items with product_id and quantity",
-				},
-			},
-			Required: []string{"user_id"},
-		},
-		Tags: []string{"shopping", "cart"},
-	})
-
-	agentCard.AddSkill(a2a.AgentSkill{
-		ID:          "process_payment",
-		Name:        "Process Payment",
-		Description: "Process a payment for a cart or order",
-		Endpoint:    baseURL + "/a2a/v0.3/tasks:send",
-		InputSchema: &a2a.JSONSchema{
-			Type: "object",
-			Properties: map[string]*a2a.JSONSchema{
-				"cart_id": {
-					Type:        "string",
-					Description: "Cart ID to process payment for",
-				},
-				"payment_method": {
-					Type:        "string",
-					Description: "Payment method (card, upi, netbanking)",
-				},
-				"credential_id": {
-					Type:        "string",
-					Description: "Stored payment credential ID",
-				},
-			},
-			Required: []string{"cart_id", "payment_method"},
-		},
-		Tags: []string{"payment", "checkout"},
-	})
-
-	agentCard.AddSkill(a2a.AgentSkill{
-		ID:          "workflow_automation",
-		Name:        "Workflow Automation",
-		Description: "Create and manage automated buy/sell workflows with time or price triggers",
-		Endpoint:    baseURL + "/a2a/v0.3/tasks:send",
-		InputSchema: &a2a.JSONSchema{
-			Type: "object",
-			Properties: map[string]*a2a.JSONSchema{
-				"action": {
-					Type:        "string",
-					Description: "Workflow action (create, pause, resume, delete)",
-				},
-				"workflow": {
-					Type:        "object",
-					Description: "Workflow configuration with trigger and action",
-				},
-			},
-			Required: []string{"action"},
-		},
-		Tags: []string{"automation", "workflow"},
-	})
-
-	// Add security schemes
-	agentCard.WithAPIKeySecurity(
-		"api_key",
-		"X-API-Key",
-		"API Key authentication via X-API-Key header",
-	)
-
-	agentCard.AddSecurityScheme(a2a.SecurityScheme{
-		ID:           "bearer_auth",
-		Type:         a2a.SecurityTypeBearer,
-		Description:  "Bearer token authentication (JWT)",
-		BearerFormat: "JWT",
-	})
-
-	// Set default security
-	agentCard.DefaultSecurity = []string{"api_key", "bearer_auth"}
-
-	// Add HTTP interface
-	agentCard.WithHTTPInterface(baseURL + "/a2a/v0.3")
-
-	// Add metadata
-	agentCard.DocumentationURL = baseURL + "/docs"
-	agentCard.ContactEmail = "support@invoice-backend.com"
-	agentCard.Tags = []string{"invoice", "marketplace", "payments", "automation"}
-
-	h.log.Info("serving agent card", "url", c.Request.URL.String())
-
-	c.JSON(http.StatusOK, agentCard)
+	h.log.Info("serving latest A2A agent card", "url", c.Request.URL.String(), "a2a_url", a2aBaseURL)
+	c.Header("Content-Type", a2a.ContentTypeA2AJSON)
+	c.JSON(http.StatusOK, card)
 }

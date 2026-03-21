@@ -1,454 +1,587 @@
 package a2a
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 )
 
-// A2A Protocol v0.3 Types
-// Based on Google's Agent2Agent Protocol specification
+const (
+	SupportedVersion         = "1.0"
+	HeaderVersion            = "A2A-Version"
+	HeaderExtensions         = "A2A-Extensions"
+	HeaderNotificationToken  = "X-A2A-Notification-Token"
+	ContentTypeJSON          = "application/json"
+	ContentTypeA2AJSON       = "application/a2a+json"
+	ContentTypeProblemJSON   = "application/problem+json"
+	ContentTypeEventStream   = "text/event-stream"
+	ProtocolBindingHTTPJSON  = "HTTP+JSON"
+	ProtocolBindingGRPC      = "GRPC"
+	ProtocolBindingJSONRPC   = "JSONRPC"
+	DefaultListPageSize      = 50
+	MaxListPageSize          = 100
+	DefaultPushListPageSize  = 50
+	MaxPushListPageSize      = 100
+	statusMessageMetadataKey = "status_message"
+)
 
-// TaskState represents the possible states of an A2A task per v0.3 spec
+type Role string
+
+const (
+	RoleUnspecified Role = "ROLE_UNSPECIFIED"
+	RoleUser        Role = "ROLE_USER"
+	RoleAgent       Role = "ROLE_AGENT"
+)
+
 type TaskState string
 
 const (
-	TaskStateWorking       TaskState = "working"
-	TaskStateCompleted     TaskState = "completed"
-	TaskStateFailed        TaskState = "failed"
-	TaskStateCancelled     TaskState = "cancelled"
-	TaskStateInputRequired TaskState = "input-required"
-	TaskStateRejected      TaskState = "rejected"
+	TaskStateUnspecified   TaskState = "TASK_STATE_UNSPECIFIED"
+	TaskStateSubmitted     TaskState = "TASK_STATE_SUBMITTED"
+	TaskStateWorking       TaskState = "TASK_STATE_WORKING"
+	TaskStateCompleted     TaskState = "TASK_STATE_COMPLETED"
+	TaskStateFailed        TaskState = "TASK_STATE_FAILED"
+	TaskStateCancelled     TaskState = "TASK_STATE_CANCELLED"
+	TaskStateInputRequired TaskState = "TASK_STATE_INPUT_REQUIRED"
+	TaskStateRejected      TaskState = "TASK_STATE_REJECTED"
+	TaskStateAuthRequired  TaskState = "TASK_STATE_AUTH_REQUIRED"
 )
 
-// IsTerminal returns true if the task state is terminal (no further transitions)
-func (s TaskState) IsTerminal() bool {
-	return s == TaskStateCompleted || s == TaskStateFailed ||
-		s == TaskStateCancelled || s == TaskStateRejected
-}
-
-// IsValid returns true if the task state is a valid A2A v0.3 state
 func (s TaskState) IsValid() bool {
 	switch s {
-	case TaskStateWorking, TaskStateCompleted, TaskStateFailed,
-		TaskStateCancelled, TaskStateInputRequired, TaskStateRejected:
+	case TaskStateUnspecified,
+		TaskStateSubmitted,
+		TaskStateWorking,
+		TaskStateCompleted,
+		TaskStateFailed,
+		TaskStateCancelled,
+		TaskStateInputRequired,
+		TaskStateRejected,
+		TaskStateAuthRequired:
 		return true
-	}
-	return false
-}
-
-// MessageRole represents the role of a message sender in A2A v0.3
-type MessageRole string
-
-const (
-	MessageRoleUser  MessageRole = "user"
-	MessageRoleAgent MessageRole = "agent"
-)
-
-// PartType represents the type of content part in a message
-type PartType string
-
-const (
-	PartTypeText PartType = "text"
-	PartTypeFile PartType = "file"
-	PartTypeData PartType = "data"
-)
-
-// Part is the interface for message content parts
-type Part interface {
-	GetType() PartType
-}
-
-// TextPart represents a text content part
-type TextPart struct {
-	Type     PartType `json:"type"`
-	Text     string   `json:"text"`
-	MimeType string   `json:"mimeType,omitempty"`
-}
-
-func (p TextPart) GetType() PartType { return PartTypeText }
-
-// FilePart represents a file content part
-type FilePart struct {
-	Type     PartType `json:"type"`
-	FileID   string   `json:"fileId,omitempty"`
-	FileName string   `json:"fileName"`
-	MimeType string   `json:"mimeType"`
-	Size     int64    `json:"size,omitempty"`
-	URL      string   `json:"url,omitempty"`
-	Data     string   `json:"data,omitempty"` // Base64 encoded for inline files
-}
-
-func (p FilePart) GetType() PartType { return PartTypeFile }
-
-// DataPart represents a structured data content part
-type DataPart struct {
-	Type     PartType               `json:"type"`
-	MimeType string                 `json:"mimeType"`
-	Data     map[string]interface{} `json:"data"`
-}
-
-func (p DataPart) GetType() PartType { return PartTypeData }
-
-// PartWrapper wraps a Part for JSON marshaling/unmarshaling
-type PartWrapper struct {
-	Part Part
-}
-
-// UnmarshalJSON implements custom JSON unmarshaling for parts
-func (pw *PartWrapper) UnmarshalJSON(data []byte) error {
-	var raw struct {
-		Type PartType `json:"type"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-
-	switch raw.Type {
-	case PartTypeText:
-		var p TextPart
-		if err := json.Unmarshal(data, &p); err != nil {
-			return err
-		}
-		pw.Part = p
-	case PartTypeFile:
-		var p FilePart
-		if err := json.Unmarshal(data, &p); err != nil {
-			return err
-		}
-		pw.Part = p
-	case PartTypeData:
-		var p DataPart
-		if err := json.Unmarshal(data, &p); err != nil {
-			return err
-		}
-		pw.Part = p
 	default:
-		// Default to text part
-		var p TextPart
-		if err := json.Unmarshal(data, &p); err != nil {
-			return err
-		}
-		pw.Part = p
+		return false
 	}
-	return nil
 }
 
-// MarshalJSON implements custom JSON marshaling for parts
-func (pw PartWrapper) MarshalJSON() ([]byte, error) {
-	return json.Marshal(pw.Part)
+func (s TaskState) IsTerminal() bool {
+	switch s {
+	case TaskStateCompleted, TaskStateFailed, TaskStateCancelled, TaskStateRejected:
+		return true
+	default:
+		return false
+	}
 }
 
-// Message represents a message in A2A v0.3 task communication
-type Message struct {
-	Role      MessageRole            `json:"role"`
-	Parts     []PartWrapper          `json:"parts"`
-	Timestamp time.Time              `json:"timestamp,omitempty"`
+type Part struct {
+	Text      string                 `json:"text,omitempty"`
+	Data      map[string]interface{} `json:"data,omitempty"`
+	Raw       string                 `json:"raw,omitempty"`
+	URL       string                 `json:"url,omitempty"`
+	Filename  string                 `json:"filename,omitempty"`
+	MediaType string                 `json:"mediaType,omitempty"`
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 }
 
-// NewTextMessage creates a new text message
-func NewTextMessage(role MessageRole, text string) Message {
+func (p Part) IsZero() bool {
+	return p.Text == "" && len(p.Data) == 0 && p.Raw == "" && p.URL == "" && p.Filename == "" && p.MediaType == "" && len(p.Metadata) == 0
+}
+
+type Message struct {
+	MessageID        string                 `json:"messageId"`
+	ContextID        string                 `json:"contextId,omitempty"`
+	TaskID           string                 `json:"taskId,omitempty"`
+	Role             Role                   `json:"role"`
+	Parts            []Part                 `json:"parts"`
+	Metadata         map[string]interface{} `json:"metadata,omitempty"`
+	Extensions       []string               `json:"extensions,omitempty"`
+	ReferenceTaskIDs []string               `json:"referenceTaskIds,omitempty"`
+}
+
+func NewTextMessage(role Role, text string) Message {
 	return Message{
-		Role: role,
-		Parts: []PartWrapper{
-			{Part: TextPart{Type: PartTypeText, Text: text}},
+		MessageID: uuid.NewString(),
+		Role:      role,
+		Parts: []Part{
+			{Text: text},
 		},
-		Timestamp: time.Now(),
 	}
 }
 
-// AddPart adds a content part to the message
-func (m *Message) AddPart(part Part) {
-	m.Parts = append(m.Parts, PartWrapper{Part: part})
-}
-
-// GetText returns the concatenated text from all text parts
-func (m *Message) GetText() string {
-	var result string
-	for _, pw := range m.Parts {
-		if tp, ok := pw.Part.(TextPart); ok {
-			if result != "" {
-				result += "\n"
-			}
-			result += tp.Text
-		}
+func (m *Message) EnsureID() {
+	if strings.TrimSpace(m.MessageID) == "" {
+		m.MessageID = uuid.NewString()
 	}
-	return result
 }
 
-// Artifact represents a task output artifact in A2A v0.3
+func (m Message) Clone() Message {
+	clone := m
+	if len(m.Parts) > 0 {
+		clone.Parts = append([]Part(nil), m.Parts...)
+	}
+	if len(m.Extensions) > 0 {
+		clone.Extensions = append([]string(nil), m.Extensions...)
+	}
+	if len(m.ReferenceTaskIDs) > 0 {
+		clone.ReferenceTaskIDs = append([]string(nil), m.ReferenceTaskIDs...)
+	}
+	if len(m.Metadata) > 0 {
+		clone.Metadata = cloneMap(m.Metadata)
+	}
+	return clone
+}
+
 type Artifact struct {
-	ID          string                 `json:"id"`
-	Name        string                 `json:"name"`
+	ArtifactID  string                 `json:"artifactId"`
+	Name        string                 `json:"name,omitempty"`
 	Description string                 `json:"description,omitempty"`
-	MimeType    string                 `json:"mimeType"`
-	Parts       []PartWrapper          `json:"parts,omitempty"`
-	Index       int                    `json:"index,omitempty"`     // For ordered artifacts
-	Append      bool                   `json:"append,omitempty"`    // Whether to append to existing
-	LastChunk   bool                   `json:"lastChunk,omitempty"` // Last chunk of streaming artifact
+	Parts       []Part                 `json:"parts"`
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
-	CreatedAt   time.Time              `json:"createdAt"`
+	Extensions  []string               `json:"extensions,omitempty"`
 }
 
-// NewArtifact creates a new artifact with generated ID
-func NewArtifact(name, mimeType string) *Artifact {
-	return &Artifact{
-		ID:        uuid.New().String(),
-		Name:      name,
-		MimeType:  mimeType,
-		Parts:     []PartWrapper{},
-		CreatedAt: time.Now(),
+func NewDataArtifact(name string, data map[string]interface{}) Artifact {
+	return Artifact{
+		ArtifactID: uuid.NewString(),
+		Name:       name,
+		Parts: []Part{
+			{
+				Data:      cloneMap(data),
+				MediaType: "application/json",
+			},
+		},
 	}
 }
 
-// Task represents an A2A v0.3 task
+type TaskStatus struct {
+	State     TaskState `json:"state"`
+	Message   *Message  `json:"message,omitempty"`
+	Timestamp time.Time `json:"timestamp,omitempty"`
+}
+
 type Task struct {
 	ID            string                 `json:"id" gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
-	SessionID     string                 `json:"sessionId,omitempty" gorm:"type:uuid;index"`
-	State         TaskState              `json:"state" gorm:"type:varchar(20);not null;default:'working'"`
-	Messages      []Message              `json:"messages" gorm:"-"` // Stored as JSONB
-	MessagesJSON  json.RawMessage        `json:"-" gorm:"column:messages;type:jsonb;not null;default:'[]'"`
-	Artifacts     []Artifact             `json:"artifacts,omitempty" gorm:"-"` // Stored as JSONB
+	ContextID     string                 `json:"contextId" gorm:"column:session_id;type:uuid;index"`
+	Status        TaskStatus             `json:"status" gorm:"-"`
+	State         TaskState              `json:"-" gorm:"column:state;type:varchar(32);not null;default:'TASK_STATE_SUBMITTED'"`
+	Artifacts     []Artifact             `json:"artifacts,omitempty" gorm:"-"`
 	ArtifactsJSON json.RawMessage        `json:"-" gorm:"column:artifacts;type:jsonb;default:'[]'"`
+	History       []Message              `json:"history,omitempty" gorm:"-"`
+	HistoryJSON   json.RawMessage        `json:"-" gorm:"column:messages;type:jsonb;not null;default:'[]'"`
 	Metadata      map[string]interface{} `json:"metadata,omitempty" gorm:"-"`
 	MetadataJSON  json.RawMessage        `json:"-" gorm:"column:metadata;type:jsonb;default:'{}'"`
-
-	// Agent references
-	TargetAgentID string `json:"targetAgentId,omitempty" gorm:"type:uuid;index"`
-	SourceAgentID string `json:"sourceAgentId,omitempty" gorm:"type:uuid;index"`
-
-	// History tracking
-	History     []TaskHistoryEntry `json:"history,omitempty" gorm:"-"`
-	HistoryJSON json.RawMessage    `json:"-" gorm:"column:history;type:jsonb;default:'[]'"`
-
-	// Timestamps
-	CreatedAt time.Time `json:"createdAt" gorm:"autoCreateTime"`
-	UpdatedAt time.Time `json:"updatedAt" gorm:"autoUpdateTime"`
+	UserID        string                 `json:"-" gorm:"column:user_id;type:varchar(255);index"`
+	BusinessID    string                 `json:"-" gorm:"column:business_id;type:varchar(255);index"`
+	CreatedAt     time.Time              `json:"-" gorm:"autoCreateTime"`
+	UpdatedAt     time.Time              `json:"-" gorm:"autoUpdateTime"`
 }
 
-// TableName returns the table name for GORM
-func (t *Task) TableName() string {
+func (Task) TableName() string {
 	return "a2a_tasks"
 }
 
-// TaskHistoryEntry represents a state transition in task history
-type TaskHistoryEntry struct {
-	State     TaskState `json:"state"`
-	Timestamp time.Time `json:"timestamp"`
-	Message   string    `json:"message,omitempty"`
-}
-
-// NewTask creates a new task with generated ID
-func NewTask(sessionID, targetAgentID, sourceAgentID string) *Task {
-	return &Task{
-		ID:            uuid.New().String(),
-		SessionID:     sessionID,
-		State:         TaskStateWorking,
-		TargetAgentID: targetAgentID,
-		SourceAgentID: sourceAgentID,
-		Messages:      []Message{},
-		Artifacts:     []Artifact{},
-		Metadata:      make(map[string]interface{}),
-		History: []TaskHistoryEntry{
-			{State: TaskStateWorking, Timestamp: time.Now(), Message: "Task created"},
-		},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+func NewTask(contextID, userID, businessID string) *Task {
+	now := time.Now().UTC()
+	if strings.TrimSpace(contextID) == "" {
+		contextID = uuid.NewString()
 	}
+	task := &Task{
+		ID:         uuid.NewString(),
+		ContextID:  contextID,
+		State:      TaskStateSubmitted,
+		Artifacts:  []Artifact{},
+		History:    []Message{},
+		Metadata:   map[string]interface{}{},
+		UserID:     userID,
+		BusinessID: businessID,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	task.refreshStatus()
+	return task
 }
 
-// BeforeSave serializes nested structs to JSON before saving
-func (t *Task) BeforeSave() error {
+func (t *Task) PrepareForSave() error {
+	if err := t.refreshStatusMessageMetadata(); err != nil {
+		return err
+	}
+
 	var err error
-
-	t.MessagesJSON, err = json.Marshal(t.Messages)
-	if err != nil {
-		return err
-	}
-
-	t.ArtifactsJSON, err = json.Marshal(t.Artifacts)
-	if err != nil {
-		return err
-	}
-
-	t.MetadataJSON, err = json.Marshal(t.Metadata)
-	if err != nil {
-		return err
-	}
-
 	t.HistoryJSON, err = json.Marshal(t.History)
 	if err != nil {
 		return err
 	}
-
+	t.ArtifactsJSON, err = json.Marshal(t.Artifacts)
+	if err != nil {
+		return err
+	}
+	t.MetadataJSON, err = json.Marshal(t.Metadata)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
-// AfterFind deserializes JSON fields after loading
-func (t *Task) AfterFind() error {
-	if len(t.MessagesJSON) > 0 {
-		if err := json.Unmarshal(t.MessagesJSON, &t.Messages); err != nil {
-			return err
-		}
-	}
-
-	if len(t.ArtifactsJSON) > 0 {
-		if err := json.Unmarshal(t.ArtifactsJSON, &t.Artifacts); err != nil {
-			return err
-		}
-	}
-
-	if len(t.MetadataJSON) > 0 {
-		if err := json.Unmarshal(t.MetadataJSON, &t.Metadata); err != nil {
-			return err
-		}
-	}
-
+func (t *Task) HydrateFromStorage() error {
 	if len(t.HistoryJSON) > 0 {
 		if err := json.Unmarshal(t.HistoryJSON, &t.History); err != nil {
 			return err
 		}
 	}
-
+	if len(t.ArtifactsJSON) > 0 {
+		if err := json.Unmarshal(t.ArtifactsJSON, &t.Artifacts); err != nil {
+			return err
+		}
+	}
+	if len(t.MetadataJSON) > 0 {
+		if err := json.Unmarshal(t.MetadataJSON, &t.Metadata); err != nil {
+			return err
+		}
+	}
+	t.refreshStatus()
 	return nil
 }
 
-// AddMessage adds a message to the task
-func (t *Task) AddMessage(msg Message) {
-	if msg.Timestamp.IsZero() {
-		msg.Timestamp = time.Now()
+func (t *Task) AddHistory(message Message) {
+	message.EnsureID()
+	if message.ContextID == "" {
+		message.ContextID = t.ContextID
 	}
-	t.Messages = append(t.Messages, msg)
-	t.UpdatedAt = time.Now()
+	if message.TaskID == "" {
+		message.TaskID = t.ID
+	}
+	t.History = append(t.History, message)
+	t.UpdatedAt = time.Now().UTC()
 }
 
-// AddArtifact adds an artifact to the task
 func (t *Task) AddArtifact(artifact Artifact) {
-	if artifact.CreatedAt.IsZero() {
-		artifact.CreatedAt = time.Now()
+	if strings.TrimSpace(artifact.ArtifactID) == "" {
+		artifact.ArtifactID = uuid.NewString()
 	}
 	t.Artifacts = append(t.Artifacts, artifact)
-	t.UpdatedAt = time.Now()
+	t.UpdatedAt = time.Now().UTC()
 }
 
-// SetState transitions the task to a new state
-func (t *Task) SetState(state TaskState, message string) error {
+func (t *Task) SetState(state TaskState, statusMessage *Message) error {
 	if !state.IsValid() {
 		return ErrInvalidTaskState
 	}
-
-	// Don't allow transitions from terminal states
 	if t.State.IsTerminal() {
 		return ErrTaskStateTerminal
 	}
-
 	t.State = state
-	t.History = append(t.History, TaskHistoryEntry{
+	t.Status = TaskStatus{
 		State:     state,
-		Timestamp: time.Now(),
-		Message:   message,
-	})
-	t.UpdatedAt = time.Now()
+		Timestamp: time.Now().UTC(),
+	}
+	if statusMessage != nil {
+		statusMessage.EnsureID()
+		msg := statusMessage.Clone()
+		if msg.ContextID == "" {
+			msg.ContextID = t.ContextID
+		}
+		if msg.TaskID == "" {
+			msg.TaskID = t.ID
+		}
+		t.Status.Message = &msg
+	}
+	t.UpdatedAt = t.Status.Timestamp
 	return nil
 }
 
-// SetMetadata sets a metadata value
-func (t *Task) SetMetadata(key string, value interface{}) {
-	if t.Metadata == nil {
-		t.Metadata = make(map[string]interface{})
+func (t *Task) refreshStatus() {
+	t.Status = TaskStatus{
+		State:     t.State,
+		Timestamp: t.UpdatedAt.UTC(),
 	}
-	t.Metadata[key] = value
-	t.UpdatedAt = time.Now()
+	if t.Status.Timestamp.IsZero() {
+		t.Status.Timestamp = t.CreatedAt.UTC()
+	}
+	if len(t.Metadata) == 0 {
+		return
+	}
+	raw, ok := t.Metadata[statusMessageMetadataKey]
+	if !ok {
+		return
+	}
+	payload, err := json.Marshal(raw)
+	if err != nil {
+		return
+	}
+	var statusMessage Message
+	if err := json.Unmarshal(payload, &statusMessage); err != nil {
+		return
+	}
+	t.Status.Message = &statusMessage
 }
 
-// SendTaskRequest represents a request to send a task
-type SendTaskRequest struct {
-	ID            string                  `json:"id,omitempty"` // Optional, generated if not provided
-	SessionID     string                  `json:"sessionId,omitempty"`
-	Message       Message                 `json:"message"`
-	TargetAgentID string                  `json:"targetAgentId,omitempty"`
-	Metadata      map[string]interface{}  `json:"metadata,omitempty"`
-	PushConfig    *PushNotificationConfig `json:"pushNotification,omitempty"`
+func (t *Task) refreshStatusMessageMetadata() error {
+	if t.Metadata == nil {
+		t.Metadata = map[string]interface{}{}
+	}
+	if t.Status.Message == nil {
+		delete(t.Metadata, statusMessageMetadataKey)
+		t.refreshStatus()
+		return nil
+	}
+	payload, err := json.Marshal(t.Status.Message)
+	if err != nil {
+		return err
+	}
+	var value map[string]interface{}
+	if err := json.Unmarshal(payload, &value); err != nil {
+		return err
+	}
+	t.Metadata[statusMessageMetadataKey] = value
+	t.refreshStatus()
+	return nil
 }
 
-// SendTaskResponse represents the response to a send task request
-type SendTaskResponse struct {
-	Task  *Task      `json:"task,omitempty"`
-	Error *TaskError `json:"error,omitempty"`
+func (t *Task) Clone(historyLength *int, includeArtifacts bool) *Task {
+	clone := *t
+	if len(t.Metadata) > 0 {
+		clone.Metadata = cloneMap(t.Metadata)
+	}
+	if includeArtifacts && len(t.Artifacts) > 0 {
+		clone.Artifacts = append([]Artifact(nil), t.Artifacts...)
+	} else {
+		clone.Artifacts = nil
+	}
+
+	switch {
+	case historyLength == nil:
+		clone.History = append([]Message(nil), t.History...)
+	case *historyLength <= 0:
+		clone.History = nil
+	case len(t.History) <= *historyLength:
+		clone.History = append([]Message(nil), t.History...)
+	default:
+		start := len(t.History) - *historyLength
+		clone.History = append([]Message(nil), t.History[start:]...)
+	}
+
+	clone.refreshStatus()
+	return &clone
 }
 
-// TaskError represents an error in task processing
-type TaskError struct {
-	Code    string                 `json:"code"`
-	Message string                 `json:"message"`
-	Details map[string]interface{} `json:"details,omitempty"`
+type SendMessageConfiguration struct {
+	AcceptedOutputModes        []string                `json:"acceptedOutputModes,omitempty"`
+	TaskPushNotificationConfig *PushNotificationConfig `json:"pushNotificationConfig,omitempty"`
+	HistoryLength              *int                    `json:"historyLength,omitempty"`
+	Blocking                   bool                    `json:"blocking,omitempty"`
 }
 
-// Common error codes
-const (
-	ErrorCodeTaskNotFound     = "TASK_NOT_FOUND"
-	ErrorCodeInvalidRequest   = "INVALID_REQUEST"
-	ErrorCodeUnauthorized     = "UNAUTHORIZED"
-	ErrorCodeAgentUnavailable = "AGENT_UNAVAILABLE"
-	ErrorCodeTaskCancelled    = "TASK_CANCELLED"
-	ErrorCodeInternalError    = "INTERNAL_ERROR"
-	ErrorCodeRateLimited      = "RATE_LIMITED"
-	ErrorCodeInputRequired    = "INPUT_REQUIRED"
-)
+type SendMessageRequest struct {
+	Message       Message                   `json:"message"`
+	Configuration *SendMessageConfiguration `json:"configuration,omitempty"`
+	Metadata      map[string]interface{}    `json:"metadata,omitempty"`
+}
 
-// ListTasksRequest represents a request to list tasks
+type SendMessageResponse struct {
+	Task    *Task    `json:"task,omitempty"`
+	Message *Message `json:"message,omitempty"`
+}
+
+type StreamResponse struct {
+	Task           *Task                    `json:"task,omitempty"`
+	Message        *Message                 `json:"message,omitempty"`
+	StatusUpdate   *TaskStatusUpdateEvent   `json:"statusUpdate,omitempty"`
+	ArtifactUpdate *TaskArtifactUpdateEvent `json:"artifactUpdate,omitempty"`
+}
+
+type TaskStatusUpdateEvent struct {
+	TaskID    string                 `json:"taskId"`
+	ContextID string                 `json:"contextId"`
+	Status    TaskStatus             `json:"status"`
+	Final     bool                   `json:"final"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+}
+
+type TaskArtifactUpdateEvent struct {
+	TaskID    string                 `json:"taskId"`
+	ContextID string                 `json:"contextId"`
+	Artifact  Artifact               `json:"artifact"`
+	Append    bool                   `json:"append,omitempty"`
+	LastChunk bool                   `json:"lastChunk,omitempty"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+}
+
+type GetTaskRequest struct {
+	Name          string `json:"name"`
+	HistoryLength *int   `json:"historyLength,omitempty"`
+}
+
 type ListTasksRequest struct {
-	SessionID string     `json:"sessionId,omitempty"`
-	State     *TaskState `json:"state,omitempty"`
-	Page      int        `json:"page,omitempty"`
-	PageSize  int        `json:"pageSize,omitempty"`
+	ContextID            string     `json:"contextId,omitempty"`
+	Status               TaskState  `json:"status,omitempty"`
+	PageSize             *int       `json:"pageSize,omitempty"`
+	PageToken            string     `json:"pageToken,omitempty"`
+	HistoryLength        *int       `json:"historyLength,omitempty"`
+	StatusTimestampAfter *time.Time `json:"statusTimestampAfter,omitempty"`
+	IncludeArtifacts     *bool      `json:"includeArtifacts,omitempty"`
 }
 
-// ListTasksResponse represents a response with a list of tasks
 type ListTasksResponse struct {
-	Tasks      []Task `json:"tasks"`
-	TotalCount int    `json:"totalCount"`
-	Page       int    `json:"page"`
-	PageSize   int    `json:"pageSize"`
+	Tasks         []Task `json:"tasks"`
+	NextPageToken string `json:"nextPageToken"`
+	PageSize      int    `json:"pageSize"`
+	TotalSize     int    `json:"totalSize"`
 }
 
-// CancelTaskRequest represents a request to cancel a task
 type CancelTaskRequest struct {
-	TaskID string `json:"taskId"`
-	Reason string `json:"reason,omitempty"`
+	Name string `json:"name"`
 }
 
-// PushNotificationConfig represents push notification configuration for a task
 type PushNotificationConfig struct {
-	URL            string            `json:"url"`
-	Headers        map[string]string `json:"headers,omitempty"`
-	Events         []string          `json:"events,omitempty"` // e.g., "state_change", "message", "artifact"
-	Authentication *AuthConfig       `json:"authentication,omitempty"`
+	ID             string              `json:"id,omitempty"`
+	URL            string              `json:"url"`
+	Token          string              `json:"token,omitempty"`
+	Authentication *AuthenticationInfo `json:"authentication,omitempty"`
 }
 
-// AuthConfig represents authentication for push notifications
-type AuthConfig struct {
-	Type        string            `json:"type"` // "bearer", "api_key", "basic"
-	Token       string            `json:"token,omitempty"`
-	Header      string            `json:"header,omitempty"`      // For api_key type
-	Credentials map[string]string `json:"credentials,omitempty"` // For basic auth
+type AuthenticationInfo struct {
+	Schemes     []string `json:"schemes"`
+	Credentials string   `json:"credentials,omitempty"`
 }
 
-// StreamEvent represents a server-sent event for task streaming
+type TaskPushNotificationConfig struct {
+	Name                   string                 `json:"name"`
+	PushNotificationConfig PushNotificationConfig `json:"pushNotificationConfig"`
+}
+
+type CreateTaskPushNotificationConfigRequest struct {
+	Parent   string                     `json:"parent"`
+	ConfigID string                     `json:"configId"`
+	Config   TaskPushNotificationConfig `json:"config"`
+}
+
+type GetTaskPushNotificationConfigRequest struct {
+	Name string `json:"name"`
+}
+
+type DeleteTaskPushNotificationConfigRequest struct {
+	Name string `json:"name"`
+}
+
+type ListTaskPushNotificationConfigRequest struct {
+	Parent    string `json:"parent"`
+	PageSize  int    `json:"pageSize,omitempty"`
+	PageToken string `json:"pageToken,omitempty"`
+}
+
+type ListTaskPushNotificationConfigResponse struct {
+	Configs       []TaskPushNotificationConfig `json:"configs"`
+	NextPageToken string                       `json:"nextPageToken,omitempty"`
+}
+
 type StreamEvent struct {
-	ID        string          `json:"id"`
-	Event     string          `json:"event"` // "state", "message", "artifact", "error", "done"
-	Data      json.RawMessage `json:"data"`
-	Timestamp time.Time       `json:"timestamp"`
+	ID        string          `json:"-"`
+	Event     string          `json:"-"`
+	Data      json.RawMessage `json:"-"`
+	Timestamp time.Time       `json:"-"`
+	Final     bool            `json:"-"`
 }
 
-// StreamEventType constants
 const (
-	StreamEventState    = "state"
-	StreamEventMessage  = "message"
-	StreamEventArtifact = "artifact"
-	StreamEventError    = "error"
-	StreamEventDone     = "done"
+	StreamEventTask         = "task"
+	StreamEventMessage      = "message"
+	StreamEventStatusUpdate = "status-update"
+	StreamEventArtifact     = "artifact-update"
+	StreamEventError        = "error"
 )
+
+func MarshalStreamResponse(response StreamResponse) (json.RawMessage, error) {
+	data, err := json.Marshal(response)
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(data), nil
+}
+
+func TaskName(taskID string) string {
+	return "tasks/" + taskID
+}
+
+func TaskPushConfigName(taskID, configID string) string {
+	return fmt.Sprintf("tasks/%s/pushNotificationConfigs/%s", taskID, configID)
+}
+
+func ParseTaskName(name string) (string, error) {
+	parts := strings.Split(strings.Trim(name, "/"), "/")
+	if len(parts) != 2 || parts[0] != "tasks" || strings.TrimSpace(parts[1]) == "" {
+		return "", fmt.Errorf("invalid task resource name %q", name)
+	}
+	return parts[1], nil
+}
+
+func ParseTaskPushConfigName(name string) (string, string, error) {
+	parts := strings.Split(strings.Trim(name, "/"), "/")
+	if len(parts) != 4 || parts[0] != "tasks" || parts[2] != "pushNotificationConfigs" || strings.TrimSpace(parts[1]) == "" || strings.TrimSpace(parts[3]) == "" {
+		return "", "", fmt.Errorf("invalid push config resource name %q", name)
+	}
+	return parts[1], parts[3], nil
+}
+
+func EncodePageToken(createdAt time.Time, id string) string {
+	raw := fmt.Sprintf("%d|%s", createdAt.UTC().UnixNano(), id)
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+func DecodePageToken(token string) (time.Time, string, error) {
+	if strings.TrimSpace(token) == "" {
+		return time.Time{}, "", nil
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return time.Time{}, "", fmt.Errorf("decode page token: %w", err)
+	}
+	parts := strings.SplitN(string(decoded), "|", 2)
+	if len(parts) != 2 {
+		return time.Time{}, "", fmt.Errorf("invalid page token")
+	}
+	nanos, err := time.ParseDuration(parts[0] + "ns")
+	if err != nil {
+		return time.Time{}, "", fmt.Errorf("invalid page token timestamp: %w", err)
+	}
+	return time.Unix(0, nanos.Nanoseconds()).UTC(), parts[1], nil
+}
+
+func cloneMap(src map[string]interface{}) map[string]interface{} {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make(map[string]interface{}, len(src))
+	for key, value := range src {
+		out[key] = value
+	}
+	return out
+}
+
+func ValidateSendMessageRequest(req *SendMessageRequest) error {
+	if req == nil {
+		return ErrInvalidMessage
+	}
+	return ValidateMessage(req.Message)
+}
+
+func ValidateMessage(message Message) error {
+	if strings.TrimSpace(message.MessageID) == "" {
+		return fmt.Errorf("%w: messageId is required", ErrInvalidMessage)
+	}
+	if message.Role != RoleUser && message.Role != RoleAgent {
+		return fmt.Errorf("%w: role must be ROLE_USER or ROLE_AGENT", ErrInvalidMessage)
+	}
+	if len(message.Parts) == 0 {
+		return fmt.Errorf("%w: at least one message part is required", ErrInvalidMessage)
+	}
+	for _, part := range message.Parts {
+		if part.IsZero() {
+			return fmt.Errorf("%w: empty message part", ErrInvalidMessage)
+		}
+	}
+	return nil
+}

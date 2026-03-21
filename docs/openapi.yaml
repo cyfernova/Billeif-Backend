@@ -189,28 +189,26 @@ paths:
 
   /.well-known/agent-card.json:
     get:
-      summary: Get agent card (AP2 discovery)
+      summary: Get latest A2A agent card
       description: |
-        Standard AP2 agent discovery endpoint.
-        Returns agent capabilities and configuration in AP2 format.
+        Public latest-spec A2A discovery endpoint.
+        Returns the HTTP+JSON agent card advertised by this backend.
       tags:
-        - Agent Discovery
+        - A2A Protocol
       responses:
         "200":
-          description: Agent card in AP2 format
+          description: Latest A2A agent card
           content:
-            application/json:
+            application/a2a+json:
               schema:
-                $ref: "#/components/schemas/AgentCard"
-        "404":
-          description: Agent not configured
+                type: object
 
-  /a2a/message:
+  /api/v1/a2a/message:send:
     post:
       summary: Send A2A message
       description: |
-        Agent-to-agent communication endpoint.
-        Supports task.start, task.data, task.status, task.result, task.error messages.
+        Latest A2A HTTP+JSON entrypoint for synchronous task/message execution.
+        Requires `Authorization: Bearer <jwt>` and `A2A-Version: 1.0`.
       tags:
         - A2A Protocol
       security:
@@ -218,20 +216,224 @@ paths:
       requestBody:
         required: true
         content:
-          application/json:
+          application/a2a+json:
             schema:
-              $ref: "#/components/schemas/A2AMessage"
+              type: object
       responses:
         "200":
-          description: Message processed
+          description: Task or message response
           content:
-            application/json:
+            application/a2a+json:
               schema:
-                $ref: "#/components/schemas/A2AMessage"
+                type: object
         "400":
-          description: Invalid message format
-        "422":
-          description: Message validation failed
+          description: Invalid request or unsupported version
+          content:
+            application/problem+json:
+              schema:
+                type: object
+        "401":
+          description: Unauthorized
+          content:
+            application/problem+json:
+              schema:
+                type: object
+
+  /api/v1/a2a/message:stream:
+    post:
+      summary: Stream A2A execution
+      description: |
+        Latest A2A HTTP+JSON streaming entrypoint.
+        Emits server-sent events for task snapshots, status updates, messages, and artifacts.
+      tags:
+        - A2A Protocol
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/a2a+json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: SSE stream of A2A events
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  /api/v1/a2a/tasks:
+    get:
+      summary: List A2A tasks
+      description: |
+        Lists scoped A2A tasks with opaque pagination via `pageToken`.
+      tags:
+        - A2A Protocol
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Paginated tasks
+          content:
+            application/a2a+json:
+              schema:
+                type: object
+
+  /api/v1/a2a/tasks/{taskId}:
+    get:
+      summary: Get A2A task
+      tags:
+        - A2A Protocol
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Task snapshot
+          content:
+            application/a2a+json:
+              schema:
+                type: object
+
+  /api/v1/a2a/tasks/{taskId}:cancel:
+    post:
+      summary: Cancel A2A task
+      tags:
+        - A2A Protocol
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Cancelled task snapshot
+          content:
+            application/a2a+json:
+              schema:
+                type: object
+
+  /api/v1/a2a/tasks/{taskId}:subscribe:
+    get:
+      summary: Subscribe to A2A task events
+      tags:
+        - A2A Protocol
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: SSE subscription stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  /api/v1/a2a/tasks/{taskId}/pushNotificationConfigs:
+    get:
+      summary: List task push notification configs
+      tags:
+        - A2A Protocol
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Task push notification configs
+          content:
+            application/a2a+json:
+              schema:
+                type: object
+    post:
+      summary: Create task push notification config
+      tags:
+        - A2A Protocol
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/a2a+json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Created task push notification config
+          content:
+            application/a2a+json:
+              schema:
+                type: object
+
+  /api/v1/a2a/tasks/{taskId}/pushNotificationConfigs/{configId}:
+    get:
+      summary: Get task push notification config
+      tags:
+        - A2A Protocol
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: configId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Task push notification config
+          content:
+            application/a2a+json:
+              schema:
+                type: object
+    delete:
+      summary: Delete task push notification config
+      tags:
+        - A2A Protocol
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: configId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
 
   /ws:
     get:

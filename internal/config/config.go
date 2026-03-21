@@ -291,7 +291,7 @@ func isProductionEnv(env string) bool {
 	return normalized == "prod" || normalized == "production"
 }
 
-const a2aMessagePath = "/api/v1/a2a/message"
+const a2aBasePath = "/api/v1/a2a"
 
 func (s ServerConfig) ResolveBaseURL() string {
 	baseURL := strings.TrimSpace(s.BaseURL)
@@ -312,7 +312,7 @@ func (s ServerConfig) ResolveBaseURL() string {
 func (s ServerConfig) A2AMessageEndpoint() string {
 	baseURL := s.ResolveBaseURL()
 	if baseURL == "" {
-		return a2aMessagePath
+		return a2aBasePath
 	}
-	return baseURL + a2aMessagePath
+	return baseURL + a2aBasePath
 }

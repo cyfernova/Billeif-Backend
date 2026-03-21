@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"invoice-backend/internal/config"
+	"invoice-backend/pkg/a2a"
 	"invoice-backend/pkg/logger"
 
 	"github.com/gin-gonic/gin"
@@ -224,11 +225,13 @@ func Auth(cfg config.CognitoConfig, log *logger.Logger) gin.HandlerFunc {
 		c.Set("role", claims.Role)
 		c.Set("picture", claims.Picture)
 		c.Set("name", claims.Name)
+		c.Set("authorization_header", authHeader)
 		c.Request = c.Request.WithContext(logger.ToContext(c.Request.Context(), reqLog.With(
 			"user_id", claims.Subject,
 			"business_id", claims.BusinessID,
 			"role", claims.Role,
 		)))
+		c.Request = c.Request.WithContext(a2a.WithAuthorizationHeader(c.Request.Context(), authHeader))
 
 		c.Next()
 	}

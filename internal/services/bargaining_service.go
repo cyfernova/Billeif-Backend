@@ -12,6 +12,8 @@ import (
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/a2a"
 	"invoice-backend/pkg/logger"
+
+	"github.com/google/uuid"
 )
 
 var (
@@ -485,23 +487,32 @@ func (s *BargainingService) notifyAgentCounterOffer(ctx context.Context, negotia
 		return
 	}
 
-	payload := map[string]interface{}{
-		"type":              "counter_offer",
-		"negotiation_id":    negotiation.ID,
-		"round_number":      round.RoundNumber,
-		"proposed_amount":   round.ProposedAmount,
-		"agent_type":        round.AgentType,
-		"volatility_factor": round.VolatilityFactor,
-		"reason":            round.Reason,
+	req := &a2a.SendMessageRequest{
+		Message: a2a.Message{
+			MessageID: uuid.NewString(),
+			Role:      a2a.RoleUser,
+			Parts: []a2a.Part{
+				{Text: fmt.Sprintf("Counteroffer in negotiation %s.", negotiation.ID)},
+			},
+			Metadata: map[string]interface{}{
+				"taskType": "bargaining.notification",
+			},
+		},
+		Metadata: map[string]interface{}{
+			"taskType":         "bargaining.notification",
+			"type":             "counter_offer",
+			"negotiationId":    negotiation.ID,
+			"roundNumber":      round.RoundNumber,
+			"proposedAmount":   round.ProposedAmount,
+			"agentType":        round.AgentType,
+			"volatilityFactor": round.VolatilityFactor,
+			"reason":           round.Reason,
+			"senderAgentId":    agent.ID,
+			"receiverAgentId":  receiverID,
+		},
 	}
 
-	taskPayload := &a2a.TaskStartPayload{
-		TaskName:    "bargaining_notification",
-		Description: fmt.Sprintf("Counteroffer in negotiation %s", negotiation.ID),
-		Parameters:  payload,
-	}
-
-	if _, err := s.a2aClient.StartTask(ctx, *receiverAgent.A2AEndpoint, agent.ID, receiverID, taskPayload); err != nil {
+	if _, err := s.a2aClient.SendMessage(ctx, *receiverAgent.A2AEndpoint, req); err != nil {
 		s.log.Error("failed to send counteroffer notification", "error", err, "receiver_id", receiverID)
 	}
 }
@@ -518,21 +529,30 @@ func (s *BargainingService) notifyAgentNegotiationComplete(ctx context.Context, 
 		return
 	}
 
-	payload := map[string]interface{}{
-		"type":           "negotiation_complete",
-		"negotiation_id": negotiation.ID,
-		"status":         outcome,
-		"final_amount":   negotiation.CurrentAmount,
-		"rounds":         negotiation.Rounds,
+	req := &a2a.SendMessageRequest{
+		Message: a2a.Message{
+			MessageID: uuid.NewString(),
+			Role:      a2a.RoleUser,
+			Parts: []a2a.Part{
+				{Text: fmt.Sprintf("Negotiation %s completed with status %s.", negotiation.ID, outcome)},
+			},
+			Metadata: map[string]interface{}{
+				"taskType": "bargaining.notification",
+			},
+		},
+		Metadata: map[string]interface{}{
+			"taskType":        "bargaining.notification",
+			"type":            "negotiation_complete",
+			"negotiationId":   negotiation.ID,
+			"status":          outcome,
+			"finalAmount":     negotiation.CurrentAmount,
+			"rounds":          negotiation.Rounds,
+			"senderAgentId":   agent.ID,
+			"receiverAgentId": receiverID,
+		},
 	}
 
-	taskPayload := &a2a.TaskStartPayload{
-		TaskName:    "bargaining_notification",
-		Description: fmt.Sprintf("Negotiation %s completed with status %s", negotiation.ID, outcome),
-		Parameters:  payload,
-	}
-
-	if _, err := s.a2aClient.StartTask(ctx, *receiverAgent.A2AEndpoint, agent.ID, receiverID, taskPayload); err != nil {
+	if _, err := s.a2aClient.SendMessage(ctx, *receiverAgent.A2AEndpoint, req); err != nil {
 		s.log.Error("failed to send negotiation complete notification", "error", err, "receiver_id", receiverID)
 	}
 }

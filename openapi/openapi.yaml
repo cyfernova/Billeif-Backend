@@ -14,6 +14,8 @@ servers:
     description: API v1 base path
 
 tags:
+  - name: A2A
+    description: Latest A2A HTTP+JSON protocol surface
   - name: Auth
     description: Authentication and authorization
   - name: Business
@@ -40,6 +42,239 @@ tags:
     description: Admin operations
 
 paths:
+  /.well-known/agent-card.json:
+    get:
+      tags: [A2A]
+      summary: Latest A2A agent card
+      operationId: getA2AAgentCard
+      responses:
+        '200':
+          description: Latest A2A agent card
+          content:
+            application/a2a+json:
+              schema:
+                type: object
+
+  /api/v1/a2a/message:send:
+    post:
+      tags: [A2A]
+      summary: Send an A2A message
+      operationId: a2aMessageSend
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/a2a+json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Task or message response
+          content:
+            application/a2a+json:
+              schema:
+                type: object
+        '400':
+          description: Invalid request or unsupported A2A version
+          content:
+            application/problem+json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/a2a/message:stream:
+    post:
+      tags: [A2A]
+      summary: Stream an A2A message execution
+      operationId: a2aMessageStream
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/a2a+json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: SSE stream of A2A events
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  /api/v1/a2a/tasks:
+    get:
+      tags: [A2A]
+      summary: List A2A tasks
+      operationId: a2aListTasks
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Paginated A2A tasks
+          content:
+            application/a2a+json:
+              schema:
+                type: object
+
+  /api/v1/a2a/tasks/{taskId}:
+    get:
+      tags: [A2A]
+      summary: Get A2A task
+      operationId: a2aGetTask
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: A2A task snapshot
+          content:
+            application/a2a+json:
+              schema:
+                type: object
+
+  /api/v1/a2a/tasks/{taskId}:cancel:
+    post:
+      tags: [A2A]
+      summary: Cancel A2A task
+      operationId: a2aCancelTask
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Cancelled A2A task
+          content:
+            application/a2a+json:
+              schema:
+                type: object
+
+  /api/v1/a2a/tasks/{taskId}:subscribe:
+    get:
+      tags: [A2A]
+      summary: Subscribe to A2A task updates
+      operationId: a2aSubscribeTask
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: SSE stream of task events
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  /api/v1/a2a/tasks/{taskId}/pushNotificationConfigs:
+    get:
+      tags: [A2A]
+      summary: List task push notification configs
+      operationId: a2aListPushConfigs
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Task push notification configs
+          content:
+            application/a2a+json:
+              schema:
+                type: object
+    post:
+      tags: [A2A]
+      summary: Create task push notification config
+      operationId: a2aCreatePushConfig
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/a2a+json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Created task push notification config
+          content:
+            application/a2a+json:
+              schema:
+                type: object
+
+  /api/v1/a2a/tasks/{taskId}/pushNotificationConfigs/{configId}:
+    get:
+      tags: [A2A]
+      summary: Get task push notification config
+      operationId: a2aGetPushConfig
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: configId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Task push notification config
+          content:
+            application/a2a+json:
+              schema:
+                type: object
+    delete:
+      tags: [A2A]
+      summary: Delete task push notification config
+      operationId: a2aDeletePushConfig
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: configId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Deleted
+
   /health:
     get:
       summary: Health check

@@ -4,8 +4,6 @@ import (
 	"invoice-backend/internal/config"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/internal/services"
-	"invoice-backend/pkg/a2a"
-	"invoice-backend/pkg/ap2"
 	"invoice-backend/pkg/logger"
 	"invoice-backend/pkg/websocket"
 )
@@ -30,12 +28,10 @@ type Handler struct {
 	Marketplace    *MarketplaceHandler
 	AgentDiscovery *AgentDiscoveryHandler
 	Intent         *IntentHandler
-	A2AMessage     *A2AMessageHandler
 	WebSocket      *WebSocketHandler
 	LLM            *LLMHandler
 	WellKnown      *WellKnownHandler
 	A2ATask        *A2ATaskHandler
-	A2APush        *A2APushHandler
 	Workflow       *WorkflowHandler
 	Bargaining     *BargainingHandler
 	AgentConfig    *AgentConfigHandler
@@ -44,12 +40,6 @@ type Handler struct {
 
 func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log *logger.Logger) *Handler {
 	log = log.Named("handlers")
-	// Create A2A client (uses SignatureService internally)
-	sigSvc, err := ap2.NewSignatureService()
-	if err != nil {
-		log.Error("failed to initialize A2A signature service", "error", err)
-	}
-	a2aClient := a2a.NewA2AClient(sigSvc, log)
 
 	// Create WebSocket hub
 	wsHub := websocket.NewHub(log)
@@ -76,12 +66,10 @@ func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log 
 		Marketplace:    NewMarketplaceHandler(svcs.Marketplace, repos.AP2, log),
 		AgentDiscovery: NewAgentDiscoveryHandler(svcs.AgentDiscovery, log),
 		Intent:         NewIntentHandler(svcs.IntentProcessing, log),
-		A2AMessage:     NewA2AMessageHandler(svcs.ShoppingAgent, svcs.MerchantAgent, svcs.CredentialProvider, svcs.PaymentProcessor, svcs.Marketplace, a2aClient, sigSvc, svcs.A2ABargaining, log),
 		WebSocket:      NewWebSocketHandler(wsHub, svcs.WebSocketConnection, log),
 		LLM:            NewLLMHandler(svcs.LLM, log),
 		WellKnown:      NewWellKnownHandler(cfg, log),
-		A2ATask:        NewA2ATaskHandler(svcs.A2ATask, log),
-		A2APush:        NewA2APushHandler(svcs.A2APush, log),
+		A2ATask:        NewA2ATaskHandler(svcs.A2ATask, svcs.A2APush, log),
 		Workflow:       NewWorkflowHandler(svcs.Workflow, log),
 		Bargaining:     NewBargainingHandler(svcs.Bargaining, log),
 		AgentConfig:    NewAgentConfigHandler(svcs.AgentConfig, svcs.Agent, svcs.Bargaining, svcs.Mentee, log),

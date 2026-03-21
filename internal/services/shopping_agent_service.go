@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	"invoice-backend/internal/models"
@@ -12,6 +14,8 @@ import (
 	"invoice-backend/pkg/a2a"
 	"invoice-backend/pkg/ap2"
 	"invoice-backend/pkg/logger"
+
+	"github.com/google/uuid"
 )
 
 var (
@@ -46,7 +50,7 @@ func NewShoppingAgentService(
 	log *logger.Logger,
 ) *ShoppingAgentService {
 	if a2aMessageEndpoint == "" {
-		a2aMessageEndpoint = "/api/v1/a2a/message"
+		a2aMessageEndpoint = "/api/v1/a2a"
 	}
 
 	return &ShoppingAgentService{
@@ -387,107 +391,96 @@ func (s *ShoppingAgentService) validateCartTotal(ctx context.Context, cartMandat
 	return nil
 }
 
-// QueryMerchantAgentsA2A queries merchant agents for capabilities via A2A
-func (s *ShoppingAgentService) QueryMerchantAgentsA2A(ctx context.Context, merchantAgentEndpoints []string) (map[string]*a2a.CapabilitiesPayload, error) {
-	capabilities := make(map[string]*a2a.CapabilitiesPayload)
+// QueryMerchantAgentsA2A fetches latest A2A Agent Cards from merchant agent well-known endpoints.
+func (s *ShoppingAgentService) QueryMerchantAgentsA2A(ctx context.Context, merchantAgentEndpoints []string) (map[string]*a2a.AgentCard, error) {
+	cards := make(map[string]*a2a.AgentCard)
 
 	for _, endpoint := range merchantAgentEndpoints {
-		s.log.Info("querying merchant agent capabilities", "endpoint", endpoint)
-
-		// Create capabilities query message
-		msg := a2a.NewA2AMessage("shopping-agent", "merchant-agent", a2a.MessageTypeQueryCapabilities)
-
-		// Send query and get response
-		response, err := s.a2aClient.SendMessage(ctx, endpoint, msg)
+		cardURL := strings.TrimRight(endpoint, "/") + "/.well-known/agent-card.json"
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, cardURL, nil)
 		if err != nil {
-			s.log.Error("failed to query merchant agent", "endpoint", endpoint, "error", err)
+			return nil, fmt.Errorf("build agent card request: %w", err)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			s.log.Warn("failed to fetch merchant agent card", "endpoint", endpoint, "error", err)
 			continue
 		}
-
-		// Extract capabilities from response
-		var caps a2a.CapabilitiesPayload
-		if err := a2a.ExtractPayload(response, &caps); err != nil {
-			s.log.Error("failed to extract capabilities", "endpoint", endpoint, "error", err)
+		var card a2a.AgentCard
+		if err := json.NewDecoder(resp.Body).Decode(&card); err != nil {
+			resp.Body.Close()
+			s.log.Warn("failed to decode merchant agent card", "endpoint", endpoint, "error", err)
 			continue
 		}
-
-		capabilities[endpoint] = &caps
-		s.log.Info("merchant agent capabilities received", "endpoint", endpoint, "capabilities", caps.Capabilities)
+		resp.Body.Close()
+		cards[endpoint] = &card
 	}
 
-	return capabilities, nil
+	return cards, nil
 }
 
 // ProcessCartWithMerchantA2A sends cart to merchant agent for processing via A2A
-func (s *ShoppingAgentService) ProcessCartWithMerchantA2A(ctx context.Context, merchantEndpoint string, cartMandate *models.CartMandate, userID string) (*a2a.A2AMessage, error) {
+func (s *ShoppingAgentService) ProcessCartWithMerchantA2A(ctx context.Context, merchantEndpoint string, cartMandate *models.CartMandate, userID string) (*a2a.SendMessageResponse, error) {
 	s.log.Info("sending cart to merchant agent", "endpoint", merchantEndpoint, "cart_id", cartMandate.ID)
 
-	// Create task.start message for cart processing
-	msg := a2a.NewA2AMessage("shopping-agent", "merchant-agent", a2a.MessageTypeTaskStart)
-	msg.WithEndpoints(s.a2aMessageEndpoint, merchantEndpoint)
-
-	// Create task start payload
-	payload := &a2a.TaskStartPayload{
-		TaskName:    "merchant.process_cart",
-		Description: "Process shopping cart and apply constraints",
-		Parameters: map[string]interface{}{
-			"cart_mandate_id": cartMandate.ID,
-			"user_id":         userID,
-			"items_count":     len(cartMandate.Items),
-			"total_amount":    cartMandate.TotalAmount,
+	req := &a2a.SendMessageRequest{
+		Message: a2a.Message{
+			MessageID: uuid.NewString(),
+			Role:      a2a.RoleUser,
+			Parts: []a2a.Part{
+				{Text: fmt.Sprintf("Process cart %s for user %s.", cartMandate.ID, userID)},
+			},
+			Metadata: map[string]interface{}{
+				"taskType": "merchant.process_cart",
+			},
 		},
-		Priority: 5,
+		Metadata: map[string]interface{}{
+			"taskType":      "merchant.process_cart",
+			"cartMandateId": cartMandate.ID,
+			"userId":        userID,
+		},
 	}
 
-	if _, err := msg.WithPayload(payload); err != nil {
-		return nil, fmt.Errorf("failed to set payload: %w", err)
-	}
-
-	// Send message with retry
-	response, err := s.a2aClient.SendMessageWithRetry(ctx, merchantEndpoint, msg, 3)
+	response, err := s.a2aClient.SendMessageWithRetry(ctx, merchantEndpoint, req, 3)
 	if err != nil {
 		s.log.Error("failed to process cart with merchant", "error", err, "cart_id", cartMandate.ID)
 		return nil, fmt.Errorf("merchant processing failed: %w", err)
 	}
 
-	s.log.Info("cart processed by merchant agent", "response_id", response.MessageID, "cart_id", cartMandate.ID)
+	s.log.Info("cart processed by merchant agent", "cart_id", cartMandate.ID)
 
 	return response, nil
 }
 
 // RequestPaymentProcessingA2A sends payment request to payment processor via A2A
-func (s *ShoppingAgentService) RequestPaymentProcessingA2A(ctx context.Context, paymentEndpoint string, paymentMandate *models.PaymentMandate) (*a2a.A2AMessage, error) {
+func (s *ShoppingAgentService) RequestPaymentProcessingA2A(ctx context.Context, paymentEndpoint string, paymentMandate *models.PaymentMandate) (*a2a.SendMessageResponse, error) {
 	s.log.Info("requesting payment processing", "endpoint", paymentEndpoint, "payment_mandate_id", paymentMandate.ID)
 
-	// Create task.start message for payment processing
-	msg := a2a.NewA2AMessage("shopping-agent", "payment-processor", a2a.MessageTypeTaskStart)
-	msg.WithEndpoints(s.a2aMessageEndpoint, paymentEndpoint)
-
-	// Create task start payload
-	payload := &a2a.TaskStartPayload{
-		TaskName:    "payment.process",
-		Description: "Process payment transaction",
-		Parameters: map[string]interface{}{
-			"payment_mandate_id": paymentMandate.ID,
-			"amount":             paymentMandate.Amount,
-			"currency":           paymentMandate.Currency,
-			"user_id":            paymentMandate.UserID,
+	req := &a2a.SendMessageRequest{
+		Message: a2a.Message{
+			MessageID: uuid.NewString(),
+			Role:      a2a.RoleUser,
+			Parts: []a2a.Part{
+				{Text: fmt.Sprintf("Process payment mandate %s.", paymentMandate.ID)},
+			},
+			Metadata: map[string]interface{}{
+				"taskType": "payment.process",
+			},
 		},
-		Priority: 8, // High priority for payments
+		Metadata: map[string]interface{}{
+			"taskType":         "payment.process",
+			"paymentMandateId": paymentMandate.ID,
+			"userId":           paymentMandate.UserID,
+		},
 	}
 
-	if _, err := msg.WithPayload(payload); err != nil {
-		return nil, fmt.Errorf("failed to set payload: %w", err)
-	}
-
-	// Send message with retry
-	response, err := s.a2aClient.SendMessageWithRetry(ctx, paymentEndpoint, msg, 3)
+	response, err := s.a2aClient.SendMessageWithRetry(ctx, paymentEndpoint, req, 3)
 	if err != nil {
 		s.log.Error("failed to process payment", "error", err, "payment_mandate_id", paymentMandate.ID)
 		return nil, fmt.Errorf("payment processing failed: %w", err)
 	}
 
-	s.log.Info("payment processed", "response_id", response.MessageID, "payment_mandate_id", paymentMandate.ID)
+	s.log.Info("payment processed", "payment_mandate_id", paymentMandate.ID)
 
 	return response, nil
 }
@@ -496,44 +489,23 @@ func (s *ShoppingAgentService) RequestPaymentProcessingA2A(ctx context.Context, 
 func (s *ShoppingAgentService) BroadcastCartStatusA2A(ctx context.Context, endpoints []string, cartMandate *models.CartMandate, status string) error {
 	s.log.Info("broadcasting cart status", "status", status, "cart_id", cartMandate.ID, "recipient_count", len(endpoints))
 
-	// Create task.status message
-	msg := a2a.NewA2AMessage("shopping-agent", "merchant-agent", a2a.MessageTypeTaskStatus)
-	msg.WithTaskID(cartMandate.ID)
-
-	// Calculate progress
-	progress := 0
-	switch status {
-	case "pending":
-		progress = 10
-	case "validated":
-		progress = 25
-	case "confirmed":
-		progress = 50
-	case "processing":
-		progress = 75
-	case "completed":
-		progress = 100
-	default:
-		progress = 0
-	}
-
-	// Create status payload
-	statusPayload := &a2a.TaskStatusPayload{
-		Status:      status,
-		ProgressPct: progress,
-		Message:     fmt.Sprintf("Cart %s is now %s", cartMandate.ID, status),
-	}
-
-	if _, err := msg.WithPayload(statusPayload); err != nil {
-		return fmt.Errorf("failed to set status payload: %w", err)
-	}
-
-	// Broadcast to all endpoints
-	errors := s.a2aClient.BroadcastMessage(ctx, endpoints, msg)
-	if len(errors) > 0 {
-		s.log.Warn("some broadcasts failed", "error_count", len(errors))
-		for endpoint, err := range errors {
-			s.log.Error("broadcast failed", "endpoint", endpoint, "error", err)
+	for _, endpoint := range endpoints {
+		req := &a2a.SendMessageRequest{
+			Message: a2a.Message{
+				MessageID: uuid.NewString(),
+				TaskID:    cartMandate.ID,
+				Role:      a2a.RoleUser,
+				Parts: []a2a.Part{
+					{Text: fmt.Sprintf("Cart %s is now %s.", cartMandate.ID, status)},
+				},
+			},
+			Metadata: map[string]interface{}{
+				"taskType": "merchant.process_cart",
+				"status":   status,
+			},
+		}
+		if _, err := s.a2aClient.SendMessage(ctx, endpoint, req); err != nil {
+			s.log.Warn("failed to broadcast cart status", "endpoint", endpoint, "error", err)
 		}
 	}
 

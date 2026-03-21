@@ -69,11 +69,19 @@ func (s *A2ATaskService) loadTaskEventsAfter(ctx context.Context, taskID, lastEv
 
 	events := make([]a2a.StreamEvent, 0, len(records))
 	for _, rec := range records {
+		final := false
+		if rec.EventType == a2a.StreamEventStatusUpdate {
+			var payload a2a.StreamResponse
+			if err := json.Unmarshal(rec.Data, &payload); err == nil && payload.StatusUpdate != nil {
+				final = payload.StatusUpdate.Final
+			}
+		}
 		events = append(events, a2a.StreamEvent{
 			ID:        rec.EventID,
 			Event:     rec.EventType,
 			Data:      rec.Data,
 			Timestamp: rec.CreatedAt,
+			Final:     final,
 		})
 	}
 
