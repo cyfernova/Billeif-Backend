@@ -6,7 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/a2a"
+	"invoice-backend/pkg/ap2"
 	"invoice-backend/pkg/logger"
 
 	"github.com/google/uuid"
@@ -14,9 +16,13 @@ import (
 )
 
 type A2ATaskService struct {
-	db          *gorm.DB
-	log         *logger.Logger
-	pushService *A2APushService
+	db                *gorm.DB
+	log               *logger.Logger
+	pushService       *A2APushService
+	ap2Repo           interfaces.AP2Repository
+	merchantSvc       *MerchantAgentService
+	sellerNegotiation *SellerNegotiationService
+	signer            *ap2.SignatureService
 }
 
 func NewA2ATaskService(db *gorm.DB, log *logger.Logger, pushService *A2APushService) *A2ATaskService {
@@ -25,6 +31,13 @@ func NewA2ATaskService(db *gorm.DB, log *logger.Logger, pushService *A2APushServ
 		log:         log,
 		pushService: pushService,
 	}
+}
+
+func (s *A2ATaskService) ConfigureDomainServices(ap2Repo interfaces.AP2Repository, merchantSvc *MerchantAgentService, sellerNegotiation *SellerNegotiationService, signer *ap2.SignatureService) {
+	s.ap2Repo = ap2Repo
+	s.merchantSvc = merchantSvc
+	s.sellerNegotiation = sellerNegotiation
+	s.signer = signer
 }
 
 func (s *A2ATaskService) SendMessage(ctx context.Context, req *a2a.SendMessageRequest, userID, businessID string) (*a2a.SendMessageResponse, error) {
@@ -314,7 +327,10 @@ func (s *A2ATaskService) runTask(ctx context.Context, task *a2a.Task, req *a2a.S
 		return err
 	}
 
-	responseMessage, responseArtifact := s.buildTaskResult(task, req)
+	responseMessage, responseArtifact, err := s.executeTask(ctx, task, req)
+	if err != nil {
+		return err
+	}
 	task.AddHistory(responseMessage)
 	if err := s.saveTask(ctx, task); err != nil {
 		return err
@@ -340,6 +356,60 @@ func (s *A2ATaskService) runTask(ctx context.Context, task *a2a.Task, req *a2a.S
 		return err
 	}
 	return s.emitStatusUpdate(ctx, task, true, events)
+}
+
+func (s *A2ATaskService) executeTask(ctx context.Context, task *a2a.Task, req *a2a.SendMessageRequest) (a2a.Message, *a2a.Artifact, error) {
+	taskType := metadataString(req.Metadata, "taskType")
+	if taskType == "" {
+		taskType = metadataString(req.Message.Metadata, "taskType")
+	}
+
+	if taskType == "merchant.process_cart" && s.merchantSvc != nil && s.signer != nil {
+		cartID := metadataString(req.Metadata, "cartMandateId")
+		if cartID == "" {
+			cartID = metadataString(req.Message.Metadata, "cartMandateId")
+		}
+		merchantAgentID := metadataString(req.Metadata, "merchantAgentId")
+		if merchantAgentID == "" {
+			merchantAgentID = metadataString(req.Message.Metadata, "merchantAgentId")
+		}
+
+		if cartID != "" && merchantAgentID != "" {
+			signature, err := s.signer.SignData([]byte(fmt.Sprintf("%s:%s:%s", cartID, merchantAgentID, task.ID)))
+			if err != nil {
+				return a2a.Message{}, nil, fmt.Errorf("sign merchant cart task: %w", err)
+			}
+			if err := s.merchantSvc.RespondToCart(ctx, cartID, merchantAgentID, "signed", signature); err != nil {
+				return a2a.Message{}, nil, fmt.Errorf("process merchant cart task: %w", err)
+			}
+
+			message := a2a.NewTextMessage(a2a.RoleAgent, "Merchant cart processing completed and cart signed.")
+			message.ContextID = task.ContextID
+			message.TaskID = task.ID
+			artifact := a2a.NewDataArtifact("result", map[string]interface{}{
+				"taskId":          task.ID,
+				"contextId":       task.ContextID,
+				"status":          "completed",
+				"cartMandateId":   cartID,
+				"merchantAgentId": merchantAgentID,
+				"cartStatus":      "signed",
+			})
+			return message, &artifact, nil
+		}
+	}
+
+	if s.sellerNegotiation != nil {
+		switch taskType {
+		case taskTypeProcurementQuoteRequest,
+			taskTypeProcurementNegotiationCounter,
+			taskTypeProcurementNegotiationAccept,
+			taskTypeProcurementNegotiationReject:
+			return s.sellerNegotiation.HandleTask(ctx, taskType, req.Metadata)
+		}
+	}
+
+	message, artifact := s.buildTaskResult(task, req)
+	return message, artifact, nil
 }
 
 func (s *A2ATaskService) buildTaskResult(task *a2a.Task, req *a2a.SendMessageRequest) (a2a.Message, *a2a.Artifact) {

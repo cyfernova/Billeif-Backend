@@ -125,7 +125,8 @@ func TestAgentEndpoints(t *testing.T) {
 		}
 		resp, res := client.Post(t, "/api/v1/agents", body)
 		require.Equal(t, http.StatusCreated, resp.StatusCode)
-		assert.Equal(t, "buyer", res["type"])
+		assert.Equal(t, "shopping", res["type"])
+		assert.Equal(t, "buyer", res["marketplace_role"])
 	})
 
 	t.Run("Create Seller Agent", func(t *testing.T) {
@@ -141,7 +142,8 @@ func TestAgentEndpoints(t *testing.T) {
 		}
 		resp, res := client.Post(t, "/api/v1/agents", body)
 		require.Equal(t, http.StatusCreated, resp.StatusCode)
-		assert.Equal(t, "seller", res["type"])
+		assert.Equal(t, "merchant", res["type"])
+		assert.Equal(t, "seller", res["marketplace_role"])
 	})
 
 	t.Run("Create Agent - Invalid Type", func(t *testing.T) {

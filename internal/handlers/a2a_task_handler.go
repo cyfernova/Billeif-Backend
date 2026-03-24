@@ -48,8 +48,11 @@ func (h *A2ATaskHandler) Handle(c *gin.Context) {
 	case c.Request.Method == http.MethodPost && strings.HasPrefix(path, "tasks/") && strings.HasSuffix(path, ":cancel"):
 		taskID := strings.TrimSuffix(strings.TrimPrefix(path, "tasks/"), ":cancel")
 		h.handleCancelTask(c, taskID)
-	case c.Request.Method == http.MethodGet && strings.HasPrefix(path, "tasks/") && strings.HasSuffix(path, ":subscribe"):
-		taskID := strings.TrimSuffix(strings.TrimPrefix(path, "tasks/"), ":subscribe")
+	case c.Request.Method == http.MethodGet:
+		taskID, ok := parseSubscribeTaskPath(path)
+		if !ok {
+			break
+		}
 		h.handleSubscribeTask(c, taskID)
 	case strings.HasPrefix(path, "tasks/") && strings.Contains(path, "/pushNotificationConfigs"):
 		h.handlePushConfigRoutes(c, path)
@@ -389,6 +392,23 @@ func isSimpleTaskPath(path string) bool {
 	}
 	remainder := strings.TrimPrefix(path, "tasks/")
 	return remainder != "" && !strings.Contains(remainder, "/") && !strings.Contains(remainder, ":")
+}
+
+func parseSubscribeTaskPath(path string) (string, bool) {
+	if !strings.HasPrefix(path, "tasks/") {
+		return "", false
+	}
+
+	switch {
+	case strings.HasSuffix(path, ":subscribe"):
+		taskID := strings.TrimSuffix(strings.TrimPrefix(path, "tasks/"), ":subscribe")
+		return taskID, taskID != "" && !strings.Contains(taskID, "/")
+	case strings.HasSuffix(path, "/subscribe"):
+		taskID := strings.TrimSuffix(strings.TrimPrefix(path, "tasks/"), "/subscribe")
+		return taskID, taskID != "" && !strings.Contains(taskID, "/")
+	default:
+		return "", false
+	}
 }
 
 func parsePushConfigPath(path string) (taskID, configID string, ok bool) {

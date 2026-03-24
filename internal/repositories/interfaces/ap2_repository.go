@@ -75,6 +75,18 @@ type AP2Repository interface {
 	GetAvailableProducts(ctx context.Context, page, limit int) ([]*models.MarketplaceProduct, int64, error)
 	UpdateMarketplaceProduct(ctx context.Context, product *models.MarketplaceProduct) error
 	DeleteMarketplaceProduct(ctx context.Context, id string) error
+	ReserveMarketplaceInventory(ctx context.Context, productID string, quantity int) error
+	ReleaseMarketplaceInventory(ctx context.Context, productID string, quantity int) error
+	CommitMarketplaceInventory(ctx context.Context, productID string, quantity int) error
+
+	// Procurement
+	CreateProcurementRun(ctx context.Context, run *models.ProcurementRun) error
+	GetProcurementRunByID(ctx context.Context, id, userID string) (*models.ProcurementRun, error)
+	GetProcurementRunByIdempotencyKey(ctx context.Context, userID, shoppingAgentID, idempotencyKey string) (*models.ProcurementRun, error)
+	UpdateProcurementRun(ctx context.Context, run *models.ProcurementRun) error
+	CreateProcurementCandidate(ctx context.Context, candidate *models.ProcurementCandidate) error
+	UpdateProcurementCandidate(ctx context.Context, candidate *models.ProcurementCandidate) error
+	GetProcurementCandidatesByRun(ctx context.Context, runID string) ([]*models.ProcurementCandidate, error)
 
 	// Marketplace Orders
 	CreateOrder(ctx context.Context, order *models.MarketplaceOrder) error

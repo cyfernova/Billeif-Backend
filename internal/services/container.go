@@ -41,6 +41,7 @@ type Container struct {
 	Workflow            *WorkflowService
 	Mentee              *MenteeService
 	Bargaining          *BargainingService
+	Procurement         *ProcurementService
 	AgentConfig         *AgentConfigService
 	A2ABargaining       *A2ABargainingService
 	WebSocketConnection *WebSocketConnectionService
@@ -84,8 +85,10 @@ func NewContainer(
 	a2aTaskSvc := NewA2ATaskService(db, log, a2aPushSvc)
 	workflowSvc := NewWorkflowService(db, log, emailSvc, a2aPushSvc)
 	bargainingSvc := NewBargainingService(ap2Repo, a2aClient, agentSvc, menteeSvc, llmSvc, log)
-	a2aBargainingSvc := NewA2ABargainingService(a2aClient, bargainingSvc, menteeSvc, log)
+	merchantAgentSvc := NewMerchantAgentService(ap2Repo, log)
 	agentConfigSvc := NewAgentConfigService(".well-known", log)
+	sellerNegotiationSvc := NewSellerNegotiationService(ap2Repo, agentConfigSvc, log)
+	a2aBargainingSvc := NewA2ABargainingService(a2aClient, bargainingSvc, menteeSvc, log)
 	websocketConnectionSvc := NewWebSocketConnectionService(cfg, aws, log)
 	credentialProviderSvc, err := NewCredentialProviderService(ap2Repo, cfg.Credentials.EncryptionKey, log)
 	if err != nil {
@@ -93,10 +96,14 @@ func NewContainer(
 	}
 
 	log.Info("service container initialized",
-		"components", 31,
+		"components", 32,
 		"llm_model", cfg.LLM.Model,
 		"workflow_enabled", workflowSvc != nil,
 	)
+
+	shoppingAgentSvc := NewShoppingAgentService(ap2Repo, agentSvc, intentProcessingSvc, ap2Signer, ap2MandateSvc, a2aClient, cfg.Server.A2AMessageEndpoint(), log)
+	procurementSvc := NewProcurementService(ap2Repo, agentSvc, intentProcessingSvc, shoppingAgentSvc, merchantAgentSvc, bargainingSvc, agentConfigSvc, ap2Signer, log)
+	a2aTaskSvc.ConfigureDomainServices(ap2Repo, merchantAgentSvc, sellerNegotiationSvc, ap2Signer)
 
 	return &Container{
 		Auth:                NewAuthService(cfg, userRepo, aws, emailSvc, s3Svc, log),
@@ -114,8 +121,8 @@ func NewContainer(
 		S3:                  s3Svc,
 		Email:               emailSvc,
 		Agent:               agentSvc,
-		ShoppingAgent:       NewShoppingAgentService(ap2Repo, agentSvc, intentProcessingSvc, ap2Signer, ap2MandateSvc, a2aClient, cfg.Server.A2AMessageEndpoint(), log),
-		MerchantAgent:       NewMerchantAgentService(ap2Repo, log),
+		ShoppingAgent:       shoppingAgentSvc,
+		MerchantAgent:       merchantAgentSvc,
 		CredentialProvider:  credentialProviderSvc,
 		PaymentProcessor:    NewPaymentProcessorService(ap2Repo, log),
 		Marketplace:         marketplaceSvc,
@@ -128,6 +135,7 @@ func NewContainer(
 		Workflow:            workflowSvc,
 		Mentee:              menteeSvc,
 		Bargaining:          bargainingSvc,
+		Procurement:         procurementSvc,
 		AgentConfig:         agentConfigSvc,
 		A2ABargaining:       a2aBargainingSvc,
 		WebSocketConnection: websocketConnectionSvc,

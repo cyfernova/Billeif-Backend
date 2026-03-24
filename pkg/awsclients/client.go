@@ -95,7 +95,7 @@ func loadConfig(ctx context.Context, cfg appconfig.AWSConfig) (aws.Config, error
 		loaders = append(loaders, config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
 			cfg.AccessKey,
 			cfg.SecretKey,
-			"",
+			cfg.SessionToken,
 		)))
 	}
 

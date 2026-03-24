@@ -8,7 +8,6 @@ import (
 
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
-	"invoice-backend/pkg/ap2"
 	"invoice-backend/pkg/logger"
 
 	"github.com/google/uuid"
@@ -49,26 +48,10 @@ type RegisterAgentRequest struct {
 
 // RegisterAgent registers a new agent in the discovery registry
 func (s *AgentDiscoveryService) RegisterAgent(ctx context.Context, req *RegisterAgentRequest) (*models.AgentRegistry, error) {
-	// Build agent card
-	card := ap2.NewAgentCardBuilder().
-		WithName(req.Name).
-		WithDescription(req.Description).
-		WithEndpoint(req.A2AEndpoint).
-		WithType(req.AgentType).
-		WithCapabilities(req.Capabilities).
-		WithCurrencies(req.Currencies).
-		WithJurisdictions(req.Jurisdictions).
-		WithLanguages(req.SupportedLanguages)
+	req.AgentType = NormalizeMarketplaceAgentType(req.AgentType)
+	req.Capabilities = discoveryCapabilitiesForType(req.AgentType, req.Capabilities)
 
-	if req.PublicKey != nil {
-		card = card.WithPublicKey(*req.PublicKey)
-	}
-
-	if req.PricingModel != nil {
-		card = card.WithPricingModel(req.PricingModel)
-	}
-
-	agentCard, err := card.Build()
+	agentCard, err := buildA2AAgentCardFromRegistration(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build agent card: %w", err)
 	}
@@ -85,8 +68,7 @@ func (s *AgentDiscoveryService) RegisterAgent(ctx context.Context, req *Register
 		domain = fmt.Sprintf("agent-%s.internal", req.AgentID)
 	}
 
-	// Create well-known URI
-	wellKnownURI := ap2.CreateWellKnownURI(domain)
+	wellKnownURI := fmt.Sprintf("https://%s/.well-known/agent-card.json", domain)
 
 	// Create registry entry
 	agentCardJSON := datatypes.JSON(cardJSON)
@@ -128,6 +110,8 @@ func (s *AgentDiscoveryService) RegisterAgent(ctx context.Context, req *Register
 		return nil, fmt.Errorf("failed to register agent: %w", err)
 	}
 
+	ApplyMarketplaceRoleToRegistry(registry)
+
 	s.log.Info("agent registered in discovery", "agent_id", req.AgentID, "registry_id", registry.ID.String())
 
 	// Create audit log
@@ -138,11 +122,19 @@ func (s *AgentDiscoveryService) RegisterAgent(ctx context.Context, req *Register
 
 // DiscoverAgents searches for agents matching criteria
 func (s *AgentDiscoveryService) DiscoverAgents(ctx context.Context, query string, filters *models.AgentDiscoveryFilter, page, limit int) ([]*models.AgentRegistry, int64, error) {
+	if filters != nil && len(filters.AgentTypes) > 0 {
+		for i := range filters.AgentTypes {
+			filters.AgentTypes[i] = NormalizeMarketplaceAgentType(filters.AgentTypes[i])
+		}
+	}
+
 	// Apply filters
 	agents, total, err := s.ap2Repo.SearchAgents(ctx, filters, page, limit)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to search agents: %w", err)
 	}
+
+	ApplyMarketplaceRoleToRegistries(agents)
 
 	s.log.Info("discovered agents", "count", len(agents), "total", total, "filters", fmt.Sprintf("%+v", filters))
 
@@ -156,16 +148,18 @@ func (s *AgentDiscoveryService) GetPublicAgents(ctx context.Context, page, limit
 		return nil, 0, fmt.Errorf("failed to get public agents: %w", err)
 	}
 
+	ApplyMarketplaceRoleToRegistries(agents)
 	return agents, total, nil
 }
 
 // GetVerifiedAgents retrieves all verified agents
 func (s *AgentDiscoveryService) GetVerifiedAgents(ctx context.Context, agentType string, page, limit int) ([]*models.AgentRegistry, int64, error) {
-	agents, total, err := s.ap2Repo.GetVerifiedAgents(ctx, agentType, page, limit)
+	agents, total, err := s.ap2Repo.GetVerifiedAgents(ctx, NormalizeMarketplaceAgentType(agentType), page, limit)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to get verified agents: %w", err)
 	}
 
+	ApplyMarketplaceRoleToRegistries(agents)
 	return agents, total, nil
 }
 
@@ -176,6 +170,7 @@ func (s *AgentDiscoveryService) GetAgentsByCapability(ctx context.Context, capab
 		return nil, 0, fmt.Errorf("failed to discover agents by capability: %w", err)
 	}
 
+	ApplyMarketplaceRoleToRegistries(agents)
 	return agents, total, nil
 }
 
@@ -191,7 +186,40 @@ func (s *AgentDiscoveryService) GetAgentRegistry(ctx context.Context, agentID st
 		s.log.Warn("failed to increment agent views", "agent_id", agentID, "error", err)
 	}
 
+	ApplyMarketplaceRoleToRegistry(registry)
 	return registry, nil
+}
+
+func discoveryCapabilitiesForType(agentType string, capabilities []string) []string {
+	existing := make(map[string]struct{}, len(capabilities))
+	for _, capability := range capabilities {
+		existing[capability] = struct{}{}
+	}
+
+	add := func(value string) {
+		if _, ok := existing[value]; ok {
+			return
+		}
+		capabilities = append(capabilities, value)
+		existing[value] = struct{}{}
+	}
+
+	switch agentType {
+	case "merchant":
+		add("bargaining")
+		add("merchant.process_cart")
+		add("inventory.reserve")
+		add("cart.sign")
+		add(taskTypeProcurementQuoteRequest)
+		add(taskTypeProcurementNegotiationCounter)
+		add(taskTypeProcurementNegotiationAccept)
+		add(taskTypeProcurementNegotiationReject)
+	case "shopping":
+		add("shopping.procurement")
+		add("shopping.search")
+	}
+
+	return capabilities
 }
 
 // VerifyAgent marks an agent as verified

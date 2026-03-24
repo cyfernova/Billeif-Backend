@@ -3,12 +3,14 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
 	"invoice-backend/pkg/logger"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"invoice-backend/internal/models"
 	interfaces "invoice-backend/internal/repositories/interfaces"
@@ -602,6 +604,146 @@ func (r *ap2Repository) UpdateMarketplaceProduct(ctx context.Context, product *m
 
 func (r *ap2Repository) DeleteMarketplaceProduct(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Delete(&models.MarketplaceProduct{}, id).Error
+}
+
+func (r *ap2Repository) ReserveMarketplaceInventory(ctx context.Context, productID string, quantity int) error {
+	if quantity <= 0 {
+		return errors.New("quantity must be positive")
+	}
+
+	result := r.db.WithContext(ctx).
+		Model(&models.MarketplaceProduct{}).
+		Where("id = ? AND is_available = ? AND inventory_count - reserved_inventory_count >= ?", productID, true, quantity).
+		Update("reserved_inventory_count", gorm.Expr("reserved_inventory_count + ?", quantity))
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("insufficient inventory to reserve")
+	}
+	return nil
+}
+
+func (r *ap2Repository) ReleaseMarketplaceInventory(ctx context.Context, productID string, quantity int) error {
+	if quantity <= 0 {
+		return nil
+	}
+
+	result := r.db.WithContext(ctx).
+		Model(&models.MarketplaceProduct{}).
+		Where("id = ? AND reserved_inventory_count >= ?", productID, quantity).
+		Update("reserved_inventory_count", gorm.Expr("reserved_inventory_count - ?", quantity))
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("reserved inventory not found")
+	}
+	return nil
+}
+
+func (r *ap2Repository) CommitMarketplaceInventory(ctx context.Context, productID string, quantity int) error {
+	if quantity <= 0 {
+		return nil
+	}
+
+	tx := r.db.WithContext(ctx).Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	var product models.MarketplaceProduct
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", productID).First(&product).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	if product.ReservedInventoryCount < quantity {
+		tx.Rollback()
+		return errors.New("reserved inventory below requested quantity")
+	}
+	if product.InventoryCount < quantity {
+		tx.Rollback()
+		return errors.New("inventory below requested quantity")
+	}
+
+	product.ReservedInventoryCount -= quantity
+	product.InventoryCount -= quantity
+	if product.InventoryCount <= 0 {
+		product.IsAvailable = false
+	}
+
+	if err := tx.Save(&product).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	return tx.Commit().Error
+}
+
+// Procurement
+func (r *ap2Repository) CreateProcurementRun(ctx context.Context, run *models.ProcurementRun) error {
+	return r.db.WithContext(ctx).Create(run).Error
+}
+
+func (r *ap2Repository) GetProcurementRunByID(ctx context.Context, id, userID string) (*models.ProcurementRun, error) {
+	var run models.ProcurementRun
+	err := r.db.WithContext(ctx).
+		Preload("Candidates").
+		Preload("Candidates.MerchantAgent").
+		Preload("Candidates.MarketplaceProduct").
+		Where("id = ? AND user_id = ? AND deleted_at IS NULL", id, userID).
+		First(&run).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, errors.New("procurement run not found")
+	}
+	return &run, err
+}
+
+func (r *ap2Repository) GetProcurementRunByIdempotencyKey(ctx context.Context, userID, shoppingAgentID, idempotencyKey string) (*models.ProcurementRun, error) {
+	var run models.ProcurementRun
+	err := r.db.WithContext(ctx).
+		Preload("Candidates").
+		Preload("Candidates.MerchantAgent").
+		Preload("Candidates.MarketplaceProduct").
+		Where("user_id = ? AND shopping_agent_id = ? AND idempotency_key = ? AND deleted_at IS NULL", userID, shoppingAgentID, idempotencyKey).
+		First(&run).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, errors.New("procurement run not found")
+	}
+	return &run, err
+}
+
+func (r *ap2Repository) UpdateProcurementRun(ctx context.Context, run *models.ProcurementRun) error {
+	return r.db.WithContext(ctx).Save(run).Error
+}
+
+func (r *ap2Repository) CreateProcurementCandidate(ctx context.Context, candidate *models.ProcurementCandidate) error {
+	return r.db.WithContext(ctx).Create(candidate).Error
+}
+
+func (r *ap2Repository) UpdateProcurementCandidate(ctx context.Context, candidate *models.ProcurementCandidate) error {
+	return r.db.WithContext(ctx).Save(candidate).Error
+}
+
+func (r *ap2Repository) GetProcurementCandidatesByRun(ctx context.Context, runID string) ([]*models.ProcurementCandidate, error) {
+	var candidates []models.ProcurementCandidate
+	if err := r.db.WithContext(ctx).
+		Preload("MerchantAgent").
+		Preload("MarketplaceProduct").
+		Where("procurement_run_id = ? AND deleted_at IS NULL", runID).
+		Order("match_score DESC, created_at ASC").
+		Find(&candidates).Error; err != nil {
+		return nil, fmt.Errorf("get procurement candidates: %w", err)
+	}
+
+	result := make([]*models.ProcurementCandidate, len(candidates))
+	for i := range candidates {
+		result[i] = &candidates[i]
+	}
+	return result, nil
 }
 
 // Marketplace Orders

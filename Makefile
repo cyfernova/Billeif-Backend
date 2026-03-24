@@ -2,9 +2,20 @@
 -include .env
 export
 
-.PHONY: help infra-backend-init infra-init infra-apply infra-plan infra-destroy infra-output build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-payment build-lambda-ws build-lambda-custom-sms-sender package-lambda run-local test test-integration migrate-up migrate-down migrate-create fmt lint clean deps test-coverage swagger
+.PHONY: help infra-backend-init infra-init infra-validate infra-apply infra-plan infra-destroy infra-output build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-payment build-lambda-ws build-lambda-custom-sms-sender package-lambda run-local test test-integration migrate-up migrate-down migrate-create fmt lint clean deps test-coverage swagger
 
 LAMBDA_BUILD_DIR := .build/lambda
+TERRAFORM_DIR := infrastructure/terraform
+TF_BACKEND_BUCKET ?= invoice-backend-tfstate-830283279729
+TF_BACKEND_REGION ?= us-east-1
+TF_BACKEND_LOCK_TABLE ?= terraform-state-lock
+TF_BACKEND_KEY ?= terraform.tfstate
+TF_INIT_BACKEND_ARGS := \
+	-backend-config=bucket=$(TF_BACKEND_BUCKET) \
+	-backend-config=region=$(TF_BACKEND_REGION) \
+	-backend-config=key=$(TF_BACKEND_KEY) \
+	-backend-config=encrypt=true \
+	-backend-config=dynamodb_table=$(TF_BACKEND_LOCK_TABLE)
 
 help:
 	@echo 'Usage: make [target]'
@@ -15,32 +26,40 @@ help:
 # Infrastructure targets
 infra-backend-init: ## Create S3 bucket and DynamoDB table for Terraform backend
 	@echo "Creating S3 bucket for Terraform state..."
-	aws s3 mb s3://invoice-backend-tfstate-20251229 --region us-east-1 || true
-	aws s3api put-bucket-versioning --bucket invoice-backend-tfstate-20251229 --versioning-configuration Status=Enabled
+	aws s3 mb s3://$(TF_BACKEND_BUCKET) --region $(TF_BACKEND_REGION) || true
+	aws s3api put-bucket-versioning --bucket $(TF_BACKEND_BUCKET) --versioning-configuration Status=Enabled --region $(TF_BACKEND_REGION)
 	@echo "Creating DynamoDB table for state locking..."
 	aws dynamodb create-table \
-		--table-name terraform-state-lock \
+		--table-name $(TF_BACKEND_LOCK_TABLE) \
 		--attribute-definitions AttributeName=LockID,AttributeType=S \
 		--key-schema AttributeName=LockID,KeyType=HASH \
 		--billing-mode PAY_PER_REQUEST \
-		--region us-east-1 || true
+		--region $(TF_BACKEND_REGION) || true
 	@echo "Backend resources created!"
 
 infra-init: ## Initialize Terraform
-	cd infrastructure/terraform && terraform init
+	cd $(TERRAFORM_DIR) && terraform init $(TF_INIT_BACKEND_ARGS)
+
+infra-validate: ## Format-check and validate Terraform without the remote backend
+	cd $(TERRAFORM_DIR) && terraform fmt -check -recursive
+	cd $(TERRAFORM_DIR) && terraform init -backend=false
+	cd $(TERRAFORM_DIR) && terraform validate
 
 infra-apply: package-lambda ## Package Lambda artifacts and apply Terraform configuration
-	cd infrastructure/terraform && terraform apply -auto-approve
+	cd $(TERRAFORM_DIR) && terraform init $(TF_INIT_BACKEND_ARGS)
+	cd $(TERRAFORM_DIR) && terraform apply -auto-approve
 
 infra-plan: package-lambda ## Package Lambda artifacts and plan Terraform configuration
-	cd infrastructure/terraform && terraform plan
+	cd $(TERRAFORM_DIR) && terraform init $(TF_INIT_BACKEND_ARGS)
+	cd $(TERRAFORM_DIR) && terraform plan
 
 infra-destroy: ## Destroy Terraform infrastructure
-	cd infrastructure/terraform && terraform destroy -auto-approve
+	cd $(TERRAFORM_DIR) && terraform init $(TF_INIT_BACKEND_ARGS)
+	cd $(TERRAFORM_DIR) && terraform destroy -auto-approve
 
 infra-output: ## Save Terraform output to file
-	cd infrastructure/terraform && terraform output -json > terraform_output.json
-	cd infrastructure/terraform && terraform output > terraform_output.txt
+	cd $(TERRAFORM_DIR) && terraform output -json > terraform_output.json
+	cd $(TERRAFORM_DIR) && terraform output > terraform_output.txt
 	@echo "Terraform output saved to infrastructure/terraform/terraform_output.txt"
 
 # Build targets

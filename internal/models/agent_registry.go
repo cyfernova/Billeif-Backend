@@ -20,6 +20,7 @@ type AgentRegistry struct {
 	AgentName        string    `gorm:"type:varchar(255);not null;index" json:"agent_name"`
 	AgentDescription *string   `gorm:"type:text" json:"agent_description"`
 	AgentType        string    `gorm:"type:varchar(50);not null;index" json:"agent_type"` // shopping, merchant, credential_provider, payment_processor
+	MarketplaceRole  string    `gorm:"-" json:"marketplace_role,omitempty"`
 
 	// Agent Card (AP2 specification) - Full agent card as JSON
 	AgentCard datatypes.JSON `gorm:"type:jsonb;not null" json:"agent_card"`
@@ -134,6 +135,7 @@ type AgentCard struct {
 	Description      string                 `json:"description"`
 	Endpoint         string                 `json:"endpoint"`
 	Type             string                 `json:"type"` // shopping, merchant, credential_provider, payment_processor
+	MarketplaceRole  string                 `json:"marketplace_role,omitempty"`
 	Capabilities     []string               `json:"capabilities"`
 	PricingModel     map[string]interface{} `json:"pricing_model"`
 	Currencies       []string               `json:"currencies"`

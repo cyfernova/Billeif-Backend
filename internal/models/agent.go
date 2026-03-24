@@ -16,6 +16,7 @@ type Agent struct {
 	Capabilities string         `gorm:"type:jsonb;not null;default:'[]'" json:"capabilities"`
 	Config       string         `gorm:"type:jsonb;not null;default:'{}'" json:"config"`
 	A2AEndpoint  *string        `gorm:"column:a2a_endpoint;type:varchar(500)" json:"a2a_endpoint,omitempty" validate:"omitempty,url,max=500"`
+	MarketplaceRole string      `gorm:"-" json:"marketplace_role,omitempty"`
 	IsPublic     bool           `gorm:"default:false" json:"is_public"`
 	IsActive     bool           `gorm:"default:true;index" json:"is_active"`
 	CreatedAt    time.Time      `gorm:"autoCreateTime" json:"created_at"`

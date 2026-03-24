@@ -40,7 +40,7 @@ func resolveSSMParameters(cfg *Config) error {
 		loaders = append(loaders, config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
 			cfg.AWS.AccessKey,
 			cfg.AWS.SecretKey,
-			"",
+			cfg.AWS.SessionToken,
 		)))
 	}
 

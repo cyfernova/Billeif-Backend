@@ -34,6 +34,7 @@ type Handler struct {
 	A2ATask        *A2ATaskHandler
 	Workflow       *WorkflowHandler
 	Bargaining     *BargainingHandler
+	Procurement    *ProcurementHandler
 	AgentConfig    *AgentConfigHandler
 	A2ABargaining  *A2ABargainingHandler
 }
@@ -71,7 +72,8 @@ func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log 
 		WellKnown:      NewWellKnownHandler(cfg, log),
 		A2ATask:        NewA2ATaskHandler(svcs.A2ATask, svcs.A2APush, log),
 		Workflow:       NewWorkflowHandler(svcs.Workflow, log),
-		Bargaining:     NewBargainingHandler(svcs.Bargaining, log),
+		Bargaining:     NewBargainingHandler(svcs.Bargaining, repos.AP2, log),
+		Procurement:    NewProcurementHandler(svcs.Procurement, repos.AP2, log),
 		AgentConfig:    NewAgentConfigHandler(svcs.AgentConfig, svcs.Agent, svcs.Bargaining, svcs.Mentee, log),
 		A2ABargaining:  NewA2ABargainingHandler(svcs.A2ABargaining, svcs.Agent, cfg, log),
 	}

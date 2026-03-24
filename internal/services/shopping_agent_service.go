@@ -119,16 +119,12 @@ func (s *ShoppingAgentService) ProcessShoppingIntent(ctx context.Context, req *S
 		return nil, fmt.Errorf("total amount %f exceeds maximum %f", totalAmount, *req.MaxAmount)
 	}
 
-	cartReq := &ap2.CartMandateRequest{
-		IntentMandateID:    &intentMandate.ID,
-		UserID:             req.UserID,
-		AgentID:            req.ShoppingAgentID,
-		Items:              cartItems,
-		Signature:          s.signCartMandate(intentMandate, cartItems),
-		ExpirationDuration: s.getDefaultExpiration(),
-	}
-
-	cartMandate, err := s.mandateSvc.CreateCartMandate(cartReq)
+	cartMandate, err := s.CreateCartMandate(ctx, &CreateCartMandateRequest{
+		UserID:          req.UserID,
+		ShoppingAgentID: req.ShoppingAgentID,
+		IntentMandateID: &intentMandate.ID,
+		Items:           cartItems,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create cart mandate: %w", err)
 	}
@@ -156,15 +152,11 @@ func (s *ShoppingAgentService) AddToCart(ctx context.Context, userID, shoppingAg
 		},
 	}
 
-	cartReq := &ap2.CartMandateRequest{
-		UserID:             userID,
-		AgentID:            shoppingAgentID,
-		Items:              cartItems,
-		Signature:          s.generateSignature(cartItems),
-		ExpirationDuration: s.getDefaultExpiration(),
-	}
-
-	cartMandate, err := s.mandateSvc.CreateCartMandate(cartReq)
+	cartMandate, err := s.CreateCartMandate(ctx, &CreateCartMandateRequest{
+		UserID:          userID,
+		ShoppingAgentID: shoppingAgentID,
+		Items:           cartItems,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create cart mandate: %w", err)
 	}
@@ -176,6 +168,14 @@ type CheckoutRequest struct {
 	UserID          string
 	CartMandateID   string
 	PaymentMethodID *string
+}
+
+type CreateCartMandateRequest struct {
+	UserID          string
+	ShoppingAgentID string
+	MerchantID      *string
+	IntentMandateID *string
+	Items           []ap2.CartItem
 }
 
 func (s *ShoppingAgentService) CompleteCheckout(ctx context.Context, req *CheckoutRequest) (*models.PaymentMandate, error) {
@@ -218,6 +218,10 @@ func (s *ShoppingAgentService) CompleteCheckout(ctx context.Context, req *Checko
 	paymentMandate, err := s.mandateSvc.CreatePaymentMandate(paymentReq, cartMandate.TotalAmount)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create payment mandate: %w", err)
+	}
+
+	if err := s.ap2Repo.CreatePaymentMandate(ctx, paymentMandate); err != nil {
+		return nil, fmt.Errorf("failed to save payment mandate: %w", err)
 	}
 
 	s.log.Info("created payment mandate", "payment_mandate_id", paymentMandate.ID, "user_id", req.UserID)
@@ -290,6 +294,10 @@ func (s *ShoppingAgentService) TrackOrder(ctx context.Context, orderID string) (
 	return s.ap2Repo.GetOrderByID(ctx, orderID)
 }
 
+func (s *ShoppingAgentService) CreateIntentMandate(ctx context.Context, req *ShoppingIntentRequest) (*models.IntentMandate, error) {
+	return s.createIntentMandate(ctx, req)
+}
+
 func (s *ShoppingAgentService) createIntentMandate(ctx context.Context, req *ShoppingIntentRequest) (*models.IntentMandate, error) {
 	constraints := ap2.MandateConstraints{
 		Currency:    "INR",
@@ -344,6 +352,42 @@ func (s *ShoppingAgentService) getDefaultExpiration() time.Duration {
 
 func (s *ShoppingAgentService) GetShoppingAgentCapabilities(ctx context.Context, agentID string) ([]*models.AgentCapability, error) {
 	return s.ap2Repo.GetCapabilitiesByAgent(ctx, agentID)
+}
+
+func (s *ShoppingAgentService) CreateCartMandate(ctx context.Context, req *CreateCartMandateRequest) (*models.CartMandate, error) {
+	signaturePayload := map[string]interface{}{
+		"user_id":     req.UserID,
+		"agent_id":    req.ShoppingAgentID,
+		"merchant_id": req.MerchantID,
+		"intent_id":   req.IntentMandateID,
+		"items":       req.Items,
+		"created_at":  time.Now().UTC(),
+	}
+	signature, err := s.signer.SignData([]byte(fmt.Sprintf("%v", signaturePayload)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign cart mandate: %w", err)
+	}
+
+	cartReq := &ap2.CartMandateRequest{
+		IntentMandateID:    req.IntentMandateID,
+		UserID:             req.UserID,
+		AgentID:            req.ShoppingAgentID,
+		MerchantID:         req.MerchantID,
+		Items:              req.Items,
+		Signature:          signature,
+		ExpirationDuration: s.getDefaultExpiration(),
+	}
+
+	cartMandate, err := s.mandateSvc.CreateCartMandate(cartReq)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.ap2Repo.CreateCartMandate(ctx, cartMandate); err != nil {
+		return nil, fmt.Errorf("failed to save cart mandate: %w", err)
+	}
+
+	return cartMandate, nil
 }
 
 // SECURITY: Verify mandate is not expired
@@ -431,13 +475,15 @@ func (s *ShoppingAgentService) ProcessCartWithMerchantA2A(ctx context.Context, m
 				{Text: fmt.Sprintf("Process cart %s for user %s.", cartMandate.ID, userID)},
 			},
 			Metadata: map[string]interface{}{
-				"taskType": "merchant.process_cart",
+				"taskType":      "merchant.process_cart",
+				"cartMandateId": cartMandate.ID,
 			},
 		},
 		Metadata: map[string]interface{}{
-			"taskType":      "merchant.process_cart",
-			"cartMandateId": cartMandate.ID,
-			"userId":        userID,
+			"taskType":        "merchant.process_cart",
+			"cartMandateId":   cartMandate.ID,
+			"merchantAgentId": valueOrEmpty(cartMandate.MerchantID),
+			"userId":          userID,
 		},
 	}
 
@@ -518,4 +564,11 @@ func (s *ShoppingAgentService) GenerateIdeas(ctx context.Context, userInput stri
 		return "", fmt.Errorf("intent processing service not available")
 	}
 	return s.intentSvc.GenerateIdeas(ctx, userInput)
+}
+
+func valueOrEmpty(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }

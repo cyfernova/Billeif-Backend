@@ -73,6 +73,7 @@ func (s *AgentService) CreatePersonalAgent(ctx context.Context, req *CreatePerso
 		return nil, fmt.Errorf("failed to create agent: %w", err)
 	}
 
+	ApplyMarketplaceRoleToAgent(agent)
 	s.log.Info("created personal agent", "agent_id", agent.ID, "user_id", req.UserID)
 	return agent, nil
 }
@@ -103,6 +104,7 @@ func (s *AgentService) CreateMerchantAgent(ctx context.Context, req *CreateMerch
 		return nil, fmt.Errorf("failed to create merchant agent: %w", err)
 	}
 
+	ApplyMarketplaceRoleToAgent(agent)
 	s.log.Info("created merchant agent", "agent_id", agent.ID, "business_id", req.BusinessID)
 	return agent, nil
 }
@@ -113,19 +115,35 @@ func (s *AgentService) GetAgentByID(ctx context.Context, agentID string) (*model
 		s.log.Error("failed to get agent", "error", err, "agent_id", agentID)
 		return nil, ErrAgentNotFound
 	}
+	ApplyMarketplaceRoleToAgent(agent)
 	return agent, nil
 }
 
 func (s *AgentService) GetAgentsByBusiness(ctx context.Context, businessID string, page, limit int) ([]*models.Agent, int64, error) {
-	return s.ap2Repo.GetAgentsByBusiness(ctx, businessID, page, limit)
+	agents, total, err := s.ap2Repo.GetAgentsByBusiness(ctx, businessID, page, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	ApplyMarketplaceRoleToAgents(agents)
+	return agents, total, nil
 }
 
 func (s *AgentService) GetAgentsByUser(ctx context.Context, userID string, page, limit int) ([]*models.Agent, int64, error) {
-	return s.ap2Repo.GetAgentsByUser(ctx, userID, page, limit)
+	agents, total, err := s.ap2Repo.GetAgentsByUser(ctx, userID, page, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	ApplyMarketplaceRoleToAgents(agents)
+	return agents, total, nil
 }
 
 func (s *AgentService) GetActiveAgentsByType(ctx context.Context, agentType string) ([]*models.Agent, error) {
-	return s.ap2Repo.GetActiveAgentsByType(ctx, agentType)
+	agents, err := s.ap2Repo.GetActiveAgentsByType(ctx, NormalizeMarketplaceAgentType(agentType))
+	if err != nil {
+		return nil, err
+	}
+	ApplyMarketplaceRoleToAgents(agents)
+	return agents, nil
 }
 
 func (s *AgentService) UpdateAgent(ctx context.Context, agentID string, updates map[string]interface{}) error {

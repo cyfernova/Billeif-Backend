@@ -13,6 +13,7 @@ type MarketplaceProduct struct {
 	Price          float64   `gorm:"not null;type:decimal(15,2)" json:"price" validate:"required,gte=0"`
 	Currency       string    `gorm:"not null;size:3;default:INR" json:"currency" validate:"required,len=3"`
 	InventoryCount int       `gorm:"default:0" json:"inventory_count" validate:"gte=0"`
+	ReservedInventoryCount int `gorm:"default:0" json:"reserved_inventory_count" validate:"gte=0"`
 	IsAvailable    bool      `gorm:"default:true;index" json:"is_available"`
 	Images         string    `gorm:"type:jsonb;default:'[]'" json:"images"`
 	Categories     string    `gorm:"type:jsonb;default:'[]'" json:"categories"`

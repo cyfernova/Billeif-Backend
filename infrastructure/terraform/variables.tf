@@ -96,6 +96,13 @@ variable "db_password" {
   }
 }
 
+variable "credential_encryption_key" {
+  description = "Base64-encoded 32-byte key used for application credential encryption"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 # Lambda Artifacts
 variable "lambda_artifact_dir" {
   description = "Directory containing built lambda zip artifacts"

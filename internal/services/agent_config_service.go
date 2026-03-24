@@ -71,6 +71,16 @@ func (s *AgentConfigService) SaveAgentConfig(ctx context.Context, agent *models.
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if config == nil {
+		return nil, fmt.Errorf("%w: config is required", ErrInvalidConfig)
+	}
+
+	roleType := RoleConfigTypeForAgentType(agent.Type)
+	if roleType == "" {
+		return nil, fmt.Errorf("%w: unsupported agent type %s", ErrInvalidConfig, agent.Type)
+	}
+	config.Type = roleType
+
 	if err := s.validateConfig(config); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidConfig, err)
 	}
@@ -95,7 +105,7 @@ func (s *AgentConfigService) SaveAgentConfig(ctx context.Context, agent *models.
 	wellKnownConfig := &models.WellKnownAgentConfig{
 		AgentID:      agent.ID,
 		Name:         agent.Name,
-		Type:         models.AgentType(agent.Type),
+		Type:         roleType,
 		Description:  "",
 		Version:      "1.0",
 		Config:       config,
@@ -103,7 +113,10 @@ func (s *AgentConfigService) SaveAgentConfig(ctx context.Context, agent *models.
 		A2AEndpoint:  a2aEndpoint,
 		CreatedAt:    agent.CreatedAt,
 		UpdatedAt:    agent.UpdatedAt,
-		Metadata:     make(map[string]interface{}),
+		Metadata: map[string]interface{}{
+			"marketplace_role": MarketplaceRoleForType(agent.Type),
+			"marketplace_type": NormalizeMarketplaceAgentType(agent.Type),
+		},
 	}
 
 	s.configs[agent.ID] = wellKnownConfig
@@ -116,6 +129,17 @@ func (s *AgentConfigService) SaveAgentConfig(ctx context.Context, agent *models.
 	s.log.Info("agent configuration saved", "agent_id", agent.ID, "type", config.Type)
 
 	return wellKnownConfig, nil
+}
+
+func (s *AgentConfigService) CreateDefaultConfigForAgentType(agentType string) (*models.AgentConfig, error) {
+	switch RoleConfigTypeForAgentType(agentType) {
+	case models.AgentTypeBuyer:
+		return s.CreateDefaultBuyerConfig(), nil
+	case models.AgentTypeSeller:
+		return s.CreateDefaultSellerConfig(), nil
+	default:
+		return nil, fmt.Errorf("%w: unsupported agent type %s", ErrInvalidConfig, agentType)
+	}
 }
 
 func (s *AgentConfigService) GetAgentConfig(ctx context.Context, agentID string) (*models.WellKnownAgentConfig, error) {

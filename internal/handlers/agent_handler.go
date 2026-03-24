@@ -110,6 +110,7 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 	}
 
 	req.Config = sanitizeAgentConfig(req.Config)
+	req.Type = services.NormalizeMarketplaceAgentType(req.Type)
 
 	var agent *models.Agent
 	var err error
@@ -343,7 +344,7 @@ func (h *AgentHandler) GetActiveAgents(c *gin.Context) {
 	if !ok {
 		return
 	}
-	agentType := c.Query("type")
+	agentType := services.NormalizeMarketplaceAgentType(c.Query("type"))
 	if agentType == "" {
 		log.Warn("missing type query param for active agents")
 		c.JSON(http.StatusBadRequest, gin.H{"error": "type parameter is required"})
@@ -362,6 +363,7 @@ func (h *AgentHandler) GetActiveAgents(c *gin.Context) {
 			filtered = append(filtered, agent)
 		}
 	}
+	services.ApplyMarketplaceRoleToAgents(filtered)
 	log.Debug("active agents fetched", "type", agentType, "count", len(filtered))
 	c.JSON(http.StatusOK, filtered)
 }
@@ -451,7 +453,7 @@ func (h *AgentHandler) UpdateAgentStatus(c *gin.Context) {
 
 func (h *AgentHandler) GetAgentByType(c *gin.Context) {
 	log := h.reqLog(c, "get_agent_by_type")
-	agentType := c.Param("type")
+	agentType := services.NormalizeMarketplaceAgentType(c.Param("type"))
 	page, limit := utils.ParsePagination(c)
 
 	userID, ok := requireUserScope(c)
@@ -493,6 +495,7 @@ func (h *AgentHandler) GetAgentByType(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid agent type"})
 		return
 	}
+	services.ApplyMarketplaceRoleToAgents(agents)
 
 	if err != nil {
 		log.Error("failed to get agents by type", "error", err, "type", agentType, "user_id", userID)

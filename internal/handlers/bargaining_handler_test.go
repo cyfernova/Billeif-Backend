@@ -91,8 +91,8 @@ func TestCreateNegotiation(t *testing.T) {
 				"initial_amount":  1000.00,
 				"max_rounds":      15,
 			},
-			expectedStatus: http.StatusBadRequest,
-			description:    "should return 400 when max_rounds exceeds 10",
+			expectedStatus: http.StatusInternalServerError,
+			description:    "should pass validation and try to create negotiation when max_rounds is within the extended 20-round limit",
 		},
 		{
 			name: "invalid buyer_agent_id format",
@@ -159,7 +159,7 @@ func TestCreateNegotiation(t *testing.T) {
 				}
 			}()
 
-			handler := NewBargainingHandler(nil, log)
+			handler := NewBargainingHandler(nil, nil, log)
 
 			reqBody, _ := json.Marshal(tt.requestBody)
 			req := httptest.NewRequest(http.MethodPost, "/bargaining/negotiations", bytes.NewBuffer(reqBody))
@@ -184,7 +184,7 @@ func TestCounterOfferRequestValidation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	log := logger.New()
-	handler := NewBargainingHandler(nil, log)
+	handler := NewBargainingHandler(nil, nil, log)
 
 	tests := []struct {
 		name           string
@@ -325,7 +325,7 @@ func TestGetSuggestedCounterOffer(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	log := logger.New()
-	handler := NewBargainingHandler(nil, log)
+	handler := NewBargainingHandler(nil, nil, log)
 
 	tests := []struct {
 		name           string
@@ -390,7 +390,7 @@ func TestListNegotiations(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	log := logger.New()
-	handler := NewBargainingHandler(nil, log)
+	handler := NewBargainingHandler(nil, nil, log)
 
 	tests := []struct {
 		name           string

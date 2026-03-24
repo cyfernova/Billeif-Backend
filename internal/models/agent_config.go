@@ -39,6 +39,7 @@ type SellerConfig struct {
 	CustomerLoyaltyFactor float64        `json:"customer_loyalty_factor"`
 	MaxRounds             int            `json:"max_rounds"`
 	PreferredCustomers    []string       `json:"preferred_customers"`
+	BlacklistedBuyers     []string       `json:"blacklisted_buyers"`
 	VolumeDiscountTiers   []DiscountTier `json:"volume_discount_tiers"`
 	PaymentTerms          []string       `json:"payment_terms"`
 	AcceptanceThreshold   float64        `json:"acceptance_threshold"`

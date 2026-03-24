@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"invoice-backend/internal/middleware"
 	"invoice-backend/internal/models"
+	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/internal/services"
 	"invoice-backend/internal/utils"
 	"invoice-backend/pkg/logger"
@@ -11,12 +13,13 @@ import (
 )
 
 type BargainingHandler struct {
-	svc *services.BargainingService
-	log *logger.Logger
+	svc     *services.BargainingService
+	ap2Repo interfaces.AP2Repository
+	log     *logger.Logger
 }
 
-func NewBargainingHandler(svc *services.BargainingService, log *logger.Logger) *BargainingHandler {
-	return &BargainingHandler{svc: svc, log: log}
+func NewBargainingHandler(svc *services.BargainingService, ap2Repo interfaces.AP2Repository, log *logger.Logger) *BargainingHandler {
+	return &BargainingHandler{svc: svc, ap2Repo: ap2Repo, log: log}
 }
 
 type CreateNegotiationRequest struct {
@@ -24,7 +27,7 @@ type CreateNegotiationRequest struct {
 	SellerAgentID      string  `json:"seller_agent_id" binding:"required,uuid"`
 	InitialAmount      float64 `json:"initial_amount" binding:"required,gt=0"`
 	MarketplaceOrderID *string `json:"marketplace_order_id,omitempty" binding:"omitempty,uuid"`
-	MaxRounds          int     `json:"max_rounds" binding:"omitempty,gte=1,lte=10"`
+	MaxRounds          int     `json:"max_rounds" binding:"omitempty,gte=1,lte=20"`
 }
 
 type CounterOfferRequest struct {
@@ -55,6 +58,12 @@ func (h *BargainingHandler) CreateNegotiation(c *gin.Context) {
 		log.Warn("invalid create negotiation payload", "error", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	if h.ap2Repo != nil {
+		if _, ok := requireOwnedAgent(c, h.ap2Repo, req.BuyerAgentID); !ok {
+			return
+		}
 	}
 
 	createReq := &services.CreateNegotiationRequest{
@@ -96,6 +105,10 @@ func (h *BargainingHandler) GetNegotiation(c *gin.Context) {
 	negotiation, err := h.svc.GetNegotiation(c.Request.Context(), id)
 	if err != nil {
 		log.Error("failed to get negotiation", "error", err, "negotiation_id", id)
+		c.JSON(http.StatusNotFound, gin.H{"error": "negotiation not found"})
+		return
+	}
+	if !h.authorizeNegotiationAccess(c, negotiation, "") {
 		c.JSON(http.StatusNotFound, gin.H{"error": "negotiation not found"})
 		return
 	}
@@ -161,6 +174,17 @@ func (h *BargainingHandler) SubmitCounterOffer(c *gin.Context) {
 		return
 	}
 
+	existingNegotiation, err := h.svc.GetNegotiation(c.Request.Context(), negotiationID)
+	if err != nil {
+		log.Error("failed to load negotiation", "error", err, "negotiation_id", negotiationID)
+		c.JSON(http.StatusNotFound, gin.H{"error": "negotiation not found"})
+		return
+	}
+	if !h.authorizeNegotiationAccess(c, existingNegotiation, req.AgentID) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "negotiation not found"})
+		return
+	}
+
 	counterOfferReq := &services.CounterOfferRequest{
 		AgentID:        req.AgentID,
 		ProposedAmount: req.ProposedAmount,
@@ -212,6 +236,15 @@ func (h *BargainingHandler) GetNegotiationRounds(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	negotiation, err := h.svc.GetNegotiation(c.Request.Context(), negotiationID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "negotiation not found"})
+		return
+	}
+	if !h.authorizeNegotiationAccess(c, negotiation, "") {
+		c.JSON(http.StatusNotFound, gin.H{"error": "negotiation not found"})
+		return
+	}
 	log.Debug("negotiation rounds fetched", "negotiation_id", negotiationID, "count", len(rounds))
 
 	c.JSON(http.StatusOK, gin.H{
@@ -249,6 +282,10 @@ func (h *BargainingHandler) GetSuggestedCounterOffer(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "negotiation not found"})
 		return
 	}
+	if !h.authorizeNegotiationAccess(c, negotiation, "") {
+		c.JSON(http.StatusNotFound, gin.H{"error": "negotiation not found"})
+		return
+	}
 
 	suggestedAmount := h.svc.CalculateSuggestedCounterOffer(negotiation, agentType)
 
@@ -257,6 +294,34 @@ func (h *BargainingHandler) GetSuggestedCounterOffer(c *gin.Context) {
 		"agent_type":       agentType,
 	})
 	log.Debug("counter offer suggestion generated", "negotiation_id", negotiationID, "agent_type", agentType)
+}
+
+func (h *BargainingHandler) authorizeNegotiationAccess(c *gin.Context, negotiation *models.BargainingNegotiation, actingAgentID string) bool {
+	userID := c.GetString("user_id")
+	if h.ap2Repo == nil {
+		return true
+	}
+	if negotiation.UserID == userID {
+		return true
+	}
+
+	businessID := middleware.GetEffectiveBusinessID(c)
+	agentIDs := []string{negotiation.BuyerAgentID, negotiation.SellerAgentID}
+	if actingAgentID != "" {
+		agentIDs = append([]string{actingAgentID}, agentIDs...)
+	}
+
+	for _, agentID := range agentIDs {
+		agent, err := h.ap2Repo.GetAgentByID(c.Request.Context(), agentID)
+		if err != nil {
+			continue
+		}
+		if agent.OwnerID == userID || (businessID != "" && agent.BusinessID == businessID) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // GetLLMBargainingDecision uses LLM to generate strategic bargaining recommendations

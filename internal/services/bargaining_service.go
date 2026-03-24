@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"invoice-backend/internal/models"
@@ -44,12 +45,13 @@ func NewBargainingService(ap2Repo interfaces.AP2Repository, a2aClient *a2a.A2ACl
 }
 
 type CreateNegotiationRequest struct {
-	BuyerAgentID       string  `json:"buyer_agent_id" validate:"required,uuid"`
-	SellerAgentID      string  `json:"seller_agent_id" validate:"required,uuid"`
-	UserID             string  `json:"user_id" validate:"required,uuid"`
-	InitialAmount      float64 `json:"initial_amount" validate:"required,gt=0"`
-	MarketplaceOrderID *string `json:"marketplace_order_id,omitempty"`
-	MaxRounds          int     `json:"max_rounds" validate:"omitempty,gte=1,lte=10"`
+	BuyerAgentID       string                 `json:"buyer_agent_id" validate:"required,uuid"`
+	SellerAgentID      string                 `json:"seller_agent_id" validate:"required,uuid"`
+	UserID             string                 `json:"user_id" validate:"required,uuid"`
+	InitialAmount      float64                `json:"initial_amount" validate:"required,gt=0"`
+	MarketplaceOrderID *string                `json:"marketplace_order_id,omitempty"`
+	MaxRounds          int                    `json:"max_rounds" validate:"omitempty,gte=1,lte=20"`
+	Metadata           map[string]interface{} `json:"metadata,omitempty"`
 }
 
 type CounterOfferRequest struct {
@@ -68,6 +70,13 @@ func (s *BargainingService) CreateNegotiation(ctx context.Context, req *CreateNe
 	sellerAgent, err := s.agentService.GetAgentByID(ctx, req.SellerAgentID)
 	if err != nil {
 		return nil, fmt.Errorf("seller agent not found: %w", err)
+	}
+
+	if NormalizeMarketplaceAgentType(buyerAgent.Type) != "shopping" {
+		return nil, fmt.Errorf("buyer agent must be a shopping agent")
+	}
+	if NormalizeMarketplaceAgentType(sellerAgent.Type) != "merchant" {
+		return nil, fmt.Errorf("seller agent must be a merchant agent")
 	}
 
 	buyerVolatility := s.getAgentVolatility(buyerAgent)
@@ -91,7 +100,7 @@ func (s *BargainingService) CreateNegotiation(ctx context.Context, req *CreateNe
 		Rounds:             0,
 		MaxRounds:          maxRounds,
 		ExpiresAt:          time.Now().Add(24 * time.Hour),
-		Metadata:           s.marshalMetadata(map[string]interface{}{}),
+		Metadata:           s.marshalMetadata(req.Metadata),
 	}
 
 	if err := s.ap2Repo.CreateBargainingNegotiation(ctx, negotiation); err != nil {
@@ -198,7 +207,9 @@ func (s *BargainingService) SubmitCounterOffer(ctx context.Context, negotiationI
 
 		s.log.Info("negotiation accepted", "negotiation_id", negotiationID, "agent_type", agentType, "amount", req.ProposedAmount)
 
-		go s.notifyAgentNegotiationComplete(ctx, negotiation, agent, receiverAgent, "accepted")
+		if !s.skipA2ANotifications(negotiation) {
+			go s.notifyAgentNegotiationComplete(ctx, negotiation, agent, receiverAgent, "accepted")
+		}
 
 		return round, negotiation, nil
 	}
@@ -230,7 +241,9 @@ func (s *BargainingService) SubmitCounterOffer(ctx context.Context, negotiationI
 
 		s.log.Info("negotiation rejected", "negotiation_id", negotiationID, "agent_type", agentType)
 
-		go s.notifyAgentNegotiationComplete(ctx, negotiation, agent, receiverAgent, "rejected")
+		if !s.skipA2ANotifications(negotiation) {
+			go s.notifyAgentNegotiationComplete(ctx, negotiation, agent, receiverAgent, "rejected")
+		}
 
 		return round, negotiation, nil
 	}
@@ -266,7 +279,9 @@ func (s *BargainingService) SubmitCounterOffer(ctx context.Context, negotiationI
 
 		s.log.Info("counteroffer submitted", "negotiation_id", negotiationID, "agent_type", agentType, "amount", req.ProposedAmount, "round", negotiation.Rounds)
 
-		go s.notifyAgentCounterOffer(ctx, negotiation, agent, receiverAgent, round)
+		if !s.skipA2ANotifications(negotiation) {
+			go s.notifyAgentCounterOffer(ctx, negotiation, agent, receiverAgent, round)
+		}
 
 		return round, negotiation, nil
 	}
@@ -441,6 +456,20 @@ func (s *BargainingService) marshalMetadata(metadata map[string]interface{}) str
 		return "{}"
 	}
 	return string(data)
+}
+
+func (s *BargainingService) skipA2ANotifications(negotiation *models.BargainingNegotiation) bool {
+	if negotiation == nil || strings.TrimSpace(negotiation.Metadata) == "" {
+		return false
+	}
+
+	var metadata map[string]interface{}
+	if err := json.Unmarshal([]byte(negotiation.Metadata), &metadata); err != nil {
+		return false
+	}
+
+	value, ok := metadata["procurement_managed_a2a"].(bool)
+	return ok && value
 }
 
 func (s *BargainingService) resolveNegotiationAgents(ctx context.Context, negotiation *models.BargainingNegotiation) (*models.Agent, *models.Agent, error) {

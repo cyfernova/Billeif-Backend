@@ -140,11 +140,10 @@ func (h *AgentConfigHandler) UpdateAgentConfig(c *gin.Context) {
 				return
 			}
 
-			var defaultConfig *models.AgentConfig
-			if agent.Type == "buyer" {
-				defaultConfig = h.configService.CreateDefaultBuyerConfig()
-			} else {
-				defaultConfig = h.configService.CreateDefaultSellerConfig()
+			defaultConfig, defaultErr := h.configService.CreateDefaultConfigForAgentType(agent.Type)
+			if defaultErr != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": defaultErr.Error()})
+				return
 			}
 
 			config, err = h.configService.SaveAgentConfig(c.Request.Context(), agent, defaultConfig)
@@ -295,7 +294,7 @@ func (h *AgentConfigHandler) GetAllAgentConfigs(c *gin.Context) {
 
 type CreateDefaultConfigRequest struct {
 	AgentID string `json:"agent_id" validate:"required,uuid"`
-	Type    string `json:"type" validate:"required,oneof=buyer seller"`
+	Type    string `json:"type" validate:"required,oneof=buyer seller shopping merchant"`
 }
 
 // CreateDefaultConfig creates a default agent configuration
@@ -324,11 +323,10 @@ func (h *AgentConfigHandler) CreateDefaultConfig(c *gin.Context) {
 		return
 	}
 
-	var defaultConfig *models.AgentConfig
-	if req.Type == "buyer" {
-		defaultConfig = h.configService.CreateDefaultBuyerConfig()
-	} else {
-		defaultConfig = h.configService.CreateDefaultSellerConfig()
+	defaultConfig, err := h.configService.CreateDefaultConfigForAgentType(req.Type)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
 	config, err := h.configService.SaveAgentConfig(c.Request.Context(), agent, defaultConfig)

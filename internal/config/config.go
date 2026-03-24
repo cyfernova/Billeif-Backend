@@ -76,10 +76,11 @@ type RedisConfig struct {
 }
 
 type AWSConfig struct {
-	Region    string `mapstructure:"REGION"`
-	AccessKey string `mapstructure:"ACCESS_KEY_ID"`
-	SecretKey string `mapstructure:"SECRET_ACCESS_KEY"`
-	Endpoint  string `mapstructure:"ENDPOINT"`
+	Region       string `mapstructure:"REGION"`
+	AccessKey    string `mapstructure:"ACCESS_KEY_ID"`
+	SecretKey    string `mapstructure:"SECRET_ACCESS_KEY"`
+	SessionToken string `mapstructure:"SESSION_TOKEN"`
+	Endpoint     string `mapstructure:"ENDPOINT"`
 }
 
 type SSMConfig struct {
@@ -181,6 +182,7 @@ func Load() (*Config, error) {
 	_ = viper.BindEnv("AWS.REGION", "AWS_REGION")
 	_ = viper.BindEnv("AWS.ACCESS_KEY_ID", "AWS_ACCESS_KEY_ID")
 	_ = viper.BindEnv("AWS.SECRET_ACCESS_KEY", "AWS_SECRET_ACCESS_KEY")
+	_ = viper.BindEnv("AWS.SESSION_TOKEN", "AWS_SESSION_TOKEN")
 	_ = viper.BindEnv("AWS.ENDPOINT", "AWS_ENDPOINT")
 	_ = viper.BindEnv("SSM.DATABASE_HOST_PARAM", "DATABASE_HOST_SSM_PARAM")
 	_ = viper.BindEnv("SSM.DATABASE_USER_PARAM", "DATABASE_USER_SSM_PARAM")

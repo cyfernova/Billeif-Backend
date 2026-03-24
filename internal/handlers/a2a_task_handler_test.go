@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -279,5 +280,49 @@ func TestA2AHandlerMessageStream(t *testing.T) {
 	}
 	if !strings.Contains(body, "event: status-update") {
 		t.Fatalf("expected status-update SSE event, got %q", body)
+	}
+}
+
+func TestA2AHandlerSubscribeStreamSupportsSlashPath(t *testing.T) {
+	router, taskService, _ := newA2ATestRouter(t)
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	var sendReq a2a.SendMessageRequest
+	if err := json.Unmarshal(newValidSendMessageBody(t), &sendReq); err != nil {
+		t.Fatalf("decode send message request: %v", err)
+	}
+
+	sendResp, err := taskService.SendMessage(context.Background(), &sendReq, "user-1", "biz-1")
+	if err != nil {
+		t.Fatalf("send message: %v", err)
+	}
+
+	req, err := http.NewRequest(http.MethodGet, server.URL+"/api/v1/a2a/tasks/"+sendResp.Task.ID+"/subscribe", nil)
+	if err != nil {
+		t.Fatalf("build subscribe request: %v", err)
+	}
+	req.Header.Set(a2a.HeaderVersion, a2a.SupportedVersion)
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("send subscribe request: %v", err)
+	}
+	defer res.Body.Close()
+
+	bodyBytes, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("read subscribe response body: %v", err)
+	}
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 from subscribe stream, got %d: %s", res.StatusCode, string(bodyBytes))
+	}
+	body := string(bodyBytes)
+	if !strings.Contains(body, "event: error") {
+		t.Fatalf("expected subscribe SSE error event, got %q", body)
+	}
+	if !strings.Contains(body, "Subscription Failed") {
+		t.Fatalf("expected subscribe handler error payload, got %q", body)
 	}
 }

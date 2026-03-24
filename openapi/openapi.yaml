@@ -162,7 +162,7 @@ paths:
               schema:
                 type: object
 
-  /api/v1/a2a/tasks/{taskId}:subscribe:
+  /api/v1/a2a/tasks/{taskId}/subscribe:
     get:
       tags: [A2A]
       summary: Subscribe to A2A task updates
