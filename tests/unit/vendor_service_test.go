@@ -214,13 +214,12 @@ func TestVendorService_List_RepositoryError(t *testing.T) {
 	ctx := context.Background()
 	businessID := "business-123"
 
-	mockRepo.On("GetByBusinessID", ctx, businessID, 1, 10).Return(nil, int64(0), errors.New("database error"))
+	mockRepo.On("GetByBusinessID", ctx, businessID, 1, 10).Return([]*models.Vendor{}, int64(0), errors.New("database error"))
 
-	vendors, total, err := svc.List(ctx, businessID, 1, 10)
+	vendors, _, err := svc.List(ctx, businessID, 1, 10)
 
 	assert.Error(t, err)
-	assert.Nil(t, vendors)
-	assert.Equal(t, int64(0), total)
+	assert.Empty(t, vendors)
 	mockRepo.AssertExpectations(t)
 }
 

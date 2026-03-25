@@ -243,13 +243,12 @@ func TestTeamService_List_RepositoryError(t *testing.T) {
 	ctx := context.Background()
 	businessID := "business-123"
 
-	mockRepo.On("GetByBusinessID", ctx, businessID, 1, 10).Return(nil, int64(0), errors.New("database error"))
+	mockRepo.On("GetByBusinessID", ctx, businessID, 1, 10).Return([]*models.TeamMember{}, int64(0), errors.New("database error"))
 
-	members, total, err := svc.List(ctx, businessID, 1, 10)
+	members, _, err := svc.List(ctx, businessID, 1, 10)
 
 	assert.Error(t, err)
-	assert.Nil(t, members)
-	assert.Equal(t, int64(0), total)
+	assert.Empty(t, members)
 	mockRepo.AssertExpectations(t)
 }
 

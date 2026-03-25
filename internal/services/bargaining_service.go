@@ -1210,7 +1210,13 @@ func calculateFallbackCounterOfferInternal(negotiation *models.BargainingNegotia
 	minDiscount := volatility * 0.02
 
 	discountFactor := minDiscount + (maxDiscount-minDiscount)*0.5
-	suggestedAmount := currentAmount * (1 - discountFactor)
+
+	var suggestedAmount float64
+	if agentType == "buyer" {
+		suggestedAmount = currentAmount * (1 - discountFactor)
+	} else {
+		suggestedAmount = currentAmount * (1 + discountFactor)
+	}
 
 	return math.Round(suggestedAmount*100) / 100
 }

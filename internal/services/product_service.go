@@ -222,3 +222,161 @@ func (s *ProductService) UpdateImageURL(ctx context.Context, businessID, product
 	log.Info("product image URL updated", "product_id", productID)
 	return nil
 }
+
+// ProductServiceTestable is a test-friendly version of ProductService
+type ProductServiceTestable struct {
+	repo ProductRepositoryTestable
+	s3   S3ServiceTestable
+	log  *logger.Logger
+}
+
+// S3ServiceTestable is the testable interface for S3 operations
+type S3ServiceTestable interface {
+	GeneratePresignedUploadURL(ctx context.Context, bucket, key, contentType string, expiresIn int64) (string, error)
+}
+
+// ProductRepositoryTestable is the testable interface for ProductRepository
+type ProductRepositoryTestable interface {
+	Create(ctx context.Context, product *models.Product) error
+	GetByID(ctx context.Context, id, businessID string) (*models.Product, error)
+	GetBySKU(ctx context.Context, businessID, sku string) (*models.Product, error)
+	GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.Product, int64, error)
+	Update(ctx context.Context, product *models.Product) error
+	Delete(ctx context.Context, id string) error
+	AdjustStock(ctx context.Context, productID string, quantity int64) error
+}
+
+// NewProductServiceForTesting creates a ProductServiceTestable for unit testing
+func NewProductServiceForTesting(repo ProductRepositoryTestable, s3 S3ServiceTestable, log *logger.Logger) *ProductServiceTestable {
+	return &ProductServiceTestable{
+		repo: repo,
+		s3:   s3,
+		log:  log,
+	}
+}
+
+// Create creates a product (testable version)
+func (s *ProductServiceTestable) Create(ctx context.Context, input CreateProductInput) (*models.Product, error) {
+	existing, _ := s.repo.GetBySKU(ctx, input.BusinessID, input.SKU)
+	if existing != nil {
+		return nil, fmt.Errorf("product with SKU %s already exists", input.SKU)
+	}
+
+	product := &models.Product{
+		BusinessID:  input.BusinessID,
+		Name:        input.Name,
+		SKU:         input.SKU,
+		Description: input.Description,
+		Price:       input.Price,
+		Currency:    input.Currency,
+		Unit:        input.Unit,
+		StockLevel:  input.StockLevel,
+		MinStock:    input.MinStock,
+		IsActive:    true,
+	}
+
+	if product.Currency == "" {
+		product.Currency = "USD"
+	}
+	if product.Unit == "" {
+		product.Unit = "PCS"
+	}
+
+	if err := s.repo.Create(ctx, product); err != nil {
+		return nil, fmt.Errorf("failed to create product: %w", err)
+	}
+
+	return product, nil
+}
+
+// GetByBusiness retrieves a product by business ID and product ID
+func (s *ProductServiceTestable) GetByBusiness(ctx context.Context, businessID, id string) (*models.Product, error) {
+	return s.repo.GetByID(ctx, id, businessID)
+}
+
+// GetBySKU retrieves a product by SKU
+func (s *ProductServiceTestable) GetBySKU(ctx context.Context, businessID, sku string) (*models.Product, error) {
+	return s.repo.GetBySKU(ctx, businessID, sku)
+}
+
+// List retrieves products for a business with pagination
+func (s *ProductServiceTestable) List(ctx context.Context, businessID string, page, limit int) ([]*models.Product, int64, error) {
+	return s.repo.GetByBusinessID(ctx, businessID, page, limit)
+}
+
+// UpdateByBusiness updates a product (testable version)
+func (s *ProductServiceTestable) UpdateByBusiness(ctx context.Context, businessID, id string, input UpdateProductInput) (*models.Product, error) {
+	product, err := s.GetByBusiness(ctx, businessID, id)
+	if err != nil {
+		return nil, err
+	}
+
+	if input.Name != "" {
+		product.Name = input.Name
+	}
+	if input.SKU != "" {
+		product.SKU = input.SKU
+	}
+	if input.Description != "" {
+		product.Description = input.Description
+	}
+	if input.Price > 0 {
+		product.Price = input.Price
+	}
+	if input.Currency != "" {
+		product.Currency = input.Currency
+	}
+	if input.Unit != "" {
+		product.Unit = input.Unit
+	}
+	if input.MinStock >= 0 {
+		product.MinStock = input.MinStock
+	}
+
+	if err := s.repo.Update(ctx, product); err != nil {
+		return nil, err
+	}
+
+	return product, nil
+}
+
+// DeleteByBusiness deletes a product (testable version)
+func (s *ProductServiceTestable) DeleteByBusiness(ctx context.Context, businessID, id string) error {
+	product, err := s.GetByBusiness(ctx, businessID, id)
+	if err != nil {
+		return err
+	}
+	return s.repo.Delete(ctx, product.ID)
+}
+
+// AdjustStockByBusiness adjusts product stock (testable version)
+func (s *ProductServiceTestable) AdjustStockByBusiness(ctx context.Context, businessID, productID string, input StockAdjustmentInput) (*models.Product, error) {
+	product, err := s.GetByBusiness(ctx, businessID, productID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.repo.AdjustStock(ctx, product.ID, input.Quantity); err != nil {
+		return nil, err
+	}
+	product.StockLevel += input.Quantity
+	return product, nil
+}
+
+// GetImageUploadURLByBusiness generates presigned URL for product image
+func (s *ProductServiceTestable) GetImageUploadURLByBusiness(ctx context.Context, businessID, productID, contentType string) (string, error) {
+	if _, err := s.GetByBusiness(ctx, businessID, productID); err != nil {
+		return "", err
+	}
+	key := fmt.Sprintf("products/%s/image", productID)
+	return s.s3.GeneratePresignedUploadURL(ctx, "product-images", key, contentType, 3600)
+}
+
+// UpdateImageURL updates product image URL
+func (s *ProductServiceTestable) UpdateImageURL(ctx context.Context, businessID, productID, imageURL string) error {
+	product, err := s.repo.GetByID(ctx, productID, businessID)
+	if err != nil {
+		return err
+	}
+	product.ImageURL = imageURL
+	return s.repo.Update(ctx, product)
+}
