@@ -79,8 +79,8 @@ func (s *BargainingService) CreateNegotiation(ctx context.Context, req *CreateNe
 		return nil, fmt.Errorf("seller agent must be a merchant agent")
 	}
 
-	buyerVolatility := s.getAgentVolatility(buyerAgent)
-	sellerVolatility := s.getAgentVolatility(sellerAgent)
+	buyerVolatility := getAgentVolatilityInternal(buyerAgent)
+	sellerVolatility := getAgentVolatilityInternal(sellerAgent)
 
 	maxRounds := req.MaxRounds
 	if maxRounds == 0 {
@@ -842,4 +842,383 @@ func safeAgentName(agent *models.Agent) string {
 		return "Unknown"
 	}
 	return agent.Name
+}
+
+// AgentServiceInterface defines the AgentService methods used by BargainingService
+type AgentServiceInterface interface {
+	GetAgentByID(ctx context.Context, id string) (*models.Agent, error)
+}
+
+// MenteeServiceInterface defines the MenteeService methods used by BargainingService
+type MenteeServiceInterface interface {
+	GetBargainingDecision(ctx context.Context, agentID string, agentType string, currentAmount float64, initialAmount float64, round int, maxRounds int, opponentID string) (*BargainingDecision, error)
+	RecordNegotiationOutcome(ctx context.Context, outcome *NegotiationOutcome) error
+}
+
+// AP2RepositoryBargainingInterface defines the AP2Repository methods used by BargainingService for bargaining
+type AP2RepositoryBargainingInterface interface {
+	CreateBargainingNegotiation(ctx context.Context, negotiation *models.BargainingNegotiation) error
+	GetBargainingNegotiationByID(ctx context.Context, id string) (*models.BargainingNegotiation, error)
+	GetNegotiationsByUser(ctx context.Context, userID string, page, limit int) ([]*models.BargainingNegotiation, int64, error)
+	UpdateNegotiationStatus(ctx context.Context, id, status string) error
+	UpdateNegotiationAmountAndRounds(ctx context.Context, id string, amount float64, rounds int, status string) error
+	CompleteNegotiation(ctx context.Context, id, status string, finalAmount float64, completedAt *time.Time) error
+	CreateBargainingRound(ctx context.Context, round *models.BargainingRound) error
+	GetBargainingRounds(ctx context.Context, negotiationID string) ([]*models.BargainingRound, error)
+}
+
+// BargainingServiceTestable is a test-friendly version of BargainingService
+type BargainingServiceTestable struct {
+	ap2Repo      AP2RepositoryBargainingInterface
+	a2aClient    *a2a.A2AClient
+	agentService AgentServiceInterface
+	mentee       MenteeServiceInterface
+	llm          *LLMService
+	log          *logger.Logger
+}
+
+// NewBargainingServiceForTesting creates a BargainingService with mockable dependencies for testing
+func NewBargainingServiceForTesting(
+	ap2Repo AP2RepositoryBargainingInterface,
+	a2aClient *a2a.A2AClient,
+	agentService AgentServiceInterface,
+	mentee MenteeServiceInterface,
+	llm *LLMService,
+	log *logger.Logger,
+) *BargainingServiceTestable {
+	return &BargainingServiceTestable{
+		ap2Repo:      ap2Repo,
+		a2aClient:    a2aClient,
+		agentService: agentService,
+		mentee:       mentee,
+		llm:          llm,
+		log:          log,
+	}
+}
+
+// CreateNegotiation creates a new bargaining negotiation
+func (s *BargainingServiceTestable) CreateNegotiation(ctx context.Context, req *CreateNegotiationRequest) (*models.BargainingNegotiation, error) {
+	buyerAgent, err := s.agentService.GetAgentByID(ctx, req.BuyerAgentID)
+	if err != nil {
+		return nil, fmt.Errorf("buyer agent not found: %w", err)
+	}
+
+	sellerAgent, err := s.agentService.GetAgentByID(ctx, req.SellerAgentID)
+	if err != nil {
+		return nil, fmt.Errorf("seller agent not found: %w", err)
+	}
+
+	if NormalizeMarketplaceAgentType(buyerAgent.Type) != "shopping" {
+		return nil, fmt.Errorf("buyer agent must be a shopping agent")
+	}
+	if NormalizeMarketplaceAgentType(sellerAgent.Type) != "merchant" {
+		return nil, fmt.Errorf("seller agent must be a merchant agent")
+	}
+
+	buyerVolatility := getAgentVolatilityInternal(buyerAgent)
+	sellerVolatility := getAgentVolatilityInternal(sellerAgent)
+
+	maxRounds := req.MaxRounds
+	if maxRounds == 0 {
+		maxRounds = 5
+	}
+
+	negotiation := &models.BargainingNegotiation{
+		BuyerAgentID:       req.BuyerAgentID,
+		SellerAgentID:      req.SellerAgentID,
+		UserID:             req.UserID,
+		MarketplaceOrderID: req.MarketplaceOrderID,
+		InitialAmount:      req.InitialAmount,
+		CurrentAmount:      req.InitialAmount,
+		BuyerVolatility:    buyerVolatility,
+		SellerVolatility:   sellerVolatility,
+		Status:             "initiated",
+		Rounds:             0,
+		MaxRounds:          maxRounds,
+		ExpiresAt:          time.Now().Add(24 * time.Hour),
+		Metadata:           s.marshalMetadata(req.Metadata),
+	}
+
+	if err := s.ap2Repo.CreateBargainingNegotiation(ctx, negotiation); err != nil {
+		return nil, fmt.Errorf("failed to create negotiation: %w", err)
+	}
+
+	return negotiation, nil
+}
+
+// GetNegotiation retrieves a negotiation by ID
+func (s *BargainingServiceTestable) GetNegotiation(ctx context.Context, negotiationID string) (*models.BargainingNegotiation, error) {
+	negotiation, err := s.ap2Repo.GetBargainingNegotiationByID(ctx, negotiationID)
+	if err != nil {
+		return nil, ErrNegotiationNotFound
+	}
+
+	if negotiation.ExpiresAt.Before(time.Now()) {
+		if negotiation.Status != "completed" && negotiation.Status != "accepted" && negotiation.Status != "rejected" {
+			if err := s.ap2Repo.UpdateNegotiationStatus(ctx, negotiationID, "expired"); err == nil {
+				negotiation.Status = "expired"
+			}
+			return negotiation, ErrNegotiationExpired
+		}
+	}
+
+	return negotiation, nil
+}
+
+// GetNegotiationsByUser retrieves negotiations for a user
+func (s *BargainingServiceTestable) GetNegotiationsByUser(ctx context.Context, userID string, page, limit int) ([]*models.BargainingNegotiation, int64, error) {
+	return s.ap2Repo.GetNegotiationsByUser(ctx, userID, page, limit)
+}
+
+// GetNegotiationRounds retrieves rounds for a negotiation
+func (s *BargainingServiceTestable) GetNegotiationRounds(ctx context.Context, negotiationID string) ([]*models.BargainingRound, error) {
+	return s.ap2Repo.GetBargainingRounds(ctx, negotiationID)
+}
+
+// SubmitCounterOffer submits a counteroffer
+func (s *BargainingServiceTestable) SubmitCounterOffer(ctx context.Context, negotiationID string, req *CounterOfferRequest) (*models.BargainingRound, *models.BargainingNegotiation, error) {
+	negotiation, err := s.GetNegotiation(ctx, negotiationID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if negotiation.Status == "expired" {
+		return nil, nil, ErrNegotiationExpired
+	}
+
+	if negotiation.Status == "accepted" || negotiation.Status == "rejected" {
+		return nil, nil, errors.New("negotiation already completed")
+	}
+
+	if negotiation.Rounds >= negotiation.MaxRounds {
+		if err := s.ap2Repo.UpdateNegotiationStatus(ctx, negotiationID, "expired"); err == nil {
+			negotiation.Status = "expired"
+		}
+		return nil, nil, ErrMaxRoundsExceeded
+	}
+
+	buyerAgent := negotiation.BuyerAgent
+	if buyerAgent == nil || buyerAgent.ID == "" {
+		buyerAgent, err = s.agentService.GetAgentByID(ctx, negotiation.BuyerAgentID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("buyer agent not found: %w", err)
+		}
+	}
+
+	sellerAgent := negotiation.SellerAgent
+	if sellerAgent == nil || sellerAgent.ID == "" {
+		sellerAgent, err = s.agentService.GetAgentByID(ctx, negotiation.SellerAgentID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("seller agent not found: %w", err)
+		}
+	}
+
+	var agentType string
+	var volatility float64
+
+	if req.AgentID == negotiation.BuyerAgentID {
+		agentType = "buyer"
+		volatility = negotiation.BuyerVolatility
+	} else if req.AgentID == negotiation.SellerAgentID {
+		agentType = "seller"
+		volatility = negotiation.SellerVolatility
+	} else {
+		return nil, nil, errors.New("agent is not part of this negotiation")
+	}
+
+	if req.Action == "accept" {
+		round := &models.BargainingRound{
+			NegotiationID:    negotiationID,
+			AgentID:        req.AgentID,
+			RoundNumber:    negotiation.Rounds + 1,
+			ProposedAmount: negotiation.CurrentAmount,
+			PreviousAmount: negotiation.CurrentAmount,
+			AgentType:      agentType,
+			Action:         "accept",
+			VolatilityFactor: 0,
+			Metadata:       s.marshalMetadata(map[string]interface{}{}),
+		}
+
+		if err := s.ap2Repo.CreateBargainingRound(ctx, round); err != nil {
+			return nil, nil, fmt.Errorf("failed to create round: %w", err)
+		}
+
+		now := time.Now()
+		if err := s.ap2Repo.CompleteNegotiation(ctx, negotiationID, "accepted", req.ProposedAmount, &now); err != nil {
+			return nil, nil, fmt.Errorf("failed to complete negotiation: %w", err)
+		}
+
+		negotiation.Status = "accepted"
+		negotiation.CurrentAmount = req.ProposedAmount
+		negotiation.Rounds++
+		negotiation.CompletedAt = &now
+
+		return round, negotiation, nil
+	}
+
+	if req.Action == "reject" {
+		round := &models.BargainingRound{
+			NegotiationID:    negotiationID,
+			AgentID:        req.AgentID,
+			RoundNumber:    negotiation.Rounds + 1,
+			ProposedAmount: req.ProposedAmount,
+			PreviousAmount: negotiation.CurrentAmount,
+			AgentType:      agentType,
+			Action:         "reject",
+			Reason:         req.Reason,
+			VolatilityFactor: 0,
+			Metadata:       s.marshalMetadata(map[string]interface{}{}),
+		}
+
+		if err := s.ap2Repo.CreateBargainingRound(ctx, round); err != nil {
+			return nil, nil, fmt.Errorf("failed to create round: %w", err)
+		}
+
+		if err := s.ap2Repo.UpdateNegotiationStatus(ctx, negotiationID, "rejected"); err != nil {
+			return nil, nil, fmt.Errorf("failed to update negotiation: %w", err)
+		}
+
+		negotiation.Status = "rejected"
+		negotiation.Rounds++
+
+		return round, negotiation, nil
+	}
+
+	if req.Action == "counteroffer" {
+		if !isValidCounterOfferInternal(negotiation, agentType, req.ProposedAmount) {
+			return nil, nil, ErrInvalidAmount
+		}
+
+		round := &models.BargainingRound{
+			NegotiationID:    negotiationID,
+			AgentID:        req.AgentID,
+			RoundNumber:    negotiation.Rounds + 1,
+			ProposedAmount: req.ProposedAmount,
+			PreviousAmount: negotiation.CurrentAmount,
+			AgentType:      agentType,
+			Action:         "counteroffer",
+			Reason:         req.Reason,
+			VolatilityFactor: calculateVolatilityFactorInternal(volatility, negotiation.Rounds, negotiation.InitialAmount, req.ProposedAmount),
+			Metadata:       s.marshalMetadata(map[string]interface{}{}),
+		}
+
+		if err := s.ap2Repo.CreateBargainingRound(ctx, round); err != nil {
+			return nil, nil, fmt.Errorf("failed to create round: %w", err)
+		}
+
+		if err := s.ap2Repo.UpdateNegotiationAmountAndRounds(ctx, negotiationID, req.ProposedAmount, negotiation.Rounds+1, "in_progress"); err != nil {
+			return nil, nil, fmt.Errorf("failed to update negotiation: %w", err)
+		}
+
+		negotiation.CurrentAmount = req.ProposedAmount
+		negotiation.Rounds++
+
+		return round, negotiation, nil
+	}
+
+	return nil, nil, errors.New("invalid action")
+}
+
+// IsValidCounterOffer validates a counteroffer amount
+func (s *BargainingServiceTestable) IsValidCounterOffer(negotiation *models.BargainingNegotiation, agentType string, proposedAmount float64) bool {
+	return isValidCounterOfferInternal(negotiation, agentType, proposedAmount)
+}
+
+// CalculateVolatilityFactor calculates volatility factor
+func (s *BargainingServiceTestable) CalculateVolatilityFactor(volatility float64, rounds int, initialAmount, currentAmount float64) float64 {
+	return calculateVolatilityFactorInternal(volatility, rounds, initialAmount, currentAmount)
+}
+
+// CalculateFallbackCounterOffer calculates a fallback counteroffer
+func (s *BargainingServiceTestable) CalculateFallbackCounterOffer(negotiation *models.BargainingNegotiation, agentType string) float64 {
+	return calculateFallbackCounterOfferInternal(negotiation, agentType)
+}
+
+// GetAgentVolatility gets volatility from agent config
+func (s *BargainingServiceTestable) GetAgentVolatility(agent *models.Agent) float64 {
+	return getAgentVolatilityInternal(agent)
+}
+
+// Helper functions (package-private for testing)
+
+func getAgentVolatilityInternal(agent *models.Agent) float64 {
+	if agent == nil || agent.Config == "" {
+		return 0.5
+	}
+
+	var config map[string]interface{}
+	if err := json.Unmarshal([]byte(agent.Config), &config); err != nil {
+		return 0.5
+	}
+
+	if volatility, ok := config["volatility"].(float64); ok {
+		if volatility >= 0 && volatility <= 1 {
+			return volatility
+		}
+	}
+
+	return 0.5
+}
+
+func isValidCounterOfferInternal(negotiation *models.BargainingNegotiation, agentType string, proposedAmount float64) bool {
+	if proposedAmount <= 0 {
+		return false
+	}
+
+	if agentType == "buyer" {
+		if proposedAmount > negotiation.CurrentAmount {
+			return false
+		}
+		if proposedAmount < negotiation.InitialAmount*0.3 {
+			return false
+		}
+	} else {
+		if proposedAmount < negotiation.CurrentAmount {
+			return false
+		}
+		if proposedAmount > negotiation.InitialAmount*1.5 {
+			return false
+		}
+	}
+
+	return true
+}
+
+func calculateVolatilityFactorInternal(volatility float64, rounds int, initialAmount, currentAmount float64) float64 {
+	changePercent := math.Abs((currentAmount - initialAmount) / initialAmount * 100)
+	volatilityEffect := volatility * (changePercent / 100)
+	roundDecay := 1.0 / math.Pow(1.2, float64(rounds))
+
+	factor := volatilityEffect * roundDecay
+
+	return math.Round(factor*10000) / 10000
+}
+
+func calculateFallbackCounterOfferInternal(negotiation *models.BargainingNegotiation, agentType string) float64 {
+	var volatility float64
+	var currentAmount float64
+
+	if agentType == "buyer" {
+		volatility = negotiation.BuyerVolatility
+		currentAmount = negotiation.CurrentAmount
+	} else {
+		volatility = negotiation.SellerVolatility
+		currentAmount = negotiation.CurrentAmount
+	}
+
+	maxDiscount := volatility * 0.15
+	minDiscount := volatility * 0.02
+
+	discountFactor := minDiscount + (maxDiscount-minDiscount)*0.5
+	suggestedAmount := currentAmount * (1 - discountFactor)
+
+	return math.Round(suggestedAmount*100) / 100
+}
+
+func (s *BargainingServiceTestable) marshalMetadata(metadata map[string]interface{}) string {
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		return "{}"
+	}
+	return string(data)
 }
