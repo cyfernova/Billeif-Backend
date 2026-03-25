@@ -1,0 +1,898 @@
+package unit
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"invoice-backend/internal/models"
+	"invoice-backend/internal/services"
+	"invoice-backend/pkg/logger"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+)
+
+// MockInvoiceRepository mocks the InvoiceRepository interface
+type MockInvoiceRepository struct {
+	mock.Mock
+}
+
+func (m *MockInvoiceRepository) Create(ctx context.Context, invoice *models.Invoice) error {
+	args := m.Called(ctx, invoice)
+	return args.Error(0)
+}
+
+func (m *MockInvoiceRepository) GetByID(ctx context.Context, id, businessID string) (*models.Invoice, error) {
+	args := m.Called(ctx, id, businessID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Invoice), args.Error(1)
+}
+
+func (m *MockInvoiceRepository) GetByIDInternal(ctx context.Context, id string) (*models.Invoice, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Invoice), args.Error(1)
+}
+
+func (m *MockInvoiceRepository) GetByInvoiceNo(ctx context.Context, businessID, invoiceNo string) (*models.Invoice, error) {
+	args := m.Called(ctx, businessID, invoiceNo)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Invoice), args.Error(1)
+}
+
+func (m *MockInvoiceRepository) GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.Invoice, int64, error) {
+	args := m.Called(ctx, businessID, page, limit)
+	return args.Get(0).([]*models.Invoice), args.Get(1).(int64), args.Error(2)
+}
+
+func (m *MockInvoiceRepository) GetItems(ctx context.Context, invoiceID string) ([]*models.InvoiceItem, error) {
+	args := m.Called(ctx, invoiceID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.InvoiceItem), args.Error(1)
+}
+
+func (m *MockInvoiceRepository) Update(ctx context.Context, invoice *models.Invoice) error {
+	args := m.Called(ctx, invoice)
+	return args.Error(0)
+}
+
+func (m *MockInvoiceRepository) UpdateStatus(ctx context.Context, invoiceID string, status string) error {
+	args := m.Called(ctx, invoiceID, status)
+	return args.Error(0)
+}
+
+func (m *MockInvoiceRepository) UpdatePDFURL(ctx context.Context, invoiceID, pdfURL string) error {
+	args := m.Called(ctx, invoiceID, pdfURL)
+	return args.Error(0)
+}
+
+func (m *MockInvoiceRepository) Delete(ctx context.Context, id string) error {
+	args := m.Called(ctx, id)
+	return args.Error(0)
+}
+
+// MockCustomerRepository mocks the CustomerRepository interface
+type MockCustomerRepository struct {
+	mock.Mock
+}
+
+func (m *MockCustomerRepository) Create(ctx context.Context, customer *models.Customer) error {
+	args := m.Called(ctx, customer)
+	return args.Error(0)
+}
+
+func (m *MockCustomerRepository) GetByID(ctx context.Context, id, businessID string) (*models.Customer, error) {
+	args := m.Called(ctx, id, businessID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Customer), args.Error(1)
+}
+
+func (m *MockCustomerRepository) GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.Customer, int64, error) {
+	args := m.Called(ctx, businessID, page, limit)
+	return args.Get(0).([]*models.Customer), args.Get(1).(int64), args.Error(2)
+}
+
+func (m *MockCustomerRepository) Update(ctx context.Context, customer *models.Customer) error {
+	args := m.Called(ctx, customer)
+	return args.Error(0)
+}
+
+func (m *MockCustomerRepository) Delete(ctx context.Context, id string) error {
+	args := m.Called(ctx, id)
+	return args.Error(0)
+}
+
+// MockProductRepository mocks the ProductRepository interface
+type MockProductRepository struct {
+	mock.Mock
+}
+
+func (m *MockProductRepository) Create(ctx context.Context, product *models.Product) error {
+	args := m.Called(ctx, product)
+	return args.Error(0)
+}
+
+func (m *MockProductRepository) GetByID(ctx context.Context, id, businessID string) (*models.Product, error) {
+	args := m.Called(ctx, id, businessID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Product), args.Error(1)
+}
+
+func (m *MockProductRepository) GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.Product, int64, error) {
+	args := m.Called(ctx, businessID, page, limit)
+	return args.Get(0).([]*models.Product), args.Get(1).(int64), args.Error(2)
+}
+
+func (m *MockProductRepository) GetBySKU(ctx context.Context, businessID, sku string) (*models.Product, error) {
+	args := m.Called(ctx, businessID, sku)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Product), args.Error(1)
+}
+
+func (m *MockProductRepository) Update(ctx context.Context, product *models.Product) error {
+	args := m.Called(ctx, product)
+	return args.Error(0)
+}
+
+func (m *MockProductRepository) Delete(ctx context.Context, id string) error {
+	args := m.Called(ctx, id)
+	return args.Error(0)
+}
+
+func (m *MockProductRepository) AdjustStock(ctx context.Context, productID string, quantity int64) error {
+	args := m.Called(ctx, productID, quantity)
+	return args.Error(0)
+}
+
+// MockSQSService mocks the SQS service
+type MockSQSService struct {
+	mock.Mock
+}
+
+func (m *MockSQSService) SendMessage(ctx context.Context, queueUrl string, message interface{}) error {
+	args := m.Called(ctx, queueUrl, message)
+	return args.Error(0)
+}
+
+// MockEmailService mocks the Email service
+type MockEmailService struct {
+	mock.Mock
+}
+
+func (m *MockEmailService) SendEmail(ctx context.Context, to, subject, body string) error {
+	args := m.Called(ctx, to, subject, body)
+	return args.Error(0)
+}
+
+// TestCreateInvoice_Success tests successful invoice creation
+func TestInvoiceService_Create_Success(t *testing.T) {
+	mockRepo := new(MockInvoiceRepository)
+	mockCustomer := new(MockCustomerRepository)
+	mockProduct := new(MockProductRepository)
+	mockSQS := new(MockSQSService)
+	mockEmail := new(MockEmailService)
+	log := logger.New()
+
+	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+
+	ctx := context.Background()
+	businessID := "business-123"
+	customerID := "customer-456"
+	dueDate := time.Now().Add(24 * time.Hour)
+
+	customer := &models.Customer{
+		ID:         customerID,
+		BusinessID: businessID,
+		Name:       "Test Customer",
+		Email:      "customer@example.com",
+	}
+
+	mockCustomer.On("GetByID", ctx, customerID, businessID).Return(customer, nil)
+	mockRepo.On("Create", ctx, mock.AnythingOfType("*models.Invoice")).Return(nil)
+	mockSQS.On("SendMessage", ctx, "invoice-queue", mock.AnythingOfType("map[string]string")).Return(nil)
+
+	input := services.CreateInvoiceInput{
+		BusinessID: businessID,
+		CustomerID: customerID,
+		DueDate:    dueDate,
+		Notes:      "Test invoice",
+		Items: []services.CreateInvoiceItemInput{
+			{
+				Description: "Product A",
+				Quantity:    2,
+				UnitPrice:   100.00,
+				TaxRate:     10,
+			},
+		},
+	}
+
+	invoice, err := svc.Create(ctx, input)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, invoice)
+	assert.Equal(t, businessID, invoice.BusinessID)
+	assert.Equal(t, customerID, invoice.CustomerID)
+	assert.Equal(t, "draft", invoice.Status)
+	assert.Equal(t, 200.00, invoice.Subtotal)     // 2 * 100
+	assert.Equal(t, 20.00, invoice.Tax)          // 200 * 10%
+	assert.Equal(t, 220.00, invoice.Total)        // 200 + 20
+	assert.Equal(t, 220.00, invoice.BalanceDue)
+	assert.Equal(t, "USD", invoice.Currency)
+	assert.Len(t, invoice.Items, 1)
+
+	mockCustomer.AssertExpectations(t)
+	mockRepo.AssertExpectations(t)
+	mockSQS.AssertExpectations(t)
+}
+
+// TestCreateInvoice_CustomerNotFound tests invoice creation when customer is not found
+func TestInvoiceService_Create_CustomerNotFound(t *testing.T) {
+	mockRepo := new(MockInvoiceRepository)
+	mockCustomer := new(MockCustomerRepository)
+	mockProduct := new(MockProductRepository)
+	mockSQS := new(MockSQSService)
+	mockEmail := new(MockEmailService)
+	log := logger.New()
+
+	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+
+	ctx := context.Background()
+	businessID := "business-123"
+	customerID := "nonexistent-customer"
+
+	mockCustomer.On("GetByID", ctx, customerID, businessID).Return(nil, errors.New("customer not found"))
+
+	input := services.CreateInvoiceInput{
+		BusinessID: businessID,
+		CustomerID: customerID,
+		DueDate:    time.Now().Add(24 * time.Hour),
+		Items: []services.CreateInvoiceItemInput{
+			{
+				Description: "Product A",
+				Quantity:    1,
+				UnitPrice:   100.00,
+				TaxRate:     0,
+			},
+		},
+	}
+
+	invoice, err := svc.Create(ctx, input)
+
+	assert.Error(t, err)
+	assert.Nil(t, invoice)
+	assert.Contains(t, err.Error(), "customer not found")
+	mockCustomer.AssertExpectations(t)
+}
+
+// TestCreateInvoice_MultipleItems tests invoice creation with multiple items
+func TestInvoiceService_Create_MultipleItems(t *testing.T) {
+	mockRepo := new(MockInvoiceRepository)
+	mockCustomer := new(MockCustomerRepository)
+	mockProduct := new(MockProductRepository)
+	mockSQS := new(MockSQSService)
+	mockEmail := new(MockEmailService)
+	log := logger.New()
+
+	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+
+	ctx := context.Background()
+	businessID := "business-123"
+	customerID := "customer-456"
+
+	customer := &models.Customer{
+		ID:         customerID,
+		BusinessID: businessID,
+		Name:       "Test Customer",
+	}
+
+	mockCustomer.On("GetByID", ctx, customerID, businessID).Return(customer, nil)
+	mockRepo.On("Create", ctx, mock.AnythingOfType("*models.Invoice")).Return(nil)
+	mockSQS.On("SendMessage", ctx, "invoice-queue", mock.AnythingOfType("map[string]string")).Return(nil)
+
+	input := services.CreateInvoiceInput{
+		BusinessID: businessID,
+		CustomerID: customerID,
+		DueDate:    time.Now().Add(24 * time.Hour),
+		Items: []services.CreateInvoiceItemInput{
+			{
+				Description: "Product A",
+				Quantity:    2,
+				UnitPrice:   100.00,
+				TaxRate:     10,
+			},
+			{
+				Description: "Product B",
+				Quantity:    3,
+				UnitPrice:   50.00,
+				TaxRate:     5,
+			},
+		},
+	}
+
+	invoice, err := svc.Create(ctx, input)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, invoice)
+	assert.Equal(t, 350.00, invoice.Subtotal)      // (2*100) + (3*50)
+	assert.Equal(t, 27.50, invoice.Tax)          // (200*10%) + (150*5%)
+	assert.Equal(t, 377.50, invoice.Total)        // 350 + 27.50
+	assert.Len(t, invoice.Items, 2)
+
+	mockCustomer.AssertExpectations(t)
+	mockRepo.AssertExpectations(t)
+	mockSQS.AssertExpectations(t)
+}
+
+// TestCreateInvoice_ZeroTaxRate tests invoice creation with zero tax
+func TestInvoiceService_Create_ZeroTaxRate(t *testing.T) {
+	mockRepo := new(MockInvoiceRepository)
+	mockCustomer := new(MockCustomerRepository)
+	mockProduct := new(MockProductRepository)
+	mockSQS := new(MockSQSService)
+	mockEmail := new(MockEmailService)
+	log := logger.New()
+
+	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+
+	ctx := context.Background()
+	businessID := "business-123"
+	customerID := "customer-456"
+
+	customer := &models.Customer{
+		ID:         customerID,
+		BusinessID: businessID,
+		Name:       "Test Customer",
+	}
+
+	mockCustomer.On("GetByID", ctx, customerID, businessID).Return(customer, nil)
+	mockRepo.On("Create", ctx, mock.AnythingOfType("*models.Invoice")).Return(nil)
+	mockSQS.On("SendMessage", ctx, "invoice-queue", mock.AnythingOfType("map[string]string")).Return(nil)
+
+	input := services.CreateInvoiceInput{
+		BusinessID: businessID,
+		CustomerID: customerID,
+		DueDate:    time.Now().Add(24 * time.Hour),
+		Items: []services.CreateInvoiceItemInput{
+			{
+				Description: "Product A",
+				Quantity:    1,
+				UnitPrice:   100.00,
+				TaxRate:     0,
+			},
+		},
+	}
+
+	invoice, err := svc.Create(ctx, input)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, invoice)
+	assert.Equal(t, 100.00, invoice.Subtotal)
+	assert.Equal(t, 0.00, invoice.Tax)
+	assert.Equal(t, 100.00, invoice.Total)
+
+	mockCustomer.AssertExpectations(t)
+	mockRepo.AssertExpectations(t)
+}
+
+// TestGetByBusiness_Success tests successful invoice retrieval
+func TestInvoiceService_GetByBusiness_Success(t *testing.T) {
+	mockRepo := new(MockInvoiceRepository)
+	mockCustomer := new(MockCustomerRepository)
+	mockProduct := new(MockProductRepository)
+	mockSQS := new(MockSQSService)
+	mockEmail := new(MockEmailService)
+	log := logger.New()
+
+	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+
+	ctx := context.Background()
+	businessID := "business-123"
+	invoiceID := "invoice-456"
+
+	expectedInvoice := &models.Invoice{
+		ID:         invoiceID,
+		BusinessID: businessID,
+		Status:     "draft",
+		Total:      100.00,
+	}
+
+	mockRepo.On("GetByID", ctx, invoiceID, businessID).Return(expectedInvoice, nil)
+
+	invoice, err := svc.GetByBusiness(ctx, businessID, invoiceID)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, invoice)
+	assert.Equal(t, invoiceID, invoice.ID)
+	assert.Equal(t, businessID, invoice.BusinessID)
+	mockRepo.AssertExpectations(t)
+}
+
+// TestGetByBusiness_NotFound tests invoice not found scenario
+func TestInvoiceService_GetByBusiness_NotFound(t *testing.T) {
+	mockRepo := new(MockInvoiceRepository)
+	mockCustomer := new(MockCustomerRepository)
+	mockProduct := new(MockProductRepository)
+	mockSQS := new(MockSQSService)
+	mockEmail := new(MockEmailService)
+	log := logger.New()
+
+	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+
+	ctx := context.Background()
+	businessID := "business-123"
+	invoiceID := "nonexistent"
+
+	mockRepo.On("GetByID", ctx, invoiceID, businessID).Return(nil, errors.New("invoice not found"))
+
+	invoice, err := svc.GetByBusiness(ctx, businessID, invoiceID)
+
+	assert.Error(t, err)
+	assert.Nil(t, invoice)
+	mockRepo.AssertExpectations(t)
+}
+
+// TestList_Success tests listing invoices with pagination
+func TestInvoiceService_List_Success(t *testing.T) {
+	mockRepo := new(MockInvoiceRepository)
+	mockCustomer := new(MockCustomerRepository)
+	mockProduct := new(MockProductRepository)
+	mockSQS := new(MockSQSService)
+	mockEmail := new(MockEmailService)
+	log := logger.New()
+
+	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+
+	ctx := context.Background()
+	businessID := "business-123"
+	page := 1
+	limit := 10
+
+	expectedInvoices := []*models.Invoice{
+		{ID: "invoice-1", BusinessID: businessID, Total: 100.00},
+		{ID: "invoice-2", BusinessID: businessID, Total: 200.00},
+	}
+
+	mockRepo.On("GetByBusinessID", ctx, businessID, page, limit).Return(expectedInvoices, int64(2), nil)
+
+	invoices, total, err := svc.List(ctx, businessID, page, limit)
+
+	assert.NoError(t, err)
+	assert.Len(t, invoices, 2)
+	assert.Equal(t, int64(2), total)
+	mockRepo.AssertExpectations(t)
+}
+
+// TestUpdateByBusiness_Success tests successful invoice update
+func TestInvoiceService_UpdateByBusiness_Success(t *testing.T) {
+	mockRepo := new(MockInvoiceRepository)
+	mockCustomer := new(MockCustomerRepository)
+	mockProduct := new(MockProductRepository)
+	mockSQS := new(MockSQSService)
+	mockEmail := new(MockEmailService)
+	log := logger.New()
+
+	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+
+	ctx := context.Background()
+	businessID := "business-123"
+	invoiceID := "invoice-456"
+
+	existingInvoice := &models.Invoice{
+		ID:         invoiceID,
+		BusinessID: businessID,
+		Status:     "draft",
+		Total:      100.00,
+	}
+
+	newDueDate := time.Now().Add(48 * time.Hour)
+
+	mockRepo.On("GetByID", ctx, invoiceID, businessID).Return(existingInvoice, nil)
+	mockRepo.On("Update", ctx, mock.AnythingOfType("*models.Invoice")).Return(nil)
+
+	input := services.UpdateInvoiceInput{
+		DueDate: newDueDate,
+		Notes:   "Updated notes",
+	}
+
+	invoice, err := svc.UpdateByBusiness(ctx, businessID, invoiceID, input)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, invoice)
+	assert.Equal(t, "Updated notes", invoice.Notes)
+	mockRepo.AssertExpectations(t)
+}
+
+// TestUpdateByBusiness_InvalidStatus tests update on non-draft invoice
+func TestInvoiceService_UpdateByBusiness_InvalidStatus(t *testing.T) {
+	mockRepo := new(MockInvoiceRepository)
+	mockCustomer := new(MockCustomerRepository)
+	mockProduct := new(MockProductRepository)
+	mockSQS := new(MockSQSService)
+	mockEmail := new(MockEmailService)
+	log := logger.New()
+
+	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+
+	ctx := context.Background()
+	businessID := "business-123"
+	invoiceID := "invoice-456"
+
+	existingInvoice := &models.Invoice{
+		ID:         invoiceID,
+		BusinessID: businessID,
+		Status:     "sent",
+		Total:      100.00,
+	}
+
+	mockRepo.On("GetByID", ctx, invoiceID, businessID).Return(existingInvoice, nil)
+
+	input := services.UpdateInvoiceInput{
+		Notes: "Updated notes",
+	}
+
+	invoice, err := svc.UpdateByBusiness(ctx, businessID, invoiceID, input)
+
+	assert.Error(t, err)
+	assert.Nil(t, invoice)
+	assert.Contains(t, err.Error(), "cannot update invoice with status: sent")
+	mockRepo.AssertExpectations(t)
+}
+
+// TestDeleteByBusiness_Success tests successful invoice deletion
+func TestInvoiceService_DeleteByBusiness_Success(t *testing.T) {
+	mockRepo := new(MockInvoiceRepository)
+	mockCustomer := new(MockCustomerRepository)
+	mockProduct := new(MockProductRepository)
+	mockSQS := new(MockSQSService)
+	mockEmail := new(MockEmailService)
+	log := logger.New()
+
+	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+
+	ctx := context.Background()
+	businessID := "business-123"
+	invoiceID := "invoice-456"
+
+	existingInvoice := &models.Invoice{
+		ID:         invoiceID,
+		BusinessID: businessID,
+		Status:     "draft",
+	}
+
+	mockRepo.On("GetByID", ctx, invoiceID, businessID).Return(existingInvoice, nil)
+	mockRepo.On("Delete", ctx, invoiceID).Return(nil)
+
+	err := svc.DeleteByBusiness(ctx, businessID, invoiceID)
+
+	assert.NoError(t, err)
+	mockRepo.AssertExpectations(t)
+}
+
+// TestDeleteByBusiness_InvalidStatus tests deletion of non-draft invoice
+func TestInvoiceService_DeleteByBusiness_InvalidStatus(t *testing.T) {
+	mockRepo := new(MockInvoiceRepository)
+	mockCustomer := new(MockCustomerRepository)
+	mockProduct := new(MockProductRepository)
+	mockSQS := new(MockSQSService)
+	mockEmail := new(MockEmailService)
+	log := logger.New()
+
+	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+
+	ctx := context.Background()
+	businessID := "business-123"
+	invoiceID := "invoice-456"
+
+	existingInvoice := &models.Invoice{
+		ID:         invoiceID,
+		BusinessID: businessID,
+		Status:     "paid",
+	}
+
+	mockRepo.On("GetByID", ctx, invoiceID, businessID).Return(existingInvoice, nil)
+
+	err := svc.DeleteByBusiness(ctx, businessID, invoiceID)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot delete invoice with status: paid")
+	mockRepo.AssertExpectations(t)
+}
+
+// TestSendByBusiness_Success tests successful invoice sending
+func TestInvoiceService_SendByBusiness_Success(t *testing.T) {
+	mockRepo := new(MockInvoiceRepository)
+	mockCustomer := new(MockCustomerRepository)
+	mockProduct := new(MockProductRepository)
+	mockSQS := new(MockSQSService)
+	mockEmail := new(MockEmailService)
+	log := logger.New()
+
+	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+
+	ctx := context.Background()
+	businessID := "business-123"
+	invoiceID := "invoice-456"
+	customerID := "customer-789"
+
+	invoice := &models.Invoice{
+		ID:         invoiceID,
+		BusinessID: businessID,
+		CustomerID: customerID,
+		InvoiceNo:  "INV-2026-123456",
+		Status:     "draft",
+		Total:      100.00,
+		Currency:   "USD",
+	}
+
+	customer := &models.Customer{
+		ID:    customerID,
+		Email: "customer@example.com",
+	}
+
+	mockRepo.On("GetByID", ctx, invoiceID, businessID).Return(invoice, nil)
+	mockCustomer.On("GetByID", ctx, customerID, businessID).Return(customer, nil)
+	mockRepo.On("UpdateStatus", ctx, invoiceID, "sent").Return(nil)
+	mockEmail.On("SendEmail", ctx, "customer@example.com", mock.AnythingOfType("string"), mock.AnythingOfType("string")).Return(nil)
+
+	err := svc.SendByBusiness(ctx, businessID, invoiceID)
+
+	assert.NoError(t, err)
+	mockRepo.AssertExpectations(t)
+	mockCustomer.AssertExpectations(t)
+	mockEmail.AssertExpectations(t)
+}
+
+// TestSendByBusiness_CustomerNotFound tests sending when customer not found
+func TestInvoiceService_SendByBusiness_CustomerNotFound(t *testing.T) {
+	mockRepo := new(MockInvoiceRepository)
+	mockCustomer := new(MockCustomerRepository)
+	mockProduct := new(MockProductRepository)
+	mockSQS := new(MockSQSService)
+	mockEmail := new(MockEmailService)
+	log := logger.New()
+
+	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+
+	ctx := context.Background()
+	businessID := "business-123"
+	invoiceID := "invoice-456"
+	customerID := "customer-789"
+
+	invoice := &models.Invoice{
+		ID:         invoiceID,
+		BusinessID: businessID,
+		CustomerID: customerID,
+		Status:     "draft",
+	}
+
+	mockRepo.On("GetByID", ctx, invoiceID, businessID).Return(invoice, nil)
+	mockCustomer.On("GetByID", ctx, customerID, businessID).Return(nil, errors.New("customer not found"))
+
+	err := svc.SendByBusiness(ctx, businessID, invoiceID)
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "customer not found")
+	mockRepo.AssertExpectations(t)
+	mockCustomer.AssertExpectations(t)
+}
+
+// TestGetPDFURLByBusiness_Success tests getting existing PDF URL
+func TestInvoiceService_GetPDFURLByBusiness_Success(t *testing.T) {
+	mockRepo := new(MockInvoiceRepository)
+	mockCustomer := new(MockCustomerRepository)
+	mockProduct := new(MockProductRepository)
+	mockSQS := new(MockSQSService)
+	mockEmail := new(MockEmailService)
+	log := logger.New()
+
+	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+
+	ctx := context.Background()
+	businessID := "business-123"
+	invoiceID := "invoice-456"
+	pdfURL := "https://s3.example.com/invoices/test.pdf"
+
+	invoice := &models.Invoice{
+		ID:         invoiceID,
+		BusinessID: businessID,
+		PDFURL:     pdfURL,
+	}
+
+	mockRepo.On("GetByID", ctx, invoiceID, businessID).Return(invoice, nil)
+
+	url, err := svc.GetPDFURLByBusiness(ctx, businessID, invoiceID)
+
+	assert.NoError(t, err)
+	assert.Equal(t, pdfURL, url)
+	mockRepo.AssertExpectations(t)
+}
+
+// TestGetPDFURLByBusiness_NotGenerated tests PDF not yet generated
+func TestInvoiceService_GetPDFURLByBusiness_NotGenerated(t *testing.T) {
+	mockRepo := new(MockInvoiceRepository)
+	mockCustomer := new(MockCustomerRepository)
+	mockProduct := new(MockProductRepository)
+	mockSQS := new(MockSQSService)
+	mockEmail := new(MockEmailService)
+	log := logger.New()
+
+	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+
+	ctx := context.Background()
+	businessID := "business-123"
+	invoiceID := "invoice-456"
+
+	invoice := &models.Invoice{
+		ID:         invoiceID,
+		BusinessID: businessID,
+		PDFURL:     "",
+	}
+
+	mockRepo.On("GetByID", ctx, invoiceID, businessID).Return(invoice, nil)
+
+	url, err := svc.GetPDFURLByBusiness(ctx, businessID, invoiceID)
+
+	assert.Error(t, err)
+	assert.Empty(t, url)
+	assert.Contains(t, err.Error(), "PDF not yet generated")
+	mockRepo.AssertExpectations(t)
+}
+
+// TestGetNextNumber_Success tests generating next invoice number
+func TestInvoiceService_GetNextNumber_Success(t *testing.T) {
+	mockRepo := new(MockInvoiceRepository)
+	mockCustomer := new(MockCustomerRepository)
+	mockProduct := new(MockProductRepository)
+	mockSQS := new(MockSQSService)
+	mockEmail := new(MockEmailService)
+	log := logger.New()
+
+	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+
+	ctx := context.Background()
+	businessID := "business-123"
+
+	invoiceNo, err := svc.GetNextNumber(ctx, businessID)
+
+	assert.NoError(t, err)
+	assert.NotEmpty(t, invoiceNo)
+	assert.Contains(t, invoiceNo, "INV-")
+	mockRepo.AssertExpectations(t)
+}
+
+// TestGenerateInvoiceNumber_Format tests invoice number format
+func TestInvoiceService_GenerateInvoiceNumber_Format(t *testing.T) {
+	mockRepo := new(MockInvoiceRepository)
+	mockCustomer := new(MockCustomerRepository)
+	mockProduct := new(MockProductRepository)
+	mockSQS := new(MockSQSService)
+	mockEmail := new(MockEmailService)
+	log := logger.New()
+
+	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+
+	ctx := context.Background()
+	businessID := "business-123"
+
+	invoiceNo, err := svc.GetNextNumber(ctx, businessID)
+
+	assert.NoError(t, err)
+	assert.Regexp(t, "^INV-\\d{4}-\\d{6}$", invoiceNo)
+}
+
+// TestCreateInvoice_WithProductID tests invoice creation with product ID
+func TestInvoiceService_Create_WithProductID(t *testing.T) {
+	mockRepo := new(MockInvoiceRepository)
+	mockCustomer := new(MockCustomerRepository)
+	mockProduct := new(MockProductRepository)
+	mockSQS := new(MockSQSService)
+	mockEmail := new(MockEmailService)
+	log := logger.New()
+
+	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+
+	ctx := context.Background()
+	businessID := "business-123"
+	customerID := "customer-456"
+	productID := "product-789"
+
+	customer := &models.Customer{
+		ID:         customerID,
+		BusinessID: businessID,
+		Name:       "Test Customer",
+	}
+
+	mockCustomer.On("GetByID", ctx, customerID, businessID).Return(customer, nil)
+	mockRepo.On("Create", ctx, mock.AnythingOfType("*models.Invoice")).Return(nil)
+	mockSQS.On("SendMessage", ctx, "invoice-queue", mock.AnythingOfType("map[string]string")).Return(nil)
+
+	input := services.CreateInvoiceInput{
+		BusinessID: businessID,
+		CustomerID: customerID,
+		DueDate:    time.Now().Add(24 * time.Hour),
+		Items: []services.CreateInvoiceItemInput{
+			{
+				ProductID:   productID,
+				Description: "Product A",
+				Quantity:    1,
+				UnitPrice:   100.00,
+				TaxRate:     0,
+			},
+		},
+	}
+
+	invoice, err := svc.Create(ctx, input)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, invoice)
+	assert.Len(t, invoice.Items, 1)
+	assert.NotNil(t, invoice.Items[0].ProductID)
+	assert.Equal(t, productID, *invoice.Items[0].ProductID)
+
+	mockCustomer.AssertExpectations(t)
+	mockRepo.AssertExpectations(t)
+	mockSQS.AssertExpectations(t)
+}
+
+// TestCreateInvoice_RepositoryError tests handling of repository error
+func TestInvoiceService_Create_RepositoryError(t *testing.T) {
+	mockRepo := new(MockInvoiceRepository)
+	mockCustomer := new(MockCustomerRepository)
+	mockProduct := new(MockProductRepository)
+	mockSQS := new(MockSQSService)
+	mockEmail := new(MockEmailService)
+	log := logger.New()
+
+	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+
+	ctx := context.Background()
+	businessID := "business-123"
+	customerID := "customer-456"
+
+	customer := &models.Customer{
+		ID:         customerID,
+		BusinessID: businessID,
+		Name:       "Test Customer",
+	}
+
+	mockCustomer.On("GetByID", ctx, customerID, businessID).Return(customer, nil)
+	mockRepo.On("Create", ctx, mock.AnythingOfType("*models.Invoice")).Return(errors.New("database error"))
+
+	input := services.CreateInvoiceInput{
+		BusinessID: businessID,
+		CustomerID: customerID,
+		DueDate:    time.Now().Add(24 * time.Hour),
+		Items: []services.CreateInvoiceItemInput{
+			{
+				Description: "Product A",
+				Quantity:    1,
+				UnitPrice:   100.00,
+				TaxRate:     0,
+			},
+		},
+	}
+
+	invoice, err := svc.Create(ctx, input)
+
+	assert.Error(t, err)
+	assert.Nil(t, invoice)
+	assert.Contains(t, err.Error(), "failed to create invoice")
+	mockCustomer.AssertExpectations(t)
+	mockRepo.AssertExpectations(t)
+}

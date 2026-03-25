@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(go vet:*)"
+      "Bash(go vet:*)",
+      "Bash(go build:*)"
     ]
   }
 }
