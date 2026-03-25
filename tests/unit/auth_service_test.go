@@ -592,7 +592,7 @@ func TestAuthService_SyncGoogleUser_ExistingUser(t *testing.T) {
 		Email:             "test@example.com",
 		Name:              "Old Name",
 		Role:              "viewer",
-		ProfilePictureURL:  "",
+		ProfilePictureURL: "",
 	}
 
 	input := services.SyncGoogleUserInput{

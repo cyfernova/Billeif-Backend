@@ -515,15 +515,15 @@ func TestVendorService_Create_AllFields(t *testing.T) {
 	ctx := context.Background()
 	input := services.CreateVendorInput{
 		BusinessID:   "business-123",
-		Name:        "Acme Corp",
-		Email:       "acme@example.com",
-		Phone:       "+1234567890",
-		Address:     "123 Main St",
-		City:        "New York",
-		State:       "NY",
-		Country:     "USA",
-		PostalCode:  "10001",
-		TaxID:       "12-3456789",
+		Name:         "Acme Corp",
+		Email:        "acme@example.com",
+		Phone:        "+1234567890",
+		Address:      "123 Main St",
+		City:         "New York",
+		State:        "NY",
+		Country:      "USA",
+		PostalCode:   "10001",
+		TaxID:        "12-3456789",
 		PaymentTerms: "Net 30",
 	}
 

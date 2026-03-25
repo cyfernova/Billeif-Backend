@@ -520,15 +520,15 @@ func TestProductService_UpdateByBusiness_AllFields(t *testing.T) {
 	productID := "product-456"
 
 	existing := &models.Product{
-		ID:         productID,
-		BusinessID: businessID,
-		Name:       "Old Name",
-		SKU:        "OLD-SKU",
+		ID:          productID,
+		BusinessID:  businessID,
+		Name:        "Old Name",
+		SKU:         "OLD-SKU",
 		Description: "Old desc",
-		Price:      10.00,
-		Currency:   "USD",
-		Unit:       "PCS",
-		MinStock:   5,
+		Price:       10.00,
+		Currency:    "USD",
+		Unit:        "PCS",
+		MinStock:    5,
 	}
 
 	mockRepo.On("GetByID", ctx, productID, businessID).Return(existing, nil)

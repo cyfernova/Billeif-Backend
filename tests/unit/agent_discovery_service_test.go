@@ -1,4 +1,3 @@
-
 package unit
 
 import (
@@ -457,8 +456,8 @@ func TestAgentDiscoveryService_RegisterAgent_MissingEndpoint(t *testing.T) {
 
 	ctx := context.Background()
 	req := &services.RegisterAgentRequest{
-		AgentID:  uuid.New().String(),
-		Name:     "Test Agent",
+		AgentID:   uuid.New().String(),
+		Name:      "Test Agent",
 		AgentType: "shopping",
 		// Missing A2AEndpoint
 	}
@@ -570,10 +569,10 @@ func TestAgentDiscoveryService_GetAgentRegistry(t *testing.T) {
 	ctx := context.Background()
 	agentID := uuid.New()
 	expectedRegistry := &models.AgentRegistry{
-		ID:         uuid.New(),
-		AgentID:    agentID,
-		AgentName:  "Test Agent",
-		IsActive:   true,
+		ID:        uuid.New(),
+		AgentID:   agentID,
+		AgentName: "Test Agent",
+		IsActive:  true,
 	}
 
 	mockRepo.On("GetAgentRegistry", ctx, agentID.String()).Return(expectedRegistry, nil)
@@ -729,7 +728,7 @@ func TestAgentDiscoveryService_DiscoveryCapabilitiesForType_Merchant(t *testing.
 	req := &services.RegisterAgentRequest{
 		AgentID:      agentID,
 		Name:         "Test Merchant",
-		A2AEndpoint: "https://merchant.example.com/a2a",
+		A2AEndpoint:  "https://merchant.example.com/a2a",
 		AgentType:    "merchant",
 		Capabilities: []string{"bargaining"},
 	}
@@ -761,7 +760,7 @@ func TestAgentDiscoveryService_DiscoveryCapabilitiesForType_Shopping(t *testing.
 	req := &services.RegisterAgentRequest{
 		AgentID:      agentID,
 		Name:         "Test Shopping Agent",
-		A2AEndpoint: "https://shopping.example.com/a2a",
+		A2AEndpoint:  "https://shopping.example.com/a2a",
 		AgentType:    "shopping",
 		Capabilities: []string{},
 	}
@@ -791,7 +790,7 @@ func TestNormalizeMarketplaceAgentType_BuyerToShopping(t *testing.T) {
 	req := &services.RegisterAgentRequest{
 		AgentID:      agentID,
 		Name:         "Test Buyer Agent",
-		A2AEndpoint: "https://buyer.example.com/a2a",
+		A2AEndpoint:  "https://buyer.example.com/a2a",
 		AgentType:    "buyer",
 		Capabilities: []string{"test"},
 	}
@@ -819,7 +818,7 @@ func TestNormalizeMarketplaceAgentType_SellerToMerchant(t *testing.T) {
 	req := &services.RegisterAgentRequest{
 		AgentID:      agentID,
 		Name:         "Test Seller Agent",
-		A2AEndpoint: "https://seller.example.com/a2a",
+		A2AEndpoint:  "https://seller.example.com/a2a",
 		AgentType:    "seller",
 		Capabilities: []string{"test"},
 	}

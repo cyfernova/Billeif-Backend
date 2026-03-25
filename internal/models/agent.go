@@ -7,21 +7,21 @@ import (
 )
 
 type Agent struct {
-	ID           string         `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
-	OwnerID      string         `gorm:"not null;index" json:"owner_id" validate:"required,uuid"`
-	BusinessID   string         `gorm:"not null;index" json:"business_id" validate:"required,uuid"`
-	Name         string         `gorm:"not null;size:255" json:"name" validate:"required,min=2,max=255"`
-	Type         string         `gorm:"not null;size:50;index" json:"type" validate:"required,oneof=buyer seller shopping merchant credential_provider payment_processor"`
-	Description  *string        `gorm:"type:text" json:"description,omitempty" validate:"omitempty,max=1000"`
-	Capabilities string         `gorm:"type:jsonb;not null;default:'[]'" json:"capabilities"`
-	Config       string         `gorm:"type:jsonb;not null;default:'{}'" json:"config"`
-	A2AEndpoint  *string        `gorm:"column:a2a_endpoint;type:varchar(500)" json:"a2a_endpoint,omitempty" validate:"omitempty,url,max=500"`
-	MarketplaceRole string      `gorm:"-" json:"marketplace_role,omitempty"`
-	IsPublic     bool           `gorm:"default:false" json:"is_public"`
-	IsActive     bool           `gorm:"default:true;index" json:"is_active"`
-	CreatedAt    time.Time      `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt    time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
-	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
+	ID              string         `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
+	OwnerID         string         `gorm:"not null;index" json:"owner_id" validate:"required,uuid"`
+	BusinessID      string         `gorm:"not null;index" json:"business_id" validate:"required,uuid"`
+	Name            string         `gorm:"not null;size:255" json:"name" validate:"required,min=2,max=255"`
+	Type            string         `gorm:"not null;size:50;index" json:"type" validate:"required,oneof=buyer seller shopping merchant credential_provider payment_processor"`
+	Description     *string        `gorm:"type:text" json:"description,omitempty" validate:"omitempty,max=1000"`
+	Capabilities    string         `gorm:"type:jsonb;not null;default:'[]'" json:"capabilities"`
+	Config          string         `gorm:"type:jsonb;not null;default:'{}'" json:"config"`
+	A2AEndpoint     *string        `gorm:"column:a2a_endpoint;type:varchar(500)" json:"a2a_endpoint,omitempty" validate:"omitempty,url,max=500"`
+	MarketplaceRole string         `gorm:"-" json:"marketplace_role,omitempty"`
+	IsPublic        bool           `gorm:"default:false" json:"is_public"`
+	IsActive        bool           `gorm:"default:true;index" json:"is_active"`
+	CreatedAt       time.Time      `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt       time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
+	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`
 
 	AgentCapabilities   []AgentCapability    `gorm:"foreignKey:AgentID" json:"agent_capabilities,omitempty"`
 	AgentTransactions   []AgentTransaction   `gorm:"foreignKey:AgentID" json:"agent_transactions,omitempty"`

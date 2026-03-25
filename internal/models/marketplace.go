@@ -5,20 +5,20 @@ import (
 )
 
 type MarketplaceProduct struct {
-	ID             string    `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
-	AgentID        string    `gorm:"not null;index" json:"agent_id" validate:"required,uuid"`
-	ProductID      *string   `gorm:"index" json:"product_id,omitempty" validate:"omitempty,uuid"`
-	Name           string    `gorm:"not null;size:255" json:"name" validate:"required,min=2,max=255"`
-	Description    *string   `gorm:"type:text" json:"description,omitempty" validate:"omitempty,max=2000"`
-	Price          float64   `gorm:"not null;type:decimal(15,2)" json:"price" validate:"required,gte=0"`
-	Currency       string    `gorm:"not null;size:3;default:INR" json:"currency" validate:"required,len=3"`
-	InventoryCount int       `gorm:"default:0" json:"inventory_count" validate:"gte=0"`
-	ReservedInventoryCount int `gorm:"default:0" json:"reserved_inventory_count" validate:"gte=0"`
-	IsAvailable    bool      `gorm:"default:true;index" json:"is_available"`
-	Images         string    `gorm:"type:jsonb;default:'[]'" json:"images"`
-	Categories     string    `gorm:"type:jsonb;default:'[]'" json:"categories"`
-	CreatedAt      time.Time `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt      time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+	ID                     string    `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
+	AgentID                string    `gorm:"not null;index" json:"agent_id" validate:"required,uuid"`
+	ProductID              *string   `gorm:"index" json:"product_id,omitempty" validate:"omitempty,uuid"`
+	Name                   string    `gorm:"not null;size:255" json:"name" validate:"required,min=2,max=255"`
+	Description            *string   `gorm:"type:text" json:"description,omitempty" validate:"omitempty,max=2000"`
+	Price                  float64   `gorm:"not null;type:decimal(15,2)" json:"price" validate:"required,gte=0"`
+	Currency               string    `gorm:"not null;size:3;default:INR" json:"currency" validate:"required,len=3"`
+	InventoryCount         int       `gorm:"default:0" json:"inventory_count" validate:"gte=0"`
+	ReservedInventoryCount int       `gorm:"default:0" json:"reserved_inventory_count" validate:"gte=0"`
+	IsAvailable            bool      `gorm:"default:true;index" json:"is_available"`
+	Images                 string    `gorm:"type:jsonb;default:'[]'" json:"images"`
+	Categories             string    `gorm:"type:jsonb;default:'[]'" json:"categories"`
+	CreatedAt              time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt              time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
 func (mp *MarketplaceProduct) TableName() string {

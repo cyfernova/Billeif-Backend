@@ -126,13 +126,13 @@ func TestPaymentService_Create_Success(t *testing.T) {
 	invoiceID := "invoice-456"
 
 	invoice := &models.Invoice{
-		ID:          invoiceID,
-		BusinessID:  businessID,
-		Total:       1000.00,
-		PaidAmount:  0,
-		BalanceDue:  1000.00,
-		Currency:    "USD",
-		Status:      "sent",
+		ID:         invoiceID,
+		BusinessID: businessID,
+		Total:      1000.00,
+		PaidAmount: 0,
+		BalanceDue: 1000.00,
+		Currency:   "USD",
+		Status:     "sent",
 	}
 
 	input := services.CreatePaymentInput{
@@ -173,13 +173,13 @@ func TestPaymentService_Create_FullPayment(t *testing.T) {
 	invoiceID := "invoice-456"
 
 	invoice := &models.Invoice{
-		ID:          invoiceID,
-		BusinessID:  businessID,
-		Total:       1000.00,
-		PaidAmount:  0,
-		BalanceDue:  1000.00,
-		Currency:    "USD",
-		Status:      "sent",
+		ID:         invoiceID,
+		BusinessID: businessID,
+		Total:      1000.00,
+		PaidAmount: 0,
+		BalanceDue: 1000.00,
+		Currency:   "USD",
+		Status:     "sent",
 	}
 
 	input := services.CreatePaymentInput{
@@ -215,13 +215,13 @@ func TestPaymentService_Create_PartialPayment(t *testing.T) {
 	invoiceID := "invoice-456"
 
 	invoice := &models.Invoice{
-		ID:          invoiceID,
-		BusinessID:  businessID,
-		Total:       1000.00,
-		PaidAmount:  300.00,
-		BalanceDue:  700.00,
-		Currency:    "USD",
-		Status:      "partial",
+		ID:         invoiceID,
+		BusinessID: businessID,
+		Total:      1000.00,
+		PaidAmount: 300.00,
+		BalanceDue: 700.00,
+		Currency:   "USD",
+		Status:     "partial",
 	}
 
 	input := services.CreatePaymentInput{

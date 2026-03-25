@@ -229,9 +229,9 @@ func TestInvoiceService_Create_Success(t *testing.T) {
 	assert.Equal(t, businessID, invoice.BusinessID)
 	assert.Equal(t, customerID, invoice.CustomerID)
 	assert.Equal(t, "draft", invoice.Status)
-	assert.Equal(t, 200.00, invoice.Subtotal)     // 2 * 100
-	assert.Equal(t, 20.00, invoice.Tax)          // 200 * 10%
-	assert.Equal(t, 220.00, invoice.Total)        // 200 + 20
+	assert.Equal(t, 200.00, invoice.Subtotal) // 2 * 100
+	assert.Equal(t, 20.00, invoice.Tax)       // 200 * 10%
+	assert.Equal(t, 220.00, invoice.Total)    // 200 + 20
 	assert.Equal(t, 220.00, invoice.BalanceDue)
 	assert.Equal(t, "USD", invoice.Currency)
 	assert.Len(t, invoice.Items, 1)
@@ -329,9 +329,9 @@ func TestInvoiceService_Create_MultipleItems(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.NotNil(t, invoice)
-	assert.Equal(t, 350.00, invoice.Subtotal)      // (2*100) + (3*50)
-	assert.Equal(t, 27.50, invoice.Tax)          // (200*10%) + (150*5%)
-	assert.Equal(t, 377.50, invoice.Total)        // 350 + 27.50
+	assert.Equal(t, 350.00, invoice.Subtotal) // (2*100) + (3*50)
+	assert.Equal(t, 27.50, invoice.Tax)       // (200*10%) + (150*5%)
+	assert.Equal(t, 377.50, invoice.Total)    // 350 + 27.50
 	assert.Len(t, invoice.Items, 2)
 
 	mockCustomer.AssertExpectations(t)

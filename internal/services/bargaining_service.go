@@ -1029,14 +1029,14 @@ func (s *BargainingServiceTestable) SubmitCounterOffer(ctx context.Context, nego
 	if req.Action == "accept" {
 		round := &models.BargainingRound{
 			NegotiationID:    negotiationID,
-			AgentID:        req.AgentID,
-			RoundNumber:    negotiation.Rounds + 1,
-			ProposedAmount: negotiation.CurrentAmount,
-			PreviousAmount: negotiation.CurrentAmount,
-			AgentType:      agentType,
-			Action:         "accept",
+			AgentID:          req.AgentID,
+			RoundNumber:      negotiation.Rounds + 1,
+			ProposedAmount:   negotiation.CurrentAmount,
+			PreviousAmount:   negotiation.CurrentAmount,
+			AgentType:        agentType,
+			Action:           "accept",
 			VolatilityFactor: 0,
-			Metadata:       s.marshalMetadata(map[string]interface{}{}),
+			Metadata:         s.marshalMetadata(map[string]interface{}{}),
 		}
 
 		if err := s.ap2Repo.CreateBargainingRound(ctx, round); err != nil {
@@ -1059,15 +1059,15 @@ func (s *BargainingServiceTestable) SubmitCounterOffer(ctx context.Context, nego
 	if req.Action == "reject" {
 		round := &models.BargainingRound{
 			NegotiationID:    negotiationID,
-			AgentID:        req.AgentID,
-			RoundNumber:    negotiation.Rounds + 1,
-			ProposedAmount: req.ProposedAmount,
-			PreviousAmount: negotiation.CurrentAmount,
-			AgentType:      agentType,
-			Action:         "reject",
-			Reason:         req.Reason,
+			AgentID:          req.AgentID,
+			RoundNumber:      negotiation.Rounds + 1,
+			ProposedAmount:   req.ProposedAmount,
+			PreviousAmount:   negotiation.CurrentAmount,
+			AgentType:        agentType,
+			Action:           "reject",
+			Reason:           req.Reason,
 			VolatilityFactor: 0,
-			Metadata:       s.marshalMetadata(map[string]interface{}{}),
+			Metadata:         s.marshalMetadata(map[string]interface{}{}),
 		}
 
 		if err := s.ap2Repo.CreateBargainingRound(ctx, round); err != nil {
@@ -1091,15 +1091,15 @@ func (s *BargainingServiceTestable) SubmitCounterOffer(ctx context.Context, nego
 
 		round := &models.BargainingRound{
 			NegotiationID:    negotiationID,
-			AgentID:        req.AgentID,
-			RoundNumber:    negotiation.Rounds + 1,
-			ProposedAmount: req.ProposedAmount,
-			PreviousAmount: negotiation.CurrentAmount,
-			AgentType:      agentType,
-			Action:         "counteroffer",
-			Reason:         req.Reason,
+			AgentID:          req.AgentID,
+			RoundNumber:      negotiation.Rounds + 1,
+			ProposedAmount:   req.ProposedAmount,
+			PreviousAmount:   negotiation.CurrentAmount,
+			AgentType:        agentType,
+			Action:           "counteroffer",
+			Reason:           req.Reason,
 			VolatilityFactor: calculateVolatilityFactorInternal(volatility, negotiation.Rounds, negotiation.InitialAmount, req.ProposedAmount),
-			Metadata:       s.marshalMetadata(map[string]interface{}{}),
+			Metadata:         s.marshalMetadata(map[string]interface{}{}),
 		}
 
 		if err := s.ap2Repo.CreateBargainingRound(ctx, round); err != nil {

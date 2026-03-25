@@ -118,25 +118,25 @@ func TestBargainingService_CreateNegotiation_Success(t *testing.T) {
 	userID := uuid.New().String()
 
 	buyerAgent := &models.Agent{
-		ID:   buyerAgentID,
-		Type: "shopping",
-		Name: "Buyer Agent",
+		ID:     buyerAgentID,
+		Type:   "shopping",
+		Name:   "Buyer Agent",
 		Config: `{"volatility": 0.3}`,
 	}
 
 	sellerAgent := &models.Agent{
-		ID:   sellerAgentID,
-		Type: "merchant",
-		Name: "Seller Agent",
+		ID:     sellerAgentID,
+		Type:   "merchant",
+		Name:   "Seller Agent",
 		Config: `{"volatility": 0.5}`,
 	}
 
 	req := &services.CreateNegotiationRequest{
 		BuyerAgentID:  buyerAgentID,
 		SellerAgentID: sellerAgentID,
-		UserID:       userID,
+		UserID:        userID,
 		InitialAmount: 1000.00,
-		MaxRounds:    5,
+		MaxRounds:     5,
 	}
 
 	mockAgent.On("GetAgentByID", ctx, buyerAgentID).Return(buyerAgent, nil)
@@ -177,7 +177,7 @@ func TestBargainingService_CreateNegotiation_BuyerAgentNotFound(t *testing.T) {
 	req := &services.CreateNegotiationRequest{
 		BuyerAgentID:  buyerAgentID,
 		SellerAgentID: sellerAgentID,
-		UserID:       userID,
+		UserID:        userID,
 		InitialAmount: 1000.00,
 	}
 
@@ -220,7 +220,7 @@ func TestBargainingService_CreateNegotiation_InvalidBuyerAgentType(t *testing.T)
 	req := &services.CreateNegotiationRequest{
 		BuyerAgentID:  buyerAgentID,
 		SellerAgentID: sellerAgentID,
-		UserID:       userID,
+		UserID:        userID,
 		InitialAmount: 1000.00,
 	}
 
@@ -264,7 +264,7 @@ func TestBargainingService_CreateNegotiation_InvalidSellerAgentType(t *testing.T
 	req := &services.CreateNegotiationRequest{
 		BuyerAgentID:  buyerAgentID,
 		SellerAgentID: sellerAgentID,
-		UserID:       userID,
+		UserID:        userID,
 		InitialAmount: 1000.00,
 	}
 
@@ -292,9 +292,9 @@ func TestBargainingService_GetNegotiation_Success(t *testing.T) {
 	negotiationID := uuid.New().String()
 
 	negotiation := &models.BargainingNegotiation{
-		ID:             negotiationID,
-		BuyerAgentID:   uuid.New().String(),
-		SellerAgentID:  uuid.New().String(),
+		ID:            negotiationID,
+		BuyerAgentID:  uuid.New().String(),
+		SellerAgentID: uuid.New().String(),
 		UserID:        uuid.New().String(),
 		InitialAmount: 1000.00,
 		CurrentAmount: 1000.00,
@@ -347,9 +347,9 @@ func TestBargainingService_GetNegotiation_Expired(t *testing.T) {
 	negotiationID := uuid.New().String()
 
 	negotiation := &models.BargainingNegotiation{
-		ID:             negotiationID,
-		BuyerAgentID:   uuid.New().String(),
-		SellerAgentID:  uuid.New().String(),
+		ID:            negotiationID,
+		BuyerAgentID:  uuid.New().String(),
+		SellerAgentID: uuid.New().String(),
 		UserID:        uuid.New().String(),
 		InitialAmount: 1000.00,
 		CurrentAmount: 950.00,
@@ -384,10 +384,10 @@ func TestBargainingService_IsValidCounterOffer(t *testing.T) {
 	}
 
 	tests := []struct {
-		name          string
-		agentType     string
+		name           string
+		agentType      string
 		proposedAmount float64
-		expected      bool
+		expected       bool
 	}{
 		// Buyer tests
 		{"buyer_valid_counteroffer", "buyer", 900.00, true},
@@ -454,10 +454,10 @@ func TestBargainingService_CalculateFallbackCounterOffer(t *testing.T) {
 	svc := services.NewBargainingServiceForTesting(mockAP2, nil, mockAgent, mockMentee, nil, log)
 
 	negotiation := &models.BargainingNegotiation{
-		InitialAmount:     1000.00,
-		CurrentAmount:     900.00,
-		BuyerVolatility:   0.5,
-		SellerVolatility:  0.5,
+		InitialAmount:    1000.00,
+		CurrentAmount:    900.00,
+		BuyerVolatility:  0.5,
+		SellerVolatility: 0.5,
 	}
 
 	buyerOffer := svc.CalculateFallbackCounterOffer(negotiation, "buyer")
@@ -515,9 +515,9 @@ func TestBargainingService_NegotiationStatusTransitions(t *testing.T) {
 		negotiationID := uuid.New().String()
 
 		negotiation := &models.BargainingNegotiation{
-			ID:             negotiationID,
-			BuyerAgentID:   uuid.New().String(),
-			SellerAgentID:  uuid.New().String(),
+			ID:            negotiationID,
+			BuyerAgentID:  uuid.New().String(),
+			SellerAgentID: uuid.New().String(),
 			UserID:        uuid.New().String(),
 			InitialAmount: 1000.00,
 			CurrentAmount: 950.00,
@@ -542,9 +542,9 @@ func TestBargainingService_NegotiationStatusTransitions(t *testing.T) {
 		negotiationID := uuid.New().String()
 
 		negotiation := &models.BargainingNegotiation{
-			ID:             negotiationID,
-			BuyerAgentID:   uuid.New().String(),
-			SellerAgentID:  uuid.New().String(),
+			ID:            negotiationID,
+			BuyerAgentID:  uuid.New().String(),
+			SellerAgentID: uuid.New().String(),
 			UserID:        uuid.New().String(),
 			InitialAmount: 1000.00,
 			CurrentAmount: 900.00,
@@ -576,9 +576,9 @@ func TestBargainingService_SubmitCounterOffer_AlreadyCompleted(t *testing.T) {
 	agentID := uuid.New().String()
 
 	negotiation := &models.BargainingNegotiation{
-		ID:             negotiationID,
-		BuyerAgentID:   agentID,
-		SellerAgentID:  uuid.New().String(),
+		ID:            negotiationID,
+		BuyerAgentID:  agentID,
+		SellerAgentID: uuid.New().String(),
 		UserID:        uuid.New().String(),
 		InitialAmount: 1000.00,
 		CurrentAmount: 900.00,
@@ -616,15 +616,15 @@ func TestBargainingService_SubmitCounterOffer_MaxRoundsExceeded(t *testing.T) {
 	agentID := uuid.New().String()
 
 	negotiation := &models.BargainingNegotiation{
-		ID:             negotiationID,
-		BuyerAgentID:   agentID,
-		SellerAgentID:  uuid.New().String(),
+		ID:            negotiationID,
+		BuyerAgentID:  agentID,
+		SellerAgentID: uuid.New().String(),
 		UserID:        uuid.New().String(),
 		InitialAmount: 1000.00,
 		CurrentAmount: 900.00,
 		Status:        "in_progress",
-		Rounds:        5,        // Max reached
-		MaxRounds:    5,        // Max allowed
+		Rounds:        5, // Max reached
+		MaxRounds:     5, // Max allowed
 		ExpiresAt:     time.Now().Add(24 * time.Hour),
 	}
 
@@ -660,15 +660,15 @@ func TestBargainingService_SubmitCounterOffer_InvalidAgent(t *testing.T) {
 	invalidAgentID := uuid.New().String()
 
 	negotiation := &models.BargainingNegotiation{
-		ID:             negotiationID,
-		BuyerAgentID:   validAgentID,
-		SellerAgentID:  uuid.New().String(),
+		ID:            negotiationID,
+		BuyerAgentID:  validAgentID,
+		SellerAgentID: uuid.New().String(),
 		UserID:        uuid.New().String(),
 		InitialAmount: 1000.00,
 		CurrentAmount: 900.00,
 		Status:        "in_progress",
 		Rounds:        0,
-		MaxRounds:    5,
+		MaxRounds:     5,
 		ExpiresAt:     time.Now().Add(24 * time.Hour),
 		BuyerAgent: &models.Agent{
 			ID:   validAgentID,
@@ -711,16 +711,16 @@ func TestBargainingService_SubmitCounterOffer_Accept(t *testing.T) {
 	sellerAgentID := uuid.New().String()
 
 	negotiation := &models.BargainingNegotiation{
-		ID:              negotiationID,
-		BuyerAgentID:    buyerAgentID,
-		SellerAgentID:   sellerAgentID,
-		UserID:          uuid.New().String(),
-		InitialAmount:  1000.00,
-		CurrentAmount:   900.00,
-		Status:          "in_progress",
-		Rounds:         1,
-		MaxRounds:      5,
-		ExpiresAt:       time.Now().Add(24 * time.Hour),
+		ID:            negotiationID,
+		BuyerAgentID:  buyerAgentID,
+		SellerAgentID: sellerAgentID,
+		UserID:        uuid.New().String(),
+		InitialAmount: 1000.00,
+		CurrentAmount: 900.00,
+		Status:        "in_progress",
+		Rounds:        1,
+		MaxRounds:     5,
+		ExpiresAt:     time.Now().Add(24 * time.Hour),
 		BuyerAgent: &models.Agent{
 			ID:   buyerAgentID,
 			Type: "shopping",
@@ -765,16 +765,16 @@ func TestBargainingService_SubmitCounterOffer_Reject(t *testing.T) {
 	sellerAgentID := uuid.New().String()
 
 	negotiation := &models.BargainingNegotiation{
-		ID:              negotiationID,
-		BuyerAgentID:    uuid.New().String(),
-		SellerAgentID:   sellerAgentID,
-		UserID:          uuid.New().String(),
-		InitialAmount:  1000.00,
-		CurrentAmount:   900.00,
-		Status:          "in_progress",
-		Rounds:         1,
-		MaxRounds:      5,
-		ExpiresAt:       time.Now().Add(24 * time.Hour),
+		ID:            negotiationID,
+		BuyerAgentID:  uuid.New().String(),
+		SellerAgentID: sellerAgentID,
+		UserID:        uuid.New().String(),
+		InitialAmount: 1000.00,
+		CurrentAmount: 900.00,
+		Status:        "in_progress",
+		Rounds:        1,
+		MaxRounds:     5,
+		ExpiresAt:     time.Now().Add(24 * time.Hour),
 		BuyerAgent: &models.Agent{
 			ID:   uuid.New().String(),
 			Type: "shopping",

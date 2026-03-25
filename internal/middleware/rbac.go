@@ -1,7 +1,6 @@
 package middleware
+
 import (
-	
-    
 	"net/http"
 
 	"invoice-backend/pkg/logger"
@@ -10,7 +9,7 @@ import (
 )
 
 func RequireRole(roles ...string) gin.HandlerFunc {
-	
+
 	return func(c *gin.Context) {
 		log := logger.FromContext(c.Request.Context()).Named("rbac")
 		userRole := GetRole(c)
