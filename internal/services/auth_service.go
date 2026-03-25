@@ -691,9 +691,14 @@ func loginOutputFromRefreshResult(authResult *types.AuthenticationResultType, re
 		return nil, fmt.Errorf("token refresh failed: incomplete response")
 	}
 
+	newRefreshToken := refreshToken
+	if authResult.RefreshToken != nil && *authResult.RefreshToken != "" {
+		newRefreshToken = *authResult.RefreshToken
+	}
+
 	return &LoginOutput{
 		AccessToken:  *authResult.AccessToken,
-		RefreshToken: refreshToken,
+		RefreshToken: newRefreshToken,
 		ExpiresIn:    authResult.ExpiresIn,
 		TokenType:    *authResult.TokenType,
 	}, nil
@@ -748,4 +753,45 @@ func maskPhoneNumber(phoneNumber string) string {
 		return "****"
 	}
 	return normalized[:3] + strings.Repeat("*", len(normalized)-7) + normalized[len(normalized)-4:]
+}
+
+// TestAuthConfig holds minimal config for testing AuthService
+type TestAuthConfig struct {
+	CognitoClientID string
+	CognitoRegion   string
+	PhoneUserPoolID string
+	PhoneClientID   string
+	PhoneRegion     string
+}
+
+// NewAuthServiceWithMocks creates an AuthService with injected mocks for testing
+func NewAuthServiceWithMocks(cfg *TestAuthConfig, userRepo interfaces.UserRepository, cognito cognitoIdentityProviderAPI, cognitoPhone cognitoIdentityProviderAPI, dynamoDB *dynamodb.Client, log *logger.Logger) *AuthService {
+	var phoneCognito cognitoIdentityProviderAPI
+	if cognitoPhone != nil {
+		phoneCognito = cognitoPhone
+	}
+
+	return &AuthService{
+		cfg: &config.Config{
+			Cognito: config.CognitoConfig{
+				ClientID: cfg.CognitoClientID,
+				Region:   cfg.CognitoRegion,
+				Phone: config.CognitoPhoneConfig{
+					UserPoolID: cfg.PhoneUserPoolID,
+					ClientID:   cfg.PhoneClientID,
+					Region:     cfg.PhoneRegion,
+				},
+			},
+		},
+		userRepo:     userRepo,
+		cognito:      cognito,
+		cognitoPhone: phoneCognito,
+		dynamoDB:     dynamoDB,
+		log:          log,
+	}
+}
+
+// NormalizeIndianPhoneNumber normalizes an Indian phone number to E.164 format
+func NormalizeIndianPhoneNumber(input string) (string, error) {
+	return normalizeIndianPhoneNumber(input)
 }
