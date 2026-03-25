@@ -263,3 +263,210 @@ func (s *BusinessService) UpdateLogoURL(ctx context.Context, businessID, logoURL
 	log.Info("business logo URL updated")
 	return nil
 }
+
+// BusinessServiceTestable is a test-friendly version of BusinessService
+type BusinessServiceTestable struct {
+	repo BusinessRepositoryTestable
+	s3   BusinessS3ServiceTestable
+	log  *logger.Logger
+}
+
+// BusinessS3ServiceTestable is the testable interface for S3 operations
+type BusinessS3ServiceTestable interface {
+	GeneratePresignedUploadURL(ctx context.Context, bucket, key, contentType string, expiresIn int64) (string, error)
+}
+
+// BusinessRepositoryTestable is the testable interface for BusinessRepository
+type BusinessRepositoryTestable interface {
+	Create(ctx context.Context, business *models.BusinessProfile) error
+	GetByID(ctx context.Context, id string) (*models.BusinessProfile, error)
+	Update(ctx context.Context, business *models.BusinessProfile) error
+	Delete(ctx context.Context, id string) error
+	List(ctx context.Context, userID string, page, limit int) ([]*models.BusinessProfile, int64, error)
+}
+
+// NewBusinessServiceForTesting creates a BusinessServiceTestable for unit testing
+func NewBusinessServiceForTesting(repo BusinessRepositoryTestable, s3 BusinessS3ServiceTestable, log *logger.Logger) *BusinessServiceTestable {
+	return &BusinessServiceTestable{
+		repo: repo,
+		s3:   s3,
+		log:  log,
+	}
+}
+
+// Create creates a business (testable version)
+func (s *BusinessServiceTestable) Create(ctx context.Context, userID string, input CreateBusinessInput) (*models.BusinessProfile, error) {
+	business := &models.BusinessProfile{
+		OwnerID:    userID,
+		Name:       input.Name,
+		Email:      input.Email,
+		Phone:      input.Phone,
+		Address:    input.Address,
+		City:       input.City,
+		State:      input.State,
+		Country:    input.Country,
+		PostalCode: input.ZipCode,
+		TaxID:      input.TaxID,
+		Currency:   input.Currency,
+	}
+
+	if business.Currency == "" {
+		business.Currency = "USD"
+	}
+
+	if err := s.repo.Create(ctx, business); err != nil {
+		return nil, fmt.Errorf("failed to create business: %w", err)
+	}
+
+	return business, nil
+}
+
+// Get retrieves a business by ID (testable version)
+func (s *BusinessServiceTestable) Get(ctx context.Context, id string) (*models.BusinessProfile, error) {
+	return s.repo.GetByID(ctx, id)
+}
+
+// GetByOwner retrieves a business by owner and business ID (testable version)
+func (s *BusinessServiceTestable) GetByOwner(ctx context.Context, userID, businessID string) (*models.BusinessProfile, error) {
+	business, err := s.Get(ctx, businessID)
+	if err != nil {
+		return nil, err
+	}
+	if business.OwnerID != userID {
+		return nil, errors.New("business not found")
+	}
+	return business, nil
+}
+
+// List lists businesses by owner (testable version)
+func (s *BusinessServiceTestable) List(ctx context.Context, userID string, page, limit int) ([]*models.BusinessProfile, int64, error) {
+	return s.repo.List(ctx, userID, page, limit)
+}
+
+// Update updates a business (testable version)
+func (s *BusinessServiceTestable) Update(ctx context.Context, id string, input UpdateBusinessInput) (*models.BusinessProfile, error) {
+	business, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	if input.Name != "" {
+		business.Name = input.Name
+	}
+	if input.Email != "" {
+		business.Email = input.Email
+	}
+	if input.Phone != "" {
+		business.Phone = input.Phone
+	}
+	if input.Address != "" {
+		business.Address = input.Address
+	}
+	if input.City != "" {
+		business.City = input.City
+	}
+	if input.State != "" {
+		business.State = input.State
+	}
+	if input.Country != "" {
+		business.Country = input.Country
+	}
+	if input.ZipCode != "" {
+		business.PostalCode = input.ZipCode
+	}
+	if input.TaxID != "" {
+		business.TaxID = input.TaxID
+	}
+	if input.Currency != "" {
+		business.Currency = input.Currency
+	}
+
+	if err := s.repo.Update(ctx, business); err != nil {
+		return nil, err
+	}
+
+	return business, nil
+}
+
+// UpdateByOwner updates a business scoped to owner (testable version)
+func (s *BusinessServiceTestable) UpdateByOwner(ctx context.Context, userID, id string, input UpdateBusinessInput) (*models.BusinessProfile, error) {
+	business, err := s.GetByOwner(ctx, userID, id)
+	if err != nil {
+		return nil, err
+	}
+
+	if input.Name != "" {
+		business.Name = input.Name
+	}
+	if input.Email != "" {
+		business.Email = input.Email
+	}
+	if input.Phone != "" {
+		business.Phone = input.Phone
+	}
+	if input.Address != "" {
+		business.Address = input.Address
+	}
+	if input.City != "" {
+		business.City = input.City
+	}
+	if input.State != "" {
+		business.State = input.State
+	}
+	if input.Country != "" {
+		business.Country = input.Country
+	}
+	if input.ZipCode != "" {
+		business.PostalCode = input.ZipCode
+	}
+	if input.TaxID != "" {
+		business.TaxID = input.TaxID
+	}
+	if input.Currency != "" {
+		business.Currency = input.Currency
+	}
+
+	if err := s.repo.Update(ctx, business); err != nil {
+		return nil, err
+	}
+
+	return business, nil
+}
+
+// Delete deletes a business (testable version)
+func (s *BusinessServiceTestable) Delete(ctx context.Context, id string) error {
+	return s.repo.Delete(ctx, id)
+}
+
+// DeleteByOwner deletes a business scoped to owner (testable version)
+func (s *BusinessServiceTestable) DeleteByOwner(ctx context.Context, userID, id string) error {
+	business, err := s.GetByOwner(ctx, userID, id)
+	if err != nil {
+		return err
+	}
+	return s.repo.Delete(ctx, business.ID)
+}
+
+// GetLogoUploadURL generates a presigned URL for logo upload (testable version)
+func (s *BusinessServiceTestable) GetLogoUploadURL(ctx context.Context, businessID, contentType string) (string, error) {
+	key := fmt.Sprintf("logos/%s/logo", businessID)
+	return s.s3.GeneratePresignedUploadURL(ctx, "business-logos", key, contentType, 3600)
+}
+
+// GetLogoUploadURLByOwner generates a presigned URL for logo upload scoped to owner (testable version)
+func (s *BusinessServiceTestable) GetLogoUploadURLByOwner(ctx context.Context, userID, businessID, contentType string) (string, error) {
+	if _, err := s.GetByOwner(ctx, userID, businessID); err != nil {
+		return "", err
+	}
+	return s.GetLogoUploadURL(ctx, businessID, contentType)
+}
+
+// UpdateLogoURL updates the logo URL for a business (testable version)
+func (s *BusinessServiceTestable) UpdateLogoURL(ctx context.Context, businessID, logoURL string) error {
+	business, err := s.repo.GetByID(ctx, businessID)
+	if err != nil {
+		return err
+	}
+	business.LogoURL = logoURL
+	return s.repo.Update(ctx, business)
+}
