@@ -21,37 +21,54 @@ func NewBusinessService(repo interfaces.BusinessRepository, s3 *S3Service, log *
 }
 
 type CreateBusinessInput struct {
-	Name          string `json:"name" binding:"required,min=2"`
-	Email         string `json:"email" binding:"required,email"`
-	Phone         string `json:"phone"`
-	Address       string `json:"address"`
-	City          string `json:"city"`
-	State         string `json:"state"`
-	Country       string `json:"country"`
-	ZipCode       string `json:"zip_code"`
-	TaxID         string `json:"tax_id"`
-	Currency      string `json:"currency"`
-	InvoicePrefix string `json:"invoice_prefix"`
+	Name                string                 `json:"name" binding:"required,min=2"`
+	Email               string                 `json:"email" binding:"required,email"`
+	Phone               string                 `json:"phone"`
+	Address             string                 `json:"address"`
+	City                string                 `json:"city"`
+	State               string                 `json:"state"`
+	Country             string                 `json:"country"`
+	ZipCode             string                 `json:"zip_code"`
+	TaxID               string                 `json:"tax_id"`
+	GSTIN               string                 `json:"gstin"`
+	BusinessStateCode   string                 `json:"business_state_code"`
+	CompositionEnabled  bool                   `json:"composition_enabled"`
+	DefaultGSTTreatment string                 `json:"default_gst_treatment"`
+	ExportLUTEnabled    bool                   `json:"export_lut_enabled"`
+	SEZEnabled          bool                   `json:"sez_enabled"`
+	NumberingRules      map[string]interface{} `json:"numbering_rules,omitempty"`
+	Currency            string                 `json:"currency"`
+	InvoicePrefix       string                 `json:"invoice_prefix"`
 }
 
 func (s *BusinessService) Create(ctx context.Context, userID string, input CreateBusinessInput) (*models.BusinessProfile, error) {
 	log := logger.FromContext(ctx).With("service", "business", "operation", "create", "owner_id", userID)
 	business := &models.BusinessProfile{
-		OwnerID:    userID,
-		Name:       input.Name,
-		Email:      input.Email,
-		Phone:      input.Phone,
-		Address:    input.Address,
-		City:       input.City,
-		State:      input.State,
-		Country:    input.Country,
-		PostalCode: input.ZipCode,
-		TaxID:      input.TaxID,
-		Currency:   input.Currency,
+		OwnerID:             userID,
+		Name:                input.Name,
+		Email:               input.Email,
+		Phone:               input.Phone,
+		Address:             input.Address,
+		City:                input.City,
+		State:               input.State,
+		Country:             input.Country,
+		PostalCode:          input.ZipCode,
+		TaxID:               input.TaxID,
+		GSTIN:               input.GSTIN,
+		BusinessStateCode:   input.BusinessStateCode,
+		CompositionEnabled:  input.CompositionEnabled,
+		DefaultGSTTreatment: input.DefaultGSTTreatment,
+		ExportLUTEnabled:    input.ExportLUTEnabled,
+		SEZEnabled:          input.SEZEnabled,
+		NumberingRules:      mustMarshalMap(input.NumberingRules),
+		Currency:            input.Currency,
 	}
 
 	if business.Currency == "" {
 		business.Currency = "USD"
+	}
+	if business.DefaultGSTTreatment == "" {
+		business.DefaultGSTTreatment = models.DocumentGSTTreatmentRegular
 	}
 
 	if err := s.repo.Create(ctx, business); err != nil {
@@ -96,17 +113,24 @@ func (s *BusinessService) List(ctx context.Context, userID string, page, limit i
 }
 
 type UpdateBusinessInput struct {
-	Name          string `json:"name"`
-	Email         string `json:"email"`
-	Phone         string `json:"phone"`
-	Address       string `json:"address"`
-	City          string `json:"city"`
-	State         string `json:"state"`
-	Country       string `json:"country"`
-	ZipCode       string `json:"zip_code"`
-	TaxID         string `json:"tax_id"`
-	Currency      string `json:"currency"`
-	InvoicePrefix string `json:"invoice_prefix"`
+	Name                string                 `json:"name"`
+	Email               string                 `json:"email"`
+	Phone               string                 `json:"phone"`
+	Address             string                 `json:"address"`
+	City                string                 `json:"city"`
+	State               string                 `json:"state"`
+	Country             string                 `json:"country"`
+	ZipCode             string                 `json:"zip_code"`
+	TaxID               string                 `json:"tax_id"`
+	GSTIN               string                 `json:"gstin"`
+	BusinessStateCode   string                 `json:"business_state_code"`
+	CompositionEnabled  *bool                  `json:"composition_enabled"`
+	DefaultGSTTreatment string                 `json:"default_gst_treatment"`
+	ExportLUTEnabled    *bool                  `json:"export_lut_enabled"`
+	SEZEnabled          *bool                  `json:"sez_enabled"`
+	NumberingRules      map[string]interface{} `json:"numbering_rules,omitempty"`
+	Currency            string                 `json:"currency"`
+	InvoicePrefix       string                 `json:"invoice_prefix"`
 }
 
 func (s *BusinessService) Update(ctx context.Context, id string, input UpdateBusinessInput) (*models.BusinessProfile, error) {
@@ -143,6 +167,27 @@ func (s *BusinessService) Update(ctx context.Context, id string, input UpdateBus
 	}
 	if input.TaxID != "" {
 		business.TaxID = input.TaxID
+	}
+	if input.GSTIN != "" {
+		business.GSTIN = input.GSTIN
+	}
+	if input.BusinessStateCode != "" {
+		business.BusinessStateCode = input.BusinessStateCode
+	}
+	if input.CompositionEnabled != nil {
+		business.CompositionEnabled = *input.CompositionEnabled
+	}
+	if input.DefaultGSTTreatment != "" {
+		business.DefaultGSTTreatment = input.DefaultGSTTreatment
+	}
+	if input.ExportLUTEnabled != nil {
+		business.ExportLUTEnabled = *input.ExportLUTEnabled
+	}
+	if input.SEZEnabled != nil {
+		business.SEZEnabled = *input.SEZEnabled
+	}
+	if input.NumberingRules != nil {
+		business.NumberingRules = mustMarshalMap(input.NumberingRules)
 	}
 	if input.Currency != "" {
 		business.Currency = input.Currency
@@ -191,6 +236,27 @@ func (s *BusinessService) UpdateByOwner(ctx context.Context, userID, id string, 
 	}
 	if input.TaxID != "" {
 		business.TaxID = input.TaxID
+	}
+	if input.GSTIN != "" {
+		business.GSTIN = input.GSTIN
+	}
+	if input.BusinessStateCode != "" {
+		business.BusinessStateCode = input.BusinessStateCode
+	}
+	if input.CompositionEnabled != nil {
+		business.CompositionEnabled = *input.CompositionEnabled
+	}
+	if input.DefaultGSTTreatment != "" {
+		business.DefaultGSTTreatment = input.DefaultGSTTreatment
+	}
+	if input.ExportLUTEnabled != nil {
+		business.ExportLUTEnabled = *input.ExportLUTEnabled
+	}
+	if input.SEZEnabled != nil {
+		business.SEZEnabled = *input.SEZEnabled
+	}
+	if input.NumberingRules != nil {
+		business.NumberingRules = mustMarshalMap(input.NumberingRules)
 	}
 	if input.Currency != "" {
 		business.Currency = input.Currency

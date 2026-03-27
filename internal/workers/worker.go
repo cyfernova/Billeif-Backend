@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path"
 	"sync"
 	"time"
 
 	"invoice-backend/internal/config"
+	"invoice-backend/internal/models"
 	"invoice-backend/internal/services"
 	"invoice-backend/pkg/awsclients"
 	"invoice-backend/pkg/logger"
@@ -113,8 +115,10 @@ func (w *Worker) processQueue(ctx context.Context, queueURL string, handler func
 }
 
 type InvoiceMessage struct {
-	Type      string `json:"type"`
-	InvoiceID string `json:"invoice_id"`
+	Type        string `json:"type"`
+	InvoiceID   string `json:"invoice_id,omitempty"`
+	DocumentID  string `json:"document_id,omitempty"`
+	RenderJobID string `json:"render_job_id,omitempty"`
 }
 
 func (w *Worker) handleInvoiceMessage(ctx context.Context, body string) error {
@@ -132,11 +136,13 @@ func ProcessInvoiceQueueMessage(ctx context.Context, cfg *config.Config, svc *se
 		return err
 	}
 
-	log.Info("processing invoice message", "type", msg.Type, "invoice_id", msg.InvoiceID)
+	log.Info("processing invoice message", "type", msg.Type, "invoice_id", msg.InvoiceID, "document_id", msg.DocumentID, "render_job_id", msg.RenderJobID)
 
 	switch msg.Type {
 	case "generate_pdf":
 		return generateInvoicePDF(ctx, cfg, svc, msg.InvoiceID)
+	case "generate_document_pdf":
+		return generateDocumentPDF(ctx, cfg, svc, log, msg.DocumentID, msg.RenderJobID)
 	default:
 		log.Warn("unknown invoice message type", "type", msg.Type)
 	}
@@ -150,10 +156,18 @@ func generateInvoicePDF(ctx context.Context, cfg *config.Config, svc *services.C
 		return err
 	}
 
-	pdfContent := buildInvoicePDFHTML(invoice)
+	document, err := svc.Document.GetForWorker(ctx, invoiceID)
+	if err != nil || document.DocumentType != models.DocumentTypeSalesInvoice {
+		document = legacyInvoiceDocument(invoice)
+	}
 
-	key := "invoices/" + invoiceID + "/invoice.pdf"
-	if err := svc.S3.Upload(ctx, cfg.S3.BucketInvoices, key, []byte(pdfContent), "application/pdf"); err != nil {
+	pdfContent, filename, err := renderDocumentPDF(ctx, svc, document, nil)
+	if err != nil {
+		return err
+	}
+
+	key := path.Join("invoices", invoiceID, filename)
+	if err := svc.S3.Upload(ctx, cfg.S3.BucketInvoices, key, pdfContent, "application/pdf"); err != nil {
 		return err
 	}
 
@@ -161,8 +175,113 @@ func generateInvoicePDF(ctx context.Context, cfg *config.Config, svc *services.C
 	return svc.Invoice.UpdatePDFUrl(ctx, invoiceID, pdfURL)
 }
 
-func buildInvoicePDFHTML(invoice *services.Invoice) string {
-	return `<html><body><h1>Invoice</h1><p>Invoice generation placeholder</p></body></html>`
+func generateDocumentPDF(ctx context.Context, cfg *config.Config, svc *services.Container, log *logger.Logger, documentID, renderJobID string) error {
+	document, err := svc.Document.GetForWorker(ctx, documentID)
+	if err != nil {
+		return err
+	}
+
+	if err := svc.Document.MarkRenderJobProcessing(ctx, document.BusinessID, renderJobID); err != nil {
+		log.Warn("failed to mark render job processing", "document_id", documentID, "render_job_id", renderJobID, "error", err)
+	}
+
+	profile, err := resolveRenderProfile(ctx, svc, document, renderJobID)
+	if err != nil {
+		_ = svc.Document.FailRenderJob(ctx, document.BusinessID, renderJobID, err.Error())
+		return err
+	}
+
+	pdfContent, filename, err := renderDocumentPDF(ctx, svc, document, profile)
+	if err != nil {
+		_ = svc.Document.FailRenderJob(ctx, document.BusinessID, renderJobID, err.Error())
+		return err
+	}
+
+	key := path.Join("documents", document.ID, filename)
+	if err := svc.S3.Upload(ctx, cfg.S3.BucketInvoices, key, pdfContent, "application/pdf"); err != nil {
+		_ = svc.Document.FailRenderJob(ctx, document.BusinessID, renderJobID, err.Error())
+		return err
+	}
+
+	pdfURL := svc.S3.GetObjectURL(cfg.S3.BucketInvoices, key)
+	if err := svc.Document.UpdateRenderedPDF(ctx, document.ID, renderJobID, pdfURL, filename); err != nil {
+		_ = svc.Document.FailRenderJob(ctx, document.BusinessID, renderJobID, err.Error())
+		return err
+	}
+	if document.DocumentType == models.DocumentTypeSalesInvoice {
+		if err := svc.Invoice.UpdatePDFUrl(ctx, document.ID, pdfURL); err != nil {
+			log.Warn("failed to sync rendered sales invoice PDF to legacy invoice", "document_id", document.ID, "error", err)
+		}
+	}
+	return nil
+}
+
+func resolveRenderProfile(ctx context.Context, svc *services.Container, document *models.Document, renderJobID string) (*models.RenderProfile, error) {
+	if renderJobID != "" {
+		job, err := svc.Document.GetRenderJobByBusiness(ctx, document.BusinessID, renderJobID)
+		if err == nil && job.RenderProfileID != nil {
+			return svc.Document.GetRenderProfileByBusiness(ctx, document.BusinessID, *job.RenderProfileID)
+		}
+	}
+	if document.RenderProfileID != nil {
+		profile, err := svc.Document.GetRenderProfileByBusiness(ctx, document.BusinessID, *document.RenderProfileID)
+		if err == nil {
+			return profile, nil
+		}
+	}
+	profile, err := svc.Document.GetDefaultRenderProfileByBusiness(ctx, document.BusinessID)
+	if err != nil {
+		return nil, nil
+	}
+	return profile, nil
+}
+
+func legacyInvoiceDocument(invoice *services.Invoice) *models.Document {
+	document := &models.Document{
+		ID:                    invoice.ID,
+		BusinessID:            invoice.BusinessID,
+		DocumentType:          models.DocumentTypeSalesInvoice,
+		PartyType:             models.DocumentPartyTypeCustomer,
+		PartyID:               &invoice.CustomerID,
+		Status:                models.DocumentStatusIssued,
+		DraftState:            models.DocumentDraftStateFinal,
+		TaxMode:               models.DocumentTaxModeNonGST,
+		GSTTreatment:          models.DocumentGSTTreatmentRegular,
+		SerialNumber:          invoice.InvoiceNo,
+		IssueDate:             invoice.InvoiceDate,
+		DueDate:               &invoice.DueDate,
+		Currency:              invoice.Currency,
+		Locale:                "en-IN",
+		Notes:                 invoice.Notes,
+		Subtotal:              invoice.Subtotal,
+		DiscountTotal:         invoice.Discount,
+		TaxTotal:              invoice.Tax,
+		Total:                 invoice.Total,
+		PaidAmount:            invoice.PaidAmount,
+		BalanceDue:            invoice.BalanceDue,
+		ProfitSnapshotEnabled: true,
+	}
+	if invoice.Tax > 0 {
+		document.TaxMode = models.DocumentTaxModeGST
+	}
+	for _, item := range invoice.Items {
+		document.Lines = append(document.Lines, &models.DocumentLine{
+			ID:                item.ID,
+			DocumentID:        invoice.ID,
+			ProductID:         item.ProductID,
+			Description:       item.Description,
+			Quantity:          item.Quantity,
+			RemainingQuantity: item.Quantity,
+			UnitPrice:         item.UnitPrice,
+			DiscountAmount:    item.Discount,
+			TaxRate:           item.TaxRate,
+			TaxAmount:         item.Total - ((item.Quantity * item.UnitPrice) - item.Discount),
+			LineSubtotal:      (item.Quantity * item.UnitPrice) - item.Discount,
+			LineTotal:         item.Total,
+			StockEffect:       "out",
+		})
+	}
+	return document
 }
 
 type PaymentMessage struct {

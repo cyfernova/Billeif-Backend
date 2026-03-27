@@ -73,10 +73,61 @@ type PaymentRepository interface {
 	Delete(ctx context.Context, id string) error
 }
 
+type DocumentRepository interface {
+	Create(ctx context.Context, document *models.Document) error
+	GetByID(ctx context.Context, id, businessID string) (*models.Document, error)
+	GetByIDInternal(ctx context.Context, id string) (*models.Document, error)
+	ListByType(ctx context.Context, businessID, documentType string, page, limit int) ([]*models.Document, int64, error)
+	Update(ctx context.Context, document *models.Document) error
+	UpdatePDF(ctx context.Context, documentID, pdfURL, filename string) error
+	Delete(ctx context.Context, id string) error
+	CreateLink(ctx context.Context, link *models.DocumentLink) error
+	ListLinks(ctx context.Context, businessID, documentID string) ([]*models.DocumentLink, error)
+	CreateRenderProfile(ctx context.Context, profile *models.RenderProfile) error
+	ListRenderProfiles(ctx context.Context, businessID string, page, limit int) ([]*models.RenderProfile, int64, error)
+	GetRenderProfile(ctx context.Context, businessID, id string) (*models.RenderProfile, error)
+	GetDefaultRenderProfile(ctx context.Context, businessID string) (*models.RenderProfile, error)
+	UpdateRenderProfile(ctx context.Context, profile *models.RenderProfile) error
+	DeleteRenderProfile(ctx context.Context, businessID, id string) error
+	CreateRenderJob(ctx context.Context, job *models.DocumentRenderJob) error
+	GetRenderJob(ctx context.Context, businessID, jobID string) (*models.DocumentRenderJob, error)
+	GetLatestRenderJob(ctx context.Context, documentID string) (*models.DocumentRenderJob, error)
+	UpdateRenderJob(ctx context.Context, job *models.DocumentRenderJob) error
+	CreateRevision(ctx context.Context, revision *models.DocumentRevision) error
+	ListRevisions(ctx context.Context, businessID, documentID string, page, limit int) ([]*models.DocumentRevision, int64, error)
+}
+
 type LedgerRepository interface {
 	Create(ctx context.Context, entry *models.LedgerEntry) error
 	GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.LedgerEntry, int64, error)
 	GetBalance(ctx context.Context, businessID string) (float64, error)
+}
+
+type JournalRepository interface {
+	Create(ctx context.Context, journal *models.Journal) error
+	GetByID(ctx context.Context, id, businessID string) (*models.Journal, error)
+	ListByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.Journal, int64, error)
+	Update(ctx context.Context, journal *models.Journal) error
+	Delete(ctx context.Context, id string) error
+}
+
+type InventoryRepository interface {
+	CreateWarehouse(ctx context.Context, warehouse *models.Warehouse) error
+	GetWarehouseByID(ctx context.Context, id, businessID string) (*models.Warehouse, error)
+	GetDefaultWarehouse(ctx context.Context, businessID string) (*models.Warehouse, error)
+	ListWarehouses(ctx context.Context, businessID string) ([]*models.Warehouse, error)
+	CreateStockMove(ctx context.Context, move *models.StockMove) error
+	CreateReservation(ctx context.Context, reservation *models.InventoryReservation) error
+	ReleaseReservationsByDocument(ctx context.Context, documentID string) error
+}
+
+type ShippingRepository interface {
+	CreateShipment(ctx context.Context, shipment *models.Shipment) error
+	GetShipmentByDocument(ctx context.Context, businessID, documentID string) (*models.Shipment, error)
+	UpdateShipment(ctx context.Context, shipment *models.Shipment) error
+	CreateShippingLabel(ctx context.Context, label *models.ShippingLabel) error
+	GetShippingLabelByDocument(ctx context.Context, businessID, documentID string) (*models.ShippingLabel, error)
+	UpdateShippingLabel(ctx context.Context, label *models.ShippingLabel) error
 }
 
 type TeamMemberRepository interface {

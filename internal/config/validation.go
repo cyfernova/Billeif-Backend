@@ -87,6 +87,10 @@ func validate(cfg *Config) error {
 		}
 	}
 
+	if (cfg.Shipping.ShiprocketEmail != "" && cfg.Shipping.ShiprocketPassword == "") || (cfg.Shipping.ShiprocketEmail == "" && cfg.Shipping.ShiprocketPassword != "") {
+		return fmt.Errorf("both shipping shiprocket email and password must be configured together")
+	}
+
 	return nil
 }
 

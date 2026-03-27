@@ -175,6 +175,10 @@ type Repositories struct {
 	Customer     interfaces.CustomerRepository
 	Vendor       interfaces.VendorRepository
 	Product      interfaces.ProductRepository
+	Document     interfaces.DocumentRepository
+	Journal      interfaces.JournalRepository
+	Inventory    interfaces.InventoryRepository
+	Shipping     interfaces.ShippingRepository
 	Invoice      interfaces.InvoiceRepository
 	Payment      interfaces.PaymentRepository
 	Ledger       interfaces.LedgerRepository
@@ -191,6 +195,10 @@ func initRepositories(db *gorm.DB) *Repositories {
 		Customer:     postgresrepo.NewCustomerRepository(db),
 		Vendor:       postgresrepo.NewVendorRepository(db),
 		Product:      postgresrepo.NewProductRepository(db),
+		Document:     postgresrepo.NewDocumentRepository(db),
+		Journal:      postgresrepo.NewJournalRepository(db),
+		Inventory:    postgresrepo.NewInventoryRepository(db),
+		Shipping:     postgresrepo.NewShippingRepository(db),
 		Invoice:      postgresrepo.NewInvoiceRepository(db),
 		Payment:      postgresrepo.NewPaymentRepository(db),
 		Ledger:       postgresrepo.NewLedgerRepository(db),
@@ -203,7 +211,7 @@ func initRepositories(db *gorm.DB) *Repositories {
 
 func initServices(cfg *config.Config, db *gorm.DB, repos *Repositories, aws *awsclients.Config, log *logger.Logger) *services.Container {
 	return services.NewContainer(cfg, db, repos.User, repos.Business, repos.Customer, repos.Vendor,
-		repos.Product, repos.Invoice, repos.Payment, repos.Ledger, repos.Team,
+		repos.Product, repos.Document, repos.Journal, repos.Inventory, repos.Shipping, repos.Invoice, repos.Payment, repos.Ledger, repos.Team,
 		repos.Webhook, repos.Subscription, repos.AP2, aws, log)
 }
 
@@ -374,6 +382,29 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 				products.POST("/:id/stock", h.Product.AdjustStock)
 			}
 
+			registerDocumentResource := func(path string, handler *handlers.DocumentHandler) {
+				group := protected.Group(path)
+				group.GET("", handler.List)
+				group.GET("/:id", handler.Get)
+				group.POST("", handler.Create)
+				group.PUT("/:id", handler.Update)
+				group.DELETE("/:id", handler.Delete)
+				group.POST("/:id/cancel", handler.Cancel)
+				group.GET("/:id/pdf", handler.GetPDF)
+			}
+
+			registerDocumentResource("/purchases", h.Purchase)
+			registerDocumentResource("/purchase-orders", h.PurchaseOrder)
+			registerDocumentResource("/sales-orders", h.SalesOrder)
+			registerDocumentResource("/quotations", h.Quotation)
+			registerDocumentResource("/proforma-invoices", h.ProformaInvoice)
+			registerDocumentResource("/delivery-challans", h.DeliveryChallan)
+			registerDocumentResource("/credit-notes", h.CreditNote)
+			registerDocumentResource("/debit-notes", h.DebitNote)
+			registerDocumentResource("/bills-of-supply", h.BillOfSupply)
+			registerDocumentResource("/packing-lists", h.PackingList)
+			registerDocumentResource("/shipping-labels", h.ShippingLabel)
+
 			invoices := protected.Group("/invoices")
 			{
 				invoices.GET("", h.Invoice.List)
@@ -393,6 +424,45 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 				payments.POST("", h.Payment.Create)
 				payments.PUT("/:id", h.Payment.Update)
 				payments.DELETE("/:id", h.Payment.Delete)
+			}
+
+			documents := protected.Group("/documents")
+			{
+				documents.POST("/merge", h.DocumentUtility.Merge)
+				documents.POST("/:id/convert", h.DocumentUtility.Convert)
+				documents.POST("/:id/duplicate", h.DocumentUtility.Duplicate)
+				documents.GET("/:id/history", h.DocumentUtility.History)
+				documents.POST("/:id/render", h.DocumentUtility.Render)
+				documents.GET("/:id/pdf", h.DocumentUtility.GetPDF)
+			}
+
+			journals := protected.Group("/journals")
+			{
+				journals.GET("", h.Journal.List)
+				journals.GET("/:id", h.Journal.Get)
+				journals.POST("", h.Journal.Create)
+				journals.PUT("/:id", h.Journal.Update)
+				journals.DELETE("/:id", h.Journal.Delete)
+				journals.POST("/:id/post", h.Journal.Post)
+				journals.POST("/:id/reverse", h.Journal.Reverse)
+			}
+
+			renderProfiles := protected.Group("/render-profiles")
+			{
+				renderProfiles.GET("", h.RenderProfile.List)
+				renderProfiles.GET("/default", h.RenderProfile.GetDefault)
+				renderProfiles.GET("/:id", h.RenderProfile.Get)
+				renderProfiles.POST("", h.RenderProfile.Create)
+				renderProfiles.PUT("/:id", h.RenderProfile.Update)
+				renderProfiles.DELETE("/:id", h.RenderProfile.Delete)
+			}
+
+			shipments := protected.Group("/shipments")
+			{
+				shipments.GET("/documents/:id", h.Shipment.GetByDocument)
+				shipments.POST("/documents/:id", h.Shipment.UpsertByDocument)
+				shipments.GET("/documents/:id/label", h.Shipment.GetLabelByDocument)
+				shipments.POST("/documents/:id/label", h.Shipment.GenerateLabelByDocument)
 			}
 
 			ledger := protected.Group("/ledger")

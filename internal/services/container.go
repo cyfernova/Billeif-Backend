@@ -18,6 +18,10 @@ type Container struct {
 	Customer            *CustomerService
 	Vendor              *VendorService
 	Product             *ProductService
+	Inventory           *InventoryService
+	Document            *DocumentService
+	Journal             *JournalService
+	Shipping            *ShippingService
 	Invoice             *InvoiceService
 	Payment             *PaymentService
 	Ledger              *LedgerService
@@ -55,6 +59,10 @@ func NewContainer(
 	customerRepo interfaces.CustomerRepository,
 	vendorRepo interfaces.VendorRepository,
 	productRepo interfaces.ProductRepository,
+	documentRepo interfaces.DocumentRepository,
+	journalRepo interfaces.JournalRepository,
+	inventoryRepo interfaces.InventoryRepository,
+	shippingRepo interfaces.ShippingRepository,
 	invoiceRepo interfaces.InvoiceRepository,
 	paymentRepo interfaces.PaymentRepository,
 	ledgerRepo interfaces.LedgerRepository,
@@ -73,6 +81,10 @@ func NewContainer(
 	ap2MandateSvc := ap2.NewMandateService(ap2MandateSigner, ap2MandateVerifier)
 	a2aSigner, _ := ap2.NewSignatureService()
 	a2aClient := a2a.NewA2AClient(a2aSigner, log)
+	inventorySvc := NewInventoryService(inventoryRepo, productRepo, log)
+	journalSvc := NewJournalService(journalRepo, ledgerRepo, log)
+	shippingSvc := NewShippingService(cfg, shippingRepo, customerRepo, vendorRepo, log)
+	documentSvc := NewDocumentService(cfg, documentRepo, businessRepo, customerRepo, vendorRepo, productRepo, inventorySvc, journalSvc, shippingSvc, aws, log)
 	marketplaceSvc := NewMarketplaceService(ap2Repo, log)
 	productMatchingSvc := NewProductMatchingService(marketplaceSvc, log)
 	intentProcessingSvc, _ := NewIntentProcessingService(productMatchingSvc, marketplaceSvc, log)
@@ -112,8 +124,12 @@ func NewContainer(
 		Customer:            NewCustomerService(customerRepo, log),
 		Vendor:              NewVendorService(vendorRepo, log),
 		Product:             NewProductService(productRepo, s3Svc, log),
-		Invoice:             NewInvoiceService(cfg, invoiceRepo, productRepo, customerRepo, aws, s3Svc, emailSvc, log),
-		Payment:             NewPaymentService(db, paymentRepo, invoiceRepo, log),
+		Inventory:           inventorySvc,
+		Document:            documentSvc,
+		Journal:             journalSvc,
+		Shipping:            shippingSvc,
+		Invoice:             NewInvoiceService(cfg, invoiceRepo, productRepo, customerRepo, documentSvc, aws, s3Svc, emailSvc, log),
+		Payment:             NewPaymentService(db, paymentRepo, invoiceRepo, documentSvc, journalSvc, log),
 		Ledger:              NewLedgerService(ledgerRepo, log),
 		Team:                NewTeamService(teamRepo, log),
 		Webhook:             NewWebhookService(webhookRepo, log),

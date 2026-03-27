@@ -20,15 +20,19 @@ func NewProductService(repo interfaces.ProductRepository, s3 *S3Service, log *lo
 }
 
 type CreateProductInput struct {
-	BusinessID  string  `json:"business_id,omitempty"`
-	Name        string  `json:"name" binding:"required,min=2"`
-	SKU         string  `json:"sku" binding:"required"`
-	Description string  `json:"description"`
-	Price       float64 `json:"price" binding:"required,gt=0"`
-	Currency    string  `json:"currency"`
-	Unit        string  `json:"unit"`
-	StockLevel  int64   `json:"stock_level"`
-	MinStock    int64   `json:"min_stock"`
+	BusinessID      string  `json:"business_id,omitempty"`
+	Name            string  `json:"name" binding:"required,min=2"`
+	SKU             string  `json:"sku" binding:"required"`
+	Description     string  `json:"description"`
+	Price           float64 `json:"price" binding:"required,gt=0"`
+	CostPrice       float64 `json:"cost_price"`
+	ValuationMethod string  `json:"valuation_method"`
+	HSNSACCode      string  `json:"hsn_sac_code"`
+	IsService       bool    `json:"is_service"`
+	Currency        string  `json:"currency"`
+	Unit            string  `json:"unit"`
+	StockLevel      int64   `json:"stock_level"`
+	MinStock        int64   `json:"min_stock"`
 }
 
 func (s *ProductService) Create(ctx context.Context, input CreateProductInput) (*models.Product, error) {
@@ -40,16 +44,20 @@ func (s *ProductService) Create(ctx context.Context, input CreateProductInput) (
 	}
 
 	product := &models.Product{
-		BusinessID:  input.BusinessID,
-		Name:        input.Name,
-		SKU:         input.SKU,
-		Description: input.Description,
-		Price:       input.Price,
-		Currency:    input.Currency,
-		Unit:        input.Unit,
-		StockLevel:  input.StockLevel,
-		MinStock:    input.MinStock,
-		IsActive:    true,
+		BusinessID:      input.BusinessID,
+		Name:            input.Name,
+		SKU:             input.SKU,
+		Description:     input.Description,
+		Price:           input.Price,
+		CostPrice:       input.CostPrice,
+		ValuationMethod: input.ValuationMethod,
+		HSNSACCode:      input.HSNSACCode,
+		IsService:       input.IsService,
+		Currency:        input.Currency,
+		Unit:            input.Unit,
+		StockLevel:      input.StockLevel,
+		MinStock:        input.MinStock,
+		IsActive:        true,
 	}
 
 	if product.Currency == "" {
@@ -57,6 +65,9 @@ func (s *ProductService) Create(ctx context.Context, input CreateProductInput) (
 	}
 	if product.Unit == "" {
 		product.Unit = "PCS"
+	}
+	if product.ValuationMethod == "" {
+		product.ValuationMethod = "last_purchase"
 	}
 
 	if err := s.repo.Create(ctx, product); err != nil {
@@ -94,13 +105,17 @@ func (s *ProductService) List(ctx context.Context, businessID string, page, limi
 }
 
 type UpdateProductInput struct {
-	Name        string  `json:"name"`
-	SKU         string  `json:"sku"`
-	Description string  `json:"description"`
-	Price       float64 `json:"price"`
-	Currency    string  `json:"currency"`
-	Unit        string  `json:"unit"`
-	MinStock    int64   `json:"min_stock"`
+	Name            string   `json:"name"`
+	SKU             string   `json:"sku"`
+	Description     string   `json:"description"`
+	Price           float64  `json:"price"`
+	CostPrice       *float64 `json:"cost_price"`
+	ValuationMethod string   `json:"valuation_method"`
+	HSNSACCode      string   `json:"hsn_sac_code"`
+	IsService       *bool    `json:"is_service"`
+	Currency        string   `json:"currency"`
+	Unit            string   `json:"unit"`
+	MinStock        int64    `json:"min_stock"`
 }
 
 func (s *ProductService) UpdateByBusiness(ctx context.Context, businessID, id string, input UpdateProductInput) (*models.Product, error) {
@@ -122,6 +137,18 @@ func (s *ProductService) UpdateByBusiness(ctx context.Context, businessID, id st
 	}
 	if input.Price > 0 {
 		product.Price = input.Price
+	}
+	if input.CostPrice != nil {
+		product.CostPrice = *input.CostPrice
+	}
+	if input.ValuationMethod != "" {
+		product.ValuationMethod = input.ValuationMethod
+	}
+	if input.HSNSACCode != "" {
+		product.HSNSACCode = input.HSNSACCode
+	}
+	if input.IsService != nil {
+		product.IsService = *input.IsService
 	}
 	if input.Currency != "" {
 		product.Currency = input.Currency

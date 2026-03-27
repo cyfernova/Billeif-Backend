@@ -22,6 +22,7 @@ type Config struct {
 	S3             S3Config          `mapstructure:"S3"`
 	SQS            SQSConfig         `mapstructure:"SQS"`
 	Sentry         SentryConfig      `mapstructure:"SENTRY"`
+	Shipping       ShippingConfig    `mapstructure:"SHIPPING"`
 	AllowedOrigins []string          `mapstructure:"ALLOWED_ORIGINS"`
 	LLM            LLMConfig         `mapstructure:"LLM"`
 	Credentials    CredentialsConfig `mapstructure:"CREDENTIALS"`
@@ -127,6 +128,19 @@ type SQSConfig struct {
 	PaymentQueue string `mapstructure:"PAYMENT_QUEUE"`
 }
 
+type ShippingConfig struct {
+	DefaultProvider           string `mapstructure:"DEFAULT_PROVIDER"`
+	Timeout                   int    `mapstructure:"TIMEOUT"`
+	ShiprocketBaseURL         string `mapstructure:"SHIPROCKET_BASE_URL"`
+	ShiprocketEmail           string `mapstructure:"SHIPROCKET_EMAIL"`
+	ShiprocketPassword        string `mapstructure:"SHIPROCKET_PASSWORD"`
+	ShiprocketAuthPath        string `mapstructure:"SHIPROCKET_AUTH_PATH"`
+	ShiprocketOrderPath       string `mapstructure:"SHIPROCKET_ORDER_PATH"`
+	ShiprocketAssignAWBPath   string `mapstructure:"SHIPROCKET_ASSIGN_AWB_PATH"`
+	ShiprocketLabelPath       string `mapstructure:"SHIPROCKET_LABEL_PATH"`
+	ShiprocketTrackingBaseURL string `mapstructure:"SHIPROCKET_TRACKING_BASE_URL"`
+}
+
 func Load() (*Config, error) {
 	viper.SetConfigType("env")
 	viper.AddConfigPath(".")
@@ -211,6 +225,16 @@ func Load() (*Config, error) {
 	_ = viper.BindEnv("SENTRY.TRACES_SAMPLE_RATE", "SENTRY_TRACES_SAMPLE_RATE")
 	_ = viper.BindEnv("SENTRY.ENABLE_TRACING", "SENTRY_ENABLE_TRACING")
 	_ = viper.BindEnv("SENTRY.DEBUG", "SENTRY_DEBUG")
+	_ = viper.BindEnv("SHIPPING.DEFAULT_PROVIDER", "SHIPPING_DEFAULT_PROVIDER")
+	_ = viper.BindEnv("SHIPPING.TIMEOUT", "SHIPPING_TIMEOUT")
+	_ = viper.BindEnv("SHIPPING.SHIPROCKET_BASE_URL", "SHIPPING_SHIPROCKET_BASE_URL", "SHIPROCKET_BASE_URL")
+	_ = viper.BindEnv("SHIPPING.SHIPROCKET_EMAIL", "SHIPPING_SHIPROCKET_EMAIL", "SHIPROCKET_EMAIL")
+	_ = viper.BindEnv("SHIPPING.SHIPROCKET_PASSWORD", "SHIPPING_SHIPROCKET_PASSWORD", "SHIPROCKET_PASSWORD")
+	_ = viper.BindEnv("SHIPPING.SHIPROCKET_AUTH_PATH", "SHIPPING_SHIPROCKET_AUTH_PATH")
+	_ = viper.BindEnv("SHIPPING.SHIPROCKET_ORDER_PATH", "SHIPPING_SHIPROCKET_ORDER_PATH")
+	_ = viper.BindEnv("SHIPPING.SHIPROCKET_ASSIGN_AWB_PATH", "SHIPPING_SHIPROCKET_ASSIGN_AWB_PATH")
+	_ = viper.BindEnv("SHIPPING.SHIPROCKET_LABEL_PATH", "SHIPPING_SHIPROCKET_LABEL_PATH")
+	_ = viper.BindEnv("SHIPPING.SHIPROCKET_TRACKING_BASE_URL", "SHIPPING_SHIPROCKET_TRACKING_BASE_URL")
 	_ = viper.BindEnv("ALLOWED_ORIGINS", "ALLOWED_ORIGINS")
 	_ = viper.BindEnv("LLM.API_KEY", "LLM_API_KEY")
 	_ = viper.BindEnv("LLM.API_URL", "LLM_API_URL")
@@ -300,6 +324,27 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.LLM.Timeout == 0 {
 		cfg.LLM.Timeout = 60
+	}
+	if cfg.Shipping.DefaultProvider == "" {
+		cfg.Shipping.DefaultProvider = "manual"
+	}
+	if cfg.Shipping.Timeout == 0 {
+		cfg.Shipping.Timeout = 30
+	}
+	if cfg.Shipping.ShiprocketBaseURL == "" {
+		cfg.Shipping.ShiprocketBaseURL = "https://apiv2.shiprocket.in/v1/external"
+	}
+	if cfg.Shipping.ShiprocketAuthPath == "" {
+		cfg.Shipping.ShiprocketAuthPath = "/auth/login"
+	}
+	if cfg.Shipping.ShiprocketOrderPath == "" {
+		cfg.Shipping.ShiprocketOrderPath = "/orders/create/adhoc"
+	}
+	if cfg.Shipping.ShiprocketAssignAWBPath == "" {
+		cfg.Shipping.ShiprocketAssignAWBPath = "/courier/assign/awb"
+	}
+	if cfg.Shipping.ShiprocketLabelPath == "" {
+		cfg.Shipping.ShiprocketLabelPath = "/courier/generate/label"
 	}
 }
 

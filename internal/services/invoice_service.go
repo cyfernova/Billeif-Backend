@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path"
 	"time"
 
 	"invoice-backend/internal/config"
@@ -21,6 +22,7 @@ type InvoiceService struct {
 	repo         interfaces.InvoiceRepository
 	productRepo  interfaces.ProductRepository
 	customerRepo interfaces.CustomerRepository
+	documents    *DocumentService
 	sqs          *sqs.Client
 	s3           *S3Service
 	email        *EmailService
@@ -32,6 +34,7 @@ func NewInvoiceService(
 	repo interfaces.InvoiceRepository,
 	productRepo interfaces.ProductRepository,
 	customerRepo interfaces.CustomerRepository,
+	documents *DocumentService,
 	aws *awsclients.Config,
 	s3 *S3Service,
 	email *EmailService,
@@ -42,6 +45,7 @@ func NewInvoiceService(
 		repo:         repo,
 		productRepo:  productRepo,
 		customerRepo: customerRepo,
+		documents:    documents,
 		sqs:          aws.SQS,
 		s3:           s3,
 		email:        email,
@@ -119,6 +123,11 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 	if err := s.repo.Create(ctx, invoice); err != nil {
 		return nil, fmt.Errorf("failed to create invoice: %w", err)
 	}
+	if s.documents != nil {
+		if err := s.documents.MirrorLegacyInvoice(ctx, invoice); err != nil {
+			s.log.Error("failed to mirror invoice into documents", "invoice_id", invoice.ID, "error", err)
+		}
+	}
 
 	go s.queuePDFGeneration(invoice.ID)
 
@@ -195,6 +204,11 @@ func (s *InvoiceService) UpdateByBusiness(ctx context.Context, businessID, id st
 	if err := s.repo.Update(ctx, invoice); err != nil {
 		return nil, err
 	}
+	if s.documents != nil {
+		if err := s.documents.MirrorLegacyInvoice(ctx, invoice); err != nil {
+			s.log.Error("failed to mirror updated invoice", "invoice_id", invoice.ID, "error", err)
+		}
+	}
 	return invoice, nil
 }
 
@@ -206,7 +220,15 @@ func (s *InvoiceService) DeleteByBusiness(ctx context.Context, businessID, id st
 	if invoice.Status != "draft" {
 		return fmt.Errorf("cannot delete invoice with status: %s", invoice.Status)
 	}
-	return s.repo.Delete(ctx, invoice.ID)
+	if err := s.repo.Delete(ctx, invoice.ID); err != nil {
+		return err
+	}
+	if s.documents != nil {
+		if err := s.documents.DeleteByType(ctx, businessID, invoice.ID, models.DocumentTypeSalesInvoice); err != nil && err.Error() != "document not found" {
+			s.log.Error("failed to delete mirrored sales invoice document", "invoice_id", invoice.ID, "error", err)
+		}
+	}
+	return nil
 }
 
 func (s *InvoiceService) UpdateStatus(ctx context.Context, id, status string) error {
@@ -226,6 +248,14 @@ func (s *InvoiceService) SendByBusiness(ctx context.Context, businessID, id stri
 
 	if err := s.repo.UpdateStatus(ctx, id, "sent"); err != nil {
 		return err
+	}
+	invoice.Status = "sent"
+	now := time.Now()
+	invoice.SentAt = &now
+	if s.documents != nil {
+		if err := s.documents.MirrorLegacyInvoice(ctx, invoice); err != nil {
+			s.log.Error("failed to mirror sent invoice", "invoice_id", invoice.ID, "error", err)
+		}
 	}
 
 	subject := fmt.Sprintf("Invoice %s", invoice.InvoiceNo)
@@ -251,7 +281,15 @@ func (s *InvoiceService) GetNextNumber(ctx context.Context, businessID string) (
 // UpdatePDFUrl is called by the internal worker (no tenant context).
 // Uses direct column update rather than tenant-scoped GetByID.
 func (s *InvoiceService) UpdatePDFUrl(ctx context.Context, invoiceID, pdfURL string) error {
-	return s.repo.UpdatePDFURL(ctx, invoiceID, pdfURL)
+	if err := s.repo.UpdatePDFURL(ctx, invoiceID, pdfURL); err != nil {
+		return err
+	}
+	if s.documents != nil {
+		if err := s.documents.SyncLegacyInvoicePDF(ctx, invoiceID, pdfURL, path.Base(pdfURL)); err != nil {
+			s.log.Error("failed to sync invoice pdf to mirrored document", "invoice_id", invoiceID, "error", err)
+		}
+	}
+	return nil
 }
 
 type Invoice = models.Invoice

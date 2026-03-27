@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"invoice-backend/internal/models"
@@ -16,11 +17,13 @@ type PaymentService struct {
 	db          *gorm.DB
 	repo        interfaces.PaymentRepository
 	invoiceRepo interfaces.InvoiceRepository
+	documents   *DocumentService
+	journals    *JournalService
 	log         *logger.Logger
 }
 
-func NewPaymentService(db *gorm.DB, repo interfaces.PaymentRepository, invoiceRepo interfaces.InvoiceRepository, log *logger.Logger) *PaymentService {
-	return &PaymentService{db: db, repo: repo, invoiceRepo: invoiceRepo, log: log}
+func NewPaymentService(db *gorm.DB, repo interfaces.PaymentRepository, invoiceRepo interfaces.InvoiceRepository, documents *DocumentService, journals *JournalService, log *logger.Logger) *PaymentService {
+	return &PaymentService{db: db, repo: repo, invoiceRepo: invoiceRepo, documents: documents, journals: journals, log: log}
 }
 
 type CreatePaymentInput struct {
@@ -82,6 +85,16 @@ func (s *PaymentService) Create(ctx context.Context, businessID string, input Cr
 	if err != nil {
 		s.log.Error("payment transaction failed", "invoice_id", input.InvoiceID, "error", err)
 		return nil, err
+	}
+	if s.documents != nil {
+		if err := s.documents.SyncLegacyInvoicePayment(ctx, invoice.ID, invoice.PaidAmount, invoice.BalanceDue, invoice.Status); err != nil {
+			s.log.Error("failed to sync mirrored document payment state", "invoice_id", invoice.ID, "payment_id", payment.ID, "error", err)
+		}
+	}
+	if s.journals != nil {
+		if err := s.createPaymentJournal(ctx, payment, invoice); err != nil {
+			s.log.Error("failed to create payment journal", "invoice_id", invoice.ID, "payment_id", payment.ID, "error", err)
+		}
 	}
 
 	return payment, nil
@@ -293,4 +306,50 @@ func (s *PaymentServiceTestable) DeleteByBusiness(ctx context.Context, businessI
 		return err
 	}
 	return s.repo.Delete(ctx, payment.ID)
+}
+
+func (s *PaymentService) createPaymentJournal(ctx context.Context, payment *models.Payment, invoice *models.Invoice) error {
+	assetCode := "BANK"
+	assetName := "Bank Account"
+	if strings.Contains(strings.ToLower(payment.PaymentMethod), "cash") {
+		assetCode = "CASH"
+		assetName = "Cash"
+	}
+
+	documentID := invoice.ID
+	metadata := map[string]interface{}{
+		"payment_id":     payment.ID,
+		"payment_method": payment.PaymentMethod,
+	}
+
+	_, err := s.journals.CreateByBusiness(ctx, invoice.BusinessID, CreateJournalInput{
+		Name:        fmt.Sprintf("Payment %s", invoice.InvoiceNo),
+		Reference:   coalesceString(payment.Reference, payment.ID),
+		PostingDate: payment.PaymentDate,
+		Status:      models.JournalStatusPosted,
+		Notes:       payment.Notes,
+		Lines: []CreateJournalLineInput{
+			{
+				AccountCode: assetCode,
+				AccountName: assetName,
+				EntryType:   "debit",
+				Amount:      payment.Amount,
+				Currency:    payment.Currency,
+				Description: fmt.Sprintf("Receipt for invoice %s", invoice.InvoiceNo),
+				DocumentID:  &documentID,
+				Metadata:    metadata,
+			},
+			{
+				AccountCode: "AR",
+				AccountName: "Accounts Receivable",
+				EntryType:   "credit",
+				Amount:      payment.Amount,
+				Currency:    payment.Currency,
+				Description: fmt.Sprintf("Settlement for invoice %s", invoice.InvoiceNo),
+				DocumentID:  &documentID,
+				Metadata:    metadata,
+			},
+		},
+	})
+	return err
 }

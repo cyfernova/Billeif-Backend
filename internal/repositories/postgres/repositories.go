@@ -10,6 +10,10 @@ type Repositories struct {
 	Customer     interfaces.CustomerRepository
 	Vendor       interfaces.VendorRepository
 	Product      interfaces.ProductRepository
+	Document     interfaces.DocumentRepository
+	Journal      interfaces.JournalRepository
+	Inventory    interfaces.InventoryRepository
+	Shipping     interfaces.ShippingRepository
 	Invoice      interfaces.InvoiceRepository
 	Payment      interfaces.PaymentRepository
 	Ledger       interfaces.LedgerRepository
@@ -19,13 +23,17 @@ type Repositories struct {
 	AP2          interfaces.AP2Repository
 }
 
-func NewRepositories(userRepo interfaces.UserRepository, businessRepo interfaces.BusinessRepository, customerRepo interfaces.CustomerRepository, vendorRepo interfaces.VendorRepository, productRepo interfaces.ProductRepository, invoiceRepo interfaces.InvoiceRepository, paymentRepo interfaces.PaymentRepository, ledgerRepo interfaces.LedgerRepository, teamRepo interfaces.TeamMemberRepository, webhookRepo interfaces.WebhookRepository, subscriptionRepo interfaces.SubscriptionRepository, ap2Repo interfaces.AP2Repository) *Repositories {
+func NewRepositories(userRepo interfaces.UserRepository, businessRepo interfaces.BusinessRepository, customerRepo interfaces.CustomerRepository, vendorRepo interfaces.VendorRepository, productRepo interfaces.ProductRepository, documentRepo interfaces.DocumentRepository, journalRepo interfaces.JournalRepository, inventoryRepo interfaces.InventoryRepository, shippingRepo interfaces.ShippingRepository, invoiceRepo interfaces.InvoiceRepository, paymentRepo interfaces.PaymentRepository, ledgerRepo interfaces.LedgerRepository, teamRepo interfaces.TeamMemberRepository, webhookRepo interfaces.WebhookRepository, subscriptionRepo interfaces.SubscriptionRepository, ap2Repo interfaces.AP2Repository) *Repositories {
 	return &Repositories{
 		User:         userRepo,
 		Business:     businessRepo,
 		Customer:     customerRepo,
 		Vendor:       vendorRepo,
 		Product:      productRepo,
+		Document:     documentRepo,
+		Journal:      journalRepo,
+		Inventory:    inventoryRepo,
+		Shipping:     shippingRepo,
 		Invoice:      invoiceRepo,
 		Payment:      paymentRepo,
 		Ledger:       ledgerRepo,
