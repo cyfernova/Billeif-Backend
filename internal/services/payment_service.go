@@ -27,12 +27,15 @@ func NewPaymentService(db *gorm.DB, repo interfaces.PaymentRepository, invoiceRe
 }
 
 type CreatePaymentInput struct {
-	InvoiceID     string  `json:"invoice_id" binding:"required,uuid"`
-	Amount        float64 `json:"amount" binding:"required,gt=0"`
-	PaymentMethod string  `json:"payment_method" binding:"required"`
-	PaymentDate   string  `json:"payment_date"`
-	Reference     string  `json:"reference"`
-	Notes         string  `json:"notes"`
+	InvoiceID     string            `json:"invoice_id" binding:"required,uuid"`
+	ProjectID     string            `json:"project_id,omitempty" binding:"omitempty,uuid"`
+	Amount        float64           `json:"amount" binding:"required,gt=0"`
+	PaymentType   string            `json:"payment_type"`
+	PaymentMethod string            `json:"payment_method" binding:"required"`
+	PaymentDate   string            `json:"payment_date"`
+	Reference     string            `json:"reference"`
+	Notes         string            `json:"notes"`
+	Withholding   *WithholdingInput `json:"withholding,omitempty"`
 }
 
 func (s *PaymentService) Create(ctx context.Context, businessID string, input CreatePaymentInput) (*models.Payment, error) {
@@ -47,25 +50,38 @@ func (s *PaymentService) Create(ctx context.Context, businessID string, input Cr
 			paymentDate = parsed
 		}
 	}
-
-	payment := &models.Payment{
-		InvoiceID:     input.InvoiceID,
-		BusinessID:    invoice.BusinessID,
-		Amount:        input.Amount,
-		Currency:      invoice.Currency,
-		PaymentDate:   paymentDate,
-		PaymentMethod: input.PaymentMethod,
-		Reference:     input.Reference,
-		Notes:         input.Notes,
+	projectID := normalizeProjectID(input.ProjectID)
+	if projectID == "" && invoice.ProjectID != nil {
+		projectID = *invoice.ProjectID
+	}
+	if projectID == "" {
+		projectID = extractProjectIDFromTags(nestedMap(unmarshalJSONMap(invoice.TaxProfile), "report_tags"))
 	}
 
+	payment := &models.Payment{
+		InvoiceID:       input.InvoiceID,
+		BusinessID:      invoice.BusinessID,
+		ProjectID:       projectIDPointer(projectID),
+		Amount:          input.Amount,
+		Currency:        invoice.Currency,
+		PaymentDate:     paymentDate,
+		PaymentType:     coalesceString(input.PaymentType, "normal"),
+		PaymentMethod:   input.PaymentMethod,
+		Reference:       input.Reference,
+		Notes:           input.Notes,
+		WithholdingData: mustMarshalMap(withholdingToMap(input.Withholding)),
+	}
 	// Use transaction to ensure atomicity of payment creation and invoice update
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(payment).Error; err != nil {
 			return fmt.Errorf("failed to create payment: %w", err)
 		}
 
-		invoice.PaidAmount += input.Amount
+		if err := s.syncPaymentWithholdingTx(ctx, tx, payment, input.Withholding); err != nil {
+			return err
+		}
+
+		invoice.PaidAmount += settlementAmount(payment.Amount, input.Withholding)
 		invoice.BalanceDue = invoice.Total - invoice.PaidAmount
 		if invoice.PaidAmount >= invoice.Total {
 			invoice.Status = "paid"
@@ -121,10 +137,13 @@ func (s *PaymentService) ListByInvoiceAndBusiness(ctx context.Context, businessI
 }
 
 type UpdatePaymentInput struct {
-	Amount        float64 `json:"amount"`
-	PaymentMethod string  `json:"payment_method"`
-	Reference     string  `json:"reference"`
-	Notes         string  `json:"notes"`
+	ProjectID     *string           `json:"project_id,omitempty"`
+	Amount        float64           `json:"amount"`
+	PaymentType   string            `json:"payment_type"`
+	PaymentMethod string            `json:"payment_method"`
+	Reference     string            `json:"reference"`
+	Notes         string            `json:"notes"`
+	Withholding   *WithholdingInput `json:"withholding,omitempty"`
 }
 
 func (s *PaymentService) UpdateByBusiness(ctx context.Context, businessID, id string, input UpdatePaymentInput) (*models.Payment, error) {
@@ -132,9 +151,19 @@ func (s *PaymentService) UpdateByBusiness(ctx context.Context, businessID, id st
 	if err != nil {
 		return nil, err
 	}
+	invoice, err := s.invoiceRepo.GetByID(ctx, payment.InvoiceID, businessID)
+	if err != nil {
+		return nil, fmt.Errorf("invoice not found: %w", err)
+	}
+
+	oldWithholding := unmarshalJSONMap(payment.WithholdingData)
+	oldSettlement := settlementAmount(payment.Amount, mapToWithholdingInput(oldWithholding))
 
 	if input.Amount > 0 {
 		payment.Amount = input.Amount
+	}
+	if input.PaymentType != "" {
+		payment.PaymentType = input.PaymentType
 	}
 	if input.PaymentMethod != "" {
 		payment.PaymentMethod = input.PaymentMethod
@@ -145,9 +174,41 @@ func (s *PaymentService) UpdateByBusiness(ctx context.Context, businessID, id st
 	if input.Notes != "" {
 		payment.Notes = input.Notes
 	}
+	if input.ProjectID != nil {
+		payment.ProjectID = projectIDPointer(*input.ProjectID)
+	}
+	if input.Withholding != nil {
+		payment.WithholdingData = mustMarshalMap(withholdingToMap(input.Withholding))
+	}
 
-	if err := s.repo.Update(ctx, payment); err != nil {
+	newWithholding := mapToWithholdingInput(unmarshalJSONMap(payment.WithholdingData))
+	newSettlement := settlementAmount(payment.Amount, newWithholding)
+
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(payment).Error; err != nil {
+			return err
+		}
+		if err := s.syncPaymentWithholdingTx(ctx, tx, payment, newWithholding); err != nil {
+			return err
+		}
+		invoice.PaidAmount += (newSettlement - oldSettlement)
+		invoice.BalanceDue = invoice.Total - invoice.PaidAmount
+		switch {
+		case invoice.PaidAmount >= invoice.Total:
+			invoice.Status = "paid"
+		case invoice.PaidAmount > 0:
+			invoice.Status = "partial"
+		default:
+			invoice.Status = "sent"
+		}
+		return tx.Save(invoice).Error
+	}); err != nil {
 		return nil, err
+	}
+	if s.documents != nil {
+		if err := s.documents.SyncLegacyInvoicePayment(ctx, invoice.ID, invoice.PaidAmount, invoice.BalanceDue, invoice.Status); err != nil {
+			s.log.Error("failed to sync mirrored document payment state after payment update", "invoice_id", invoice.ID, "payment_id", payment.ID, "error", err)
+		}
 	}
 	return payment, nil
 }
@@ -162,6 +223,69 @@ func (s *PaymentService) DeleteByBusiness(ctx context.Context, businessID, id st
 		return err
 	}
 	return s.repo.Delete(ctx, payment.ID)
+}
+
+func (s *PaymentService) syncPaymentWithholdingTx(ctx context.Context, tx *gorm.DB, payment *models.Payment, withholding *WithholdingInput) error {
+	if payment == nil {
+		return nil
+	}
+	if err := tx.WithContext(ctx).Where("payment_id = ?", payment.ID).Delete(&models.PaymentWithholding{}).Error; err != nil {
+		return err
+	}
+	if withholding == nil || withholding.SectionCode == "" || withholding.Amount == 0 {
+		return nil
+	}
+	record := &models.PaymentWithholding{
+		BusinessID:      payment.BusinessID,
+		PaymentID:       payment.ID,
+		InvoiceID:       &payment.InvoiceID,
+		SectionCode:     withholding.SectionCode,
+		WithholdingType: coalesceString(withholding.WithholdingType, models.WithholdingTypeTDS),
+		Rate:            withholding.Rate,
+		TaxableAmount:   withholding.TaxableAmount,
+		Amount:          withholding.Amount,
+		Metadata:        mustMarshalMap(withholding.Metadata),
+	}
+	return tx.WithContext(ctx).Create(record).Error
+}
+
+func settlementAmount(amount float64, withholding *WithholdingInput) float64 {
+	if withholding == nil {
+		return amount
+	}
+	return amount + withholding.Amount
+}
+
+func withholdingToMap(input *WithholdingInput) map[string]interface{} {
+	if input == nil {
+		return map[string]interface{}{}
+	}
+	return map[string]interface{}{
+		"section_code":     input.SectionCode,
+		"withholding_type": input.WithholdingType,
+		"rate":             input.Rate,
+		"taxable_amount":   input.TaxableAmount,
+		"amount":           input.Amount,
+		"metadata":         input.Metadata,
+	}
+}
+
+func mapToWithholdingInput(data map[string]interface{}) *WithholdingInput {
+	if len(data) == 0 {
+		return nil
+	}
+	input := &WithholdingInput{
+		SectionCode:     readStringCandidate(data, "section_code"),
+		WithholdingType: readStringCandidate(data, "withholding_type"),
+		Rate:            readFloatCandidate(data, "rate"),
+		TaxableAmount:   readFloatCandidate(data, "taxable_amount"),
+		Amount:          readFloatCandidate(data, "amount"),
+		Metadata:        nestedMap(data, "metadata"),
+	}
+	if input.SectionCode == "" && input.Amount == 0 {
+		return nil
+	}
+	return input
 }
 
 // PaymentServiceTestable is a test-friendly version of PaymentService
@@ -224,6 +348,7 @@ func (s *PaymentServiceTestable) Create(ctx context.Context, businessID string, 
 	payment := &models.Payment{
 		InvoiceID:     input.InvoiceID,
 		BusinessID:    invoice.BusinessID,
+		ProjectID:     invoice.ProjectID,
 		Amount:        input.Amount,
 		Currency:      invoice.Currency,
 		PaymentDate:   paymentDate,
@@ -292,6 +417,9 @@ func (s *PaymentServiceTestable) UpdateByBusiness(ctx context.Context, businessI
 	if input.Notes != "" {
 		payment.Notes = input.Notes
 	}
+	if input.ProjectID != nil {
+		payment.ProjectID = projectIDPointer(*input.ProjectID)
+	}
 
 	if err := s.repo.Update(ctx, payment); err != nil {
 		return nil, err
@@ -325,6 +453,7 @@ func (s *PaymentService) createPaymentJournal(ctx context.Context, payment *mode
 	_, err := s.journals.CreateByBusiness(ctx, invoice.BusinessID, CreateJournalInput{
 		Name:        fmt.Sprintf("Payment %s", invoice.InvoiceNo),
 		Reference:   coalesceString(payment.Reference, payment.ID),
+		ProjectID:   normalizeProjectID(derefString(payment.ProjectID)),
 		PostingDate: payment.PaymentDate,
 		Status:      models.JournalStatusPosted,
 		Notes:       payment.Notes,

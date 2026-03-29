@@ -195,3 +195,29 @@ func PaymentRateLimit() gin.HandlerFunc {
 		c.Next()
 	}
 }
+
+// ReportShareRateLimit limits anonymous access attempts to shared reports.
+// 20 requests per minute per client IP.
+func ReportShareRateLimit() gin.HandlerFunc {
+	limiter := NewRateLimiter(time.Minute, 20)
+
+	return func(c *gin.Context) {
+		log := logger.FromContext(c.Request.Context()).Named("rate_limit")
+		clientIP := c.ClientIP()
+		if clientIP == "" {
+			clientIP = "unknown"
+		}
+
+		if !limiter.isAllowed(clientIP) {
+			log.Warn("report share rate limit exceeded", "client_ip", clientIP, "path", c.Request.URL.Path)
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error":   "too many requests",
+				"message": "report share access rate limit exceeded. please try again shortly",
+			})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}

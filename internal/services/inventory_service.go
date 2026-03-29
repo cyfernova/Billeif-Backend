@@ -3,23 +3,33 @@ package services
 import (
 	"context"
 	"fmt"
-	"math"
 	"strings"
-	"time"
 
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/logger"
+
+	"gorm.io/gorm"
 )
 
 type InventoryService struct {
-	repo        interfaces.InventoryRepository
-	productRepo interfaces.ProductRepository
-	log         *logger.Logger
+	db           *gorm.DB
+	repo         interfaces.InventoryRepository
+	productRepo  interfaces.ProductRepository
+	businessRepo interfaces.BusinessRepository
+	teamRepo     interfaces.TeamMemberRepository
+	log          *logger.Logger
 }
 
-func NewInventoryService(repo interfaces.InventoryRepository, productRepo interfaces.ProductRepository, log *logger.Logger) *InventoryService {
-	return &InventoryService{repo: repo, productRepo: productRepo, log: log}
+func NewInventoryService(db *gorm.DB, repo interfaces.InventoryRepository, productRepo interfaces.ProductRepository, businessRepo interfaces.BusinessRepository, teamRepo interfaces.TeamMemberRepository, log *logger.Logger) *InventoryService {
+	return &InventoryService{
+		db:           db,
+		repo:         repo,
+		productRepo:  productRepo,
+		businessRepo: businessRepo,
+		teamRepo:     teamRepo,
+		log:          log,
+	}
 }
 
 func (s *InventoryService) EnsureDefaultWarehouse(ctx context.Context, businessID string) (*models.Warehouse, error) {
@@ -49,74 +59,124 @@ func (s *InventoryService) ApplyDocument(ctx context.Context, document *models.D
 	if document == nil {
 		return fmt.Errorf("document is required")
 	}
+	if s.db == nil {
+		return nil
+	}
 	direction, shouldPost, shouldReserve := stockBehaviorForDocument(document)
 	if !shouldPost && !shouldReserve {
 		return nil
 	}
-
-	defaultWarehouse, err := s.EnsureDefaultWarehouse(ctx, document.BusinessID)
-	if err != nil {
-		return err
-	}
-
-	for _, line := range document.Lines {
-		if line.ProductID == nil || line.Quantity <= 0 || strings.EqualFold(line.StockEffect, "none") {
-			continue
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		defaultWarehouse, err := s.EnsureDefaultWarehouse(ctx, document.BusinessID)
+		if err != nil {
+			return err
 		}
-		qty := line.Quantity + line.FreeQuantity
-		if qty <= 0 {
-			continue
-		}
+		for _, line := range document.Lines {
+			if line.ProductID == nil || line.Quantity <= 0 || strings.EqualFold(line.StockEffect, "none") {
+				continue
+			}
+			qty := line.Quantity + line.FreeQuantity
+			if qty <= 0 {
+				continue
+			}
 
-		warehouseID := line.WarehouseID
-		if warehouseID == nil {
-			warehouseID = &defaultWarehouse.ID
-		}
+			warehouseID := defaultWarehouse.ID
+			if line.WarehouseID != nil && *line.WarehouseID != "" {
+				warehouseID = *line.WarehouseID
+			}
+			product, variant, err := s.resolveVariantTx(tx, document.BusinessID, *line.ProductID, derefString(line.VariantID))
+			if err != nil {
+				return err
+			}
+			reason := fmt.Sprintf("%s:%s", document.DocumentType, document.SerialNumber)
+			if shouldReserve {
+				if err := s.repo.CreateReservation(ctx, &models.InventoryReservation{
+					BusinessID:     document.BusinessID,
+					ProductID:      *line.ProductID,
+					WarehouseID:    &warehouseID,
+					DocumentID:     document.ID,
+					DocumentLineID: &line.ID,
+					Quantity:       qty,
+					Status:         "active",
+				}); err != nil {
+					return err
+				}
+				if err := s.reserveInventoryTx(tx, document.BusinessID, product.ID, variant.ID, warehouseID, qty, document.ID, &line.ID, reason); err != nil {
+					return err
+				}
+				continue
+			}
 
-		if shouldReserve {
-			if err := s.repo.CreateReservation(ctx, &models.InventoryReservation{
-				BusinessID:     document.BusinessID,
-				ProductID:      *line.ProductID,
-				WarehouseID:    warehouseID,
-				DocumentID:     document.ID,
-				DocumentLineID: &line.ID,
-				Quantity:       qty,
-				Status:         "active",
+			signedQty := qty
+			if direction == models.StockMoveDirectionOut {
+				signedQty = -qty
+			}
+			if _, err := s.applyInventoryMutationTx(tx, inventoryMutationInput{
+				BusinessID:       document.BusinessID,
+				Product:          product,
+				Variant:          variant,
+				WarehouseID:      warehouseID,
+				ProjectID:        derefString(document.ProjectID),
+				Quantity:         signedQty,
+				Reason:           reason,
+				UnitCost:         line.CostSnapshot,
+				BatchAllocations: unmarshalBatchAllocations(line.BatchAllocations),
+				SerialIDs:        unmarshalStringSlice(line.SerialIDs),
+				TransactionType:  documentInventoryTransactionType(document.DocumentType, direction),
+				DocumentID:       &document.ID,
+				DocumentLineID:   &line.ID,
 			}); err != nil {
 				return err
 			}
-			continue
-		}
-
-		delta := int64(math.Round(qty))
-		if direction == models.StockMoveDirectionOut {
-			delta = -delta
-		}
-		if delta != 0 {
-			if err := s.productRepo.AdjustStock(ctx, *line.ProductID, delta); err != nil {
-				return err
+			if direction == models.StockMoveDirectionOut {
+				if err := s.releaseInventoryTx(tx, document.BusinessID, product.ID, variant.ID, warehouseID, qty, document.ID, &line.ID, reason); err != nil && !strings.Contains(strings.ToLower(err.Error()), "record not found") {
+					return err
+				}
 			}
 		}
-		if err := s.repo.CreateStockMove(ctx, &models.StockMove{
-			BusinessID:     document.BusinessID,
-			ProductID:      *line.ProductID,
-			WarehouseID:    warehouseID,
-			DocumentID:     &document.ID,
-			DocumentLineID: &line.ID,
-			Direction:      direction,
-			Quantity:       qty,
-			Reason:         fmt.Sprintf("%s:%s", document.DocumentType, document.SerialNumber),
-			RecordedAt:     time.Now(),
-		}); err != nil {
-			return err
-		}
-	}
-
-	return nil
+		return nil
+	})
 }
 
 func (s *InventoryService) ReleaseReservations(ctx context.Context, documentID string) error {
-	return s.repo.ReleaseReservationsByDocument(ctx, documentID)
+	if s.db == nil {
+		return s.repo.ReleaseReservationsByDocument(ctx, documentID)
+	}
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var reservations []models.InventoryReservation
+		if err := tx.Where("document_id = ? AND status = 'active' AND deleted_at IS NULL", documentID).Find(&reservations).Error; err != nil {
+			return err
+		}
+		for _, reservation := range reservations {
+			if reservation.WarehouseID != nil {
+				product, variant, err := s.resolveVariantTx(tx, reservation.BusinessID, reservation.ProductID, "")
+				if err != nil {
+					s.log.Warn("failed to resolve variant for reservation release", "reservation_id", reservation.ID, "error", err)
+					continue
+				}
+				if err := s.releaseInventoryTx(tx, reservation.BusinessID, product.ID, variant.ID, *reservation.WarehouseID, reservation.Quantity, reservation.DocumentID, reservation.DocumentLineID, "reservation release"); err != nil {
+					s.log.Warn("failed to release reservation balance", "reservation_id", reservation.ID, "error", err)
+				}
+			}
+		}
+		return s.repo.ReleaseReservationsByDocument(ctx, documentID)
+	})
+}
+
+func documentInventoryTransactionType(documentType, direction string) string {
+	switch direction {
+	case models.StockMoveDirectionIn:
+		return models.InventoryTransactionTypeStockIn
+	case models.StockMoveDirectionOut:
+		return models.InventoryTransactionTypeStockOut
+	default:
+		switch documentType {
+		case models.DocumentTypeSalesOrder:
+			return models.InventoryTransactionTypeReservation
+		default:
+			return models.InventoryTransactionTypeAdjustment
+		}
+	}
 }
 
 func stockBehaviorForDocument(document *models.Document) (direction string, shouldPost bool, shouldReserve bool) {

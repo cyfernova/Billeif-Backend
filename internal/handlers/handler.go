@@ -15,6 +15,9 @@ type Handler struct {
 	Customer        *CustomerHandler
 	Vendor          *VendorHandler
 	Product         *ProductHandler
+	Project         *ProjectHandler
+	Inventory       *InventoryHandler
+	Barcode         *BarcodeHandler
 	Purchase        *DocumentHandler
 	PurchaseOrder   *DocumentHandler
 	SalesOrder      *DocumentHandler
@@ -24,6 +27,7 @@ type Handler struct {
 	CreditNote      *DocumentHandler
 	DebitNote       *DocumentHandler
 	BillOfSupply    *DocumentHandler
+	Expense         *DocumentHandler
 	PackingList     *DocumentHandler
 	ShippingLabel   *DocumentHandler
 	DocumentUtility *DocumentUtilityHandler
@@ -33,6 +37,8 @@ type Handler struct {
 	Invoice         *InvoiceHandler
 	Payment         *PaymentHandler
 	Ledger          *LedgerHandler
+	Report          *ReportHandler
+	Tax             *TaxHandler
 	Team            *TeamHandler
 	Webhook         *WebhookHandler
 	Subscription    *SubscriptionHandler
@@ -69,6 +75,9 @@ func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log 
 		Customer:        NewCustomerHandler(svcs.Customer, log),
 		Vendor:          NewVendorHandler(svcs.Vendor, log),
 		Product:         NewProductHandler(svcs.Product, log),
+		Project:         NewProjectHandler(svcs.Project, log),
+		Inventory:       NewInventoryHandler(svcs.Inventory, log),
+		Barcode:         NewBarcodeHandler(svcs.Barcode, log),
 		Purchase:        NewDocumentHandler(svcs.Document, models.DocumentTypePurchaseInvoice, log),
 		PurchaseOrder:   NewDocumentHandler(svcs.Document, models.DocumentTypePurchaseOrder, log),
 		SalesOrder:      NewDocumentHandler(svcs.Document, models.DocumentTypeSalesOrder, log),
@@ -78,6 +87,7 @@ func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log 
 		CreditNote:      NewDocumentHandler(svcs.Document, models.DocumentTypeCreditNote, log),
 		DebitNote:       NewDocumentHandler(svcs.Document, models.DocumentTypeDebitNote, log),
 		BillOfSupply:    NewDocumentHandler(svcs.Document, models.DocumentTypeBillOfSupply, log),
+		Expense:         NewDocumentHandler(svcs.Document, models.DocumentTypeExpense, log),
 		PackingList:     NewDocumentHandler(svcs.Document, models.DocumentTypePackingList, log),
 		ShippingLabel:   NewDocumentHandler(svcs.Document, models.DocumentTypeShippingLabel, log),
 		DocumentUtility: NewDocumentUtilityHandler(svcs.Document, log),
@@ -87,6 +97,8 @@ func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log 
 		Invoice:         NewInvoiceHandler(svcs.Invoice, log),
 		Payment:         NewPaymentHandler(svcs.Payment, log),
 		Ledger:          NewLedgerHandler(svcs.Ledger, log),
+		Report:          NewReportHandler(svcs.Report, log),
+		Tax:             NewTaxHandler(svcs.TaxCompliance, log),
 		Team:            NewTeamHandler(svcs.Team, log),
 		Webhook:         NewWebhookHandler(svcs.Webhook, log),
 		Subscription:    NewSubscriptionHandler(svcs.Subscription, log),

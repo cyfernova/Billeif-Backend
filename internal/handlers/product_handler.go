@@ -107,8 +107,14 @@ func (h *ProductHandler) List(c *gin.Context) {
 	}
 
 	page, limit := utils.ParsePagination(c)
+	filter := services.ProductListFilter{
+		CategoryID:   c.Query("category_id"),
+		WarehouseID:  c.Query("warehouse_id"),
+		Query:        c.Query("query"),
+		LowStockOnly: c.Query("low_stock") == "true",
+	}
 
-	products, total, err := h.svc.List(c.Request.Context(), businessID, page, limit)
+	products, total, err := h.svc.ListWithFilters(c.Request.Context(), businessID, filter, page, limit)
 	if err != nil {
 		log.Error("failed to list products", "error", err, "business_id", businessID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -165,6 +171,25 @@ func (h *ProductHandler) Update(c *gin.Context) {
 	log.Info("product updated", "product_id", product.ID)
 
 	c.JSON(http.StatusOK, product)
+}
+
+func (h *ProductHandler) Clone(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "clone")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	product, err := h.svc.CloneByBusiness(c.Request.Context(), businessID, c.Param("id"))
+	if err != nil {
+		log.Error("failed to clone product", "error", err)
+		if isNotFoundErr(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, product)
 }
 
 // Delete deletes a product

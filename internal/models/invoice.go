@@ -10,6 +10,7 @@ type Invoice struct {
 	ID          string         `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
 	BusinessID  string         `gorm:"not null;index" json:"business_id" validate:"required,uuid"`
 	CustomerID  string         `gorm:"not null;index" json:"customer_id" validate:"required,uuid"`
+	ProjectID   *string        `gorm:"index" json:"project_id,omitempty" validate:"omitempty,uuid"`
 	InvoiceNo   string         `gorm:"not null;uniqueIndex:idx_business_invoice;size:50" json:"invoice_no" validate:"required,max=50"`
 	InvoiceDate time.Time      `gorm:"not null;index" json:"invoice_date" validate:"required"`
 	DueDate     time.Time      `json:"due_date,omitempty" validate:"omitempty"`
@@ -24,6 +25,7 @@ type Invoice struct {
 	Notes       string         `gorm:"type:text" json:"notes,omitempty"`
 	PDFURL      string         `gorm:"size:500" json:"pdf_url,omitempty"`
 	PDFFilename string         `gorm:"size:255" json:"pdf_filename,omitempty"`
+	TaxProfile  string         `gorm:"type:jsonb;default:'{}'" json:"tax_profile,omitempty"`
 	SentAt      *time.Time     `json:"sent_at,omitempty"`
 	PaidAt      *time.Time     `json:"paid_at,omitempty"`
 	CreatedAt   time.Time      `gorm:"autoCreateTime" json:"created_at"`
@@ -34,17 +36,21 @@ type Invoice struct {
 }
 
 type InvoiceItem struct {
-	ID          string    `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
-	InvoiceID   string    `gorm:"not null;index" json:"invoice_id" validate:"required"`
-	ProductID   *string   `gorm:"index" json:"product_id,omitempty" validate:"omitempty,uuid"`
-	Description string    `gorm:"not null" json:"description" validate:"required"`
-	Quantity    float64   `gorm:"not null;type:decimal(15,3)" json:"quantity" validate:"required,gt=0"`
-	UnitPrice   float64   `gorm:"not null;type:decimal(15,2)" json:"unit_price" validate:"required,gt=0"`
-	Discount    float64   `gorm:"type:decimal(15,2);default:0" json:"discount" validate:"gte=0"`
-	TaxRate     float64   `gorm:"type:decimal(5,2);default:0" json:"tax_rate" validate:"gte=0,lte=100"`
-	Total       float64   `gorm:"not null;type:decimal(15,2)" json:"total" validate:"required,gt=0"`
-	CreatedAt   time.Time `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt   time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+	ID               string    `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
+	InvoiceID        string    `gorm:"not null;index" json:"invoice_id" validate:"required"`
+	ProductID        *string   `gorm:"index" json:"product_id,omitempty" validate:"omitempty,uuid"`
+	VariantID        *string   `gorm:"index" json:"variant_id,omitempty" validate:"omitempty,uuid"`
+	WarehouseID      *string   `gorm:"index" json:"warehouse_id,omitempty" validate:"omitempty,uuid"`
+	Description      string    `gorm:"not null" json:"description" validate:"required"`
+	Quantity         float64   `gorm:"not null;type:decimal(15,3)" json:"quantity" validate:"required,gt=0"`
+	UnitPrice        float64   `gorm:"not null;type:decimal(15,2)" json:"unit_price" validate:"required,gt=0"`
+	Discount         float64   `gorm:"type:decimal(15,2);default:0" json:"discount" validate:"gte=0"`
+	TaxRate          float64   `gorm:"type:decimal(5,2);default:0" json:"tax_rate" validate:"gte=0,lte=100"`
+	BatchAllocations string    `gorm:"type:jsonb;default:'[]'" json:"batch_allocations,omitempty"`
+	SerialIDs        string    `gorm:"type:jsonb;default:'[]'" json:"serial_ids,omitempty"`
+	Total            float64   `gorm:"not null;type:decimal(15,2)" json:"total" validate:"required,gt=0"`
+	CreatedAt        time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt        time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
 func (i *Invoice) TableName() string {

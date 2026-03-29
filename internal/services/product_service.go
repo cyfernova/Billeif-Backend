@@ -2,37 +2,78 @@ package services
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"sort"
+	"strings"
+	"time"
 
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/logger"
+
+	"gorm.io/gorm"
 )
 
 type ProductService struct {
-	repo interfaces.ProductRepository
-	s3   *S3Service
-	log  *logger.Logger
+	db        *gorm.DB
+	repo      interfaces.ProductRepository
+	s3        *S3Service
+	inventory *InventoryService
+	log       *logger.Logger
 }
 
-func NewProductService(repo interfaces.ProductRepository, s3 *S3Service, log *logger.Logger) *ProductService {
-	return &ProductService{repo: repo, s3: s3, log: log}
+func NewProductService(db *gorm.DB, repo interfaces.ProductRepository, s3 *S3Service, inventory *InventoryService, log *logger.Logger) *ProductService {
+	return &ProductService{db: db, repo: repo, s3: s3, inventory: inventory, log: log}
 }
 
 type CreateProductInput struct {
-	BusinessID      string  `json:"business_id,omitempty"`
-	Name            string  `json:"name" binding:"required,min=2"`
-	SKU             string  `json:"sku" binding:"required"`
-	Description     string  `json:"description"`
-	Price           float64 `json:"price" binding:"required,gt=0"`
-	CostPrice       float64 `json:"cost_price"`
-	ValuationMethod string  `json:"valuation_method"`
-	HSNSACCode      string  `json:"hsn_sac_code"`
-	IsService       bool    `json:"is_service"`
-	Currency        string  `json:"currency"`
-	Unit            string  `json:"unit"`
-	StockLevel      int64   `json:"stock_level"`
-	MinStock        int64   `json:"min_stock"`
+	BusinessID        string                 `json:"business_id,omitempty"`
+	CategoryID        string                 `json:"category_id"`
+	Name              string                 `json:"name" binding:"required,min=2"`
+	SKU               string                 `json:"sku" binding:"required"`
+	Barcode           string                 `json:"barcode"`
+	Description       string                 `json:"description"`
+	Price             float64                `json:"price" binding:"required,gt=0"`
+	CostPrice         float64                `json:"cost_price"`
+	ValuationMethod   string                 `json:"valuation_method"`
+	HSNSACCode        string                 `json:"hsn_sac_code"`
+	UQCCode           string                 `json:"uqc_code"`
+	GSTMetadata       map[string]interface{} `json:"gst_metadata,omitempty"`
+	IsService         bool                   `json:"is_service"`
+	Currency          string                 `json:"currency"`
+	Unit              string                 `json:"unit"`
+	StockLevel        int64                  `json:"stock_level"`
+	MinStock          int64                  `json:"min_stock"`
+	LowStockThreshold int64                  `json:"low_stock_threshold"`
+	Images            []ProductImageInput    `json:"images,omitempty"`
+	CustomColumns     map[string]interface{} `json:"custom_columns,omitempty"`
+	Variants          []ProductVariantInput  `json:"variants,omitempty"`
+}
+
+type ProductImageInput struct {
+	URL       string `json:"url" binding:"required"`
+	Key       string `json:"key"`
+	AltText   string `json:"alt_text"`
+	Position  int    `json:"position"`
+	IsPrimary bool   `json:"is_primary"`
+}
+
+type ProductVariantInput struct {
+	ID                string                 `json:"id,omitempty"`
+	Name              string                 `json:"name"`
+	SKU               string                 `json:"sku"`
+	Barcode           string                 `json:"barcode"`
+	Attributes        map[string]interface{} `json:"attributes,omitempty"`
+	IsDefault         bool                   `json:"is_default"`
+	TrackBatches      bool                   `json:"track_batches"`
+	TrackSerials      bool                   `json:"track_serials"`
+	Price             float64                `json:"price"`
+	CostPrice         float64                `json:"cost_price"`
+	StockLevel        float64                `json:"stock_level"`
+	LowStockThreshold float64                `json:"low_stock_threshold"`
+	Images            []ProductImageInput    `json:"images,omitempty"`
 }
 
 func (s *ProductService) Create(ctx context.Context, input CreateProductInput) (*models.Product, error) {
@@ -44,20 +85,26 @@ func (s *ProductService) Create(ctx context.Context, input CreateProductInput) (
 	}
 
 	product := &models.Product{
-		BusinessID:      input.BusinessID,
-		Name:            input.Name,
-		SKU:             input.SKU,
-		Description:     input.Description,
-		Price:           input.Price,
-		CostPrice:       input.CostPrice,
-		ValuationMethod: input.ValuationMethod,
-		HSNSACCode:      input.HSNSACCode,
-		IsService:       input.IsService,
-		Currency:        input.Currency,
-		Unit:            input.Unit,
-		StockLevel:      input.StockLevel,
-		MinStock:        input.MinStock,
-		IsActive:        true,
+		BusinessID:        input.BusinessID,
+		CategoryID:        stringPointer(input.CategoryID),
+		Name:              input.Name,
+		SKU:               input.SKU,
+		Barcode:           firstNonEmpty(strings.TrimSpace(input.Barcode), strings.TrimSpace(input.SKU)),
+		Description:       input.Description,
+		Price:             input.Price,
+		CostPrice:         input.CostPrice,
+		ValuationMethod:   input.ValuationMethod,
+		HSNSACCode:        input.HSNSACCode,
+		UQCCode:           input.UQCCode,
+		GSTMetadata:       mustMarshalMap(input.GSTMetadata),
+		IsService:         input.IsService,
+		Currency:          input.Currency,
+		Unit:              input.Unit,
+		StockLevel:        0,
+		MinStock:          input.MinStock,
+		LowStockThreshold: input.LowStockThreshold,
+		ExtraAttributes:   mustMarshalMap(nil),
+		IsActive:          true,
 	}
 
 	if product.Currency == "" {
@@ -69,17 +116,79 @@ func (s *ProductService) Create(ctx context.Context, input CreateProductInput) (
 	if product.ValuationMethod == "" {
 		product.ValuationMethod = "last_purchase"
 	}
+	if product.UQCCode == "" {
+		product.UQCCode = "OTH"
+	}
+	if product.LowStockThreshold == 0 {
+		product.LowStockThreshold = product.MinStock
+	}
 
-	if err := s.repo.Create(ctx, product); err != nil {
+	if s.db == nil {
+		product.StockLevel = input.StockLevel
+		if err := s.repo.Create(ctx, product); err != nil {
+			log.Error("failed to create product", "error", err)
+			return nil, fmt.Errorf("failed to create product: %w", err)
+		}
+		log.Info("product created", "product_id", product.ID)
+		return product, nil
+	}
+
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(product).Error; err != nil {
+			return err
+		}
+		if err := s.syncProductRelationsTx(tx, product, input.Images, input.CustomColumns, input.Variants); err != nil {
+			return err
+		}
+		if input.StockLevel > 0 && s.inventory != nil && !product.IsService {
+			defaultVariant, err := s.inventory.ensureDefaultVariantTx(tx, input.BusinessID, product)
+			if err != nil {
+				return err
+			}
+			if len(input.Variants) > 0 {
+				variantRows, err := s.listProductVariantsTx(tx, product.ID)
+				if err != nil {
+					return err
+				}
+				if len(variantRows) > 0 {
+					defaultVariant = variantRows[0]
+					for _, row := range variantRows {
+						if row.IsDefault {
+							defaultVariant = row
+							break
+						}
+					}
+				}
+			}
+			_, err = s.inventory.applyInventoryMutationTx(tx, inventoryMutationInput{
+				BusinessID:      input.BusinessID,
+				Product:         product,
+				Variant:         defaultVariant,
+				WarehouseID:     "",
+				Quantity:        float64(input.StockLevel),
+				Reason:          "opening quantity",
+				UnitCost:        product.CostPrice,
+				TransactionType: models.InventoryTransactionTypeOpeningBalance,
+			})
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
 		log.Error("failed to create product", "error", err)
 		return nil, fmt.Errorf("failed to create product: %w", err)
 	}
 
+	product, _ = s.GetByBusiness(ctx, input.BusinessID, product.ID)
 	log.Info("product created", "product_id", product.ID)
 	return product, nil
 }
 
 func (s *ProductService) GetByBusiness(ctx context.Context, businessID, id string) (*models.Product, error) {
+	if s.db != nil {
+		return s.getProductDetailed(ctx, businessID, id)
+	}
 	return s.repo.GetByID(ctx, id, businessID)
 }
 
@@ -94,6 +203,9 @@ func (s *ProductService) GetBySKU(ctx context.Context, businessID, sku string) (
 }
 
 func (s *ProductService) List(ctx context.Context, businessID string, page, limit int) ([]*models.Product, int64, error) {
+	if s.db != nil {
+		return s.listProductsDetailed(ctx, businessID, ProductListFilter{}, page, limit)
+	}
 	log := logger.FromContext(ctx).With("service", "product", "operation", "list", "business_id", businessID, "page", page, "limit", limit)
 	products, total, err := s.repo.GetByBusinessID(ctx, businessID, page, limit)
 	if err != nil {
@@ -104,18 +216,33 @@ func (s *ProductService) List(ctx context.Context, businessID string, page, limi
 	return products, total, nil
 }
 
+func (s *ProductService) ListWithFilters(ctx context.Context, businessID string, filter ProductListFilter, page, limit int) ([]*models.Product, int64, error) {
+	if s.db != nil {
+		return s.listProductsDetailed(ctx, businessID, filter, page, limit)
+	}
+	return s.List(ctx, businessID, page, limit)
+}
+
 type UpdateProductInput struct {
-	Name            string   `json:"name"`
-	SKU             string   `json:"sku"`
-	Description     string   `json:"description"`
-	Price           float64  `json:"price"`
-	CostPrice       *float64 `json:"cost_price"`
-	ValuationMethod string   `json:"valuation_method"`
-	HSNSACCode      string   `json:"hsn_sac_code"`
-	IsService       *bool    `json:"is_service"`
-	Currency        string   `json:"currency"`
-	Unit            string   `json:"unit"`
-	MinStock        int64    `json:"min_stock"`
+	CategoryID        string                 `json:"category_id"`
+	Name              string                 `json:"name"`
+	SKU               string                 `json:"sku"`
+	Barcode           string                 `json:"barcode"`
+	Description       string                 `json:"description"`
+	Price             float64                `json:"price"`
+	CostPrice         *float64               `json:"cost_price"`
+	ValuationMethod   string                 `json:"valuation_method"`
+	HSNSACCode        string                 `json:"hsn_sac_code"`
+	UQCCode           string                 `json:"uqc_code"`
+	GSTMetadata       map[string]interface{} `json:"gst_metadata,omitempty"`
+	IsService         *bool                  `json:"is_service"`
+	Currency          string                 `json:"currency"`
+	Unit              string                 `json:"unit"`
+	MinStock          int64                  `json:"min_stock"`
+	LowStockThreshold *int64                 `json:"low_stock_threshold,omitempty"`
+	Images            []ProductImageInput    `json:"images,omitempty"`
+	CustomColumns     map[string]interface{} `json:"custom_columns,omitempty"`
+	Variants          []ProductVariantInput  `json:"variants,omitempty"`
 }
 
 func (s *ProductService) UpdateByBusiness(ctx context.Context, businessID, id string, input UpdateProductInput) (*models.Product, error) {
@@ -129,8 +256,14 @@ func (s *ProductService) UpdateByBusiness(ctx context.Context, businessID, id st
 	if input.Name != "" {
 		product.Name = input.Name
 	}
+	if input.CategoryID != "" {
+		product.CategoryID = stringPointer(input.CategoryID)
+	}
 	if input.SKU != "" {
 		product.SKU = input.SKU
+	}
+	if input.Barcode != "" {
+		product.Barcode = input.Barcode
 	}
 	if input.Description != "" {
 		product.Description = input.Description
@@ -147,6 +280,12 @@ func (s *ProductService) UpdateByBusiness(ctx context.Context, businessID, id st
 	if input.HSNSACCode != "" {
 		product.HSNSACCode = input.HSNSACCode
 	}
+	if input.UQCCode != "" {
+		product.UQCCode = input.UQCCode
+	}
+	if input.GSTMetadata != nil {
+		product.GSTMetadata = mustMarshalMap(input.GSTMetadata)
+	}
 	if input.IsService != nil {
 		product.IsService = *input.IsService
 	}
@@ -158,6 +297,24 @@ func (s *ProductService) UpdateByBusiness(ctx context.Context, businessID, id st
 	}
 	if input.MinStock >= 0 {
 		product.MinStock = input.MinStock
+	}
+	if input.LowStockThreshold != nil {
+		product.LowStockThreshold = *input.LowStockThreshold
+	}
+
+	if s.db != nil {
+		if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := tx.Save(product).Error; err != nil {
+				return err
+			}
+			return s.syncProductRelationsTx(tx, product, input.Images, input.CustomColumns, input.Variants)
+		}); err != nil {
+			log.Error("failed to update product", "error", err)
+			return nil, err
+		}
+		product, _ = s.GetByBusiness(ctx, businessID, id)
+		log.Info("product updated", "product_id", product.ID)
+		return product, nil
 	}
 
 	if err := s.repo.Update(ctx, product); err != nil {
@@ -195,8 +352,13 @@ func (s *ProductService) DeleteByBusiness(ctx context.Context, businessID, id st
 }
 
 type StockAdjustmentInput struct {
-	Quantity int64  `json:"quantity" binding:"required"`
-	Reason   string `json:"reason"`
+	VariantID        string                 `json:"variant_id,omitempty"`
+	WarehouseID      string                 `json:"warehouse_id,omitempty"`
+	Quantity         int64                  `json:"quantity" binding:"required"`
+	Reason           string                 `json:"reason"`
+	UnitCost         float64                `json:"unit_cost"`
+	BatchAllocations []BatchAllocationInput `json:"batch_allocations,omitempty"`
+	SerialIDs        []string               `json:"serial_ids,omitempty"`
 }
 
 func (s *ProductService) AdjustStockByBusiness(ctx context.Context, businessID, productID string, input StockAdjustmentInput) (*models.Product, error) {
@@ -205,6 +367,24 @@ func (s *ProductService) AdjustStockByBusiness(ctx context.Context, businessID, 
 	if err != nil {
 		log.Error("failed to load product for stock adjustment", "error", err)
 		return nil, err
+	}
+	if s.inventory != nil {
+		_, err = s.inventory.RecordAdjustment(ctx, InventoryAdjustmentInput{
+			BusinessID:       businessID,
+			ProductID:        productID,
+			VariantID:        input.VariantID,
+			WarehouseID:      input.WarehouseID,
+			Quantity:         float64(input.Quantity),
+			Reason:           input.Reason,
+			UnitCost:         input.UnitCost,
+			BatchAllocations: input.BatchAllocations,
+			SerialIDs:        input.SerialIDs,
+		})
+		if err != nil {
+			log.Error("failed to adjust stock", "error", err)
+			return nil, err
+		}
+		return s.GetByBusiness(ctx, businessID, productID)
 	}
 	if err := s.repo.AdjustStock(ctx, product.ID, input.Quantity); err != nil {
 		log.Error("failed to adjust stock", "error", err)
@@ -248,6 +428,389 @@ func (s *ProductService) UpdateImageURL(ctx context.Context, businessID, product
 	}
 	log.Info("product image URL updated", "product_id", productID)
 	return nil
+}
+
+type ProductListFilter struct {
+	CategoryID   string
+	WarehouseID  string
+	Query        string
+	LowStockOnly bool
+}
+
+func (s *ProductService) CloneByBusiness(ctx context.Context, businessID, id string) (*models.Product, error) {
+	product, err := s.getProductDetailed(ctx, businessID, id)
+	if err != nil {
+		return nil, err
+	}
+	cloneSKU := fmt.Sprintf("%s-CLONE", product.SKU)
+	if _, err := s.repo.GetBySKU(ctx, businessID, cloneSKU); err == nil {
+		cloneSKU = fmt.Sprintf("%s-%d", cloneSKU, timeNowUnix())
+	}
+	input := CreateProductInput{
+		BusinessID:        businessID,
+		CategoryID:        derefString(product.CategoryID),
+		Name:              product.Name + " Copy",
+		SKU:               cloneSKU,
+		Barcode:           "",
+		Description:       product.Description,
+		Price:             product.Price,
+		CostPrice:         product.CostPrice,
+		ValuationMethod:   product.ValuationMethod,
+		HSNSACCode:        product.HSNSACCode,
+		UQCCode:           product.UQCCode,
+		GSTMetadata:       unmarshalJSONMap(product.GSTMetadata),
+		IsService:         product.IsService,
+		Currency:          product.Currency,
+		Unit:              product.Unit,
+		MinStock:          product.MinStock,
+		LowStockThreshold: product.LowStockThreshold,
+		CustomColumns:     product.CustomColumns,
+	}
+	for _, image := range product.Images {
+		input.Images = append(input.Images, ProductImageInput{
+			URL:       image.URL,
+			Key:       image.Key,
+			AltText:   image.AltText,
+			Position:  image.Position,
+			IsPrimary: image.IsPrimary,
+		})
+	}
+	for _, variant := range product.Variants {
+		input.Variants = append(input.Variants, ProductVariantInput{
+			Name:              variant.Name,
+			SKU:               cloneVariantSKU(variant.SKU),
+			Barcode:           "",
+			Attributes:        unmarshalJSONMap(variant.Attributes),
+			IsDefault:         variant.IsDefault,
+			TrackBatches:      variant.TrackBatches,
+			TrackSerials:      variant.TrackSerials,
+			Price:             variant.Price,
+			CostPrice:         variant.CostPrice,
+			LowStockThreshold: variant.LowStockThreshold,
+		})
+	}
+	return s.Create(ctx, input)
+}
+
+func cloneVariantSKU(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Sprintf("VAR-%d", timeNowUnix())
+	}
+	return fmt.Sprintf("%s-CLONE", value)
+}
+
+func timeNowUnix() int64 {
+	return time.Now().UnixNano() % 1000000
+}
+
+func (s *ProductService) listProductsDetailed(ctx context.Context, businessID string, filter ProductListFilter, page, limit int) ([]*models.Product, int64, error) {
+	var total int64
+	var products []models.Product
+	offset := (page - 1) * limit
+	query := s.db.WithContext(ctx).
+		Model(&models.Product{}).
+		Where("business_id = ? AND deleted_at IS NULL", businessID)
+	if filter.CategoryID != "" {
+		query = query.Where("category_id = ?", filter.CategoryID)
+	}
+	if filter.Query != "" {
+		q := "%" + strings.ToLower(strings.TrimSpace(filter.Query)) + "%"
+		query = query.Where("LOWER(name) LIKE ? OR LOWER(sku) LIKE ? OR LOWER(COALESCE(barcode, '')) LIKE ?", q, q, q)
+	}
+	if filter.LowStockOnly {
+		query = query.Where("COALESCE(low_stock_threshold, min_stock, 0) >= stock_level")
+	}
+	if filter.WarehouseID != "" {
+		query = query.Joins("LEFT JOIN product_warehouse_catalogs pwc ON pwc.product_id = products.id AND pwc.warehouse_id = ? AND pwc.deleted_at IS NULL", filter.WarehouseID).
+			Where("COALESCE(pwc.is_visible, TRUE) = TRUE")
+	}
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	if err := query.Preload("Category").Preload("Variants").Preload("Images").Preload("CustomValues.Column").Order("created_at DESC").Offset(offset).Limit(limit).Find(&products).Error; err != nil {
+		return nil, 0, err
+	}
+	result := make([]*models.Product, 0, len(products))
+	for i := range products {
+		s.hydrateCustomColumns(&products[i])
+		sort.Slice(products[i].Variants, func(a, b int) bool {
+			if products[i].Variants[a].IsDefault == products[i].Variants[b].IsDefault {
+				return products[i].Variants[a].Name < products[i].Variants[b].Name
+			}
+			return products[i].Variants[a].IsDefault
+		})
+		result = append(result, &products[i])
+	}
+	return result, total, nil
+}
+
+func (s *ProductService) getProductDetailed(ctx context.Context, businessID, id string) (*models.Product, error) {
+	var product models.Product
+	err := s.db.WithContext(ctx).
+		Preload("Category").
+		Preload("Variants").
+		Preload("Images").
+		Preload("CustomValues.Column").
+		Where("id = ? AND business_id = ? AND deleted_at IS NULL", id, businessID).
+		First(&product).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("product not found")
+		}
+		return nil, err
+	}
+	s.hydrateCustomColumns(&product)
+	sort.Slice(product.Variants, func(i, j int) bool {
+		if product.Variants[i].IsDefault == product.Variants[j].IsDefault {
+			return product.Variants[i].Name < product.Variants[j].Name
+		}
+		return product.Variants[i].IsDefault
+	})
+	return &product, nil
+}
+
+func (s *ProductService) listProductVariantsTx(tx *gorm.DB, productID string) ([]*models.ProductVariant, error) {
+	var variants []models.ProductVariant
+	if err := tx.Where("product_id = ? AND deleted_at IS NULL", productID).Order("is_default DESC, created_at ASC").Find(&variants).Error; err != nil {
+		return nil, err
+	}
+	result := make([]*models.ProductVariant, 0, len(variants))
+	for i := range variants {
+		result = append(result, &variants[i])
+	}
+	return result, nil
+}
+
+func (s *ProductService) hydrateCustomColumns(product *models.Product) {
+	if product == nil {
+		return
+	}
+	product.CustomColumns = map[string]interface{}{}
+	for _, value := range product.CustomValues {
+		if value == nil || value.Column == nil {
+			continue
+		}
+		var parsed interface{}
+		if err := json.Unmarshal([]byte(value.Value), &parsed); err != nil {
+			parsed = value.Value
+		}
+		product.CustomColumns[value.Column.Slug] = parsed
+	}
+}
+
+func (s *ProductService) syncProductRelationsTx(tx *gorm.DB, product *models.Product, images []ProductImageInput, customColumns map[string]interface{}, variants []ProductVariantInput) error {
+	if len(images) > 0 {
+		if err := tx.Where("product_id = ?", product.ID).Delete(&models.ProductImage{}).Error; err != nil {
+			return err
+		}
+		for idx, image := range images {
+			record := &models.ProductImage{
+				BusinessID: product.BusinessID,
+				ProductID:  product.ID,
+				URL:        image.URL,
+				Key:        image.Key,
+				AltText:    image.AltText,
+				Position:   image.Position,
+				IsPrimary:  image.IsPrimary,
+			}
+			if record.Position == 0 {
+				record.Position = idx + 1
+			}
+			if err := tx.Create(record).Error; err != nil {
+				return err
+			}
+		}
+		if len(images) > 0 {
+			product.ImageURL = images[0].URL
+			product.ImageKey = images[0].Key
+			if err := tx.Model(product).Updates(map[string]interface{}{
+				"image_url": product.ImageURL,
+				"image_key": product.ImageKey,
+			}).Error; err != nil {
+				return err
+			}
+		}
+	}
+
+	if customColumns != nil {
+		if err := tx.Where("product_id = ?", product.ID).Delete(&models.ProductCustomValue{}).Error; err != nil {
+			return err
+		}
+		for key, value := range customColumns {
+			slug := slugifyValue(key)
+			column := &models.ProductCustomColumn{}
+			err := tx.Where("business_id = ? AND slug = ? AND deleted_at IS NULL", product.BusinessID, slug).First(column).Error
+			if err != nil {
+				if !errors.Is(err, gorm.ErrRecordNotFound) {
+					return err
+				}
+				column = &models.ProductCustomColumn{
+					BusinessID: product.BusinessID,
+					Name:       key,
+					Slug:       slug,
+					DataType:   inferCustomColumnType(value),
+					IsActive:   true,
+				}
+				if err := tx.Create(column).Error; err != nil {
+					return err
+				}
+			}
+			buf, err := json.Marshal(value)
+			if err != nil {
+				return err
+			}
+			record := &models.ProductCustomValue{
+				BusinessID: product.BusinessID,
+				ProductID:  product.ID,
+				ColumnID:   column.ID,
+				Value:      string(buf),
+			}
+			if err := tx.Create(record).Error; err != nil {
+				return err
+			}
+		}
+	}
+
+	if len(variants) == 0 {
+		if s.inventory != nil {
+			_, err := s.inventory.ensureDefaultVariantTx(tx, product.BusinessID, product)
+			return err
+		}
+		return nil
+	}
+	defaultMarked := false
+	for _, variantInput := range variants {
+		if variantInput.IsDefault {
+			defaultMarked = true
+			break
+		}
+	}
+	if !defaultMarked && len(variants) > 0 {
+		variants[0].IsDefault = true
+	}
+	for idx, variantInput := range variants {
+		variant := &models.ProductVariant{}
+		query := tx.Where("product_id = ? AND deleted_at IS NULL", product.ID)
+		if variantInput.ID != "" {
+			query = query.Where("id = ?", variantInput.ID)
+		} else if variantInput.SKU != "" {
+			query = query.Where("sku = ?", variantInput.SKU)
+		} else {
+			query = query.Where("is_default = TRUE")
+		}
+		err := query.First(variant).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			variant = &models.ProductVariant{
+				BusinessID: product.BusinessID,
+				ProductID:  product.ID,
+			}
+		}
+		variant.Name = firstNonEmpty(variantInput.Name, fmt.Sprintf("Variant %d", idx+1))
+		variant.SKU = firstNonEmpty(variantInput.SKU, fmt.Sprintf("%s-%d", product.SKU, idx+1))
+		variant.Barcode = firstNonEmpty(variantInput.Barcode, variant.Barcode)
+		variant.Attributes = mustMarshalMap(variantInput.Attributes)
+		variant.IsDefault = variantInput.IsDefault
+		variant.TrackBatches = variantInput.TrackBatches
+		variant.TrackSerials = variantInput.TrackSerials
+		if variantInput.Price > 0 {
+			variant.Price = variantInput.Price
+		} else if variant.Price == 0 {
+			variant.Price = product.Price
+		}
+		if variantInput.CostPrice > 0 {
+			variant.CostPrice = variantInput.CostPrice
+		} else if variant.CostPrice == 0 {
+			variant.CostPrice = product.CostPrice
+		}
+		if variantInput.LowStockThreshold > 0 {
+			variant.LowStockThreshold = variantInput.LowStockThreshold
+		} else if variant.LowStockThreshold == 0 {
+			variant.LowStockThreshold = float64(maxInt64(product.LowStockThreshold, product.MinStock))
+		}
+		variant.IsActive = true
+		if variant.ID == "" {
+			if err := tx.Create(variant).Error; err != nil {
+				return err
+			}
+		} else if err := tx.Save(variant).Error; err != nil {
+			return err
+		}
+		if len(variantInput.Images) > 0 {
+			if err := tx.Where("variant_id = ?", variant.ID).Delete(&models.ProductImage{}).Error; err != nil {
+				return err
+			}
+			for imageIdx, image := range variantInput.Images {
+				record := &models.ProductImage{
+					BusinessID: product.BusinessID,
+					ProductID:  product.ID,
+					VariantID:  &variant.ID,
+					URL:        image.URL,
+					Key:        image.Key,
+					AltText:    image.AltText,
+					Position:   image.Position,
+					IsPrimary:  image.IsPrimary,
+				}
+				if record.Position == 0 {
+					record.Position = imageIdx + 1
+				}
+				if err := tx.Create(record).Error; err != nil {
+					return err
+				}
+			}
+		}
+		if variantInput.StockLevel > 0 && s.inventory != nil && !product.IsService {
+			if _, err := s.inventory.applyInventoryMutationTx(tx, inventoryMutationInput{
+				BusinessID:      product.BusinessID,
+				Product:         product,
+				Variant:         variant,
+				WarehouseID:     "",
+				Quantity:        variantInput.StockLevel,
+				Reason:          "variant opening quantity",
+				UnitCost:        firstNonZero(variant.CostPrice, product.CostPrice),
+				TransactionType: models.InventoryTransactionTypeOpeningBalance,
+			}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func firstNonZero(values ...float64) float64 {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func inferCustomColumnType(value interface{}) string {
+	switch value.(type) {
+	case bool:
+		return "boolean"
+	case float64, float32, int, int32, int64, uint, uint32, uint64:
+		return "number"
+	case []interface{}:
+		return "multi_select"
+	case map[string]interface{}:
+		return "object"
+	default:
+		return "text"
+	}
+}
+
+func slugifyValue(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.ReplaceAll(value, " ", "_")
+	value = strings.ReplaceAll(value, "-", "_")
+	if value == "" {
+		return fmt.Sprintf("field_%d", timeNowUnix())
+	}
+	return value
 }
 
 // ProductServiceTestable is a test-friendly version of ProductService

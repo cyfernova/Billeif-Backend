@@ -14,9 +14,11 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"gorm.io/gorm"
 )
 
 type DocumentService struct {
+	db           *gorm.DB
 	cfg          *config.Config
 	repo         interfaces.DocumentRepository
 	businessRepo interfaces.BusinessRepository
@@ -31,29 +33,40 @@ type DocumentService struct {
 }
 
 type CreateDocumentLineInput struct {
-	ProductID       string                 `json:"product_id"`
-	Description     string                 `json:"description" binding:"required"`
-	HSNSACCode      string                 `json:"hsn_sac_code"`
-	Unit            string                 `json:"unit"`
-	WarehouseID     string                 `json:"warehouse_id"`
-	Quantity        float64                `json:"quantity" binding:"required,gt=0"`
-	FreeQuantity    float64                `json:"free_quantity"`
-	UnitPrice       float64                `json:"unit_price" binding:"required,gte=0"`
-	DiscountAmount  float64                `json:"discount_amount"`
-	TaxRate         float64                `json:"tax_rate"`
-	CessRate        float64                `json:"cess_rate"`
-	PackingMetadata map[string]interface{} `json:"packing_metadata,omitempty"`
+	ProductID        string                 `json:"product_id"`
+	VariantID        string                 `json:"variant_id,omitempty"`
+	Description      string                 `json:"description" binding:"required"`
+	HSNSACCode       string                 `json:"hsn_sac_code"`
+	UQCCode          string                 `json:"uqc_code"`
+	Unit             string                 `json:"unit"`
+	WarehouseID      string                 `json:"warehouse_id"`
+	Quantity         float64                `json:"quantity" binding:"required,gt=0"`
+	FreeQuantity     float64                `json:"free_quantity"`
+	UnitPrice        float64                `json:"unit_price" binding:"required,gte=0"`
+	DiscountAmount   float64                `json:"discount_amount"`
+	TaxRate          float64                `json:"tax_rate"`
+	CessRate         float64                `json:"cess_rate"`
+	PackingMetadata  map[string]interface{} `json:"packing_metadata,omitempty"`
+	BatchAllocations []BatchAllocationInput `json:"batch_allocations,omitempty"`
+	SerialIDs        []string               `json:"serial_ids,omitempty"`
 }
 
 type CreateDocumentInput struct {
 	BusinessID      string                    `json:"business_id,omitempty"`
 	PartyID         string                    `json:"party_id"`
 	PartyType       string                    `json:"party_type"`
+	ProjectID       string                    `json:"project_id,omitempty" binding:"omitempty,uuid"`
 	Status          string                    `json:"status"`
 	DraftState      string                    `json:"draft_state"`
 	TaxMode         string                    `json:"tax_mode"`
 	GSTTreatment    string                    `json:"gst_treatment"`
 	PlaceOfSupply   string                    `json:"place_of_supply"`
+	PartyGSTIN      string                    `json:"party_gstin"`
+	PartyPAN        string                    `json:"party_pan"`
+	PartyStateCode  string                    `json:"party_state_code"`
+	SupplyType      string                    `json:"supply_type"`
+	ExportType      string                    `json:"export_type"`
+	BillOfSupply    bool                      `json:"bill_of_supply"`
 	IssueDate       time.Time                 `json:"issue_date"`
 	DueDate         *time.Time                `json:"due_date"`
 	DispatchDate    *time.Time                `json:"dispatch_date"`
@@ -67,6 +80,8 @@ type CreateDocumentInput struct {
 	Declaration     string                    `json:"declaration"`
 	Direction       string                    `json:"direction"`
 	ExtraFields     map[string]interface{}    `json:"extra_fields,omitempty"`
+	ReportTags      map[string]interface{}    `json:"report_tags,omitempty"`
+	Withholdings    []WithholdingInput        `json:"withholdings,omitempty"`
 	Lines           []CreateDocumentLineInput `json:"lines" binding:"required,min=1,dive"`
 }
 
@@ -135,6 +150,7 @@ type UpdateRenderProfileInput struct {
 }
 
 func NewDocumentService(
+	db *gorm.DB,
 	cfg *config.Config,
 	repo interfaces.DocumentRepository,
 	businessRepo interfaces.BusinessRepository,
@@ -148,6 +164,7 @@ func NewDocumentService(
 	log *logger.Logger,
 ) *DocumentService {
 	return &DocumentService{
+		db:           db,
 		cfg:          cfg,
 		repo:         repo,
 		businessRepo: businessRepo,
@@ -168,6 +185,9 @@ func (s *DocumentService) CreateByType(ctx context.Context, businessID, document
 		return nil, err
 	}
 	if err := s.repo.Create(ctx, document); err != nil {
+		return nil, err
+	}
+	if err := s.syncDocumentWithholdings(ctx, document, input.Withholdings); err != nil {
 		return nil, err
 	}
 	if document.Status != models.DocumentStatusDraft {
@@ -191,6 +211,8 @@ func (s *DocumentService) buildDocument(ctx context.Context, businessID, documen
 	if err := s.validateParty(ctx, businessID, partyType, input.PartyID); err != nil {
 		return nil, err
 	}
+	projectID := syncProjectIDFromTags(input.ProjectID, input.ReportTags)
+	input.ReportTags = mergeProjectIntoTags(input.ReportTags, projectID)
 
 	document := &models.Document{
 		BusinessID:            businessID,
@@ -201,6 +223,12 @@ func (s *DocumentService) buildDocument(ctx context.Context, businessID, documen
 		TaxMode:               coalesceString(input.TaxMode, defaultTaxMode(documentType, input.GSTTreatment)),
 		GSTTreatment:          coalesceString(input.GSTTreatment, business.DefaultGSTTreatment),
 		PlaceOfSupply:         coalesceString(input.PlaceOfSupply, business.BusinessStateCode),
+		PartyGSTIN:            input.PartyGSTIN,
+		PartyPAN:              input.PartyPAN,
+		PartyStateCode:        input.PartyStateCode,
+		SupplyType:            input.SupplyType,
+		ExportType:            input.ExportType,
+		BillOfSupply:          input.BillOfSupply,
 		IssueDate:             input.IssueDate,
 		DueDate:               input.DueDate,
 		DispatchDate:          input.DispatchDate,
@@ -213,8 +241,10 @@ func (s *DocumentService) buildDocument(ctx context.Context, businessID, documen
 		Declaration:           input.Declaration,
 		Direction:             input.Direction,
 		ExtraFields:           mustMarshalMap(input.ExtraFields),
+		ReportTags:            mustMarshalMap(input.ReportTags),
 		RenderProfileID:       nil,
 		ProfitSnapshotEnabled: true,
+		ProjectID:             projectIDPointer(projectID),
 	}
 	if input.PartyID != "" {
 		document.PartyID = &input.PartyID
@@ -231,9 +261,16 @@ func (s *DocumentService) buildDocument(ctx context.Context, businessID, documen
 	if documentType == models.DocumentTypeBillOfSupply {
 		document.TaxMode = models.DocumentTaxModeNonGST
 		document.GSTTreatment = models.DocumentGSTTreatmentComposition
+		document.BillOfSupply = true
 		if document.Declaration == "" {
 			document.Declaration = "Tax not payable under Section 10 or exempt supply as per GST Law."
 		}
+	}
+	if documentType == models.DocumentTypeExpense && document.Direction == "" {
+		document.Direction = models.DocumentDirectionInward
+	}
+	if err := s.applyPartyTaxSnapshot(ctx, businessID, document); err != nil {
+		return nil, err
 	}
 
 	document.SerialNumber = s.generateSerialNumber(documentType)
@@ -251,6 +288,7 @@ func (s *DocumentService) buildDocument(ctx context.Context, businessID, documen
 	if documentType == models.DocumentTypeCreditNote || documentType == models.DocumentTypeDebitNote {
 		document.BalanceDue = 0
 	}
+	document.WithholdingTotal, document.TDSTotal, document.TCSTotal = summarizeWithholdings(input.Withholdings)
 
 	return document, nil
 }
@@ -271,6 +309,7 @@ func (s *DocumentService) buildDocumentLines(ctx context.Context, business *mode
 		line := &models.DocumentLine{
 			Description:       input.Description,
 			HSNSACCode:        input.HSNSACCode,
+			UQCCode:           input.UQCCode,
 			Unit:              input.Unit,
 			Quantity:          input.Quantity,
 			FreeQuantity:      input.FreeQuantity,
@@ -280,6 +319,8 @@ func (s *DocumentService) buildDocumentLines(ctx context.Context, business *mode
 			TaxRate:           input.TaxRate,
 			CessRate:          input.CessRate,
 			PackingMetadata:   mustMarshalMap(input.PackingMetadata),
+			BatchAllocations:  mustMarshalBatchAllocations(input.BatchAllocations),
+			SerialIDs:         marshalStringSlice(input.SerialIDs),
 			StockEffect:       stockEffectForDocument(document.DocumentType, document.Direction),
 		}
 		if input.ProductID != "" {
@@ -291,6 +332,9 @@ func (s *DocumentService) buildDocumentLines(ctx context.Context, business *mode
 			if line.HSNSACCode == "" {
 				line.HSNSACCode = product.HSNSACCode
 			}
+			if line.UQCCode == "" {
+				line.UQCCode = product.UQCCode
+			}
 			if line.Unit == "" {
 				line.Unit = product.Unit
 			}
@@ -300,8 +344,14 @@ func (s *DocumentService) buildDocumentLines(ctx context.Context, business *mode
 				line.WarehouseID = nil
 			}
 		}
+		if input.VariantID != "" {
+			line.VariantID = &input.VariantID
+		}
 		if input.WarehouseID != "" {
 			line.WarehouseID = &input.WarehouseID
+		}
+		if line.UQCCode == "" {
+			line.UQCCode = normalizeUQCCode("")
 		}
 
 		line.LineSubtotal = (line.Quantity * line.UnitPrice) - line.DiscountAmount
@@ -382,6 +432,14 @@ func (s *DocumentService) UpdateByType(ctx context.Context, businessID, id, docu
 	existing.Declaration = rebuilt.Declaration
 	existing.Direction = rebuilt.Direction
 	existing.ExtraFields = rebuilt.ExtraFields
+	existing.ReportTags = rebuilt.ReportTags
+	existing.ProjectID = rebuilt.ProjectID
+	existing.PartyGSTIN = rebuilt.PartyGSTIN
+	existing.PartyPAN = rebuilt.PartyPAN
+	existing.PartyStateCode = rebuilt.PartyStateCode
+	existing.SupplyType = rebuilt.SupplyType
+	existing.ExportType = rebuilt.ExportType
+	existing.BillOfSupply = rebuilt.BillOfSupply
 	existing.Lines = rebuilt.Lines
 	existing.Subtotal = rebuilt.Subtotal
 	existing.DiscountTotal = rebuilt.DiscountTotal
@@ -390,6 +448,9 @@ func (s *DocumentService) UpdateByType(ctx context.Context, businessID, id, docu
 	existing.Total = rebuilt.Total
 	existing.BalanceDue = rebuilt.Total - existing.PaidAmount
 	if err := s.repo.Update(ctx, existing); err != nil {
+		return nil, err
+	}
+	if err := s.syncDocumentWithholdings(ctx, existing, input.Withholdings); err != nil {
 		return nil, err
 	}
 	if existing.Status != models.DocumentStatusDraft {
@@ -891,6 +952,7 @@ func (s *DocumentService) MirrorLegacyInvoice(ctx context.Context, invoice *mode
 	doc.DueDate = &invoice.DueDate
 	doc.Currency = defaultCurrency(invoice.Currency)
 	doc.Locale = "en-IN"
+	doc.ProjectID = invoice.ProjectID
 	doc.PDFURL = invoice.PDFURL
 	doc.PDFFilename = invoice.PDFFilename
 	doc.Notes = invoice.Notes
@@ -900,13 +962,43 @@ func (s *DocumentService) MirrorLegacyInvoice(ctx context.Context, invoice *mode
 	doc.PaidAmount = invoice.PaidAmount
 	doc.BalanceDue = invoice.BalanceDue
 	doc.ProfitSnapshotEnabled = true
+	taxProfile := unmarshalJSONMap(invoice.TaxProfile)
+	if value := readStringCandidate(taxProfile, "gst_treatment"); value != "" {
+		doc.GSTTreatment = value
+	}
+	if value := readStringCandidate(taxProfile, "place_of_supply"); value != "" {
+		doc.PlaceOfSupply = value
+	}
+	doc.BillOfSupply = readBoolCandidate(taxProfile, "bill_of_supply")
+	doc.ExportType = readStringCandidate(taxProfile, "export_type")
+	doc.SupplyType = readStringCandidate(taxProfile, "supply_type")
+	doc.PartyGSTIN = readStringCandidate(taxProfile, "counterparty_gstin")
+	doc.PartyPAN = coalesceString(readStringCandidate(taxProfile, "counterparty_pan"), parsePANFromGSTIN(doc.PartyGSTIN))
+	doc.PartyStateCode = readStringCandidate(taxProfile, "counterparty_state_code")
+	reportTags := nestedMap(taxProfile, "report_tags")
+	projectID := normalizeProjectID(extractProjectIDFromTags(reportTags))
+	if invoice.ProjectID != nil && *invoice.ProjectID != "" {
+		projectID = *invoice.ProjectID
+	}
+	reportTags = mergeProjectIntoTags(reportTags, projectID)
+	doc.ReportTags = mustMarshalMap(reportTags)
+	doc.ProjectID = projectIDPointer(projectID)
+	if sourceLinkage := nestedMap(taxProfile, "source_linkage"); len(sourceLinkage) > 0 {
+		doc.SourceLinkage = mustMarshalMap(sourceLinkage)
+	}
+	if doc.BillOfSupply {
+		doc.DocumentType = models.DocumentTypeBillOfSupply
+		doc.TaxMode = models.DocumentTaxModeNonGST
+	}
 	doc.Lines = nil
 	for _, item := range invoice.Items {
 		line := &models.DocumentLine{
 			ID:                item.ID,
 			DocumentID:        invoice.ID,
 			ProductID:         item.ProductID,
+			VariantID:         item.VariantID,
 			Description:       item.Description,
+			WarehouseID:       item.WarehouseID,
 			Quantity:          item.Quantity,
 			RemainingQuantity: item.Quantity,
 			UnitPrice:         item.UnitPrice,
@@ -915,6 +1007,8 @@ func (s *DocumentService) MirrorLegacyInvoice(ctx context.Context, invoice *mode
 			TaxAmount:         item.Total - ((item.Quantity * item.UnitPrice) - item.Discount),
 			LineSubtotal:      (item.Quantity * item.UnitPrice) - item.Discount,
 			LineTotal:         item.Total,
+			BatchAllocations:  item.BatchAllocations,
+			SerialIDs:         item.SerialIDs,
 			StockEffect:       "out",
 		}
 		if item.ProductID != nil {
@@ -922,19 +1016,30 @@ func (s *DocumentService) MirrorLegacyInvoice(ctx context.Context, invoice *mode
 				line.CostSnapshot = product.CostPrice
 				line.MarginSnapshot = line.LineSubtotal - (product.CostPrice * item.Quantity)
 				line.HSNSACCode = product.HSNSACCode
+				line.UQCCode = normalizeUQCCode(product.UQCCode)
 				line.Unit = product.Unit
 			}
 		}
+		if line.UQCCode == "" {
+			line.UQCCode = normalizeUQCCode("")
+		}
 		doc.Lines = append(doc.Lines, line)
 	}
+	doc.WithholdingTotal, doc.TDSTotal, doc.TCSTotal = summarizeWithholdings(mapSliceToWithholdings(readMapSlice(taxProfile, "tcs")))
 	if doc.CreatedAt.IsZero() {
 		if err := s.repo.Create(ctx, doc); err != nil {
+			return err
+		}
+		if err := s.syncDocumentWithholdings(ctx, doc, mapSliceToWithholdings(readMapSlice(taxProfile, "tcs"))); err != nil {
 			return err
 		}
 		s.recordRevision(ctx, doc, "legacy_sync_created", nil)
 		return nil
 	}
 	if err := s.repo.Update(ctx, doc); err != nil {
+		return err
+	}
+	if err := s.syncDocumentWithholdings(ctx, doc, mapSliceToWithholdings(readMapSlice(taxProfile, "tcs"))); err != nil {
 		return err
 	}
 	s.recordRevision(ctx, doc, "legacy_sync_updated", nil)
@@ -1044,6 +1149,7 @@ func (s *DocumentService) generateSerialNumber(documentType string) string {
 		models.DocumentTypeBillOfSupply:    "BS",
 		models.DocumentTypePackingList:     "PK",
 		models.DocumentTypeShippingLabel:   "SL",
+		models.DocumentTypeExpense:         "EX",
 	}[documentType]
 	if prefix == "" {
 		prefix = "DOC"
@@ -1111,7 +1217,7 @@ func resolvePartyType(documentType, requested, direction string) string {
 		return requested
 	}
 	switch documentType {
-	case models.DocumentTypePurchaseInvoice, models.DocumentTypePurchaseOrder, models.DocumentTypeDebitNote:
+	case models.DocumentTypePurchaseInvoice, models.DocumentTypePurchaseOrder, models.DocumentTypeDebitNote, models.DocumentTypeExpense:
 		return models.DocumentPartyTypeVendor
 	case models.DocumentTypeDeliveryChallan:
 		if direction == models.DocumentDirectionInward {
@@ -1125,7 +1231,7 @@ func resolvePartyType(documentType, requested, direction string) string {
 
 func stockEffectForDocument(documentType, direction string) string {
 	switch documentType {
-	case models.DocumentTypePurchaseInvoice, models.DocumentTypeCreditNote:
+	case models.DocumentTypePurchaseInvoice, models.DocumentTypeCreditNote, models.DocumentTypeExpense:
 		return "in"
 	case models.DocumentTypeDeliveryChallan:
 		if direction == models.DocumentDirectionInward {
@@ -1154,7 +1260,8 @@ func isSupportedDocumentType(documentType string) bool {
 		models.DocumentTypeDebitNote,
 		models.DocumentTypeBillOfSupply,
 		models.DocumentTypePackingList,
-		models.DocumentTypeShippingLabel:
+		models.DocumentTypeShippingLabel,
+		models.DocumentTypeExpense:
 		return true
 	default:
 		return false
@@ -1244,4 +1351,88 @@ func (s *DocumentService) recordRevision(ctx context.Context, document *models.D
 	if err := s.repo.CreateRevision(ctx, revision); err != nil {
 		s.log.Warn("failed to create document revision", "document_id", document.ID, "action", action, "error", err)
 	}
+}
+
+func (s *DocumentService) applyPartyTaxSnapshot(ctx context.Context, businessID string, document *models.Document) error {
+	if document == nil || document.PartyID == nil || *document.PartyID == "" {
+		return nil
+	}
+	switch document.PartyType {
+	case models.DocumentPartyTypeCustomer:
+		customer, err := s.customerRepo.GetByID(ctx, *document.PartyID, businessID)
+		if err != nil {
+			return err
+		}
+		if document.PartyGSTIN == "" {
+			document.PartyGSTIN = customer.GSTIN
+		}
+		if document.PartyPAN == "" {
+			document.PartyPAN = customer.PAN
+		}
+		if document.PartyStateCode == "" {
+			document.PartyStateCode = customer.StateCode
+		}
+	case models.DocumentPartyTypeVendor:
+		vendor, err := s.vendorRepo.GetByID(ctx, *document.PartyID, businessID)
+		if err != nil {
+			return err
+		}
+		if document.PartyGSTIN == "" {
+			document.PartyGSTIN = vendor.GSTIN
+		}
+		if document.PartyPAN == "" {
+			document.PartyPAN = vendor.PAN
+		}
+		if document.PartyStateCode == "" {
+			document.PartyStateCode = vendor.StateCode
+		}
+	}
+	return nil
+}
+
+func (s *DocumentService) syncDocumentWithholdings(ctx context.Context, document *models.Document, inputs []WithholdingInput) error {
+	if s.db == nil || document == nil || document.ID == "" {
+		return nil
+	}
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("document_id = ?", document.ID).Delete(&models.DocumentWithholding{}).Error; err != nil {
+			return err
+		}
+		if len(inputs) == 0 {
+			return nil
+		}
+		records := make([]models.DocumentWithholding, 0, len(inputs))
+		for _, input := range inputs {
+			if input.SectionCode == "" || input.Amount == 0 {
+				continue
+			}
+			records = append(records, models.DocumentWithholding{
+				BusinessID:      document.BusinessID,
+				DocumentID:      document.ID,
+				SectionCode:     input.SectionCode,
+				WithholdingType: coalesceString(input.WithholdingType, models.WithholdingTypeTDS),
+				Rate:            input.Rate,
+				TaxableAmount:   input.TaxableAmount,
+				Amount:          input.Amount,
+				Metadata:        mustMarshalMap(input.Metadata),
+			})
+		}
+		if len(records) == 0 {
+			return nil
+		}
+		return tx.Create(&records).Error
+	})
+}
+
+func summarizeWithholdings(inputs []WithholdingInput) (total, tdsTotal, tcsTotal float64) {
+	for _, input := range inputs {
+		total += input.Amount
+		switch input.WithholdingType {
+		case models.WithholdingTypeTCS:
+			tcsTotal += input.Amount
+		default:
+			tdsTotal += input.Amount
+		}
+	}
+	return total, tdsTotal, tcsTotal
 }

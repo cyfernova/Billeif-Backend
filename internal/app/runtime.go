@@ -182,6 +182,7 @@ type Repositories struct {
 	Invoice      interfaces.InvoiceRepository
 	Payment      interfaces.PaymentRepository
 	Ledger       interfaces.LedgerRepository
+	Reporting    interfaces.ReportingRepository
 	Team         interfaces.TeamMemberRepository
 	Webhook      interfaces.WebhookRepository
 	Subscription interfaces.SubscriptionRepository
@@ -202,6 +203,7 @@ func initRepositories(db *gorm.DB) *Repositories {
 		Invoice:      postgresrepo.NewInvoiceRepository(db),
 		Payment:      postgresrepo.NewPaymentRepository(db),
 		Ledger:       postgresrepo.NewLedgerRepository(db),
+		Reporting:    postgresrepo.NewReportingRepository(db),
 		Team:         postgresrepo.NewTeamMemberRepository(db),
 		Webhook:      postgresrepo.NewWebhookRepository(db),
 		Subscription: postgresrepo.NewSubscriptionRepository(db),
@@ -211,7 +213,7 @@ func initRepositories(db *gorm.DB) *Repositories {
 
 func initServices(cfg *config.Config, db *gorm.DB, repos *Repositories, aws *awsclients.Config, log *logger.Logger) *services.Container {
 	return services.NewContainer(cfg, db, repos.User, repos.Business, repos.Customer, repos.Vendor,
-		repos.Product, repos.Document, repos.Journal, repos.Inventory, repos.Shipping, repos.Invoice, repos.Payment, repos.Ledger, repos.Team,
+		repos.Product, repos.Document, repos.Journal, repos.Inventory, repos.Shipping, repos.Invoice, repos.Payment, repos.Ledger, repos.Reporting, repos.Team,
 		repos.Webhook, repos.Subscription, repos.AP2, aws, log)
 }
 
@@ -330,6 +332,13 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			googleAuth.POST("/google", h.Auth.GoogleLogin)
 		}
 
+		public := api.Group("/public")
+		public.Use(middleware.ReportShareRateLimit())
+		{
+			public.GET("/report-shares/:token/metadata", h.Report.PublicMetadata)
+			public.POST("/report-shares/:token/access", h.Report.PublicAccess)
+		}
+
 		protected := api.Group("")
 		protected.Use(middleware.Auth(cfg.Cognito, log))
 		protected.Use(middleware.BusinessAuth(svcs.BusinessAuth))
@@ -378,8 +387,70 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 				products.POST("", h.Product.Create)
 				products.PUT("/:id", h.Product.Update)
 				products.DELETE("/:id", h.Product.Delete)
+				products.POST("/:id/clone", h.Product.Clone)
 				products.POST("/:id/image", h.Product.UploadImage)
 				products.POST("/:id/stock", h.Product.AdjustStock)
+			}
+
+			projects := protected.Group("/projects")
+			{
+				projects.GET("", h.Project.List)
+				projects.POST("", middleware.RequireRole("admin", "accountant"), h.Project.Create)
+				projects.PUT("/:id", middleware.RequireRole("admin", "accountant"), h.Project.Update)
+				projects.DELETE("/:id", middleware.RequireRole("admin", "accountant"), h.Project.Delete)
+			}
+
+			reports := protected.Group("/reports")
+			{
+				reports.GET("/catalog", h.Report.Catalog)
+				reports.GET("/dashboard", h.Report.Dashboard)
+				reports.GET("/shares/history", h.Report.ShareHistory)
+				reports.GET("/preferences/:key", h.Report.GetPreference)
+				reports.PUT("/preferences/:key", h.Report.SavePreference)
+				reports.POST("/:key/query", h.Report.Query)
+				reports.POST("/:key/export", h.Report.Export)
+				reports.POST("/:key/share", middleware.RequireRole("admin", "accountant"), h.Report.CreateShare)
+			}
+
+			warehouses := protected.Group("/warehouses")
+			{
+				warehouses.GET("", h.Inventory.ListWarehouses)
+				warehouses.POST("", h.Inventory.CreateWarehouse)
+				warehouses.PUT("/:id", h.Inventory.UpdateWarehouse)
+				warehouses.DELETE("/:id", h.Inventory.DeleteWarehouse)
+				warehouses.POST("/:id/catalog", h.Inventory.UpsertCatalog)
+				warehouses.GET("/:id/permissions", h.Inventory.ListPermissions)
+				warehouses.POST("/:id/permissions", h.Inventory.UpsertPermissions)
+			}
+
+			inventory := protected.Group("/inventory")
+			{
+				inventory.POST("/adjustments", h.Inventory.CreateAdjustment)
+				inventory.POST("/transfers", h.Inventory.CreateTransfer)
+				inventory.POST("/resets", h.Inventory.ResetStock)
+				inventory.GET("/timeline", h.Inventory.Timeline)
+				inventory.GET("/valuation", h.Inventory.Valuation)
+				inventory.GET("/alerts", h.Inventory.Alerts)
+				inventory.GET("/batches", h.Inventory.ListBatches)
+				inventory.GET("/serials", h.Inventory.ListSerials)
+			}
+
+			assemblies := protected.Group("/assemblies")
+			{
+				assemblies.GET("", h.Inventory.ListAssemblyRecipes)
+				assemblies.POST("", h.Inventory.CreateAssemblyRecipe)
+				assemblies.POST("/:id/build", h.Inventory.BuildAssembly)
+				assemblies.POST("/:id/disassemble", h.Inventory.DisassembleAssembly)
+			}
+
+			barcodes := protected.Group("/barcodes")
+			{
+				barcodes.POST("/generate", h.Barcode.Generate)
+				barcodes.POST("/assign", h.Barcode.Assign)
+				barcodes.GET("/lookup", h.Barcode.Lookup)
+				barcodes.POST("/render/png", h.Barcode.RenderPNG)
+				barcodes.POST("/render/svg", h.Barcode.RenderSVG)
+				barcodes.POST("/render/pdf", h.Barcode.RenderPDF)
 			}
 
 			registerDocumentResource := func(path string, handler *handlers.DocumentHandler) {
@@ -402,6 +473,7 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			registerDocumentResource("/credit-notes", h.CreditNote)
 			registerDocumentResource("/debit-notes", h.DebitNote)
 			registerDocumentResource("/bills-of-supply", h.BillOfSupply)
+			registerDocumentResource("/expenses", h.Expense)
 			registerDocumentResource("/packing-lists", h.PackingList)
 			registerDocumentResource("/shipping-labels", h.ShippingLabel)
 
@@ -455,6 +527,19 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 				renderProfiles.POST("", h.RenderProfile.Create)
 				renderProfiles.PUT("/:id", h.RenderProfile.Update)
 				renderProfiles.DELETE("/:id", h.RenderProfile.Delete)
+			}
+
+			utils := protected.Group("/utils")
+			{
+				utils.POST("/gstin/:gstin/fetch", h.Tax.FetchGSTIN)
+			}
+
+			tax := protected.Group("/tax")
+			{
+				tax.POST("/gstr-2b/import", h.Tax.ImportGSTR2B)
+				tax.GET("/reports/:type", h.Tax.GetReport)
+				tax.POST("/reports/:type/export", h.Tax.ExportReport)
+				tax.GET("/report-runs/:id", h.Tax.GetReportRun)
 			}
 
 			shipments := protected.Group("/shipments")

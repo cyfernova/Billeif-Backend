@@ -23,6 +23,7 @@ type Config struct {
 	SQS            SQSConfig         `mapstructure:"SQS"`
 	Sentry         SentryConfig      `mapstructure:"SENTRY"`
 	Shipping       ShippingConfig    `mapstructure:"SHIPPING"`
+	GSTLookup      GSTLookupConfig   `mapstructure:"GST_LOOKUP"`
 	AllowedOrigins []string          `mapstructure:"ALLOWED_ORIGINS"`
 	LLM            LLMConfig         `mapstructure:"LLM"`
 	Credentials    CredentialsConfig `mapstructure:"CREDENTIALS"`
@@ -141,6 +142,12 @@ type ShippingConfig struct {
 	ShiprocketTrackingBaseURL string `mapstructure:"SHIPROCKET_TRACKING_BASE_URL"`
 }
 
+type GSTLookupConfig struct {
+	BaseURL string `mapstructure:"BASE_URL"`
+	APIKey  string `mapstructure:"API_KEY"`
+	Timeout int    `mapstructure:"TIMEOUT"`
+}
+
 func Load() (*Config, error) {
 	viper.SetConfigType("env")
 	viper.AddConfigPath(".")
@@ -235,6 +242,9 @@ func Load() (*Config, error) {
 	_ = viper.BindEnv("SHIPPING.SHIPROCKET_ASSIGN_AWB_PATH", "SHIPPING_SHIPROCKET_ASSIGN_AWB_PATH")
 	_ = viper.BindEnv("SHIPPING.SHIPROCKET_LABEL_PATH", "SHIPPING_SHIPROCKET_LABEL_PATH")
 	_ = viper.BindEnv("SHIPPING.SHIPROCKET_TRACKING_BASE_URL", "SHIPPING_SHIPROCKET_TRACKING_BASE_URL")
+	_ = viper.BindEnv("GST_LOOKUP.BASE_URL", "GST_LOOKUP_BASE_URL")
+	_ = viper.BindEnv("GST_LOOKUP.API_KEY", "GST_LOOKUP_API_KEY")
+	_ = viper.BindEnv("GST_LOOKUP.TIMEOUT", "GST_LOOKUP_TIMEOUT")
 	_ = viper.BindEnv("ALLOWED_ORIGINS", "ALLOWED_ORIGINS")
 	_ = viper.BindEnv("LLM.API_KEY", "LLM_API_KEY")
 	_ = viper.BindEnv("LLM.API_URL", "LLM_API_URL")
@@ -345,6 +355,9 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Shipping.ShiprocketLabelPath == "" {
 		cfg.Shipping.ShiprocketLabelPath = "/courier/generate/label"
+	}
+	if cfg.GSTLookup.Timeout == 0 {
+		cfg.GSTLookup.Timeout = 15
 	}
 }
 

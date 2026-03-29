@@ -19,33 +19,47 @@ func NewVendorService(repo interfaces.VendorRepository, log *logger.Logger) *Ven
 }
 
 type CreateVendorInput struct {
-	BusinessID   string `json:"business_id,omitempty"`
-	Name         string `json:"name" binding:"required,min=2"`
-	Email        string `json:"email" binding:"required,email"`
-	Phone        string `json:"phone"`
-	Address      string `json:"address"`
-	City         string `json:"city"`
-	State        string `json:"state"`
-	Country      string `json:"country"`
-	PostalCode   string `json:"postal_code"`
-	TaxID        string `json:"tax_id"`
-	PaymentTerms string `json:"payment_terms"`
+	BusinessID              string                 `json:"business_id,omitempty"`
+	Name                    string                 `json:"name" binding:"required,min=2"`
+	Email                   string                 `json:"email" binding:"required,email"`
+	Phone                   string                 `json:"phone"`
+	Address                 string                 `json:"address"`
+	City                    string                 `json:"city"`
+	State                   string                 `json:"state"`
+	Country                 string                 `json:"country"`
+	PostalCode              string                 `json:"postal_code"`
+	TaxID                   string                 `json:"tax_id"`
+	GSTIN                   string                 `json:"gstin"`
+	PAN                     string                 `json:"pan"`
+	CompanyName             string                 `json:"company_name"`
+	StateCode               string                 `json:"state_code"`
+	BillingAddressJSON      map[string]interface{} `json:"billing_address_json,omitempty"`
+	ShippingAddressJSON     map[string]interface{} `json:"shipping_address_json,omitempty"`
+	WithholdingDefaultsJSON map[string]interface{} `json:"withholding_defaults_json,omitempty"`
+	PaymentTerms            string                 `json:"payment_terms"`
 }
 
 func (s *VendorService) Create(ctx context.Context, input CreateVendorInput) (*models.Vendor, error) {
 	log := logger.FromContext(ctx).With("service", "vendor", "operation", "create", "business_id", input.BusinessID)
 	vendor := &models.Vendor{
-		BusinessID:   input.BusinessID,
-		Name:         input.Name,
-		Email:        input.Email,
-		Phone:        input.Phone,
-		Address:      input.Address,
-		City:         input.City,
-		State:        input.State,
-		Country:      input.Country,
-		PostalCode:   input.PostalCode,
-		TaxID:        input.TaxID,
-		PaymentTerms: input.PaymentTerms,
+		BusinessID:              input.BusinessID,
+		Name:                    input.Name,
+		Email:                   input.Email,
+		Phone:                   input.Phone,
+		Address:                 input.Address,
+		City:                    input.City,
+		State:                   input.State,
+		Country:                 input.Country,
+		PostalCode:              input.PostalCode,
+		TaxID:                   input.TaxID,
+		GSTIN:                   input.GSTIN,
+		PAN:                     input.PAN,
+		CompanyName:             input.CompanyName,
+		StateCode:               input.StateCode,
+		BillingJSON:             mustMarshalMap(input.BillingAddressJSON),
+		ShippingJSON:            mustMarshalMap(input.ShippingAddressJSON),
+		WithholdingDefaultsJSON: mustMarshalMap(input.WithholdingDefaultsJSON),
+		PaymentTerms:            input.PaymentTerms,
 	}
 
 	if err := s.repo.Create(ctx, vendor); err != nil {
@@ -73,16 +87,23 @@ func (s *VendorService) List(ctx context.Context, businessID string, page, limit
 }
 
 type UpdateVendorInput struct {
-	Name         string `json:"name"`
-	Email        string `json:"email"`
-	Phone        string `json:"phone"`
-	Address      string `json:"address"`
-	City         string `json:"city"`
-	State        string `json:"state"`
-	Country      string `json:"country"`
-	PostalCode   string `json:"postal_code"`
-	TaxID        string `json:"tax_id"`
-	PaymentTerms string `json:"payment_terms"`
+	Name                    string                 `json:"name"`
+	Email                   string                 `json:"email"`
+	Phone                   string                 `json:"phone"`
+	Address                 string                 `json:"address"`
+	City                    string                 `json:"city"`
+	State                   string                 `json:"state"`
+	Country                 string                 `json:"country"`
+	PostalCode              string                 `json:"postal_code"`
+	TaxID                   string                 `json:"tax_id"`
+	GSTIN                   string                 `json:"gstin"`
+	PAN                     string                 `json:"pan"`
+	CompanyName             string                 `json:"company_name"`
+	StateCode               string                 `json:"state_code"`
+	BillingAddressJSON      map[string]interface{} `json:"billing_address_json,omitempty"`
+	ShippingAddressJSON     map[string]interface{} `json:"shipping_address_json,omitempty"`
+	WithholdingDefaultsJSON map[string]interface{} `json:"withholding_defaults_json,omitempty"`
+	PaymentTerms            string                 `json:"payment_terms"`
 }
 
 func (s *VendorService) UpdateByBusiness(ctx context.Context, businessID, id string, input UpdateVendorInput) (*models.Vendor, error) {
@@ -119,6 +140,27 @@ func (s *VendorService) UpdateByBusiness(ctx context.Context, businessID, id str
 	}
 	if input.TaxID != "" {
 		vendor.TaxID = input.TaxID
+	}
+	if input.GSTIN != "" {
+		vendor.GSTIN = input.GSTIN
+	}
+	if input.PAN != "" {
+		vendor.PAN = input.PAN
+	}
+	if input.CompanyName != "" {
+		vendor.CompanyName = input.CompanyName
+	}
+	if input.StateCode != "" {
+		vendor.StateCode = input.StateCode
+	}
+	if input.BillingAddressJSON != nil {
+		vendor.BillingJSON = mustMarshalMap(input.BillingAddressJSON)
+	}
+	if input.ShippingAddressJSON != nil {
+		vendor.ShippingJSON = mustMarshalMap(input.ShippingAddressJSON)
+	}
+	if input.WithholdingDefaultsJSON != nil {
+		vendor.WithholdingDefaultsJSON = mustMarshalMap(input.WithholdingDefaultsJSON)
 	}
 	if input.PaymentTerms != "" {
 		vendor.PaymentTerms = input.PaymentTerms

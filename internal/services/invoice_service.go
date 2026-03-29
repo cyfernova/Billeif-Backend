@@ -54,18 +54,24 @@ func NewInvoiceService(
 }
 
 type CreateInvoiceItemInput struct {
-	ProductID   string  `json:"product_id"`
-	Description string  `json:"description" binding:"required"`
-	Quantity    float64 `json:"quantity" binding:"required,gt=0"`
-	UnitPrice   float64 `json:"unit_price" binding:"required,gt=0"`
-	TaxRate     float64 `json:"tax_rate"`
+	ProductID        string                 `json:"product_id"`
+	VariantID        string                 `json:"variant_id,omitempty"`
+	WarehouseID      string                 `json:"warehouse_id,omitempty"`
+	Description      string                 `json:"description" binding:"required"`
+	Quantity         float64                `json:"quantity" binding:"required,gt=0"`
+	UnitPrice        float64                `json:"unit_price" binding:"required,gt=0"`
+	TaxRate          float64                `json:"tax_rate"`
+	BatchAllocations []BatchAllocationInput `json:"batch_allocations,omitempty"`
+	SerialIDs        []string               `json:"serial_ids,omitempty"`
 }
 
 type CreateInvoiceInput struct {
 	BusinessID string                   `json:"business_id,omitempty"`
 	CustomerID string                   `json:"customer_id" binding:"required,uuid"`
+	ProjectID  string                   `json:"project_id,omitempty" binding:"omitempty,uuid"`
 	DueDate    time.Time                `json:"due_date" binding:"required"`
 	Notes      string                   `json:"notes"`
+	TaxProfile TaxProfileInput          `json:"tax_profile"`
 	Items      []CreateInvoiceItemInput `json:"items" binding:"required,min=1,dive"`
 }
 
@@ -79,6 +85,8 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 	if err != nil {
 		return nil, err
 	}
+	projectID := syncProjectIDFromTags(input.ProjectID, input.TaxProfile.ReportTags)
+	input.TaxProfile.ReportTags = mergeProjectIntoTags(input.TaxProfile.ReportTags, projectID)
 
 	var subtotal, taxTotal float64
 	items := make([]*models.InvoiceItem, len(input.Items))
@@ -93,20 +101,33 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 		if item.ProductID != "" {
 			productID = &item.ProductID
 		}
+		var variantID *string
+		if item.VariantID != "" {
+			variantID = &item.VariantID
+		}
+		var warehouseID *string
+		if item.WarehouseID != "" {
+			warehouseID = &item.WarehouseID
+		}
 
 		items[i] = &models.InvoiceItem{
-			ProductID:   productID,
-			Description: item.Description,
-			Quantity:    item.Quantity,
-			UnitPrice:   item.UnitPrice,
-			TaxRate:     item.TaxRate,
-			Total:       itemSubtotal + itemTax,
+			ProductID:        productID,
+			VariantID:        variantID,
+			WarehouseID:      warehouseID,
+			Description:      item.Description,
+			Quantity:         item.Quantity,
+			UnitPrice:        item.UnitPrice,
+			TaxRate:          item.TaxRate,
+			BatchAllocations: mustMarshalBatchAllocations(item.BatchAllocations),
+			SerialIDs:        marshalStringSlice(item.SerialIDs),
+			Total:            itemSubtotal + itemTax,
 		}
 	}
 
 	invoice := &models.Invoice{
 		BusinessID:  input.BusinessID,
 		CustomerID:  input.CustomerID,
+		ProjectID:   projectIDPointer(projectID),
 		InvoiceNo:   invoiceNo,
 		Status:      "draft",
 		InvoiceDate: time.Now(),
@@ -116,6 +137,7 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 		Total:       subtotal + taxTotal,
 		BalanceDue:  subtotal + taxTotal,
 		Notes:       input.Notes,
+		TaxProfile:  mustMarshalMap(taxProfileToMap(input.TaxProfile)),
 		Currency:    "USD",
 		Items:       items,
 	}
@@ -180,8 +202,10 @@ func (s *InvoiceService) List(ctx context.Context, businessID string, page, limi
 }
 
 type UpdateInvoiceInput struct {
-	DueDate time.Time `json:"due_date"`
-	Notes   string    `json:"notes"`
+	DueDate    time.Time        `json:"due_date"`
+	Notes      string           `json:"notes"`
+	ProjectID  *string          `json:"project_id,omitempty"`
+	TaxProfile *TaxProfileInput `json:"tax_profile,omitempty"`
 }
 
 func (s *InvoiceService) UpdateByBusiness(ctx context.Context, businessID, id string, input UpdateInvoiceInput) (*models.Invoice, error) {
@@ -200,6 +224,24 @@ func (s *InvoiceService) UpdateByBusiness(ctx context.Context, businessID, id st
 	if input.Notes != "" {
 		invoice.Notes = input.Notes
 	}
+	if input.TaxProfile != nil {
+		projectID := ""
+		if invoice.ProjectID != nil {
+			projectID = *invoice.ProjectID
+		}
+		if input.ProjectID != nil {
+			projectID = normalizeProjectID(*input.ProjectID)
+		}
+		projectID = syncProjectIDFromTags(projectID, input.TaxProfile.ReportTags)
+		input.TaxProfile.ReportTags = mergeProjectIntoTags(input.TaxProfile.ReportTags, projectID)
+		invoice.TaxProfile = mustMarshalMap(taxProfileToMap(*input.TaxProfile))
+		invoice.ProjectID = projectIDPointer(projectID)
+	} else if input.ProjectID != nil {
+		profile := unmarshalJSONMap(invoice.TaxProfile)
+		profile["report_tags"] = mergeProjectIntoTags(nestedMap(profile, "report_tags"), normalizeProjectID(*input.ProjectID))
+		invoice.TaxProfile = mustMarshalMap(profile)
+		invoice.ProjectID = projectIDPointer(*input.ProjectID)
+	}
 
 	if err := s.repo.Update(ctx, invoice); err != nil {
 		return nil, err
@@ -210,6 +252,30 @@ func (s *InvoiceService) UpdateByBusiness(ctx context.Context, businessID, id st
 		}
 	}
 	return invoice, nil
+}
+
+func taxProfileToMap(input TaxProfileInput) map[string]interface{} {
+	return map[string]interface{}{
+		"gst_treatment":           input.GSTTreatment,
+		"place_of_supply":         input.PlaceOfSupply,
+		"bill_of_supply":          input.BillOfSupply,
+		"export_type":             input.ExportType,
+		"supply_type":             input.SupplyType,
+		"counterparty_gstin":      input.CounterpartyGSTIN,
+		"counterparty_pan":        input.CounterpartyPAN,
+		"counterparty_state_code": input.CounterpartyStateCode,
+		"tcs":                     withholdingsToList(input.TCS),
+		"source_linkage":          input.SourceLinkage,
+		"report_tags":             input.ReportTags,
+	}
+}
+
+func withholdingsToList(inputs []WithholdingInput) []map[string]interface{} {
+	items := make([]map[string]interface{}, 0, len(inputs))
+	for _, input := range inputs {
+		items = append(items, withholdingToMap(&input))
+	}
+	return items
 }
 
 func (s *InvoiceService) DeleteByBusiness(ctx context.Context, businessID, id string) error {
@@ -225,7 +291,9 @@ func (s *InvoiceService) DeleteByBusiness(ctx context.Context, businessID, id st
 	}
 	if s.documents != nil {
 		if err := s.documents.DeleteByType(ctx, businessID, invoice.ID, models.DocumentTypeSalesInvoice); err != nil && err.Error() != "document not found" {
-			s.log.Error("failed to delete mirrored sales invoice document", "invoice_id", invoice.ID, "error", err)
+			if altErr := s.documents.DeleteByType(ctx, businessID, invoice.ID, models.DocumentTypeBillOfSupply); altErr != nil && altErr.Error() != "document not found" {
+				s.log.Error("failed to delete mirrored invoice document", "invoice_id", invoice.ID, "error", altErr)
+			}
 		}
 	}
 	return nil

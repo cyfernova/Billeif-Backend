@@ -19,6 +19,7 @@ const (
 	DocumentTypeBillOfSupply    = "bill_of_supply"
 	DocumentTypePackingList     = "packing_list"
 	DocumentTypeShippingLabel   = "shipping_label"
+	DocumentTypeExpense         = "expense"
 )
 
 const (
@@ -92,6 +93,12 @@ type Document struct {
 	TaxMode               string         `gorm:"not null;size:20;default:'gst'" json:"tax_mode"`
 	GSTTreatment          string         `gorm:"not null;size:50;default:'regular'" json:"gst_treatment"`
 	PlaceOfSupply         string         `gorm:"size:50" json:"place_of_supply,omitempty"`
+	PartyGSTIN            string         `gorm:"size:20" json:"party_gstin,omitempty"`
+	PartyPAN              string         `gorm:"size:10" json:"party_pan,omitempty"`
+	PartyStateCode        string         `gorm:"size:10" json:"party_state_code,omitempty"`
+	SupplyType            string         `gorm:"size:40" json:"supply_type,omitempty"`
+	ExportType            string         `gorm:"size:40" json:"export_type,omitempty"`
+	BillOfSupply          bool           `gorm:"default:false" json:"bill_of_supply"`
 	SerialNumber          string         `gorm:"not null;size:80;index" json:"serial_number"`
 	IssueDate             time.Time      `gorm:"not null;index" json:"issue_date"`
 	DueDate               *time.Time     `json:"due_date,omitempty"`
@@ -102,6 +109,7 @@ type Document struct {
 	SourceLinkage         string         `gorm:"type:jsonb;default:'{}'" json:"source_linkage,omitempty"`
 	RenderProfileID       *string        `gorm:"index" json:"render_profile_id,omitempty" validate:"omitempty,uuid"`
 	ShipmentID            *string        `gorm:"index" json:"shipment_id,omitempty" validate:"omitempty,uuid"`
+	ProjectID             *string        `gorm:"index" json:"project_id,omitempty" validate:"omitempty,uuid"`
 	ProfitSnapshotEnabled bool           `gorm:"default:false" json:"profit_snapshot_enabled"`
 	CancellationReason    *string        `gorm:"type:text" json:"cancellation_reason,omitempty"`
 	CancelledAt           *time.Time     `json:"cancelled_at,omitempty"`
@@ -115,10 +123,14 @@ type Document struct {
 	DiscountTotal         float64        `gorm:"type:decimal(15,2);default:0" json:"discount_total"`
 	TaxTotal              float64        `gorm:"type:decimal(15,2);default:0" json:"tax_total"`
 	CessTotal             float64        `gorm:"type:decimal(15,2);default:0" json:"cess_total"`
+	WithholdingTotal      float64        `gorm:"type:decimal(15,2);default:0" json:"withholding_total"`
+	TDSTotal              float64        `gorm:"type:decimal(15,2);default:0" json:"tds_total"`
+	TCSTotal              float64        `gorm:"type:decimal(15,2);default:0" json:"tcs_total"`
 	Total                 float64        `gorm:"type:decimal(15,2);default:0" json:"total"`
 	PaidAmount            float64        `gorm:"type:decimal(15,2);default:0" json:"paid_amount"`
 	BalanceDue            float64        `gorm:"type:decimal(15,2);default:0" json:"balance_due"`
 	ExtraFields           string         `gorm:"type:jsonb;default:'{}'" json:"extra_fields,omitempty"`
+	ReportTags            string         `gorm:"type:jsonb;default:'{}'" json:"report_tags,omitempty"`
 	CreatedAt             time.Time      `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt             time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
 	DeletedAt             gorm.DeletedAt `gorm:"index" json:"-"`
@@ -134,8 +146,10 @@ type DocumentLine struct {
 	ID                string    `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
 	DocumentID        string    `gorm:"not null;index" json:"document_id" validate:"required,uuid"`
 	ProductID         *string   `gorm:"index" json:"product_id,omitempty" validate:"omitempty,uuid"`
+	VariantID         *string   `gorm:"index" json:"variant_id,omitempty" validate:"omitempty,uuid"`
 	Description       string    `gorm:"not null;size:500" json:"description"`
 	HSNSACCode        string    `gorm:"size:40" json:"hsn_sac_code,omitempty"`
+	UQCCode           string    `gorm:"size:20;default:'OTH'" json:"uqc_code,omitempty"`
 	Unit              string    `gorm:"size:40" json:"unit,omitempty"`
 	WarehouseID       *string   `gorm:"index" json:"warehouse_id,omitempty" validate:"omitempty,uuid"`
 	Quantity          float64   `gorm:"type:decimal(15,3);not null;default:0" json:"quantity"`
@@ -158,6 +172,9 @@ type DocumentLine struct {
 	CostSnapshot      float64   `gorm:"type:decimal(15,2);default:0" json:"cost_snapshot"`
 	MarginSnapshot    float64   `gorm:"type:decimal(15,2);default:0" json:"margin_snapshot"`
 	PackingMetadata   string    `gorm:"type:jsonb;default:'{}'" json:"packing_metadata,omitempty"`
+	BatchAllocations  string    `gorm:"type:jsonb;default:'[]'" json:"batch_allocations,omitempty"`
+	SerialIDs         string    `gorm:"type:jsonb;default:'[]'" json:"serial_ids,omitempty"`
+	ReportTags        string    `gorm:"type:jsonb;default:'{}'" json:"report_tags,omitempty"`
 	StockEffect       string    `gorm:"size:20;default:'none'" json:"stock_effect,omitempty"`
 	CreatedAt         time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt         time.Time `gorm:"autoUpdateTime" json:"updated_at"`

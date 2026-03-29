@@ -19,33 +19,47 @@ func NewCustomerService(repo interfaces.CustomerRepository, log *logger.Logger) 
 }
 
 type CreateCustomerInput struct {
-	BusinessID   string  `json:"business_id,omitempty"`
-	Name         string  `json:"name" binding:"required,min=2"`
-	Email        string  `json:"email" binding:"required,email"`
-	Phone        string  `json:"phone"`
-	Address      string  `json:"address"`
-	City         string  `json:"city"`
-	State        string  `json:"state"`
-	Country      string  `json:"country"`
-	ZipCode      string  `json:"zip_code"`
-	TaxID        string  `json:"tax_id"`
-	CreditLimit  float64 `json:"credit_limit"`
-	PaymentTerms int     `json:"payment_terms"`
+	BusinessID              string                 `json:"business_id,omitempty"`
+	Name                    string                 `json:"name" binding:"required,min=2"`
+	Email                   string                 `json:"email" binding:"required,email"`
+	Phone                   string                 `json:"phone"`
+	Address                 string                 `json:"address"`
+	City                    string                 `json:"city"`
+	State                   string                 `json:"state"`
+	Country                 string                 `json:"country"`
+	ZipCode                 string                 `json:"zip_code"`
+	TaxID                   string                 `json:"tax_id"`
+	GSTIN                   string                 `json:"gstin"`
+	PAN                     string                 `json:"pan"`
+	CompanyName             string                 `json:"company_name"`
+	StateCode               string                 `json:"state_code"`
+	BillingAddressJSON      map[string]interface{} `json:"billing_address_json,omitempty"`
+	ShippingAddressJSON     map[string]interface{} `json:"shipping_address_json,omitempty"`
+	WithholdingDefaultsJSON map[string]interface{} `json:"withholding_defaults_json,omitempty"`
+	CreditLimit             float64                `json:"credit_limit"`
+	PaymentTerms            int                    `json:"payment_terms"`
 }
 
 func (s *CustomerService) Create(ctx context.Context, input CreateCustomerInput) (*models.Customer, error) {
 	customer := &models.Customer{
-		BusinessID:  input.BusinessID,
-		Name:        input.Name,
-		Email:       input.Email,
-		Phone:       input.Phone,
-		Address:     input.Address,
-		City:        input.City,
-		State:       input.State,
-		Country:     input.Country,
-		PostalCode:  input.ZipCode,
-		TaxID:       input.TaxID,
-		CreditLimit: input.CreditLimit,
+		BusinessID:              input.BusinessID,
+		Name:                    input.Name,
+		Email:                   input.Email,
+		Phone:                   input.Phone,
+		Address:                 input.Address,
+		City:                    input.City,
+		State:                   input.State,
+		Country:                 input.Country,
+		PostalCode:              input.ZipCode,
+		TaxID:                   input.TaxID,
+		GSTIN:                   input.GSTIN,
+		PAN:                     input.PAN,
+		CompanyName:             input.CompanyName,
+		StateCode:               input.StateCode,
+		BillingJSON:             mustMarshalMap(input.BillingAddressJSON),
+		ShippingJSON:            mustMarshalMap(input.ShippingAddressJSON),
+		WithholdingDefaultsJSON: mustMarshalMap(input.WithholdingDefaultsJSON),
+		CreditLimit:             input.CreditLimit,
 	}
 
 	if err := s.repo.Create(ctx, customer); err != nil {
@@ -64,17 +78,24 @@ func (s *CustomerService) List(ctx context.Context, businessID string, page, lim
 }
 
 type UpdateCustomerInput struct {
-	Name         string  `json:"name"`
-	Email        string  `json:"email"`
-	Phone        string  `json:"phone"`
-	Address      string  `json:"address"`
-	City         string  `json:"city"`
-	State        string  `json:"state"`
-	Country      string  `json:"country"`
-	ZipCode      string  `json:"zip_code"`
-	TaxID        string  `json:"tax_id"`
-	CreditLimit  float64 `json:"credit_limit"`
-	PaymentTerms int     `json:"payment_terms"`
+	Name                    string                 `json:"name"`
+	Email                   string                 `json:"email"`
+	Phone                   string                 `json:"phone"`
+	Address                 string                 `json:"address"`
+	City                    string                 `json:"city"`
+	State                   string                 `json:"state"`
+	Country                 string                 `json:"country"`
+	ZipCode                 string                 `json:"zip_code"`
+	TaxID                   string                 `json:"tax_id"`
+	GSTIN                   string                 `json:"gstin"`
+	PAN                     string                 `json:"pan"`
+	CompanyName             string                 `json:"company_name"`
+	StateCode               string                 `json:"state_code"`
+	BillingAddressJSON      map[string]interface{} `json:"billing_address_json,omitempty"`
+	ShippingAddressJSON     map[string]interface{} `json:"shipping_address_json,omitempty"`
+	WithholdingDefaultsJSON map[string]interface{} `json:"withholding_defaults_json,omitempty"`
+	CreditLimit             float64                `json:"credit_limit"`
+	PaymentTerms            int                    `json:"payment_terms"`
 }
 
 func (s *CustomerService) UpdateByBusiness(ctx context.Context, businessID, id string, input UpdateCustomerInput) (*models.Customer, error) {
@@ -109,6 +130,27 @@ func (s *CustomerService) UpdateByBusiness(ctx context.Context, businessID, id s
 	}
 	if input.TaxID != "" {
 		customer.TaxID = input.TaxID
+	}
+	if input.GSTIN != "" {
+		customer.GSTIN = input.GSTIN
+	}
+	if input.PAN != "" {
+		customer.PAN = input.PAN
+	}
+	if input.CompanyName != "" {
+		customer.CompanyName = input.CompanyName
+	}
+	if input.StateCode != "" {
+		customer.StateCode = input.StateCode
+	}
+	if input.BillingAddressJSON != nil {
+		customer.BillingJSON = mustMarshalMap(input.BillingAddressJSON)
+	}
+	if input.ShippingAddressJSON != nil {
+		customer.ShippingJSON = mustMarshalMap(input.ShippingAddressJSON)
+	}
+	if input.WithholdingDefaultsJSON != nil {
+		customer.WithholdingDefaultsJSON = mustMarshalMap(input.WithholdingDefaultsJSON)
 	}
 	if input.CreditLimit > 0 {
 		customer.CreditLimit = input.CreditLimit

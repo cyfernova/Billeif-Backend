@@ -24,6 +24,10 @@ go.work
 .env
 .env.local
 terraform.tfvars
+*.pem
+*.key
+*.crt
+*.p12
 # IDE
 .vscode/
 .idea/
@@ -48,6 +52,8 @@ postgres-data/
 *.tfstate
 *.tfstate.*
 .terraform/
+tfplan
+tfplan.*
 
 # Generated docs
 docs/swagger.json

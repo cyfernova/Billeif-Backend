@@ -22,9 +22,13 @@ type BusinessProfile struct {
 	BusinessStateCode   string         `gorm:"size:10" json:"business_state_code,omitempty" validate:"omitempty,max=10"`
 	CompositionEnabled  bool           `gorm:"default:false" json:"composition_enabled"`
 	DefaultGSTTreatment string         `gorm:"size:50;default:'regular'" json:"default_gst_treatment,omitempty"`
+	GSTFilingFrequency  string         `gorm:"size:20;default:'monthly'" json:"gst_filing_frequency,omitempty"`
+	GSTRegistered       bool           `gorm:"default:false" json:"gst_registered"`
+	GSTTDSEnabled       bool           `gorm:"default:false" json:"gst_tds_enabled"`
 	ExportLUTEnabled    bool           `gorm:"default:false" json:"export_lut_enabled"`
 	SEZEnabled          bool           `gorm:"default:false" json:"sez_enabled"`
 	NumberingRules      string         `gorm:"type:jsonb;default:'{}'" json:"numbering_rules,omitempty"`
+	TaxPreferencesJSON  string         `gorm:"type:jsonb;default:'{}'" json:"tax_preferences_json,omitempty"`
 	LogoURL             string         `gorm:"size:500" json:"logo_url,omitempty"`
 	LogoKey             string         `gorm:"size:255" json:"logo_key,omitempty"`
 	Currency            string         `gorm:"not null;size:3;default:'USD'" json:"currency" validate:"required,len=3"`

@@ -36,6 +36,7 @@ type CreateJournalInput struct {
 	BusinessID  string                   `json:"business_id,omitempty"`
 	Name        string                   `json:"name" binding:"required"`
 	Reference   string                   `json:"reference"`
+	ProjectID   string                   `json:"project_id,omitempty" binding:"omitempty,uuid"`
 	PostingDate time.Time                `json:"posting_date"`
 	Notes       string                   `json:"notes"`
 	Status      string                   `json:"status"`
@@ -69,6 +70,7 @@ func (s *JournalService) buildJournal(ctx context.Context, businessID string, in
 		BusinessID:  businessID,
 		Name:        input.Name,
 		Reference:   input.Reference,
+		ProjectID:   projectIDPointer(input.ProjectID),
 		Status:      input.Status,
 		PostingDate: input.PostingDate,
 		Notes:       input.Notes,
@@ -124,6 +126,7 @@ func (s *JournalService) UpdateByBusiness(ctx context.Context, businessID, id st
 	}
 	existing.Name = rebuilt.Name
 	existing.Reference = rebuilt.Reference
+	existing.ProjectID = rebuilt.ProjectID
 	existing.Status = rebuilt.Status
 	existing.PostingDate = rebuilt.PostingDate
 	existing.Notes = rebuilt.Notes
@@ -187,6 +190,7 @@ func (s *JournalService) ReverseByBusiness(ctx context.Context, businessID, id s
 		BusinessID:   businessID,
 		Name:         "Reversal: " + journal.Name,
 		Reference:    journal.Reference,
+		ProjectID:    journal.ProjectID,
 		Status:       models.JournalStatusPosted,
 		PostingDate:  time.Now(),
 		Notes:        "Auto reversal",
@@ -232,6 +236,7 @@ func (s *JournalService) CreateAutoJournalForDocument(ctx context.Context, docum
 	return s.CreateByBusiness(ctx, document.BusinessID, CreateJournalInput{
 		Name:        fmt.Sprintf("%s %s", document.DocumentType, document.SerialNumber),
 		Reference:   document.SerialNumber,
+		ProjectID:   normalizeProjectID(derefString(document.ProjectID)),
 		PostingDate: document.IssueDate,
 		Status:      models.JournalStatusPosted,
 		Lines:       lines,
@@ -252,7 +257,7 @@ func buildJournalLinesForDocument(document *models.Document) []CreateJournalLine
 			{AccountCode: "OUT_GST", AccountName: "Output GST", EntryType: "debit", Amount: document.TaxTotal + document.CessTotal, Currency: document.Currency, Description: document.SerialNumber, DocumentID: &document.ID},
 			{AccountCode: "AR", AccountName: "Accounts Receivable", EntryType: "credit", Amount: document.Total, Currency: document.Currency, Description: document.SerialNumber, DocumentID: &document.ID},
 		}
-	case models.DocumentTypePurchaseInvoice:
+	case models.DocumentTypePurchaseInvoice, models.DocumentTypeExpense:
 		return []CreateJournalLineInput{
 			{AccountCode: "INV", AccountName: "Inventory / Expense", EntryType: "debit", Amount: document.Subtotal - document.DiscountTotal, Currency: document.Currency, Description: document.SerialNumber, DocumentID: &document.ID},
 			{AccountCode: "IN_GST", AccountName: "Input GST", EntryType: "debit", Amount: document.TaxTotal + document.CessTotal, Currency: document.Currency, Description: document.SerialNumber, DocumentID: &document.ID},
@@ -281,6 +286,7 @@ func (s *JournalService) projectLedger(ctx context.Context, journal *models.Jour
 			Description:   line.AccountName + " - " + line.Description,
 			Amount:        line.Amount,
 			Currency:      line.Currency,
+			ProjectID:     journal.ProjectID,
 		}
 		if line.DocumentID != nil {
 			entry.InvoiceID = line.DocumentID

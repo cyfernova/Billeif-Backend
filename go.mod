@@ -17,6 +17,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.42.21
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.68.0
 	github.com/awslabs/aws-lambda-go-api-proxy v0.16.2
+	github.com/boombuler/barcode v1.0.0
 	github.com/getsentry/sentry-go v0.42.0
 	github.com/getsentry/sentry-go/gin v0.42.0
 	github.com/gin-contrib/cors v1.7.6
@@ -26,6 +27,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/lib/pq v1.11.2
+	github.com/phpdave11/gofpdf v1.4.2
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
 	github.com/swaggo/files v1.0.1
@@ -94,7 +96,6 @@ require (
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
-	github.com/phpdave11/gofpdf v1.4.2 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/quic-go/qpack v0.5.1 // indirect
 	github.com/quic-go/quic-go v0.54.0 // indirect

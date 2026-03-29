@@ -67,6 +67,7 @@ func (r *journalRepository) Update(ctx context.Context, journal *models.Journal)
 		if err := tx.Model(&models.Journal{}).Where("id = ?", journal.ID).Updates(map[string]interface{}{
 			"name":           journal.Name,
 			"reference":      journal.Reference,
+			"project_id":     journal.ProjectID,
 			"status":         journal.Status,
 			"posting_date":   journal.PostingDate,
 			"notes":          journal.Notes,

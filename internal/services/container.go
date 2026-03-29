@@ -18,6 +18,7 @@ type Container struct {
 	Customer            *CustomerService
 	Vendor              *VendorService
 	Product             *ProductService
+	Project             *ProjectService
 	Inventory           *InventoryService
 	Document            *DocumentService
 	Journal             *JournalService
@@ -25,9 +26,12 @@ type Container struct {
 	Invoice             *InvoiceService
 	Payment             *PaymentService
 	Ledger              *LedgerService
+	Report              *ReportService
+	TaxCompliance       *TaxComplianceService
 	Team                *TeamService
 	Webhook             *WebhookService
 	Subscription        *SubscriptionService
+	Barcode             *BarcodeService
 	S3                  *S3Service
 	Email               *EmailService
 	Agent               *AgentService
@@ -66,6 +70,7 @@ func NewContainer(
 	invoiceRepo interfaces.InvoiceRepository,
 	paymentRepo interfaces.PaymentRepository,
 	ledgerRepo interfaces.LedgerRepository,
+	reportingRepo interfaces.ReportingRepository,
 	teamRepo interfaces.TeamMemberRepository,
 	webhookRepo interfaces.WebhookRepository,
 	subscriptionRepo interfaces.SubscriptionRepository,
@@ -81,10 +86,12 @@ func NewContainer(
 	ap2MandateSvc := ap2.NewMandateService(ap2MandateSigner, ap2MandateVerifier)
 	a2aSigner, _ := ap2.NewSignatureService()
 	a2aClient := a2a.NewA2AClient(a2aSigner, log)
-	inventorySvc := NewInventoryService(inventoryRepo, productRepo, log)
+	inventorySvc := NewInventoryService(db, inventoryRepo, productRepo, businessRepo, teamRepo, log)
 	journalSvc := NewJournalService(journalRepo, ledgerRepo, log)
 	shippingSvc := NewShippingService(cfg, shippingRepo, customerRepo, vendorRepo, log)
-	documentSvc := NewDocumentService(cfg, documentRepo, businessRepo, customerRepo, vendorRepo, productRepo, inventorySvc, journalSvc, shippingSvc, aws, log)
+	documentSvc := NewDocumentService(db, cfg, documentRepo, businessRepo, customerRepo, vendorRepo, productRepo, inventorySvc, journalSvc, shippingSvc, aws, log)
+	projectSvc := NewProjectService(db, log)
+	reportSvc := NewReportService(cfg, reportingRepo, log)
 	marketplaceSvc := NewMarketplaceService(ap2Repo, log)
 	productMatchingSvc := NewProductMatchingService(marketplaceSvc, log)
 	intentProcessingSvc, _ := NewIntentProcessingService(productMatchingSvc, marketplaceSvc, log)
@@ -107,8 +114,10 @@ func NewContainer(
 		log.Fatal("failed to initialize credential provider service", "error", err)
 	}
 
+	taxComplianceSvc := NewTaxComplianceService(cfg, db, businessRepo, customerRepo, vendorRepo, log)
+
 	log.Info("service container initialized",
-		"components", 32,
+		"components", 34,
 		"llm_model", cfg.LLM.Model,
 		"workflow_enabled", workflowSvc != nil,
 	)
@@ -123,7 +132,8 @@ func NewContainer(
 		Business:            NewBusinessService(businessRepo, s3Svc, log),
 		Customer:            NewCustomerService(customerRepo, log),
 		Vendor:              NewVendorService(vendorRepo, log),
-		Product:             NewProductService(productRepo, s3Svc, log),
+		Product:             NewProductService(db, productRepo, s3Svc, inventorySvc, log),
+		Project:             projectSvc,
 		Inventory:           inventorySvc,
 		Document:            documentSvc,
 		Journal:             journalSvc,
@@ -131,9 +141,12 @@ func NewContainer(
 		Invoice:             NewInvoiceService(cfg, invoiceRepo, productRepo, customerRepo, documentSvc, aws, s3Svc, emailSvc, log),
 		Payment:             NewPaymentService(db, paymentRepo, invoiceRepo, documentSvc, journalSvc, log),
 		Ledger:              NewLedgerService(ledgerRepo, log),
+		Report:              reportSvc,
+		TaxCompliance:       taxComplianceSvc,
 		Team:                NewTeamService(teamRepo, log),
 		Webhook:             NewWebhookService(webhookRepo, log),
 		Subscription:        NewSubscriptionService(subscriptionRepo, log),
+		Barcode:             NewBarcodeService(db, log),
 		S3:                  s3Svc,
 		Email:               emailSvc,
 		Agent:               agentSvc,

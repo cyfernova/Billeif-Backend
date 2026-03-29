@@ -467,6 +467,7 @@ func labelsForLocale(locale string) *localeLabels {
 			models.DocumentTypeCreditNote:      "Credit Note",
 			models.DocumentTypeDebitNote:       "Debit Note",
 			models.DocumentTypeBillOfSupply:    "Bill of Supply",
+			models.DocumentTypeExpense:         "Expense",
 			models.DocumentTypePackingList:     "Packing List",
 			models.DocumentTypeShippingLabel:   "Shipping Label",
 		},
@@ -728,6 +729,7 @@ func supportedDocumentTypes() []string {
 		models.DocumentTypeCreditNote,
 		models.DocumentTypeDebitNote,
 		models.DocumentTypeBillOfSupply,
+		models.DocumentTypeExpense,
 		models.DocumentTypePackingList,
 		models.DocumentTypeShippingLabel,
 	}

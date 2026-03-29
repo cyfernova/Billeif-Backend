@@ -73,5 +73,5 @@ func (r *productRepository) Delete(ctx context.Context, id string) error {
 }
 
 func (r *productRepository) AdjustStock(ctx context.Context, productID string, quantity int64) error {
-	return r.db.WithContext(ctx).Model(&models.Product{}).Where("id = ?", productID).UpdateColumn("stock", gorm.Expr("stock + ?", quantity)).Error
+	return r.db.WithContext(ctx).Model(&models.Product{}).Where("id = ?", productID).UpdateColumn("stock_level", gorm.Expr("stock_level + ?", quantity)).Error
 }

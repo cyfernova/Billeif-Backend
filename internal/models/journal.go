@@ -17,6 +17,7 @@ type Journal struct {
 	BusinessID     string         `gorm:"not null;index" json:"business_id" validate:"required,uuid"`
 	Name           string         `gorm:"not null;size:150" json:"name"`
 	Reference      string         `gorm:"size:100" json:"reference,omitempty"`
+	ProjectID      *string        `gorm:"index" json:"project_id,omitempty" validate:"omitempty,uuid"`
 	Status         string         `gorm:"not null;size:30;default:'draft';index" json:"status"`
 	PostingDate    time.Time      `gorm:"not null;index" json:"posting_date"`
 	Notes          string         `gorm:"type:text" json:"notes,omitempty"`

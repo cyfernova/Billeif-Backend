@@ -34,9 +34,13 @@ type CreateBusinessInput struct {
 	BusinessStateCode   string                 `json:"business_state_code"`
 	CompositionEnabled  bool                   `json:"composition_enabled"`
 	DefaultGSTTreatment string                 `json:"default_gst_treatment"`
+	GSTFilingFrequency  string                 `json:"gst_filing_frequency"`
+	GSTRegistered       bool                   `json:"gst_registered"`
+	GSTTDSEnabled       bool                   `json:"gst_tds_enabled"`
 	ExportLUTEnabled    bool                   `json:"export_lut_enabled"`
 	SEZEnabled          bool                   `json:"sez_enabled"`
 	NumberingRules      map[string]interface{} `json:"numbering_rules,omitempty"`
+	TaxPreferencesJSON  map[string]interface{} `json:"tax_preferences_json,omitempty"`
 	Currency            string                 `json:"currency"`
 	InvoicePrefix       string                 `json:"invoice_prefix"`
 }
@@ -58,9 +62,13 @@ func (s *BusinessService) Create(ctx context.Context, userID string, input Creat
 		BusinessStateCode:   input.BusinessStateCode,
 		CompositionEnabled:  input.CompositionEnabled,
 		DefaultGSTTreatment: input.DefaultGSTTreatment,
+		GSTFilingFrequency:  input.GSTFilingFrequency,
+		GSTRegistered:       input.GSTRegistered,
+		GSTTDSEnabled:       input.GSTTDSEnabled,
 		ExportLUTEnabled:    input.ExportLUTEnabled,
 		SEZEnabled:          input.SEZEnabled,
 		NumberingRules:      mustMarshalMap(input.NumberingRules),
+		TaxPreferencesJSON:  mustMarshalMap(input.TaxPreferencesJSON),
 		Currency:            input.Currency,
 	}
 
@@ -69,6 +77,9 @@ func (s *BusinessService) Create(ctx context.Context, userID string, input Creat
 	}
 	if business.DefaultGSTTreatment == "" {
 		business.DefaultGSTTreatment = models.DocumentGSTTreatmentRegular
+	}
+	if business.GSTFilingFrequency == "" {
+		business.GSTFilingFrequency = "monthly"
 	}
 
 	if err := s.repo.Create(ctx, business); err != nil {
@@ -126,9 +137,13 @@ type UpdateBusinessInput struct {
 	BusinessStateCode   string                 `json:"business_state_code"`
 	CompositionEnabled  *bool                  `json:"composition_enabled"`
 	DefaultGSTTreatment string                 `json:"default_gst_treatment"`
+	GSTFilingFrequency  string                 `json:"gst_filing_frequency"`
+	GSTRegistered       *bool                  `json:"gst_registered"`
+	GSTTDSEnabled       *bool                  `json:"gst_tds_enabled"`
 	ExportLUTEnabled    *bool                  `json:"export_lut_enabled"`
 	SEZEnabled          *bool                  `json:"sez_enabled"`
 	NumberingRules      map[string]interface{} `json:"numbering_rules,omitempty"`
+	TaxPreferencesJSON  map[string]interface{} `json:"tax_preferences_json,omitempty"`
 	Currency            string                 `json:"currency"`
 	InvoicePrefix       string                 `json:"invoice_prefix"`
 }
@@ -180,6 +195,15 @@ func (s *BusinessService) Update(ctx context.Context, id string, input UpdateBus
 	if input.DefaultGSTTreatment != "" {
 		business.DefaultGSTTreatment = input.DefaultGSTTreatment
 	}
+	if input.GSTFilingFrequency != "" {
+		business.GSTFilingFrequency = input.GSTFilingFrequency
+	}
+	if input.GSTRegistered != nil {
+		business.GSTRegistered = *input.GSTRegistered
+	}
+	if input.GSTTDSEnabled != nil {
+		business.GSTTDSEnabled = *input.GSTTDSEnabled
+	}
 	if input.ExportLUTEnabled != nil {
 		business.ExportLUTEnabled = *input.ExportLUTEnabled
 	}
@@ -188,6 +212,9 @@ func (s *BusinessService) Update(ctx context.Context, id string, input UpdateBus
 	}
 	if input.NumberingRules != nil {
 		business.NumberingRules = mustMarshalMap(input.NumberingRules)
+	}
+	if input.TaxPreferencesJSON != nil {
+		business.TaxPreferencesJSON = mustMarshalMap(input.TaxPreferencesJSON)
 	}
 	if input.Currency != "" {
 		business.Currency = input.Currency
@@ -249,6 +276,15 @@ func (s *BusinessService) UpdateByOwner(ctx context.Context, userID, id string, 
 	if input.DefaultGSTTreatment != "" {
 		business.DefaultGSTTreatment = input.DefaultGSTTreatment
 	}
+	if input.GSTFilingFrequency != "" {
+		business.GSTFilingFrequency = input.GSTFilingFrequency
+	}
+	if input.GSTRegistered != nil {
+		business.GSTRegistered = *input.GSTRegistered
+	}
+	if input.GSTTDSEnabled != nil {
+		business.GSTTDSEnabled = *input.GSTTDSEnabled
+	}
 	if input.ExportLUTEnabled != nil {
 		business.ExportLUTEnabled = *input.ExportLUTEnabled
 	}
@@ -257,6 +293,9 @@ func (s *BusinessService) UpdateByOwner(ctx context.Context, userID, id string, 
 	}
 	if input.NumberingRules != nil {
 		business.NumberingRules = mustMarshalMap(input.NumberingRules)
+	}
+	if input.TaxPreferencesJSON != nil {
+		business.TaxPreferencesJSON = mustMarshalMap(input.TaxPreferencesJSON)
 	}
 	if input.Currency != "" {
 		business.Currency = input.Currency

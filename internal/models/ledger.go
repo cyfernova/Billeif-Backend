@@ -9,6 +9,7 @@ type LedgerEntry struct {
 	BusinessID    string    `gorm:"not null;index" json:"business_id" validate:"required,uuid"`
 	InvoiceID     *string   `gorm:"index" json:"invoice_id,omitempty" validate:"omitempty,uuid"`
 	PaymentID     *string   `gorm:"index" json:"payment_id,omitempty" validate:"omitempty,uuid"`
+	ProjectID     *string   `gorm:"index" json:"project_id,omitempty" validate:"omitempty,uuid"`
 	TransactionID string    `gorm:"not null;size:100;index" json:"transaction_id" validate:"required,max=100"`
 	EntryDate     time.Time `gorm:"not null;index" json:"entry_date" validate:"required"`
 	EntryType     string    `gorm:"not null;size:50" json:"entry_type" validate:"required,oneof=debit credit"`
