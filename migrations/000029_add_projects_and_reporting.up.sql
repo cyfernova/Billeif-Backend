@@ -206,8 +206,9 @@ WHERE j.project_id IS NULL
 UPDATE ledger_entries le
 SET project_id = COALESCE(le.project_id, p.project_id, d.project_id)
 FROM payments p
-LEFT JOIN documents d ON d.id = le.invoice_id
-WHERE le.payment_id = p.id;
+LEFT JOIN documents d ON d.id = p.invoice_id
+WHERE le.payment_id = p.id
+  AND le.project_id IS NULL;
 
 UPDATE ledger_entries le
 SET project_id = COALESCE(le.project_id, d.project_id)
