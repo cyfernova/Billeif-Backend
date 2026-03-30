@@ -26,6 +26,8 @@ type Customer struct {
 	ShippingJSON            string         `gorm:"type:jsonb;default:'{}'" json:"shipping_address_json,omitempty"`
 	WithholdingDefaultsJSON string         `gorm:"type:jsonb;default:'{}'" json:"withholding_defaults_json,omitempty"`
 	CreditLimit             float64        `gorm:"type:decimal(15,2);default:0" json:"credit_limit" validate:"gte=0"`
+	DefaultPriceListID      *string        `gorm:"index" json:"default_price_list_id,omitempty" validate:"omitempty,uuid"`
+	PreferencesJSON         string         `gorm:"type:jsonb;default:'{}'" json:"preferences_json,omitempty"`
 	Notes                   string         `gorm:"type:text" json:"notes,omitempty"`
 	CreatedAt               time.Time      `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt               time.Time      `gorm:"autoUpdateTime" json:"updated_at"`

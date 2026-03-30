@@ -109,8 +109,8 @@ func TestBusinessService_Create_DefaultCurrency(t *testing.T) {
 	ctx := context.Background()
 	userID := "user-123"
 	input := services.CreateBusinessInput{
-		Name:    "Test Business",
-		Email:   "test@example.com",
+		Name:     "Test Business",
+		Email:    "test@example.com",
 		Currency: "", // Empty currency should default to USD
 	}
 
@@ -191,10 +191,10 @@ func TestBusinessService_Get_Success(t *testing.T) {
 	businessID := "business-123"
 
 	expected := &models.BusinessProfile{
-		ID:     businessID,
+		ID:      businessID,
 		OwnerID: "user-123",
-		Name:   "Acme Corp",
-		Email:  "acme@example.com",
+		Name:    "Acme Corp",
+		Email:   "acme@example.com",
 	}
 
 	mockRepo.On("GetByID", ctx, businessID).Return(expected, nil)

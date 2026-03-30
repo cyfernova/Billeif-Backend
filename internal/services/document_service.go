@@ -18,71 +18,90 @@ import (
 )
 
 type DocumentService struct {
-	db           *gorm.DB
-	cfg          *config.Config
-	repo         interfaces.DocumentRepository
-	businessRepo interfaces.BusinessRepository
-	customerRepo interfaces.CustomerRepository
-	vendorRepo   interfaces.VendorRepository
-	productRepo  interfaces.ProductRepository
-	inventory    *InventoryService
-	journals     *JournalService
-	shipping     *ShippingService
-	sqs          *sqs.Client
-	log          *logger.Logger
+	db            *gorm.DB
+	cfg           *config.Config
+	repo          interfaces.DocumentRepository
+	businessRepo  interfaces.BusinessRepository
+	customerRepo  interfaces.CustomerRepository
+	vendorRepo    interfaces.VendorRepository
+	productRepo   interfaces.ProductRepository
+	inventory     *InventoryService
+	journals      *JournalService
+	shipping      *ShippingService
+	taxCompliance *TaxComplianceService
+	sqs           *sqs.Client
+	log           *logger.Logger
 }
 
 type CreateDocumentLineInput struct {
-	ProductID        string                 `json:"product_id"`
-	VariantID        string                 `json:"variant_id,omitempty"`
-	Description      string                 `json:"description" binding:"required"`
-	HSNSACCode       string                 `json:"hsn_sac_code"`
-	UQCCode          string                 `json:"uqc_code"`
-	Unit             string                 `json:"unit"`
-	WarehouseID      string                 `json:"warehouse_id"`
-	Quantity         float64                `json:"quantity" binding:"required,gt=0"`
-	FreeQuantity     float64                `json:"free_quantity"`
-	UnitPrice        float64                `json:"unit_price" binding:"required,gte=0"`
-	DiscountAmount   float64                `json:"discount_amount"`
-	TaxRate          float64                `json:"tax_rate"`
-	CessRate         float64                `json:"cess_rate"`
-	PackingMetadata  map[string]interface{} `json:"packing_metadata,omitempty"`
-	BatchAllocations []BatchAllocationInput `json:"batch_allocations,omitempty"`
-	SerialIDs        []string               `json:"serial_ids,omitempty"`
+	ProductID        string                   `json:"product_id"`
+	VariantID        string                   `json:"variant_id,omitempty"`
+	Description      string                   `json:"description" binding:"required"`
+	HSNSACCode       string                   `json:"hsn_sac_code"`
+	UQCCode          string                   `json:"uqc_code"`
+	Unit             string                   `json:"unit"`
+	WarehouseID      string                   `json:"warehouse_id"`
+	Quantity         float64                  `json:"quantity" binding:"required,gt=0"`
+	FreeQuantity     float64                  `json:"free_quantity"`
+	UnitPrice        float64                  `json:"unit_price" binding:"required,gte=0"`
+	MRP              float64                  `json:"mrp"`
+	DiscountAmount   float64                  `json:"discount_amount"`
+	TaxRate          float64                  `json:"tax_rate"`
+	CessRate         float64                  `json:"cess_rate"`
+	CustomFields     map[string]interface{}   `json:"custom_fields,omitempty"`
+	ChargeLinkage    []map[string]interface{} `json:"charge_linkage,omitempty"`
+	PackingMetadata  map[string]interface{}   `json:"packing_metadata,omitempty"`
+	BatchAllocations []BatchAllocationInput   `json:"batch_allocations,omitempty"`
+	SerialIDs        []string                 `json:"serial_ids,omitempty"`
 }
 
 type CreateDocumentInput struct {
-	BusinessID      string                    `json:"business_id,omitempty"`
-	PartyID         string                    `json:"party_id"`
-	PartyType       string                    `json:"party_type"`
-	ProjectID       string                    `json:"project_id,omitempty" binding:"omitempty,uuid"`
-	Status          string                    `json:"status"`
-	DraftState      string                    `json:"draft_state"`
-	TaxMode         string                    `json:"tax_mode"`
-	GSTTreatment    string                    `json:"gst_treatment"`
-	PlaceOfSupply   string                    `json:"place_of_supply"`
-	PartyGSTIN      string                    `json:"party_gstin"`
-	PartyPAN        string                    `json:"party_pan"`
-	PartyStateCode  string                    `json:"party_state_code"`
-	SupplyType      string                    `json:"supply_type"`
-	ExportType      string                    `json:"export_type"`
-	BillOfSupply    bool                      `json:"bill_of_supply"`
-	IssueDate       time.Time                 `json:"issue_date"`
-	DueDate         *time.Time                `json:"due_date"`
-	DispatchDate    *time.Time                `json:"dispatch_date"`
-	Currency        string                    `json:"currency"`
-	ExchangeRate    float64                   `json:"exchange_rate"`
-	Locale          string                    `json:"locale"`
-	SourceLinkage   map[string]interface{}    `json:"source_linkage,omitempty"`
-	RenderProfileID string                    `json:"render_profile_id"`
-	Notes           string                    `json:"notes"`
-	Terms           string                    `json:"terms"`
-	Declaration     string                    `json:"declaration"`
-	Direction       string                    `json:"direction"`
-	ExtraFields     map[string]interface{}    `json:"extra_fields,omitempty"`
-	ReportTags      map[string]interface{}    `json:"report_tags,omitempty"`
-	Withholdings    []WithholdingInput        `json:"withholdings,omitempty"`
-	Lines           []CreateDocumentLineInput `json:"lines" binding:"required,min=1,dive"`
+	BusinessID           string                    `json:"business_id,omitempty"`
+	PartyID              string                    `json:"party_id"`
+	PartyType            string                    `json:"party_type"`
+	ProjectID            string                    `json:"project_id,omitempty" binding:"omitempty,uuid"`
+	PriceListID          string                    `json:"price_list_id,omitempty"`
+	Status               string                    `json:"status"`
+	DraftState           string                    `json:"draft_state"`
+	TaxMode              string                    `json:"tax_mode"`
+	GSTTreatment         string                    `json:"gst_treatment"`
+	PlaceOfSupply        string                    `json:"place_of_supply"`
+	PartyGSTIN           string                    `json:"party_gstin"`
+	PartyPAN             string                    `json:"party_pan"`
+	PartyStateCode       string                    `json:"party_state_code"`
+	SupplyType           string                    `json:"supply_type"`
+	ExportType           string                    `json:"export_type"`
+	BillOfSupply         bool                      `json:"bill_of_supply"`
+	IssueDate            time.Time                 `json:"issue_date"`
+	DueDate              *time.Time                `json:"due_date"`
+	DispatchDate         *time.Time                `json:"dispatch_date"`
+	Currency             string                    `json:"currency"`
+	ExchangeRate         float64                   `json:"exchange_rate"`
+	Locale               string                    `json:"locale"`
+	SourceLinkage        map[string]interface{}    `json:"source_linkage,omitempty"`
+	RenderProfileID      string                    `json:"render_profile_id"`
+	Notes                string                    `json:"notes"`
+	Terms                string                    `json:"terms"`
+	Declaration          string                    `json:"declaration"`
+	Direction            string                    `json:"direction"`
+	GenerateEInvoice     bool                      `json:"generate_einvoice"`
+	GenerateEWayBill     bool                      `json:"generate_ewaybill"`
+	ReverseCharge        bool                      `json:"reverse_charge"`
+	ReverseChargeReason  string                    `json:"reverse_charge_reason"`
+	DispatchFrom         map[string]interface{}    `json:"dispatch_from,omitempty"`
+	DispatchTo           map[string]interface{}    `json:"dispatch_to,omitempty"`
+	DistanceKM           float64                   `json:"distance_km"`
+	Transporter          map[string]interface{}    `json:"transporter,omitempty"`
+	Vehicle              map[string]interface{}    `json:"vehicle,omitempty"`
+	MultiVehiclePlan     map[string]interface{}    `json:"multi_vehicle_plan,omitempty"`
+	ExtraFields          map[string]interface{}    `json:"extra_fields,omitempty"`
+	CustomFields         map[string]interface{}    `json:"custom_fields,omitempty"`
+	AdditionalCharges    []map[string]interface{}  `json:"additional_charges,omitempty"`
+	OriginSubscriptionID string                    `json:"origin_subscription_id,omitempty"`
+	OriginRunID          string                    `json:"origin_run_id,omitempty"`
+	ReportTags           map[string]interface{}    `json:"report_tags,omitempty"`
+	Withholdings         []WithholdingInput        `json:"withholdings,omitempty"`
+	Lines                []CreateDocumentLineInput `json:"lines" binding:"required,min=1,dive"`
 }
 
 type ConvertDocumentLineQuantity struct {
@@ -179,6 +198,10 @@ func NewDocumentService(
 	}
 }
 
+func (s *DocumentService) AttachTaxComplianceService(taxCompliance *TaxComplianceService) {
+	s.taxCompliance = taxCompliance
+}
+
 func (s *DocumentService) CreateByType(ctx context.Context, businessID, documentType string, input CreateDocumentInput) (*models.Document, error) {
 	document, err := s.buildDocument(ctx, businessID, documentType, input)
 	if err != nil {
@@ -194,8 +217,14 @@ func (s *DocumentService) CreateByType(ctx context.Context, businessID, document
 		if err := s.applyPostCreateSideEffects(ctx, document); err != nil {
 			return nil, err
 		}
+		if s.taxCompliance != nil {
+			if err := s.taxCompliance.EnqueueDocumentCompliance(ctx, document, "document_create"); err != nil {
+				return nil, err
+			}
+		}
 	}
 	s.recordRevision(ctx, document, "created", nil)
+	_ = recordActivityLog(ctx, s.db, businessID, "document", document.ID, "created", "", document, nil, nil)
 	return document, nil
 }
 
@@ -213,6 +242,33 @@ func (s *DocumentService) buildDocument(ctx context.Context, businessID, documen
 	}
 	projectID := syncProjectIDFromTags(input.ProjectID, input.ReportTags)
 	input.ReportTags = mergeProjectIntoTags(input.ReportTags, projectID)
+	priceListID, err := resolvePriceListID(
+		ctx,
+		s.db,
+		s.customerRepo,
+		s.vendorRepo,
+		businessID,
+		partyType,
+		input.PartyID,
+		stringPointer(input.PriceListID),
+		nil,
+	)
+	if err != nil {
+		return nil, err
+	}
+	extraFields := input.ExtraFields
+	if extraFields == nil {
+		extraFields = map[string]interface{}{}
+	}
+	if input.CustomFields != nil {
+		extraFields["custom_fields"] = input.CustomFields
+	}
+	if input.AdditionalCharges != nil {
+		extraFields["additional_charges"] = input.AdditionalCharges
+	}
+	if input.DistanceKM > 0 {
+		extraFields["distance_source"] = models.DistanceSourceManual
+	}
 
 	document := &models.Document{
 		BusinessID:            businessID,
@@ -240,11 +296,28 @@ func (s *DocumentService) buildDocument(ctx context.Context, businessID, documen
 		Terms:                 input.Terms,
 		Declaration:           input.Declaration,
 		Direction:             input.Direction,
-		ExtraFields:           mustMarshalMap(input.ExtraFields),
+		GenerateEInvoice:      input.GenerateEInvoice,
+		GenerateEWayBill:      input.GenerateEWayBill,
+		ReverseCharge:         input.ReverseCharge,
+		ReverseChargeReason:   input.ReverseChargeReason,
+		DispatchFrom:          mustMarshalMap(input.DispatchFrom),
+		DispatchTo:            mustMarshalMap(input.DispatchTo),
+		DistanceKM:            input.DistanceKM,
+		Transporter:           mustMarshalMap(input.Transporter),
+		Vehicle:               mustMarshalMap(input.Vehicle),
+		MultiVehiclePlan:      mustMarshalMap(input.MultiVehiclePlan),
+		ExtraFields:           mustMarshalMap(extraFields),
 		ReportTags:            mustMarshalMap(input.ReportTags),
 		RenderProfileID:       nil,
 		ProfitSnapshotEnabled: true,
 		ProjectID:             projectIDPointer(projectID),
+		PriceListID:           priceListID,
+	}
+	if input.OriginSubscriptionID != "" {
+		document.OriginSubscriptionID = &input.OriginSubscriptionID
+	}
+	if input.OriginRunID != "" {
+		document.OriginRunID = &input.OriginRunID
 	}
 	if input.PartyID != "" {
 		document.PartyID = &input.PartyID
@@ -306,6 +379,22 @@ func (s *DocumentService) buildDocumentLines(ctx context.Context, business *mode
 	var totals documentTotals
 	intraState := business.BusinessStateCode == "" || business.BusinessStateCode == document.PlaceOfSupply
 	for _, input := range inputs {
+		pricing, err := resolveLinePricing(ctx, s.db, s.productRepo, business.ID, document.PriceListID, input.ProductID, input.VariantID, stringPointer(input.WarehouseID))
+		if err != nil {
+			return nil, totals, err
+		}
+		unitPrice := input.UnitPrice
+		if unitPrice <= 0 {
+			unitPrice = pricing.UnitPrice
+		}
+		mrp := input.MRP
+		if mrp <= 0 {
+			mrp = pricing.MRP
+		}
+		cessRate := input.CessRate
+		if cessRate <= 0 {
+			cessRate = pricing.CessRate
+		}
 		line := &models.DocumentLine{
 			Description:       input.Description,
 			HSNSACCode:        input.HSNSACCode,
@@ -314,10 +403,13 @@ func (s *DocumentService) buildDocumentLines(ctx context.Context, business *mode
 			Quantity:          input.Quantity,
 			FreeQuantity:      input.FreeQuantity,
 			RemainingQuantity: input.Quantity,
-			UnitPrice:         input.UnitPrice,
+			UnitPrice:         unitPrice,
+			MRP:               mrp,
 			DiscountAmount:    input.DiscountAmount,
 			TaxRate:           input.TaxRate,
-			CessRate:          input.CessRate,
+			CessRate:          cessRate,
+			CustomFields:      mustMarshalMap(input.CustomFields),
+			ChargeLinkage:     mustMarshalAny(input.ChargeLinkage, "[]"),
 			PackingMetadata:   mustMarshalMap(input.PackingMetadata),
 			BatchAllocations:  mustMarshalBatchAllocations(input.BatchAllocations),
 			SerialIDs:         marshalStringSlice(input.SerialIDs),
@@ -405,6 +497,9 @@ func (s *DocumentService) UpdateByType(ctx context.Context, businessID, id, docu
 	if existing.DocumentType != documentType {
 		return nil, fmt.Errorf("document type mismatch")
 	}
+	if existing.SignedAt != nil {
+		return nil, fmt.Errorf("signed documents are immutable")
+	}
 	if existing.Status != models.DocumentStatusDraft {
 		return nil, fmt.Errorf("only draft documents can be updated")
 	}
@@ -431,9 +526,22 @@ func (s *DocumentService) UpdateByType(ctx context.Context, businessID, id, docu
 	existing.Terms = rebuilt.Terms
 	existing.Declaration = rebuilt.Declaration
 	existing.Direction = rebuilt.Direction
+	existing.GenerateEInvoice = rebuilt.GenerateEInvoice
+	existing.GenerateEWayBill = rebuilt.GenerateEWayBill
+	existing.ReverseCharge = rebuilt.ReverseCharge
+	existing.ReverseChargeReason = rebuilt.ReverseChargeReason
+	existing.DispatchFrom = rebuilt.DispatchFrom
+	existing.DispatchTo = rebuilt.DispatchTo
+	existing.DistanceKM = rebuilt.DistanceKM
+	existing.Transporter = rebuilt.Transporter
+	existing.Vehicle = rebuilt.Vehicle
+	existing.MultiVehiclePlan = rebuilt.MultiVehiclePlan
 	existing.ExtraFields = rebuilt.ExtraFields
 	existing.ReportTags = rebuilt.ReportTags
 	existing.ProjectID = rebuilt.ProjectID
+	existing.PriceListID = rebuilt.PriceListID
+	existing.OriginSubscriptionID = rebuilt.OriginSubscriptionID
+	existing.OriginRunID = rebuilt.OriginRunID
 	existing.PartyGSTIN = rebuilt.PartyGSTIN
 	existing.PartyPAN = rebuilt.PartyPAN
 	existing.PartyStateCode = rebuilt.PartyStateCode
@@ -457,8 +565,14 @@ func (s *DocumentService) UpdateByType(ctx context.Context, businessID, id, docu
 		if err := s.applyPostCreateSideEffects(ctx, existing); err != nil {
 			return nil, err
 		}
+		if s.taxCompliance != nil {
+			if err := s.taxCompliance.EnqueueDocumentCompliance(ctx, existing, "document_update"); err != nil {
+				return nil, err
+			}
+		}
 	}
 	s.recordRevision(ctx, existing, "updated", nil)
+	_ = recordActivityLog(ctx, s.db, businessID, "document", existing.ID, "updated", "", existing, nil, nil)
 	return existing, nil
 }
 
@@ -470,10 +584,17 @@ func (s *DocumentService) DeleteByType(ctx context.Context, businessID, id, docu
 	if existing.DocumentType != documentType {
 		return fmt.Errorf("document type mismatch")
 	}
+	if existing.SignedAt != nil {
+		return fmt.Errorf("signed documents are immutable")
+	}
 	if existing.Status != models.DocumentStatusDraft {
 		return fmt.Errorf("only draft documents can be deleted")
 	}
-	return s.repo.Delete(ctx, existing.ID)
+	if err := s.repo.Delete(ctx, existing.ID); err != nil {
+		return err
+	}
+	_ = recordActivityLog(ctx, s.db, businessID, "document", existing.ID, "deleted", "", existing, nil, nil)
+	return nil
 }
 
 func (s *DocumentService) CancelByType(ctx context.Context, businessID, id, documentType, reason string) (*models.Document, error) {
@@ -495,6 +616,7 @@ func (s *DocumentService) CancelByType(ctx context.Context, businessID, id, docu
 		return nil, err
 	}
 	s.recordRevision(ctx, document, "cancelled", map[string]interface{}{"reason": reason})
+	_ = recordActivityLog(ctx, s.db, businessID, "document", document.ID, "cancelled", reason, document, nil, nil)
 	return document, nil
 }
 
@@ -605,6 +727,7 @@ func (s *DocumentService) MergeByBusiness(ctx context.Context, businessID string
 		}
 	}
 	s.recordRevision(ctx, merged, "merged", map[string]interface{}{"source_document_ids": input.DocumentIDs})
+	_ = recordActivityLog(ctx, s.db, businessID, "document", merged.ID, "merged", "", merged, nil, map[string]interface{}{"source_document_ids": input.DocumentIDs})
 	return merged, nil
 }
 
@@ -736,6 +859,7 @@ func (s *DocumentService) ConvertByBusiness(ctx context.Context, businessID, id 
 	}
 	s.recordRevision(ctx, source, "converted_source", map[string]interface{}{"target_document_id": converted.ID, "target_document_type": input.TargetDocumentType})
 	s.recordRevision(ctx, converted, "converted_target", map[string]interface{}{"source_document_id": source.ID, "source_document_type": source.DocumentType})
+	_ = recordActivityLog(ctx, s.db, businessID, "document", converted.ID, "converted", "", converted, nil, map[string]interface{}{"source_document_id": source.ID, "target_document_type": input.TargetDocumentType})
 	return converted, nil
 }
 
@@ -953,6 +1077,12 @@ func (s *DocumentService) MirrorLegacyInvoice(ctx context.Context, invoice *mode
 	doc.Currency = defaultCurrency(invoice.Currency)
 	doc.Locale = "en-IN"
 	doc.ProjectID = invoice.ProjectID
+	doc.PriceListID = invoice.PriceListID
+	doc.OriginSubscriptionID = invoice.OriginSubscriptionID
+	doc.OriginRunID = invoice.OriginRunID
+	doc.SignedAt = invoice.SignedAt
+	doc.SignedByProfileID = invoice.SignedByProfileID
+	doc.SignMetadata = invoice.SignMetadata
 	doc.PDFURL = invoice.PDFURL
 	doc.PDFFilename = invoice.PDFFilename
 	doc.Notes = invoice.Notes
@@ -975,6 +1105,16 @@ func (s *DocumentService) MirrorLegacyInvoice(ctx context.Context, invoice *mode
 	doc.PartyGSTIN = readStringCandidate(taxProfile, "counterparty_gstin")
 	doc.PartyPAN = coalesceString(readStringCandidate(taxProfile, "counterparty_pan"), parsePANFromGSTIN(doc.PartyGSTIN))
 	doc.PartyStateCode = readStringCandidate(taxProfile, "counterparty_state_code")
+	doc.GenerateEInvoice = readBoolCandidate(taxProfile, "generate_einvoice")
+	doc.GenerateEWayBill = readBoolCandidate(taxProfile, "generate_ewaybill")
+	doc.ReverseCharge = readBoolCandidate(taxProfile, "reverse_charge")
+	doc.ReverseChargeReason = readStringCandidate(taxProfile, "reverse_charge_reason")
+	doc.DispatchFrom = mustMarshalMap(nestedMap(taxProfile, "dispatch_from"))
+	doc.DispatchTo = mustMarshalMap(nestedMap(taxProfile, "dispatch_to"))
+	doc.DistanceKM = floatValue(taxProfile["distance_km"])
+	doc.Transporter = mustMarshalMap(nestedMap(taxProfile, "transporter"))
+	doc.Vehicle = mustMarshalMap(nestedMap(taxProfile, "vehicle"))
+	doc.MultiVehiclePlan = mustMarshalMap(nestedMap(taxProfile, "multi_vehicle_plan"))
 	reportTags := nestedMap(taxProfile, "report_tags")
 	projectID := normalizeProjectID(extractProjectIDFromTags(reportTags))
 	if invoice.ProjectID != nil && *invoice.ProjectID != "" {
@@ -1000,11 +1140,17 @@ func (s *DocumentService) MirrorLegacyInvoice(ctx context.Context, invoice *mode
 			Description:       item.Description,
 			WarehouseID:       item.WarehouseID,
 			Quantity:          item.Quantity,
+			FreeQuantity:      item.FreeQuantity,
 			RemainingQuantity: item.Quantity,
 			UnitPrice:         item.UnitPrice,
+			MRP:               item.MRP,
 			DiscountAmount:    item.Discount,
 			TaxRate:           item.TaxRate,
-			TaxAmount:         item.Total - ((item.Quantity * item.UnitPrice) - item.Discount),
+			CessRate:          item.CessRate,
+			CessAmount:        item.CessAmount,
+			CustomFields:      item.CustomFields,
+			ChargeLinkage:     item.ChargeSnapshot,
+			TaxAmount:         item.Total - ((item.Quantity * item.UnitPrice) - item.Discount) - item.CessAmount,
 			LineSubtotal:      (item.Quantity * item.UnitPrice) - item.Discount,
 			LineTotal:         item.Total,
 			BatchAllocations:  item.BatchAllocations,

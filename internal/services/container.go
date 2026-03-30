@@ -24,6 +24,7 @@ type Container struct {
 	Journal             *JournalService
 	Shipping            *ShippingService
 	Invoice             *InvoiceService
+	BillingOps          *BillingOpsService
 	Payment             *PaymentService
 	Ledger              *LedgerService
 	Report              *ReportService
@@ -32,6 +33,7 @@ type Container struct {
 	Webhook             *WebhookService
 	Subscription        *SubscriptionService
 	Barcode             *BarcodeService
+	POS                 *POSService
 	S3                  *S3Service
 	Email               *EmailService
 	Agent               *AgentService
@@ -90,6 +92,7 @@ func NewContainer(
 	journalSvc := NewJournalService(journalRepo, ledgerRepo, log)
 	shippingSvc := NewShippingService(cfg, shippingRepo, customerRepo, vendorRepo, log)
 	documentSvc := NewDocumentService(db, cfg, documentRepo, businessRepo, customerRepo, vendorRepo, productRepo, inventorySvc, journalSvc, shippingSvc, aws, log)
+	barcodeSvc := NewBarcodeService(db, log)
 	projectSvc := NewProjectService(db, log)
 	reportSvc := NewReportService(cfg, reportingRepo, log)
 	marketplaceSvc := NewMarketplaceService(ap2Repo, log)
@@ -114,7 +117,13 @@ func NewContainer(
 		log.Fatal("failed to initialize credential provider service", "error", err)
 	}
 
-	taxComplianceSvc := NewTaxComplianceService(cfg, db, businessRepo, customerRepo, vendorRepo, log)
+	webhookSvc := NewWebhookService(webhookRepo, log)
+	taxComplianceSvc := NewTaxComplianceService(cfg, db, businessRepo, customerRepo, vendorRepo, subscriptionRepo, aws, s3Svc, webhookSvc, log)
+	invoiceSvc := NewInvoiceService(db, cfg, invoiceRepo, productRepo, customerRepo, documentSvc, aws, s3Svc, emailSvc, log)
+	billingOpsSvc := NewBillingOpsService(cfg, db, customerRepo, vendorRepo, productRepo, invoiceSvc, documentSvc, s3Svc, log)
+	documentSvc.AttachTaxComplianceService(taxComplianceSvc)
+	taxComplianceSvc.AttachDocumentService(documentSvc)
+	posSvc := NewPOSService(db, documentSvc, barcodeSvc, taxComplianceSvc.entitlements, log)
 
 	log.Info("service container initialized",
 		"components", 34,
@@ -138,15 +147,17 @@ func NewContainer(
 		Document:            documentSvc,
 		Journal:             journalSvc,
 		Shipping:            shippingSvc,
-		Invoice:             NewInvoiceService(cfg, invoiceRepo, productRepo, customerRepo, documentSvc, aws, s3Svc, emailSvc, log),
+		Invoice:             invoiceSvc,
+		BillingOps:          billingOpsSvc,
 		Payment:             NewPaymentService(db, paymentRepo, invoiceRepo, documentSvc, journalSvc, log),
 		Ledger:              NewLedgerService(ledgerRepo, log),
 		Report:              reportSvc,
 		TaxCompliance:       taxComplianceSvc,
 		Team:                NewTeamService(teamRepo, log),
-		Webhook:             NewWebhookService(webhookRepo, log),
+		Webhook:             webhookSvc,
 		Subscription:        NewSubscriptionService(subscriptionRepo, log),
-		Barcode:             NewBarcodeService(db, log),
+		Barcode:             barcodeSvc,
+		POS:                 posSvc,
 		S3:                  s3Svc,
 		Email:               emailSvc,
 		Agent:               agentSvc,

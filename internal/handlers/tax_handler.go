@@ -103,6 +103,50 @@ func (h *TaxHandler) GetReportRun(c *gin.Context) {
 	c.JSON(http.StatusOK, run)
 }
 
+func (h *TaxHandler) ListIntegrationAccounts(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	accounts, err := h.svc.ListIntegrationAccounts(c.Request.Context(), businessID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": accounts})
+}
+
+func (h *TaxHandler) UpsertIntegrationAccount(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	var input services.UpsertGSTIntegrationAccountInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	account, err := h.svc.UpsertIntegrationAccount(c.Request.Context(), businessID, c.Param("id"), input)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, account)
+}
+
+func (h *TaxHandler) ValidateIntegrationAccount(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	account, err := h.svc.ValidateIntegrationAccount(c.Request.Context(), businessID, c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "account": account})
+		return
+	}
+	c.JSON(http.StatusOK, account)
+}
+
 func parseReportOptions(c *gin.Context) (services.GSTReportOptions, error) {
 	start, err := time.Parse("2006-01-02", c.Query("period_start"))
 	if err != nil {

@@ -485,7 +485,9 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 				invoices.PUT("/:id", h.Invoice.Update)
 				invoices.DELETE("/:id", h.Invoice.Delete)
 				invoices.POST("/:id/send", h.Invoice.Send)
+				invoices.POST("/bulk-actions", h.BillingOps.CreateInvoiceBulkAction)
 				invoices.GET("/:id/pdf", h.Invoice.GetPDF)
+				invoices.POST("/:id/einvoice", h.Invoice.GenerateEInvoice)
 				invoices.GET("/next-number", h.Invoice.NextNumber)
 			}
 
@@ -501,11 +503,81 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			documents := protected.Group("/documents")
 			{
 				documents.POST("/merge", h.DocumentUtility.Merge)
+				documents.POST("/bulk-actions", h.BillingOps.CreateDocumentBulkAction)
 				documents.POST("/:id/convert", h.DocumentUtility.Convert)
 				documents.POST("/:id/duplicate", h.DocumentUtility.Duplicate)
 				documents.GET("/:id/history", h.DocumentUtility.History)
+				documents.GET("/:id/compliance", h.DocumentUtility.GetComplianceStatus)
+				documents.POST("/:id/einvoice", h.DocumentUtility.GenerateEInvoice)
+				documents.GET("/:id/einvoice", h.DocumentUtility.GetEInvoice)
+				documents.POST("/:id/einvoice/cancel", h.DocumentUtility.CancelEInvoice)
+				documents.POST("/:id/ewaybill", h.DocumentUtility.GenerateEWayBill)
+				documents.GET("/:id/ewaybill", h.DocumentUtility.GetEWayBill)
+				documents.GET("/:id/ewaybill/pdf", h.DocumentUtility.GetEWayBillPDF)
+				documents.PATCH("/:id/ewaybill/part-b", h.DocumentUtility.UpdateEWayPartB)
+				documents.POST("/:id/ewaybill/multi-vehicle", h.DocumentUtility.InitiateMultiVehicle)
 				documents.POST("/:id/render", h.DocumentUtility.Render)
 				documents.GET("/:id/pdf", h.DocumentUtility.GetPDF)
+			}
+
+			priceLists := protected.Group("/price-lists")
+			{
+				priceLists.GET("", h.BillingOps.ListPriceLists)
+				priceLists.GET("/:id", h.BillingOps.GetPriceList)
+				priceLists.POST("", h.BillingOps.CreatePriceList)
+				priceLists.PUT("/:id", h.BillingOps.UpdatePriceList)
+				priceLists.DELETE("/:id", h.BillingOps.DeletePriceList)
+			}
+
+			partyGroups := protected.Group("/party-groups")
+			{
+				partyGroups.GET("", h.BillingOps.ListPartyGroups)
+				partyGroups.GET("/:id", h.BillingOps.GetPartyGroup)
+				partyGroups.GET("/:id/ledger", h.BillingOps.GetPartyGroupLedger)
+				partyGroups.POST("", h.BillingOps.CreatePartyGroup)
+				partyGroups.PUT("/:id", h.BillingOps.UpdatePartyGroup)
+				partyGroups.DELETE("/:id", h.BillingOps.DeletePartyGroup)
+			}
+
+			activityLogs := protected.Group("/activity-logs")
+			{
+				activityLogs.GET("", h.BillingOps.ListActivityLogs)
+			}
+
+			signatures := protected.Group("/signatures")
+			{
+				signatures.GET("/profiles", h.BillingOps.ListSignatureProfiles)
+				signatures.GET("/profiles/:id", h.BillingOps.GetSignatureProfile)
+				signatures.POST("/profiles", h.BillingOps.CreateSignatureProfile)
+				signatures.POST("/invoices/:id", h.BillingOps.SignInvoice)
+				signatures.POST("/documents/:id", h.BillingOps.SignDocument)
+			}
+
+			bulkJobs := protected.Group("/bulk-jobs")
+			{
+				bulkJobs.GET("", h.BillingOps.ListBulkJobs)
+				bulkJobs.GET("/:id", h.BillingOps.GetBulkJob)
+			}
+
+			imports := protected.Group("/imports")
+			{
+				imports.POST("/customers", h.BillingOps.CreateCustomerImportJob)
+				imports.POST("/vendors", h.BillingOps.CreateVendorImportJob)
+				imports.POST("/products", h.BillingOps.CreateProductImportJob)
+				imports.POST("/invoices", h.BillingOps.CreateInvoiceImportJob)
+				imports.POST("/documents", h.BillingOps.CreateDocumentImportJob)
+			}
+
+			invoiceSubscriptions := protected.Group("/invoice-subscriptions")
+			{
+				invoiceSubscriptions.GET("", h.BillingOps.ListInvoiceSubscriptions)
+				invoiceSubscriptions.GET("/:id", h.BillingOps.GetInvoiceSubscription)
+				invoiceSubscriptions.GET("/:id/runs", h.BillingOps.ListInvoiceSubscriptionRuns)
+				invoiceSubscriptions.POST("", h.BillingOps.CreateInvoiceSubscription)
+				invoiceSubscriptions.PUT("/:id", h.BillingOps.UpdateInvoiceSubscription)
+				invoiceSubscriptions.POST("/:id/pause", h.BillingOps.PauseInvoiceSubscription)
+				invoiceSubscriptions.POST("/:id/resume", h.BillingOps.ResumeInvoiceSubscription)
+				invoiceSubscriptions.POST("/:id/generate-now", h.BillingOps.GenerateInvoiceSubscriptionNow)
 			}
 
 			journals := protected.Group("/journals")
@@ -536,10 +608,23 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 			tax := protected.Group("/tax")
 			{
+				tax.GET("/integrations", h.Tax.ListIntegrationAccounts)
+				tax.POST("/integrations", h.Tax.UpsertIntegrationAccount)
+				tax.PUT("/integrations/:id", h.Tax.UpsertIntegrationAccount)
+				tax.POST("/integrations/:id/validate", h.Tax.ValidateIntegrationAccount)
 				tax.POST("/gstr-2b/import", h.Tax.ImportGSTR2B)
 				tax.GET("/reports/:type", h.Tax.GetReport)
 				tax.POST("/reports/:type/export", h.Tax.ExportReport)
 				tax.GET("/report-runs/:id", h.Tax.GetReportRun)
+			}
+
+			pos := protected.Group("/pos")
+			{
+				pos.POST("/sessions", h.POS.CreateSession)
+				pos.GET("/catalog/search", h.POS.SearchCatalog)
+				pos.POST("/carts/:id/items/scan", h.POS.ScanItem)
+				pos.POST("/carts/:id/checkout", h.POS.Checkout)
+				pos.GET("/receipts/:documentID", h.POS.GetReceipt)
 			}
 
 			shipments := protected.Group("/shipments")

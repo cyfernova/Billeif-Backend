@@ -57,9 +57,11 @@ data "aws_iam_policy_document" "lambda_app" {
     resources = [
       aws_sqs_queue.invoice_processing.arn,
       aws_sqs_queue.payment_processing.arn,
+      aws_sqs_queue.gst_processing.arn,
       aws_sqs_queue.workflow_runs.arn,
       aws_sqs_queue.invoice_processing_dlq.arn,
       aws_sqs_queue.payment_processing_dlq.arn,
+      aws_sqs_queue.gst_processing_dlq.arn,
       aws_sqs_queue.workflow_runs_dlq.arn
     ]
   }

@@ -262,7 +262,7 @@ func TestAgentConfigService_SaveAgentConfig_MaxDiscountLessThanMin(t *testing.T)
 		Type:       models.AgentTypeBuyer,
 		Volatility: 0.5,
 		BuyerConfig: &models.BuyerConfig{
-			MaxDiscountPercent:  5.0,  // Less than MinDiscountPercent
+			MaxDiscountPercent:  5.0, // Less than MinDiscountPercent
 			MinDiscountPercent:  25.0,
 			MaxRounds:           5,
 			AcceptanceThreshold: 0.85,
@@ -513,9 +513,9 @@ func TestAgentConfigService_ValidateConfig_SellerAcceptanceThresholdOutOfRange(t
 		Type:       models.AgentTypeSeller,
 		Volatility: 0.5,
 		SellerConfig: &models.SellerConfig{
-			MinAcceptablePrice: 0.0,
-			MaxMarkupPercent:   30.0,
-			MaxRounds:          5,
+			MinAcceptablePrice:  0.0,
+			MaxMarkupPercent:    30.0,
+			MaxRounds:           5,
 			AcceptanceThreshold: 1.5, // Invalid - must be 0-1
 		},
 	}
@@ -690,7 +690,7 @@ func createSellerConfig() *models.AgentConfig {
 			MinAcceptablePrice:    0.0,
 			MaxMarkupPercent:      30.0,
 			InventoryPressure:     0.5,
-			CustomerLoyaltyFactor:  1.0,
+			CustomerLoyaltyFactor: 1.0,
 			MaxRounds:             5,
 			PreferredCustomers:    []string{},
 			PaymentTerms:          []string{"net30"},
@@ -810,12 +810,12 @@ func TestAgentConfigService_A2AEndpoint(t *testing.T) {
 
 	a2aEndpoint := "https://agent.example.com/a2a/v0.3"
 	agent := &models.Agent{
-		ID:           "agent-a2a",
-		Name:         "A2A Test",
-		Type:         "shopping",
-		A2AEndpoint:  &a2aEndpoint,
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
+		ID:          "agent-a2a",
+		Name:        "A2A Test",
+		Type:        "shopping",
+		A2AEndpoint: &a2aEndpoint,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
 	}
 
 	config := createBuyerConfig()
@@ -832,12 +832,12 @@ func TestAgentConfigService_A2AEndpointNil(t *testing.T) {
 	svc := services.NewAgentConfigService(tmpDir, log)
 
 	agent := &models.Agent{
-		ID:           "agent-no-a2a",
-		Name:         "No A2A Test",
-		Type:         "shopping",
-		A2AEndpoint:  nil,
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
+		ID:          "agent-no-a2a",
+		Name:        "No A2A Test",
+		Type:        "shopping",
+		A2AEndpoint: nil,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
 	}
 
 	config := createBuyerConfig()

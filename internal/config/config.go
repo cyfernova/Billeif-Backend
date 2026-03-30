@@ -23,7 +23,9 @@ type Config struct {
 	SQS            SQSConfig         `mapstructure:"SQS"`
 	Sentry         SentryConfig      `mapstructure:"SENTRY"`
 	Shipping       ShippingConfig    `mapstructure:"SHIPPING"`
+	GST            GSTConfig         `mapstructure:"GST"`
 	GSTLookup      GSTLookupConfig   `mapstructure:"GST_LOOKUP"`
+	Entitlements   EntitlementsConfig `mapstructure:"ENTITLEMENTS"`
 	AllowedOrigins []string          `mapstructure:"ALLOWED_ORIGINS"`
 	LLM            LLMConfig         `mapstructure:"LLM"`
 	Credentials    CredentialsConfig `mapstructure:"CREDENTIALS"`
@@ -127,6 +129,7 @@ type S3Config struct {
 type SQSConfig struct {
 	InvoiceQueue string `mapstructure:"INVOICE_QUEUE"`
 	PaymentQueue string `mapstructure:"PAYMENT_QUEUE"`
+	GSTQueue     string `mapstructure:"GST_QUEUE"`
 }
 
 type ShippingConfig struct {
@@ -146,6 +149,32 @@ type GSTLookupConfig struct {
 	BaseURL string `mapstructure:"BASE_URL"`
 	APIKey  string `mapstructure:"API_KEY"`
 	Timeout int    `mapstructure:"TIMEOUT"`
+}
+
+type GSTConfig struct {
+	Provider                 string `mapstructure:"PROVIDER"`
+	BaseURL                  string `mapstructure:"BASE_URL"`
+	AuthPath                 string `mapstructure:"AUTH_PATH"`
+	ValidatePath             string `mapstructure:"VALIDATE_PATH"`
+	EInvoicePath             string `mapstructure:"EINVOICE_PATH"`
+	EInvoiceCancelPath       string `mapstructure:"EINVOICE_CANCEL_PATH"`
+	EWayBillPath             string `mapstructure:"EWAYBILL_PATH"`
+	EWayBillPartBPath        string `mapstructure:"EWAYBILL_PARTB_PATH"`
+	EWayBillMultiVehiclePath string `mapstructure:"EWAYBILL_MULTI_VEHICLE_PATH"`
+	EWayBillPDFPath          string `mapstructure:"EWAYBILL_PDF_PATH"`
+	DistancePath             string `mapstructure:"DISTANCE_PATH"`
+	ClientID                 string `mapstructure:"CLIENT_ID"`
+	ClientSecret             string `mapstructure:"CLIENT_SECRET"`
+	Username                 string `mapstructure:"USERNAME"`
+	Password                 string `mapstructure:"PASSWORD"`
+	APIToken                 string `mapstructure:"API_TOKEN"`
+	GSPName                  string `mapstructure:"GSP_NAME"`
+	Timeout                  int    `mapstructure:"TIMEOUT"`
+	Sandbox                  bool   `mapstructure:"SANDBOX"`
+}
+
+type EntitlementsConfig struct {
+	JSON string `mapstructure:"JSON"`
 }
 
 func Load() (*Config, error) {
@@ -227,6 +256,7 @@ func Load() (*Config, error) {
 	_ = viper.BindEnv("S3.BUCKET_EMAIL_SINK", "S3_BUCKET_EMAIL_SINK")
 	_ = viper.BindEnv("SQS.INVOICE_QUEUE", "SQS_INVOICE_QUEUE")
 	_ = viper.BindEnv("SQS.PAYMENT_QUEUE", "SQS_PAYMENT_QUEUE")
+	_ = viper.BindEnv("SQS.GST_QUEUE", "SQS_GST_QUEUE")
 	_ = viper.BindEnv("SENTRY.DSN", "SENTRY_DSN")
 	_ = viper.BindEnv("SENTRY.SAMPLE_RATE", "SENTRY_SAMPLE_RATE")
 	_ = viper.BindEnv("SENTRY.TRACES_SAMPLE_RATE", "SENTRY_TRACES_SAMPLE_RATE")
@@ -242,9 +272,29 @@ func Load() (*Config, error) {
 	_ = viper.BindEnv("SHIPPING.SHIPROCKET_ASSIGN_AWB_PATH", "SHIPPING_SHIPROCKET_ASSIGN_AWB_PATH")
 	_ = viper.BindEnv("SHIPPING.SHIPROCKET_LABEL_PATH", "SHIPPING_SHIPROCKET_LABEL_PATH")
 	_ = viper.BindEnv("SHIPPING.SHIPROCKET_TRACKING_BASE_URL", "SHIPPING_SHIPROCKET_TRACKING_BASE_URL")
+	_ = viper.BindEnv("GST.PROVIDER", "GST_PROVIDER")
+	_ = viper.BindEnv("GST.BASE_URL", "GST_BASE_URL")
+	_ = viper.BindEnv("GST.AUTH_PATH", "GST_AUTH_PATH")
+	_ = viper.BindEnv("GST.VALIDATE_PATH", "GST_VALIDATE_PATH")
+	_ = viper.BindEnv("GST.EINVOICE_PATH", "GST_EINVOICE_PATH")
+	_ = viper.BindEnv("GST.EINVOICE_CANCEL_PATH", "GST_EINVOICE_CANCEL_PATH")
+	_ = viper.BindEnv("GST.EWAYBILL_PATH", "GST_EWAYBILL_PATH")
+	_ = viper.BindEnv("GST.EWAYBILL_PARTB_PATH", "GST_EWAYBILL_PARTB_PATH")
+	_ = viper.BindEnv("GST.EWAYBILL_MULTI_VEHICLE_PATH", "GST_EWAYBILL_MULTI_VEHICLE_PATH")
+	_ = viper.BindEnv("GST.EWAYBILL_PDF_PATH", "GST_EWAYBILL_PDF_PATH")
+	_ = viper.BindEnv("GST.DISTANCE_PATH", "GST_DISTANCE_PATH")
+	_ = viper.BindEnv("GST.CLIENT_ID", "GST_CLIENT_ID")
+	_ = viper.BindEnv("GST.CLIENT_SECRET", "GST_CLIENT_SECRET")
+	_ = viper.BindEnv("GST.USERNAME", "GST_USERNAME")
+	_ = viper.BindEnv("GST.PASSWORD", "GST_PASSWORD")
+	_ = viper.BindEnv("GST.API_TOKEN", "GST_API_TOKEN")
+	_ = viper.BindEnv("GST.GSP_NAME", "GST_GSP_NAME")
+	_ = viper.BindEnv("GST.TIMEOUT", "GST_TIMEOUT")
+	_ = viper.BindEnv("GST.SANDBOX", "GST_SANDBOX")
 	_ = viper.BindEnv("GST_LOOKUP.BASE_URL", "GST_LOOKUP_BASE_URL")
 	_ = viper.BindEnv("GST_LOOKUP.API_KEY", "GST_LOOKUP_API_KEY")
 	_ = viper.BindEnv("GST_LOOKUP.TIMEOUT", "GST_LOOKUP_TIMEOUT")
+	_ = viper.BindEnv("ENTITLEMENTS.JSON", "ENTITLEMENTS_JSON")
 	_ = viper.BindEnv("ALLOWED_ORIGINS", "ALLOWED_ORIGINS")
 	_ = viper.BindEnv("LLM.API_KEY", "LLM_API_KEY")
 	_ = viper.BindEnv("LLM.API_URL", "LLM_API_URL")

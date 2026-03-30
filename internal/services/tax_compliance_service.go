@@ -14,21 +14,30 @@ import (
 	"invoice-backend/internal/config"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
+	"invoice-backend/pkg/awsclients"
 	"invoice-backend/pkg/logger"
 
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/google/uuid"
 	"github.com/phpdave11/gofpdf"
 	"gorm.io/gorm"
 )
 
 type TaxComplianceService struct {
-	cfg          *config.Config
-	db           *gorm.DB
-	businessRepo interfaces.BusinessRepository
-	customerRepo interfaces.CustomerRepository
-	vendorRepo   interfaces.VendorRepository
-	httpClient   *http.Client
-	log          *logger.Logger
+	cfg              *config.Config
+	db               *gorm.DB
+	businessRepo     interfaces.BusinessRepository
+	customerRepo     interfaces.CustomerRepository
+	vendorRepo       interfaces.VendorRepository
+	subscriptionRepo interfaces.SubscriptionRepository
+	httpClient       *http.Client
+	sqs              *sqs.Client
+	s3               *S3Service
+	webhooks         *WebhookService
+	documents        *DocumentService
+	entitlements     *EntitlementService
+	provider         GSTProvider
+	log              *logger.Logger
 }
 
 type GSTINLookupResult struct {
@@ -81,21 +90,40 @@ func NewTaxComplianceService(
 	businessRepo interfaces.BusinessRepository,
 	customerRepo interfaces.CustomerRepository,
 	vendorRepo interfaces.VendorRepository,
+	subscriptionRepo interfaces.SubscriptionRepository,
+	awsCfg *awsclients.Config,
+	s3 *S3Service,
+	webhooks *WebhookService,
 	log *logger.Logger,
 ) *TaxComplianceService {
 	timeout := 15 * time.Second
 	if cfg != nil && cfg.GSTLookup.Timeout > 0 {
 		timeout = time.Duration(cfg.GSTLookup.Timeout) * time.Second
 	}
-	return &TaxComplianceService{
-		cfg:          cfg,
-		db:           db,
-		businessRepo: businessRepo,
-		customerRepo: customerRepo,
-		vendorRepo:   vendorRepo,
-		httpClient:   &http.Client{Timeout: timeout},
-		log:          log,
+	var sqsClient *sqs.Client
+	if awsCfg != nil {
+		sqsClient = awsCfg.SQS
 	}
+	svc := &TaxComplianceService{
+		cfg:              cfg,
+		db:               db,
+		businessRepo:     businessRepo,
+		customerRepo:     customerRepo,
+		vendorRepo:       vendorRepo,
+		subscriptionRepo: subscriptionRepo,
+		httpClient:       &http.Client{Timeout: timeout},
+		sqs:              sqsClient,
+		s3:               s3,
+		webhooks:         webhooks,
+		log:              log,
+	}
+	svc.entitlements = NewEntitlementService(cfg, db, subscriptionRepo, log)
+	svc.provider = NewConfiguredGSTProvider(cfg, log)
+	return svc
+}
+
+func (s *TaxComplianceService) AttachDocumentService(documents *DocumentService) {
+	s.documents = documents
 }
 
 func (s *TaxComplianceService) FetchGSTIN(ctx context.Context, gstin string) (*GSTINLookupResult, error) {

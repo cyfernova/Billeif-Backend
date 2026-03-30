@@ -2,9 +2,13 @@ package services
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -145,6 +149,84 @@ func (s *WebhookService) DeleteByBusiness(ctx context.Context, businessID, id st
 	}
 	log.Info("webhook deleted", "webhook_id", webhook.ID)
 	return nil
+}
+
+func (s *WebhookService) EmitEvent(ctx context.Context, businessID, event string, payload map[string]interface{}) error {
+	if strings.TrimSpace(businessID) == "" || strings.TrimSpace(event) == "" {
+		return nil
+	}
+	webhooks, err := s.repo.GetByBusinessID(ctx, businessID)
+	if err != nil {
+		return err
+	}
+
+	envelope := map[string]interface{}{
+		"event":       event,
+		"business_id": businessID,
+		"sent_at":     time.Now().UTC().Format(time.RFC3339Nano),
+		"data":        payload,
+	}
+	body, err := json.Marshal(envelope)
+	if err != nil {
+		return err
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	for _, webhook := range webhooks {
+		if webhook == nil || !webhook.IsActive || !webhookSubscribedToEvent(webhook.Events, event) {
+			continue
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhook.URL, strings.NewReader(string(body)))
+		if err != nil {
+			s.log.Warn("failed to build webhook request", "webhook_id", webhook.ID, "event", event, "error", err)
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Cyfernova-Event", event)
+		req.Header.Set("X-Cyfernova-Signature", signWebhookPayload(webhook.Secret, body))
+
+		resp, err := client.Do(req)
+		if err != nil {
+			s.log.Warn("failed to deliver webhook", "webhook_id", webhook.ID, "event", event, "error", err)
+			continue
+		}
+		_ = resp.Body.Close()
+
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			now := time.Now().UTC()
+			webhook.LastTriggered = &now
+			if updateErr := s.repo.Update(ctx, webhook); updateErr != nil {
+				s.log.Warn("failed to update webhook delivery timestamp", "webhook_id", webhook.ID, "event", event, "error", updateErr)
+			}
+			continue
+		}
+		s.log.Warn("webhook delivery returned non-success", "webhook_id", webhook.ID, "event", event, "status_code", resp.StatusCode)
+	}
+
+	return nil
+}
+
+func webhookSubscribedToEvent(events, event string) bool {
+	if strings.TrimSpace(events) == "" {
+		return false
+	}
+	for _, candidate := range strings.Split(events, ",") {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "*" || strings.EqualFold(candidate, event) {
+			return true
+		}
+	}
+	return false
+}
+
+func signWebhookPayload(secret string, payload []byte) string {
+	if secret == "" {
+		return ""
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write(payload)
+	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
 
 func generateWebhookSecret() string {

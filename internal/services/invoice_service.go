@@ -15,9 +15,11 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"gorm.io/gorm"
 )
 
 type InvoiceService struct {
+	db           *gorm.DB
 	cfg          *config.Config
 	repo         interfaces.InvoiceRepository
 	productRepo  interfaces.ProductRepository
@@ -30,6 +32,7 @@ type InvoiceService struct {
 }
 
 func NewInvoiceService(
+	db *gorm.DB,
 	cfg *config.Config,
 	repo interfaces.InvoiceRepository,
 	productRepo interfaces.ProductRepository,
@@ -41,6 +44,7 @@ func NewInvoiceService(
 	log *logger.Logger,
 ) *InvoiceService {
 	return &InvoiceService{
+		db:           db,
 		cfg:          cfg,
 		repo:         repo,
 		productRepo:  productRepo,
@@ -54,31 +58,55 @@ func NewInvoiceService(
 }
 
 type CreateInvoiceItemInput struct {
-	ProductID        string                 `json:"product_id"`
-	VariantID        string                 `json:"variant_id,omitempty"`
-	WarehouseID      string                 `json:"warehouse_id,omitempty"`
-	Description      string                 `json:"description" binding:"required"`
-	Quantity         float64                `json:"quantity" binding:"required,gt=0"`
-	UnitPrice        float64                `json:"unit_price" binding:"required,gt=0"`
-	TaxRate          float64                `json:"tax_rate"`
-	BatchAllocations []BatchAllocationInput `json:"batch_allocations,omitempty"`
-	SerialIDs        []string               `json:"serial_ids,omitempty"`
+	ProductID        string                   `json:"product_id"`
+	VariantID        string                   `json:"variant_id,omitempty"`
+	WarehouseID      string                   `json:"warehouse_id,omitempty"`
+	Description      string                   `json:"description" binding:"required"`
+	Quantity         float64                  `json:"quantity" binding:"required,gt=0"`
+	FreeQuantity     float64                  `json:"free_quantity"`
+	UnitPrice        float64                  `json:"unit_price" binding:"gte=0"`
+	MRP              float64                  `json:"mrp"`
+	TaxRate          float64                  `json:"tax_rate"`
+	CessRate         float64                  `json:"cess_rate"`
+	CustomFields     map[string]interface{}   `json:"custom_fields,omitempty"`
+	ChargeSnapshot   []map[string]interface{} `json:"charge_snapshot,omitempty"`
+	BatchAllocations []BatchAllocationInput   `json:"batch_allocations,omitempty"`
+	SerialIDs        []string                 `json:"serial_ids,omitempty"`
 }
 
 type CreateInvoiceInput struct {
-	BusinessID string                   `json:"business_id,omitempty"`
-	CustomerID string                   `json:"customer_id" binding:"required,uuid"`
-	ProjectID  string                   `json:"project_id,omitempty" binding:"omitempty,uuid"`
-	DueDate    time.Time                `json:"due_date" binding:"required"`
-	Notes      string                   `json:"notes"`
-	TaxProfile TaxProfileInput          `json:"tax_profile"`
-	Items      []CreateInvoiceItemInput `json:"items" binding:"required,min=1,dive"`
+	BusinessID           string                   `json:"business_id,omitempty"`
+	CustomerID           string                   `json:"customer_id" binding:"required,uuid"`
+	ProjectID            string                   `json:"project_id,omitempty" binding:"omitempty,uuid"`
+	PriceListID          string                   `json:"price_list_id,omitempty"`
+	DueDate              time.Time                `json:"due_date" binding:"required"`
+	Notes                string                   `json:"notes"`
+	CustomFields         map[string]interface{}   `json:"custom_fields,omitempty"`
+	AdditionalCharges    []map[string]interface{} `json:"additional_charges,omitempty"`
+	OriginSubscriptionID string                   `json:"origin_subscription_id,omitempty"`
+	OriginRunID          string                   `json:"origin_run_id,omitempty"`
+	TaxProfile           TaxProfileInput          `json:"tax_profile"`
+	Items                []CreateInvoiceItemInput `json:"items" binding:"required,min=1,dive"`
 }
 
 func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (*models.Invoice, error) {
 	_, err := s.customerRepo.GetByID(ctx, input.CustomerID, input.BusinessID)
 	if err != nil {
 		return nil, fmt.Errorf("customer not found: %w", err)
+	}
+	priceListID, err := resolvePriceListID(
+		ctx,
+		s.db,
+		s.customerRepo,
+		nil,
+		input.BusinessID,
+		models.DocumentPartyTypeCustomer,
+		input.CustomerID,
+		stringPointer(input.PriceListID),
+		nil,
+	)
+	if err != nil {
+		return nil, err
 	}
 
 	invoiceNo, err := s.generateInvoiceNumber(ctx, input.BusinessID)
@@ -89,13 +117,32 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 	input.TaxProfile.ReportTags = mergeProjectIntoTags(input.TaxProfile.ReportTags, projectID)
 
 	var subtotal, taxTotal float64
+	var cessTotal float64
 	items := make([]*models.InvoiceItem, len(input.Items))
 
 	for i, item := range input.Items {
-		itemSubtotal := item.Quantity * item.UnitPrice
+		pricing, err := resolveLinePricing(ctx, s.db, s.productRepo, input.BusinessID, priceListID, item.ProductID, item.VariantID, stringPointer(item.WarehouseID))
+		if err != nil {
+			return nil, err
+		}
+		unitPrice := item.UnitPrice
+		if unitPrice <= 0 {
+			unitPrice = pricing.UnitPrice
+		}
+		mrp := item.MRP
+		if mrp <= 0 {
+			mrp = pricing.MRP
+		}
+		cessRate := item.CessRate
+		if cessRate <= 0 {
+			cessRate = pricing.CessRate
+		}
+		itemSubtotal := item.Quantity * unitPrice
 		itemTax := itemSubtotal * (item.TaxRate / 100)
+		itemCess := itemSubtotal * (cessRate / 100)
 		subtotal += itemSubtotal
 		taxTotal += itemTax
+		cessTotal += itemCess
 
 		var productID *string
 		if item.ProductID != "" {
@@ -116,30 +163,45 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 			WarehouseID:      warehouseID,
 			Description:      item.Description,
 			Quantity:         item.Quantity,
-			UnitPrice:        item.UnitPrice,
+			FreeQuantity:     item.FreeQuantity,
+			UnitPrice:        unitPrice,
+			MRP:              mrp,
 			TaxRate:          item.TaxRate,
+			CessRate:         cessRate,
+			CessAmount:       itemCess,
+			CustomFields:     mustMarshalMap(item.CustomFields),
+			ChargeSnapshot:   mustMarshalAny(item.ChargeSnapshot, "[]"),
 			BatchAllocations: mustMarshalBatchAllocations(item.BatchAllocations),
 			SerialIDs:        marshalStringSlice(item.SerialIDs),
-			Total:            itemSubtotal + itemTax,
+			Total:            itemSubtotal + itemTax + itemCess,
 		}
 	}
 
 	invoice := &models.Invoice{
-		BusinessID:  input.BusinessID,
-		CustomerID:  input.CustomerID,
-		ProjectID:   projectIDPointer(projectID),
-		InvoiceNo:   invoiceNo,
-		Status:      "draft",
-		InvoiceDate: time.Now(),
-		DueDate:     input.DueDate,
-		Subtotal:    subtotal,
-		Tax:         taxTotal,
-		Total:       subtotal + taxTotal,
-		BalanceDue:  subtotal + taxTotal,
-		Notes:       input.Notes,
-		TaxProfile:  mustMarshalMap(taxProfileToMap(input.TaxProfile)),
-		Currency:    "USD",
-		Items:       items,
+		BusinessID:        input.BusinessID,
+		CustomerID:        input.CustomerID,
+		ProjectID:         projectIDPointer(projectID),
+		PriceListID:       priceListID,
+		InvoiceNo:         invoiceNo,
+		Status:            "draft",
+		InvoiceDate:       time.Now(),
+		DueDate:           input.DueDate,
+		Subtotal:          subtotal,
+		Tax:               taxTotal + cessTotal,
+		Total:             subtotal + taxTotal + cessTotal,
+		BalanceDue:        subtotal + taxTotal + cessTotal,
+		Notes:             input.Notes,
+		CustomFields:      mustMarshalMap(input.CustomFields),
+		AdditionalCharges: mustMarshalAny(input.AdditionalCharges, "[]"),
+		TaxProfile:        mustMarshalMap(taxProfileToMap(input.TaxProfile)),
+		Currency:          "USD",
+		Items:             items,
+	}
+	if input.OriginSubscriptionID != "" {
+		invoice.OriginSubscriptionID = &input.OriginSubscriptionID
+	}
+	if input.OriginRunID != "" {
+		invoice.OriginRunID = &input.OriginRunID
 	}
 
 	if err := s.repo.Create(ctx, invoice); err != nil {
@@ -150,6 +212,7 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 			s.log.Error("failed to mirror invoice into documents", "invoice_id", invoice.ID, "error", err)
 		}
 	}
+	_ = recordActivityLog(ctx, s.db, invoice.BusinessID, "invoice", invoice.ID, "created", "", invoice, nil, nil)
 
 	go s.queuePDFGeneration(invoice.ID)
 
@@ -202,10 +265,14 @@ func (s *InvoiceService) List(ctx context.Context, businessID string, page, limi
 }
 
 type UpdateInvoiceInput struct {
-	DueDate    time.Time        `json:"due_date"`
-	Notes      string           `json:"notes"`
-	ProjectID  *string          `json:"project_id,omitempty"`
-	TaxProfile *TaxProfileInput `json:"tax_profile,omitempty"`
+	DueDate           time.Time                `json:"due_date"`
+	Notes             string                   `json:"notes"`
+	ProjectID         *string                  `json:"project_id,omitempty"`
+	PriceListID       *string                  `json:"price_list_id,omitempty"`
+	CustomFields      map[string]interface{}   `json:"custom_fields,omitempty"`
+	AdditionalCharges []map[string]interface{} `json:"additional_charges,omitempty"`
+	EditReason        string                   `json:"edit_reason,omitempty"`
+	TaxProfile        *TaxProfileInput         `json:"tax_profile,omitempty"`
 }
 
 func (s *InvoiceService) UpdateByBusiness(ctx context.Context, businessID, id string, input UpdateInvoiceInput) (*models.Invoice, error) {
@@ -214,6 +281,9 @@ func (s *InvoiceService) UpdateByBusiness(ctx context.Context, businessID, id st
 		return nil, err
 	}
 
+	if invoice.SignedAt != nil {
+		return nil, fmt.Errorf("signed invoices are immutable")
+	}
 	if invoice.Status != "draft" {
 		return nil, fmt.Errorf("cannot update invoice with status: %s", invoice.Status)
 	}
@@ -223,6 +293,15 @@ func (s *InvoiceService) UpdateByBusiness(ctx context.Context, businessID, id st
 	}
 	if input.Notes != "" {
 		invoice.Notes = input.Notes
+	}
+	if input.PriceListID != nil {
+		invoice.PriceListID = input.PriceListID
+	}
+	if input.CustomFields != nil {
+		invoice.CustomFields = mustMarshalMap(input.CustomFields)
+	}
+	if input.AdditionalCharges != nil {
+		invoice.AdditionalCharges = mustMarshalAny(input.AdditionalCharges, "[]")
 	}
 	if input.TaxProfile != nil {
 		projectID := ""
@@ -251,6 +330,7 @@ func (s *InvoiceService) UpdateByBusiness(ctx context.Context, businessID, id st
 			s.log.Error("failed to mirror updated invoice", "invoice_id", invoice.ID, "error", err)
 		}
 	}
+	_ = recordActivityLog(ctx, s.db, invoice.BusinessID, "invoice", invoice.ID, "updated", input.EditReason, invoice, nil, nil)
 	return invoice, nil
 }
 
@@ -264,6 +344,16 @@ func taxProfileToMap(input TaxProfileInput) map[string]interface{} {
 		"counterparty_gstin":      input.CounterpartyGSTIN,
 		"counterparty_pan":        input.CounterpartyPAN,
 		"counterparty_state_code": input.CounterpartyStateCode,
+		"generate_einvoice":       input.GenerateEInvoice,
+		"generate_ewaybill":       input.GenerateEWayBill,
+		"reverse_charge":          input.ReverseCharge,
+		"reverse_charge_reason":   input.ReverseChargeReason,
+		"dispatch_from":           input.DispatchFrom,
+		"dispatch_to":             input.DispatchTo,
+		"distance_km":             input.DistanceKM,
+		"transporter":             input.Transporter,
+		"vehicle":                 input.Vehicle,
+		"multi_vehicle_plan":      input.MultiVehiclePlan,
 		"tcs":                     withholdingsToList(input.TCS),
 		"source_linkage":          input.SourceLinkage,
 		"report_tags":             input.ReportTags,
@@ -283,6 +373,9 @@ func (s *InvoiceService) DeleteByBusiness(ctx context.Context, businessID, id st
 	if err != nil {
 		return err
 	}
+	if invoice.SignedAt != nil {
+		return fmt.Errorf("signed invoices are immutable")
+	}
 	if invoice.Status != "draft" {
 		return fmt.Errorf("cannot delete invoice with status: %s", invoice.Status)
 	}
@@ -296,6 +389,7 @@ func (s *InvoiceService) DeleteByBusiness(ctx context.Context, businessID, id st
 			}
 		}
 	}
+	_ = recordActivityLog(ctx, s.db, businessID, "invoice", invoice.ID, "deleted", "", invoice, nil, nil)
 	return nil
 }
 
@@ -325,6 +419,7 @@ func (s *InvoiceService) SendByBusiness(ctx context.Context, businessID, id stri
 			s.log.Error("failed to mirror sent invoice", "invoice_id", invoice.ID, "error", err)
 		}
 	}
+	_ = recordActivityLog(ctx, s.db, businessID, "invoice", invoice.ID, "sent", "", invoice, nil, nil)
 
 	subject := fmt.Sprintf("Invoice %s", invoice.InvoiceNo)
 	body := fmt.Sprintf("Please find attached invoice %s for amount %s%.2f", invoice.InvoiceNo, invoice.Currency, invoice.Total)

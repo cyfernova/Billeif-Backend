@@ -17,6 +17,7 @@ import (
 	"invoice-backend/internal/services"
 
 	"github.com/phpdave11/gofpdf"
+	"github.com/skip2/go-qrcode"
 )
 
 //go:embed fonts/*.ttf
@@ -131,6 +132,7 @@ func renderDocumentPDF(ctx context.Context, svc *services.Container, document *m
 	renderDocumentSummary(pdf, fontFamily, document, party, labels)
 	renderLineTable(pdf, fontFamily, document, labels)
 	renderTotalsSection(pdf, fontFamily, document, labels)
+	renderComplianceSection(ctx, pdf, fontFamily, svc, document)
 	renderTextSections(pdf, fontFamily, document, profile, labels)
 
 	if pdf.Err() {
@@ -329,6 +331,62 @@ func renderTextSections(pdf *gofpdf.Fpdf, fontFamily string, document *models.Do
 	renderOptionalTextBlock(pdf, fontFamily, labels.notes, document.Notes, visibility["show_notes"])
 	renderOptionalTextBlock(pdf, fontFamily, labels.terms, document.Terms, visibility["show_terms"])
 	renderOptionalTextBlock(pdf, fontFamily, labels.declaration, document.Declaration, visibility["show_declaration"])
+}
+
+func renderComplianceSection(ctx context.Context, pdf *gofpdf.Fpdf, fontFamily string, svc *services.Container, document *models.Document) {
+	if svc == nil || svc.TaxCompliance == nil || document == nil {
+		return
+	}
+
+	eInvoice, _ := svc.TaxCompliance.GetEInvoiceByDocument(ctx, document.BusinessID, document.ID)
+	eWayBill, _ := svc.TaxCompliance.GetEWayBillByDocument(ctx, document.BusinessID, document.ID)
+	if eInvoice == nil && eWayBill == nil {
+		return
+	}
+
+	_, pageHeight := pdf.GetPageSize()
+	_, _, _, bottomMargin := pdf.GetMargins()
+	const boxHeight = 34.0
+	if pdf.GetY()+boxHeight > pageHeight-bottomMargin {
+		pdf.AddPage()
+	}
+
+	startX := pdf.GetX()
+	startY := pdf.GetY()
+	boxWidth := 186.0
+	pdf.Rect(startX, startY, boxWidth, boxHeight, "D")
+
+	pdf.SetXY(startX+2, startY+2)
+	pdf.SetFont(fontFamily, "", 10)
+	pdf.CellFormat(120, 6, "GST Compliance", "", 1, "L", false, 0, "")
+	pdf.SetFont(fontFamily, "", 8.5)
+
+	if eInvoice != nil {
+		pdf.SetX(startX + 2)
+		pdf.CellFormat(120, 4.5, lineValue("IRN", eInvoice.IRN), "", 1, "L", false, 0, "")
+		pdf.SetX(startX + 2)
+		pdf.CellFormat(120, 4.5, lineValue("Ack No", eInvoice.AckNumber), "", 1, "L", false, 0, "")
+		pdf.SetX(startX + 2)
+		pdf.CellFormat(120, 4.5, lineValue("Ack Date", formatDatePtr(eInvoice.AckDate)), "", 1, "L", false, 0, "")
+	}
+	if eWayBill != nil {
+		pdf.SetX(startX + 2)
+		pdf.CellFormat(120, 4.5, lineValue("E-Way Bill", eWayBill.EWayBillNumber), "", 1, "L", false, 0, "")
+		pdf.SetX(startX + 2)
+		pdf.CellFormat(120, 4.5, lineValue("Valid Until", formatDatePtr(eWayBill.ValidUntil)), "", 1, "L", false, 0, "")
+	}
+
+	if eInvoice != nil && strings.TrimSpace(eInvoice.SignedQRCodePayload) != "" {
+		qrBytes, err := qrcode.Encode(strings.TrimSpace(eInvoice.SignedQRCodePayload), qrcode.Medium, 160)
+		if err == nil {
+			imageName := "gst-qr-" + sanitizeFilename(document.ID)
+			imageOpts := gofpdf.ImageOptions{ImageType: "PNG", ReadDpi: true}
+			pdf.RegisterImageOptionsReader(imageName, imageOpts, bytes.NewReader(qrBytes))
+			pdf.ImageOptions(imageName, startX+144, startY+4, 28, 28, false, imageOpts, 0, "")
+		}
+	}
+
+	pdf.SetY(startY + boxHeight + 3)
 }
 
 func renderOptionalTextBlock(pdf *gofpdf.Fpdf, fontFamily, title, content string, visible bool) {

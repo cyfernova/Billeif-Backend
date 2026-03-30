@@ -18,7 +18,7 @@ import (
 )
 
 func TestTaxComplianceService_FetchGSTINFallback(t *testing.T) {
-	svc := NewTaxComplianceService(nil, nil, nil, nil, nil, logger.New())
+	svc := NewTaxComplianceService(nil, nil, nil, nil, nil, nil, nil, nil, nil, logger.New())
 
 	result, err := svc.FetchGSTIN(context.Background(), "29ABCDE1234F1Z5")
 	require.NoError(t, err)
@@ -138,7 +138,7 @@ func newTaxComplianceTestService(t *testing.T) (*TaxComplianceService, *gorm.DB,
 	var customerRepo interfaces.CustomerRepository = postgresrepo.NewCustomerRepository(db)
 	var vendorRepo interfaces.VendorRepository = postgresrepo.NewVendorRepository(db)
 
-	return NewTaxComplianceService(nil, db, businessRepo, customerRepo, vendorRepo, logger.New()), db, business.ID
+	return NewTaxComplianceService(nil, db, businessRepo, customerRepo, vendorRepo, nil, nil, nil, nil, logger.New()), db, business.ID
 }
 
 func createTaxComplianceTestSchema(t *testing.T, db *gorm.DB) {

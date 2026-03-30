@@ -85,6 +85,24 @@ resource "aws_cloudwatch_metric_alarm" "lambda_payment_errors" {
   }
 }
 
+resource "aws_cloudwatch_metric_alarm" "lambda_gst_errors" {
+  alarm_name          = "${var.project_name}-lambda-gst-errors"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "Errors"
+  namespace           = "AWS/Lambda"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 3
+  alarm_description   = "GST worker Lambda error count is high"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    FunctionName = aws_lambda_function.sqs_gst.function_name
+  }
+}
+
 resource "aws_cloudwatch_metric_alarm" "rds_cpu_high" {
   alarm_name          = "${var.project_name}-rds-cpu-high"
   comparison_operator = "GreaterThanThreshold"
@@ -139,6 +157,7 @@ resource "aws_cloudwatch_dashboard" "main" {
             ["AWS/Lambda", "Invocations", "FunctionName", aws_lambda_function.api_http.function_name],
             [".", "Invocations", "FunctionName", aws_lambda_function.sqs_invoice.function_name],
             [".", "Invocations", "FunctionName", aws_lambda_function.sqs_payment.function_name],
+            [".", "Invocations", "FunctionName", aws_lambda_function.sqs_gst.function_name],
             [".", "Invocations", "FunctionName", aws_lambda_function.ws_handler.function_name]
           ]
           stat   = "Sum"
@@ -158,6 +177,7 @@ resource "aws_cloudwatch_dashboard" "main" {
             ["AWS/Lambda", "Errors", "FunctionName", aws_lambda_function.api_http.function_name],
             [".", "Errors", "FunctionName", aws_lambda_function.sqs_invoice.function_name],
             [".", "Errors", "FunctionName", aws_lambda_function.sqs_payment.function_name],
+            [".", "Errors", "FunctionName", aws_lambda_function.sqs_gst.function_name],
             [".", "Errors", "FunctionName", aws_lambda_function.ws_handler.function_name]
           ]
           stat   = "Sum"

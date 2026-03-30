@@ -11,12 +11,13 @@ import (
 )
 
 type InvoiceHandler struct {
-	svc *services.InvoiceService
-	log *logger.Logger
+	svc        *services.InvoiceService
+	compliance *services.TaxComplianceService
+	log        *logger.Logger
 }
 
-func NewInvoiceHandler(svc *services.InvoiceService, log *logger.Logger) *InvoiceHandler {
-	return &InvoiceHandler{svc: svc, log: log}
+func NewInvoiceHandler(svc *services.InvoiceService, compliance *services.TaxComplianceService, log *logger.Logger) *InvoiceHandler {
+	return &InvoiceHandler{svc: svc, compliance: compliance, log: log}
 }
 
 // Create creates a new invoice
@@ -44,6 +45,7 @@ func (h *InvoiceHandler) Create(c *gin.Context) {
 		return
 	}
 	input.BusinessID = businessID
+	requestContextWithActor(c)
 
 	var invoice *models.Invoice
 	invoice, err := h.svc.CreateByBusiness(c.Request.Context(), businessID, input)
@@ -149,6 +151,7 @@ func (h *InvoiceHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	requestContextWithActor(c)
 
 	var invoice *models.Invoice
 	invoice, err := h.svc.UpdateByBusiness(c.Request.Context(), businessID, id, input)
@@ -183,6 +186,7 @@ func (h *InvoiceHandler) Delete(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
+	requestContextWithActor(c)
 	if err := h.svc.DeleteByBusiness(c.Request.Context(), businessID, id); err != nil {
 		log.Error("failed to delete invoice", "error", err, "invoice_id", id)
 		if isNotFoundErr(err) {
@@ -214,6 +218,7 @@ func (h *InvoiceHandler) Send(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
+	requestContextWithActor(c)
 	if err := h.svc.SendByBusiness(c.Request.Context(), businessID, id); err != nil {
 		log.Error("failed to send invoice", "error", err, "invoice_id", id)
 		if isNotFoundErr(err) {
@@ -258,6 +263,25 @@ func (h *InvoiceHandler) GetPDF(c *gin.Context) {
 	log.Debug("invoice PDF URL fetched", "invoice_id", id)
 
 	c.JSON(http.StatusOK, gin.H{"pdf_url": url})
+}
+
+func (h *InvoiceHandler) GenerateEInvoice(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	idempotencyKey, ok := requireIdempotencyKey(c)
+	if !ok {
+		return
+	}
+	var input services.GenerateEInvoiceInput
+	_ = c.ShouldBindJSON(&input)
+	job, err := h.compliance.GenerateEInvoiceByDocument(c.Request.Context(), businessID, c.Param("id"), idempotencyKey, input)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusAccepted, job)
 }
 
 // NextNumber returns the next available invoice number

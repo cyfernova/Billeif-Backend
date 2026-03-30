@@ -33,12 +33,12 @@ type Filters struct {
 }
 
 type Query struct {
-	BusinessID string  `json:"-"`
-	UserID     string  `json:"-"`
-	Page       int     `json:"page,omitempty"`
-	Limit      int     `json:"limit,omitempty"`
+	BusinessID string   `json:"-"`
+	UserID     string   `json:"-"`
+	Page       int      `json:"page,omitempty"`
+	Limit      int      `json:"limit,omitempty"`
 	Columns    []string `json:"columns,omitempty"`
-	Filters    Filters `json:"filters,omitempty"`
+	Filters    Filters  `json:"filters,omitempty"`
 }
 
 type Pagination struct {

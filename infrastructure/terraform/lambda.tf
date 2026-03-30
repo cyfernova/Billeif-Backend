@@ -9,6 +9,7 @@ locals {
     a2a_stream        = "${var.lambda_artifact_dir}/a2a-stream.zip"
     sqs_invoice       = "${var.lambda_artifact_dir}/sqs-invoice.zip"
     sqs_payment       = "${var.lambda_artifact_dir}/sqs-payment.zip"
+    sqs_gst           = "${var.lambda_artifact_dir}/sqs-gst.zip"
     ws_handler        = "${var.lambda_artifact_dir}/ws.zip"
     custom_sms_sender = "${var.lambda_artifact_dir}/custom-sms-sender.zip"
   }
@@ -36,6 +37,7 @@ locals {
     S3_BUCKET_EMAIL_SINK             = aws_s3_bucket.email_sink.id
     SQS_INVOICE_QUEUE                = aws_sqs_queue.invoice_processing.url
     SQS_PAYMENT_QUEUE                = aws_sqs_queue.payment_processing.url
+    SQS_GST_QUEUE                    = aws_sqs_queue.gst_processing.url
     COGNITO_USER_POOL_ID             = aws_cognito_user_pool.main.id
     COGNITO_CLIENT_ID                = aws_cognito_user_pool_client.main.id
     COGNITO_REGION                   = var.aws_region
@@ -66,6 +68,11 @@ resource "aws_cloudwatch_log_group" "lambda_sqs_invoice" {
 
 resource "aws_cloudwatch_log_group" "lambda_sqs_payment" {
   name              = "/aws/lambda/${var.project_name}-sqs-payment"
+  retention_in_days = var.log_retention_days
+}
+
+resource "aws_cloudwatch_log_group" "lambda_sqs_gst" {
+  name              = "/aws/lambda/${var.project_name}-sqs-gst"
   retention_in_days = var.log_retention_days
 }
 
@@ -192,6 +199,35 @@ resource "aws_lambda_function" "sqs_payment" {
   depends_on = [aws_cloudwatch_log_group.lambda_sqs_payment]
 }
 
+resource "aws_lambda_function" "sqs_gst" {
+  function_name    = "${var.project_name}-sqs-gst"
+  role             = aws_iam_role.lambda_exec.arn
+  runtime          = "provided.al2023"
+  handler          = "bootstrap"
+  architectures    = ["arm64"]
+  filename         = local.lambda_artifacts.sqs_gst
+  source_code_hash = local.lambda_artifact_hashes.sqs_gst
+  memory_size      = 512
+  timeout          = 60
+
+  reserved_concurrent_executions = var.enable_lambda_reserved_concurrency ? 2 : null
+
+  environment {
+    variables = merge(local.common_lambda_env, {
+      WEBSOCKET_API_ENDPOINT = local.websocket_api_invoke_url
+    })
+  }
+
+  lifecycle {
+    precondition {
+      condition     = fileexists(local.lambda_artifacts.sqs_gst)
+      error_message = "Missing Lambda artifact ${local.lambda_artifacts.sqs_gst}. Run make package-lambda from the repository root before running Terraform."
+    }
+  }
+
+  depends_on = [aws_cloudwatch_log_group.lambda_sqs_gst]
+}
+
 resource "aws_lambda_function" "ws_handler" {
   function_name    = "${var.project_name}-ws-handler"
   role             = aws_iam_role.lambda_exec.arn
@@ -243,6 +279,14 @@ resource "aws_lambda_event_source_mapping" "invoice_queue" {
 resource "aws_lambda_event_source_mapping" "payment_queue" {
   event_source_arn                   = aws_sqs_queue.payment_processing.arn
   function_name                      = aws_lambda_function.sqs_payment.arn
+  batch_size                         = 10
+  function_response_types            = ["ReportBatchItemFailures"]
+  maximum_batching_window_in_seconds = 5
+}
+
+resource "aws_lambda_event_source_mapping" "gst_queue" {
+  event_source_arn                   = aws_sqs_queue.gst_processing.arn
+  function_name                      = aws_lambda_function.sqs_gst.arn
   batch_size                         = 10
   function_response_types            = ["ReportBatchItemFailures"]
   maximum_batching_window_in_seconds = 5

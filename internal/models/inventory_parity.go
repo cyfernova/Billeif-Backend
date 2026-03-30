@@ -75,7 +75,9 @@ type ProductVariant struct {
 	TrackBatches      bool           `gorm:"default:false" json:"track_batches"`
 	TrackSerials      bool           `gorm:"default:false" json:"track_serials"`
 	Price             float64        `gorm:"type:decimal(15,2);default:0" json:"price"`
+	MRP               float64        `gorm:"type:decimal(15,2);default:0" json:"mrp"`
 	CostPrice         float64        `gorm:"type:decimal(15,2);default:0" json:"cost_price"`
+	DefaultCessRate   float64        `gorm:"type:decimal(7,3);default:0" json:"default_cess_rate"`
 	StockLevel        float64        `gorm:"type:decimal(15,3);default:0" json:"stock_level"`
 	ReservedLevel     float64        `gorm:"type:decimal(15,3);default:0" json:"reserved_level"`
 	LowStockThreshold float64        `gorm:"type:decimal(15,3);default:0" json:"low_stock_threshold"`
@@ -135,6 +137,7 @@ type ProductWarehouseCatalog struct {
 	IsVisible     bool           `gorm:"default:true" json:"is_visible"`
 	IsActive      bool           `gorm:"default:true" json:"is_active"`
 	PriceOverride *float64       `gorm:"type:decimal(15,2)" json:"price_override,omitempty"`
+	PriceListID   *string        `gorm:"index" json:"price_list_id,omitempty" validate:"omitempty,uuid"`
 	CreatedAt     time.Time      `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt     time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
 	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`

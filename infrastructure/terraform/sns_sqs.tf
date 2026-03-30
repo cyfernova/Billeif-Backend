@@ -96,6 +96,12 @@ resource "aws_sqs_queue" "payment_processing" {
   visibility_timeout_seconds = var.worker_queue_visibility_timeout_seconds
 }
 
+resource "aws_sqs_queue" "gst_processing" {
+  name                       = "gst-processing-queue"
+  message_retention_seconds  = 86400
+  visibility_timeout_seconds = var.worker_queue_visibility_timeout_seconds
+}
+
 # Workflow Run Queue
 resource "aws_sqs_queue" "workflow_runs" {
   name                       = "workflow-runs-queue"
@@ -109,6 +115,10 @@ resource "aws_sqs_queue" "invoice_processing_dlq" {
 
 resource "aws_sqs_queue" "payment_processing_dlq" {
   name = "payment-processing-dlq"
+}
+
+resource "aws_sqs_queue" "gst_processing_dlq" {
+  name = "gst-processing-dlq"
 }
 
 resource "aws_sqs_queue" "workflow_runs_dlq" {
@@ -128,6 +138,14 @@ resource "aws_sqs_queue_redrive_allow_policy" "payment_processing_dlq" {
   redrive_allow_policy = jsonencode({
     redrivePermission = "byQueue",
     sourceQueueArns   = [aws_sqs_queue.payment_processing.arn]
+  })
+}
+
+resource "aws_sqs_queue_redrive_allow_policy" "gst_processing_dlq" {
+  queue_url = aws_sqs_queue.gst_processing_dlq.id
+  redrive_allow_policy = jsonencode({
+    redrivePermission = "byQueue",
+    sourceQueueArns   = [aws_sqs_queue.gst_processing.arn]
   })
 }
 
@@ -151,6 +169,14 @@ resource "aws_sqs_queue_redrive_policy" "payment_processing" {
   queue_url = aws_sqs_queue.payment_processing.id
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.payment_processing_dlq.arn
+    maxReceiveCount     = 3
+  })
+}
+
+resource "aws_sqs_queue_redrive_policy" "gst_processing" {
+  queue_url = aws_sqs_queue.gst_processing.id
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.gst_processing_dlq.arn
     maxReceiveCount     = 3
   })
 }

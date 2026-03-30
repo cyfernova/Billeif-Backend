@@ -25,11 +25,6 @@ const docTemplate = `{
     "paths": {
         "/admin/local-emails": {
             "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
                 "description": "[Admin Only] Returns a list of all emails captured by the system (for development/testing).",
                 "produces": [
                     "application/json"
@@ -73,16 +68,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/config": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/config": {
+            "get": {
                 "description": "Returns all agent configurations for the authenticated user.",
                 "produces": [
                     "application/json"
@@ -108,14 +103,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Create or update a bargaining agent configuration for buyer or seller agents.",
                 "consumes": [
                     "application/json"
@@ -172,16 +167,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/config/default": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/config/default": {
+            "post": {
                 "description": "Creates a default bargaining configuration for a buyer or seller agent.",
                 "consumes": [
                     "application/json"
@@ -238,16 +233,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/config/mentee/export": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/config/mentee/export": {
+            "get": {
                 "description": "Exports all mentee learning data as a JSON file.",
                 "tags": [
                     "Agent Configuration"
@@ -269,16 +264,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/config/mentee/import": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/config/mentee/import": {
+            "post": {
                 "description": "Imports mentee learning data from a JSON file.",
                 "tags": [
                     "Agent Configuration"
@@ -321,16 +316,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/config/mentee/learning/{agent_id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/config/mentee/learning/{agent_id}": {
+            "get": {
                 "description": "Returns the mentee's learning data for a specific agent.",
                 "produces": [
                     "application/json"
@@ -364,14 +359,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Resets the mentee's learning data for a specific agent.",
                 "tags": [
                     "Agent Configuration"
@@ -399,16 +394,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/config/mentee/recommendation/{negotiation_id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/config/mentee/recommendation/{negotiation_id}": {
+            "get": {
                 "description": "Returns the mentee's recommendation for the next bargaining action.",
                 "produces": [
                     "application/json"
@@ -471,16 +466,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/config/{agent_id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/config/{agent_id}": {
+            "get": {
                 "description": "Returns the configuration for a specific agent.",
                 "produces": [
                     "application/json"
@@ -523,14 +518,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Update the bargaining configuration for a specific agent.",
                 "consumes": [
                     "application/json"
@@ -594,14 +589,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Deletes the configuration for a specific agent.",
                 "tags": [
                     "Agent Configuration"
@@ -620,16 +615,16 @@ const docTemplate = `{
                     "204": {
                         "description": "No Content"
                     }
-                }
-            }
-        },
-        "/auth/change-password": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/auth/change-password": {
+            "post": {
                 "description": "Change the password of the authenticated user.",
                 "consumes": [
                     "application/json"
@@ -680,7 +675,12 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
             }
         },
         "/auth/forgot-password": {
@@ -722,11 +722,6 @@ const docTemplate = `{
         },
         "/auth/google": {
             "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
                 "description": "Sync user data from Google after successful OAuth authentication.",
                 "produces": [
                     "application/json"
@@ -761,7 +756,12 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
             }
         },
         "/auth/login": {
@@ -809,11 +809,6 @@ const docTemplate = `{
         },
         "/auth/logout": {
             "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
                 "description": "Revoke the user's access token and end the session.",
                 "produces": [
                     "application/json"
@@ -841,16 +836,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/auth/me": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/auth/me": {
+            "get": {
                 "description": "Returns the profile information of the authenticated user.",
                 "produces": [
                     "application/json"
@@ -885,16 +880,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/auth/profile": {
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/auth/profile": {
+            "put": {
                 "description": "Update the profile information of the authenticated user.",
                 "consumes": [
                     "application/json"
@@ -943,16 +938,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/auth/profile-picture": {
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/auth/profile-picture": {
+            "put": {
                 "description": "Updates the user's profile picture URL after successful upload.",
                 "consumes": [
                     "application/json"
@@ -1006,14 +1001,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Returns a presigned S3 URL to upload a profile picture.",
                 "produces": [
                     "application/json"
@@ -1049,7 +1044,12 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
             }
         },
         "/auth/refresh": {
@@ -1283,11 +1283,6 @@ const docTemplate = `{
         },
         "/bargaining/negotiations": {
             "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
                 "description": "Returns a list of negotiations belonging to the authenticated user.",
                 "produces": [
                     "application/json"
@@ -1329,14 +1324,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Create a new bargaining negotiation between buyer and seller agents.",
                 "consumes": [
                     "application/json"
@@ -1384,16 +1379,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/bargaining/negotiations/llm-decision": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/bargaining/negotiations/llm-decision": {
+            "get": {
                 "consumes": [
                     "application/json"
                 ],
@@ -1457,16 +1452,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/bargaining/negotiations/llm-summary": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/bargaining/negotiations/llm-summary": {
+            "get": {
                 "produces": [
                     "application/json"
                 ],
@@ -1509,16 +1504,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/bargaining/negotiations/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/bargaining/negotiations/{id}": {
+            "get": {
                 "description": "Returns the details of a specific negotiation.",
                 "produces": [
                     "application/json"
@@ -1552,16 +1547,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/bargaining/negotiations/{id}/counteroffer": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/bargaining/negotiations/{id}/counteroffer": {
+            "post": {
                 "description": "Submit a counter offer, accept, or reject a negotiation round.",
                 "consumes": [
                     "application/json"
@@ -1635,16 +1630,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/bargaining/negotiations/{id}/rounds": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/bargaining/negotiations/{id}/rounds": {
+            "get": {
                 "description": "Returns all rounds for a specific negotiation.",
                 "produces": [
                     "application/json"
@@ -1679,16 +1674,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/bargaining/negotiations/{id}/suggest": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/bargaining/negotiations/{id}/suggest": {
+            "get": {
                 "description": "Returns a suggested counter offer amount based on negotiation state and agent type.",
                 "produces": [
                     "application/json"
@@ -1743,16 +1738,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/business-profiles": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/business-profiles": {
+            "get": {
                 "description": "Returns a list of business profiles belonging to the authenticated user.",
                 "produces": [
                     "application/json"
@@ -1803,14 +1798,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Create a new business profile for the authenticated user.",
                 "consumes": [
                     "application/json"
@@ -1867,16 +1862,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/business-profiles/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/business-profiles/{id}": {
+            "get": {
                 "description": "Returns the profile information of a specific business.",
                 "produces": [
                     "application/json"
@@ -1910,14 +1905,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Update the profile information of a specific business.",
                 "consumes": [
                     "application/json"
@@ -1972,14 +1967,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Remove a specific business profile.",
                 "produces": [
                     "application/json"
@@ -2010,16 +2005,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/business-profiles/{id}/logo": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/business-profiles/{id}/logo": {
+            "post": {
                 "description": "Returns a presigned S3 URL to upload a business logo.",
                 "produces": [
                     "application/json"
@@ -2062,16 +2057,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/customers": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/customers": {
+            "get": {
                 "description": "Returns a list of customers belonging to a specific business.",
                 "produces": [
                     "application/json"
@@ -2129,14 +2124,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Create a new customer for a business.",
                 "consumes": [
                     "application/json"
@@ -2184,16 +2179,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/customers/export": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/customers/export": {
+            "get": {
                 "description": "Returns a list of all customers for a business in JSON format.",
                 "produces": [
                     "application/json"
@@ -2239,16 +2234,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/customers/import": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/customers/import": {
+            "post": {
                 "description": "Batch import multiple customers for a business.",
                 "consumes": [
                     "application/json"
@@ -2309,16 +2304,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/customers/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/customers/{id}": {
+            "get": {
                 "description": "Returns the details of a specific customer.",
                 "produces": [
                     "application/json"
@@ -2352,14 +2347,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Update the details of a specific customer.",
                 "consumes": [
                     "application/json"
@@ -2414,14 +2409,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Remove a specific customer.",
                 "produces": [
                     "application/json"
@@ -2452,16 +2447,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents": {
+            "get": {
                 "description": "Search for agents using various filters like type, capability, jurisdiction, and currency.",
                 "produces": [
                     "application/json"
@@ -2533,16 +2528,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/by-capability": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/by-capability": {
+            "get": {
                 "description": "Retrieve agents that have specific capabilities.",
                 "produces": [
                     "application/json"
@@ -2604,16 +2599,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/public": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/public": {
+            "get": {
                 "description": "Retrieve all publicly available agents with pagination.",
                 "produces": [
                     "application/json"
@@ -2655,16 +2650,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/register": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/register": {
+            "post": {
                 "description": "Register an agent in the discovery registry.",
                 "consumes": [
                     "application/json"
@@ -2713,16 +2708,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/verified": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/verified": {
+            "get": {
                 "description": "Retrieve all verified agents, optionally filtered by type.",
                 "produces": [
                     "application/json"
@@ -2770,16 +2765,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/{agentID}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/{agentID}": {
+            "get": {
                 "description": "Retrieve a specific agent's registry entry by agent ID.",
                 "produces": [
                     "application/json"
@@ -2814,16 +2809,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/{registryID}/activate": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/{registryID}/activate": {
+            "post": {
                 "description": "Activate a previously deactivated agent. Requires admin role.",
                 "produces": [
                     "application/json"
@@ -2860,16 +2855,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/{registryID}/deactivate": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/{registryID}/deactivate": {
+            "post": {
                 "description": "Deactivate an agent in the registry. Requires admin role.",
                 "produces": [
                     "application/json"
@@ -2906,16 +2901,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/{registryID}/health-check": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/{registryID}/health-check": {
+            "post": {
                 "description": "Perform a health check on a registered agent. Requires admin role.",
                 "produces": [
                     "application/json"
@@ -2952,16 +2947,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/{registryID}/inquiry": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/{registryID}/inquiry": {
+            "post": {
                 "description": "Record an inquiry event for a registered agent.",
                 "produces": [
                     "application/json"
@@ -2998,16 +2993,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/{registryID}/integration": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/{registryID}/integration": {
+            "post": {
                 "description": "Record an integration event for a registered agent.",
                 "produces": [
                     "application/json"
@@ -3044,16 +3039,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/{registryID}/rate": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/{registryID}/rate": {
+            "post": {
                 "description": "Submit a rating and optional review for an agent.",
                 "consumes": [
                     "application/json"
@@ -3111,16 +3106,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/{registryID}/unverify": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/{registryID}/unverify": {
+            "post": {
                 "description": "Remove verification from an agent. Requires admin role.",
                 "produces": [
                     "application/json"
@@ -3157,16 +3152,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/{registryID}/verify": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/{registryID}/verify": {
+            "post": {
                 "description": "Mark an agent as verified. Requires admin role.",
                 "produces": [
                     "application/json"
@@ -3203,16 +3198,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/invoices": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/invoices": {
+            "get": {
                 "description": "Returns a list of invoices belonging to a specific business.",
                 "produces": [
                     "application/json"
@@ -3270,14 +3265,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Create a new invoice for a business and customer.",
                 "consumes": [
                     "application/json"
@@ -3325,16 +3320,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/invoices/next-number": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/invoices/next-number": {
+            "get": {
                 "description": "Returns the incremented invoice number for the next invoice to be created.",
                 "produces": [
                     "application/json"
@@ -3380,16 +3375,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/invoices/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/invoices/{id}": {
+            "get": {
                 "description": "Returns the details of a specific invoice.",
                 "produces": [
                     "application/json"
@@ -3423,14 +3418,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Update the details of a specific invoice.",
                 "consumes": [
                     "application/json"
@@ -3485,14 +3480,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Remove a specific invoice.",
                 "produces": [
                     "application/json"
@@ -3523,16 +3518,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/invoices/{id}/pdf": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/invoices/{id}/pdf": {
+            "get": {
                 "description": "Returns a presigned S3 URL to download the invoice in PDF format.",
                 "produces": [
                     "application/json"
@@ -3569,16 +3564,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/invoices/{id}/send": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/invoices/{id}/send": {
+            "post": {
                 "description": "Trigger the delivery of an invoice to the customer (e.g., via email).",
                 "produces": [
                     "application/json"
@@ -3615,16 +3610,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/ledger": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/ledger": {
+            "get": {
                 "description": "Returns a list of general ledger entries for a specific business.",
                 "produces": [
                     "application/json"
@@ -3682,16 +3677,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/ledger/balance": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/ledger/balance": {
+            "get": {
                 "description": "Returns the total balance for a specific business from the general ledger.",
                 "produces": [
                     "application/json"
@@ -3738,16 +3733,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/marketplace/merchant/products": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/marketplace/merchant/products": {
+            "get": {
                 "description": "Retrieve all products belonging to a specific merchant agent.",
                 "produces": [
                     "application/json"
@@ -3805,14 +3800,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Add a new product to the marketplace for a merchant agent.",
                 "consumes": [
                     "application/json"
@@ -3867,16 +3862,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/marketplace/merchant/products/{id}": {
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/marketplace/merchant/products/{id}": {
+            "put": {
                 "description": "Update an existing marketplace product.",
                 "consumes": [
                     "application/json"
@@ -3943,16 +3938,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/marketplace/orders": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/marketplace/orders": {
+            "get": {
                 "description": "Retrieve orders for the authenticated user, optionally filtered by status.",
                 "produces": [
                     "application/json"
@@ -4000,16 +3995,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/marketplace/orders/status/{status}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/marketplace/orders/status/{status}": {
+            "get": {
                 "description": "Retrieve orders for the authenticated user filtered by a specific status.",
                 "produces": [
                     "application/json"
@@ -4058,16 +4053,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/marketplace/products": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/marketplace/products": {
+            "get": {
                 "description": "List marketplace products with optional category and agent filters.",
                 "produces": [
                     "application/json"
@@ -4121,16 +4116,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/marketplace/products/available": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/marketplace/products/available": {
+            "get": {
                 "description": "Retrieve all currently available marketplace products.",
                 "produces": [
                     "application/json"
@@ -4172,16 +4167,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/marketplace/products/search": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/marketplace/products/search": {
+            "get": {
                 "description": "Search marketplace products by query string.",
                 "produces": [
                     "application/json"
@@ -4229,16 +4224,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/marketplace/products/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/marketplace/products/{id}": {
+            "get": {
                 "description": "Retrieve a specific marketplace product by its ID.",
                 "produces": [
                     "application/json"
@@ -4272,16 +4267,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/marketplace/stats": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/marketplace/stats": {
+            "get": {
                 "description": "Retrieve overall marketplace statistics.",
                 "produces": [
                     "application/json"
@@ -4307,16 +4302,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/payments": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/payments": {
+            "get": {
                 "description": "Returns a list of payments recorded for a specific invoice.",
                 "produces": [
                     "application/json"
@@ -4374,14 +4369,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Record a new payment for an invoice.",
                 "consumes": [
                     "application/json"
@@ -4429,16 +4424,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/payments/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/payments/{id}": {
+            "get": {
                 "description": "Returns the details of a specific payment.",
                 "produces": [
                     "application/json"
@@ -4472,14 +4467,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Update the details of a specific payment.",
                 "consumes": [
                     "application/json"
@@ -4534,14 +4529,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Remove a specific payment record.",
                 "produces": [
                     "application/json"
@@ -4572,16 +4567,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/products": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/products": {
+            "get": {
                 "description": "Returns a list of products belonging to a specific business.",
                 "produces": [
                     "application/json"
@@ -4639,14 +4634,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Create a new product for a business.",
                 "consumes": [
                     "application/json"
@@ -4694,16 +4689,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/products/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/products/{id}": {
+            "get": {
                 "description": "Returns the details of a specific product.",
                 "produces": [
                     "application/json"
@@ -4737,14 +4732,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Update the details of a specific product.",
                 "consumes": [
                     "application/json"
@@ -4799,14 +4794,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Remove a specific product.",
                 "produces": [
                     "application/json"
@@ -4837,16 +4832,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/products/{id}/image": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/products/{id}/image": {
+            "post": {
                 "description": "Returns a presigned S3 URL to upload a product image.",
                 "produces": [
                     "application/json"
@@ -4889,16 +4884,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/products/{id}/stock": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/products/{id}/stock": {
+            "post": {
                 "description": "Add or remove stock for a specific product.",
                 "consumes": [
                     "application/json"
@@ -4953,16 +4948,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/subscriptions": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/subscriptions": {
+            "get": {
                 "description": "Returns the subscription details for the authenticated business.",
                 "produces": [
                     "application/json"
@@ -5004,14 +4999,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Update the subscription plan or status for a business.",
                 "consumes": [
                     "application/json"
@@ -5065,14 +5060,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Create a new subscription plan for a business.",
                 "consumes": [
                     "application/json"
@@ -5120,16 +5115,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/teams": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/teams": {
+            "get": {
                 "description": "Returns a list of team members belonging to a specific business.",
                 "produces": [
                     "application/json"
@@ -5187,14 +5182,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Add a new team member to a business.",
                 "consumes": [
                     "application/json"
@@ -5242,16 +5237,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/teams/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/teams/{id}": {
+            "get": {
                 "description": "Returns the details of a specific team member.",
                 "produces": [
                     "application/json"
@@ -5285,14 +5280,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Update the details of a specific team member.",
                 "consumes": [
                     "application/json"
@@ -5347,14 +5342,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Remove a specific team member from a business.",
                 "produces": [
                     "application/json"
@@ -5385,16 +5380,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/vendors": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/vendors": {
+            "get": {
                 "description": "Returns a list of vendors belonging to a specific business.",
                 "produces": [
                     "application/json"
@@ -5452,14 +5447,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Create a new vendor for a business.",
                 "consumes": [
                     "application/json"
@@ -5507,16 +5502,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/vendors/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/vendors/{id}": {
+            "get": {
                 "description": "Returns the details of a specific vendor.",
                 "produces": [
                     "application/json"
@@ -5550,14 +5545,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Update the details of a specific vendor.",
                 "consumes": [
                     "application/json"
@@ -5612,14 +5607,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Remove a specific vendor.",
                 "produces": [
                     "application/json"
@@ -5650,16 +5645,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/webhooks": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/webhooks": {
+            "get": {
                 "description": "Returns a list of webhook subscriptions for a specific business.",
                 "produces": [
                     "application/json"
@@ -5703,14 +5698,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Register a new webhook URL for event notifications.",
                 "consumes": [
                     "application/json"
@@ -5758,16 +5753,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/webhooks/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/webhooks/{id}": {
+            "get": {
                 "description": "Returns the details of a specific webhook subscription.",
                 "produces": [
                     "application/json"
@@ -5801,14 +5796,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Update the details of a specific webhook subscription.",
                 "consumes": [
                     "application/json"
@@ -5863,14 +5858,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Remove a specific webhook subscription.",
                 "produces": [
                     "application/json"
@@ -5901,7 +5896,12 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
             }
         }
     },
@@ -5964,7 +5964,9 @@ const docTemplate = `{
                     "type": "string",
                     "enum": [
                         "buyer",
-                        "seller"
+                        "seller",
+                        "shopping",
+                        "merchant"
                     ]
                 }
             }
@@ -5988,7 +5990,7 @@ const docTemplate = `{
                 },
                 "max_rounds": {
                     "type": "integer",
-                    "maximum": 10,
+                    "maximum": 20,
                     "minimum": 1
                 },
                 "seller_agent_id": {
@@ -6139,6 +6141,9 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/models.MarketplaceProduct"
                     }
+                },
+                "marketplace_role": {
+                    "type": "string"
                 },
                 "name": {
                     "type": "string",
@@ -6310,7 +6315,7 @@ const docTemplate = `{
                 },
                 "max_rounds": {
                     "type": "integer",
-                    "maximum": 10,
+                    "maximum": 20,
                     "minimum": 1
                 },
                 "metadata": {
@@ -6360,9 +6365,16 @@ const docTemplate = `{
                 "address": {
                     "type": "string"
                 },
+                "business_state_code": {
+                    "type": "string",
+                    "maxLength": 10
+                },
                 "city": {
                     "type": "string",
                     "maxLength": 100
+                },
+                "composition_enabled": {
+                    "type": "boolean"
                 },
                 "country": {
                     "type": "string",
@@ -6374,8 +6386,27 @@ const docTemplate = `{
                 "currency": {
                     "type": "string"
                 },
+                "default_gst_treatment": {
+                    "type": "string"
+                },
                 "email": {
                     "type": "string"
+                },
+                "export_lut_enabled": {
+                    "type": "boolean"
+                },
+                "gst_filing_frequency": {
+                    "type": "string"
+                },
+                "gst_registered": {
+                    "type": "boolean"
+                },
+                "gst_tds_enabled": {
+                    "type": "boolean"
+                },
+                "gstin": {
+                    "type": "string",
+                    "maxLength": 20
                 },
                 "id": {
                     "type": "string"
@@ -6391,6 +6422,9 @@ const docTemplate = `{
                     "maxLength": 255,
                     "minLength": 2
                 },
+                "numbering_rules": {
+                    "type": "string"
+                },
                 "owner_id": {
                     "type": "string"
                 },
@@ -6402,6 +6436,9 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 20
                 },
+                "sez_enabled": {
+                    "type": "boolean"
+                },
                 "state": {
                     "type": "string",
                     "maxLength": 100
@@ -6409,6 +6446,9 @@ const docTemplate = `{
                 "tax_id": {
                     "type": "string",
                     "maxLength": 100
+                },
+                "tax_preferences_json": {
+                    "type": "string"
                 },
                 "updated_at": {
                     "type": "string"
@@ -6475,12 +6515,18 @@ const docTemplate = `{
                 "address": {
                     "type": "string"
                 },
+                "billing_address_json": {
+                    "type": "string"
+                },
                 "business_id": {
                     "type": "string"
                 },
                 "city": {
                     "type": "string",
                     "maxLength": 100
+                },
+                "company_name": {
+                    "type": "string"
                 },
                 "country": {
                     "type": "string",
@@ -6493,9 +6539,16 @@ const docTemplate = `{
                     "type": "number",
                     "minimum": 0
                 },
+                "default_price_list_id": {
+                    "type": "string"
+                },
                 "email": {
                     "type": "string",
                     "maxLength": 255
+                },
+                "gstin": {
+                    "type": "string",
+                    "maxLength": 20
                 },
                 "id": {
                     "type": "string"
@@ -6508,6 +6561,10 @@ const docTemplate = `{
                 "notes": {
                     "type": "string"
                 },
+                "pan": {
+                    "type": "string",
+                    "maxLength": 10
+                },
                 "phone": {
                     "type": "string",
                     "maxLength": 50
@@ -6516,15 +6573,28 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 20
                 },
+                "preferences_json": {
+                    "type": "string"
+                },
+                "shipping_address_json": {
+                    "type": "string"
+                },
                 "state": {
                     "type": "string",
                     "maxLength": 100
+                },
+                "state_code": {
+                    "type": "string",
+                    "maxLength": 10
                 },
                 "tax_id": {
                     "type": "string",
                     "maxLength": 100
                 },
                 "updated_at": {
+                    "type": "string"
+                },
+                "withholding_defaults_json": {
                     "type": "string"
                 }
             }
@@ -6572,6 +6642,9 @@ const docTemplate = `{
                 "total"
             ],
             "properties": {
+                "additional_charges": {
+                    "type": "string"
+                },
                 "balance_due": {
                     "type": "number",
                     "minimum": 0
@@ -6583,6 +6656,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "currency": {
+                    "type": "string"
+                },
+                "custom_fields": {
                     "type": "string"
                 },
                 "customer_id": {
@@ -6614,6 +6690,12 @@ const docTemplate = `{
                 "notes": {
                     "type": "string"
                 },
+                "origin_run_id": {
+                    "type": "string"
+                },
+                "origin_subscription_id": {
+                    "type": "string"
+                },
                 "paid_amount": {
                     "type": "number",
                     "minimum": 0
@@ -6627,7 +6709,22 @@ const docTemplate = `{
                 "pdf_url": {
                     "type": "string"
                 },
+                "price_list_id": {
+                    "type": "string"
+                },
+                "project_id": {
+                    "type": "string"
+                },
                 "sent_at": {
+                    "type": "string"
+                },
+                "sign_metadata": {
+                    "type": "string"
+                },
+                "signed_at": {
+                    "type": "string"
+                },
+                "signed_by_profile_id": {
                     "type": "string"
                 },
                 "status": {
@@ -6649,6 +6746,9 @@ const docTemplate = `{
                     "type": "number",
                     "minimum": 0
                 },
+                "tax_profile": {
+                    "type": "string"
+                },
                 "total": {
                     "type": "number"
                 },
@@ -6667,7 +6767,22 @@ const docTemplate = `{
                 "unit_price"
             ],
             "properties": {
+                "batch_allocations": {
+                    "type": "string"
+                },
+                "cess_amount": {
+                    "type": "number"
+                },
+                "cess_rate": {
+                    "type": "number"
+                },
+                "charge_snapshot": {
+                    "type": "string"
+                },
                 "created_at": {
+                    "type": "string"
+                },
+                "custom_fields": {
                     "type": "string"
                 },
                 "description": {
@@ -6677,17 +6792,26 @@ const docTemplate = `{
                     "type": "number",
                     "minimum": 0
                 },
+                "free_quantity": {
+                    "type": "number"
+                },
                 "id": {
                     "type": "string"
                 },
                 "invoice_id": {
                     "type": "string"
                 },
+                "mrp": {
+                    "type": "number"
+                },
                 "product_id": {
                     "type": "string"
                 },
                 "quantity": {
                     "type": "number"
+                },
+                "serial_ids": {
+                    "type": "string"
                 },
                 "tax_rate": {
                     "type": "number",
@@ -6701,6 +6825,12 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "updated_at": {
+                    "type": "string"
+                },
+                "variant_id": {
+                    "type": "string"
+                },
+                "warehouse_id": {
                     "type": "string"
                 }
             }
@@ -6755,6 +6885,10 @@ const docTemplate = `{
                 "product_id": {
                     "type": "string"
                 },
+                "reserved_inventory_count": {
+                    "type": "integer",
+                    "minimum": 0
+                },
                 "updated_at": {
                     "type": "string"
                 }
@@ -6799,6 +6933,12 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 50
                 },
+                "payment_type": {
+                    "type": "string"
+                },
+                "project_id": {
+                    "type": "string"
+                },
                 "receipt_key": {
                     "type": "string"
                 },
@@ -6810,6 +6950,9 @@ const docTemplate = `{
                     "maxLength": 100
                 },
                 "updated_at": {
+                    "type": "string"
+                },
+                "withholding_data": {
                     "type": "string"
                 }
             }
@@ -6825,8 +6968,22 @@ const docTemplate = `{
                 "unit"
             ],
             "properties": {
+                "barcode": {
+                    "type": "string",
+                    "maxLength": 128
+                },
                 "business_id": {
                     "type": "string"
+                },
+                "category": {
+                    "$ref": "#/definitions/models.ProductCategory"
+                },
+                "category_id": {
+                    "type": "string"
+                },
+                "cost_price": {
+                    "type": "number",
+                    "minimum": 0
                 },
                 "created_at": {
                     "type": "string"
@@ -6834,7 +6991,32 @@ const docTemplate = `{
                 "currency": {
                     "type": "string"
                 },
+                "custom_columns": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "custom_values": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.ProductCustomValue"
+                    }
+                },
+                "default_cess_rate": {
+                    "type": "number"
+                },
+                "default_price_list_id": {
+                    "type": "string"
+                },
                 "description": {
+                    "type": "string"
+                },
+                "extra_attributes": {
+                    "type": "string"
+                },
+                "gst_metadata": {
+                    "type": "string"
+                },
+                "hsn_sac_code": {
                     "type": "string"
                 },
                 "id": {
@@ -6846,12 +7028,28 @@ const docTemplate = `{
                 "image_url": {
                     "type": "string"
                 },
+                "images": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.ProductImage"
+                    }
+                },
                 "is_active": {
                     "type": "boolean"
+                },
+                "is_service": {
+                    "type": "boolean"
+                },
+                "low_stock_threshold": {
+                    "type": "integer",
+                    "minimum": 0
                 },
                 "min_stock": {
                     "type": "integer",
                     "minimum": 0
+                },
+                "mrp": {
+                    "type": "number"
                 },
                 "name": {
                     "type": "string",
@@ -6869,11 +7067,303 @@ const docTemplate = `{
                     "type": "integer",
                     "minimum": 0
                 },
+                "stock_summary": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "number",
+                        "format": "float64"
+                    }
+                },
                 "unit": {
                     "type": "string",
                     "maxLength": 50
                 },
                 "updated_at": {
+                    "type": "string"
+                },
+                "uqc_code": {
+                    "type": "string"
+                },
+                "valuation_method": {
+                    "type": "string"
+                },
+                "variants": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.ProductVariant"
+                    }
+                },
+                "warehouse_catalog": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.ProductWarehouseCatalog"
+                    }
+                }
+            }
+        },
+        "models.ProductCategory": {
+            "type": "object",
+            "required": [
+                "business_id"
+            ],
+            "properties": {
+                "business_id": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_active": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "parent_id": {
+                    "type": "string"
+                },
+                "slug": {
+                    "type": "string"
+                },
+                "sort_order": {
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.ProductCustomColumn": {
+            "type": "object",
+            "required": [
+                "business_id"
+            ],
+            "properties": {
+                "business_id": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "data_type": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_active": {
+                    "type": "boolean"
+                },
+                "is_required": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "options": {
+                    "type": "string"
+                },
+                "slug": {
+                    "type": "string"
+                },
+                "sort_order": {
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.ProductCustomValue": {
+            "type": "object",
+            "required": [
+                "business_id",
+                "column_id",
+                "product_id"
+            ],
+            "properties": {
+                "business_id": {
+                    "type": "string"
+                },
+                "column": {
+                    "$ref": "#/definitions/models.ProductCustomColumn"
+                },
+                "column_id": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "product_id": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.ProductImage": {
+            "type": "object",
+            "required": [
+                "business_id",
+                "product_id"
+            ],
+            "properties": {
+                "alt_text": {
+                    "type": "string"
+                },
+                "business_id": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_primary": {
+                    "type": "boolean"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "position": {
+                    "type": "integer"
+                },
+                "product_id": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                },
+                "variant_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.ProductVariant": {
+            "type": "object",
+            "required": [
+                "business_id",
+                "product_id"
+            ],
+            "properties": {
+                "attributes": {
+                    "type": "string"
+                },
+                "barcode": {
+                    "type": "string"
+                },
+                "business_id": {
+                    "type": "string"
+                },
+                "cost_price": {
+                    "type": "number"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "default_cess_rate": {
+                    "type": "number"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "images": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.ProductImage"
+                    }
+                },
+                "is_active": {
+                    "type": "boolean"
+                },
+                "is_default": {
+                    "type": "boolean"
+                },
+                "low_stock_threshold": {
+                    "type": "number"
+                },
+                "mrp": {
+                    "type": "number"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "price": {
+                    "type": "number"
+                },
+                "product_id": {
+                    "type": "string"
+                },
+                "reserved_level": {
+                    "type": "number"
+                },
+                "sku": {
+                    "type": "string"
+                },
+                "stock_level": {
+                    "type": "number"
+                },
+                "track_batches": {
+                    "type": "boolean"
+                },
+                "track_serials": {
+                    "type": "boolean"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.ProductWarehouseCatalog": {
+            "type": "object",
+            "required": [
+                "business_id",
+                "product_id",
+                "warehouse_id"
+            ],
+            "properties": {
+                "business_id": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_active": {
+                    "type": "boolean"
+                },
+                "is_visible": {
+                    "type": "boolean"
+                },
+                "price_list_id": {
+                    "type": "string"
+                },
+                "price_override": {
+                    "type": "number"
+                },
+                "product_id": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "warehouse_id": {
                     "type": "string"
                 }
             }
@@ -6900,6 +7390,12 @@ const docTemplate = `{
             "properties": {
                 "acceptance_threshold": {
                     "type": "number"
+                },
+                "blacklisted_buyers": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "customer_loyalty_factor": {
                     "type": "number"
@@ -7034,6 +7530,9 @@ const docTemplate = `{
                 "joined_at": {
                     "type": "string"
                 },
+                "permission_overrides": {
+                    "type": "string"
+                },
                 "role": {
                     "type": "string",
                     "enum": [
@@ -7064,12 +7563,18 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 100
                 },
+                "billing_address_json": {
+                    "type": "string"
+                },
                 "business_id": {
                     "type": "string"
                 },
                 "city": {
                     "type": "string",
                     "maxLength": 100
+                },
+                "company_name": {
+                    "type": "string"
                 },
                 "country": {
                     "type": "string",
@@ -7078,9 +7583,16 @@ const docTemplate = `{
                 "created_at": {
                     "type": "string"
                 },
+                "default_price_list_id": {
+                    "type": "string"
+                },
                 "email": {
                     "type": "string",
                     "maxLength": 255
+                },
+                "gstin": {
+                    "type": "string",
+                    "maxLength": 20
                 },
                 "id": {
                     "type": "string"
@@ -7092,6 +7604,10 @@ const docTemplate = `{
                 },
                 "notes": {
                     "type": "string"
+                },
+                "pan": {
+                    "type": "string",
+                    "maxLength": 10
                 },
                 "payment_terms": {
                     "type": "string",
@@ -7105,15 +7621,28 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 20
                 },
+                "preferences_json": {
+                    "type": "string"
+                },
+                "shipping_address_json": {
+                    "type": "string"
+                },
                 "state": {
                     "type": "string",
                     "maxLength": 100
+                },
+                "state_code": {
+                    "type": "string",
+                    "maxLength": 10
                 },
                 "tax_id": {
                     "type": "string",
                     "maxLength": 100
                 },
                 "updated_at": {
+                    "type": "string"
+                },
+                "withholding_defaults_json": {
                     "type": "string"
                 }
             }
@@ -7233,6 +7762,33 @@ const docTemplate = `{
                 }
             }
         },
+        "services.BatchAllocationInput": {
+            "type": "object",
+            "required": [
+                "quantity"
+            ],
+            "properties": {
+                "batch_id": {
+                    "type": "string"
+                },
+                "batch_number": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "extra_fields": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "manufactured_at": {
+                    "type": "string"
+                },
+                "quantity": {
+                    "type": "number"
+                }
+            }
+        },
         "services.ChangePasswordInput": {
             "type": "object",
             "required": [
@@ -7259,8 +7815,14 @@ const docTemplate = `{
                 "address": {
                     "type": "string"
                 },
+                "business_state_code": {
+                    "type": "string"
+                },
                 "city": {
                     "type": "string"
+                },
+                "composition_enabled": {
+                    "type": "boolean"
                 },
                 "country": {
                     "type": "string"
@@ -7268,7 +7830,25 @@ const docTemplate = `{
                 "currency": {
                     "type": "string"
                 },
+                "default_gst_treatment": {
+                    "type": "string"
+                },
                 "email": {
+                    "type": "string"
+                },
+                "export_lut_enabled": {
+                    "type": "boolean"
+                },
+                "gst_filing_frequency": {
+                    "type": "string"
+                },
+                "gst_registered": {
+                    "type": "boolean"
+                },
+                "gst_tds_enabled": {
+                    "type": "boolean"
+                },
+                "gstin": {
                     "type": "string"
                 },
                 "invoice_prefix": {
@@ -7278,14 +7858,25 @@ const docTemplate = `{
                     "type": "string",
                     "minLength": 2
                 },
+                "numbering_rules": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
                 "phone": {
                     "type": "string"
+                },
+                "sez_enabled": {
+                    "type": "boolean"
                 },
                 "state": {
                     "type": "string"
                 },
                 "tax_id": {
                     "type": "string"
+                },
+                "tax_preferences_json": {
+                    "type": "object",
+                    "additionalProperties": true
                 },
                 "zip_code": {
                     "type": "string"
@@ -7302,10 +7893,17 @@ const docTemplate = `{
                 "address": {
                     "type": "string"
                 },
+                "billing_address_json": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
                 "business_id": {
                     "type": "string"
                 },
                 "city": {
+                    "type": "string"
+                },
+                "company_name": {
                     "type": "string"
                 },
                 "country": {
@@ -7317,9 +7915,15 @@ const docTemplate = `{
                 "email": {
                     "type": "string"
                 },
+                "gstin": {
+                    "type": "string"
+                },
                 "name": {
                     "type": "string",
                     "minLength": 2
+                },
+                "pan": {
+                    "type": "string"
                 },
                 "payment_terms": {
                     "type": "integer"
@@ -7327,11 +7931,22 @@ const docTemplate = `{
                 "phone": {
                     "type": "string"
                 },
+                "shipping_address_json": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
                 "state": {
+                    "type": "string"
+                },
+                "state_code": {
                     "type": "string"
                 },
                 "tax_id": {
                     "type": "string"
+                },
+                "withholding_defaults_json": {
+                    "type": "object",
+                    "additionalProperties": true
                 },
                 "zip_code": {
                     "type": "string"
@@ -7346,8 +7961,19 @@ const docTemplate = `{
                 "items"
             ],
             "properties": {
+                "additional_charges": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": true
+                    }
+                },
                 "business_id": {
                     "type": "string"
+                },
+                "custom_fields": {
+                    "type": "object",
+                    "additionalProperties": true
                 },
                 "customer_id": {
                     "type": "string"
@@ -7364,6 +7990,21 @@ const docTemplate = `{
                 },
                 "notes": {
                     "type": "string"
+                },
+                "origin_run_id": {
+                    "type": "string"
+                },
+                "origin_subscription_id": {
+                    "type": "string"
+                },
+                "price_list_id": {
+                    "type": "string"
+                },
+                "project_id": {
+                    "type": "string"
+                },
+                "tax_profile": {
+                    "$ref": "#/definitions/services.TaxProfileInput"
                 }
             }
         },
@@ -7371,12 +8012,37 @@ const docTemplate = `{
             "type": "object",
             "required": [
                 "description",
-                "quantity",
-                "unit_price"
+                "quantity"
             ],
             "properties": {
+                "batch_allocations": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/services.BatchAllocationInput"
+                    }
+                },
+                "cess_rate": {
+                    "type": "number"
+                },
+                "charge_snapshot": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": true
+                    }
+                },
+                "custom_fields": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
                 "description": {
                     "type": "string"
+                },
+                "free_quantity": {
+                    "type": "number"
+                },
+                "mrp": {
+                    "type": "number"
                 },
                 "product_id": {
                     "type": "string"
@@ -7384,11 +8050,24 @@ const docTemplate = `{
                 "quantity": {
                     "type": "number"
                 },
+                "serial_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "tax_rate": {
                     "type": "number"
                 },
                 "unit_price": {
-                    "type": "number"
+                    "type": "number",
+                    "minimum": 0
+                },
+                "variant_id": {
+                    "type": "string"
+                },
+                "warehouse_id": {
+                    "type": "string"
                 }
             }
         },
@@ -7415,8 +8094,17 @@ const docTemplate = `{
                 "payment_method": {
                     "type": "string"
                 },
+                "payment_type": {
+                    "type": "string"
+                },
+                "project_id": {
+                    "type": "string"
+                },
                 "reference": {
                     "type": "string"
+                },
+                "withholding": {
+                    "$ref": "#/definitions/services.WithholdingInput"
                 }
             }
         },
@@ -7428,14 +8116,46 @@ const docTemplate = `{
                 "sku"
             ],
             "properties": {
+                "barcode": {
+                    "type": "string"
+                },
                 "business_id": {
                     "type": "string"
+                },
+                "category_id": {
+                    "type": "string"
+                },
+                "cost_price": {
+                    "type": "number"
                 },
                 "currency": {
                     "type": "string"
                 },
+                "custom_columns": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
                 "description": {
                     "type": "string"
+                },
+                "gst_metadata": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "hsn_sac_code": {
+                    "type": "string"
+                },
+                "images": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/services.ProductImageInput"
+                    }
+                },
+                "is_service": {
+                    "type": "boolean"
+                },
+                "low_stock_threshold": {
+                    "type": "integer"
                 },
                 "min_stock": {
                     "type": "integer"
@@ -7455,6 +8175,18 @@ const docTemplate = `{
                 },
                 "unit": {
                     "type": "string"
+                },
+                "uqc_code": {
+                    "type": "string"
+                },
+                "valuation_method": {
+                    "type": "string"
+                },
+                "variants": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/services.ProductVariantInput"
+                    }
                 }
             }
         },
@@ -7511,10 +8243,17 @@ const docTemplate = `{
                 "address": {
                     "type": "string"
                 },
+                "billing_address_json": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
                 "business_id": {
                     "type": "string"
                 },
                 "city": {
+                    "type": "string"
+                },
+                "company_name": {
                     "type": "string"
                 },
                 "country": {
@@ -7523,9 +8262,15 @@ const docTemplate = `{
                 "email": {
                     "type": "string"
                 },
+                "gstin": {
+                    "type": "string"
+                },
                 "name": {
                     "type": "string",
                     "minLength": 2
+                },
+                "pan": {
+                    "type": "string"
                 },
                 "payment_terms": {
                     "type": "string"
@@ -7536,11 +8281,22 @@ const docTemplate = `{
                 "postal_code": {
                     "type": "string"
                 },
+                "shipping_address_json": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
                 "state": {
+                    "type": "string"
+                },
+                "state_code": {
                     "type": "string"
                 },
                 "tax_id": {
                     "type": "string"
+                },
+                "withholding_defaults_json": {
+                    "type": "object",
+                    "additionalProperties": true
                 }
             }
         },
@@ -7664,6 +8420,77 @@ const docTemplate = `{
                 "min": {
                     "type": "number",
                     "format": "float64"
+                }
+            }
+        },
+        "services.ProductImageInput": {
+            "type": "object",
+            "required": [
+                "url"
+            ],
+            "properties": {
+                "alt_text": {
+                    "type": "string"
+                },
+                "is_primary": {
+                    "type": "boolean"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "position": {
+                    "type": "integer"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.ProductVariantInput": {
+            "type": "object",
+            "properties": {
+                "attributes": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "barcode": {
+                    "type": "string"
+                },
+                "cost_price": {
+                    "type": "number"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "images": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/services.ProductImageInput"
+                    }
+                },
+                "is_default": {
+                    "type": "boolean"
+                },
+                "low_stock_threshold": {
+                    "type": "number"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "price": {
+                    "type": "number"
+                },
+                "sku": {
+                    "type": "string"
+                },
+                "stock_level": {
+                    "type": "number"
+                },
+                "track_batches": {
+                    "type": "boolean"
+                },
+                "track_serials": {
+                    "type": "boolean"
                 }
             }
         },
@@ -7801,11 +8628,75 @@ const docTemplate = `{
                 "quantity"
             ],
             "properties": {
+                "batch_allocations": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/services.BatchAllocationInput"
+                    }
+                },
                 "quantity": {
                     "type": "integer"
                 },
                 "reason": {
                     "type": "string"
+                },
+                "serial_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "unit_cost": {
+                    "type": "number"
+                },
+                "variant_id": {
+                    "type": "string"
+                },
+                "warehouse_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.TaxProfileInput": {
+            "type": "object",
+            "properties": {
+                "bill_of_supply": {
+                    "type": "boolean"
+                },
+                "counterparty_gstin": {
+                    "type": "string"
+                },
+                "counterparty_pan": {
+                    "type": "string"
+                },
+                "counterparty_state_code": {
+                    "type": "string"
+                },
+                "export_type": {
+                    "type": "string"
+                },
+                "gst_treatment": {
+                    "type": "string"
+                },
+                "place_of_supply": {
+                    "type": "string"
+                },
+                "report_tags": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "source_linkage": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "supply_type": {
+                    "type": "string"
+                },
+                "tcs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/services.WithholdingInput"
+                    }
                 }
             }
         },
@@ -7815,8 +8706,14 @@ const docTemplate = `{
                 "address": {
                     "type": "string"
                 },
+                "business_state_code": {
+                    "type": "string"
+                },
                 "city": {
                     "type": "string"
+                },
+                "composition_enabled": {
+                    "type": "boolean"
                 },
                 "country": {
                     "type": "string"
@@ -7824,7 +8721,25 @@ const docTemplate = `{
                 "currency": {
                     "type": "string"
                 },
+                "default_gst_treatment": {
+                    "type": "string"
+                },
                 "email": {
+                    "type": "string"
+                },
+                "export_lut_enabled": {
+                    "type": "boolean"
+                },
+                "gst_filing_frequency": {
+                    "type": "string"
+                },
+                "gst_registered": {
+                    "type": "boolean"
+                },
+                "gst_tds_enabled": {
+                    "type": "boolean"
+                },
+                "gstin": {
                     "type": "string"
                 },
                 "invoice_prefix": {
@@ -7833,14 +8748,25 @@ const docTemplate = `{
                 "name": {
                     "type": "string"
                 },
+                "numbering_rules": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
                 "phone": {
                     "type": "string"
+                },
+                "sez_enabled": {
+                    "type": "boolean"
                 },
                 "state": {
                     "type": "string"
                 },
                 "tax_id": {
                     "type": "string"
+                },
+                "tax_preferences_json": {
+                    "type": "object",
+                    "additionalProperties": true
                 },
                 "zip_code": {
                     "type": "string"
@@ -7923,7 +8849,14 @@ const docTemplate = `{
                 "address": {
                     "type": "string"
                 },
+                "billing_address_json": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
                 "city": {
+                    "type": "string"
+                },
+                "company_name": {
                     "type": "string"
                 },
                 "country": {
@@ -7935,7 +8868,13 @@ const docTemplate = `{
                 "email": {
                     "type": "string"
                 },
+                "gstin": {
+                    "type": "string"
+                },
                 "name": {
+                    "type": "string"
+                },
+                "pan": {
                     "type": "string"
                 },
                 "payment_terms": {
@@ -7944,11 +8883,22 @@ const docTemplate = `{
                 "phone": {
                     "type": "string"
                 },
+                "shipping_address_json": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
                 "state": {
+                    "type": "string"
+                },
+                "state_code": {
                     "type": "string"
                 },
                 "tax_id": {
                     "type": "string"
+                },
+                "withholding_defaults_json": {
+                    "type": "object",
+                    "additionalProperties": true
                 },
                 "zip_code": {
                     "type": "string"
@@ -7958,11 +8908,34 @@ const docTemplate = `{
         "services.UpdateInvoiceInput": {
             "type": "object",
             "properties": {
+                "additional_charges": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": true
+                    }
+                },
+                "custom_fields": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
                 "due_date": {
+                    "type": "string"
+                },
+                "edit_reason": {
                     "type": "string"
                 },
                 "notes": {
                     "type": "string"
+                },
+                "price_list_id": {
+                    "type": "string"
+                },
+                "project_id": {
+                    "type": "string"
+                },
+                "tax_profile": {
+                    "$ref": "#/definitions/services.TaxProfileInput"
                 }
             }
         },
@@ -7978,19 +8951,60 @@ const docTemplate = `{
                 "payment_method": {
                     "type": "string"
                 },
+                "payment_type": {
+                    "type": "string"
+                },
+                "project_id": {
+                    "type": "string"
+                },
                 "reference": {
                     "type": "string"
+                },
+                "withholding": {
+                    "$ref": "#/definitions/services.WithholdingInput"
                 }
             }
         },
         "services.UpdateProductInput": {
             "type": "object",
             "properties": {
+                "barcode": {
+                    "type": "string"
+                },
+                "category_id": {
+                    "type": "string"
+                },
+                "cost_price": {
+                    "type": "number"
+                },
                 "currency": {
                     "type": "string"
                 },
+                "custom_columns": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
                 "description": {
                     "type": "string"
+                },
+                "gst_metadata": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "hsn_sac_code": {
+                    "type": "string"
+                },
+                "images": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/services.ProductImageInput"
+                    }
+                },
+                "is_service": {
+                    "type": "boolean"
+                },
+                "low_stock_threshold": {
+                    "type": "integer"
                 },
                 "min_stock": {
                     "type": "integer"
@@ -8006,6 +9020,18 @@ const docTemplate = `{
                 },
                 "unit": {
                     "type": "string"
+                },
+                "uqc_code": {
+                    "type": "string"
+                },
+                "valuation_method": {
+                    "type": "string"
+                },
+                "variants": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/services.ProductVariantInput"
+                    }
                 }
             }
         },
@@ -8114,7 +9140,14 @@ const docTemplate = `{
                 "address": {
                     "type": "string"
                 },
+                "billing_address_json": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
                 "city": {
+                    "type": "string"
+                },
+                "company_name": {
                     "type": "string"
                 },
                 "country": {
@@ -8123,7 +9156,13 @@ const docTemplate = `{
                 "email": {
                     "type": "string"
                 },
+                "gstin": {
+                    "type": "string"
+                },
                 "name": {
+                    "type": "string"
+                },
+                "pan": {
                     "type": "string"
                 },
                 "payment_terms": {
@@ -8135,11 +9174,22 @@ const docTemplate = `{
                 "postal_code": {
                     "type": "string"
                 },
+                "shipping_address_json": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
                 "state": {
+                    "type": "string"
+                },
+                "state_code": {
                     "type": "string"
                 },
                 "tax_id": {
                     "type": "string"
+                },
+                "withholding_defaults_json": {
+                    "type": "object",
+                    "additionalProperties": true
                 }
             }
         },
@@ -8177,6 +9227,30 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "email": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.WithholdingInput": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "number"
+                },
+                "metadata": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "rate": {
+                    "type": "number"
+                },
+                "section_code": {
+                    "type": "string"
+                },
+                "taxable_amount": {
+                    "type": "number"
+                },
+                "withholding_type": {
                     "type": "string"
                 }
             }

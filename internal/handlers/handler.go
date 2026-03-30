@@ -18,6 +18,7 @@ type Handler struct {
 	Project         *ProjectHandler
 	Inventory       *InventoryHandler
 	Barcode         *BarcodeHandler
+	POS             *POSHandler
 	Purchase        *DocumentHandler
 	PurchaseOrder   *DocumentHandler
 	SalesOrder      *DocumentHandler
@@ -35,6 +36,7 @@ type Handler struct {
 	RenderProfile   *RenderProfileHandler
 	Shipment        *ShipmentHandler
 	Invoice         *InvoiceHandler
+	BillingOps      *BillingOpsHandler
 	Payment         *PaymentHandler
 	Ledger          *LedgerHandler
 	Report          *ReportHandler
@@ -90,11 +92,12 @@ func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log 
 		Expense:         NewDocumentHandler(svcs.Document, models.DocumentTypeExpense, log),
 		PackingList:     NewDocumentHandler(svcs.Document, models.DocumentTypePackingList, log),
 		ShippingLabel:   NewDocumentHandler(svcs.Document, models.DocumentTypeShippingLabel, log),
-		DocumentUtility: NewDocumentUtilityHandler(svcs.Document, log),
+		DocumentUtility: NewDocumentUtilityHandler(svcs.Document, svcs.TaxCompliance, log),
 		Journal:         NewJournalHandler(svcs.Journal, log),
 		RenderProfile:   NewRenderProfileHandler(svcs.Document, log),
 		Shipment:        NewShipmentHandler(svcs.Shipping, svcs.Document, log),
-		Invoice:         NewInvoiceHandler(svcs.Invoice, log),
+		Invoice:         NewInvoiceHandler(svcs.Invoice, svcs.TaxCompliance, log),
+		BillingOps:      NewBillingOpsHandler(svcs.BillingOps, log),
 		Payment:         NewPaymentHandler(svcs.Payment, log),
 		Ledger:          NewLedgerHandler(svcs.Ledger, log),
 		Report:          NewReportHandler(svcs.Report, log),
@@ -102,6 +105,7 @@ func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log 
 		Team:            NewTeamHandler(svcs.Team, log),
 		Webhook:         NewWebhookHandler(svcs.Webhook, log),
 		Subscription:    NewSubscriptionHandler(svcs.Subscription, log),
+		POS:             NewPOSHandler(svcs.POS, log),
 		Health:          NewHealthHandler(log),
 		Admin:           NewAdminHandler(svcs.Email, log),
 		Agent:           NewAgentHandler(svcs.Agent, log),

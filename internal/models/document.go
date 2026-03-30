@@ -110,7 +110,25 @@ type Document struct {
 	RenderProfileID       *string        `gorm:"index" json:"render_profile_id,omitempty" validate:"omitempty,uuid"`
 	ShipmentID            *string        `gorm:"index" json:"shipment_id,omitempty" validate:"omitempty,uuid"`
 	ProjectID             *string        `gorm:"index" json:"project_id,omitempty" validate:"omitempty,uuid"`
+	PriceListID           *string        `gorm:"index" json:"price_list_id,omitempty" validate:"omitempty,uuid"`
+	OriginSubscriptionID  *string        `gorm:"index" json:"origin_subscription_id,omitempty" validate:"omitempty,uuid"`
+	OriginRunID           *string        `gorm:"index" json:"origin_run_id,omitempty" validate:"omitempty,uuid"`
 	ProfitSnapshotEnabled bool           `gorm:"default:false" json:"profit_snapshot_enabled"`
+	GenerateEInvoice      bool           `gorm:"default:false" json:"generate_einvoice"`
+	GenerateEWayBill      bool           `gorm:"default:false" json:"generate_ewaybill"`
+	ReverseCharge         bool           `gorm:"default:false" json:"reverse_charge"`
+	ReverseChargeReason   string         `gorm:"type:text" json:"reverse_charge_reason,omitempty"`
+	DispatchFrom          string         `gorm:"type:jsonb;default:'{}'" json:"dispatch_from,omitempty"`
+	DispatchTo            string         `gorm:"type:jsonb;default:'{}'" json:"dispatch_to,omitempty"`
+	DistanceKM            float64        `gorm:"type:decimal(10,2);default:0" json:"distance_km"`
+	Transporter           string         `gorm:"type:jsonb;default:'{}'" json:"transporter,omitempty"`
+	Vehicle               string         `gorm:"type:jsonb;default:'{}'" json:"vehicle,omitempty"`
+	MultiVehiclePlan      string         `gorm:"type:jsonb;default:'{}'" json:"multi_vehicle_plan,omitempty"`
+	CurrentEInvoiceID     *string        `gorm:"index" json:"current_einvoice_id,omitempty" validate:"omitempty,uuid"`
+	CurrentEWayBillID     *string        `gorm:"index" json:"current_ewaybill_id,omitempty" validate:"omitempty,uuid"`
+	SignedAt              *time.Time     `gorm:"index" json:"signed_at,omitempty"`
+	SignedByProfileID     *string        `gorm:"index" json:"signed_by_profile_id,omitempty" validate:"omitempty,uuid"`
+	SignMetadata          string         `gorm:"type:jsonb;default:'{}'" json:"sign_metadata,omitempty"`
 	CancellationReason    *string        `gorm:"type:text" json:"cancellation_reason,omitempty"`
 	CancelledAt           *time.Time     `json:"cancelled_at,omitempty"`
 	PDFURL                string         `gorm:"size:500" json:"pdf_url,omitempty"`
@@ -156,6 +174,7 @@ type DocumentLine struct {
 	FreeQuantity      float64   `gorm:"type:decimal(15,3);default:0" json:"free_quantity"`
 	RemainingQuantity float64   `gorm:"type:decimal(15,3);default:0" json:"remaining_quantity"`
 	UnitPrice         float64   `gorm:"type:decimal(15,2);not null;default:0" json:"unit_price"`
+	MRP               float64   `gorm:"type:decimal(15,2);default:0" json:"mrp"`
 	DiscountAmount    float64   `gorm:"type:decimal(15,2);default:0" json:"discount_amount"`
 	TaxRate           float64   `gorm:"type:decimal(7,3);default:0" json:"tax_rate"`
 	CGSTRate          float64   `gorm:"type:decimal(7,3);default:0" json:"cgst_rate"`
@@ -171,6 +190,8 @@ type DocumentLine struct {
 	LineTotal         float64   `gorm:"type:decimal(15,2);default:0" json:"line_total"`
 	CostSnapshot      float64   `gorm:"type:decimal(15,2);default:0" json:"cost_snapshot"`
 	MarginSnapshot    float64   `gorm:"type:decimal(15,2);default:0" json:"margin_snapshot"`
+	CustomFields      string    `gorm:"type:jsonb;default:'{}'" json:"custom_fields,omitempty"`
+	ChargeLinkage     string    `gorm:"type:jsonb;default:'[]'" json:"charge_linkage,omitempty"`
 	PackingMetadata   string    `gorm:"type:jsonb;default:'{}'" json:"packing_metadata,omitempty"`
 	BatchAllocations  string    `gorm:"type:jsonb;default:'[]'" json:"batch_allocations,omitempty"`
 	SerialIDs         string    `gorm:"type:jsonb;default:'[]'" json:"serial_ids,omitempty"`

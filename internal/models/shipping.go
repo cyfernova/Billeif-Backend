@@ -30,18 +30,18 @@ func (Shipment) TableName() string {
 }
 
 type ShippingLabel struct {
-	ID             string         `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
-	BusinessID     string         `gorm:"not null;index" json:"business_id" validate:"required,uuid"`
-	ShipmentID     string         `gorm:"not null;index" json:"shipment_id" validate:"required,uuid"`
-	DocumentID     string         `gorm:"not null;index" json:"document_id" validate:"required,uuid"`
-	LabelFormat    string         `gorm:"not null;size:20;default:'pdf'" json:"label_format"`
-	LabelURL       string         `gorm:"size:500" json:"label_url,omitempty"`
-	LabelZPL       string         `gorm:"type:text" json:"label_zpl,omitempty"`
-	ProviderLabelID string        `gorm:"size:120" json:"provider_label_id,omitempty"`
-	ProviderPayload string        `gorm:"type:jsonb;default:'{}'" json:"provider_payload,omitempty"`
-	CreatedAt      time.Time      `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt      time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
-	DeletedAt      gorm.DeletedAt `gorm:"index" json:"-"`
+	ID              string         `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
+	BusinessID      string         `gorm:"not null;index" json:"business_id" validate:"required,uuid"`
+	ShipmentID      string         `gorm:"not null;index" json:"shipment_id" validate:"required,uuid"`
+	DocumentID      string         `gorm:"not null;index" json:"document_id" validate:"required,uuid"`
+	LabelFormat     string         `gorm:"not null;size:20;default:'pdf'" json:"label_format"`
+	LabelURL        string         `gorm:"size:500" json:"label_url,omitempty"`
+	LabelZPL        string         `gorm:"type:text" json:"label_zpl,omitempty"`
+	ProviderLabelID string         `gorm:"size:120" json:"provider_label_id,omitempty"`
+	ProviderPayload string         `gorm:"type:jsonb;default:'{}'" json:"provider_payload,omitempty"`
+	CreatedAt       time.Time      `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt       time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
+	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 func (ShippingLabel) TableName() string {

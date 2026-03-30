@@ -58,16 +58,16 @@ func TestCustomerService_Create_Success(t *testing.T) {
 
 	ctx := context.Background()
 	input := services.CreateCustomerInput{
-		BusinessID: "business-123",
-		Name:       "John Doe",
-		Email:      "john@example.com",
-		Phone:      "+1234567890",
-		Address:    "123 Main St",
-		City:       "New York",
-		State:      "NY",
-		Country:    "USA",
-		ZipCode:    "10001",
-		TaxID:      "12-3456789",
+		BusinessID:  "business-123",
+		Name:        "John Doe",
+		Email:       "john@example.com",
+		Phone:       "+1234567890",
+		Address:     "123 Main St",
+		City:        "New York",
+		State:       "NY",
+		Country:     "USA",
+		ZipCode:     "10001",
+		TaxID:       "12-3456789",
 		CreditLimit: 5000.00,
 	}
 

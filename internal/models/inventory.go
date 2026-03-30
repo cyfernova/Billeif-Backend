@@ -50,6 +50,8 @@ type StockMove struct {
 	Quantity          float64        `gorm:"type:decimal(15,3);not null" json:"quantity"`
 	UnitCost          float64        `gorm:"type:decimal(15,2);default:0" json:"unit_cost"`
 	Reason            string         `gorm:"size:255" json:"reason,omitempty"`
+	ActorID           *string        `gorm:"index" json:"actor_id,omitempty" validate:"omitempty,uuid"`
+	ActorRole         string         `gorm:"size:80" json:"actor_role,omitempty"`
 	Metadata          string         `gorm:"type:jsonb;default:'{}'" json:"metadata,omitempty"`
 	RecordedAt        time.Time      `gorm:"not null;index" json:"recorded_at"`
 	CreatedAt         time.Time      `gorm:"autoCreateTime" json:"created_at"`

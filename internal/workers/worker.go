@@ -40,9 +40,10 @@ func New(cfg *config.Config, svc *services.Container, aws *awsclients.Config, lo
 func (w *Worker) Start(ctx context.Context) {
 	w.log.Info("starting background workers")
 
-	w.wg.Add(2)
+	w.wg.Add(3)
 	go w.processInvoiceQueue(ctx)
 	go w.processPaymentQueue(ctx)
+	go w.processGSTQueue(ctx)
 }
 
 func (w *Worker) Stop() {
@@ -60,6 +61,11 @@ func (w *Worker) processInvoiceQueue(ctx context.Context) {
 func (w *Worker) processPaymentQueue(ctx context.Context) {
 	defer w.wg.Done()
 	w.processQueue(ctx, w.cfg.SQS.PaymentQueue, w.handlePaymentMessage)
+}
+
+func (w *Worker) processGSTQueue(ctx context.Context) {
+	defer w.wg.Done()
+	w.processQueue(ctx, w.cfg.SQS.GSTQueue, w.handleGSTMessage)
 }
 
 func (w *Worker) processQueue(ctx context.Context, queueURL string, handler func(context.Context, string) error) {
@@ -123,6 +129,10 @@ type InvoiceMessage struct {
 
 func (w *Worker) handleInvoiceMessage(ctx context.Context, body string) error {
 	return ProcessInvoiceQueueMessage(ctx, w.cfg, w.svc, w.log, body)
+}
+
+func (w *Worker) handleGSTMessage(ctx context.Context, body string) error {
+	return ProcessGSTQueueMessage(ctx, w.svc, w.log, body)
 }
 
 // ProcessInvoiceQueueMessage handles one invoice queue message in a transport-agnostic way.
@@ -282,6 +292,27 @@ func legacyInvoiceDocument(invoice *services.Invoice) *models.Document {
 		})
 	}
 	return document
+}
+
+type GSTQueueMessage struct {
+	JobID string `json:"job_id"`
+}
+
+func ProcessGSTQueueMessage(ctx context.Context, svc *services.Container, log *logger.Logger, body string) error {
+	if svc == nil || log == nil {
+		return fmt.Errorf("invalid dependencies for gst queue processing")
+	}
+
+	var msg GSTQueueMessage
+	if err := json.Unmarshal([]byte(body), &msg); err != nil {
+		return err
+	}
+	if msg.JobID == "" {
+		return fmt.Errorf("job_id is required")
+	}
+
+	log.Info("processing gst message", "job_id", msg.JobID)
+	return svc.TaxCompliance.ProcessJobByID(ctx, msg.JobID)
 }
 
 type PaymentMessage struct {
