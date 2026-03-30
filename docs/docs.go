@@ -9272,7 +9272,7 @@ var SwaggerInfo = &swag.Spec{
 	BasePath:         "/api/v1",
 	Schemes:          []string{},
 	Title:            "Invoice Backend API",
-	Description:      "Production-grade monolithic Golang backend for an invoice/billing platform.",
+	Description:      "Backend",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",
