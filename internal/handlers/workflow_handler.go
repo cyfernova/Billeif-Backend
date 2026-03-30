@@ -45,7 +45,17 @@ type UpdateWorkflowRequest struct {
 }
 
 // CreateWorkflow handles POST /workflows
-// Creates a new workflow
+// @Summary Create workflow
+// @Description Creates a new workflow
+// @Tags Workflows
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body CreateWorkflowRequest true "Workflow details"
+// @Success 201 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /workflows [post]
 func (h *WorkflowHandler) CreateWorkflow(c *gin.Context) {
 	var req CreateWorkflowRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -94,7 +104,17 @@ func (h *WorkflowHandler) CreateWorkflow(c *gin.Context) {
 }
 
 // GetWorkflow handles GET /workflows/:id
-// Returns a specific workflow
+// @Summary Get workflow
+// @Description Returns a specific workflow
+// @Tags Workflows
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Workflow ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /workflows/{id} [get]
 func (h *WorkflowHandler) GetWorkflow(c *gin.Context) {
 	workflowID := c.Param("id")
 	if workflowID == "" {
@@ -128,7 +148,17 @@ func (h *WorkflowHandler) GetWorkflow(c *gin.Context) {
 }
 
 // ListWorkflows handles GET /workflows
-// Returns all workflows for the authenticated user
+// @Summary List workflows
+// @Description Returns all workflows for the authenticated user
+// @Tags Workflows
+// @Produce json
+// @Security BearerAuth
+// @Param page query int false "Page number"
+// @Param limit query int false "Items per page"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /workflows [get]
 func (h *WorkflowHandler) ListWorkflows(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
@@ -167,7 +197,19 @@ func (h *WorkflowHandler) ListWorkflows(c *gin.Context) {
 }
 
 // UpdateWorkflow handles PUT /workflows/:id
-// Updates a workflow
+// @Summary Update workflow
+// @Description Updates an existing workflow
+// @Tags Workflows
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Workflow ID"
+// @Param input body UpdateWorkflowRequest true "Workflow update details"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /workflows/{id} [put]
 func (h *WorkflowHandler) UpdateWorkflow(c *gin.Context) {
 	workflowID := c.Param("id")
 	if workflowID == "" {
@@ -238,7 +280,17 @@ func (h *WorkflowHandler) UpdateWorkflow(c *gin.Context) {
 }
 
 // DeleteWorkflow handles DELETE /workflows/:id
-// Deletes a workflow
+// @Summary Delete workflow
+// @Description Deletes a workflow
+// @Tags Workflows
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Workflow ID"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /workflows/{id} [delete]
 func (h *WorkflowHandler) DeleteWorkflow(c *gin.Context) {
 	workflowID := c.Param("id")
 	if workflowID == "" {
@@ -281,7 +333,17 @@ func (h *WorkflowHandler) DeleteWorkflow(c *gin.Context) {
 }
 
 // PauseWorkflow handles POST /workflows/:id/pause
-// Pauses a workflow
+// @Summary Pause workflow
+// @Description Pauses a workflow
+// @Tags Workflows
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Workflow ID"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /workflows/{id}/pause [post]
 func (h *WorkflowHandler) PauseWorkflow(c *gin.Context) {
 	workflowID := c.Param("id")
 	if workflowID == "" {
@@ -324,7 +386,17 @@ func (h *WorkflowHandler) PauseWorkflow(c *gin.Context) {
 }
 
 // ResumeWorkflow handles POST /workflows/:id/resume
-// Resumes a paused workflow
+// @Summary Resume workflow
+// @Description Resumes a paused workflow
+// @Tags Workflows
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Workflow ID"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /workflows/{id}/resume [post]
 func (h *WorkflowHandler) ResumeWorkflow(c *gin.Context) {
 	workflowID := c.Param("id")
 	if workflowID == "" {
@@ -367,7 +439,17 @@ func (h *WorkflowHandler) ResumeWorkflow(c *gin.Context) {
 }
 
 // RunWorkflow handles POST /workflows/:id/run
-// Runs a workflow immediately
+// @Summary Run workflow
+// @Description Runs a workflow immediately
+// @Tags Workflows
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Workflow ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /workflows/{id}/run [post]
 func (h *WorkflowHandler) RunWorkflow(c *gin.Context) {
 	workflowID := c.Param("id")
 	if workflowID == "" {

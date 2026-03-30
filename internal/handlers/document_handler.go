@@ -20,6 +20,15 @@ func NewDocumentHandler(svc *services.DocumentService, documentType string, log 
 	return &DocumentHandler{svc: svc, documentType: documentType, log: log}
 }
 
+// List returns all documents for a business
+// @Summary List documents
+// @Description Returns all documents for the business
+// @Tags Documents
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /documents [get]
 func (h *DocumentHandler) List(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -34,6 +43,17 @@ func (h *DocumentHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": documents, "total": total, "page": page, "limit": limit})
 }
 
+// Get retrieves a document by ID
+// @Summary Get document
+// @Description Returns a document by ID
+// @Tags Documents
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Document ID"
+// @Success 200 {object} interface{}
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /documents/{id} [get]
 func (h *DocumentHandler) Get(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -51,6 +71,18 @@ func (h *DocumentHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, document)
 }
 
+// Create creates a new document
+// @Summary Create document
+// @Description Creates a new document for the business
+// @Tags Documents
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body services.CreateDocumentInput true "Document details"
+// @Success 201 {object} interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /documents [post]
 func (h *DocumentHandler) Create(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -70,6 +102,20 @@ func (h *DocumentHandler) Create(c *gin.Context) {
 	c.JSON(http.StatusCreated, document)
 }
 
+// Update updates an existing document
+// @Summary Update document
+// @Description Updates an existing document by ID
+// @Tags Documents
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Document ID"
+// @Param input body services.CreateDocumentInput true "Document update details"
+// @Success 200 {object} interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /documents/{id} [put]
 func (h *DocumentHandler) Update(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -95,6 +141,18 @@ func (h *DocumentHandler) Update(c *gin.Context) {
 	c.JSON(http.StatusOK, document)
 }
 
+// Delete deletes a document
+// @Summary Delete document
+// @Description Deletes a document by ID
+// @Tags Documents
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Document ID"
+// @Success 204 {string} string
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /documents/{id} [delete]
 func (h *DocumentHandler) Delete(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -114,14 +172,30 @@ func (h *DocumentHandler) Delete(c *gin.Context) {
 	c.JSON(http.StatusNoContent, nil)
 }
 
+// CancelRequest represents document cancellation request
+type CancelRequest struct {
+	Reason string `json:"reason"`
+}
+
+// Cancel cancels a document
+// @Summary Cancel document
+// @Description Cancels a document by ID
+// @Tags Documents
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Document ID"
+// @Param input body CancelRequest false "Cancellation reason"
+// @Success 200 {object} interface{}
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /documents/{id}/cancel [post]
 func (h *DocumentHandler) Cancel(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
 		return
 	}
-	var body struct {
-		Reason string `json:"reason"`
-	}
+	var body CancelRequest
 	_ = c.ShouldBindJSON(&body)
 	requestContextWithActor(c)
 	document, err := h.svc.CancelByType(c.Request.Context(), businessID, c.Param("id"), h.documentType, body.Reason)
@@ -136,6 +210,17 @@ func (h *DocumentHandler) Cancel(c *gin.Context) {
 	c.JSON(http.StatusOK, document)
 }
 
+// GetPDF retrieves the PDF URL for a document
+// @Summary Get document PDF
+// @Description Returns the PDF URL for a document
+// @Tags Documents
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Document ID"
+// @Success 200 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /documents/{id}/pdf [get]
 func (h *DocumentHandler) GetPDF(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {

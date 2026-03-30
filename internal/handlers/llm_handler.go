@@ -35,7 +35,17 @@ type AgentAssistRequest struct {
 }
 
 // Chat handles general chat requests
-// POST /llm/chat
+// @Summary Chat with LLM
+// @Description Sends a chat request to the configured LLM (Claude/Gemini)
+// @Tags LLM
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body APIRequest true "Chat messages"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /llm/chat [post]
 func (h *LLMHandler) Chat(c *gin.Context) {
 	var req APIRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -54,7 +64,17 @@ func (h *LLMHandler) Chat(c *gin.Context) {
 }
 
 // AgentAssist handles agent-specific assistance
-// POST /llm/agent-assist
+// @Summary Agent assist
+// @Description Provides LLM-powered assistance for agent workflows
+// @Tags LLM
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body AgentAssistRequest true "Agent assist request"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /llm/agent-assist [post]
 func (h *LLMHandler) AgentAssist(c *gin.Context) {
 	var req AgentAssistRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

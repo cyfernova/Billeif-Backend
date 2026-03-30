@@ -21,6 +21,15 @@ func NewBillingOpsHandler(svc *services.BillingOpsService, log *logger.Logger) *
 	return &BillingOpsHandler{svc: svc, log: log}
 }
 
+// ListPriceLists returns all price lists for a business
+// @Summary List price lists
+// @Description Returns all price lists for the business
+// @Tags Billing Ops
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /price-lists [get]
 func (h *BillingOpsHandler) ListPriceLists(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -48,6 +57,18 @@ func (h *BillingOpsHandler) GetPriceList(c *gin.Context) {
 	c.JSON(http.StatusOK, detail)
 }
 
+// CreatePriceList creates a new price list
+// @Summary Create price list
+// @Description Creates a new price list for the business
+// @Tags Billing Ops
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body services.CreatePriceListInput true "Price list details"
+// @Success 201 {object} interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /price-lists [post]
 func (h *BillingOpsHandler) CreatePriceList(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -212,6 +233,15 @@ func (h *BillingOpsHandler) DeletePartyGroup(c *gin.Context) {
 	c.JSON(http.StatusNoContent, nil)
 }
 
+// ListActivityLogs returns activity logs for a business
+// @Summary List activity logs
+// @Description Returns activity logs for the business
+// @Tags Billing Ops
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /activity-logs [get]
 func (h *BillingOpsHandler) ListActivityLogs(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {

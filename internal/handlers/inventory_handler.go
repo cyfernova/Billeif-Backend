@@ -21,6 +21,15 @@ func NewInventoryHandler(svc *services.InventoryService, log *logger.Logger) *In
 	return &InventoryHandler{svc: svc, log: log}
 }
 
+// ListWarehouses returns all warehouses for a business
+// @Summary List warehouses
+// @Description Returns all warehouses for the business
+// @Tags Inventory
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /warehouses [get]
 func (h *InventoryHandler) ListWarehouses(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -38,6 +47,19 @@ func (h *InventoryHandler) ListWarehouses(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": warehouses})
 }
 
+// CreateWarehouse creates a new warehouse
+// @Summary Create warehouse
+// @Description Creates a new warehouse for the business
+// @Tags Inventory
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body services.CreateWarehouseInput true "Warehouse details"
+// @Success 201 {object} interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 403 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /warehouses [post]
 func (h *InventoryHandler) CreateWarehouse(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -65,6 +87,21 @@ func (h *InventoryHandler) CreateWarehouse(c *gin.Context) {
 	c.JSON(http.StatusCreated, warehouse)
 }
 
+// UpdateWarehouse updates an existing warehouse
+// @Summary Update warehouse
+// @Description Updates an existing warehouse by ID
+// @Tags Inventory
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Warehouse ID"
+// @Param input body services.UpdateWarehouseInput true "Warehouse update details"
+// @Success 200 {object} interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 403 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /warehouses/{id} [put]
 func (h *InventoryHandler) UpdateWarehouse(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -91,6 +128,18 @@ func (h *InventoryHandler) UpdateWarehouse(c *gin.Context) {
 	c.JSON(http.StatusOK, warehouse)
 }
 
+// DeleteWarehouse deletes a warehouse
+// @Summary Delete warehouse
+// @Description Deletes a warehouse by ID
+// @Tags Inventory
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Warehouse ID"
+// @Success 204 {string} string
+// @Failure 403 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /warehouses/{id} [delete]
 func (h *InventoryHandler) DeleteWarehouse(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -172,6 +221,18 @@ func (h *InventoryHandler) ListPermissions(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": records})
 }
 
+// CreateAdjustment creates an inventory adjustment
+// @Summary Create inventory adjustment
+// @Description Creates an inventory adjustment
+// @Tags Inventory
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body services.InventoryAdjustmentInput true "Adjustment details"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /inventory/adjustments [post]
 func (h *InventoryHandler) CreateAdjustment(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -199,6 +260,18 @@ func (h *InventoryHandler) CreateAdjustment(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": balances})
 }
 
+// CreateTransfer creates an inventory transfer
+// @Summary Create inventory transfer
+// @Description Creates an inventory transfer between warehouses
+// @Tags Inventory
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body services.InventoryTransferInput true "Transfer details"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /inventory/transfers [post]
 func (h *InventoryHandler) CreateTransfer(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -251,6 +324,15 @@ func (h *InventoryHandler) ResetStock(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
+// Timeline returns inventory timeline
+// @Summary Inventory timeline
+// @Description Returns inventory movement timeline
+// @Tags Inventory
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /inventory/timeline [get]
 func (h *InventoryHandler) Timeline(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -285,6 +367,15 @@ func (h *InventoryHandler) Timeline(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": rows})
 }
 
+// Valuation returns inventory valuation
+// @Summary Inventory valuation
+// @Description Returns inventory valuation report
+// @Tags Inventory
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /inventory/valuation [get]
 func (h *InventoryHandler) Valuation(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -313,6 +404,15 @@ func (h *InventoryHandler) Valuation(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": rows, "total_value": total})
 }
 
+// Alerts returns inventory alerts
+// @Summary Inventory alerts
+// @Description Returns inventory alerts for low stock and expiry
+// @Tags Inventory
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /inventory/alerts [get]
 func (h *InventoryHandler) Alerts(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -337,6 +437,15 @@ func (h *InventoryHandler) Alerts(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": alerts})
 }
 
+// ListBatches returns batch inventory
+// @Summary List batches
+// @Description Returns batch inventory information
+// @Tags Inventory
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /inventory/batches [get]
 func (h *InventoryHandler) ListBatches(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -350,6 +459,15 @@ func (h *InventoryHandler) ListBatches(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": batches})
 }
 
+// ListSerials returns serial number inventory
+// @Summary List serials
+// @Description Returns serial number inventory information
+// @Tags Inventory
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /inventory/serials [get]
 func (h *InventoryHandler) ListSerials(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -363,6 +481,18 @@ func (h *InventoryHandler) ListSerials(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": serials})
 }
 
+// CreateAssemblyRecipe creates an assembly recipe
+// @Summary Create assembly recipe
+// @Description Creates an assembly recipe for bundled products
+// @Tags Inventory
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body services.CreateAssemblyRecipeInput true "Recipe details"
+// @Success 201 {object} interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /assemblies [post]
 func (h *InventoryHandler) CreateAssemblyRecipe(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -382,6 +512,15 @@ func (h *InventoryHandler) CreateAssemblyRecipe(c *gin.Context) {
 	c.JSON(http.StatusCreated, recipe)
 }
 
+// ListAssemblyRecipes returns all assembly recipes
+// @Summary List assembly recipes
+// @Description Returns all assembly recipes for the business
+// @Tags Inventory
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /assemblies [get]
 func (h *InventoryHandler) ListAssemblyRecipes(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -395,10 +534,36 @@ func (h *InventoryHandler) ListAssemblyRecipes(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": recipes})
 }
 
+// BuildAssembly builds an assembly
+// @Summary Build assembly
+// @Description Builds an assembly from its recipe
+// @Tags Inventory
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Assembly Recipe ID"
+// @Param input body services.ExecuteAssemblyInput true "Build details"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /assemblies/{id}/build [post]
 func (h *InventoryHandler) BuildAssembly(c *gin.Context) {
 	h.executeAssembly(c, false)
 }
 
+// DisassembleAssembly disassembles an assembly
+// @Summary Disassemble assembly
+// @Description Disassembles an assembly back into components
+// @Tags Inventory
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Assembly Recipe ID"
+// @Param input body services.ExecuteAssemblyInput true "Disassembly details"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /assemblies/{id}/disassemble [post]
 func (h *InventoryHandler) DisassembleAssembly(c *gin.Context) {
 	h.executeAssembly(c, true)
 }

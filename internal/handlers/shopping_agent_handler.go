@@ -46,6 +46,17 @@ type CheckoutRequest struct {
 	PaymentMethodID *string `json:"payment_method_id"`
 }
 
+// SearchProducts searches for products in the marketplace
+// @Summary Search marketplace products
+// @Description Searches for products in the marketplace
+// @Tags Shopping
+// @Produce json
+// @Security BearerAuth
+// @Param q query string false "Search query"
+// @Param category query string false "Category filter"
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /agents/shopping/search [get]
 func (h *ShoppingAgentHandler) SearchProducts(c *gin.Context) {
 	query := c.Query("q")
 	page, limit := utils.ParsePagination(c)
@@ -74,6 +85,19 @@ func (h *ShoppingAgentHandler) SearchProducts(c *gin.Context) {
 	})
 }
 
+// CreateCart creates a new shopping cart
+// @Summary Create shopping cart
+// @Description Creates a new shopping cart with agent
+// @Tags Shopping
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param agent_id query string true "Shopping agent ID"
+// @Param input body CreateCartRequest true "Cart details"
+// @Success 201 {object} interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /agents/shopping/cart [post]
 func (h *ShoppingAgentHandler) CreateCart(c *gin.Context) {
 	userID := c.GetString("user_id")
 	shoppingAgentID := c.Query("agent_id")
@@ -119,6 +143,19 @@ func (h *ShoppingAgentHandler) CreateCart(c *gin.Context) {
 	c.JSON(http.StatusCreated, cartMandate)
 }
 
+// AddToCart adds a product to an existing cart
+// @Summary Add to cart
+// @Description Adds a product to an existing shopping cart
+// @Tags Shopping
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param agent_id query string true "Shopping agent ID"
+// @Param input body AddToCartRequest true "Product to add"
+// @Success 201 {object} interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /agents/shopping/cart/add [post]
 func (h *ShoppingAgentHandler) AddToCart(c *gin.Context) {
 	userID := c.GetString("user_id")
 	shoppingAgentID := c.Query("agent_id")
@@ -151,6 +188,18 @@ func (h *ShoppingAgentHandler) AddToCart(c *gin.Context) {
 	c.JSON(http.StatusCreated, cartMandate)
 }
 
+// Checkout completes checkout for a shopping cart
+// @Summary Checkout
+// @Description Completes checkout for a shopping cart
+// @Tags Shopping
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body CheckoutRequest true "Checkout details"
+// @Success 201 {object} interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /agents/shopping/checkout [post]
 func (h *ShoppingAgentHandler) Checkout(c *gin.Context) {
 	userID := c.GetString("user_id")
 
@@ -175,6 +224,17 @@ func (h *ShoppingAgentHandler) Checkout(c *gin.Context) {
 	c.JSON(http.StatusCreated, paymentMandate)
 }
 
+// GetCart retrieves a cart by ID
+// @Summary Get cart
+// @Description Returns a shopping cart by ID
+// @Tags Shopping
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Cart ID"
+// @Success 200 {object} interface{}
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /agents/shopping/cart/{id} [get]
 func (h *ShoppingAgentHandler) GetCart(c *gin.Context) {
 	cartID := c.Param("id")
 	userID := middleware.GetUserID(c)
@@ -188,6 +248,15 @@ func (h *ShoppingAgentHandler) GetCart(c *gin.Context) {
 	c.JSON(http.StatusOK, cartMandate)
 }
 
+// ListCarts lists all carts for the user
+// @Summary List carts
+// @Description Returns all shopping carts for the user
+// @Tags Shopping
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /agents/shopping/carts [get]
 func (h *ShoppingAgentHandler) ListCarts(c *gin.Context) {
 	userID := c.GetString("user_id")
 	page, limit := utils.ParsePagination(c)
@@ -206,6 +275,16 @@ func (h *ShoppingAgentHandler) ListCarts(c *gin.Context) {
 	})
 }
 
+// ListOrders lists all orders for the user
+// @Summary List orders
+// @Description Returns all marketplace orders for the user
+// @Tags Shopping
+// @Produce json
+// @Security BearerAuth
+// @Param status query string false "Filter by status"
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /agents/shopping/orders [get]
 func (h *ShoppingAgentHandler) ListOrders(c *gin.Context) {
 	userID := c.GetString("user_id")
 	page, limit := utils.ParsePagination(c)
@@ -234,6 +313,17 @@ func (h *ShoppingAgentHandler) ListOrders(c *gin.Context) {
 	})
 }
 
+// TrackOrder tracks an order by ID
+// @Summary Track order
+// @Description Returns tracking information for an order
+// @Tags Shopping
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Order ID"
+// @Success 200 {object} interface{}
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /agents/shopping/orders/{id} [get]
 func (h *ShoppingAgentHandler) TrackOrder(c *gin.Context) {
 	orderID := c.Param("id")
 
@@ -246,6 +336,15 @@ func (h *ShoppingAgentHandler) TrackOrder(c *gin.Context) {
 	c.JSON(http.StatusOK, order)
 }
 
+// GetAvailableProducts retrieves available products
+// @Summary Get available products
+// @Description Returns all available marketplace products
+// @Tags Shopping
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /agents/shopping/products/available [get]
 func (h *ShoppingAgentHandler) GetAvailableProducts(c *gin.Context) {
 	page, limit := utils.ParsePagination(c)
 
@@ -263,6 +362,17 @@ func (h *ShoppingAgentHandler) GetAvailableProducts(c *gin.Context) {
 	})
 }
 
+// GetProductDetails retrieves product details
+// @Summary Get product details
+// @Description Returns details for a specific marketplace product
+// @Tags Shopping
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Product ID"
+// @Success 200 {object} interface{}
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /agents/shopping/products/{id} [get]
 func (h *ShoppingAgentHandler) GetProductDetails(c *gin.Context) {
 	productID := c.Param("id")
 
@@ -275,6 +385,16 @@ func (h *ShoppingAgentHandler) GetProductDetails(c *gin.Context) {
 	c.JSON(http.StatusOK, product)
 }
 
+// GetAgentCapabilities retrieves shopping agent capabilities
+// @Summary Get shopping agent capabilities
+// @Description Returns capabilities for a shopping agent
+// @Tags Shopping
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Agent ID"
+// @Success 200 {object} interface{}
+// @Failure 500 {object} map[string]string
+// @Router /agents/shopping/{id}/capabilities [get]
 func (h *ShoppingAgentHandler) GetAgentCapabilities(c *gin.Context) {
 	agentID := c.Param("id")
 
@@ -287,11 +407,25 @@ func (h *ShoppingAgentHandler) GetAgentCapabilities(c *gin.Context) {
 	c.JSON(http.StatusOK, capabilities)
 }
 
-func (h *ShoppingAgentHandler) GenerateIdeas(c *gin.Context) {
-	var req struct {
-		Input string `json:"input" binding:"required"`
-	}
+// GenerateIdeasRequest represents generate ideas request
+type GenerateIdeasRequest struct {
+	Input string `json:"input" binding:"required"`
+}
 
+// GenerateIdeas generates ideas using LLM
+// @Summary Generate shopping ideas
+// @Description Generates shopping ideas using LLM
+// @Tags Shopping
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body GenerateIdeasRequest true "Idea request"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /agents/ideate [post]
+func (h *ShoppingAgentHandler) GenerateIdeas(c *gin.Context) {
+	var req GenerateIdeasRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

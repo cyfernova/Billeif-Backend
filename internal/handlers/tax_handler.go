@@ -19,6 +19,16 @@ func NewTaxHandler(svc *services.TaxComplianceService, log *logger.Logger) *TaxH
 	return &TaxHandler{svc: svc, log: log}
 }
 
+// FetchGSTIN fetches GSTIN details
+// @Summary Fetch GSTIN details
+// @Description Fetches GSTIN details from government registry
+// @Tags Tax
+// @Produce json
+// @Security BearerAuth
+// @Param gstin path string true "GSTIN"
+// @Success 200 {object} interface{}
+// @Failure 500 {object} map[string]string
+// @Router /utils/gstin/{gstin}/fetch [post]
 func (h *TaxHandler) FetchGSTIN(c *gin.Context) {
 	if _, ok := requireBusinessScope(c); !ok {
 		return
@@ -31,6 +41,18 @@ func (h *TaxHandler) FetchGSTIN(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// ImportGSTR2B imports GSTR-2B data
+// @Summary Import GSTR-2B
+// @Description Imports GSTR-2B data from government portal
+// @Tags Tax
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body services.ImportGSTR2BInput true "Import parameters"
+// @Success 201 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /tax/gstr-2b/import [post]
 func (h *TaxHandler) ImportGSTR2B(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -49,6 +71,21 @@ func (h *TaxHandler) ImportGSTR2B(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"import": gstrImport, "results": results})
 }
 
+// GetReport retrieves a tax report
+// @Summary Get tax report
+// @Description Returns a tax report of the specified type
+// @Tags Tax
+// @Produce json
+// @Security BearerAuth
+// @Param type path string true "Report type"
+// @Param period_start query string true "Period start date (2006-01-02)"
+// @Param period_end query string true "Period end date (2006-01-02)"
+// @Param filing_frequency query string false "Filing frequency"
+// @Param export_format query string false "Export format"
+// @Success 200 {object} interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /tax/reports/{type} [get]
 func (h *TaxHandler) GetReport(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -67,6 +104,19 @@ func (h *TaxHandler) GetReport(c *gin.Context) {
 	c.JSON(http.StatusOK, report)
 }
 
+// ExportReport exports a tax report
+// @Summary Export tax report
+// @Description Exports a tax report in the specified format
+// @Tags Tax
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param type path string true "Report type"
+// @Param input body services.GSTReportOptions true "Export options"
+// @Success 201 {object} interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /tax/reports/{type}/export [post]
 func (h *TaxHandler) ExportReport(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -90,6 +140,17 @@ func (h *TaxHandler) ExportReport(c *gin.Context) {
 	c.JSON(http.StatusCreated, run)
 }
 
+// GetReportRun retrieves a tax report run status
+// @Summary Get tax report run
+// @Description Returns the status of a tax report export run
+// @Tags Tax
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Report Run ID"
+// @Success 200 {object} interface{}
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /tax/report-runs/{id} [get]
 func (h *TaxHandler) GetReportRun(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -103,6 +164,15 @@ func (h *TaxHandler) GetReportRun(c *gin.Context) {
 	c.JSON(http.StatusOK, run)
 }
 
+// ListIntegrationAccounts lists tax integration accounts
+// @Summary List tax integration accounts
+// @Description Returns all tax integration accounts for the business
+// @Tags Tax
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /tax/integrations [get]
 func (h *TaxHandler) ListIntegrationAccounts(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -116,6 +186,19 @@ func (h *TaxHandler) ListIntegrationAccounts(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": accounts})
 }
 
+// UpsertIntegrationAccount creates or updates a tax integration account
+// @Summary Upsert tax integration account
+// @Description Creates or updates a tax integration account
+// @Tags Tax
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string false "Integration Account ID"
+// @Param input body services.UpsertGSTIntegrationAccountInput true "Account details"
+// @Success 200 {object} interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /tax/integrations/{id} [post]
 func (h *TaxHandler) UpsertIntegrationAccount(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -134,6 +217,17 @@ func (h *TaxHandler) UpsertIntegrationAccount(c *gin.Context) {
 	c.JSON(http.StatusOK, account)
 }
 
+// ValidateIntegrationAccount validates a tax integration account
+// @Summary Validate tax integration account
+// @Description Validates credentials for a tax integration account
+// @Tags Tax
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Integration Account ID"
+// @Success 200 {object} interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /tax/integrations/{id}/validate [post]
 func (h *TaxHandler) ValidateIntegrationAccount(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {

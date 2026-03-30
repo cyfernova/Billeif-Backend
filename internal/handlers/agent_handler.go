@@ -87,6 +87,18 @@ type AddCapabilityRequest struct {
 	Config         map[string]interface{} `json:"config"`
 }
 
+// CreateAgent creates a new agent
+// @Summary Create agent
+// @Description Creates a new shopping or merchant agent
+// @Tags Agents
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body CreateAgentRequest true "Agent details"
+// @Success 201 {object} models.Agent
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /agents [post]
 func (h *AgentHandler) CreateAgent(c *gin.Context) {
 	log := h.reqLog(c, "create_agent")
 	businessID := c.GetString("business_id")
@@ -148,6 +160,16 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 	c.JSON(http.StatusCreated, agent)
 }
 
+// ListAgents lists all agents for the user or business
+// @Summary List agents
+// @Description Returns all agents owned by the user or business
+// @Tags Agents
+// @Produce json
+// @Security BearerAuth
+// @Param business_id query string false "Filter by business ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /agents [get]
 func (h *AgentHandler) ListAgents(c *gin.Context) {
 	log := h.reqLog(c, "list_agents")
 	userID, ok := requireUserScope(c)
@@ -187,6 +209,17 @@ func (h *AgentHandler) ListAgents(c *gin.Context) {
 	})
 }
 
+// GetAgent retrieves an agent by ID
+// @Summary Get agent
+// @Description Returns a specific agent by ID
+// @Tags Agents
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Agent ID"
+// @Success 200 {object} models.Agent
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /agents/{id} [get]
 func (h *AgentHandler) GetAgent(c *gin.Context) {
 	log := h.reqLog(c, "get_agent")
 	id := c.Param("id")
@@ -198,6 +231,20 @@ func (h *AgentHandler) GetAgent(c *gin.Context) {
 	c.JSON(http.StatusOK, agent)
 }
 
+// UpdateAgent updates an existing agent
+// @Summary Update agent
+// @Description Updates an existing agent by ID
+// @Tags Agents
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Agent ID"
+// @Param input body UpdateAgentRequest true "Agent update details"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /agents/{id} [put]
 func (h *AgentHandler) UpdateAgent(c *gin.Context) {
 	log := h.reqLog(c, "update_agent")
 	id := c.Param("id")
@@ -236,6 +283,17 @@ func (h *AgentHandler) UpdateAgent(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "agent updated successfully"})
 }
 
+// DeleteAgent deletes an agent
+// @Summary Delete agent
+// @Description Deletes an agent by ID
+// @Tags Agents
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Agent ID"
+// @Success 204 {string} string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /agents/{id} [delete]
 func (h *AgentHandler) DeleteAgent(c *gin.Context) {
 	log := h.reqLog(c, "delete_agent")
 	id := c.Param("id")
@@ -252,6 +310,20 @@ func (h *AgentHandler) DeleteAgent(c *gin.Context) {
 	c.JSON(http.StatusNoContent, nil)
 }
 
+// AddCapability adds a capability to an agent
+// @Summary Add agent capability
+// @Description Adds a new capability to an existing agent
+// @Tags Agents
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Agent ID"
+// @Param input body AddCapabilityRequest true "Capability details"
+// @Success 201 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /agents/{id}/capabilities [post]
 func (h *AgentHandler) AddCapability(c *gin.Context) {
 	log := h.reqLog(c, "add_capability")
 	id := c.Param("id")
@@ -311,6 +383,17 @@ func (h *AgentHandler) RemoveCapability(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "capability removed successfully"})
 }
 
+// GetAgentCapabilities retrieves capabilities for an agent
+// @Summary Get agent capabilities
+// @Description Returns all capabilities for a specific agent
+// @Tags Agents
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Agent ID"
+// @Success 200 {array} interface{}
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /agents/{id}/capabilities [get]
 func (h *AgentHandler) GetAgentCapabilities(c *gin.Context) {
 	log := h.reqLog(c, "get_agent_capabilities")
 	id := c.Param("id")
@@ -328,6 +411,15 @@ func (h *AgentHandler) GetAgentCapabilities(c *gin.Context) {
 	c.JSON(http.StatusOK, capabilities)
 }
 
+// ValidateAgentPermissions validates if the agent has permissions
+// @Summary Validate agent permissions
+// @Description Validates if the agent has required permissions
+// @Tags Agents
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Agent ID"
+// @Success 200 {object} map[string]bool
+// @Router /agents/validate-permissions/{id} [post]
 func (h *AgentHandler) ValidateAgentPermissions(c *gin.Context) {
 	log := h.reqLog(c, "validate_agent_permissions")
 	agentID := c.Param("id")
@@ -338,6 +430,17 @@ func (h *AgentHandler) ValidateAgentPermissions(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"has_permission": true})
 }
 
+// GetActiveAgents retrieves all active agents for a business
+// @Summary Get active agents
+// @Description Returns all active agents of a specific type for the business
+// @Tags Agents
+// @Produce json
+// @Security BearerAuth
+// @Param type query string true "Agent type (shopping, merchant)"
+// @Success 200 {array} models.Agent
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /agents/active [get]
 func (h *AgentHandler) GetActiveAgents(c *gin.Context) {
 	log := h.reqLog(c, "get_active_agents")
 	businessID, ok := requireBusinessScope(c)
@@ -451,6 +554,17 @@ func (h *AgentHandler) UpdateAgentStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "agent status updated successfully"})
 }
 
+// GetAgentByType retrieves agents by type
+// @Summary Get agents by type
+// @Description Returns agents filtered by type for the user or business
+// @Tags Agents
+// @Produce json
+// @Security BearerAuth
+// @Param type path string true "Agent type (shopping, merchant)"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /agents/type/{type} [get]
 func (h *AgentHandler) GetAgentByType(c *gin.Context) {
 	log := h.reqLog(c, "get_agent_by_type")
 	agentType := services.NormalizeMarketplaceAgentType(c.Param("type"))

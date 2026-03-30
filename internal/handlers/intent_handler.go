@@ -23,16 +23,37 @@ func NewIntentHandler(intentProcessing *services.IntentProcessingService, log *l
 	}
 }
 
+// ProcessIntentRequest represents process intent request
+type ProcessIntentRequest struct {
+	Intent     string `json:"intent" binding:"required"`
+	MaxResults int    `json:"max_results,omitempty"`
+}
+
+// ValidateIntentRequest represents validate intent request
+type ValidateIntentRequest struct {
+	Intent string `json:"intent" binding:"required"`
+}
+
+// ParseIntentRequest represents parse intent request
+type ParseIntentRequest struct {
+	Intent string `json:"intent" binding:"required"`
+}
+
 // ProcessIntent processes a natural language shopping intent
-// POST /api/v1/intent/process
+// @Summary Process shopping intent
+// @Description Processes a natural language shopping intent and returns matched products
+// @Tags Intent
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body ProcessIntentRequest true "Intent details"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Router /intent/process [post]
 func (h *IntentHandler) ProcessIntent(c *gin.Context) {
 	userID := c.GetString("user_id")
 
-	var req struct {
-		Intent     string `json:"intent" binding:"required"`
-		MaxResults int    `json:"max_results,omitempty"`
-	}
-
+	var req ProcessIntentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -75,14 +96,20 @@ func (h *IntentHandler) ProcessIntent(c *gin.Context) {
 }
 
 // ValidateIntent validates if products exist for the given intent
-// POST /api/v1/intent/validate
+// @Summary Validate shopping intent
+// @Description Validates if products exist for the given natural language intent
+// @Tags Intent
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body ValidateIntentRequest true "Intent to validate"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Router /intent/validate [post]
 func (h *IntentHandler) ValidateIntent(c *gin.Context) {
 	userID := c.GetString("user_id")
 
-	var req struct {
-		Intent string `json:"intent" binding:"required"`
-	}
-
+	var req ValidateIntentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -106,14 +133,21 @@ func (h *IntentHandler) ValidateIntent(c *gin.Context) {
 }
 
 // ParseIntent only parses the intent without searching for products
-// POST /api/v1/intent/parse
+// @Summary Parse shopping intent
+// @Description Parses a natural language intent without searching for products
+// @Tags Intent
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body ParseIntentRequest true "Intent to parse"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /intent/parse [post]
 func (h *IntentHandler) ParseIntent(c *gin.Context) {
 	userID := c.GetString("user_id")
 
-	var req struct {
-		Intent string `json:"intent" binding:"required"`
-	}
-
+	var req ParseIntentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

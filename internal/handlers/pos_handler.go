@@ -19,6 +19,18 @@ func NewPOSHandler(svc *services.POSService, log *logger.Logger) *POSHandler {
 	return &POSHandler{svc: svc, log: log}
 }
 
+// CreateSession creates a new POS session
+// @Summary Create POS session
+// @Description Creates a new Point of Sale session
+// @Tags POS
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body services.CreatePOSSessionInput true "Session details"
+// @Success 201 {object} interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /pos/sessions [post]
 func (h *POSHandler) CreateSession(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -41,6 +53,19 @@ func (h *POSHandler) CreateSession(c *gin.Context) {
 	c.JSON(http.StatusCreated, session)
 }
 
+// SearchCatalog searches the product catalog
+// @Summary Search POS catalog
+// @Description Searches the product catalog for POS
+// @Tags POS
+// @Produce json
+// @Security BearerAuth
+// @Param q query string false "Search query"
+// @Param warehouse_id query string false "Warehouse ID"
+// @Param limit query int false "Result limit"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /pos/catalog/search [get]
 func (h *POSHandler) SearchCatalog(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -55,6 +80,19 @@ func (h *POSHandler) SearchCatalog(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": results})
 }
 
+// ScanItem scans an item into the POS cart
+// @Summary Scan POS item
+// @Description Scans an item into the POS cart
+// @Tags POS
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Cart ID"
+// @Param input body services.ScanPOSItemInput true "Item details"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /pos/carts/{id}/items/scan [post]
 func (h *POSHandler) ScanItem(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -73,6 +111,19 @@ func (h *POSHandler) ScanItem(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"session": session, "cart": cart})
 }
 
+// Checkout completes POS cart checkout
+// @Summary POS checkout
+// @Description Completes checkout for a POS cart
+// @Tags POS
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Cart ID"
+// @Param input body services.CheckoutPOSCartInput true "Checkout details"
+// @Success 201 {object} interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /pos/carts/{id}/checkout [post]
 func (h *POSHandler) Checkout(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -95,6 +146,19 @@ func (h *POSHandler) Checkout(c *gin.Context) {
 	c.JSON(http.StatusCreated, document)
 }
 
+// GetReceipt retrieves a POS receipt
+// @Summary Get POS receipt
+// @Description Returns a thermal receipt for a document
+// @Tags POS
+// @Produce json
+// @Security BearerAuth
+// @Param documentID path string true "Document ID"
+// @Param format query string false "Receipt format (thermal)"
+// @Param width query string false "Receipt width (58mm, 80mm)"
+// @Success 200 {object} interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /pos/receipts/{documentID} [get]
 func (h *POSHandler) GetReceipt(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {

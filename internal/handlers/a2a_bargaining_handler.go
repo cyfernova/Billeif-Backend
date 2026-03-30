@@ -59,6 +59,19 @@ func (h *A2ABargainingHandler) defaultA2AMessageEndpoint() string {
 	return h.cfg.Server.A2AMessageEndpoint()
 }
 
+// StartNegotiation starts an A2A bargaining negotiation
+// @Summary Start A2A negotiation
+// @Description Starts an A2A bargaining negotiation between buyer and seller agents
+// @Tags A2A Bargaining
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body StartA2ANegotiationRequest true "Negotiation details"
+// @Success 201 {object} A2ANegotiationSession
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /a2a-bargaining/start [post]
 func (h *A2ABargainingHandler) StartNegotiation(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("a2a_bargaining_handler").With("operation", "start_negotiation")
 
@@ -150,6 +163,18 @@ func (h *A2ABargainingHandler) StartNegotiation(c *gin.Context) {
 	c.JSON(http.StatusCreated, response)
 }
 
+// GetSessionProgress retrieves progress of an A2A negotiation
+// @Summary Get negotiation progress
+// @Description Returns the progress of an A2A bargaining negotiation
+// @Tags A2A Bargaining
+// @Produce json
+// @Security BearerAuth
+// @Param sessionId path string true "Session ID"
+// @Success 200 {object} interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /a2a-bargaining/progress/{sessionId} [get]
 func (h *A2ABargainingHandler) GetSessionProgress(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("a2a_bargaining_handler").With("operation", "get_progress")
 
@@ -171,6 +196,17 @@ func (h *A2ABargainingHandler) GetSessionProgress(c *gin.Context) {
 	c.JSON(http.StatusOK, progress)
 }
 
+// StopNegotiation stops an A2A bargaining negotiation
+// @Summary Stop negotiation
+// @Description Stops an active A2A bargaining negotiation
+// @Tags A2A Bargaining
+// @Produce json
+// @Security BearerAuth
+// @Param sessionId path string true "Session ID"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /a2a-bargaining/stop/{sessionId} [post]
 func (h *A2ABargainingHandler) StopNegotiation(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("a2a_bargaining_handler").With("operation", "stop_negotiation")
 

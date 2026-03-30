@@ -19,6 +19,18 @@ func NewJournalHandler(svc *services.JournalService, log *logger.Logger) *Journa
 	return &JournalHandler{svc: svc, log: log}
 }
 
+// Create creates a new journal entry
+// @Summary Create journal
+// @Description Creates a new journal entry for the business
+// @Tags Journals
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body services.CreateJournalInput true "Journal details"
+// @Success 201 {object} interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /journals [post]
 func (h *JournalHandler) Create(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -37,6 +49,17 @@ func (h *JournalHandler) Create(c *gin.Context) {
 	c.JSON(http.StatusCreated, journal)
 }
 
+// Get retrieves a journal by ID
+// @Summary Get journal
+// @Description Returns a journal by ID
+// @Tags Journals
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Journal ID"
+// @Success 200 {object} interface{}
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /journals/{id} [get]
 func (h *JournalHandler) Get(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -50,6 +73,15 @@ func (h *JournalHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, journal)
 }
 
+// List returns all journals for a business
+// @Summary List journals
+// @Description Returns all journals for the business
+// @Tags Journals
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /journals [get]
 func (h *JournalHandler) List(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -64,6 +96,20 @@ func (h *JournalHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": journals, "total": total, "page": page, "limit": limit})
 }
 
+// Update updates an existing journal
+// @Summary Update journal
+// @Description Updates an existing journal by ID
+// @Tags Journals
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Journal ID"
+// @Param input body services.CreateJournalInput true "Journal update details"
+// @Success 200 {object} interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /journals/{id} [put]
 func (h *JournalHandler) Update(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -88,6 +134,18 @@ func (h *JournalHandler) Update(c *gin.Context) {
 	c.JSON(http.StatusOK, journal)
 }
 
+// Delete deletes a journal
+// @Summary Delete journal
+// @Description Deletes a journal by ID
+// @Tags Journals
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Journal ID"
+// @Success 204 {string} string
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /journals/{id} [delete]
 func (h *JournalHandler) Delete(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -106,6 +164,18 @@ func (h *JournalHandler) Delete(c *gin.Context) {
 	c.JSON(http.StatusNoContent, nil)
 }
 
+// Post posts a journal
+// @Summary Post journal
+// @Description Posts a journal by ID
+// @Tags Journals
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Journal ID"
+// @Success 200 {object} interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /journals/{id}/post [post]
 func (h *JournalHandler) Post(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -125,6 +195,18 @@ func (h *JournalHandler) Post(c *gin.Context) {
 	c.JSON(http.StatusOK, journal)
 }
 
+// Reverse reverses a journal
+// @Summary Reverse journal
+// @Description Reverses a posted journal by ID
+// @Tags Journals
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Journal ID"
+// @Success 201 {object} interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /journals/{id}/reverse [post]
 func (h *JournalHandler) Reverse(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {

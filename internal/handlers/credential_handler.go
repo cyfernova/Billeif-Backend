@@ -66,6 +66,18 @@ type CredentialTokenResponse struct {
 	CreatedAt        time.Time `json:"created_at"`
 }
 
+// AddPaymentMethod adds a new payment method for the user
+// @Summary Add payment method
+// @Description Adds a new payment method (card) to the user's account
+// @Tags Credentials
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body AddPaymentMethodRequest true "Payment method details"
+// @Success 201 {object} PaymentMethodResponse
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /agents/credentials/payment-methods [post]
 func (h *CredentialHandler) AddPaymentMethod(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("credential_handler").With("operation", "add_payment_method")
 	userID := c.GetString("user_id")
@@ -98,6 +110,15 @@ func (h *CredentialHandler) AddPaymentMethod(c *gin.Context) {
 	c.JSON(http.StatusCreated, toPaymentMethodResponse(credential))
 }
 
+// ListPaymentMethods lists all payment methods for the user
+// @Summary List payment methods
+// @Description Returns all payment methods associated with the user
+// @Tags Credentials
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {array} PaymentMethodResponse
+// @Failure 500 {object} map[string]string
+// @Router /agents/credentials/payment-methods [get]
 func (h *CredentialHandler) ListPaymentMethods(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("credential_handler").With("operation", "list_payment_methods")
 	userID := c.GetString("user_id")
@@ -117,6 +138,17 @@ func (h *CredentialHandler) ListPaymentMethods(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
+// GetPaymentMethod retrieves a specific payment method by ID
+// @Summary Get payment method
+// @Description Returns a specific payment method by its ID
+// @Tags Credentials
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Payment Method ID"
+// @Success 200 {object} PaymentMethodResponse
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /agents/credentials/payment-methods/{id} [get]
 func (h *CredentialHandler) GetPaymentMethod(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("credential_handler").With("operation", "get_payment_method")
 	id := c.Param("id")
@@ -138,6 +170,16 @@ func (h *CredentialHandler) GetPaymentMethod(c *gin.Context) {
 	c.JSON(http.StatusOK, toPaymentMethodResponse(credential))
 }
 
+// SetDefaultPaymentMethod sets a payment method as the default
+// @Summary Set default payment method
+// @Description Sets a payment method as the user's default
+// @Tags Credentials
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Payment Method ID"
+// @Success 200 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /agents/credentials/payment-methods/{id} [put]
 func (h *CredentialHandler) SetDefaultPaymentMethod(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("credential_handler").With("operation", "set_default_payment_method")
 	id := c.Param("id")
@@ -153,6 +195,16 @@ func (h *CredentialHandler) SetDefaultPaymentMethod(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "default payment method updated"})
 }
 
+// DeletePaymentMethod deletes a payment method
+// @Summary Delete payment method
+// @Description Deletes a payment method by ID
+// @Tags Credentials
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Payment Method ID"
+// @Success 204 {string} string
+// @Failure 500 {object} map[string]string
+// @Router /agents/credentials/payment-methods/{id} [delete]
 func (h *CredentialHandler) DeletePaymentMethod(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("credential_handler").With("operation", "delete_payment_method")
 	id := c.Param("id")
@@ -168,14 +220,29 @@ func (h *CredentialHandler) DeletePaymentMethod(c *gin.Context) {
 	c.JSON(http.StatusNoContent, nil)
 }
 
+// GenerateTokenRequest represents credential token generation request
+type GenerateTokenRequest struct {
+	CredentialID     string `json:"credential_id" binding:"required"`
+	PaymentMandateID string `json:"payment_mandate_id" binding:"required"`
+}
+
+// GenerateToken generates a credential token for payment
+// @Summary Generate credential token
+// @Description Generates a credential token for payment processing
+// @Tags Credentials
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body GenerateTokenRequest true "Token request"
+// @Success 201 {object} CredentialTokenResponse
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /agents/credentials/tokens [post]
 func (h *CredentialHandler) GenerateToken(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("credential_handler").With("operation", "generate_token")
 	userID := c.GetString("user_id")
 
-	var req struct {
-		CredentialID     string `json:"credential_id" binding:"required"`
-		PaymentMandateID string `json:"payment_mandate_id" binding:"required"`
-	}
+	var req GenerateTokenRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		log.Warn("invalid credential token request payload", "error", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -199,6 +266,16 @@ func (h *CredentialHandler) GenerateToken(c *gin.Context) {
 	c.JSON(http.StatusCreated, toCredentialTokenResponse(token, true))
 }
 
+// GetDefaultPaymentMethod retrieves the user's default payment method
+// @Summary Get default payment method
+// @Description Returns the user's default payment method
+// @Tags Credentials
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} PaymentMethodResponse
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /agents/credentials/payment-methods/default [get]
 func (h *CredentialHandler) GetDefaultPaymentMethod(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("credential_handler").With("operation", "get_default_payment_method")
 	userID := c.GetString("user_id")
@@ -213,6 +290,16 @@ func (h *CredentialHandler) GetDefaultPaymentMethod(c *gin.Context) {
 	c.JSON(http.StatusOK, toPaymentMethodResponse(credential))
 }
 
+// ValidateToken validates a credential token
+// @Summary Validate credential token
+// @Description Validates a credential token
+// @Tags Credentials
+// @Produce json
+// @Param token query string true "Token to validate"
+// @Success 200 {object} CredentialTokenResponse
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Router /agents/credentials/tokens/validate [get]
 func (h *CredentialHandler) ValidateToken(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("credential_handler").With("operation", "validate_token")
 	token := c.Query("token")

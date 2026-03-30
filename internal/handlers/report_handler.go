@@ -21,6 +21,14 @@ func NewReportHandler(svc *services.ReportService, log *logger.Logger) *ReportHa
 	return &ReportHandler{svc: svc, log: log}
 }
 
+// Catalog returns the available report types
+// @Summary Report catalog
+// @Description Returns all available report types
+// @Tags Reports
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Router /reports/catalog [get]
 func (h *ReportHandler) Catalog(c *gin.Context) {
 	if _, ok := requireBusinessScope(c); !ok {
 		return
@@ -28,6 +36,20 @@ func (h *ReportHandler) Catalog(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": h.svc.Catalog()})
 }
 
+// Query executes a report query
+// @Summary Query report
+// @Description Executes a report query and returns results
+// @Tags Reports
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param key path string true "Report key"
+// @Param input body services.ReportQueryInput true "Query parameters"
+// @Success 200 {object} interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /reports/{key}/query [post]
 func (h *ReportHandler) Query(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -56,6 +78,20 @@ func (h *ReportHandler) Query(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// Export exports a report
+// @Summary Export report
+// @Description Exports a report in the specified format
+// @Tags Reports
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param key path string true "Report key"
+// @Param input body services.ReportExportInput true "Export parameters"
+// @Success 201 {object} interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /reports/{key}/export [post]
 func (h *ReportHandler) Export(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -84,6 +120,15 @@ func (h *ReportHandler) Export(c *gin.Context) {
 	c.JSON(http.StatusCreated, result)
 }
 
+// Dashboard returns dashboard data
+// @Summary Dashboard
+// @Description Returns dashboard data for the business
+// @Tags Reports
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} interface{}
+// @Failure 500 {object} map[string]string
+// @Router /reports/dashboard [get]
 func (h *ReportHandler) Dashboard(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -102,6 +147,17 @@ func (h *ReportHandler) Dashboard(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// GetPreference retrieves a report preference
+// @Summary Get report preference
+// @Description Returns a saved report preference
+// @Tags Reports
+// @Produce json
+// @Security BearerAuth
+// @Param key path string true "Preference key"
+// @Success 200 {object} interface{}
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /reports/preferences/{key} [get]
 func (h *ReportHandler) GetPreference(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -123,6 +179,20 @@ func (h *ReportHandler) GetPreference(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// SavePreference saves a report preference
+// @Summary Save report preference
+// @Description Saves a report preference
+// @Tags Reports
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param key path string true "Preference key"
+// @Param input body services.ReportPreferenceInput true "Preference data"
+// @Success 200 {object} interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /reports/preferences/{key} [put]
 func (h *ReportHandler) SavePreference(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -151,6 +221,20 @@ func (h *ReportHandler) SavePreference(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// CreateShare creates a report share
+// @Summary Create report share
+// @Description Creates a public share link for a report
+// @Tags Reports
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param key path string true "Report key"
+// @Param input body services.ReportShareInput true "Share parameters"
+// @Success 201 {object} interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /reports/{key}/share [post]
 func (h *ReportHandler) CreateShare(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -179,6 +263,15 @@ func (h *ReportHandler) CreateShare(c *gin.Context) {
 	c.JSON(http.StatusCreated, result)
 }
 
+// ShareHistory returns report share history
+// @Summary Report share history
+// @Description Returns the history of report shares
+// @Tags Reports
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /reports/shares/history [get]
 func (h *ReportHandler) ShareHistory(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -198,6 +291,17 @@ func (h *ReportHandler) ShareHistory(c *gin.Context) {
 	})
 }
 
+// PublicMetadata returns public metadata for a shared report
+// @Summary Get public report metadata
+// @Description Returns public metadata for a shared report
+// @Tags Public
+// @Produce json
+// @Param token path string true "Share token"
+// @Success 200 {object} interface{}
+// @Failure 404 {object} map[string]string
+// @Failure 410 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /public/report-shares/{token}/metadata [get]
 func (h *ReportHandler) PublicMetadata(c *gin.Context) {
 	result, err := h.svc.GetPublicMetadata(c.Request.Context(), c.Param("token"))
 	if err != nil {
@@ -216,6 +320,21 @@ func (h *ReportHandler) PublicMetadata(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// PublicAccess provides public access to a shared report
+// @Summary Access shared report
+// @Description Provides access to a shared report using a token
+// @Tags Public
+// @Accept json
+// @Produce json
+// @Param token path string true "Share token"
+// @Param input body services.ReportShareAccessInput false "Access parameters"
+// @Success 200 {object} interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 410 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /public/report-shares/{token}/access [post]
 func (h *ReportHandler) PublicAccess(c *gin.Context) {
 	var input services.ReportShareAccessInput
 	_ = c.ShouldBindJSON(&input)

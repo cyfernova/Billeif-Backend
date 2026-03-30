@@ -39,7 +39,14 @@ var upgrader = gorillaws.Upgrader{
 }
 
 // HandleConnection handles local WebSocket connection upgrades.
-// GET /ws
+// @Summary WebSocket connection
+// @Description Upgrades to a WebSocket connection
+// @Tags WebSocket
+// @Produce json
+// @Security BearerAuth
+// @Success 101 {string} string "Switching Protocols"
+// @Failure 401 {object} map[string]string
+// @Router /ws [get]
 func (h *WebSocketHandler) HandleConnection(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
@@ -143,7 +150,14 @@ func (h *WebSocketHandler) BroadcastToAll(messageType websocket.MessageType, dat
 }
 
 // GetStats returns WebSocket statistics.
-// GET /ws/stats
+// @Summary Get WebSocket stats
+// @Description Returns WebSocket connection statistics
+// @Tags WebSocket
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /ws/stats [get]
 func (h *WebSocketHandler) GetStats(c *gin.Context) {
 	if h.connectionSvc != nil {
 		count, countErr := h.connectionSvc.GetClientCount(c.Request.Context())
@@ -168,7 +182,15 @@ func (h *WebSocketHandler) GetStats(c *gin.Context) {
 }
 
 // GetConnectionStatus checks if a user is connected.
-// GET /ws/status/:userID
+// @Summary Get WebSocket connection status
+// @Description Checks if a specific user is connected via WebSocket
+// @Tags WebSocket
+// @Produce json
+// @Security BearerAuth
+// @Param userID path string true "User ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /ws/status/{userID} [get]
 func (h *WebSocketHandler) GetConnectionStatus(c *gin.Context) {
 	userID := c.Param("userID")
 
@@ -185,15 +207,29 @@ func (h *WebSocketHandler) GetConnectionStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"user_id": userID, "is_connected": isConnected, "timestamp": time.Now()})
 }
 
+// WebsocketNotificationRequest represents a WebSocket notification request
+type WebsocketNotificationRequest struct {
+	MessageType string                 `json:"message_type" binding:"required"`
+	Data        map[string]interface{} `json:"data" binding:"required"`
+}
+
 // SendNotification sends a notification to a specific user.
-// POST /ws/notify/:userID
+// @Summary Send WebSocket notification
+// @Description Sends a notification to a specific user via WebSocket
+// @Tags WebSocket
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param userID path string true "User ID"
+// @Param input body WebsocketNotificationRequest true "Notification details"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /ws/notify/{userID} [post]
 func (h *WebSocketHandler) SendNotification(c *gin.Context) {
 	userID := c.Param("userID")
 
-	var request struct {
-		MessageType string                 `json:"message_type" binding:"required"`
-		Data        map[string]interface{} `json:"data" binding:"required"`
-	}
+	var request WebsocketNotificationRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid request: %v", err)})
 		return
@@ -216,12 +252,19 @@ func (h *WebSocketHandler) SendNotification(c *gin.Context) {
 }
 
 // SendNotificationToAll broadcasts a notification to all connected clients.
-// POST /ws/notify-all
+// @Summary Broadcast WebSocket notification
+// @Description Broadcasts a notification to all connected WebSocket clients
+// @Tags WebSocket
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body WebsocketNotificationRequest true "Notification details"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /ws/notify-all [post]
 func (h *WebSocketHandler) SendNotificationToAll(c *gin.Context) {
-	var request struct {
-		MessageType string                 `json:"message_type" binding:"required"`
-		Data        map[string]interface{} `json:"data" binding:"required"`
-	}
+	var request WebsocketNotificationRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid request: %v", err)})
 		return
@@ -243,7 +286,14 @@ func (h *WebSocketHandler) SendNotificationToAll(c *gin.Context) {
 }
 
 // GetConnectedUsers returns list of connected user IDs.
-// GET /ws/users
+// @Summary List connected WebSocket users
+// @Description Returns all connected WebSocket user IDs
+// @Tags WebSocket
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /ws/users [get]
 func (h *WebSocketHandler) GetConnectedUsers(c *gin.Context) {
 	if h.connectionSvc != nil {
 		users, err := h.connectionSvc.GetConnectedUsers(c.Request.Context())
@@ -259,7 +309,14 @@ func (h *WebSocketHandler) GetConnectedUsers(c *gin.Context) {
 }
 
 // HealthCheck performs a health check on the WebSocket subsystem.
-// GET /ws/health
+// @Summary WebSocket health check
+// @Description Returns the health status of the WebSocket subsystem
+// @Tags WebSocket
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /ws/health [get]
 func (h *WebSocketHandler) HealthCheck(c *gin.Context) {
 	if h.connectionSvc != nil {
 		count, err := h.connectionSvc.GetClientCount(c.Request.Context())

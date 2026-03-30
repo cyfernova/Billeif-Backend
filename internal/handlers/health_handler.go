@@ -16,10 +16,17 @@ func NewHealthHandler(log *logger.Logger) *HealthHandler {
 	return &HealthHandler{log: log}
 }
 
+// Check returns the health status of the service
+// @Summary Health check
+// @Description Returns a simple health check message
+// @Tags Health
+// @Produce plain
+// @Success 200 {string} string "OK"
+// @Router /health [get]
 func (h *HealthHandler) Check(c *gin.Context) {
 	logger.FromContext(c.Request.Context()).Named("health_handler").Debug("health check request")
 	message := `
- __          __                                  _  _                _ 
+ __          __                                  _  _                _
  \ \        / /                                 | |(_)              | |
   \ \  /\  / /   ___    __ _   _ __   ___       | | _  __   __  ___ | |
    \ \/  \/ /   / _ \  / _` + "`" + ` | | '__| / _ \      | || | \ \ / / / _ \| |

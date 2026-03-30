@@ -23,6 +23,14 @@ func NewWellKnownHandler(cfg *config.Config, log *logger.Logger) *WellKnownHandl
 	}
 }
 
+// GetAgentCard returns the agent card for A2A agent discovery
+// @Summary Get agent card
+// @Description Returns the agent card for A2A protocol agent discovery
+// @Tags Well-Known
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} a2a.AgentCard
+// @Router /.well-known/agent-card.json [get]
 func (h *WellKnownHandler) GetAgentCard(c *gin.Context) {
 	baseURL := h.config.Server.ResolveBaseURL()
 	if baseURL == "" {

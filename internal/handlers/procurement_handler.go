@@ -43,6 +43,20 @@ func (h *ProcurementHandler) CreateProcurementRun(c *gin.Context) {
 	h.startProcurement(c)
 }
 
+// startProcurement starts a procurement run
+// @Summary Start procurement run
+// @Description Starts a procurement run for a shopping agent
+// @Tags Procurement
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Shopping Agent ID"
+// @Param input body CreateProcurementRunRequest true "Procurement details"
+// @Success 201 {object} interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /agents/{id}/procurement-runs [post]
 func (h *ProcurementHandler) startProcurement(c *gin.Context) {
 	shoppingAgentID := c.Param("id")
 	userID := c.GetString("user_id")
@@ -89,6 +103,18 @@ func (h *ProcurementHandler) startProcurement(c *gin.Context) {
 	c.JSON(http.StatusCreated, run)
 }
 
+// GetProcurementRun retrieves a procurement run
+// @Summary Get procurement run
+// @Description Returns a procurement run by ID
+// @Tags Procurement
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Shopping Agent ID"
+// @Param run_id path string true "Procurement Run ID"
+// @Success 200 {object} interface{}
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /agents/{id}/procurement-runs/{run_id} [get]
 func (h *ProcurementHandler) GetProcurementRun(c *gin.Context) {
 	shoppingAgentID := c.Param("id")
 	runID := c.Param("run_id")
@@ -107,6 +133,18 @@ func (h *ProcurementHandler) GetProcurementRun(c *gin.Context) {
 	c.JSON(http.StatusOK, run)
 }
 
+// CancelProcurementRun cancels a procurement run
+// @Summary Cancel procurement run
+// @Description Cancels a procurement run by ID
+// @Tags Procurement
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Shopping Agent ID"
+// @Param run_id path string true "Procurement Run ID"
+// @Success 200 {object} interface{}
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /agents/{id}/procurement-runs/{run_id}/cancel [post]
 func (h *ProcurementHandler) CancelProcurementRun(c *gin.Context) {
 	shoppingAgentID := c.Param("id")
 	runID := c.Param("run_id")
