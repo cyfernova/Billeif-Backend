@@ -208,7 +208,11 @@ func (m *MockAP2Repository) CreateAgent(ctx context.Context, agent *models.Agent
 	return nil
 }
 func (m *MockAP2Repository) GetAgentByID(ctx context.Context, id string) (*models.Agent, error) {
-	return nil, nil
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Agent), args.Error(1)
 }
 func (m *MockAP2Repository) HasAgentOwnership(ctx context.Context, ownerID, agentID string) (bool, error) {
 	return false, nil

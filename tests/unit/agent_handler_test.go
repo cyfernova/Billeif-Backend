@@ -1,5 +1,8 @@
 package unit
 
+// comand to test this = go test -v ./tests/unit/... -run "TestAddPaymentMethod|TestListPaymentMethods|TestGetPaymentMethod|TestSetDefaultPaymentMethod|TestDeletePaymentMethod|TestGen
+//   erateToken|TestGetDefaultPaymentMethod|TestValidateToken"
+
 import (
 	"bytes"
 	"context"
