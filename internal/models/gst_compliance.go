@@ -25,13 +25,13 @@ const (
 )
 
 const (
-	GSTErrorClassRetriable    = "retriable"
-	GSTErrorClassValidation   = "validation"
-	GSTErrorClassCredentials  = "credentials"
-	GSTErrorClassDuplicate    = "duplicate"
-	GSTErrorClassRule         = "rule"
-	GSTErrorClassUnavailable  = "unavailable"
-	GSTErrorClassUnknown      = "unknown"
+	GSTErrorClassRetriable   = "retriable"
+	GSTErrorClassValidation  = "validation"
+	GSTErrorClassCredentials = "credentials"
+	GSTErrorClassDuplicate   = "duplicate"
+	GSTErrorClassRule        = "rule"
+	GSTErrorClassUnavailable = "unavailable"
+	GSTErrorClassUnknown     = "unknown"
 )
 
 const (
@@ -42,12 +42,12 @@ const (
 )
 
 const (
-	EWayBillStatusPending     = "pending"
-	EWayBillStatusGenerated   = "generated"
-	EWayBillStatusPartB       = "part_b_updated"
+	EWayBillStatusPending      = "pending"
+	EWayBillStatusGenerated    = "generated"
+	EWayBillStatusPartB        = "part_b_updated"
 	EWayBillStatusMultiVehicle = "multi_vehicle"
-	EWayBillStatusCancelled   = "cancelled"
-	EWayBillStatusFailed      = "failed"
+	EWayBillStatusCancelled    = "cancelled"
+	EWayBillStatusFailed       = "failed"
 )
 
 const (
@@ -164,25 +164,25 @@ func (EWayBillVehicleMovement) TableName() string {
 }
 
 type GSTSubmissionJob struct {
-	ID                  string         `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
-	BusinessID          string         `gorm:"not null;index" json:"business_id"`
-	DocumentID          string         `gorm:"not null;index" json:"document_id"`
-	Operation           string         `gorm:"not null;size:40;index" json:"operation"`
-	Status              string         `gorm:"not null;size:30;default:'queued';index" json:"status"`
-	IdempotencyKey      string         `gorm:"not null;size:180;uniqueIndex" json:"idempotency_key"`
-	QueueMessageID      string         `gorm:"size:120" json:"queue_message_id,omitempty"`
-	AttemptCount        int            `gorm:"default:0" json:"attempt_count"`
-	NextAttemptAt       *time.Time     `gorm:"index" json:"next_attempt_at,omitempty"`
-	LastAttemptAt       *time.Time     `json:"last_attempt_at,omitempty"`
-	SucceededAt         *time.Time     `json:"succeeded_at,omitempty"`
-	LastError           string         `gorm:"type:text" json:"last_error,omitempty"`
-	ErrorClass          string         `gorm:"size:30" json:"error_class,omitempty"`
-	RequestPayload      string         `gorm:"type:jsonb;default:'{}'" json:"request_payload,omitempty"`
-	ResultPayload       string         `gorm:"type:jsonb;default:'{}'" json:"result_payload,omitempty"`
-	Source              string         `gorm:"size:40" json:"source,omitempty"`
-	CreatedAt           time.Time      `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt           time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
-	DeletedAt           gorm.DeletedAt `gorm:"index" json:"-"`
+	ID             string         `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
+	BusinessID     string         `gorm:"not null;index" json:"business_id"`
+	DocumentID     string         `gorm:"not null;index" json:"document_id"`
+	Operation      string         `gorm:"not null;size:40;index" json:"operation"`
+	Status         string         `gorm:"not null;size:30;default:'queued';index" json:"status"`
+	IdempotencyKey string         `gorm:"not null;size:180;uniqueIndex" json:"idempotency_key"`
+	QueueMessageID string         `gorm:"size:120" json:"queue_message_id,omitempty"`
+	AttemptCount   int            `gorm:"default:0" json:"attempt_count"`
+	NextAttemptAt  *time.Time     `gorm:"index" json:"next_attempt_at,omitempty"`
+	LastAttemptAt  *time.Time     `json:"last_attempt_at,omitempty"`
+	SucceededAt    *time.Time     `json:"succeeded_at,omitempty"`
+	LastError      string         `gorm:"type:text" json:"last_error,omitempty"`
+	ErrorClass     string         `gorm:"size:30" json:"error_class,omitempty"`
+	RequestPayload string         `gorm:"type:jsonb;default:'{}'" json:"request_payload,omitempty"`
+	ResultPayload  string         `gorm:"type:jsonb;default:'{}'" json:"result_payload,omitempty"`
+	Source         string         `gorm:"size:40" json:"source,omitempty"`
+	CreatedAt      time.Time      `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt      time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
+	DeletedAt      gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 func (GSTSubmissionJob) TableName() string {

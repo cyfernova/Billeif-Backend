@@ -4,7 +4,10 @@
       "Bash(go vet:*)",
       "Bash(go build:*)",
       "Bash(go test:*)",
-      "Bash(make fmt:*)"
+      "Bash(make fmt:*)",
+      "Bash(go clean:*)",
+      "Bash(grep -E \"--- FAIL\")",
+      "Bash(make lint:*)"
     ]
   }
 }

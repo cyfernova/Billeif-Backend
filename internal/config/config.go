@@ -9,26 +9,26 @@ import (
 )
 
 type Config struct {
-	Environment    string            `mapstructure:"ENVIRONMENT"`
-	Logging        LoggingConfig     `mapstructure:"LOGGING"`
-	Server         ServerConfig      `mapstructure:"SERVER"`
-	Database       DatabaseConfig    `mapstructure:"DATABASE"`
-	Redis          RedisConfig       `mapstructure:"REDIS"`
-	AWS            AWSConfig         `mapstructure:"AWS"`
-	SSM            SSMConfig         `mapstructure:"SSM"`
-	WebSocket      WebSocketConfig   `mapstructure:"WEBSOCKET"`
-	Cognito        CognitoConfig     `mapstructure:"COGNITO"`
-	JWT            JWTConfig         `mapstructure:"JWT"`
-	S3             S3Config          `mapstructure:"S3"`
-	SQS            SQSConfig         `mapstructure:"SQS"`
-	Sentry         SentryConfig      `mapstructure:"SENTRY"`
-	Shipping       ShippingConfig    `mapstructure:"SHIPPING"`
-	GST            GSTConfig         `mapstructure:"GST"`
-	GSTLookup      GSTLookupConfig   `mapstructure:"GST_LOOKUP"`
+	Environment    string             `mapstructure:"ENVIRONMENT"`
+	Logging        LoggingConfig      `mapstructure:"LOGGING"`
+	Server         ServerConfig       `mapstructure:"SERVER"`
+	Database       DatabaseConfig     `mapstructure:"DATABASE"`
+	Redis          RedisConfig        `mapstructure:"REDIS"`
+	AWS            AWSConfig          `mapstructure:"AWS"`
+	SSM            SSMConfig          `mapstructure:"SSM"`
+	WebSocket      WebSocketConfig    `mapstructure:"WEBSOCKET"`
+	Cognito        CognitoConfig      `mapstructure:"COGNITO"`
+	JWT            JWTConfig          `mapstructure:"JWT"`
+	S3             S3Config           `mapstructure:"S3"`
+	SQS            SQSConfig          `mapstructure:"SQS"`
+	Sentry         SentryConfig       `mapstructure:"SENTRY"`
+	Shipping       ShippingConfig     `mapstructure:"SHIPPING"`
+	GST            GSTConfig          `mapstructure:"GST"`
+	GSTLookup      GSTLookupConfig    `mapstructure:"GST_LOOKUP"`
 	Entitlements   EntitlementsConfig `mapstructure:"ENTITLEMENTS"`
-	AllowedOrigins []string          `mapstructure:"ALLOWED_ORIGINS"`
-	LLM            LLMConfig         `mapstructure:"LLM"`
-	Credentials    CredentialsConfig `mapstructure:"CREDENTIALS"`
+	AllowedOrigins []string           `mapstructure:"ALLOWED_ORIGINS"`
+	LLM            LLMConfig          `mapstructure:"LLM"`
+	Credentials    CredentialsConfig  `mapstructure:"CREDENTIALS"`
 }
 
 type LoggingConfig struct {
