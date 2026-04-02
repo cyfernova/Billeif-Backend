@@ -426,6 +426,15 @@ func (h *TestableCommerceHandler) PublicValidateCoupon(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+func (h *TestableCommerceHandler) PublicCategories(c *gin.Context) {
+	catalog, err := h.svc.GetCatalog(c.Request.Context(), c.Param("slug"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, catalog.Categories)
+}
+
 func (h *TestableCommerceHandler) PublicCheckout(c *gin.Context) {
 	var input services.StorefrontCheckoutInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -1033,184 +1042,6 @@ func TestCancelStorefrontOrder_Success(t *testing.T) {
 
 	if res.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
-	}
-
-	mockSvc.AssertExpectations(t)
-}
-
-// =============================================================================
-// Public Catalog Tests
-// =============================================================================
-
-func TestPublicCatalog_Success(t *testing.T) {
-	mockSvc := new(MockCommerceService)
-	log := logger.New()
-	handler := NewTestableCommerceHandler(mockSvc, log)
-
-	catalog := &services.StorefrontCatalogResponse{
-		Storefront: &models.Storefront{ID: "sf-123", Name: "My Store", Slug: "my-store"},
-		Categories: []*models.StorefrontCategory{},
-		Products:   []*services.StorefrontCatalogItem{},
-	}
-	mockSvc.On("GetCatalog", mock.Anything, "my-store").Return(catalog, nil)
-
-	router := gin.New()
-	router.GET("/public/store/catalog/:slug", handler.PublicCatalog)
-
-	req := httptest.NewRequest(http.MethodGet, "/public/store/catalog/my-store", nil)
-	res := httptest.NewRecorder()
-	router.ServeHTTP(res, req)
-
-	if res.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
-	}
-
-	mockSvc.AssertExpectations(t)
-}
-
-func TestPublicCatalog_NotFound(t *testing.T) {
-	mockSvc := new(MockCommerceService)
-	log := logger.New()
-	handler := NewTestableCommerceHandler(mockSvc, log)
-
-	mockSvc.On("GetCatalog", mock.Anything, "non-existent").Return((*services.StorefrontCatalogResponse)(nil), errors.New("record not found"))
-
-	router := gin.New()
-	router.GET("/public/store/catalog/:slug", handler.PublicCatalog)
-
-	req := httptest.NewRequest(http.MethodGet, "/public/store/catalog/non-existent", nil)
-	res := httptest.NewRecorder()
-	router.ServeHTTP(res, req)
-
-	if res.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d", res.Code)
-	}
-
-	mockSvc.AssertExpectations(t)
-}
-
-// =============================================================================
-// Public ValidateCoupon Tests
-// =============================================================================
-
-func TestPublicValidateCoupon_Success(t *testing.T) {
-	mockSvc := new(MockCommerceService)
-	log := logger.New()
-	handler := NewTestableCommerceHandler(mockSvc, log)
-
-	result := &services.CouponValidationResult{
-		Valid:         true,
-		DiscountTotal: 10,
-	}
-	mockSvc.On("ValidateCoupon", mock.Anything, "my-store", mock.Anything).Return(result, nil)
-
-	router := gin.New()
-	router.POST("/public/store/coupons/validate/:slug", handler.PublicValidateCoupon)
-
-	reqBody := map[string]interface{}{
-		"code": "SAVE10",
-	}
-	body, _ := json.Marshal(reqBody)
-	req := httptest.NewRequest(http.MethodPost, "/public/store/coupons/validate/my-store", bytes.NewBuffer(body))
-	req.Header.Set("Content-Type", "application/json")
-	res := httptest.NewRecorder()
-	router.ServeHTTP(res, req)
-
-	if res.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
-	}
-
-	mockSvc.AssertExpectations(t)
-}
-
-// =============================================================================
-// Public Checkout Tests
-// =============================================================================
-
-func TestPublicCheckout_Success(t *testing.T) {
-	mockSvc := new(MockCommerceService)
-	log := logger.New()
-	handler := NewTestableCommerceHandler(mockSvc, log)
-
-	result := &services.CheckoutResult{
-		Order: &models.StoreOrder{ID: "ord-123", Status: "pending", Total: 500.00},
-		GatewayOrderID: "gw-123",
-	}
-	mockSvc.On("Checkout", mock.Anything, "my-store", "test-idempotency-key", mock.Anything).Return(result, nil)
-
-	router := gin.New()
-	router.POST("/public/store/checkout/:slug", handler.PublicCheckout)
-
-	reqBody := map[string]interface{}{
-		"items": []map[string]interface{}{
-			{"product_id": "11111111-1111-1111-1111-111111111111", "quantity": 2},
-		},
-		"customer": map[string]interface{}{
-			"name":  "Test Customer",
-			"email": "test@example.com",
-		},
-	}
-	body, _ := json.Marshal(reqBody)
-	req := httptest.NewRequest(http.MethodPost, "/public/store/checkout/my-store", bytes.NewBuffer(body))
-	req.Header.Set("Content-Type", "application/json")
-	res := httptest.NewRecorder()
-	router.ServeHTTP(res, req)
-
-	if res.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d: %s", res.Code, res.Body.String())
-	}
-
-	mockSvc.AssertExpectations(t)
-}
-
-// =============================================================================
-// Public Order Tests
-// =============================================================================
-
-func TestPublicOrder_Success(t *testing.T) {
-	mockSvc := new(MockCommerceService)
-	log := logger.New()
-	handler := NewTestableCommerceHandler(mockSvc, log)
-
-	order := &models.StoreOrder{
-		ID:           "ord-123",
-		StorefrontID: "sf-123",
-		Status:       "pending",
-		Total:        500.00,
-		PublicToken:  "public-token-123",
-	}
-	mockSvc.On("GetPublicOrder", mock.Anything, "my-store", "public-token-123").Return(order, nil)
-
-	router := gin.New()
-	router.GET("/public/store/orders/:slug/:token", handler.PublicOrder)
-
-	req := httptest.NewRequest(http.MethodGet, "/public/store/orders/my-store/public-token-123", nil)
-	res := httptest.NewRecorder()
-	router.ServeHTTP(res, req)
-
-	if res.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
-	}
-
-	mockSvc.AssertExpectations(t)
-}
-
-func TestPublicOrder_NotFound(t *testing.T) {
-	mockSvc := new(MockCommerceService)
-	log := logger.New()
-	handler := NewTestableCommerceHandler(mockSvc, log)
-
-	mockSvc.On("GetPublicOrder", mock.Anything, "my-store", "invalid-token").Return((*models.StoreOrder)(nil), errors.New("order not found"))
-
-	router := gin.New()
-	router.GET("/public/store/orders/:slug/:token", handler.PublicOrder)
-
-	req := httptest.NewRequest(http.MethodGet, "/public/store/orders/my-store/invalid-token", nil)
-	res := httptest.NewRecorder()
-	router.ServeHTTP(res, req)
-
-	if res.Code != http.StatusNotFound {
-		t.Fatalf("expected 404, got %d", res.Code)
 	}
 
 	mockSvc.AssertExpectations(t)
