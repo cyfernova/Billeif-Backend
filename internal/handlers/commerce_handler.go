@@ -20,6 +20,16 @@ func NewCommerceHandler(svc *services.CommerceService, log *logger.Logger) *Comm
 	return &CommerceHandler{svc: svc, log: log}
 }
 
+// ListEntitlements godoc
+// @Summary List feature entitlements
+// @Description Returns a list of all feature entitlements for a business
+// @Tags Commerce
+// @Security BearerAuth
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /subscriptions/entitlements [get]
 func (h *CommerceHandler) ListEntitlements(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -33,6 +43,16 @@ func (h *CommerceHandler) ListEntitlements(c *gin.Context) {
 	c.JSON(http.StatusOK, entitlements)
 }
 
+// SyncEntitlements godoc
+// @Summary Sync feature entitlements
+// @Description Syncs feature entitlements for a business from the subscription service
+// @Tags Commerce
+// @Security BearerAuth
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /subscriptions/entitlements/sync [post]
 func (h *CommerceHandler) SyncEntitlements(c *gin.Context) {
 	requestContextWithActor(c)
 	businessID, ok := requireBusinessScope(c)
@@ -47,6 +67,16 @@ func (h *CommerceHandler) SyncEntitlements(c *gin.Context) {
 	c.JSON(http.StatusOK, entitlements)
 }
 
+// ListRoles godoc
+// @Summary List roles
+// @Description Returns a list of all roles for a business
+// @Tags Commerce
+// @Security BearerAuth
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /roles [get]
 func (h *CommerceHandler) ListRoles(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -60,6 +90,18 @@ func (h *CommerceHandler) ListRoles(c *gin.Context) {
 	c.JSON(http.StatusOK, roles)
 }
 
+// CreateRole godoc
+// @Summary Create role
+// @Description Creates a new role for a business
+// @Tags Commerce
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param input body services.UpsertRoleInput true "Role input"
+// @Success 201 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Router /roles [post]
 func (h *CommerceHandler) CreateRole(c *gin.Context) {
 	requestContextWithActor(c)
 	businessID, ok := requireBusinessScope(c)
@@ -80,6 +122,20 @@ func (h *CommerceHandler) CreateRole(c *gin.Context) {
 	c.JSON(http.StatusCreated, role)
 }
 
+// UpdateRole godoc
+// @Summary Update role
+// @Description Updates an existing role
+// @Tags Commerce
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param id path string true "Role ID"
+// @Param input body services.UpsertRoleInput true "Role input"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /roles/{id} [put]
 func (h *CommerceHandler) UpdateRole(c *gin.Context) {
 	requestContextWithActor(c)
 	businessID, ok := requireBusinessScope(c)
@@ -103,6 +159,17 @@ func (h *CommerceHandler) UpdateRole(c *gin.Context) {
 	c.JSON(http.StatusOK, role)
 }
 
+// DeleteRole godoc
+// @Summary Delete role
+// @Description Deletes an existing role
+// @Tags Commerce
+// @Security BearerAuth
+// @Param id path string true "Role ID"
+// @Success 204
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /roles/{id} [delete]
 func (h *CommerceHandler) DeleteRole(c *gin.Context) {
 	requestContextWithActor(c)
 	businessID, ok := requireBusinessScope(c)
@@ -120,6 +187,16 @@ func (h *CommerceHandler) DeleteRole(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// ListBranches godoc
+// @Summary List branches
+// @Description Returns a list of all branches for a business
+// @Tags Commerce
+// @Security BearerAuth
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /branches [get]
 func (h *CommerceHandler) ListBranches(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -133,6 +210,18 @@ func (h *CommerceHandler) ListBranches(c *gin.Context) {
 	c.JSON(http.StatusOK, branches)
 }
 
+// CreateBranch godoc
+// @Summary Create branch
+// @Description Creates a new branch for a business
+// @Tags Commerce
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param input body services.UpsertBranchInput true "Branch input"
+// @Success 201 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Router /branches [post]
 func (h *CommerceHandler) CreateBranch(c *gin.Context) {
 	requestContextWithActor(c)
 	businessID, ok := requireBusinessScope(c)
@@ -153,6 +242,20 @@ func (h *CommerceHandler) CreateBranch(c *gin.Context) {
 	c.JSON(http.StatusCreated, branch)
 }
 
+// UpdateBranch godoc
+// @Summary Update branch
+// @Description Updates an existing branch
+// @Tags Commerce
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param id path string true "Branch ID"
+// @Param input body services.UpsertBranchInput true "Branch input"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /branches/{id} [put]
 func (h *CommerceHandler) UpdateBranch(c *gin.Context) {
 	requestContextWithActor(c)
 	businessID, ok := requireBusinessScope(c)
@@ -176,6 +279,17 @@ func (h *CommerceHandler) UpdateBranch(c *gin.Context) {
 	c.JSON(http.StatusOK, branch)
 }
 
+// DeleteBranch godoc
+// @Summary Delete branch
+// @Description Deletes an existing branch
+// @Tags Commerce
+// @Security BearerAuth
+// @Param id path string true "Branch ID"
+// @Success 204
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /branches/{id} [delete]
 func (h *CommerceHandler) DeleteBranch(c *gin.Context) {
 	requestContextWithActor(c)
 	businessID, ok := requireBusinessScope(c)
@@ -193,6 +307,16 @@ func (h *CommerceHandler) DeleteBranch(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// ListStorefronts godoc
+// @Summary List storefronts
+// @Description Returns a list of all storefronts for a business
+// @Tags Storefronts
+// @Security BearerAuth
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /storefronts [get]
 func (h *CommerceHandler) ListStorefronts(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -206,6 +330,18 @@ func (h *CommerceHandler) ListStorefronts(c *gin.Context) {
 	c.JSON(http.StatusOK, storefronts)
 }
 
+// CreateStorefront godoc
+// @Summary Create storefront
+// @Description Creates a new storefront for a business
+// @Tags Storefronts
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param input body services.UpsertStorefrontInput true "Storefront input"
+// @Success 201 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Router /storefronts [post]
 func (h *CommerceHandler) CreateStorefront(c *gin.Context) {
 	requestContextWithActor(c)
 	businessID, ok := requireBusinessScope(c)
@@ -226,6 +362,17 @@ func (h *CommerceHandler) CreateStorefront(c *gin.Context) {
 	c.JSON(http.StatusCreated, storefront)
 }
 
+// GetStorefront godoc
+// @Summary Get storefront
+// @Description Returns the details of a specific storefront
+// @Tags Storefronts
+// @Security BearerAuth
+// @Produce json
+// @Param id path string true "Storefront ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /storefronts/{id} [get]
 func (h *CommerceHandler) GetStorefront(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -243,6 +390,20 @@ func (h *CommerceHandler) GetStorefront(c *gin.Context) {
 	c.JSON(http.StatusOK, storefront)
 }
 
+// UpdateStorefrontSettings godoc
+// @Summary Update storefront settings
+// @Description Updates the settings of a specific storefront
+// @Tags Storefronts
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param id path string true "Storefront ID"
+// @Param input body services.UpsertStorefrontInput true "Storefront settings"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /storefronts/{id}/settings [put]
 func (h *CommerceHandler) UpdateStorefrontSettings(c *gin.Context) {
 	requestContextWithActor(c)
 	businessID, ok := requireBusinessScope(c)
@@ -266,6 +427,17 @@ func (h *CommerceHandler) UpdateStorefrontSettings(c *gin.Context) {
 	c.JSON(http.StatusOK, storefront)
 }
 
+// ListStorefrontProducts godoc
+// @Summary List storefront products
+// @Description Returns a list of all products for a specific storefront
+// @Tags Storefronts
+// @Security BearerAuth
+// @Produce json
+// @Param id path string true "Storefront ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /storefronts/{id}/products [get]
 func (h *CommerceHandler) ListStorefrontProducts(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -287,6 +459,20 @@ func (h *CommerceHandler) ListStorefrontProducts(c *gin.Context) {
 	c.JSON(http.StatusOK, items)
 }
 
+// ReplaceStorefrontProducts godoc
+// @Summary Replace storefront products
+// @Description Replaces all products for a specific storefront
+// @Tags Storefronts
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param id path string true "Storefront ID"
+// @Param input body []services.UpsertStorefrontProductInput true "Products input"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /storefronts/{id}/products [put]
 func (h *CommerceHandler) ReplaceStorefrontProducts(c *gin.Context) {
 	requestContextWithActor(c)
 	businessID, ok := requireBusinessScope(c)
@@ -314,6 +500,17 @@ func (h *CommerceHandler) ReplaceStorefrontProducts(c *gin.Context) {
 	c.JSON(http.StatusOK, items)
 }
 
+// ListStorefrontCoupons godoc
+// @Summary List storefront coupons
+// @Description Returns a list of all coupons for a specific storefront
+// @Tags Storefronts
+// @Security BearerAuth
+// @Produce json
+// @Param id path string true "Storefront ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /storefronts/{id}/coupons [get]
 func (h *CommerceHandler) ListStorefrontCoupons(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -335,6 +532,20 @@ func (h *CommerceHandler) ListStorefrontCoupons(c *gin.Context) {
 	c.JSON(http.StatusOK, coupons)
 }
 
+// CreateStorefrontCoupon godoc
+// @Summary Create storefront coupon
+// @Description Creates a new coupon for a specific storefront
+// @Tags Storefronts
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param id path string true "Storefront ID"
+// @Param input body services.UpsertStorefrontCouponInput true "Coupon input"
+// @Success 201 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /storefronts/{id}/coupons [post]
 func (h *CommerceHandler) CreateStorefrontCoupon(c *gin.Context) {
 	requestContextWithActor(c)
 	businessID, ok := requireBusinessScope(c)
@@ -362,6 +573,21 @@ func (h *CommerceHandler) CreateStorefrontCoupon(c *gin.Context) {
 	c.JSON(http.StatusCreated, coupon)
 }
 
+// UpdateStorefrontCoupon godoc
+// @Summary Update storefront coupon
+// @Description Updates an existing coupon for a specific storefront
+// @Tags Storefronts
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param id path string true "Storefront ID"
+// @Param coupon_id path string true "Coupon ID"
+// @Param input body services.UpsertStorefrontCouponInput true "Coupon input"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /storefronts/{id}/coupons/{coupon_id} [put]
 func (h *CommerceHandler) UpdateStorefrontCoupon(c *gin.Context) {
 	requestContextWithActor(c)
 	businessID, ok := requireBusinessScope(c)
@@ -393,6 +619,20 @@ func (h *CommerceHandler) UpdateStorefrontCoupon(c *gin.Context) {
 	c.JSON(http.StatusOK, coupon)
 }
 
+// ListStorefrontOrders godoc
+// @Summary List storefront orders
+// @Description Returns a paginated list of orders for a specific storefront
+// @Tags Storefronts
+// @Security BearerAuth
+// @Produce json
+// @Param id path string true "Storefront ID"
+// @Param status query string false "Filter by status"
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page" default(20)
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /storefronts/{id}/orders [get]
 func (h *CommerceHandler) ListStorefrontOrders(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -408,6 +648,19 @@ func (h *CommerceHandler) ListStorefrontOrders(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": orders, "total": total})
 }
 
+// ApproveStorefrontOrder godoc
+// @Summary Approve storefront order
+// @Description Approves a pending order for a specific storefront
+// @Tags Storefronts
+// @Security BearerAuth
+// @Produce json
+// @Param id path string true "Storefront ID"
+// @Param order_id path string true "Order ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /storefronts/{id}/orders/{order_id}/approve [post]
 func (h *CommerceHandler) ApproveStorefrontOrder(c *gin.Context) {
 	requestContextWithActor(c)
 	businessID, ok := requireBusinessScope(c)
@@ -426,6 +679,21 @@ func (h *CommerceHandler) ApproveStorefrontOrder(c *gin.Context) {
 	c.JSON(http.StatusOK, order)
 }
 
+// CancelStorefrontOrder godoc
+// @Summary Cancel storefront order
+// @Description Cancels a pending order for a specific storefront
+// @Tags Storefronts
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param id path string true "Storefront ID"
+// @Param order_id path string true "Order ID"
+// @Param reason body string false "Cancellation reason"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /storefronts/{id}/orders/{order_id}/cancel [post]
 func (h *CommerceHandler) CancelStorefrontOrder(c *gin.Context) {
 	requestContextWithActor(c)
 	businessID, ok := requireBusinessScope(c)
@@ -448,6 +716,16 @@ func (h *CommerceHandler) CancelStorefrontOrder(c *gin.Context) {
 	c.JSON(http.StatusOK, order)
 }
 
+// ListDriveAssets godoc
+// @Summary List drive assets
+// @Description Returns a list of all drive assets for a business with usage statistics
+// @Tags Drive
+// @Security BearerAuth
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /drive [get]
 func (h *CommerceHandler) ListDriveAssets(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -461,6 +739,18 @@ func (h *CommerceHandler) ListDriveAssets(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": assets, "usage_bytes": usage})
 }
 
+// CreateDriveUpload godoc
+// @Summary Create drive upload
+// @Description Creates a presigned URL for uploading a drive asset
+// @Tags Drive
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param input body services.CreateDriveAssetInput true "Drive asset input"
+// @Success 201 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Router /drive/presign [post]
 func (h *CommerceHandler) CreateDriveUpload(c *gin.Context) {
 	requestContextWithActor(c)
 	businessID, ok := requireBusinessScope(c)
@@ -485,6 +775,17 @@ func (h *CommerceHandler) CreateDriveUpload(c *gin.Context) {
 	c.JSON(http.StatusCreated, session)
 }
 
+// DeleteDriveAsset godoc
+// @Summary Delete drive asset
+// @Description Deletes a specific drive asset
+// @Tags Drive
+// @Security BearerAuth
+// @Param id path string true "Drive asset ID"
+// @Success 204
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /drive/{id} [delete]
 func (h *CommerceHandler) DeleteDriveAsset(c *gin.Context) {
 	requestContextWithActor(c)
 	businessID, ok := requireBusinessScope(c)
@@ -502,6 +803,16 @@ func (h *CommerceHandler) DeleteDriveAsset(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// GetWhatsAppConfig godoc
+// @Summary Get WhatsApp config
+// @Description Returns the WhatsApp configuration for a business
+// @Tags WhatsApp
+// @Security BearerAuth
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /whatsapp/config [get]
 func (h *CommerceHandler) GetWhatsAppConfig(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -519,6 +830,18 @@ func (h *CommerceHandler) GetWhatsAppConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, config)
 }
 
+// UpsertWhatsAppConfig godoc
+// @Summary Upsert WhatsApp config
+// @Description Creates or updates the WhatsApp configuration for a business
+// @Tags WhatsApp
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param input body services.UpsertWhatsAppConfigInput true "WhatsApp config input"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Router /whatsapp/config [put]
 func (h *CommerceHandler) UpsertWhatsAppConfig(c *gin.Context) {
 	requestContextWithActor(c)
 	businessID, ok := requireBusinessScope(c)
@@ -538,6 +861,17 @@ func (h *CommerceHandler) UpsertWhatsAppConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, config)
 }
 
+// ListNotificationDeliveries godoc
+// @Summary List notification deliveries
+// @Description Returns a list of notification deliveries for a business
+// @Tags WhatsApp
+// @Security BearerAuth
+// @Produce json
+// @Param limit query int false "Number of results" default(50)
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /whatsapp/deliveries [get]
 func (h *CommerceHandler) ListNotificationDeliveries(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -552,6 +886,16 @@ func (h *CommerceHandler) ListNotificationDeliveries(c *gin.Context) {
 	c.JSON(http.StatusOK, deliveries)
 }
 
+// PublicCatalog godoc
+// @Summary Get public catalog
+// @Description Returns the public catalog for a storefront by slug
+// @Tags Public Storefront
+// @Produce json
+// @Param slug path string true "Storefront slug"
+// @Success 200 {object} map[string]interface{}
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /public/store/catalog/{slug} [get]
 func (h *CommerceHandler) PublicCatalog(c *gin.Context) {
 	catalog, err := h.svc.GetCatalog(c.Request.Context(), c.Param("slug"))
 	if err != nil {
@@ -565,6 +909,16 @@ func (h *CommerceHandler) PublicCatalog(c *gin.Context) {
 	c.JSON(http.StatusOK, catalog)
 }
 
+// PublicCategories godoc
+// @Summary Get public categories
+// @Description Returns the categories for a storefront by slug
+// @Tags Public Storefront
+// @Produce json
+// @Param slug path string true "Storefront slug"
+// @Success 200 {object} map[string]interface{}
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /public/store/categories/{slug} [get]
 func (h *CommerceHandler) PublicCategories(c *gin.Context) {
 	catalog, err := h.svc.GetCatalog(c.Request.Context(), c.Param("slug"))
 	if err != nil {
@@ -578,6 +932,18 @@ func (h *CommerceHandler) PublicCategories(c *gin.Context) {
 	c.JSON(http.StatusOK, catalog.Categories)
 }
 
+// PublicValidateCoupon godoc
+// @Summary Validate coupon
+// @Description Validates a coupon code for a storefront
+// @Tags Public Storefront
+// @Accept json
+// @Produce json
+// @Param slug path string true "Storefront slug"
+// @Param input body services.ValidateCouponInput true "Coupon validation input"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /public/store/coupons/validate/{slug} [post]
 func (h *CommerceHandler) PublicValidateCoupon(c *gin.Context) {
 	var input services.ValidateCouponInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -596,6 +962,18 @@ func (h *CommerceHandler) PublicValidateCoupon(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// PublicCheckout godoc
+// @Summary Public checkout
+// @Description Processes checkout for a storefront order
+// @Tags Public Storefront
+// @Accept json
+// @Produce json
+// @Param slug path string true "Storefront slug"
+// @Param input body services.StorefrontCheckoutInput true "Checkout input"
+// @Success 201 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /public/store/checkout/{slug} [post]
 func (h *CommerceHandler) PublicCheckout(c *gin.Context) {
 	idempotencyKey, ok := requireIdempotencyKey(c)
 	if !ok {
@@ -618,6 +996,17 @@ func (h *CommerceHandler) PublicCheckout(c *gin.Context) {
 	c.JSON(http.StatusCreated, result)
 }
 
+// PublicOrder godoc
+// @Summary Get public order
+// @Description Returns order details using a public order token
+// @Tags Public Storefront
+// @Produce json
+// @Param slug path string true "Storefront slug"
+// @Param token path string true "Order token"
+// @Success 200 {object} map[string]interface{}
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /public/store/orders/{slug}/{token} [get]
 func (h *CommerceHandler) PublicOrder(c *gin.Context) {
 	order, err := h.svc.GetPublicOrder(c.Request.Context(), c.Param("slug"), c.Param("token"))
 	if err != nil {
@@ -631,6 +1020,17 @@ func (h *CommerceHandler) PublicOrder(c *gin.Context) {
 	c.JSON(http.StatusOK, order)
 }
 
+// PublicRazorpayWebhook godoc
+// @Summary Razorpay webhook
+// @Description Handles Razorpay payment webhook notifications
+// @Tags Public Storefront
+// @Accept json
+// @Produce json
+// @Param X-Razorpay-Signature header string true "Razorpay signature"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Router /public/store/webhooks/payment/razorpay [post]
 func (h *CommerceHandler) PublicRazorpayWebhook(c *gin.Context) {
 	rawBody, err := io.ReadAll(c.Request.Body)
 	if err != nil {
