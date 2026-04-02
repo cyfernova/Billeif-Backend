@@ -32,6 +32,7 @@ type Container struct {
 	Team                *TeamService
 	Webhook             *WebhookService
 	Subscription        *SubscriptionService
+	Commerce            *CommerceService
 	Barcode             *BarcodeService
 	POS                 *POSService
 	S3                  *S3Service
@@ -124,6 +125,7 @@ func NewContainer(
 	documentSvc.AttachTaxComplianceService(taxComplianceSvc)
 	taxComplianceSvc.AttachDocumentService(documentSvc)
 	posSvc := NewPOSService(db, documentSvc, barcodeSvc, taxComplianceSvc.entitlements, log)
+	commerceSvc := NewCommerceService(cfg, db, businessRepo, customerRepo, productRepo, subscriptionRepo, inventorySvc, documentSvc, s3Svc, log)
 
 	log.Info("service container initialized",
 		"components", 34,
@@ -137,7 +139,7 @@ func NewContainer(
 
 	return &Container{
 		Auth:                NewAuthService(cfg, userRepo, aws, emailSvc, s3Svc, log),
-		BusinessAuth:        NewBusinessAuthService(businessRepo, teamRepo, log),
+		BusinessAuth:        NewBusinessAuthService(db, businessRepo, teamRepo, log),
 		Business:            NewBusinessService(businessRepo, s3Svc, log),
 		Customer:            NewCustomerService(customerRepo, log),
 		Vendor:              NewVendorService(vendorRepo, log),
@@ -156,6 +158,7 @@ func NewContainer(
 		Team:                NewTeamService(teamRepo, log),
 		Webhook:             webhookSvc,
 		Subscription:        NewSubscriptionService(subscriptionRepo, log),
+		Commerce:            commerceSvc,
 		Barcode:             barcodeSvc,
 		POS:                 posSvc,
 		S3:                  s3Svc,

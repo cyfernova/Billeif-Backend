@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/http"
 
+	"invoice-backend/internal/services"
 	"invoice-backend/pkg/logger"
 
 	"github.com/gin-gonic/gin"
@@ -66,6 +67,24 @@ func RequireBusinessAccess() gin.HandlerFunc {
 			return
 		}
 
+		c.Next()
+	}
+}
+
+func RequirePermission(authSvc *services.BusinessAuthService, permission string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		log := logger.FromContext(c.Request.Context()).Named("rbac")
+		userID := GetUserID(c)
+		businessID := GetEffectiveBusinessID(c)
+		if userID == "" || businessID == "" {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "business scope required"})
+			return
+		}
+		if authSvc == nil || !authSvc.UserHasPermission(c.Request.Context(), userID, businessID, permission) {
+			log.Warn("permission access denied", "permission", permission, "user_id", userID, "business_id", businessID)
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "insufficient permissions"})
+			return
+		}
 		c.Next()
 	}
 }

@@ -85,6 +85,7 @@ const (
 type Document struct {
 	ID                    string         `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
 	BusinessID            string         `gorm:"not null;index" json:"business_id" validate:"required,uuid"`
+	BranchID              *string        `gorm:"index" json:"branch_id,omitempty" validate:"omitempty,uuid"`
 	DocumentType          string         `gorm:"not null;size:50;index" json:"document_type"`
 	PartyType             string         `gorm:"not null;size:20;index" json:"party_type"`
 	PartyID               *string        `gorm:"index" json:"party_id,omitempty" validate:"omitempty,uuid"`
@@ -105,6 +106,11 @@ type Document struct {
 	DispatchDate          *time.Time     `json:"dispatch_date,omitempty"`
 	Currency              string         `gorm:"not null;size:3;default:'INR'" json:"currency"`
 	ExchangeRate          float64        `gorm:"type:decimal(18,6);default:1" json:"exchange_rate"`
+	FXProvider            string         `gorm:"size:80" json:"fx_provider,omitempty"`
+	FXBaseCurrency        string         `gorm:"size:3" json:"fx_base_currency,omitempty"`
+	FXQuoteCurrency       string         `gorm:"size:3" json:"fx_quote_currency,omitempty"`
+	FXRateTimestamp       *time.Time     `json:"fx_rate_timestamp,omitempty"`
+	FXMetadata            string         `gorm:"type:jsonb;default:'{}'" json:"fx_metadata,omitempty"`
 	Locale                string         `gorm:"not null;size:20;default:'en-IN'" json:"locale"`
 	SourceLinkage         string         `gorm:"type:jsonb;default:'{}'" json:"source_linkage,omitempty"`
 	RenderProfileID       *string        `gorm:"index" json:"render_profile_id,omitempty" validate:"omitempty,uuid"`

@@ -34,6 +34,13 @@ func BusinessAuth(authSvc *services.BusinessAuthService) gin.HandlerFunc {
 			return
 		}
 
+		branchID := extractBranchID(c)
+		if branchID != "" && !authSvc.UserHasBranchAccess(c.Request.Context(), userID, businessID, branchID) {
+			log.Warn("branch access denied", "user_id", userID, "business_id", businessID, "branch_id", branchID)
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "access denied to this branch"})
+			return
+		}
+
 		// Store validated business_id in context for handlers
 		c.Set("validated_business_id", businessID)
 		c.Next()
@@ -53,5 +60,15 @@ func extractBusinessID(c *gin.Context) string {
 		return id
 	}
 
+	return ""
+}
+
+func extractBranchID(c *gin.Context) string {
+	if id := c.Query("branch_id"); id != "" {
+		return id
+	}
+	if id := c.Param("branch_id"); id != "" {
+		return id
+	}
 	return ""
 }

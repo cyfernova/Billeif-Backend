@@ -1,0 +1,2056 @@
+package services
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
+	"invoice-backend/internal/config"
+	"invoice-backend/internal/models"
+	"invoice-backend/internal/repositories/interfaces"
+	"invoice-backend/pkg/logger"
+	"invoice-backend/pkg/razorpay"
+
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+)
+
+type CommerceService struct {
+	cfg              *config.Config
+	db               *gorm.DB
+	businessRepo     interfaces.BusinessRepository
+	customerRepo     interfaces.CustomerRepository
+	productRepo      interfaces.ProductRepository
+	subscriptionRepo interfaces.SubscriptionRepository
+	inventory        *InventoryService
+	documents        *DocumentService
+	s3               *S3Service
+	httpClient       *http.Client
+	razorpay         *razorpay.RazorpayService
+	log              *logger.Logger
+}
+
+type UpsertFeatureEntitlementInput struct {
+	FeatureKey string                 `json:"feature_key" binding:"required"`
+	Enabled    bool                   `json:"enabled"`
+	LimitValue *int64                 `json:"limit_value,omitempty"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
+}
+
+type UpsertRoleInput struct {
+	BusinessID  string   `json:"business_id,omitempty"`
+	Name        string   `json:"name" binding:"required"`
+	Key         string   `json:"key,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Permissions []string `json:"permissions,omitempty"`
+}
+
+type UpsertBranchInput struct {
+	BusinessID string                 `json:"business_id,omitempty"`
+	Name       string                 `json:"name" binding:"required"`
+	Code       string                 `json:"code" binding:"required"`
+	Email      string                 `json:"email,omitempty"`
+	Phone      string                 `json:"phone,omitempty"`
+	Address    string                 `json:"address,omitempty"`
+	City       string                 `json:"city,omitempty"`
+	State      string                 `json:"state,omitempty"`
+	Country    string                 `json:"country,omitempty"`
+	PostalCode string                 `json:"postal_code,omitempty"`
+	IsDefault  bool                   `json:"is_default"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
+}
+
+type UpsertStorefrontInput struct {
+	BusinessID         string                 `json:"business_id,omitempty"`
+	Name               string                 `json:"name" binding:"required"`
+	Slug               string                 `json:"slug,omitempty"`
+	Status             string                 `json:"status,omitempty"`
+	Currency           string                 `json:"currency,omitempty"`
+	AllowCOD           *bool                  `json:"allow_cod,omitempty"`
+	AllowOnlinePayment *bool                  `json:"allow_online_payment,omitempty"`
+	AutoInvoiceOnPaid  *bool                  `json:"auto_invoice_on_paid,omitempty"`
+	MinimumOrderValue  *float64               `json:"minimum_order_value,omitempty"`
+	Settings           map[string]interface{} `json:"settings,omitempty"`
+	BlockedUsers       []string               `json:"blocked_users,omitempty"`
+	Domains            []string               `json:"domains,omitempty"`
+}
+
+type UpsertStorefrontProductInput struct {
+	ProductID      string                 `json:"product_id" binding:"required,uuid"`
+	CategoryID     string                 `json:"category_id,omitempty" binding:"omitempty,uuid"`
+	IsPublished    bool                   `json:"is_published"`
+	DisplayPrice   float64                `json:"display_price"`
+	CompareAtPrice float64                `json:"compare_at_price"`
+	SortOrder      int                    `json:"sort_order"`
+	Badge          string                 `json:"badge,omitempty"`
+	SEO            map[string]interface{} `json:"seo,omitempty"`
+	Metadata       map[string]interface{} `json:"metadata,omitempty"`
+}
+
+type UpsertStorefrontCouponInput struct {
+	Code                  string                 `json:"code" binding:"required"`
+	DiscountType          string                 `json:"discount_type" binding:"required,oneof=percentage fixed"`
+	DiscountValue         float64                `json:"discount_value" binding:"required,gt=0"`
+	MinimumOrderValue     float64                `json:"minimum_order_value"`
+	MaxDiscountAmount     float64                `json:"max_discount_amount"`
+	UsageLimit            int64                  `json:"usage_limit"`
+	UsageLimitPerCustomer int64                  `json:"usage_limit_per_customer"`
+	StartsAt              *time.Time             `json:"starts_at,omitempty"`
+	EndsAt                *time.Time             `json:"ends_at,omitempty"`
+	IsActive              *bool                  `json:"is_active,omitempty"`
+	Metadata              map[string]interface{} `json:"metadata,omitempty"`
+}
+
+type CheckoutCustomerInput struct {
+	Name       string                 `json:"name" binding:"required"`
+	Email      string                 `json:"email,omitempty"`
+	Phone      string                 `json:"phone,omitempty"`
+	GSTIN      string                 `json:"gstin,omitempty"`
+	PAN        string                 `json:"pan,omitempty"`
+	StateCode  string                 `json:"state_code,omitempty"`
+	Address    string                 `json:"address,omitempty"`
+	City       string                 `json:"city,omitempty"`
+	State      string                 `json:"state,omitempty"`
+	Country    string                 `json:"country,omitempty"`
+	PostalCode string                 `json:"postal_code,omitempty"`
+	Billing    map[string]interface{} `json:"billing,omitempty"`
+	Shipping   map[string]interface{} `json:"shipping,omitempty"`
+}
+
+type CheckoutItemInput struct {
+	ProductID   string  `json:"product_id" binding:"required,uuid"`
+	VariantID   string  `json:"variant_id,omitempty" binding:"omitempty,uuid"`
+	Quantity    float64 `json:"quantity" binding:"required,gt=0"`
+	WarehouseID string  `json:"warehouse_id,omitempty" binding:"omitempty,uuid"`
+}
+
+type StorefrontCheckoutInput struct {
+	BranchID        string                 `json:"branch_id,omitempty" binding:"omitempty,uuid"`
+	Currency        string                 `json:"currency,omitempty"`
+	PaymentMethod   string                 `json:"payment_method,omitempty"`
+	CouponCode      string                 `json:"coupon_code,omitempty"`
+	Notes           string                 `json:"notes,omitempty"`
+	ShippingTotal   float64                `json:"shipping_total"`
+	BillingAddress  map[string]interface{} `json:"billing_address,omitempty"`
+	ShippingAddress map[string]interface{} `json:"shipping_address,omitempty"`
+	Customer        CheckoutCustomerInput  `json:"customer" binding:"required"`
+	Items           []CheckoutItemInput    `json:"items" binding:"required,min=1,dive"`
+}
+
+type ValidateCouponInput struct {
+	Code          string  `json:"code" binding:"required"`
+	CustomerEmail string  `json:"customer_email,omitempty"`
+	Subtotal      float64 `json:"subtotal" binding:"gte=0"`
+}
+
+type CreateDriveAssetInput struct {
+	BusinessID  string                 `json:"business_id,omitempty"`
+	Name        string                 `json:"name" binding:"required"`
+	ContentType string                 `json:"content_type" binding:"required"`
+	SizeBytes   int64                  `json:"size_bytes" binding:"required,gte=0"`
+	Category    string                 `json:"category,omitempty"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+}
+
+type UpsertWhatsAppConfigInput struct {
+	BusinessID       string                 `json:"business_id,omitempty"`
+	PhoneNumberID    string                 `json:"phone_number_id,omitempty"`
+	AccessToken      string                 `json:"access_token,omitempty"`
+	WebhookSecret    string                 `json:"webhook_secret,omitempty"`
+	VerifyToken      string                 `json:"verify_token,omitempty"`
+	DefaultRecipient string                 `json:"default_recipient,omitempty"`
+	Enabled          *bool                  `json:"enabled,omitempty"`
+	Metadata         map[string]interface{} `json:"metadata,omitempty"`
+}
+
+type CheckoutResult struct {
+	Order          *models.StoreOrder `json:"order"`
+	GatewayOrderID string             `json:"gateway_order_id,omitempty"`
+}
+
+type CouponValidationResult struct {
+	Valid         bool    `json:"valid"`
+	DiscountTotal float64 `json:"discount_total"`
+	Message       string  `json:"message,omitempty"`
+}
+
+type DriveUploadSession struct {
+	Asset     *models.DriveAsset `json:"asset"`
+	UploadURL string             `json:"upload_url"`
+}
+
+type StorefrontCatalogItem struct {
+	StorefrontProduct *models.StorefrontProduct `json:"storefront_product"`
+	Product           *models.Product           `json:"product"`
+}
+
+type StorefrontCatalogResponse struct {
+	Storefront *models.Storefront           `json:"storefront"`
+	Categories []*models.StorefrontCategory `json:"categories"`
+	Products   []*StorefrontCatalogItem     `json:"products"`
+}
+
+func NewCommerceService(
+	cfg *config.Config,
+	db *gorm.DB,
+	businessRepo interfaces.BusinessRepository,
+	customerRepo interfaces.CustomerRepository,
+	productRepo interfaces.ProductRepository,
+	subscriptionRepo interfaces.SubscriptionRepository,
+	inventory *InventoryService,
+	documents *DocumentService,
+	s3 *S3Service,
+	log *logger.Logger,
+) *CommerceService {
+	var rp *razorpay.RazorpayService
+	if cfg != nil && strings.TrimSpace(cfg.Razorpay.Key) != "" && strings.TrimSpace(cfg.Razorpay.Secret) != "" {
+		rp = razorpay.NewRazorpayService(&razorpay.Config{
+			Key:           cfg.Razorpay.Key,
+			Secret:        cfg.Razorpay.Secret,
+			WebhookSecret: cfg.Razorpay.WebhookSecret,
+			BaseURL:       cfg.Razorpay.BaseURL,
+			Timeout:       time.Duration(cfg.Razorpay.Timeout) * time.Second,
+		}, log.Named("razorpay"))
+	}
+	httpTimeout := 15 * time.Second
+	if cfg != nil && cfg.WhatsApp.Timeout > 0 {
+		httpTimeout = time.Duration(cfg.WhatsApp.Timeout) * time.Second
+	}
+	return &CommerceService{
+		cfg:              cfg,
+		db:               db,
+		businessRepo:     businessRepo,
+		customerRepo:     customerRepo,
+		productRepo:      productRepo,
+		subscriptionRepo: subscriptionRepo,
+		inventory:        inventory,
+		documents:        documents,
+		s3:               s3,
+		httpClient:       &http.Client{Timeout: httpTimeout},
+		razorpay:         rp,
+		log:              log,
+	}
+}
+
+func (s *CommerceService) ListFeatureEntitlements(ctx context.Context, businessID string) ([]*models.FeatureEntitlement, error) {
+	var entitlements []*models.FeatureEntitlement
+	if err := s.db.WithContext(ctx).
+		Where("business_id = ? AND deleted_at IS NULL", businessID).
+		Order("feature_key ASC").
+		Find(&entitlements).Error; err != nil {
+		return nil, err
+	}
+	if len(entitlements) == 0 {
+		return s.SyncFeatureEntitlements(ctx, businessID)
+	}
+	return entitlements, nil
+}
+
+func (s *CommerceService) SyncFeatureEntitlements(ctx context.Context, businessID string) ([]*models.FeatureEntitlement, error) {
+	subscription, err := s.subscriptionRepo.GetByBusinessID(ctx, businessID)
+	if err != nil || subscription == nil {
+		subscription = &models.Subscription{BusinessID: businessID, Plan: "free", PlanCode: "free", CatalogVersion: CurrentSubscriptionCatalogVersion}
+	}
+	subscription.PlanCode = normalizePlanCode(subscription.Plan, subscription.PlanCode)
+	subscription.CatalogVersion = normalizeCatalogVersion(subscription.CatalogVersion)
+	seeds := defaultEntitlementSeedsForSubscription(subscription)
+
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for _, seed := range seeds {
+			var entitlement models.FeatureEntitlement
+			err := tx.Where("business_id = ? AND feature_key = ? AND deleted_at IS NULL", businessID, seed.FeatureKey).First(&entitlement).Error
+			switch {
+			case err == nil:
+				entitlement.Enabled = seed.Enabled
+				entitlement.LimitValue = seed.LimitValue
+				entitlement.Metadata = mustMarshalMap(seed.Metadata)
+				if err := tx.Save(&entitlement).Error; err != nil {
+					return err
+				}
+			case err == gorm.ErrRecordNotFound:
+				entitlement = models.FeatureEntitlement{
+					BusinessID: businessID,
+					FeatureKey: seed.FeatureKey,
+					Enabled:    seed.Enabled,
+					LimitValue: seed.LimitValue,
+					Metadata:   mustMarshalMap(seed.Metadata),
+				}
+				if err := tx.Create(&entitlement).Error; err != nil {
+					return err
+				}
+			default:
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	var entitlements []*models.FeatureEntitlement
+	if err := s.db.WithContext(ctx).
+		Where("business_id = ? AND deleted_at IS NULL", businessID).
+		Order("feature_key ASC").
+		Find(&entitlements).Error; err != nil {
+		return nil, err
+	}
+	return entitlements, nil
+}
+
+func (s *CommerceService) UpsertFeatureEntitlements(ctx context.Context, businessID string, inputs []UpsertFeatureEntitlementInput) ([]*models.FeatureEntitlement, error) {
+	if len(inputs) == 0 {
+		return s.ListFeatureEntitlements(ctx, businessID)
+	}
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for _, input := range inputs {
+			if strings.TrimSpace(input.FeatureKey) == "" {
+				continue
+			}
+			var entitlement models.FeatureEntitlement
+			err := tx.Where("business_id = ? AND feature_key = ? AND deleted_at IS NULL", businessID, input.FeatureKey).First(&entitlement).Error
+			switch {
+			case err == nil:
+				entitlement.Enabled = input.Enabled
+				entitlement.LimitValue = input.LimitValue
+				if input.Metadata != nil {
+					entitlement.Metadata = mustMarshalMap(input.Metadata)
+				}
+				if err := tx.Save(&entitlement).Error; err != nil {
+					return err
+				}
+			case err == gorm.ErrRecordNotFound:
+				entitlement = models.FeatureEntitlement{
+					BusinessID: businessID,
+					FeatureKey: input.FeatureKey,
+					Enabled:    input.Enabled,
+					LimitValue: input.LimitValue,
+					Metadata:   mustMarshalMap(input.Metadata),
+				}
+				if err := tx.Create(&entitlement).Error; err != nil {
+					return err
+				}
+			default:
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return s.ListFeatureEntitlements(ctx, businessID)
+}
+
+func (s *CommerceService) ListRoles(ctx context.Context, businessID string) ([]*models.Role, error) {
+	var roles []*models.Role
+	if err := s.db.WithContext(ctx).
+		Preload("Permissions", "deleted_at IS NULL").
+		Where("business_id = ? AND deleted_at IS NULL", businessID).
+		Order("is_system DESC, name ASC").
+		Find(&roles).Error; err != nil {
+		return nil, err
+	}
+	return roles, nil
+}
+
+func (s *CommerceService) CreateRole(ctx context.Context, input UpsertRoleInput) (*models.Role, error) {
+	if err := s.ensureFeatureEnabled(ctx, input.BusinessID, FeatureCustomRoles); err != nil {
+		return nil, err
+	}
+	role := &models.Role{
+		BusinessID:  input.BusinessID,
+		Name:        input.Name,
+		Key:         normalizeLookupKey(firstNonEmpty(input.Key, input.Name)),
+		Description: input.Description,
+		IsSystem:    false,
+	}
+	if role.Key == "" {
+		return nil, fmt.Errorf("role key is required")
+	}
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(role).Error; err != nil {
+			return err
+		}
+		return s.replaceRolePermissionsTx(tx, role.ID, input.Permissions)
+	}); err != nil {
+		return nil, err
+	}
+	return s.getRole(ctx, input.BusinessID, role.ID)
+}
+
+func (s *CommerceService) UpdateRole(ctx context.Context, businessID, roleID string, input UpsertRoleInput) (*models.Role, error) {
+	role, err := s.getRole(ctx, businessID, roleID)
+	if err != nil {
+		return nil, err
+	}
+	if role.IsSystem {
+		return nil, fmt.Errorf("system roles cannot be modified")
+	}
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		role.Name = coalesceString(input.Name, role.Name)
+		if input.Key != "" {
+			role.Key = normalizeLookupKey(input.Key)
+		}
+		if input.Description != "" {
+			role.Description = input.Description
+		}
+		if err := tx.Save(role).Error; err != nil {
+			return err
+		}
+		if input.Permissions != nil {
+			return s.replaceRolePermissionsTx(tx, role.ID, input.Permissions)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return s.getRole(ctx, businessID, roleID)
+}
+
+func (s *CommerceService) DeleteRole(ctx context.Context, businessID, roleID string) error {
+	role, err := s.getRole(ctx, businessID, roleID)
+	if err != nil {
+		return err
+	}
+	if role.IsSystem {
+		return fmt.Errorf("system roles cannot be deleted")
+	}
+	return s.db.WithContext(ctx).Delete(role).Error
+}
+
+func (s *CommerceService) ListBranches(ctx context.Context, businessID string) ([]*models.Branch, error) {
+	var branches []*models.Branch
+	if err := s.db.WithContext(ctx).
+		Where("business_id = ? AND deleted_at IS NULL", businessID).
+		Order("is_default DESC, name ASC").
+		Find(&branches).Error; err != nil {
+		return nil, err
+	}
+	return branches, nil
+}
+
+func (s *CommerceService) CreateBranch(ctx context.Context, input UpsertBranchInput) (*models.Branch, error) {
+	if err := s.ensureFeatureEnabled(ctx, input.BusinessID, FeatureBranches); err != nil {
+		return nil, err
+	}
+	branch := &models.Branch{
+		BusinessID: input.BusinessID,
+		Name:       input.Name,
+		Code:       strings.ToUpper(strings.TrimSpace(input.Code)),
+		Email:      input.Email,
+		Phone:      input.Phone,
+		Address:    input.Address,
+		City:       input.City,
+		State:      input.State,
+		Country:    input.Country,
+		PostalCode: input.PostalCode,
+		IsDefault:  input.IsDefault,
+		Metadata:   mustMarshalMap(input.Metadata),
+	}
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if branch.IsDefault {
+			if err := tx.Model(&models.Branch{}).
+				Where("business_id = ? AND deleted_at IS NULL", input.BusinessID).
+				Update("is_default", false).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Create(branch).Error
+	}); err != nil {
+		return nil, err
+	}
+	return branch, nil
+}
+
+func (s *CommerceService) UpdateBranch(ctx context.Context, businessID, branchID string, input UpsertBranchInput) (*models.Branch, error) {
+	var branch models.Branch
+	if err := s.db.WithContext(ctx).
+		Where("id = ? AND business_id = ? AND deleted_at IS NULL", branchID, businessID).
+		First(&branch).Error; err != nil {
+		return nil, err
+	}
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if input.Name != "" {
+			branch.Name = input.Name
+		}
+		if input.Code != "" {
+			branch.Code = strings.ToUpper(strings.TrimSpace(input.Code))
+		}
+		if input.Email != "" {
+			branch.Email = input.Email
+		}
+		if input.Phone != "" {
+			branch.Phone = input.Phone
+		}
+		if input.Address != "" {
+			branch.Address = input.Address
+		}
+		if input.City != "" {
+			branch.City = input.City
+		}
+		if input.State != "" {
+			branch.State = input.State
+		}
+		if input.Country != "" {
+			branch.Country = input.Country
+		}
+		if input.PostalCode != "" {
+			branch.PostalCode = input.PostalCode
+		}
+		if input.Metadata != nil {
+			branch.Metadata = mustMarshalMap(input.Metadata)
+		}
+		if input.IsDefault {
+			if err := tx.Model(&models.Branch{}).
+				Where("business_id = ? AND deleted_at IS NULL", businessID).
+				Update("is_default", false).Error; err != nil {
+				return err
+			}
+			branch.IsDefault = true
+		}
+		return tx.Save(&branch).Error
+	}); err != nil {
+		return nil, err
+	}
+	return &branch, nil
+}
+
+func (s *CommerceService) DeleteBranch(ctx context.Context, businessID, branchID string) error {
+	return s.db.WithContext(ctx).
+		Where("business_id = ? AND id = ?", businessID, branchID).
+		Delete(&models.Branch{}).Error
+}
+
+func (s *CommerceService) ListStorefronts(ctx context.Context, businessID string) ([]*models.Storefront, error) {
+	var storefronts []*models.Storefront
+	if err := s.db.WithContext(ctx).
+		Preload("Domains", "deleted_at IS NULL").
+		Where("business_id = ? AND deleted_at IS NULL", businessID).
+		Order("created_at ASC").
+		Find(&storefronts).Error; err != nil {
+		return nil, err
+	}
+	return storefronts, nil
+}
+
+func (s *CommerceService) GetStorefront(ctx context.Context, businessID, storefrontID string) (*models.Storefront, error) {
+	var storefront models.Storefront
+	if err := s.db.WithContext(ctx).
+		Preload("Domains", "deleted_at IS NULL").
+		Where("id = ? AND business_id = ? AND deleted_at IS NULL", storefrontID, businessID).
+		First(&storefront).Error; err != nil {
+		return nil, err
+	}
+	return &storefront, nil
+}
+
+func (s *CommerceService) CreateStorefront(ctx context.Context, input UpsertStorefrontInput) (*models.Storefront, error) {
+	if err := s.ensureFeatureEnabled(ctx, input.BusinessID, FeatureOnlineStore); err != nil {
+		return nil, err
+	}
+	var existingCount int64
+	if err := s.db.WithContext(ctx).Model(&models.Storefront{}).
+		Where("business_id = ? AND deleted_at IS NULL", input.BusinessID).
+		Count(&existingCount).Error; err != nil {
+		return nil, err
+	}
+	if existingCount > 0 {
+		return nil, fmt.Errorf("only one storefront is supported per business in v1")
+	}
+	business, err := s.businessRepo.GetByID(ctx, input.BusinessID)
+	if err != nil {
+		return nil, err
+	}
+	storefront := &models.Storefront{
+		BusinessID:         input.BusinessID,
+		Name:               input.Name,
+		Slug:               normalizeLookupKey(firstNonEmpty(input.Slug, input.Name)),
+		Status:             coalesceString(input.Status, models.StorefrontStatusDraft),
+		Currency:           defaultCurrency(coalesceString(input.Currency, business.Currency)),
+		AllowCOD:           boolValueOrDefault(input.AllowCOD, true),
+		AllowOnlinePayment: boolValueOrDefault(input.AllowOnlinePayment, false),
+		AutoInvoiceOnPaid:  boolValueOrDefault(input.AutoInvoiceOnPaid, true),
+		MinimumOrderValue:  floatPointerValue(input.MinimumOrderValue),
+		Settings:           mustMarshalMap(input.Settings),
+		BlockedUsers:       marshalStringSlice(uniqueStrings(input.BlockedUsers)),
+	}
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(storefront).Error; err != nil {
+			return err
+		}
+		return s.replaceStorefrontDomainsTx(tx, storefront.ID, input.Domains)
+	}); err != nil {
+		return nil, err
+	}
+	return s.GetStorefront(ctx, input.BusinessID, storefront.ID)
+}
+
+func (s *CommerceService) UpdateStorefrontSettings(ctx context.Context, businessID, storefrontID string, input UpsertStorefrontInput) (*models.Storefront, error) {
+	storefront, err := s.GetStorefront(ctx, businessID, storefrontID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if input.Name != "" {
+			storefront.Name = input.Name
+		}
+		if input.Slug != "" {
+			storefront.Slug = normalizeLookupKey(input.Slug)
+		}
+		if input.Status != "" {
+			storefront.Status = input.Status
+		}
+		if input.Currency != "" {
+			storefront.Currency = defaultCurrency(input.Currency)
+		}
+		if input.AllowCOD != nil {
+			storefront.AllowCOD = *input.AllowCOD
+		}
+		if input.AllowOnlinePayment != nil {
+			storefront.AllowOnlinePayment = *input.AllowOnlinePayment
+		}
+		if input.AutoInvoiceOnPaid != nil {
+			storefront.AutoInvoiceOnPaid = *input.AutoInvoiceOnPaid
+		}
+		if input.MinimumOrderValue != nil {
+			storefront.MinimumOrderValue = *input.MinimumOrderValue
+		}
+		if input.Settings != nil {
+			storefront.Settings = mustMarshalMap(input.Settings)
+		}
+		if input.BlockedUsers != nil {
+			storefront.BlockedUsers = marshalStringSlice(uniqueStrings(input.BlockedUsers))
+		}
+		if err := tx.Save(storefront).Error; err != nil {
+			return err
+		}
+		if input.Domains != nil {
+			return s.replaceStorefrontDomainsTx(tx, storefront.ID, input.Domains)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return s.GetStorefront(ctx, businessID, storefrontID)
+}
+
+func (s *CommerceService) ListStorefrontProducts(ctx context.Context, businessID, storefrontID string) ([]*StorefrontCatalogItem, error) {
+	var storefrontProducts []*models.StorefrontProduct
+	if err := s.db.WithContext(ctx).
+		Where("storefront_id = ? AND deleted_at IS NULL", storefrontID).
+		Order("sort_order ASC, created_at ASC").
+		Find(&storefrontProducts).Error; err != nil {
+		return nil, err
+	}
+	items := make([]*StorefrontCatalogItem, 0, len(storefrontProducts))
+	for _, storefrontProduct := range storefrontProducts {
+		product, err := s.productRepo.GetByID(ctx, storefrontProduct.ProductID, businessID)
+		if err != nil {
+			continue
+		}
+		items = append(items, &StorefrontCatalogItem{
+			StorefrontProduct: storefrontProduct,
+			Product:           product,
+		})
+	}
+	return items, nil
+}
+
+func (s *CommerceService) ReplaceStorefrontProducts(ctx context.Context, businessID, storefrontID string, inputs []UpsertStorefrontProductInput) ([]*StorefrontCatalogItem, error) {
+	if err := s.ensureFeatureEnabled(ctx, businessID, FeatureOnlineStore); err != nil {
+		return nil, err
+	}
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for _, input := range inputs {
+			product, err := s.productRepo.GetByID(ctx, input.ProductID, businessID)
+			if err != nil {
+				return err
+			}
+			eligible, err := s.productEligibleForStorefront(ctx, input.ProductID)
+			if err != nil {
+				return err
+			}
+			if input.IsPublished && !eligible {
+				return fmt.Errorf("product %s uses batch or serial tracking and cannot be published to the storefront", product.Name)
+			}
+			var storefrontProduct models.StorefrontProduct
+			err = tx.Where("storefront_id = ? AND product_id = ? AND deleted_at IS NULL", storefrontID, input.ProductID).First(&storefrontProduct).Error
+			switch {
+			case err == nil:
+				storefrontProduct.CategoryID = stringPointer(input.CategoryID)
+				storefrontProduct.IsPublished = input.IsPublished
+				storefrontProduct.DisplayPrice = coalesceFloat(input.DisplayPrice, product.Price)
+				storefrontProduct.CompareAtPrice = input.CompareAtPrice
+				storefrontProduct.SortOrder = input.SortOrder
+				storefrontProduct.Badge = input.Badge
+				storefrontProduct.SEO = mustMarshalMap(input.SEO)
+				storefrontProduct.Metadata = mustMarshalMap(input.Metadata)
+				if err := tx.Save(&storefrontProduct).Error; err != nil {
+					return err
+				}
+			case err == gorm.ErrRecordNotFound:
+				storefrontProduct = models.StorefrontProduct{
+					StorefrontID:   storefrontID,
+					ProductID:      input.ProductID,
+					CategoryID:     stringPointer(input.CategoryID),
+					IsPublished:    input.IsPublished,
+					DisplayPrice:   coalesceFloat(input.DisplayPrice, product.Price),
+					CompareAtPrice: input.CompareAtPrice,
+					SortOrder:      input.SortOrder,
+					Badge:          input.Badge,
+					SEO:            mustMarshalMap(input.SEO),
+					Metadata:       mustMarshalMap(input.Metadata),
+				}
+				if err := tx.Create(&storefrontProduct).Error; err != nil {
+					return err
+				}
+			default:
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return s.ListStorefrontProducts(ctx, businessID, storefrontID)
+}
+
+func (s *CommerceService) ListStorefrontCoupons(ctx context.Context, storefrontID string) ([]*models.StorefrontCoupon, error) {
+	var coupons []*models.StorefrontCoupon
+	if err := s.db.WithContext(ctx).
+		Where("storefront_id = ? AND deleted_at IS NULL", storefrontID).
+		Order("created_at DESC").
+		Find(&coupons).Error; err != nil {
+		return nil, err
+	}
+	return coupons, nil
+}
+
+func (s *CommerceService) CreateStorefrontCoupon(ctx context.Context, storefrontID string, input UpsertStorefrontCouponInput) (*models.StorefrontCoupon, error) {
+	coupon := &models.StorefrontCoupon{
+		StorefrontID:          storefrontID,
+		Code:                  strings.ToUpper(strings.TrimSpace(input.Code)),
+		DiscountType:          input.DiscountType,
+		DiscountValue:         input.DiscountValue,
+		MinimumOrderValue:     input.MinimumOrderValue,
+		MaxDiscountAmount:     input.MaxDiscountAmount,
+		UsageLimit:            input.UsageLimit,
+		UsageLimitPerCustomer: input.UsageLimitPerCustomer,
+		StartsAt:              input.StartsAt,
+		EndsAt:                input.EndsAt,
+		IsActive:              boolValueOrDefault(input.IsActive, true),
+		Metadata:              mustMarshalMap(input.Metadata),
+	}
+	if err := s.db.WithContext(ctx).Create(coupon).Error; err != nil {
+		return nil, err
+	}
+	return coupon, nil
+}
+
+func (s *CommerceService) UpdateStorefrontCoupon(ctx context.Context, storefrontID, couponID string, input UpsertStorefrontCouponInput) (*models.StorefrontCoupon, error) {
+	var coupon models.StorefrontCoupon
+	if err := s.db.WithContext(ctx).
+		Where("id = ? AND storefront_id = ? AND deleted_at IS NULL", couponID, storefrontID).
+		First(&coupon).Error; err != nil {
+		return nil, err
+	}
+	coupon.Code = strings.ToUpper(strings.TrimSpace(firstNonEmpty(input.Code, coupon.Code)))
+	if input.DiscountType != "" {
+		coupon.DiscountType = input.DiscountType
+	}
+	if input.DiscountValue > 0 {
+		coupon.DiscountValue = input.DiscountValue
+	}
+	coupon.MinimumOrderValue = input.MinimumOrderValue
+	coupon.MaxDiscountAmount = input.MaxDiscountAmount
+	coupon.UsageLimit = input.UsageLimit
+	coupon.UsageLimitPerCustomer = input.UsageLimitPerCustomer
+	coupon.StartsAt = input.StartsAt
+	coupon.EndsAt = input.EndsAt
+	if input.IsActive != nil {
+		coupon.IsActive = *input.IsActive
+	}
+	if input.Metadata != nil {
+		coupon.Metadata = mustMarshalMap(input.Metadata)
+	}
+	if err := s.db.WithContext(ctx).Save(&coupon).Error; err != nil {
+		return nil, err
+	}
+	return &coupon, nil
+}
+
+func (s *CommerceService) ListStorefrontOrders(ctx context.Context, businessID, storefrontID, status string, page, limit int) ([]*models.StoreOrder, int64, error) {
+	if page <= 0 {
+		page = 1
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	query := s.db.WithContext(ctx).
+		Model(&models.StoreOrder{}).
+		Where("business_id = ? AND storefront_id = ? AND deleted_at IS NULL", businessID, storefrontID)
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var orders []*models.StoreOrder
+	if err := query.
+		Preload("Lines", "deleted_at IS NULL").
+		Preload("Events", "deleted_at IS NULL").
+		Order("created_at DESC").
+		Offset((page - 1) * limit).
+		Limit(limit).
+		Find(&orders).Error; err != nil {
+		return nil, 0, err
+	}
+	return orders, total, nil
+}
+
+func (s *CommerceService) ApproveStoreOrder(ctx context.Context, businessID, storefrontID, orderID string) (*models.StoreOrder, error) {
+	order, storefront, err := s.getStoreOrderForBusiness(ctx, businessID, storefrontID, orderID)
+	if err != nil {
+		return nil, err
+	}
+	if order.Status == models.StoreOrderStatusCancelled {
+		return nil, fmt.Errorf("cancelled orders cannot be approved")
+	}
+	if order.SalesInvoiceID == nil || *order.SalesInvoiceID == "" {
+		invoiceID, err := s.createSalesInvoiceForOrder(ctx, order)
+		if err != nil {
+			return nil, err
+		}
+		order.SalesInvoiceID = stringPointer(invoiceID)
+	}
+	order.Status = models.StoreOrderStatusConfirmed
+	if order.PaymentStatus == models.StoreOrderPaymentStatusPaid {
+		order.Status = models.StoreOrderStatusPaid
+	}
+	if err := s.db.WithContext(ctx).Save(order).Error; err != nil {
+		return nil, err
+	}
+	_ = s.recordStoreOrderEvent(ctx, order.ID, "store_order.approved", order.Status, map[string]interface{}{
+		"storefront_id": storefront.ID,
+	})
+	s.queueStoreOrderNotification(ctx, order, "store_order.paid")
+	return order, nil
+}
+
+func (s *CommerceService) CancelStoreOrder(ctx context.Context, businessID, storefrontID, orderID, reason string) (*models.StoreOrder, error) {
+	order, _, err := s.getStoreOrderForBusiness(ctx, businessID, storefrontID, orderID)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	order.Status = models.StoreOrderStatusCancelled
+	order.CancelledAt = &now
+	order.CancellationReason = reason
+	if err := s.db.WithContext(ctx).Save(order).Error; err != nil {
+		return nil, err
+	}
+	if order.SalesOrderID != nil && *order.SalesOrderID != "" && (order.SalesInvoiceID == nil || *order.SalesInvoiceID == "") {
+		_ = s.inventory.ReleaseReservations(ctx, *order.SalesOrderID)
+	}
+	_ = s.recordStoreOrderEvent(ctx, order.ID, "store_order.cancelled", order.Status, map[string]interface{}{"reason": reason})
+	s.queueStoreOrderNotification(ctx, order, "store_order.cancelled")
+	return order, nil
+}
+
+func (s *CommerceService) GetCatalog(ctx context.Context, slug string) (*StorefrontCatalogResponse, error) {
+	storefront, err := s.findStorefrontBySlug(ctx, slug)
+	if err != nil {
+		return nil, err
+	}
+	var categories []*models.StorefrontCategory
+	if err := s.db.WithContext(ctx).
+		Where("storefront_id = ? AND deleted_at IS NULL", storefront.ID).
+		Order("sort_order ASC, name ASC").
+		Find(&categories).Error; err != nil {
+		return nil, err
+	}
+	var storefrontProducts []*models.StorefrontProduct
+	if err := s.db.WithContext(ctx).
+		Where("storefront_id = ? AND deleted_at IS NULL AND is_published = TRUE", storefront.ID).
+		Order("sort_order ASC, created_at ASC").
+		Find(&storefrontProducts).Error; err != nil {
+		return nil, err
+	}
+	items := make([]*StorefrontCatalogItem, 0, len(storefrontProducts))
+	for _, storefrontProduct := range storefrontProducts {
+		product, err := s.productRepo.GetByID(ctx, storefrontProduct.ProductID, storefront.BusinessID)
+		if err != nil || !product.IsActive {
+			continue
+		}
+		items = append(items, &StorefrontCatalogItem{StorefrontProduct: storefrontProduct, Product: product})
+	}
+	return &StorefrontCatalogResponse{
+		Storefront: storefront,
+		Categories: categories,
+		Products:   items,
+	}, nil
+}
+
+func (s *CommerceService) ValidateCoupon(ctx context.Context, slug string, input ValidateCouponInput) (*CouponValidationResult, error) {
+	storefront, err := s.findStorefrontBySlug(ctx, slug)
+	if err != nil {
+		return nil, err
+	}
+	_, discount, err := s.resolveCoupon(ctx, storefront, strings.ToUpper(strings.TrimSpace(input.Code)), "", input.CustomerEmail, input.Subtotal)
+	if err != nil {
+		return &CouponValidationResult{Valid: false, Message: err.Error()}, nil
+	}
+	return &CouponValidationResult{
+		Valid:         true,
+		DiscountTotal: discount,
+	}, nil
+}
+
+func (s *CommerceService) Checkout(ctx context.Context, slug, idempotencyKey string, input StorefrontCheckoutInput) (*CheckoutResult, error) {
+	storefront, err := s.findStorefrontBySlug(ctx, slug)
+	if err != nil {
+		return nil, err
+	}
+	if storefront.Status != models.StorefrontStatusPublished && storefront.Status != models.StorefrontStatusDraft {
+		return nil, fmt.Errorf("storefront is not accepting orders")
+	}
+	if idempotencyKey != "" {
+		var existing models.StoreOrder
+		err := s.db.WithContext(ctx).
+			Preload("Lines", "deleted_at IS NULL").
+			Where("storefront_id = ? AND idempotency_key = ? AND deleted_at IS NULL", storefront.ID, idempotencyKey).
+			First(&existing).Error
+		if err == nil {
+			return &CheckoutResult{Order: &existing, GatewayOrderID: existing.GatewayOrderID}, nil
+		}
+		if err != nil && err != gorm.ErrRecordNotFound {
+			return nil, err
+		}
+	}
+	if strings.EqualFold(input.PaymentMethod, "online") && !storefront.AllowOnlinePayment {
+		return nil, fmt.Errorf("online payments are not enabled for this storefront")
+	}
+	if (input.PaymentMethod == "" || strings.EqualFold(input.PaymentMethod, "cod")) && !storefront.AllowCOD {
+		return nil, fmt.Errorf("cash on delivery is not enabled for this storefront")
+	}
+	business, err := s.businessRepo.GetByID(ctx, storefront.BusinessID)
+	if err != nil {
+		return nil, err
+	}
+	orderCurrency := defaultCurrency(firstNonEmpty(input.Currency, storefront.Currency, business.Currency))
+	customer, err := s.resolveCheckoutCustomer(ctx, storefront.BusinessID, input.Customer, input.BillingAddress, input.ShippingAddress)
+	if err != nil {
+		return nil, err
+	}
+
+	order := &models.StoreOrder{
+		BusinessID:      storefront.BusinessID,
+		StorefrontID:    storefront.ID,
+		BranchID:        stringPointer(input.BranchID),
+		CustomerID:      stringPointer(customer.ID),
+		PublicToken:     randomToken(18),
+		OrderNumber:     s.nextStoreOrderNumber(),
+		Status:          models.StoreOrderStatusPending,
+		PaymentStatus:   models.StoreOrderPaymentStatusPending,
+		PaymentMethod:   strings.ToLower(strings.TrimSpace(firstNonEmpty(input.PaymentMethod, "cod"))),
+		Currency:        orderCurrency,
+		ExchangeRate:    1,
+		BillingAddress:  mustMarshalMap(firstAvailableMap(input.BillingAddress, input.Customer.Billing)),
+		ShippingAddress: mustMarshalMap(firstAvailableMap(input.ShippingAddress, input.Customer.Shipping)),
+		Notes:           input.Notes,
+		IdempotencyKey:  idempotencyKey,
+		OrderedAt:       time.Now().UTC(),
+	}
+	if order.PaymentMethod == "cod" {
+		order.PaymentStatus = models.StoreOrderPaymentStatusCOD
+		order.Status = models.StoreOrderStatusAwaitingApproval
+	}
+	if err := s.validateBranchID(ctx, storefront.BusinessID, input.BranchID); err != nil {
+		return nil, err
+	}
+
+	lines, subtotal, taxTotal, err := s.buildStoreOrderLines(ctx, storefront, input.Items)
+	if err != nil {
+		return nil, err
+	}
+	order.Subtotal = subtotal
+	order.TaxTotal = taxTotal
+	order.ShippingTotal = input.ShippingTotal
+
+	if !strings.EqualFold(orderCurrency, defaultCurrency(business.Currency)) {
+		if err := s.ensureFeatureEnabled(ctx, storefront.BusinessID, FeatureMultiCurrency); err != nil {
+			return nil, err
+		}
+		fxRate, err := s.ResolveFXRate(ctx, defaultCurrency(business.Currency), orderCurrency)
+		if err != nil {
+			return nil, err
+		}
+		order.ExchangeRate = fxRate.Rate
+		order.FXProvider = fxRate.Provider
+		order.FXBaseCurrency = fxRate.BaseCurrency
+		order.FXQuoteCurrency = fxRate.QuoteCurrency
+		order.FXRateTimestamp = &fxRate.FetchedAt
+		for _, line := range lines {
+			line.UnitPrice = roundMoney(line.UnitPrice * fxRate.Rate)
+			line.DiscountAmount = roundMoney(line.DiscountAmount * fxRate.Rate)
+			line.TaxAmount = roundMoney(line.TaxAmount * fxRate.Rate)
+			line.LineTotal = roundMoney(line.LineTotal * fxRate.Rate)
+		}
+		order.Subtotal = roundMoney(order.Subtotal * fxRate.Rate)
+		order.TaxTotal = roundMoney(order.TaxTotal * fxRate.Rate)
+		order.ShippingTotal = roundMoney(order.ShippingTotal * fxRate.Rate)
+	}
+
+	couponCode := strings.ToUpper(strings.TrimSpace(input.CouponCode))
+	if couponCode != "" {
+		coupon, discount, err := s.resolveCoupon(ctx, storefront, couponCode, customer.ID, customer.Email, order.Subtotal)
+		if err != nil {
+			return nil, err
+		}
+		order.CouponID = &coupon.ID
+		order.DiscountTotal = roundMoney(discount)
+	}
+
+	order.Total = roundMoney(order.Subtotal + order.TaxTotal + order.ShippingTotal - order.DiscountTotal)
+	if order.Total < 0 {
+		order.Total = 0
+	}
+	if storefront.MinimumOrderValue > 0 && order.Total < storefront.MinimumOrderValue {
+		return nil, fmt.Errorf("minimum order value is %.2f", storefront.MinimumOrderValue)
+	}
+	order.Snapshot = mustMarshalMap(map[string]interface{}{
+		"customer": input.Customer,
+		"items":    input.Items,
+	})
+
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(order).Error; err != nil {
+			return err
+		}
+		for _, line := range lines {
+			line.StoreOrderID = order.ID
+			if err := tx.Create(line).Error; err != nil {
+				return err
+			}
+		}
+		if order.CouponID != nil && *order.CouponID != "" {
+			redemption := &models.StorefrontCouponRedemption{
+				StorefrontCouponID: *order.CouponID,
+				StoreOrderID:       &order.ID,
+				CustomerID:         &customer.ID,
+				CustomerEmail:      customer.Email,
+				DiscountAmount:     order.DiscountTotal,
+			}
+			if err := tx.Create(redemption).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Create(&models.StoreOrderEvent{
+			StoreOrderID: order.ID,
+			EventType:    "store_order.created",
+			Status:       order.Status,
+			Payload:      mustMarshalMap(map[string]interface{}{"payment_method": order.PaymentMethod}),
+		}).Error
+	}); err != nil {
+		return nil, err
+	}
+
+	salesOrderID, err := s.createSalesOrderForOrder(ctx, order)
+	if err != nil {
+		s.log.Error("failed to create sales order for storefront checkout", "order_id", order.ID, "error", err)
+	} else {
+		order.SalesOrderID = stringPointer(salesOrderID)
+		_ = s.db.WithContext(ctx).Model(order).Update("sales_order_id", salesOrderID).Error
+	}
+
+	var gatewayOrderID string
+	if order.PaymentMethod == "online" && s.razorpay != nil {
+		gatewayOrderID, err = s.razorpay.CreateOrder(ctx, &razorpay.CreateOrderRequest{
+			Amount:         currencyToMinorUnits(order.Total),
+			Currency:       order.Currency,
+			Receipt:        order.OrderNumber,
+			PaymentCapture: "1",
+		})
+		if err != nil {
+			s.log.Warn("failed to create razorpay order", "order_id", order.ID, "error", err)
+		} else {
+			order.GatewayOrderID = gatewayOrderID
+			_ = s.db.WithContext(ctx).Model(order).Update("gateway_order_id", gatewayOrderID).Error
+		}
+	}
+
+	s.queueStoreOrderNotification(ctx, order, "store_order.created")
+	return &CheckoutResult{
+		Order:          order,
+		GatewayOrderID: gatewayOrderID,
+	}, nil
+}
+
+func (s *CommerceService) GetPublicOrder(ctx context.Context, slug, token string) (*models.StoreOrder, error) {
+	storefront, err := s.findStorefrontBySlug(ctx, slug)
+	if err != nil {
+		return nil, err
+	}
+	var order models.StoreOrder
+	if err := s.db.WithContext(ctx).
+		Preload("Lines", "deleted_at IS NULL").
+		Preload("Events", "deleted_at IS NULL").
+		Where("storefront_id = ? AND public_token = ? AND deleted_at IS NULL", storefront.ID, token).
+		First(&order).Error; err != nil {
+		return nil, err
+	}
+	return &order, nil
+}
+
+func (s *CommerceService) HandleRazorpayWebhook(ctx context.Context, signature string, rawBody []byte) error {
+	if s.cfg == nil || strings.TrimSpace(s.cfg.Razorpay.WebhookSecret) == "" {
+		return fmt.Errorf("razorpay webhook secret is not configured")
+	}
+	handler := razorpay.NewWebhookHandler(s.cfg.Razorpay.WebhookSecret)
+	if !handler.VerifyWebhookSignature(rawBody, signature) {
+		return fmt.Errorf("invalid webhook signature")
+	}
+	event, err := handler.ParseWebhookEvent(rawBody)
+	if err != nil {
+		return err
+	}
+
+	switch event.Event {
+	case "payment.captured", "payment.authorized":
+		orderID, _ := handler.GetOrderID(*event)
+		paymentID, _ := handler.GetPaymentID(*event)
+		return s.markOrderPaidByGateway(ctx, orderID, paymentID, event.Event)
+	case "payment.failed":
+		orderID, _ := handler.GetOrderID(*event)
+		return s.markOrderFailedByGateway(ctx, orderID, event.Event)
+	case "refund.processed", "payment.refunded":
+		orderID, _ := handler.GetOrderID(*event)
+		return s.markOrderRefundedByGateway(ctx, orderID, event.Event)
+	default:
+		return nil
+	}
+}
+
+func (s *CommerceService) ListDriveAssets(ctx context.Context, businessID string) ([]*models.DriveAsset, int64, error) {
+	var assets []*models.DriveAsset
+	if err := s.db.WithContext(ctx).
+		Where("business_id = ? AND deleted_at IS NULL", businessID).
+		Order("created_at DESC").
+		Find(&assets).Error; err != nil {
+		return nil, 0, err
+	}
+	var usage int64
+	if err := s.db.WithContext(ctx).
+		Model(&models.DriveAsset{}).
+		Select("COALESCE(SUM(size_bytes), 0)").
+		Where("business_id = ? AND deleted_at IS NULL", businessID).
+		Scan(&usage).Error; err != nil {
+		return nil, 0, err
+	}
+	return assets, usage, nil
+}
+
+func (s *CommerceService) CreateDriveUpload(ctx context.Context, businessID, userID string, input CreateDriveAssetInput) (*DriveUploadSession, error) {
+	if err := s.ensureFeatureEnabled(ctx, businessID, FeatureDriveStorageMB); err != nil {
+		return nil, err
+	}
+	usage, limit, err := s.driveUsageAndLimit(ctx, businessID)
+	if err != nil {
+		return nil, err
+	}
+	if limit > 0 && usage+input.SizeBytes > limit {
+		return nil, fmt.Errorf("drive storage quota exceeded")
+	}
+	asset := &models.DriveAsset{
+		BusinessID:  businessID,
+		UploadedBy:  stringPointer(userID),
+		Name:        input.Name,
+		Bucket:      s.cfg.S3.BucketDrive,
+		ObjectKey:   fmt.Sprintf("%s/%s/%s", businessID, time.Now().UTC().Format("20060102"), uuid.NewString()),
+		ContentType: input.ContentType,
+		SizeBytes:   input.SizeBytes,
+		Category:    input.Category,
+		Metadata:    mustMarshalMap(input.Metadata),
+	}
+	if err := s.db.WithContext(ctx).Create(asset).Error; err != nil {
+		return nil, err
+	}
+	uploadURL, err := s.s3.GeneratePresignedUploadURL(ctx, asset.Bucket, asset.ObjectKey, input.ContentType, 900)
+	if err != nil {
+		return nil, err
+	}
+	return &DriveUploadSession{Asset: asset, UploadURL: uploadURL}, nil
+}
+
+func (s *CommerceService) DeleteDriveAsset(ctx context.Context, businessID, assetID string) error {
+	var asset models.DriveAsset
+	if err := s.db.WithContext(ctx).
+		Where("id = ? AND business_id = ? AND deleted_at IS NULL", assetID, businessID).
+		First(&asset).Error; err != nil {
+		return err
+	}
+	if err := s.s3.Delete(ctx, asset.Bucket, asset.ObjectKey); err != nil {
+		s.log.Warn("failed to delete drive asset from s3", "asset_id", asset.ID, "error", err)
+	}
+	return s.db.WithContext(ctx).Delete(&asset).Error
+}
+
+func (s *CommerceService) GetWhatsAppConfig(ctx context.Context, businessID string) (*models.WhatsAppConfig, error) {
+	var cfg models.WhatsAppConfig
+	if err := s.db.WithContext(ctx).
+		Where("business_id = ? AND deleted_at IS NULL", businessID).
+		Order("created_at DESC").
+		First(&cfg).Error; err != nil {
+		return nil, err
+	}
+	return &cfg, nil
+}
+
+func (s *CommerceService) UpsertWhatsAppConfig(ctx context.Context, businessID string, input UpsertWhatsAppConfigInput) (*models.WhatsAppConfig, error) {
+	var cfg models.WhatsAppConfig
+	err := s.db.WithContext(ctx).
+		Where("business_id = ? AND deleted_at IS NULL", businessID).
+		First(&cfg).Error
+	switch {
+	case err == nil:
+		cfg.PhoneNumberID = firstNonEmpty(input.PhoneNumberID, cfg.PhoneNumberID)
+		if input.AccessToken != "" {
+			cfg.AccessToken = input.AccessToken
+		}
+		if input.WebhookSecret != "" {
+			cfg.WebhookSecret = input.WebhookSecret
+		}
+		if input.VerifyToken != "" {
+			cfg.VerifyToken = input.VerifyToken
+		}
+		if input.DefaultRecipient != "" {
+			cfg.DefaultRecipient = input.DefaultRecipient
+		}
+		if input.Enabled != nil {
+			cfg.Enabled = *input.Enabled
+		}
+		if input.Metadata != nil {
+			cfg.Metadata = mustMarshalMap(input.Metadata)
+		}
+		if err := s.db.WithContext(ctx).Save(&cfg).Error; err != nil {
+			return nil, err
+		}
+	case err == gorm.ErrRecordNotFound:
+		cfg = models.WhatsAppConfig{
+			BusinessID:       businessID,
+			PhoneNumberID:    input.PhoneNumberID,
+			AccessToken:      input.AccessToken,
+			WebhookSecret:    input.WebhookSecret,
+			VerifyToken:      input.VerifyToken,
+			DefaultRecipient: input.DefaultRecipient,
+			Enabled:          boolValueOrDefault(input.Enabled, false),
+			Metadata:         mustMarshalMap(input.Metadata),
+		}
+		if err := s.db.WithContext(ctx).Create(&cfg).Error; err != nil {
+			return nil, err
+		}
+	default:
+		return nil, err
+	}
+	return &cfg, nil
+}
+
+func (s *CommerceService) ListNotificationDeliveries(ctx context.Context, businessID string, limit int) ([]*models.NotificationDelivery, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	var deliveries []*models.NotificationDelivery
+	if err := s.db.WithContext(ctx).
+		Where("business_id = ? AND deleted_at IS NULL", businessID).
+		Order("created_at DESC").
+		Limit(limit).
+		Find(&deliveries).Error; err != nil {
+		return nil, err
+	}
+	return deliveries, nil
+}
+
+func (s *CommerceService) ResolveFXRate(ctx context.Context, baseCurrency, quoteCurrency string) (*models.FXRate, error) {
+	baseCurrency = strings.ToUpper(strings.TrimSpace(baseCurrency))
+	quoteCurrency = strings.ToUpper(strings.TrimSpace(quoteCurrency))
+	if baseCurrency == "" || quoteCurrency == "" {
+		return nil, fmt.Errorf("both currencies are required")
+	}
+	if baseCurrency == quoteCurrency {
+		now := time.Now().UTC()
+		return &models.FXRate{
+			Provider:      "identity",
+			BaseCurrency:  baseCurrency,
+			QuoteCurrency: quoteCurrency,
+			Rate:          1,
+			FetchedAt:     now,
+		}, nil
+	}
+
+	var cached models.FXRate
+	err := s.db.WithContext(ctx).
+		Where("base_currency = ? AND quote_currency = ? AND deleted_at IS NULL", baseCurrency, quoteCurrency).
+		Order("fetched_at DESC").
+		First(&cached).Error
+	if err == nil && time.Since(cached.FetchedAt) < time.Hour {
+		return &cached, nil
+	}
+
+	baseURL := strings.TrimRight(s.cfg.FX.BaseURL, "/")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/"+baseCurrency, nil)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(s.cfg.FX.APIKey) != "" {
+		req.Header.Set("Authorization", "Bearer "+s.cfg.FX.APIKey)
+	}
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		if cached.ID != "" {
+			return &cached, nil
+		}
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		if cached.ID != "" {
+			return &cached, nil
+		}
+		return nil, fmt.Errorf("fx provider returned status %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+	rates, _ := payload["rates"].(map[string]interface{})
+	rate := floatValue(rates[quoteCurrency])
+	if rate <= 0 {
+		if nested, ok := payload["conversion_rates"].(map[string]interface{}); ok {
+			rate = floatValue(nested[quoteCurrency])
+		}
+	}
+	if rate <= 0 {
+		return nil, fmt.Errorf("fx rate for %s/%s not available", baseCurrency, quoteCurrency)
+	}
+	fxRate := &models.FXRate{
+		Provider:      firstNonEmpty(s.cfg.FX.Provider, "fx-api"),
+		BaseCurrency:  baseCurrency,
+		QuoteCurrency: quoteCurrency,
+		Rate:          rate,
+		FetchedAt:     time.Now().UTC(),
+		Metadata:      mustMarshalMap(payload),
+	}
+	if err := s.db.WithContext(ctx).Create(fxRate).Error; err != nil {
+		return nil, err
+	}
+	return fxRate, nil
+}
+
+func (s *CommerceService) getRole(ctx context.Context, businessID, roleID string) (*models.Role, error) {
+	var role models.Role
+	if err := s.db.WithContext(ctx).
+		Preload("Permissions", "deleted_at IS NULL").
+		Where("id = ? AND business_id = ? AND deleted_at IS NULL", roleID, businessID).
+		First(&role).Error; err != nil {
+		return nil, err
+	}
+	return &role, nil
+}
+
+func (s *CommerceService) replaceRolePermissionsTx(tx *gorm.DB, roleID string, permissions []string) error {
+	if err := tx.Where("role_id = ?", roleID).Delete(&models.RolePermission{}).Error; err != nil {
+		return err
+	}
+	unique := uniqueStrings(permissions)
+	for _, permission := range unique {
+		if permission == "" {
+			continue
+		}
+		record := &models.RolePermission{RoleID: roleID, PermissionKey: permission}
+		if err := tx.Create(record).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *CommerceService) replaceStorefrontDomainsTx(tx *gorm.DB, storefrontID string, domains []string) error {
+	if domains == nil {
+		return nil
+	}
+	if err := tx.Where("storefront_id = ?", storefrontID).Delete(&models.StorefrontDomain{}).Error; err != nil {
+		return err
+	}
+	for index, domain := range uniqueStrings(domains) {
+		record := &models.StorefrontDomain{
+			StorefrontID: storefrontID,
+			Domain:       strings.ToLower(strings.TrimSpace(domain)),
+			IsPrimary:    index == 0,
+		}
+		if record.Domain == "" {
+			continue
+		}
+		if err := tx.Create(record).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *CommerceService) findStorefrontBySlug(ctx context.Context, slug string) (*models.Storefront, error) {
+	var storefront models.Storefront
+	if err := s.db.WithContext(ctx).
+		Preload("Domains", "deleted_at IS NULL").
+		Where("slug = ? AND deleted_at IS NULL", normalizeLookupKey(slug)).
+		First(&storefront).Error; err != nil {
+		return nil, err
+	}
+	return &storefront, nil
+}
+
+func (s *CommerceService) resolveCheckoutCustomer(ctx context.Context, businessID string, input CheckoutCustomerInput, billing, shipping map[string]interface{}) (*models.Customer, error) {
+	query := s.db.WithContext(ctx).Model(&models.Customer{}).Where("business_id = ? AND deleted_at IS NULL", businessID)
+	if strings.TrimSpace(input.Email) != "" {
+		var customer models.Customer
+		if err := query.Where("LOWER(email) = ?", strings.ToLower(strings.TrimSpace(input.Email))).First(&customer).Error; err == nil {
+			return &customer, nil
+		}
+	}
+	if strings.TrimSpace(input.Phone) != "" {
+		var customer models.Customer
+		if err := s.db.WithContext(ctx).Model(&models.Customer{}).
+			Where("business_id = ? AND phone = ? AND deleted_at IS NULL", businessID, input.Phone).
+			First(&customer).Error; err == nil {
+			return &customer, nil
+		}
+	}
+	customer := &models.Customer{
+		BusinessID:   businessID,
+		Name:         input.Name,
+		Email:        input.Email,
+		Phone:        input.Phone,
+		Address:      input.Address,
+		City:         input.City,
+		State:        input.State,
+		Country:      input.Country,
+		PostalCode:   input.PostalCode,
+		GSTIN:        input.GSTIN,
+		PAN:          input.PAN,
+		StateCode:    input.StateCode,
+		BillingJSON:  mustMarshalMap(firstAvailableMap(billing, input.Billing)),
+		ShippingJSON: mustMarshalMap(firstAvailableMap(shipping, input.Shipping)),
+	}
+	if err := s.db.WithContext(ctx).Create(customer).Error; err != nil {
+		return nil, err
+	}
+	return customer, nil
+}
+
+func (s *CommerceService) buildStoreOrderLines(ctx context.Context, storefront *models.Storefront, inputs []CheckoutItemInput) ([]*models.StoreOrderLine, float64, float64, error) {
+	items := make([]*models.StoreOrderLine, 0, len(inputs))
+	var subtotal float64
+	var taxTotal float64
+	for _, input := range inputs {
+		var storefrontProduct models.StorefrontProduct
+		if err := s.db.WithContext(ctx).
+			Where("storefront_id = ? AND product_id = ? AND is_published = TRUE AND deleted_at IS NULL", storefront.ID, input.ProductID).
+			First(&storefrontProduct).Error; err != nil {
+			return nil, 0, 0, fmt.Errorf("product is not available in this storefront")
+		}
+		product, err := s.productRepo.GetByID(ctx, input.ProductID, storefront.BusinessID)
+		if err != nil {
+			return nil, 0, 0, err
+		}
+		if !product.IsActive {
+			return nil, 0, 0, fmt.Errorf("product %s is inactive", product.Name)
+		}
+		unitPrice := coalesceFloat(storefrontProduct.DisplayPrice, product.Price)
+		sku := product.SKU
+		title := product.Name
+		snapshot := map[string]interface{}{
+			"product_id":  product.ID,
+			"image_url":   product.ImageURL,
+			"description": product.Description,
+		}
+		if input.VariantID != "" {
+			var variant models.ProductVariant
+			if err := s.db.WithContext(ctx).
+				Where("id = ? AND product_id = ? AND business_id = ? AND deleted_at IS NULL", input.VariantID, input.ProductID, storefront.BusinessID).
+				First(&variant).Error; err != nil {
+				return nil, 0, 0, err
+			}
+			unitPrice = coalesceFloat(variant.Price, unitPrice)
+			sku = firstNonEmpty(variant.SKU, sku)
+			title = product.Name + " / " + variant.Name
+			snapshot["variant_id"] = variant.ID
+			snapshot["variant_name"] = variant.Name
+		}
+		lineSubtotal := roundMoney(unitPrice * input.Quantity)
+		taxRate := floatValue(unmarshalJSONMap(product.GSTMetadata)["tax_rate"])
+		taxAmount := roundMoney(lineSubtotal * (taxRate / 100))
+		lineTotal := roundMoney(lineSubtotal + taxAmount)
+		item := &models.StoreOrderLine{
+			ProductID:      stringPointer(product.ID),
+			VariantID:      stringPointer(input.VariantID),
+			WarehouseID:    stringPointer(input.WarehouseID),
+			Title:          title,
+			SKU:            sku,
+			Quantity:       input.Quantity,
+			UnitPrice:      unitPrice,
+			DiscountAmount: 0,
+			TaxRate:        taxRate,
+			TaxAmount:      taxAmount,
+			LineTotal:      lineTotal,
+			Snapshot:       mustMarshalMap(snapshot),
+		}
+		subtotal += lineSubtotal
+		taxTotal += taxAmount
+		items = append(items, item)
+	}
+	return items, roundMoney(subtotal), roundMoney(taxTotal), nil
+}
+
+func (s *CommerceService) resolveCoupon(ctx context.Context, storefront *models.Storefront, code, customerID, customerEmail string, subtotal float64) (*models.StorefrontCoupon, float64, error) {
+	var coupon models.StorefrontCoupon
+	if err := s.db.WithContext(ctx).
+		Where("storefront_id = ? AND code = ? AND deleted_at IS NULL", storefront.ID, code).
+		First(&coupon).Error; err != nil {
+		return nil, 0, fmt.Errorf("coupon not found")
+	}
+	now := time.Now().UTC()
+	if !coupon.IsActive {
+		return nil, 0, fmt.Errorf("coupon is inactive")
+	}
+	if coupon.StartsAt != nil && now.Before(*coupon.StartsAt) {
+		return nil, 0, fmt.Errorf("coupon is not active yet")
+	}
+	if coupon.EndsAt != nil && now.After(*coupon.EndsAt) {
+		return nil, 0, fmt.Errorf("coupon has expired")
+	}
+	if subtotal < coupon.MinimumOrderValue {
+		return nil, 0, fmt.Errorf("coupon minimum order value is %.2f", coupon.MinimumOrderValue)
+	}
+	if coupon.UsageLimit > 0 {
+		var total int64
+		if err := s.db.WithContext(ctx).
+			Model(&models.StorefrontCouponRedemption{}).
+			Where("storefront_coupon_id = ? AND deleted_at IS NULL", coupon.ID).
+			Count(&total).Error; err != nil {
+			return nil, 0, err
+		}
+		if total >= coupon.UsageLimit {
+			return nil, 0, fmt.Errorf("coupon usage limit reached")
+		}
+	}
+	if coupon.UsageLimitPerCustomer > 0 {
+		query := s.db.WithContext(ctx).
+			Model(&models.StorefrontCouponRedemption{}).
+			Where("storefront_coupon_id = ? AND deleted_at IS NULL", coupon.ID)
+		if customerID != "" {
+			query = query.Where("customer_id = ?", customerID)
+		} else if customerEmail != "" {
+			query = query.Where("LOWER(customer_email) = ?", strings.ToLower(customerEmail))
+		}
+		var total int64
+		if err := query.Count(&total).Error; err != nil {
+			return nil, 0, err
+		}
+		if total >= coupon.UsageLimitPerCustomer {
+			return nil, 0, fmt.Errorf("coupon customer usage limit reached")
+		}
+	}
+
+	discount := 0.0
+	switch coupon.DiscountType {
+	case models.StoreCouponDiscountTypePercent:
+		discount = subtotal * (coupon.DiscountValue / 100)
+	case models.StoreCouponDiscountTypeFixed:
+		discount = coupon.DiscountValue
+	default:
+		return nil, 0, fmt.Errorf("unsupported coupon type")
+	}
+	if coupon.MaxDiscountAmount > 0 && discount > coupon.MaxDiscountAmount {
+		discount = coupon.MaxDiscountAmount
+	}
+	if discount > subtotal {
+		discount = subtotal
+	}
+	return &coupon, roundMoney(discount), nil
+}
+
+func (s *CommerceService) createSalesOrderForOrder(ctx context.Context, order *models.StoreOrder) (string, error) {
+	document, err := s.createStoreOrderDocument(ctx, order, models.DocumentTypeSalesOrder)
+	if err != nil {
+		return "", err
+	}
+	return document.ID, nil
+}
+
+func (s *CommerceService) createSalesInvoiceForOrder(ctx context.Context, order *models.StoreOrder) (string, error) {
+	document, err := s.createStoreOrderDocument(ctx, order, models.DocumentTypeSalesInvoice)
+	if err != nil {
+		return "", err
+	}
+	return document.ID, nil
+}
+
+func (s *CommerceService) createStoreOrderDocument(ctx context.Context, order *models.StoreOrder, documentType string) (*models.Document, error) {
+	if order.CustomerID == nil || *order.CustomerID == "" {
+		return nil, fmt.Errorf("customer is required for document generation")
+	}
+	var lines []*models.StoreOrderLine
+	if err := s.db.WithContext(ctx).
+		Where("store_order_id = ? AND deleted_at IS NULL", order.ID).
+		Order("created_at ASC").
+		Find(&lines).Error; err != nil {
+		return nil, err
+	}
+	documentLines := make([]CreateDocumentLineInput, 0, len(lines))
+	for _, line := range lines {
+		documentLines = append(documentLines, CreateDocumentLineInput{
+			ProductID:      derefString(line.ProductID),
+			VariantID:      derefString(line.VariantID),
+			Description:    line.Title,
+			WarehouseID:    derefString(line.WarehouseID),
+			Quantity:       line.Quantity,
+			UnitPrice:      line.UnitPrice,
+			DiscountAmount: line.DiscountAmount,
+			TaxRate:        line.TaxRate,
+		})
+	}
+	input := CreateDocumentInput{
+		BranchID:     derefString(order.BranchID),
+		PartyID:      *order.CustomerID,
+		PartyType:    models.DocumentPartyTypeCustomer,
+		Status:       models.DocumentStatusIssued,
+		DraftState:   models.DocumentDraftStateFinal,
+		IssueDate:    order.OrderedAt,
+		Currency:     order.Currency,
+		ExchangeRate: order.ExchangeRate,
+		Locale:       "en-IN",
+		Notes:        order.Notes,
+		Direction:    models.DocumentDirectionOutward,
+		Lines:        documentLines,
+	}
+	document, err := s.documents.buildDocument(ctx, order.BusinessID, documentType, input)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.db.WithContext(ctx).Create(document).Error; err != nil {
+		return nil, err
+	}
+	if err := s.documents.syncDocumentWithholdings(ctx, document, nil); err != nil {
+		return nil, err
+	}
+	if err := s.documents.applyPostCreateSideEffects(ctx, document); err != nil {
+		return nil, err
+	}
+	s.documents.recordRevision(ctx, document, "created", map[string]interface{}{
+		"origin":         "storefront",
+		"store_order_id": order.ID,
+		"payment_status": order.PaymentStatus,
+	})
+	_ = recordActivityLog(ctx, s.db, order.BusinessID, "document", document.ID, "created", "storefront order", document, nil, map[string]interface{}{
+		"store_order_id": order.ID,
+	})
+	return document, nil
+}
+
+func (s *CommerceService) getStoreOrderForBusiness(ctx context.Context, businessID, storefrontID, orderID string) (*models.StoreOrder, *models.Storefront, error) {
+	storefront, err := s.GetStorefront(ctx, businessID, storefrontID)
+	if err != nil {
+		return nil, nil, err
+	}
+	var order models.StoreOrder
+	if err := s.db.WithContext(ctx).
+		Preload("Lines", "deleted_at IS NULL").
+		Where("id = ? AND business_id = ? AND storefront_id = ? AND deleted_at IS NULL", orderID, businessID, storefrontID).
+		First(&order).Error; err != nil {
+		return nil, nil, err
+	}
+	return &order, storefront, nil
+}
+
+func (s *CommerceService) validateBranchID(ctx context.Context, businessID, branchID string) error {
+	if branchID == "" {
+		return nil
+	}
+	var count int64
+	if err := s.db.WithContext(ctx).
+		Model(&models.Branch{}).
+		Where("id = ? AND business_id = ? AND deleted_at IS NULL", branchID, businessID).
+		Count(&count).Error; err != nil {
+		return err
+	}
+	if count == 0 {
+		return fmt.Errorf("branch not found")
+	}
+	return nil
+}
+
+func (s *CommerceService) productEligibleForStorefront(ctx context.Context, productID string) (bool, error) {
+	var trackedCount int64
+	if err := s.db.WithContext(ctx).
+		Model(&models.ProductVariant{}).
+		Where("product_id = ? AND deleted_at IS NULL AND (track_batches = TRUE OR track_serials = TRUE)", productID).
+		Count(&trackedCount).Error; err != nil {
+		return false, err
+	}
+	return trackedCount == 0, nil
+}
+
+func (s *CommerceService) ensureFeatureEnabled(ctx context.Context, businessID, featureKey string) error {
+	entitlements, err := s.ListFeatureEntitlements(ctx, businessID)
+	if err != nil {
+		return err
+	}
+	for _, entitlement := range entitlements {
+		if entitlement.FeatureKey == featureKey {
+			if !entitlement.Enabled {
+				return fmt.Errorf("%s is not enabled on the current plan", featureKey)
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("%s is not enabled on the current plan", featureKey)
+}
+
+func (s *CommerceService) driveUsageAndLimit(ctx context.Context, businessID string) (usageBytes int64, limitBytes int64, err error) {
+	if err := s.db.WithContext(ctx).
+		Model(&models.DriveAsset{}).
+		Select("COALESCE(SUM(size_bytes), 0)").
+		Where("business_id = ? AND deleted_at IS NULL", businessID).
+		Scan(&usageBytes).Error; err != nil {
+		return 0, 0, err
+	}
+	entitlements, err := s.ListFeatureEntitlements(ctx, businessID)
+	if err != nil {
+		return usageBytes, 0, err
+	}
+	for _, entitlement := range entitlements {
+		if entitlement.FeatureKey == FeatureDriveStorageMB && entitlement.Enabled && entitlement.LimitValue != nil && *entitlement.LimitValue > 0 {
+			limitBytes = *entitlement.LimitValue * 1024 * 1024
+			return usageBytes, limitBytes, nil
+		}
+	}
+	return usageBytes, 0, nil
+}
+
+func (s *CommerceService) recordStoreOrderEvent(ctx context.Context, orderID, eventType, status string, payload map[string]interface{}) error {
+	if orderID == "" {
+		return nil
+	}
+	return s.db.WithContext(ctx).Create(&models.StoreOrderEvent{
+		StoreOrderID: orderID,
+		EventType:    eventType,
+		Status:       status,
+		Payload:      mustMarshalMap(payload),
+	}).Error
+}
+
+func (s *CommerceService) queueStoreOrderNotification(ctx context.Context, order *models.StoreOrder, eventKey string) {
+	if order == nil {
+		return
+	}
+	var cfg models.WhatsAppConfig
+	if err := s.db.WithContext(ctx).
+		Where("business_id = ? AND deleted_at IS NULL AND enabled = TRUE", order.BusinessID).
+		Order("created_at DESC").
+		First(&cfg).Error; err != nil {
+		return
+	}
+
+	var customer models.Customer
+	if order.CustomerID != nil && *order.CustomerID != "" {
+		_ = s.db.WithContext(ctx).
+			Where("id = ? AND business_id = ? AND deleted_at IS NULL", *order.CustomerID, order.BusinessID).
+			First(&customer).Error
+	}
+	recipient := firstNonEmpty(customer.Phone, cfg.DefaultRecipient)
+	if recipient == "" {
+		return
+	}
+
+	delivery := &models.NotificationDelivery{
+		BusinessID:   order.BusinessID,
+		StoreOrderID: &order.ID,
+		Channel:      models.NotificationChannelWhatsApp,
+		EventKey:     eventKey,
+		Recipient:    recipient,
+		Status:       "queued",
+		RequestPayload: mustMarshalMap(map[string]interface{}{
+			"order_number": order.OrderNumber,
+			"event_key":    eventKey,
+		}),
+	}
+	if err := s.db.WithContext(ctx).Create(delivery).Error; err != nil {
+		return
+	}
+
+	go s.sendWhatsAppDelivery(context.Background(), &cfg, delivery, order, &customer)
+}
+
+func (s *CommerceService) sendWhatsAppDelivery(ctx context.Context, cfg *models.WhatsAppConfig, delivery *models.NotificationDelivery, order *models.StoreOrder, customer *models.Customer) {
+	if cfg == nil || delivery == nil || order == nil {
+		return
+	}
+	bodyText := fmt.Sprintf("Order %s is now %s. Total: %.2f %s", order.OrderNumber, order.Status, order.Total, order.Currency)
+	reqBody := map[string]interface{}{
+		"messaging_product": "whatsapp",
+		"to":                delivery.Recipient,
+		"type":              "text",
+		"text": map[string]interface{}{
+			"body": bodyText,
+		},
+	}
+	rawBody, _ := json.Marshal(reqBody)
+	url := strings.TrimRight(s.cfg.WhatsApp.BaseURL, "/") + "/" + cfg.PhoneNumberID + "/messages"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(rawBody))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+cfg.AccessToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := s.httpClient.Do(req)
+	now := time.Now().UTC()
+	if err != nil {
+		_ = s.db.WithContext(context.Background()).
+			Model(delivery).
+			Updates(map[string]interface{}{
+				"status":          "failed",
+				"attempt_count":   delivery.AttemptCount + 1,
+				"last_attempt_at": &now,
+				"response_payload": mustMarshalMap(map[string]interface{}{
+					"error": err.Error(),
+				}),
+			}).Error
+		return
+	}
+	defer resp.Body.Close()
+	responseBody, _ := io.ReadAll(resp.Body)
+	updates := map[string]interface{}{
+		"attempt_count":   delivery.AttemptCount + 1,
+		"last_attempt_at": &now,
+		"response_payload": mustMarshalMap(map[string]interface{}{
+			"raw": string(responseBody),
+		}),
+	}
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		updates["status"] = "sent"
+		updates["delivered_at"] = &now
+	} else {
+		updates["status"] = "failed"
+	}
+	_ = s.db.WithContext(context.Background()).Model(delivery).Updates(updates).Error
+}
+
+func (s *CommerceService) markOrderPaidByGateway(ctx context.Context, gatewayOrderID, paymentID, webhookReference string) error {
+	var order models.StoreOrder
+	if err := s.db.WithContext(ctx).
+		Where("gateway_order_id = ? AND deleted_at IS NULL", gatewayOrderID).
+		First(&order).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil
+		}
+		return err
+	}
+	now := time.Now().UTC()
+	updates := map[string]interface{}{
+		"payment_status":     models.StoreOrderPaymentStatusPaid,
+		"status":             models.StoreOrderStatusPaid,
+		"gateway_payment_id": paymentID,
+		"webhook_reference":  webhookReference,
+		"paid_at":            &now,
+	}
+	if err := s.db.WithContext(ctx).Model(&order).Updates(updates).Error; err != nil {
+		return err
+	}
+	order.PaymentStatus = models.StoreOrderPaymentStatusPaid
+	order.Status = models.StoreOrderStatusPaid
+	order.GatewayPaymentID = paymentID
+	order.WebhookReference = webhookReference
+	order.PaidAt = &now
+
+	var storefront models.Storefront
+	if err := s.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", order.StorefrontID).First(&storefront).Error; err == nil && storefront.AutoInvoiceOnPaid && (order.SalesInvoiceID == nil || *order.SalesInvoiceID == "") {
+		invoiceID, err := s.createSalesInvoiceForOrder(ctx, &order)
+		if err == nil {
+			order.SalesInvoiceID = stringPointer(invoiceID)
+			_ = s.db.WithContext(ctx).Model(&order).Update("sales_invoice_id", invoiceID).Error
+		}
+	}
+	_ = s.recordStoreOrderEvent(ctx, order.ID, "store_order.paid", order.Status, map[string]interface{}{
+		"gateway_order_id":   gatewayOrderID,
+		"gateway_payment_id": paymentID,
+	})
+	s.queueStoreOrderNotification(ctx, &order, "store_order.paid")
+	return nil
+}
+
+func (s *CommerceService) markOrderFailedByGateway(ctx context.Context, gatewayOrderID, webhookReference string) error {
+	return s.db.WithContext(ctx).
+		Model(&models.StoreOrder{}).
+		Where("gateway_order_id = ? AND deleted_at IS NULL", gatewayOrderID).
+		Updates(map[string]interface{}{
+			"payment_status":    models.StoreOrderPaymentStatusFailed,
+			"status":            models.StoreOrderStatusPaymentFailed,
+			"webhook_reference": webhookReference,
+		}).Error
+}
+
+func (s *CommerceService) markOrderRefundedByGateway(ctx context.Context, gatewayOrderID, webhookReference string) error {
+	return s.db.WithContext(ctx).
+		Model(&models.StoreOrder{}).
+		Where("gateway_order_id = ? AND deleted_at IS NULL", gatewayOrderID).
+		Updates(map[string]interface{}{
+			"payment_status":    models.StoreOrderPaymentStatusRefunded,
+			"webhook_reference": webhookReference,
+		}).Error
+}
+
+type entitlementSeed struct {
+	FeatureKey string
+	Enabled    bool
+	LimitValue *int64
+	Metadata   map[string]interface{}
+}
+
+func defaultEntitlementSeedsForSubscription(subscription *models.Subscription) []entitlementSeed {
+	unlimited := int64(-1)
+	switch normalizePlanCode(subscription.Plan, subscription.PlanCode) {
+	case "biz":
+		return []entitlementSeed{
+			{FeatureKey: FeatureOnlineStore, Enabled: true},
+			{FeatureKey: FeatureMultiCurrency, Enabled: true},
+			{FeatureKey: FeatureExportDocuments, Enabled: true},
+			{FeatureKey: FeatureSEZDocuments, Enabled: true},
+			{FeatureKey: FeatureDeemedExportDocuments, Enabled: true},
+			{FeatureKey: FeatureMultiUser, Enabled: true, LimitValue: &unlimited},
+			{FeatureKey: FeatureCustomRoles, Enabled: true},
+			{FeatureKey: FeatureMultiBusiness, Enabled: true},
+			{FeatureKey: FeatureBranches, Enabled: true, LimitValue: int64Pointer(50)},
+			{FeatureKey: FeaturePrioritySupport, Enabled: true},
+			{FeatureKey: FeatureDriveStorageMB, Enabled: true, LimitValue: int64Pointer(maxInt64(subscription.MaxStorageMB, 10240))},
+			{FeatureKey: FeatureWhatsAppNotifications, Enabled: true},
+		}
+	case "rise":
+		return []entitlementSeed{
+			{FeatureKey: FeatureOnlineStore, Enabled: true},
+			{FeatureKey: FeatureMultiCurrency, Enabled: true},
+			{FeatureKey: FeatureExportDocuments, Enabled: true},
+			{FeatureKey: FeatureSEZDocuments, Enabled: true},
+			{FeatureKey: FeatureDeemedExportDocuments, Enabled: true},
+			{FeatureKey: FeatureMultiUser, Enabled: true, LimitValue: int64Pointer(maxInt64(subscription.MaxUsers, 10))},
+			{FeatureKey: FeatureCustomRoles, Enabled: true},
+			{FeatureKey: FeatureMultiBusiness, Enabled: false},
+			{FeatureKey: FeatureBranches, Enabled: true, LimitValue: int64Pointer(10)},
+			{FeatureKey: FeaturePrioritySupport, Enabled: false},
+			{FeatureKey: FeatureDriveStorageMB, Enabled: true, LimitValue: int64Pointer(maxInt64(subscription.MaxStorageMB, 2048))},
+			{FeatureKey: FeatureWhatsAppNotifications, Enabled: true},
+		}
+	case "pro":
+		return []entitlementSeed{
+			{FeatureKey: FeatureOnlineStore, Enabled: true},
+			{FeatureKey: FeatureMultiCurrency, Enabled: false},
+			{FeatureKey: FeatureExportDocuments, Enabled: true},
+			{FeatureKey: FeatureSEZDocuments, Enabled: false},
+			{FeatureKey: FeatureDeemedExportDocuments, Enabled: false},
+			{FeatureKey: FeatureMultiUser, Enabled: true, LimitValue: int64Pointer(maxInt64(subscription.MaxUsers, 3))},
+			{FeatureKey: FeatureCustomRoles, Enabled: false},
+			{FeatureKey: FeatureMultiBusiness, Enabled: false},
+			{FeatureKey: FeatureBranches, Enabled: false},
+			{FeatureKey: FeaturePrioritySupport, Enabled: false},
+			{FeatureKey: FeatureDriveStorageMB, Enabled: true, LimitValue: int64Pointer(maxInt64(subscription.MaxStorageMB, 512))},
+			{FeatureKey: FeatureWhatsAppNotifications, Enabled: false},
+		}
+	default:
+		return []entitlementSeed{
+			{FeatureKey: FeatureOnlineStore, Enabled: false},
+			{FeatureKey: FeatureMultiCurrency, Enabled: false},
+			{FeatureKey: FeatureExportDocuments, Enabled: false},
+			{FeatureKey: FeatureSEZDocuments, Enabled: false},
+			{FeatureKey: FeatureDeemedExportDocuments, Enabled: false},
+			{FeatureKey: FeatureMultiUser, Enabled: false, LimitValue: int64Pointer(maxInt64(subscription.MaxUsers, 1))},
+			{FeatureKey: FeatureCustomRoles, Enabled: false},
+			{FeatureKey: FeatureMultiBusiness, Enabled: false},
+			{FeatureKey: FeatureBranches, Enabled: false},
+			{FeatureKey: FeaturePrioritySupport, Enabled: false},
+			{FeatureKey: FeatureDriveStorageMB, Enabled: true, LimitValue: int64Pointer(maxInt64(subscription.MaxStorageMB, 100))},
+			{FeatureKey: FeatureWhatsAppNotifications, Enabled: false},
+		}
+	}
+}
+
+func normalizeLookupKey(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.ReplaceAll(value, "_", "-")
+	value = strings.ReplaceAll(value, " ", "-")
+	var builder strings.Builder
+	lastDash := false
+	for _, ch := range value {
+		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') {
+			builder.WriteRune(ch)
+			lastDash = false
+			continue
+		}
+		if ch == '-' && !lastDash {
+			builder.WriteRune(ch)
+			lastDash = true
+		}
+	}
+	return strings.Trim(builder.String(), "-")
+}
+
+func randomToken(size int) string {
+	if size <= 0 {
+		size = 12
+	}
+	buf := make([]byte, size)
+	if _, err := rand.Read(buf); err != nil {
+		return uuid.NewString()
+	}
+	return hex.EncodeToString(buf)
+}
+
+func firstAvailableMap(values ...map[string]interface{}) map[string]interface{} {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return map[string]interface{}{}
+}
+
+func floatPointerValue(value *float64) float64 {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
+func int64Pointer(value int64) *int64 {
+	v := value
+	return &v
+}
+
+func currencyToMinorUnits(value float64) int64 {
+	return int64(roundMoney(value * 100))
+}
+
+func roundMoney(value float64) float64 {
+	return float64(int64((value+0.005)*100)) / 100
+}
+
+func (s *CommerceService) nextStoreOrderNumber() string {
+	return fmt.Sprintf("WEB-%s-%s", time.Now().UTC().Format("20060102"), strings.ToUpper(randomToken(3)))
+}

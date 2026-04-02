@@ -50,6 +50,7 @@ type WarehousePermissionInput struct {
 
 type CreateWarehouseInput struct {
 	BusinessID string `json:"business_id,omitempty"`
+	BranchID   string `json:"branch_id,omitempty" binding:"omitempty,uuid"`
 	Name       string `json:"name" binding:"required"`
 	Code       string `json:"code" binding:"required"`
 	Address    string `json:"address"`
@@ -61,6 +62,7 @@ type CreateWarehouseInput struct {
 }
 
 type UpdateWarehouseInput struct {
+	BranchID   string `json:"branch_id,omitempty" binding:"omitempty,uuid"`
 	Name       string `json:"name"`
 	Code       string `json:"code"`
 	Address    string `json:"address"`
@@ -286,6 +288,7 @@ func (s *InventoryService) IsBusinessOwner(ctx context.Context, userID, business
 func (s *InventoryService) CreateWarehouse(ctx context.Context, input CreateWarehouseInput) (*models.Warehouse, error) {
 	warehouse := &models.Warehouse{
 		BusinessID: input.BusinessID,
+		BranchID:   stringPointer(input.BranchID),
 		Name:       input.Name,
 		Code:       strings.ToUpper(strings.TrimSpace(input.Code)),
 		Address:    input.Address,
@@ -321,6 +324,9 @@ func (s *InventoryService) UpdateWarehouse(ctx context.Context, businessID, ware
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if input.Name != "" {
 			warehouse.Name = input.Name
+		}
+		if input.BranchID != "" {
+			warehouse.BranchID = stringPointer(input.BranchID)
 		}
 		if input.Code != "" {
 			warehouse.Code = strings.ToUpper(strings.TrimSpace(input.Code))

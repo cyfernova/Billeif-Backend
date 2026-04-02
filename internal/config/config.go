@@ -20,6 +20,9 @@ type Config struct {
 	Cognito        CognitoConfig      `mapstructure:"COGNITO"`
 	JWT            JWTConfig          `mapstructure:"JWT"`
 	S3             S3Config           `mapstructure:"S3"`
+	Razorpay       RazorpayConfig     `mapstructure:"RAZORPAY"`
+	FX             FXConfig           `mapstructure:"FX"`
+	WhatsApp       WhatsAppConfig     `mapstructure:"WHATSAPP"`
 	SQS            SQSConfig          `mapstructure:"SQS"`
 	Sentry         SentryConfig       `mapstructure:"SENTRY"`
 	Shipping       ShippingConfig     `mapstructure:"SHIPPING"`
@@ -124,6 +127,27 @@ type S3Config struct {
 	BucketInvoices  string `mapstructure:"BUCKET_INVOICES"`
 	BucketProducts  string `mapstructure:"BUCKET_PRODUCTS"`
 	BucketEmailSink string `mapstructure:"BUCKET_EMAIL_SINK"`
+	BucketDrive     string `mapstructure:"BUCKET_DRIVE"`
+}
+
+type RazorpayConfig struct {
+	Key           string `mapstructure:"KEY"`
+	Secret        string `mapstructure:"SECRET"`
+	WebhookSecret string `mapstructure:"WEBHOOK_SECRET"`
+	BaseURL       string `mapstructure:"BASE_URL"`
+	Timeout       int    `mapstructure:"TIMEOUT"`
+}
+
+type FXConfig struct {
+	Provider string `mapstructure:"PROVIDER"`
+	BaseURL  string `mapstructure:"BASE_URL"`
+	APIKey   string `mapstructure:"API_KEY"`
+	Timeout  int    `mapstructure:"TIMEOUT"`
+}
+
+type WhatsAppConfig struct {
+	BaseURL string `mapstructure:"BASE_URL"`
+	Timeout int    `mapstructure:"TIMEOUT"`
 }
 
 type SQSConfig struct {
@@ -254,6 +278,18 @@ func Load() (*Config, error) {
 	_ = viper.BindEnv("S3.BUCKET_INVOICES", "S3_BUCKET_INVOICES")
 	_ = viper.BindEnv("S3.BUCKET_PRODUCTS", "S3_BUCKET_PRODUCTS")
 	_ = viper.BindEnv("S3.BUCKET_EMAIL_SINK", "S3_BUCKET_EMAIL_SINK")
+	_ = viper.BindEnv("S3.BUCKET_DRIVE", "S3_BUCKET_DRIVE")
+	_ = viper.BindEnv("RAZORPAY.KEY", "RAZORPAY_KEY")
+	_ = viper.BindEnv("RAZORPAY.SECRET", "RAZORPAY_SECRET")
+	_ = viper.BindEnv("RAZORPAY.WEBHOOK_SECRET", "RAZORPAY_WEBHOOK_SECRET")
+	_ = viper.BindEnv("RAZORPAY.BASE_URL", "RAZORPAY_BASE_URL")
+	_ = viper.BindEnv("RAZORPAY.TIMEOUT", "RAZORPAY_TIMEOUT")
+	_ = viper.BindEnv("FX.PROVIDER", "FX_PROVIDER")
+	_ = viper.BindEnv("FX.BASE_URL", "FX_BASE_URL")
+	_ = viper.BindEnv("FX.API_KEY", "FX_API_KEY")
+	_ = viper.BindEnv("FX.TIMEOUT", "FX_TIMEOUT")
+	_ = viper.BindEnv("WHATSAPP.BASE_URL", "WHATSAPP_BASE_URL")
+	_ = viper.BindEnv("WHATSAPP.TIMEOUT", "WHATSAPP_TIMEOUT")
 	_ = viper.BindEnv("SQS.INVOICE_QUEUE", "SQS_INVOICE_QUEUE")
 	_ = viper.BindEnv("SQS.PAYMENT_QUEUE", "SQS_PAYMENT_QUEUE")
 	_ = viper.BindEnv("SQS.GST_QUEUE", "SQS_GST_QUEUE")
@@ -384,6 +420,27 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.LLM.Timeout == 0 {
 		cfg.LLM.Timeout = 60
+	}
+	if cfg.S3.BucketDrive == "" {
+		cfg.S3.BucketDrive = cfg.S3.BucketInvoices
+	}
+	if cfg.Razorpay.Timeout == 0 {
+		cfg.Razorpay.Timeout = 30
+	}
+	if cfg.FX.Provider == "" {
+		cfg.FX.Provider = "open-er-api"
+	}
+	if cfg.FX.BaseURL == "" {
+		cfg.FX.BaseURL = "https://open.er-api.com/v6/latest"
+	}
+	if cfg.FX.Timeout == 0 {
+		cfg.FX.Timeout = 15
+	}
+	if cfg.WhatsApp.BaseURL == "" {
+		cfg.WhatsApp.BaseURL = "https://graph.facebook.com/v20.0"
+	}
+	if cfg.WhatsApp.Timeout == 0 {
+		cfg.WhatsApp.Timeout = 15
 	}
 	if cfg.Shipping.DefaultProvider == "" {
 		cfg.Shipping.DefaultProvider = "manual"

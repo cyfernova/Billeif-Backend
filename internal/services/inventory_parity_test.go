@@ -319,6 +319,7 @@ func newInventoryParityTestDB(t *testing.T) *gorm.DB {
 		`CREATE TABLE warehouses (
 			id TEXT PRIMARY KEY,
 			business_id TEXT NOT NULL,
+			branch_id TEXT,
 			name TEXT NOT NULL,
 			code TEXT NOT NULL,
 			address TEXT,

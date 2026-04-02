@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"invoice-backend/internal/config"
@@ -57,6 +58,7 @@ type CreateDocumentLineInput struct {
 
 type CreateDocumentInput struct {
 	BusinessID           string                    `json:"business_id,omitempty"`
+	BranchID             string                    `json:"branch_id,omitempty" binding:"omitempty,uuid"`
 	PartyID              string                    `json:"party_id"`
 	PartyType            string                    `json:"party_type"`
 	ProjectID            string                    `json:"project_id,omitempty" binding:"omitempty,uuid"`
@@ -272,6 +274,7 @@ func (s *DocumentService) buildDocument(ctx context.Context, businessID, documen
 
 	document := &models.Document{
 		BusinessID:            businessID,
+		BranchID:              stringPointer(input.BranchID),
 		DocumentType:          documentType,
 		PartyType:             partyType,
 		Status:                coalesceString(input.Status, models.DocumentStatusDraft),
@@ -325,6 +328,9 @@ func (s *DocumentService) buildDocument(ctx context.Context, businessID, documen
 	if input.RenderProfileID != "" {
 		document.RenderProfileID = &input.RenderProfileID
 	}
+	if err := s.validateBranchAccess(ctx, businessID, input.BranchID); err != nil {
+		return nil, err
+	}
 	if document.IssueDate.IsZero() {
 		document.IssueDate = time.Now()
 	}
@@ -345,6 +351,7 @@ func (s *DocumentService) buildDocument(ctx context.Context, businessID, documen
 	if err := s.applyPartyTaxSnapshot(ctx, businessID, document); err != nil {
 		return nil, err
 	}
+	s.applyDocumentFX(ctx, business, document)
 
 	document.SerialNumber = s.generateSerialNumber(documentType)
 	lines, totals, err := s.buildDocumentLines(ctx, business, document, input.Lines)
@@ -364,6 +371,62 @@ func (s *DocumentService) buildDocument(ctx context.Context, businessID, documen
 	document.WithholdingTotal, document.TDSTotal, document.TCSTotal = summarizeWithholdings(input.Withholdings)
 
 	return document, nil
+}
+
+func (s *DocumentService) validateBranchAccess(ctx context.Context, businessID, branchID string) error {
+	if branchID == "" || s.db == nil {
+		return nil
+	}
+	var count int64
+	if err := s.db.WithContext(ctx).
+		Model(&models.Branch{}).
+		Where("id = ? AND business_id = ? AND deleted_at IS NULL", branchID, businessID).
+		Count(&count).Error; err != nil {
+		return err
+	}
+	if count == 0 {
+		return fmt.Errorf("branch not found")
+	}
+	return nil
+}
+
+func (s *DocumentService) applyDocumentFX(ctx context.Context, business *models.BusinessProfile, document *models.Document) {
+	if business == nil || document == nil {
+		return
+	}
+	baseCurrency := defaultCurrency(business.Currency)
+	quoteCurrency := defaultCurrency(document.Currency)
+	document.FXBaseCurrency = baseCurrency
+	document.FXQuoteCurrency = quoteCurrency
+	if strings.EqualFold(baseCurrency, quoteCurrency) {
+		document.ExchangeRate = 1
+		document.FXProvider = ""
+		document.FXMetadata = mustMarshalMap(map[string]interface{}{
+			"mode": "base_currency",
+		})
+		return
+	}
+	if document.ExchangeRate <= 0 {
+		var fxRate models.FXRate
+		err := s.db.WithContext(ctx).
+			Where("base_currency = ? AND quote_currency = ? AND deleted_at IS NULL", baseCurrency, quoteCurrency).
+			Order("fetched_at DESC").
+			First(&fxRate).Error
+		if err == nil && fxRate.Rate > 0 {
+			document.ExchangeRate = fxRate.Rate
+			document.FXProvider = fxRate.Provider
+			document.FXRateTimestamp = &fxRate.FetchedAt
+			document.FXMetadata = fxRate.Metadata
+		}
+	}
+	if document.ExchangeRate <= 0 {
+		document.ExchangeRate = 1
+	}
+	if document.FXMetadata == "" {
+		document.FXMetadata = mustMarshalMap(map[string]interface{}{
+			"manual_override": document.ExchangeRate > 0,
+		})
+	}
 }
 
 type documentTotals struct {
@@ -509,6 +572,7 @@ func (s *DocumentService) UpdateByType(ctx context.Context, businessID, id, docu
 	}
 	existing.PartyType = rebuilt.PartyType
 	existing.PartyID = rebuilt.PartyID
+	existing.BranchID = rebuilt.BranchID
 	existing.Status = rebuilt.Status
 	existing.DraftState = rebuilt.DraftState
 	existing.TaxMode = rebuilt.TaxMode
@@ -519,6 +583,11 @@ func (s *DocumentService) UpdateByType(ctx context.Context, businessID, id, docu
 	existing.DispatchDate = rebuilt.DispatchDate
 	existing.Currency = rebuilt.Currency
 	existing.ExchangeRate = rebuilt.ExchangeRate
+	existing.FXProvider = rebuilt.FXProvider
+	existing.FXBaseCurrency = rebuilt.FXBaseCurrency
+	existing.FXQuoteCurrency = rebuilt.FXQuoteCurrency
+	existing.FXRateTimestamp = rebuilt.FXRateTimestamp
+	existing.FXMetadata = rebuilt.FXMetadata
 	existing.Locale = rebuilt.Locale
 	existing.SourceLinkage = rebuilt.SourceLinkage
 	existing.RenderProfileID = rebuilt.RenderProfileID

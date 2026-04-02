@@ -67,6 +67,8 @@ func newEntitlementsTestDB(t *testing.T) *gorm.DB {
 			id TEXT PRIMARY KEY,
 			business_id TEXT NOT NULL,
 			plan TEXT NOT NULL,
+			plan_code TEXT,
+			catalog_version TEXT,
 			status TEXT NOT NULL,
 			max_invoices INTEGER,
 			max_customers INTEGER,

@@ -32,9 +32,11 @@ func (s *SubscriptionService) Create(ctx context.Context, input CreateSubscripti
 	}
 
 	subscription := &models.Subscription{
-		BusinessID: input.BusinessID,
-		Plan:       input.Plan,
-		Status:     "active",
+		BusinessID:     input.BusinessID,
+		Plan:           input.Plan,
+		PlanCode:       normalizePlanCode(input.Plan, ""),
+		CatalogVersion: normalizeCatalogVersion(""),
+		Status:         "active",
 	}
 
 	if err := s.repo.Create(ctx, subscription); err != nil {
@@ -71,10 +73,12 @@ func (s *SubscriptionService) Update(ctx context.Context, businessID string, inp
 
 	if input.Plan != "" {
 		subscription.Plan = input.Plan
+		subscription.PlanCode = normalizePlanCode(input.Plan, subscription.PlanCode)
 	}
 	if input.Status != "" {
 		subscription.Status = input.Status
 	}
+	subscription.CatalogVersion = normalizeCatalogVersion(subscription.CatalogVersion)
 
 	if err := s.repo.Update(ctx, subscription); err != nil {
 		log.Error("failed to update subscription", "error", err)

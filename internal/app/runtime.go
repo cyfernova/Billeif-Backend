@@ -333,10 +333,20 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 		}
 
 		public := api.Group("/public")
-		public.Use(middleware.ReportShareRateLimit())
 		{
-			public.GET("/report-shares/:token/metadata", h.Report.PublicMetadata)
-			public.POST("/report-shares/:token/access", h.Report.PublicAccess)
+			public.GET("/report-shares/:token/metadata", middleware.ReportShareRateLimit(), h.Report.PublicMetadata)
+			public.POST("/report-shares/:token/access", middleware.ReportShareRateLimit(), h.Report.PublicAccess)
+
+			store := public.Group("/store/:slug")
+			store.Use(middleware.StorefrontCatalogRateLimit())
+			{
+				store.GET("/catalog", h.Commerce.PublicCatalog)
+				store.GET("/categories", h.Commerce.PublicCategories)
+				store.POST("/coupons/validate", middleware.StorefrontCouponRateLimit(), h.Commerce.PublicValidateCoupon)
+				store.POST("/checkout", middleware.StorefrontCheckoutRateLimit(), h.Commerce.PublicCheckout)
+				store.GET("/orders/:token", h.Commerce.PublicOrder)
+				store.POST("/webhooks/payment/razorpay", h.Commerce.PublicRazorpayWebhook)
+			}
 		}
 
 		protected := api.Group("")
@@ -664,6 +674,54 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 				subscriptions.GET("", h.Subscription.Get)
 				subscriptions.POST("", h.Subscription.Create)
 				subscriptions.PUT("", h.Subscription.Update)
+				subscriptions.GET("/entitlements", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionSubscriptionsView), h.Commerce.ListEntitlements)
+				subscriptions.POST("/entitlements/sync", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionSubscriptionsManage), h.Commerce.SyncEntitlements)
+			}
+
+			branches := protected.Group("/branches")
+			{
+				branches.GET("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionBranchesView), h.Commerce.ListBranches)
+				branches.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionBranchesManage), h.Commerce.CreateBranch)
+				branches.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionBranchesManage), h.Commerce.UpdateBranch)
+				branches.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionBranchesManage), h.Commerce.DeleteBranch)
+			}
+
+			roles := protected.Group("/roles")
+			{
+				roles.GET("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionTeamsView), h.Commerce.ListRoles)
+				roles.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRolesManage), h.Commerce.CreateRole)
+				roles.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRolesManage), h.Commerce.UpdateRole)
+				roles.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRolesManage), h.Commerce.DeleteRole)
+			}
+
+			storefronts := protected.Group("/storefronts")
+			{
+				storefronts.GET("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionStorefrontView), h.Commerce.ListStorefronts)
+				storefronts.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionStorefrontManage), h.Commerce.CreateStorefront)
+				storefronts.GET("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionStorefrontView), h.Commerce.GetStorefront)
+				storefronts.PUT("/:id/settings", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionStorefrontManage), h.Commerce.UpdateStorefrontSettings)
+				storefronts.GET("/:id/products", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionStorefrontView), h.Commerce.ListStorefrontProducts)
+				storefronts.PUT("/:id/products", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionStorefrontManage), h.Commerce.ReplaceStorefrontProducts)
+				storefronts.GET("/:id/coupons", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionStorefrontView), h.Commerce.ListStorefrontCoupons)
+				storefronts.POST("/:id/coupons", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionStorefrontManage), h.Commerce.CreateStorefrontCoupon)
+				storefronts.PUT("/:id/coupons/:coupon_id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionStorefrontManage), h.Commerce.UpdateStorefrontCoupon)
+				storefronts.GET("/:id/orders", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionOrdersView), h.Commerce.ListStorefrontOrders)
+				storefronts.POST("/:id/orders/:order_id/approve", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionOrdersManage), h.Commerce.ApproveStorefrontOrder)
+				storefronts.POST("/:id/orders/:order_id/cancel", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionOrdersManage), h.Commerce.CancelStorefrontOrder)
+			}
+
+			drive := protected.Group("/drive")
+			{
+				drive.GET("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDriveView), h.Commerce.ListDriveAssets)
+				drive.POST("/presign", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDriveManage), h.Commerce.CreateDriveUpload)
+				drive.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDriveManage), h.Commerce.DeleteDriveAsset)
+			}
+
+			whatsapp := protected.Group("/notifications/whatsapp")
+			{
+				whatsapp.GET("/config", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.Commerce.GetWhatsAppConfig)
+				whatsapp.PUT("/config", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.Commerce.UpsertWhatsAppConfig)
+				whatsapp.GET("/deliveries", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.Commerce.ListNotificationDeliveries)
 			}
 
 			agents := protected.Group("/agents")

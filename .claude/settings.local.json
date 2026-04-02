@@ -7,7 +7,9 @@
       "Bash(make fmt:*)",
       "Bash(go clean:*)",
       "Bash(grep -E \"--- FAIL\")",
-      "Bash(make lint:*)"
+      "Bash(make lint:*)",
+      "WebSearch",
+      "WebFetch(domain:codelabs.developers.google.com)"
     ]
   }
 }

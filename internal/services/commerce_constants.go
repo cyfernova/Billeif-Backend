@@ -1,0 +1,35 @@
+package services
+
+const (
+	FeatureOnlineStore           = "online_store"
+	FeatureMultiCurrency         = "multi_currency"
+	FeatureExportDocuments       = "export_documents"
+	FeatureSEZDocuments          = "sez_documents"
+	FeatureDeemedExportDocuments = "deemed_export_documents"
+	FeatureMultiUser             = "multi_user"
+	FeatureCustomRoles           = "custom_roles"
+	FeatureMultiBusiness         = "multi_business"
+	FeatureBranches              = "branches"
+	FeaturePrioritySupport       = "priority_support"
+	FeatureDriveStorageMB        = "drive_storage_mb"
+	FeatureWhatsAppNotifications = "whatsapp_notifications"
+)
+
+const (
+	PermissionStorefrontManage    = "storefront.manage"
+	PermissionStorefrontView      = "storefront.view"
+	PermissionOrdersManage        = "orders.manage"
+	PermissionOrdersView          = "orders.view"
+	PermissionBranchesManage      = "branches.manage"
+	PermissionBranchesView        = "branches.view"
+	PermissionRolesManage         = "roles.manage"
+	PermissionTeamsManage         = "teams.manage"
+	PermissionTeamsView           = "teams.view"
+	PermissionDocumentsManage     = "documents.manage"
+	PermissionDocumentsExport     = "documents.export"
+	PermissionDriveManage         = "drive.manage"
+	PermissionDriveView           = "drive.view"
+	PermissionNotificationsManage = "notifications.manage"
+	PermissionSubscriptionsManage = "subscriptions.manage"
+	PermissionSubscriptionsView   = "subscriptions.view"
+)

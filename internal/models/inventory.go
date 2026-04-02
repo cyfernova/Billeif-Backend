@@ -16,6 +16,7 @@ const (
 type Warehouse struct {
 	ID         string         `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
 	BusinessID string         `gorm:"not null;index" json:"business_id" validate:"required,uuid"`
+	BranchID   *string        `gorm:"index" json:"branch_id,omitempty" validate:"omitempty,uuid"`
 	Name       string         `gorm:"not null;size:120" json:"name"`
 	Code       string         `gorm:"not null;size:60" json:"code"`
 	Address    string         `gorm:"size:500" json:"address,omitempty"`

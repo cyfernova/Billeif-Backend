@@ -221,3 +221,66 @@ func ReportShareRateLimit() gin.HandlerFunc {
 		c.Next()
 	}
 }
+
+// StorefrontCatalogRateLimit limits anonymous storefront browsing traffic per IP.
+func StorefrontCatalogRateLimit() gin.HandlerFunc {
+	limiter := NewRateLimiter(time.Minute, 120)
+
+	return func(c *gin.Context) {
+		clientIP := c.ClientIP()
+		if clientIP == "" {
+			clientIP = "unknown"
+		}
+		if !limiter.isAllowed(clientIP) {
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error":   "too many requests",
+				"message": "storefront rate limit exceeded. please try again shortly",
+			})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
+// StorefrontCheckoutRateLimit limits public checkout requests per IP.
+func StorefrontCheckoutRateLimit() gin.HandlerFunc {
+	limiter := NewRateLimiter(time.Minute, 20)
+
+	return func(c *gin.Context) {
+		clientIP := c.ClientIP()
+		if clientIP == "" {
+			clientIP = "unknown"
+		}
+		if !limiter.isAllowed(clientIP) {
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error":   "too many requests",
+				"message": "checkout rate limit exceeded. please try again shortly",
+			})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
+// StorefrontCouponRateLimit limits public coupon validation requests per IP.
+func StorefrontCouponRateLimit() gin.HandlerFunc {
+	limiter := NewRateLimiter(time.Minute, 40)
+
+	return func(c *gin.Context) {
+		clientIP := c.ClientIP()
+		if clientIP == "" {
+			clientIP = "unknown"
+		}
+		if !limiter.isAllowed(clientIP) {
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error":   "too many requests",
+				"message": "coupon validation rate limit exceeded. please try again shortly",
+			})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}

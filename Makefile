@@ -10,6 +10,11 @@ TF_BACKEND_BUCKET ?= invoice-backend-tfstate-830283279729
 TF_BACKEND_REGION ?= us-east-1
 TF_BACKEND_LOCK_TABLE ?= terraform-state-lock
 TF_BACKEND_KEY ?= terraform.tfstate
+TF_VAR_credential_encryption_key ?= $(CREDENTIAL_ENCRYPTION_KEY)
+TF_VAR_india_sms_sender_id ?= $(INDIA_SMS_SENDER_ID)
+TF_VAR_india_dlt_entity_id ?= $(INDIA_DLT_ENTITY_ID)
+TF_VAR_india_signup_template_id ?= $(INDIA_SIGNUP_TEMPLATE_ID)
+TF_VAR_india_auth_template_id ?= $(INDIA_AUTH_TEMPLATE_ID)
 TF_INIT_BACKEND_ARGS := \
 	-backend-config=bucket=$(TF_BACKEND_BUCKET) \
 	-backend-config=region=$(TF_BACKEND_REGION) \

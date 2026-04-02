@@ -44,6 +44,7 @@ type Handler struct {
 	Team            *TeamHandler
 	Webhook         *WebhookHandler
 	Subscription    *SubscriptionHandler
+	Commerce        *CommerceHandler
 	Health          *HealthHandler
 	Admin           *AdminHandler
 	Agent           *AgentHandler
@@ -105,6 +106,7 @@ func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log 
 		Team:            NewTeamHandler(svcs.Team, log),
 		Webhook:         NewWebhookHandler(svcs.Webhook, log),
 		Subscription:    NewSubscriptionHandler(svcs.Subscription, log),
+		Commerce:        NewCommerceHandler(svcs.Commerce, log),
 		POS:             NewPOSHandler(svcs.POS, log),
 		Health:          NewHealthHandler(log),
 		Admin:           NewAdminHandler(svcs.Email, log),
