@@ -155,6 +155,125 @@ func (m *MockCommerceService) GetPublicOrder(ctx context.Context, slug, token st
 	return args.Get(0).(*models.StoreOrder), args.Error(1)
 }
 
+func (m *MockCommerceService) ListFeatureEntitlements(ctx context.Context, businessID string) ([]*models.FeatureEntitlement, error) {
+	args := m.Called(ctx, businessID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.FeatureEntitlement), args.Error(1)
+}
+
+func (m *MockCommerceService) SyncFeatureEntitlements(ctx context.Context, businessID string) ([]*models.FeatureEntitlement, error) {
+	args := m.Called(ctx, businessID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.FeatureEntitlement), args.Error(1)
+}
+
+func (m *MockCommerceService) ListRoles(ctx context.Context, businessID string) ([]*models.Role, error) {
+	args := m.Called(ctx, businessID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.Role), args.Error(1)
+}
+
+func (m *MockCommerceService) CreateRole(ctx context.Context, input services.UpsertRoleInput) (*models.Role, error) {
+	args := m.Called(ctx, input)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Role), args.Error(1)
+}
+
+func (m *MockCommerceService) UpdateRole(ctx context.Context, businessID, roleID string, input services.UpsertRoleInput) (*models.Role, error) {
+	args := m.Called(ctx, businessID, roleID, input)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Role), args.Error(1)
+}
+
+func (m *MockCommerceService) DeleteRole(ctx context.Context, businessID, roleID string) error {
+	args := m.Called(ctx, businessID, roleID)
+	return args.Error(0)
+}
+
+func (m *MockCommerceService) ListBranches(ctx context.Context, businessID string) ([]*models.Branch, error) {
+	args := m.Called(ctx, businessID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.Branch), args.Error(1)
+}
+
+func (m *MockCommerceService) CreateBranch(ctx context.Context, input services.UpsertBranchInput) (*models.Branch, error) {
+	args := m.Called(ctx, input)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Branch), args.Error(1)
+}
+
+func (m *MockCommerceService) UpdateBranch(ctx context.Context, businessID, branchID string, input services.UpsertBranchInput) (*models.Branch, error) {
+	args := m.Called(ctx, businessID, branchID, input)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Branch), args.Error(1)
+}
+
+func (m *MockCommerceService) DeleteBranch(ctx context.Context, businessID, branchID string) error {
+	args := m.Called(ctx, businessID, branchID)
+	return args.Error(0)
+}
+
+func (m *MockCommerceService) ListDriveAssets(ctx context.Context, businessID string) ([]*models.DriveAsset, int64, error) {
+	args := m.Called(ctx, businessID)
+	if args.Get(0) == nil {
+		return nil, 0, args.Error(2)
+	}
+	return args.Get(0).([]*models.DriveAsset), args.Get(1).(int64), args.Error(2)
+}
+
+func (m *MockCommerceService) CreateDriveUpload(ctx context.Context, businessID, userID string, input services.CreateDriveAssetInput) (*services.DriveUploadSession, error) {
+	args := m.Called(ctx, businessID, userID, input)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*services.DriveUploadSession), args.Error(1)
+}
+
+func (m *MockCommerceService) DeleteDriveAsset(ctx context.Context, businessID, assetID string) error {
+	args := m.Called(ctx, businessID, assetID)
+	return args.Error(0)
+}
+
+func (m *MockCommerceService) GetWhatsAppConfig(ctx context.Context, businessID string) (*models.WhatsAppConfig, error) {
+	args := m.Called(ctx, businessID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.WhatsAppConfig), args.Error(1)
+}
+
+func (m *MockCommerceService) UpsertWhatsAppConfig(ctx context.Context, businessID string, input services.UpsertWhatsAppConfigInput) (*models.WhatsAppConfig, error) {
+	args := m.Called(ctx, businessID, input)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.WhatsAppConfig), args.Error(1)
+}
+
+func (m *MockCommerceService) ListNotificationDeliveries(ctx context.Context, businessID string, limit int) ([]*models.NotificationDelivery, error) {
+	args := m.Called(ctx, businessID, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.NotificationDelivery), args.Error(1)
+}
+
 // =============================================================================
 // Test Commerce Handler Wrapper
 // =============================================================================
@@ -456,6 +575,272 @@ func (h *TestableCommerceHandler) PublicOrder(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, order)
+}
+
+func (h *TestableCommerceHandler) ListEntitlements(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	entitlements, err := h.svc.ListFeatureEntitlements(c.Request.Context(), businessID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, entitlements)
+}
+
+func (h *TestableCommerceHandler) SyncEntitlements(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	entitlements, err := h.svc.SyncFeatureEntitlements(c.Request.Context(), businessID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, entitlements)
+}
+
+func (h *TestableCommerceHandler) ListRoles(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	roles, err := h.svc.ListRoles(c.Request.Context(), businessID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, roles)
+}
+
+func (h *TestableCommerceHandler) CreateRole(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	var input services.UpsertRoleInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	input.BusinessID = businessID
+	role, err := h.svc.CreateRole(c.Request.Context(), input)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, role)
+}
+
+func (h *TestableCommerceHandler) UpdateRole(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	var input services.UpsertRoleInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	role, err := h.svc.UpdateRole(c.Request.Context(), businessID, c.Param("id"), input)
+	if err != nil {
+		status := http.StatusBadRequest
+		if isNotFoundErr(err) {
+			status = http.StatusNotFound
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, role)
+}
+
+func (h *TestableCommerceHandler) DeleteRole(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	if err := h.svc.DeleteRole(c.Request.Context(), businessID, c.Param("id")); err != nil {
+		status := http.StatusBadRequest
+		if isNotFoundErr(err) {
+			status = http.StatusNotFound
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *TestableCommerceHandler) ListBranches(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	branches, err := h.svc.ListBranches(c.Request.Context(), businessID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, branches)
+}
+
+func (h *TestableCommerceHandler) CreateBranch(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	var input services.UpsertBranchInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	input.BusinessID = businessID
+	branch, err := h.svc.CreateBranch(c.Request.Context(), input)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, branch)
+}
+
+func (h *TestableCommerceHandler) UpdateBranch(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	var input services.UpsertBranchInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	branch, err := h.svc.UpdateBranch(c.Request.Context(), businessID, c.Param("id"), input)
+	if err != nil {
+		status := http.StatusBadRequest
+		if isNotFoundErr(err) {
+			status = http.StatusNotFound
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, branch)
+}
+
+func (h *TestableCommerceHandler) DeleteBranch(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	if err := h.svc.DeleteBranch(c.Request.Context(), businessID, c.Param("id")); err != nil {
+		status := http.StatusBadRequest
+		if isNotFoundErr(err) {
+			status = http.StatusNotFound
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *TestableCommerceHandler) ListDriveAssets(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	assets, usage, err := h.svc.ListDriveAssets(c.Request.Context(), businessID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": assets, "usage_bytes": usage})
+}
+
+func (h *TestableCommerceHandler) CreateDriveUpload(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
+	var input services.CreateDriveAssetInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	input.BusinessID = businessID
+	session, err := h.svc.CreateDriveUpload(c.Request.Context(), businessID, userID, input)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, session)
+}
+
+func (h *TestableCommerceHandler) DeleteDriveAsset(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	if err := h.svc.DeleteDriveAsset(c.Request.Context(), businessID, c.Param("id")); err != nil {
+		status := http.StatusBadRequest
+		if isNotFoundErr(err) {
+			status = http.StatusNotFound
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *TestableCommerceHandler) GetWhatsAppConfig(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	config, err := h.svc.GetWhatsAppConfig(c.Request.Context(), businessID)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if isNotFoundErr(err) {
+			status = http.StatusNotFound
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, config)
+}
+
+func (h *TestableCommerceHandler) UpsertWhatsAppConfig(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	var input services.UpsertWhatsAppConfigInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	config, err := h.svc.UpsertWhatsAppConfig(c.Request.Context(), businessID, input)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, config)
+}
+
+func (h *TestableCommerceHandler) ListNotificationDeliveries(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	deliveries, err := h.svc.ListNotificationDeliveries(c.Request.Context(), businessID, 50)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, deliveries)
 }
 
 func requestContextWithActor(c *gin.Context) {
@@ -1045,4 +1430,1428 @@ func TestCancelStorefrontOrder_Success(t *testing.T) {
 	}
 
 	mockSvc.AssertExpectations(t)
+}
+
+// =============================================================================
+// Additional Storefront Tests - Error/Edge Cases
+// =============================================================================
+
+// ListStorefronts - Service Error
+func TestListStorefronts_ServiceError(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	mockSvc.On("ListStorefronts", mock.Anything, "biz-123").Return(nil, errors.New("database error"))
+
+	router := gin.New()
+	router.GET("/storefronts", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.ListStorefronts(c)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/storefronts", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", res.Code)
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+// CreateStorefront - Unauthorized
+func TestCreateStorefront_Unauthorized(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	router := gin.New()
+	router.POST("/storefronts", func(c *gin.Context) {
+		handler.CreateStorefront(c)
+	})
+
+	reqBody := map[string]interface{}{"name": "My Store", "slug": "my-store"}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPost, "/storefronts", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", res.Code)
+	}
+}
+
+// GetStorefront - Unauthorized
+func TestGetStorefront_Unauthorized(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	router := gin.New()
+	router.GET("/storefronts/:id", func(c *gin.Context) {
+		handler.GetStorefront(c)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/storefronts/sf-123", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", res.Code)
+	}
+}
+
+// UpdateStorefrontSettings - Unauthorized
+func TestUpdateStorefrontSettings_Unauthorized(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	router := gin.New()
+	router.PUT("/storefronts/:id/settings", func(c *gin.Context) {
+		handler.UpdateStorefrontSettings(c)
+	})
+
+	reqBody := map[string]interface{}{"name": "Updated Store"}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPut, "/storefronts/sf-123/settings", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", res.Code)
+	}
+}
+
+// UpdateStorefrontSettings - Storefront Not Found
+func TestUpdateStorefrontSettings_StorefrontNotFound(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	mockSvc.On("UpdateStorefrontSettings", mock.Anything, "biz-123", "non-existent", mock.Anything).Return(nil, errors.New("storefront not found"))
+
+	router := gin.New()
+	router.PUT("/storefronts/:id/settings", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.UpdateStorefrontSettings(c)
+	})
+
+	reqBody := map[string]interface{}{"name": "Updated"}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPut, "/storefronts/non-existent/settings", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", res.Code)
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+// ListStorefrontProducts - Unauthorized
+func TestListStorefrontProducts_Unauthorized(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	router := gin.New()
+	router.GET("/storefronts/:id/products", func(c *gin.Context) {
+		handler.ListStorefrontProducts(c)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/storefronts/sf-123/products", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", res.Code)
+	}
+}
+
+// ReplaceStorefrontProducts - Unauthorized
+func TestReplaceStorefrontProducts_Unauthorized(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	router := gin.New()
+	router.PUT("/storefronts/:id/products", func(c *gin.Context) {
+		handler.ReplaceStorefrontProducts(c)
+	})
+
+	reqBody := []map[string]interface{}{}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPut, "/storefronts/sf-123/products", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", res.Code)
+	}
+}
+
+// ReplaceStorefrontProducts - Storefront Not Found
+func TestReplaceStorefrontProducts_StorefrontNotFound(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	mockSvc.On("GetStorefront", mock.Anything, "biz-123", "non-existent").Return(nil, errors.New("storefront not found"))
+
+	router := gin.New()
+	router.PUT("/storefronts/:id/products", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.ReplaceStorefrontProducts(c)
+	})
+
+	reqBody := []map[string]interface{}{{"product_id": "11111111-1111-1111-1111-111111111111"}}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPut, "/storefronts/non-existent/products", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", res.Code)
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+// ReplaceStorefrontProducts - Bad Request
+func TestReplaceStorefrontProducts_BadRequest(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	storefront := &models.Storefront{ID: "sf-123", BusinessID: "biz-123"}
+	mockSvc.On("GetStorefront", mock.Anything, "biz-123", "sf-123").Return(storefront, nil)
+
+	router := gin.New()
+	router.PUT("/storefronts/:id/products", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.ReplaceStorefrontProducts(c)
+	})
+
+	// Send invalid JSON to trigger binding error
+	req := httptest.NewRequest(http.MethodPut, "/storefronts/sf-123/products", bytes.NewBuffer([]byte("invalid json")))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", res.Code, res.Body.String())
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+// ReplaceStorefrontProducts - Service Error
+func TestReplaceStorefrontProducts_ServiceError(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	storefront := &models.Storefront{ID: "sf-123", BusinessID: "biz-123"}
+	mockSvc.On("GetStorefront", mock.Anything, "biz-123", "sf-123").Return(storefront, nil)
+	mockSvc.On("ReplaceStorefrontProducts", mock.Anything, "biz-123", "sf-123", mock.Anything).Return(nil, errors.New("database error"))
+
+	router := gin.New()
+	router.PUT("/storefronts/:id/products", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.ReplaceStorefrontProducts(c)
+	})
+
+	reqBody := []map[string]interface{}{{"product_id": "11111111-1111-1111-1111-111111111111"}}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPut, "/storefronts/sf-123/products", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", res.Code, res.Body.String())
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+// ListStorefrontCoupons - Unauthorized
+func TestListStorefrontCoupons_Unauthorized(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	router := gin.New()
+	router.GET("/storefronts/:id/coupons", func(c *gin.Context) {
+		handler.ListStorefrontCoupons(c)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/storefronts/sf-123/coupons", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", res.Code)
+	}
+}
+
+// ListStorefrontCoupons - Storefront Not Found
+func TestListStorefrontCoupons_StorefrontNotFound(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	mockSvc.On("GetStorefront", mock.Anything, "biz-123", "non-existent").Return(nil, errors.New("storefront not found"))
+
+	router := gin.New()
+	router.GET("/storefronts/:id/coupons", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.ListStorefrontCoupons(c)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/storefronts/non-existent/coupons", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", res.Code)
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+// CreateStorefrontCoupon - Unauthorized
+func TestCreateStorefrontCoupon_Unauthorized(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	router := gin.New()
+	router.POST("/storefronts/:id/coupons", func(c *gin.Context) {
+		handler.CreateStorefrontCoupon(c)
+	})
+
+	reqBody := map[string]interface{}{"code": "SAVE20", "discount_type": "percentage", "discount_value": 20}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPost, "/storefronts/sf-123/coupons", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", res.Code)
+	}
+}
+
+// CreateStorefrontCoupon - Storefront Not Found
+func TestCreateStorefrontCoupon_StorefrontNotFound(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	mockSvc.On("GetStorefront", mock.Anything, "biz-123", "non-existent").Return(nil, errors.New("storefront not found"))
+
+	router := gin.New()
+	router.POST("/storefronts/:id/coupons", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.CreateStorefrontCoupon(c)
+	})
+
+	reqBody := map[string]interface{}{"code": "SAVE20", "discount_type": "percentage", "discount_value": 20}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPost, "/storefronts/non-existent/coupons", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", res.Code)
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+// CreateStorefrontCoupon - Bad Request
+func TestCreateStorefrontCoupon_BadRequest(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	storefront := &models.Storefront{ID: "sf-123", BusinessID: "biz-123"}
+	mockSvc.On("GetStorefront", mock.Anything, "biz-123", "sf-123").Return(storefront, nil)
+
+	router := gin.New()
+	router.POST("/storefronts/:id/coupons", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.CreateStorefrontCoupon(c)
+	})
+
+	// Missing required fields
+	reqBody := map[string]interface{}{}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPost, "/storefronts/sf-123/coupons", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", res.Code, res.Body.String())
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+// UpdateStorefrontCoupon - Unauthorized
+func TestUpdateStorefrontCoupon_Unauthorized(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	router := gin.New()
+	router.PUT("/storefronts/:id/coupons/:coupon_id", func(c *gin.Context) {
+		handler.UpdateStorefrontCoupon(c)
+	})
+
+	reqBody := map[string]interface{}{"code": "SAVE30", "discount_type": "fixed", "discount_value": 30}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPut, "/storefronts/sf-123/coupons/cp-1", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", res.Code)
+	}
+}
+
+// UpdateStorefrontCoupon - Storefront Not Found
+func TestUpdateStorefrontCoupon_StorefrontNotFound(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	mockSvc.On("GetStorefront", mock.Anything, "biz-123", "non-existent").Return(nil, errors.New("storefront not found"))
+
+	router := gin.New()
+	router.PUT("/storefronts/:id/coupons/:coupon_id", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.UpdateStorefrontCoupon(c)
+	})
+
+	reqBody := map[string]interface{}{"code": "SAVE30", "discount_type": "fixed", "discount_value": 30}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPut, "/storefronts/non-existent/coupons/cp-1", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", res.Code)
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+// UpdateStorefrontCoupon - Coupon Not Found
+func TestUpdateStorefrontCoupon_NotFound(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	storefront := &models.Storefront{ID: "sf-123", BusinessID: "biz-123"}
+	mockSvc.On("GetStorefront", mock.Anything, "biz-123", "sf-123").Return(storefront, nil)
+	mockSvc.On("UpdateStorefrontCoupon", mock.Anything, "sf-123", "non-existent", mock.Anything).Return(nil, errors.New("coupon not found"))
+
+	router := gin.New()
+	router.PUT("/storefronts/:id/coupons/:coupon_id", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.UpdateStorefrontCoupon(c)
+	})
+
+	reqBody := map[string]interface{}{"code": "SAVE30", "discount_type": "percentage", "discount_value": 30}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPut, "/storefronts/sf-123/coupons/non-existent", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", res.Code)
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+// ListStorefrontOrders - Unauthorized
+func TestListStorefrontOrders_Unauthorized(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	router := gin.New()
+	router.GET("/storefronts/:id/orders", func(c *gin.Context) {
+		handler.ListStorefrontOrders(c)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/storefronts/sf-123/orders", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", res.Code)
+	}
+}
+
+// ApproveStorefrontOrder - Unauthorized
+func TestApproveStorefrontOrder_Unauthorized(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	router := gin.New()
+	router.POST("/storefronts/:id/orders/:order_id/approve", func(c *gin.Context) {
+		handler.ApproveStorefrontOrder(c)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/storefronts/sf-123/orders/ord-1/approve", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", res.Code)
+	}
+}
+
+// CancelStorefrontOrder - Unauthorized
+func TestCancelStorefrontOrder_Unauthorized(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	router := gin.New()
+	router.POST("/storefronts/:id/orders/:order_id/cancel", func(c *gin.Context) {
+		handler.CancelStorefrontOrder(c)
+	})
+
+	reqBody := map[string]interface{}{"reason": "Customer request"}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPost, "/storefronts/sf-123/orders/ord-1/cancel", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", res.Code)
+	}
+}
+
+// CancelStorefrontOrder - Not Found
+func TestCancelStorefrontOrder_NotFound(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	mockSvc.On("CancelStoreOrder", mock.Anything, "biz-123", "sf-123", "non-existent", "Customer request").Return(nil, errors.New("order not found"))
+
+	router := gin.New()
+	router.POST("/storefronts/:id/orders/:order_id/cancel", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.CancelStorefrontOrder(c)
+	})
+
+	reqBody := map[string]interface{}{"reason": "Customer request"}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPost, "/storefronts/sf-123/orders/non-existent/cancel", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", res.Code)
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+// =============================================================================
+// ListEntitlements Tests
+// =============================================================================
+
+func TestListEntitlements_Success(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	entitlements := []*models.FeatureEntitlement{
+		{ID: "ent-1", BusinessID: "biz-123", FeatureKey: "online_store", Enabled: true},
+		{ID: "ent-2", BusinessID: "biz-123", FeatureKey: "multi_currency", Enabled: false},
+	}
+	mockSvc.On("ListFeatureEntitlements", mock.Anything, "biz-123").Return(entitlements, nil)
+
+	router := gin.New()
+	router.GET("/subscriptions/entitlements", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.ListEntitlements(c)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/subscriptions/entitlements", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+func TestListEntitlements_Unauthorized(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	router := gin.New()
+	router.GET("/subscriptions/entitlements", func(c *gin.Context) {
+		handler.ListEntitlements(c)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/subscriptions/entitlements", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", res.Code)
+	}
+}
+
+func TestListEntitlements_InternalError(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	mockSvc.On("ListFeatureEntitlements", mock.Anything, "biz-123").Return(nil, errors.New("database error"))
+
+	router := gin.New()
+	router.GET("/subscriptions/entitlements", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.ListEntitlements(c)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/subscriptions/entitlements", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", res.Code)
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+// =============================================================================
+// SyncEntitlements Tests
+// =============================================================================
+
+func TestSyncEntitlements_Success(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	entitlements := []*models.FeatureEntitlement{
+		{ID: "ent-1", BusinessID: "biz-123", FeatureKey: "online_store", Enabled: true},
+	}
+	mockSvc.On("SyncFeatureEntitlements", mock.Anything, "biz-123").Return(entitlements, nil)
+
+	router := gin.New()
+	router.POST("/subscriptions/entitlements/sync", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.SyncEntitlements(c)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/subscriptions/entitlements/sync", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+func TestSyncEntitlements_Unauthorized(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	router := gin.New()
+	router.POST("/subscriptions/entitlements/sync", func(c *gin.Context) {
+		handler.SyncEntitlements(c)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/subscriptions/entitlements/sync", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", res.Code)
+	}
+}
+
+// =============================================================================
+// ListRoles Tests
+// =============================================================================
+
+func TestListRoles_Success(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	roles := []*models.Role{
+		{ID: "role-1", BusinessID: "biz-123", Name: "Admin", Key: "admin"},
+		{ID: "role-2", BusinessID: "biz-123", Name: "Viewer", Key: "viewer"},
+	}
+	mockSvc.On("ListRoles", mock.Anything, "biz-123").Return(roles, nil)
+
+	router := gin.New()
+	router.GET("/roles", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.ListRoles(c)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/roles", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+func TestListRoles_Unauthorized(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	router := gin.New()
+	router.GET("/roles", func(c *gin.Context) {
+		handler.ListRoles(c)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/roles", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", res.Code)
+	}
+}
+
+// =============================================================================
+// CreateRole Tests
+// =============================================================================
+
+func TestCreateRole_Success(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	role := &models.Role{ID: "role-1", BusinessID: "biz-123", Name: "Manager", Key: "manager"}
+	mockSvc.On("CreateRole", mock.Anything, mock.MatchedBy(func(input services.UpsertRoleInput) bool {
+		return input.Name == "Manager" && input.BusinessID == "biz-123"
+	})).Return(role, nil)
+
+	router := gin.New()
+	router.POST("/roles", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.CreateRole(c)
+	})
+
+	reqBody := map[string]interface{}{
+		"name":        "Manager",
+		"key":         "manager",
+		"permissions": []string{"read", "write"},
+	}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPost, "/roles", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", res.Code, res.Body.String())
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+func TestCreateRole_BadRequest(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	router := gin.New()
+	router.POST("/roles", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.CreateRole(c)
+	})
+
+	reqBody := map[string]interface{}{}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPost, "/roles", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", res.Code)
+	}
+}
+
+// =============================================================================
+// UpdateRole Tests
+// =============================================================================
+
+func TestUpdateRole_Success(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	role := &models.Role{ID: "role-1", BusinessID: "biz-123", Name: "Updated Manager"}
+	mockSvc.On("UpdateRole", mock.Anything, "biz-123", "role-1", mock.Anything).Return(role, nil)
+
+	router := gin.New()
+	router.PUT("/roles/:id", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.UpdateRole(c)
+	})
+
+	reqBody := map[string]interface{}{
+		"name": "Updated Manager",
+	}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPut, "/roles/role-1", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+func TestUpdateRole_NotFound(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	mockSvc.On("UpdateRole", mock.Anything, "biz-123", "non-existent", mock.Anything).Return(nil, errors.New("role not found"))
+
+	router := gin.New()
+	router.PUT("/roles/:id", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.UpdateRole(c)
+	})
+
+	reqBody := map[string]interface{}{"name": "Updated"}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPut, "/roles/non-existent", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", res.Code)
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+// =============================================================================
+// DeleteRole Tests
+// =============================================================================
+
+func TestDeleteRole_Success(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	mockSvc.On("DeleteRole", mock.Anything, "biz-123", "role-1").Return(nil)
+
+	router := gin.New()
+	router.DELETE("/roles/:id", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.DeleteRole(c)
+	})
+
+	req := httptest.NewRequest(http.MethodDelete, "/roles/role-1", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", res.Code)
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+func TestDeleteRole_NotFound(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	mockSvc.On("DeleteRole", mock.Anything, "biz-123", "non-existent").Return(errors.New("role not found"))
+
+	router := gin.New()
+	router.DELETE("/roles/:id", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.DeleteRole(c)
+	})
+
+	req := httptest.NewRequest(http.MethodDelete, "/roles/non-existent", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", res.Code)
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+// =============================================================================
+// ListBranches Tests
+// =============================================================================
+
+func TestListBranches_Success(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	branches := []*models.Branch{
+		{ID: "branch-1", BusinessID: "biz-123", Name: "Main Branch", Code: "MAIN"},
+	}
+	mockSvc.On("ListBranches", mock.Anything, "biz-123").Return(branches, nil)
+
+	router := gin.New()
+	router.GET("/branches", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.ListBranches(c)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/branches", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+func TestListBranches_Unauthorized(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	router := gin.New()
+	router.GET("/branches", func(c *gin.Context) {
+		handler.ListBranches(c)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/branches", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", res.Code)
+	}
+}
+
+// =============================================================================
+// CreateBranch Tests
+// =============================================================================
+
+func TestCreateBranch_Success(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	branch := &models.Branch{ID: "branch-1", BusinessID: "biz-123", Name: "New Branch", Code: "NEW"}
+	mockSvc.On("CreateBranch", mock.Anything, mock.MatchedBy(func(input services.UpsertBranchInput) bool {
+		return input.Name == "New Branch" && input.Code == "NEW" && input.BusinessID == "biz-123"
+	})).Return(branch, nil)
+
+	router := gin.New()
+	router.POST("/branches", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.CreateBranch(c)
+	})
+
+	reqBody := map[string]interface{}{
+		"name": "New Branch",
+		"code": "NEW",
+	}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPost, "/branches", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", res.Code, res.Body.String())
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+func TestCreateBranch_BadRequest(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	router := gin.New()
+	router.POST("/branches", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.CreateBranch(c)
+	})
+
+	reqBody := map[string]interface{}{}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPost, "/branches", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", res.Code)
+	}
+}
+
+// =============================================================================
+// UpdateBranch Tests
+// =============================================================================
+
+func TestUpdateBranch_Success(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	branch := &models.Branch{ID: "branch-1", BusinessID: "biz-123", Name: "Updated Branch"}
+	mockSvc.On("UpdateBranch", mock.Anything, "biz-123", "branch-1", mock.Anything).Return(branch, nil)
+
+	router := gin.New()
+	router.PUT("/branches/:id", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.UpdateBranch(c)
+	})
+
+	reqBody := map[string]interface{}{
+		"name": "Updated Branch",
+		"code": "UPD",
+	}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPut, "/branches/branch-1", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+func TestUpdateBranch_NotFound(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	mockSvc.On("UpdateBranch", mock.Anything, "biz-123", "non-existent", mock.Anything).Return(nil, errors.New("branch not found"))
+
+	router := gin.New()
+	router.PUT("/branches/:id", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.UpdateBranch(c)
+	})
+
+	reqBody := map[string]interface{}{"name": "Updated", "code": "UPD"}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPut, "/branches/non-existent", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", res.Code)
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+// =============================================================================
+// DeleteBranch Tests
+// =============================================================================
+
+func TestDeleteBranch_Success(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	mockSvc.On("DeleteBranch", mock.Anything, "biz-123", "branch-1").Return(nil)
+
+	router := gin.New()
+	router.DELETE("/branches/:id", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.DeleteBranch(c)
+	})
+
+	req := httptest.NewRequest(http.MethodDelete, "/branches/branch-1", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", res.Code)
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+// =============================================================================
+// ListDriveAssets Tests
+// =============================================================================
+
+func TestListDriveAssets_Success(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	assets := []*models.DriveAsset{
+		{ID: "asset-1", BusinessID: "biz-123", Name: "document.pdf", SizeBytes: 1024},
+	}
+	mockSvc.On("ListDriveAssets", mock.Anything, "biz-123").Return(assets, int64(1024), nil)
+
+	router := gin.New()
+	router.GET("/drive", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.ListDriveAssets(c)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/drive", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+func TestListDriveAssets_Unauthorized(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	router := gin.New()
+	router.GET("/drive", func(c *gin.Context) {
+		handler.ListDriveAssets(c)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/drive", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", res.Code)
+	}
+}
+
+// =============================================================================
+// CreateDriveUpload Tests
+// =============================================================================
+
+func TestCreateDriveUpload_Success(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	session := &services.DriveUploadSession{
+		Asset:     &models.DriveAsset{ID: "asset-1", BusinessID: "biz-123", Name: "new-file.pdf"},
+		UploadURL: "https://storage.example.com/presigned-url",
+	}
+	mockSvc.On("CreateDriveUpload", mock.Anything, "biz-123", "user-1", mock.Anything).Return(session, nil)
+
+	router := gin.New()
+	router.POST("/drive/presign", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		c.Set("user_id", "user-1")
+		handler.CreateDriveUpload(c)
+	})
+
+	reqBody := map[string]interface{}{
+		"name":         "new-file.pdf",
+		"content_type": "application/pdf",
+		"size_bytes":   2048,
+	}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPost, "/drive/presign", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", res.Code, res.Body.String())
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+func TestCreateDriveUpload_UnauthorizedUser(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	router := gin.New()
+	router.POST("/drive/presign", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.CreateDriveUpload(c)
+	})
+
+	reqBody := map[string]interface{}{"name": "file.pdf", "content_type": "application/pdf", "size_bytes": 100}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPost, "/drive/presign", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", res.Code)
+	}
+}
+
+// =============================================================================
+// DeleteDriveAsset Tests
+// =============================================================================
+
+func TestDeleteDriveAsset_Success(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	mockSvc.On("DeleteDriveAsset", mock.Anything, "biz-123", "asset-1").Return(nil)
+
+	router := gin.New()
+	router.DELETE("/drive/:id", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.DeleteDriveAsset(c)
+	})
+
+	req := httptest.NewRequest(http.MethodDelete, "/drive/asset-1", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", res.Code)
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+func TestDeleteDriveAsset_NotFound(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	mockSvc.On("DeleteDriveAsset", mock.Anything, "biz-123", "non-existent").Return(errors.New("asset not found"))
+
+	router := gin.New()
+	router.DELETE("/drive/:id", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.DeleteDriveAsset(c)
+	})
+
+	req := httptest.NewRequest(http.MethodDelete, "/drive/non-existent", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", res.Code)
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+// =============================================================================
+// GetWhatsAppConfig Tests
+// =============================================================================
+
+func TestGetWhatsAppConfig_Success(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	config := &models.WhatsAppConfig{ID: "wa-1", BusinessID: "biz-123", PhoneNumberID: "+1234567890", Enabled: true}
+	mockSvc.On("GetWhatsAppConfig", mock.Anything, "biz-123").Return(config, nil)
+
+	router := gin.New()
+	router.GET("/whatsapp/config", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.GetWhatsAppConfig(c)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/whatsapp/config", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+func TestGetWhatsAppConfig_NotFound(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	mockSvc.On("GetWhatsAppConfig", mock.Anything, "biz-123").Return(nil, errors.New("config not found"))
+
+	router := gin.New()
+	router.GET("/whatsapp/config", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.GetWhatsAppConfig(c)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/whatsapp/config", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", res.Code)
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+// =============================================================================
+// UpsertWhatsAppConfig Tests
+// =============================================================================
+
+func TestUpsertWhatsAppConfig_Success(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	config := &models.WhatsAppConfig{ID: "wa-1", BusinessID: "biz-123", PhoneNumberID: "+1234567890", Enabled: true}
+	mockSvc.On("UpsertWhatsAppConfig", mock.Anything, "biz-123", mock.Anything).Return(config, nil)
+
+	router := gin.New()
+	router.PUT("/whatsapp/config", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.UpsertWhatsAppConfig(c)
+	})
+
+	reqBody := map[string]interface{}{
+		"phone_number": "+1234567890",
+		"status":       "active",
+	}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPut, "/whatsapp/config", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+func TestUpsertWhatsAppConfig_BadRequest(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	router := gin.New()
+	router.PUT("/whatsapp/config", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.UpsertWhatsAppConfig(c)
+	})
+
+	req := httptest.NewRequest(http.MethodPut, "/whatsapp/config", bytes.NewBuffer([]byte("invalid json")))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", res.Code)
+	}
+}
+
+// =============================================================================
+// ListNotificationDeliveries Tests
+// =============================================================================
+
+func TestListNotificationDeliveries_Success(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	deliveries := []*models.NotificationDelivery{
+		{ID: "del-1", BusinessID: "biz-123", Channel: "whatsapp", Status: "delivered"},
+	}
+	mockSvc.On("ListNotificationDeliveries", mock.Anything, "biz-123", 50).Return(deliveries, nil)
+
+	router := gin.New()
+	router.GET("/whatsapp/deliveries", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		handler.ListNotificationDeliveries(c)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/whatsapp/deliveries", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+func TestListNotificationDeliveries_Unauthorized(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	log := logger.New()
+	handler := NewTestableCommerceHandler(mockSvc, log)
+
+	router := gin.New()
+	router.GET("/whatsapp/deliveries", func(c *gin.Context) {
+		handler.ListNotificationDeliveries(c)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/whatsapp/deliveries", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", res.Code)
+	}
 }
