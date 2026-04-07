@@ -32,11 +32,24 @@ func validateImageContentType(c *gin.Context) (string, bool) {
 }
 
 func requireBusinessScope(c *gin.Context) (string, bool) {
+	return requireEffectiveBusinessScope(c, "")
+}
+
+// requireEffectiveBusinessScope enforces request-scoped business ownership.
+// If requestedBusinessID is provided, it must match the authenticated business scope.
+func requireEffectiveBusinessScope(c *gin.Context, requestedBusinessID string) (string, bool) {
 	businessID := middleware.GetEffectiveBusinessID(c)
 	if businessID == "" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "business scope required"})
 		return "", false
 	}
+
+	requestedBusinessID = strings.TrimSpace(requestedBusinessID)
+	if requestedBusinessID != "" && requestedBusinessID != businessID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "business_id does not match authenticated scope"})
+		return "", false
+	}
+
 	return businessID, true
 }
 

@@ -109,7 +109,7 @@ func TestAuthValidTokenEnrichesContextLogger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to generate RSA key: %v", err)
 	}
-	cfg := config.CognitoConfig{Region: "us-east-1", UserPoolID: "pool-123", JWKSRefreshRate: time.Hour}
+	cfg := config.CognitoConfig{Region: "us-east-1", UserPoolID: "pool-123", ClientID: "test-client-id", JWKSRefreshRate: time.Hour}
 	jwksCachesMu.Lock()
 	jwksCaches = map[string]*JWKSCache{
 		fmt.Sprintf("%s/.well-known/jwks.json", cognitoIssuer(cfg.Region, cfg.UserPoolID)): {
@@ -130,6 +130,7 @@ func TestAuthValidTokenEnrichesContextLogger(t *testing.T) {
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		},
 		TokenUse:   "access",
+		ClientID:   "test-client-id",
 		BusinessID: "biz-123",
 		Role:       "admin",
 		Email:      "user@example.com",

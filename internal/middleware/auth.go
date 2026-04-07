@@ -41,6 +41,13 @@ type JWKSCache struct {
 	jwksURL   string
 }
 
+type TokenUse string
+
+const (
+	TokenUseAccess TokenUse = "access"
+	TokenUseID     TokenUse = "id"
+)
+
 func NewJWKSCache(jwksURL string, ttl time.Duration) *JWKSCache {
 	return &JWKSCache{
 		keys:    make(map[string]*rsa.PublicKey),
@@ -51,13 +58,15 @@ func NewJWKSCache(jwksURL string, ttl time.Duration) *JWKSCache {
 
 func (c *JWKSCache) GetKey(kid string) (*rsa.PublicKey, error) {
 	c.mu.RLock()
-	if key, ok := c.keys[kid]; ok && time.Since(c.lastFetch) < c.ttl {
-		c.mu.RUnlock()
-		return key, nil
-	}
+	key, ok := c.keys[kid]
+	stale := time.Since(c.lastFetch) >= c.ttl
 	c.mu.RUnlock()
 
-	if err := c.refresh(); err != nil {
+	if ok && !stale {
+		return key, nil
+	}
+
+	if err := c.refresh(!ok); err != nil {
 		return nil, err
 	}
 
@@ -69,11 +78,11 @@ func (c *JWKSCache) GetKey(kid string) (*rsa.PublicKey, error) {
 	return nil, fmt.Errorf("key not found: %s", kid)
 }
 
-func (c *JWKSCache) refresh() error {
+func (c *JWKSCache) refresh(force bool) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if time.Since(c.lastFetch) < c.ttl && len(c.keys) > 0 {
+	if !force && time.Since(c.lastFetch) < c.ttl && len(c.keys) > 0 {
 		return nil
 	}
 
@@ -99,6 +108,7 @@ func (c *JWKSCache) refresh() error {
 		return err
 	}
 
+	refreshedKeys := make(map[string]*rsa.PublicKey, len(jwks.Keys))
 	for _, k := range jwks.Keys {
 		if k.Kty != "RSA" {
 			continue
@@ -107,9 +117,15 @@ func (c *JWKSCache) refresh() error {
 		if err != nil {
 			continue
 		}
-		c.keys[k.Kid] = pubKey
+		refreshedKeys[k.Kid] = pubKey
 	}
 
+	if len(refreshedKeys) == 0 {
+		return fmt.Errorf("fetch JWKS: no valid RSA keys found")
+	}
+
+	// Replace the entire key map atomically so retired keys are dropped.
+	c.keys = refreshedKeys
 	c.lastFetch = time.Now()
 	return nil
 }
@@ -140,6 +156,7 @@ type CognitoClaims struct {
 	Username    string   `json:"cognito:username"`
 	Groups      []string `json:"cognito:groups"`
 	TokenUse    string   `json:"token_use"`
+	ClientID    string   `json:"client_id"`
 	BusinessID  string   `json:"custom:businessId"`
 	Role        string   `json:"custom:role"`
 	Picture     string   `json:"picture"`
@@ -153,6 +170,7 @@ type cognitoPool struct {
 	jwksURL             string
 	ttl                 time.Duration
 	canonicalizeSubject bool
+	allowedClientIDs    map[string]struct{}
 }
 
 var (
@@ -176,8 +194,7 @@ func parseAuthorizationHeader(authHeader string) (string, error) {
 }
 
 func ValidateCognitoToken(cfg config.CognitoConfig, tokenString string) (*CognitoClaims, error) {
-	claims, _, err := validateCognitoTokenWithPools(tokenString, cognitoPoolsFromConfig(cfg))
-	return claims, err
+	return validateCognitoTokenWithAllowedTokenUses(cfg, tokenString, defaultAllowedTokenUses())
 }
 
 func ValidateCognitoAuthorization(cfg config.CognitoConfig, authHeader string) (*CognitoClaims, error) {
@@ -189,10 +206,21 @@ func ValidateCognitoAuthorization(cfg config.CognitoConfig, authHeader string) (
 }
 
 func Auth(cfg config.CognitoConfig, log *logger.Logger) gin.HandlerFunc {
+	return AuthWithTokenUse(cfg, log, TokenUseAccess)
+}
+
+func AuthWithTokenUse(cfg config.CognitoConfig, log *logger.Logger, allowedTokenUses ...TokenUse) gin.HandlerFunc {
+	allowedUses := normalizeAllowedTokenUses(allowedTokenUses)
 	return func(c *gin.Context) {
 		reqLog := logger.FromContext(c.Request.Context()).Named("auth_middleware")
 		authHeader := c.GetHeader("Authorization")
-		claims, err := ValidateCognitoAuthorization(cfg, authHeader)
+		tokenString, err := parseAuthorizationHeader(authHeader)
+		if err != nil {
+			reqLog.Warn("token validation failed", "error", err)
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
+			return
+		}
+		claims, err := validateCognitoTokenWithAllowedTokenUses(cfg, tokenString, allowedUses)
 		if err != nil {
 			reqLog.Warn("token validation failed", "error", err)
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
@@ -276,17 +304,21 @@ func cognitoPoolsFromConfig(cfg config.CognitoConfig) []cognitoPool {
 	}
 
 	pools := []cognitoPool{
-		newCognitoPool(cfg.Region, cfg.UserPoolID, ttl, false),
+		newCognitoPool(cfg.Region, cfg.UserPoolID, cfg.ClientID, ttl, false),
 	}
 
 	if cfg.Phone.UserPoolID != "" && cfg.Phone.Region != "" {
-		pools = append(pools, newCognitoPool(cfg.Phone.Region, cfg.Phone.UserPoolID, ttl, true))
+		pools = append(pools, newCognitoPool(cfg.Phone.Region, cfg.Phone.UserPoolID, cfg.Phone.ClientID, ttl, true))
 	}
 
 	return pools
 }
 
-func newCognitoPool(region, userPoolID string, ttl time.Duration, canonicalizeSubject bool) cognitoPool {
+func newCognitoPool(region, userPoolID, clientID string, ttl time.Duration, canonicalizeSubject bool) cognitoPool {
+	allowedClientIDs := map[string]struct{}{}
+	if trimmed := strings.TrimSpace(clientID); trimmed != "" {
+		allowedClientIDs[trimmed] = struct{}{}
+	}
 	return cognitoPool{
 		userPoolID:          userPoolID,
 		region:              region,
@@ -294,10 +326,16 @@ func newCognitoPool(region, userPoolID string, ttl time.Duration, canonicalizeSu
 		jwksURL:             fmt.Sprintf("%s/.well-known/jwks.json", cognitoIssuer(region, userPoolID)),
 		ttl:                 ttl,
 		canonicalizeSubject: canonicalizeSubject,
+		allowedClientIDs:    allowedClientIDs,
 	}
 }
 
-func validateCognitoTokenWithPools(tokenString string, pools []cognitoPool) (*CognitoClaims, cognitoPool, error) {
+func validateCognitoTokenWithAllowedTokenUses(cfg config.CognitoConfig, tokenString string, allowedTokenUses map[string]struct{}) (*CognitoClaims, error) {
+	claims, _, err := validateCognitoTokenWithPools(tokenString, cognitoPoolsFromConfig(cfg), allowedTokenUses)
+	return claims, err
+}
+
+func validateCognitoTokenWithPools(tokenString string, pools []cognitoPool, allowedTokenUses map[string]struct{}) (*CognitoClaims, cognitoPool, error) {
 	unverifiedClaims, err := parseUnverifiedClaims(tokenString)
 	if err != nil {
 		return nil, cognitoPool{}, err
@@ -330,14 +368,80 @@ func validateCognitoTokenWithPools(tokenString string, pools []cognitoPool) (*Co
 	if claims.Issuer != pool.issuer {
 		return nil, cognitoPool{}, fmt.Errorf("invalid token issuer")
 	}
-	if claims.TokenUse != "access" && claims.TokenUse != "id" {
-		return nil, cognitoPool{}, fmt.Errorf("invalid token type: %s", claims.TokenUse)
+	if err := validateTokenUse(claims, allowedTokenUses); err != nil {
+		return nil, cognitoPool{}, err
+	}
+	if err := validateClientBinding(claims, pool); err != nil {
+		return nil, cognitoPool{}, err
 	}
 	if pool.canonicalizeSubject {
 		claims.Subject = canonicalPhoneCognitoID(pool.userPoolID, claims.Subject)
 	}
 
 	return claims, pool, nil
+}
+
+func defaultAllowedTokenUses() map[string]struct{} {
+	return normalizeAllowedTokenUses([]TokenUse{TokenUseAccess})
+}
+
+func normalizeAllowedTokenUses(allowedTokenUses []TokenUse) map[string]struct{} {
+	allowed := make(map[string]struct{}, len(allowedTokenUses))
+	for _, tokenUse := range allowedTokenUses {
+		normalized := strings.ToLower(strings.TrimSpace(string(tokenUse)))
+		if normalized == "" {
+			continue
+		}
+		allowed[normalized] = struct{}{}
+	}
+	if len(allowed) == 0 {
+		allowed[string(TokenUseAccess)] = struct{}{}
+	}
+	return allowed
+}
+
+func validateTokenUse(claims *CognitoClaims, allowedTokenUses map[string]struct{}) error {
+	tokenUse := strings.ToLower(strings.TrimSpace(claims.TokenUse))
+	if tokenUse == "" {
+		return fmt.Errorf("token_use is required")
+	}
+	if _, ok := allowedTokenUses[tokenUse]; !ok {
+		return fmt.Errorf("token_use %q is not allowed", tokenUse)
+	}
+	return nil
+}
+
+func validateClientBinding(claims *CognitoClaims, pool cognitoPool) error {
+	if len(pool.allowedClientIDs) == 0 {
+		return fmt.Errorf("no cognito client_id configured for issuer")
+	}
+	for _, clientID := range tokenClientIDs(claims) {
+		if _, ok := pool.allowedClientIDs[clientID]; ok {
+			return nil
+		}
+	}
+	return fmt.Errorf("token client binding is invalid")
+}
+
+func tokenClientIDs(claims *CognitoClaims) []string {
+	unique := make(map[string]struct{})
+	var ids []string
+	appendID := func(candidate string) {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			return
+		}
+		if _, exists := unique[candidate]; exists {
+			return
+		}
+		unique[candidate] = struct{}{}
+		ids = append(ids, candidate)
+	}
+	appendID(claims.ClientID)
+	for _, audience := range claims.Audience {
+		appendID(audience)
+	}
+	return ids
 }
 
 func parseUnverifiedClaims(tokenString string) (*CognitoClaims, error) {

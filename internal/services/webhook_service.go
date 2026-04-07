@@ -18,12 +18,17 @@ import (
 )
 
 type WebhookService struct {
-	repo interfaces.WebhookRepository
-	log  *logger.Logger
+	repo       interfaces.WebhookRepository
+	log        *logger.Logger
+	httpClient *http.Client
 }
 
 func NewWebhookService(repo interfaces.WebhookRepository, log *logger.Logger) *WebhookService {
-	return &WebhookService{repo: repo, log: log}
+	return &WebhookService{
+		repo:       repo,
+		log:        log,
+		httpClient: newWebhookDeliveryHTTPClient(10 * time.Second),
+	}
 }
 
 type CreateWebhookInput struct {
@@ -171,7 +176,10 @@ func (s *WebhookService) EmitEvent(ctx context.Context, businessID, event string
 		return err
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := s.httpClient
+	if client == nil {
+		client = newWebhookDeliveryHTTPClient(10 * time.Second)
+	}
 	for _, webhook := range webhooks {
 		if webhook == nil || !webhook.IsActive || !webhookSubscribedToEvent(webhook.Events, event) {
 			continue

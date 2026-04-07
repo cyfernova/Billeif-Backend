@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -50,11 +49,9 @@ var (
 
 func NewA2APushService(db *gorm.DB, _ interfaces.AP2Repository, log *logger.Logger) *A2APushService {
 	return &A2APushService{
-		db:  db,
-		log: log,
-		httpClient: &http.Client{
-			Timeout: 15 * time.Second,
-		},
+		db:         db,
+		log:        log,
+		httpClient: newWebhookDeliveryHTTPClient(15 * time.Second),
 	}
 }
 
@@ -270,41 +267,8 @@ func validateWebhookURL(ctx context.Context, rawURL string) error {
 	if !strings.EqualFold(parsed.Scheme, "https") {
 		return fmt.Errorf("webhook URL must use https")
 	}
-	host := strings.ToLower(parsed.Hostname())
-	if host == "" {
-		return fmt.Errorf("webhook host is required")
-	}
-	if host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".internal") {
-		return fmt.Errorf("local or internal hosts are not allowed")
-	}
-
-	if ip := net.ParseIP(host); ip != nil {
-		if isDeniedIP(ip) {
-			return fmt.Errorf("private or local IP addresses are not allowed")
-		}
-		return nil
-	}
-
-	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
-	if err != nil {
-		return fmt.Errorf("failed to resolve webhook host")
-	}
-	for _, ip := range ips {
-		if isDeniedIP(ip) {
-			return fmt.Errorf("private or local IP addresses are not allowed")
-		}
+	if _, err := resolveAllowedWebhookIPs(ctx, parsed.Hostname(), defaultLookupIPAddr); err != nil {
+		return err
 	}
 	return nil
-}
-
-func isDeniedIP(ip net.IP) bool {
-	if ip == nil {
-		return true
-	}
-	return ip.IsLoopback() ||
-		ip.IsLinkLocalMulticast() ||
-		ip.IsLinkLocalUnicast() ||
-		ip.IsPrivate() ||
-		ip.IsUnspecified() ||
-		ip.IsMulticast()
 }

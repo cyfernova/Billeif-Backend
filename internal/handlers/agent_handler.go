@@ -101,7 +101,6 @@ type AddCapabilityRequest struct {
 // @Router /agents [post]
 func (h *AgentHandler) CreateAgent(c *gin.Context) {
 	log := h.reqLog(c, "create_agent")
-	businessID := c.GetString("business_id")
 	userID := c.GetString("user_id")
 
 	var req CreateAgentRequest
@@ -111,13 +110,9 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 		return
 	}
 
-	if req.BusinessID != "" {
-		businessID = req.BusinessID
-	}
-
-	if businessID == "" {
-		log.Warn("business_id is required")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "business_id is required"})
+	businessID, ok := requireEffectiveBusinessScope(c, req.BusinessID)
+	if !ok {
+		log.Warn("business scope validation failed", "requested_business_id", req.BusinessID)
 		return
 	}
 

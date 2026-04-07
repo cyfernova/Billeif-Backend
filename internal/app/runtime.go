@@ -327,7 +327,7 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 		// And "protected" group has all the other protected routes.
 		// We can add it to "protected" group or create a small subgroup here.
 		googleAuth := api.Group("/auth")
-		googleAuth.Use(middleware.Auth(cfg.Cognito, log))
+		googleAuth.Use(middleware.AuthWithTokenUse(cfg.Cognito, log, middleware.TokenUseID))
 		{
 			googleAuth.POST("/google", h.Auth.GoogleLogin)
 		}
@@ -870,14 +870,14 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			ws.GET("", h.WebSocket.HandleConnection)
 
 			// WebSocket management endpoints
-			ws.GET("/stats", h.WebSocket.GetStats)
-			ws.GET("/status/:userID", h.WebSocket.GetConnectionStatus)
-			ws.GET("/users", h.WebSocket.GetConnectedUsers)
+			ws.GET("/stats", middleware.RequireRole("admin"), h.WebSocket.GetStats)
+			ws.GET("/status/:userID", middleware.RequireRole("admin"), h.WebSocket.GetConnectionStatus)
+			ws.GET("/users", middleware.RequireRole("admin"), h.WebSocket.GetConnectedUsers)
 			ws.GET("/health", h.WebSocket.HealthCheck)
 
 			// Notification endpoints (for sending notifications via REST)
-			ws.POST("/notify/:userID", h.WebSocket.SendNotification)
-			ws.POST("/notify-all", h.WebSocket.SendNotificationToAll)
+			ws.POST("/notify/:userID", middleware.RequireRole("admin"), h.WebSocket.SendNotification)
+			ws.POST("/notify-all", middleware.RequireRole("admin"), h.WebSocket.SendNotificationToAll)
 		}
 
 		// Bargaining endpoints
@@ -903,11 +903,17 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 		admin := api.Group("/admin")
 		admin.Use(middleware.Auth(cfg.Cognito, log))
-		// admin.Use(middleware.RequireRole("admin"))
+		admin.Use(middleware.RequireRole("admin"))
 		{
-			admin.GET("/local-emails", h.Admin.ListEmails)
+			if shouldExposeAdminLocalEmails(cfg.Environment) {
+				admin.GET("/local-emails", h.Admin.ListEmails)
+			}
 		}
 	}
 
 	return router
+}
+
+func shouldExposeAdminLocalEmails(environment string) bool {
+	return !logger.IsProductionEnvironment(environment)
 }

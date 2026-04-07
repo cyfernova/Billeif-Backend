@@ -410,7 +410,7 @@ func TestRenderProfileCreate_Success(t *testing.T) {
 	})
 
 	reqBody := map[string]interface{}{
-		"name":     "New Profile",
+		"name":      "New Profile",
 		"page_size": "A4",
 	}
 	body, _ := json.Marshal(reqBody)
@@ -466,7 +466,7 @@ func TestRenderProfileCreate_ServiceError(t *testing.T) {
 	})
 
 	reqBody := map[string]interface{}{
-		"name":     "New Profile",
+		"name":      "New Profile",
 		"page_size": "A4",
 	}
 	body, _ := json.Marshal(reqBody)
