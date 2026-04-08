@@ -647,3 +647,17 @@ func (h *BillingOpsHandler) ListInvoiceSubscriptionRuns(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"data": rows, "total": total, "page": page, "limit": limit})
 }
+
+func (h *BillingOpsHandler) ListAggregatedInvoiceSubscriptionRuns(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	page, limit := utils.ParsePagination(c)
+	rows, total, stats, err := h.svc.ListAggregatedInvoiceSubscriptionRuns(c.Request.Context(), businessID, page, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": rows, "stats": stats, "total": total, "page": page, "limit": limit})
+}

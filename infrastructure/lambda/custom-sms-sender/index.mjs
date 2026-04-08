@@ -86,7 +86,7 @@ export const handler = async (event) => {
         DataType: "String",
         StringValue: "Transactional",
       },
-      "AWS.MM.SMS.SenderID": {
+      "AWS.SNS.SMS.SenderID": {
         DataType: "String",
         StringValue: requiredEnv("INDIA_SENDER_ID"),
       },

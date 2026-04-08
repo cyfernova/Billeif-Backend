@@ -12,6 +12,7 @@ type TeamMember struct {
 	UserID              string         `gorm:"not null;index" json:"user_id" validate:"required,uuid"`
 	Role                string         `gorm:"not null;size:50" json:"role" validate:"required,oneof=admin accountant viewer"`
 	RoleID              *string        `gorm:"index" json:"role_id,omitempty" validate:"omitempty,uuid"`
+	AssignedRole        *Role          `gorm:"foreignKey:RoleID;references:ID" json:"assigned_role,omitempty"`
 	Status              string         `gorm:"not null;size:30;default:'active';index" json:"status"`
 	BranchScopeJSON     string         `gorm:"type:jsonb;default:'[]'" json:"branch_scope_json,omitempty"`
 	PermissionOverrides string         `gorm:"type:jsonb;default:'{}'" json:"permission_overrides,omitempty"`

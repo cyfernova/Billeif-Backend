@@ -10,10 +10,8 @@
       "Bash(make lint:*)",
       "WebSearch",
       "WebFetch(domain:codelabs.developers.google.com)",
-      "Bash(make swagger:*)",
-      "Bash(sed 's/[\"\"\"\"\\\\047]//g')",
-      "Bash(grep -h \"router\\\\.\\\\\\(GET\\\\|POST\\\\|PUT\\\\|DELETE\\\\|PATCH\\\\\\)\\(\" tests/unit/*_test.go)",
-      "Bash(go env:*)"
+      "Bash(git pull:*)",
+      "Bash(git stash:*)"
     ]
   }
 }

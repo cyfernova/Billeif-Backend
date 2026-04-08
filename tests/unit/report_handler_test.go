@@ -225,12 +225,16 @@ func (h *ReportHandlerTestable) SavePreference(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if input.Columns != nil && len(input.Columns) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "at least one valid column is required"})
+		return
+	}
 	result, err := h.svc.SavePreference(c.Request.Context(), businessID, userID, c.Param("key"), input)
 	if err != nil {
 		statusCode := http.StatusInternalServerError
 		if isNotFoundErr(err) {
 			statusCode = http.StatusNotFound
-		} else if err.Error() == "at least one valid column is required" {
+		} else if err.Error() == "at least one valid column is required" || err.Error() == "unsupported export format" || err.Error() == "unsupported share mode" {
 			statusCode = http.StatusBadRequest
 		}
 		c.JSON(statusCode, gin.H{"error": err.Error()})

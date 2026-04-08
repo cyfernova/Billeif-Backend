@@ -581,6 +581,7 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			invoiceSubscriptions := protected.Group("/invoice-subscriptions")
 			{
 				invoiceSubscriptions.GET("", h.BillingOps.ListInvoiceSubscriptions)
+				invoiceSubscriptions.GET("/runs", h.BillingOps.ListAggregatedInvoiceSubscriptionRuns)
 				invoiceSubscriptions.GET("/:id", h.BillingOps.GetInvoiceSubscription)
 				invoiceSubscriptions.GET("/:id/runs", h.BillingOps.ListInvoiceSubscriptionRuns)
 				invoiceSubscriptions.POST("", h.BillingOps.CreateInvoiceSubscription)
@@ -714,6 +715,7 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			{
 				drive.GET("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDriveView), h.Commerce.ListDriveAssets)
 				drive.POST("/presign", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDriveManage), h.Commerce.CreateDriveUpload)
+				drive.PATCH("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDriveManage), h.Commerce.UpdateDriveAsset)
 				drive.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDriveManage), h.Commerce.DeleteDriveAsset)
 			}
 
@@ -722,6 +724,15 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 				whatsapp.GET("/config", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.Commerce.GetWhatsAppConfig)
 				whatsapp.PUT("/config", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.Commerce.UpsertWhatsAppConfig)
 				whatsapp.GET("/deliveries", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.Commerce.ListNotificationDeliveries)
+			}
+
+			email := protected.Group("/email")
+			{
+				email.GET("/accounts", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.EmailConfig.ListAccounts)
+				email.POST("/accounts", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.EmailConfig.CreateAccount)
+				email.PUT("/accounts/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.EmailConfig.UpdateAccount)
+				email.GET("/deliveries", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.EmailConfig.ListDeliveries)
+				email.POST("/accounts/:id/test", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.EmailConfig.SendTest)
 			}
 
 			agents := protected.Group("/agents")

@@ -223,10 +223,14 @@ type InventoryAlert struct {
 }
 
 func (s *InventoryService) ListWarehouses(ctx context.Context, businessID string) ([]*models.Warehouse, error) {
-	if s.repo != nil {
-		return s.repo.ListWarehouses(ctx, businessID)
+	warehouses, err := s.loadWarehouses(ctx, businessID)
+	if err != nil {
+		return nil, err
 	}
-	return s.listWarehousesFromDB(ctx, businessID)
+	if err := s.decorateWarehouseSummaries(ctx, businessID, warehouses, "", true); err != nil {
+		return nil, err
+	}
+	return warehouses, nil
 }
 
 func (s *InventoryService) ListWarehousesForUser(ctx context.Context, businessID, userID, role string) ([]*models.Warehouse, error) {
@@ -259,7 +263,17 @@ func (s *InventoryService) ListWarehousesForUser(ctx context.Context, businessID
 	for i := range rows {
 		result = append(result, &rows[i])
 	}
+	if err := s.decorateWarehouseSummaries(ctx, businessID, result, userID, false); err != nil {
+		return nil, err
+	}
 	return result, nil
+}
+
+func (s *InventoryService) loadWarehouses(ctx context.Context, businessID string) ([]*models.Warehouse, error) {
+	if s.repo != nil {
+		return s.repo.ListWarehouses(ctx, businessID)
+	}
+	return s.listWarehousesFromDB(ctx, businessID)
 }
 
 func (s *InventoryService) listWarehousesFromDB(ctx context.Context, businessID string) ([]*models.Warehouse, error) {
@@ -283,6 +297,147 @@ func (s *InventoryService) IsBusinessOwner(ctx context.Context, userID, business
 	}
 	business, err := s.businessRepo.GetByID(ctx, businessID)
 	return err == nil && business.OwnerID == userID
+}
+
+func (s *InventoryService) decorateWarehouseSummaries(ctx context.Context, businessID string, warehouses []*models.Warehouse, userID string, fullAccess bool) error {
+	if len(warehouses) == 0 || s.db == nil {
+		return nil
+	}
+
+	warehouseIDs := make([]string, 0, len(warehouses))
+	for _, warehouse := range warehouses {
+		warehouseIDs = append(warehouseIDs, warehouse.ID)
+	}
+
+	type countRow struct {
+		WarehouseID string
+		Total       int64
+	}
+
+	var productCounts []countRow
+	if err := s.db.WithContext(ctx).
+		Model(&models.InventoryBalance{}).
+		Select("warehouse_id, COUNT(DISTINCT product_id) AS total").
+		Where("business_id = ? AND warehouse_id IN ? AND deleted_at IS NULL", businessID, warehouseIDs).
+		Group("warehouse_id").
+		Scan(&productCounts).Error; err != nil {
+		if isMissingWarehouseSummaryTableErr(err) {
+			return nil
+		}
+		return err
+	}
+	productCountByWarehouse := map[string]int64{}
+	for _, row := range productCounts {
+		productCountByWarehouse[row.WarehouseID] = row.Total
+	}
+
+	var lowStockCounts []countRow
+	lowStockSQL := `
+		SELECT ib.warehouse_id, COUNT(*) AS total
+		FROM (
+			SELECT warehouse_id, product_id, variant_id, SUM(on_hand) AS on_hand
+			FROM inventory_balances
+			WHERE business_id = ? AND warehouse_id IN ? AND deleted_at IS NULL
+			GROUP BY warehouse_id, product_id, variant_id
+		) ib
+		JOIN products p ON p.id = ib.product_id AND p.deleted_at IS NULL
+		LEFT JOIN product_variants pv ON pv.id = ib.variant_id AND pv.deleted_at IS NULL
+		WHERE COALESCE(NULLIF(pv.low_stock_threshold, 0), NULLIF(p.low_stock_threshold, 0), p.min_stock, 0) > 0
+		  AND ib.on_hand <= COALESCE(NULLIF(pv.low_stock_threshold, 0), NULLIF(p.low_stock_threshold, 0), p.min_stock, 0)
+		GROUP BY ib.warehouse_id
+	`
+	if err := s.db.WithContext(ctx).Raw(lowStockSQL, businessID, warehouseIDs).Scan(&lowStockCounts).Error; err != nil {
+		if isMissingWarehouseSummaryTableErr(err) {
+			return nil
+		}
+		return err
+	}
+	lowStockCountByWarehouse := map[string]int64{}
+	for _, row := range lowStockCounts {
+		lowStockCountByWarehouse[row.WarehouseID] = row.Total
+	}
+
+	permissionSummaryByWarehouse := map[string][]string{}
+	if fullAccess {
+		for _, warehouse := range warehouses {
+			permissionSummaryByWarehouse[warehouse.ID] = fullWarehousePermissionSummary()
+		}
+	} else {
+		var totalPermissionRows []countRow
+		if err := s.db.WithContext(ctx).
+			Model(&models.WarehousePermission{}).
+			Select("warehouse_id, COUNT(*) AS total").
+			Where("business_id = ? AND warehouse_id IN ? AND deleted_at IS NULL", businessID, warehouseIDs).
+			Group("warehouse_id").
+			Scan(&totalPermissionRows).Error; err != nil {
+			return err
+		}
+		totalPermissionsByWarehouse := map[string]int64{}
+		for _, row := range totalPermissionRows {
+			totalPermissionsByWarehouse[row.WarehouseID] = row.Total
+		}
+
+		var permissionRows []models.WarehousePermission
+		if err := s.db.WithContext(ctx).
+			Where("business_id = ? AND warehouse_id IN ? AND user_id = ? AND deleted_at IS NULL", businessID, warehouseIDs, userID).
+			Find(&permissionRows).Error; err != nil {
+			return err
+		}
+		for i := range permissionRows {
+			permissionSummaryByWarehouse[permissionRows[i].WarehouseID] = warehousePermissionSummary(&permissionRows[i])
+		}
+		for _, warehouse := range warehouses {
+			if totalPermissionsByWarehouse[warehouse.ID] == 0 {
+				permissionSummaryByWarehouse[warehouse.ID] = fullWarehousePermissionSummary()
+			}
+		}
+	}
+
+	for _, warehouse := range warehouses {
+		warehouse.ProductCount = productCountByWarehouse[warehouse.ID]
+		warehouse.LowStockCount = lowStockCountByWarehouse[warehouse.ID]
+		warehouse.PermissionSummary = permissionSummaryByWarehouse[warehouse.ID]
+	}
+
+	return nil
+}
+
+func fullWarehousePermissionSummary() []string {
+	return []string{
+		warehousePermissionViewCatalog,
+		warehousePermissionManageCatalog,
+		warehousePermissionMoveStock,
+		warehousePermissionViewReports,
+		warehousePermissionManage,
+	}
+}
+
+func warehousePermissionSummary(permission *models.WarehousePermission) []string {
+	summary := make([]string, 0, 5)
+	if permission.CanViewCatalog {
+		summary = append(summary, warehousePermissionViewCatalog)
+	}
+	if permission.CanManageCatalog {
+		summary = append(summary, warehousePermissionManageCatalog)
+	}
+	if permission.CanMoveStock {
+		summary = append(summary, warehousePermissionMoveStock)
+	}
+	if permission.CanViewReports {
+		summary = append(summary, warehousePermissionViewReports)
+	}
+	if permission.CanManageWarehouse {
+		summary = append(summary, warehousePermissionManage)
+	}
+	return summary
+}
+
+func isMissingWarehouseSummaryTableErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	value := strings.ToLower(err.Error())
+	return strings.Contains(value, "no such table") || strings.Contains(value, "does not exist")
 }
 
 func (s *InventoryService) CreateWarehouse(ctx context.Context, input CreateWarehouseInput) (*models.Warehouse, error) {

@@ -67,6 +67,7 @@ type Role struct {
 	UpdatedAt   time.Time         `gorm:"autoUpdateTime" json:"updated_at"`
 	DeletedAt   gorm.DeletedAt    `gorm:"index" json:"-"`
 	Permissions []*RolePermission `gorm:"foreignKey:RoleID" json:"permissions,omitempty"`
+	UserCount   int64             `gorm:"-" json:"user_count,omitempty"`
 }
 
 func (Role) TableName() string {
@@ -336,6 +337,7 @@ type DriveAsset struct {
 	BusinessID  string         `gorm:"not null;index" json:"business_id"`
 	UploadedBy  *string        `gorm:"index" json:"uploaded_by,omitempty"`
 	Name        string         `gorm:"not null;size:255" json:"name"`
+	FolderPath  string         `gorm:"size:500" json:"folder_path,omitempty"`
 	Bucket      string         `gorm:"not null;size:255" json:"bucket"`
 	ObjectKey   string         `gorm:"not null;size:500;index" json:"object_key"`
 	ContentType string         `gorm:"size:120" json:"content_type,omitempty"`

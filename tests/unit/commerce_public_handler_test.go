@@ -314,7 +314,7 @@ func TestPublicCategories_EmptyCategories(t *testing.T) {
 	catalog := &services.StorefrontCatalogResponse{
 		Storefront: &models.Storefront{ID: "sf-123", Name: "Empty Store", Slug: "empty-store"},
 		Categories: []*models.StorefrontCategory{},
-		Products:  []*services.StorefrontCatalogItem{},
+		Products:   []*services.StorefrontCatalogItem{},
 	}
 	mockSvc.On("GetCatalog", mock.Anything, "empty-store").Return(catalog, nil)
 

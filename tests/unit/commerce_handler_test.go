@@ -1,7 +1,6 @@
 package unit
 
 import (
-	
 	"bytes"
 	"context"
 	"encoding/json"
@@ -288,7 +287,7 @@ func NewTestableCommerceHandler(svc *MockCommerceService, log *logger.Logger) *T
 }
 
 func (h *TestableCommerceHandler) ListStorefronts(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireCommerceBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -302,7 +301,7 @@ func (h *TestableCommerceHandler) ListStorefronts(c *gin.Context) {
 
 func (h *TestableCommerceHandler) CreateStorefront(c *gin.Context) {
 	requestContextWithActor(c)
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireCommerceBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -321,14 +320,14 @@ func (h *TestableCommerceHandler) CreateStorefront(c *gin.Context) {
 }
 
 func (h *TestableCommerceHandler) GetStorefront(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireCommerceBusinessScope(c)
 	if !ok {
 		return
 	}
 	storefront, err := h.svc.GetStorefront(c.Request.Context(), businessID, c.Param("id"))
 	if err != nil {
 		status := http.StatusInternalServerError
-		if isNotFoundErr(err) {
+		if isCommerceNotFoundErr(err) {
 			status = http.StatusNotFound
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
@@ -339,7 +338,7 @@ func (h *TestableCommerceHandler) GetStorefront(c *gin.Context) {
 
 func (h *TestableCommerceHandler) UpdateStorefrontSettings(c *gin.Context) {
 	requestContextWithActor(c)
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireCommerceBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -351,7 +350,7 @@ func (h *TestableCommerceHandler) UpdateStorefrontSettings(c *gin.Context) {
 	storefront, err := h.svc.UpdateStorefrontSettings(c.Request.Context(), businessID, c.Param("id"), input)
 	if err != nil {
 		status := http.StatusBadRequest
-		if isNotFoundErr(err) {
+		if isCommerceNotFoundErr(err) {
 			status = http.StatusNotFound
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
@@ -361,7 +360,7 @@ func (h *TestableCommerceHandler) UpdateStorefrontSettings(c *gin.Context) {
 }
 
 func (h *TestableCommerceHandler) ListStorefrontProducts(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireCommerceBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -379,7 +378,7 @@ func (h *TestableCommerceHandler) ListStorefrontProducts(c *gin.Context) {
 
 func (h *TestableCommerceHandler) ReplaceStorefrontProducts(c *gin.Context) {
 	requestContextWithActor(c)
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireCommerceBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -401,7 +400,7 @@ func (h *TestableCommerceHandler) ReplaceStorefrontProducts(c *gin.Context) {
 }
 
 func (h *TestableCommerceHandler) ListStorefrontCoupons(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireCommerceBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -419,7 +418,7 @@ func (h *TestableCommerceHandler) ListStorefrontCoupons(c *gin.Context) {
 
 func (h *TestableCommerceHandler) CreateStorefrontCoupon(c *gin.Context) {
 	requestContextWithActor(c)
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireCommerceBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -442,7 +441,7 @@ func (h *TestableCommerceHandler) CreateStorefrontCoupon(c *gin.Context) {
 
 func (h *TestableCommerceHandler) UpdateStorefrontCoupon(c *gin.Context) {
 	requestContextWithActor(c)
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireCommerceBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -458,7 +457,7 @@ func (h *TestableCommerceHandler) UpdateStorefrontCoupon(c *gin.Context) {
 	coupon, err := h.svc.UpdateStorefrontCoupon(c.Request.Context(), c.Param("id"), c.Param("coupon_id"), input)
 	if err != nil {
 		status := http.StatusBadRequest
-		if isNotFoundErr(err) {
+		if isCommerceNotFoundErr(err) {
 			status = http.StatusNotFound
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
@@ -468,7 +467,7 @@ func (h *TestableCommerceHandler) UpdateStorefrontCoupon(c *gin.Context) {
 }
 
 func (h *TestableCommerceHandler) ListStorefrontOrders(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireCommerceBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -484,14 +483,14 @@ func (h *TestableCommerceHandler) ListStorefrontOrders(c *gin.Context) {
 
 func (h *TestableCommerceHandler) ApproveStorefrontOrder(c *gin.Context) {
 	requestContextWithActor(c)
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireCommerceBusinessScope(c)
 	if !ok {
 		return
 	}
 	order, err := h.svc.ApproveStoreOrder(c.Request.Context(), businessID, c.Param("id"), c.Param("order_id"))
 	if err != nil {
 		status := http.StatusBadRequest
-		if isNotFoundErr(err) {
+		if isCommerceNotFoundErr(err) {
 			status = http.StatusNotFound
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
@@ -502,7 +501,7 @@ func (h *TestableCommerceHandler) ApproveStorefrontOrder(c *gin.Context) {
 
 func (h *TestableCommerceHandler) CancelStorefrontOrder(c *gin.Context) {
 	requestContextWithActor(c)
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireCommerceBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -513,7 +512,7 @@ func (h *TestableCommerceHandler) CancelStorefrontOrder(c *gin.Context) {
 	order, err := h.svc.CancelStoreOrder(c.Request.Context(), businessID, c.Param("id"), c.Param("order_id"), payload.Reason)
 	if err != nil {
 		status := http.StatusBadRequest
-		if isNotFoundErr(err) {
+		if isCommerceNotFoundErr(err) {
 			status = http.StatusNotFound
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
@@ -578,7 +577,7 @@ func (h *TestableCommerceHandler) PublicOrder(c *gin.Context) {
 }
 
 func (h *TestableCommerceHandler) ListEntitlements(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireCommerceBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -591,7 +590,7 @@ func (h *TestableCommerceHandler) ListEntitlements(c *gin.Context) {
 }
 
 func (h *TestableCommerceHandler) SyncEntitlements(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireCommerceBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -604,7 +603,7 @@ func (h *TestableCommerceHandler) SyncEntitlements(c *gin.Context) {
 }
 
 func (h *TestableCommerceHandler) ListRoles(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireCommerceBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -617,7 +616,7 @@ func (h *TestableCommerceHandler) ListRoles(c *gin.Context) {
 }
 
 func (h *TestableCommerceHandler) CreateRole(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireCommerceBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -636,7 +635,7 @@ func (h *TestableCommerceHandler) CreateRole(c *gin.Context) {
 }
 
 func (h *TestableCommerceHandler) UpdateRole(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireCommerceBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -648,7 +647,7 @@ func (h *TestableCommerceHandler) UpdateRole(c *gin.Context) {
 	role, err := h.svc.UpdateRole(c.Request.Context(), businessID, c.Param("id"), input)
 	if err != nil {
 		status := http.StatusBadRequest
-		if isNotFoundErr(err) {
+		if isCommerceNotFoundErr(err) {
 			status = http.StatusNotFound
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
@@ -658,13 +657,13 @@ func (h *TestableCommerceHandler) UpdateRole(c *gin.Context) {
 }
 
 func (h *TestableCommerceHandler) DeleteRole(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireCommerceBusinessScope(c)
 	if !ok {
 		return
 	}
 	if err := h.svc.DeleteRole(c.Request.Context(), businessID, c.Param("id")); err != nil {
 		status := http.StatusBadRequest
-		if isNotFoundErr(err) {
+		if isCommerceNotFoundErr(err) {
 			status = http.StatusNotFound
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
@@ -674,7 +673,7 @@ func (h *TestableCommerceHandler) DeleteRole(c *gin.Context) {
 }
 
 func (h *TestableCommerceHandler) ListBranches(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireCommerceBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -687,7 +686,7 @@ func (h *TestableCommerceHandler) ListBranches(c *gin.Context) {
 }
 
 func (h *TestableCommerceHandler) CreateBranch(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireCommerceBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -706,7 +705,7 @@ func (h *TestableCommerceHandler) CreateBranch(c *gin.Context) {
 }
 
 func (h *TestableCommerceHandler) UpdateBranch(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireCommerceBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -718,7 +717,7 @@ func (h *TestableCommerceHandler) UpdateBranch(c *gin.Context) {
 	branch, err := h.svc.UpdateBranch(c.Request.Context(), businessID, c.Param("id"), input)
 	if err != nil {
 		status := http.StatusBadRequest
-		if isNotFoundErr(err) {
+		if isCommerceNotFoundErr(err) {
 			status = http.StatusNotFound
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
@@ -728,13 +727,13 @@ func (h *TestableCommerceHandler) UpdateBranch(c *gin.Context) {
 }
 
 func (h *TestableCommerceHandler) DeleteBranch(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireCommerceBusinessScope(c)
 	if !ok {
 		return
 	}
 	if err := h.svc.DeleteBranch(c.Request.Context(), businessID, c.Param("id")); err != nil {
 		status := http.StatusBadRequest
-		if isNotFoundErr(err) {
+		if isCommerceNotFoundErr(err) {
 			status = http.StatusNotFound
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
@@ -744,7 +743,7 @@ func (h *TestableCommerceHandler) DeleteBranch(c *gin.Context) {
 }
 
 func (h *TestableCommerceHandler) ListDriveAssets(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireCommerceBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -757,11 +756,11 @@ func (h *TestableCommerceHandler) ListDriveAssets(c *gin.Context) {
 }
 
 func (h *TestableCommerceHandler) CreateDriveUpload(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireCommerceBusinessScope(c)
 	if !ok {
 		return
 	}
-	userID, ok := requireUserScope(c)
+	userID, ok := requireCommerceUserScope(c)
 	if !ok {
 		return
 	}
@@ -780,13 +779,13 @@ func (h *TestableCommerceHandler) CreateDriveUpload(c *gin.Context) {
 }
 
 func (h *TestableCommerceHandler) DeleteDriveAsset(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireCommerceBusinessScope(c)
 	if !ok {
 		return
 	}
 	if err := h.svc.DeleteDriveAsset(c.Request.Context(), businessID, c.Param("id")); err != nil {
 		status := http.StatusBadRequest
-		if isNotFoundErr(err) {
+		if isCommerceNotFoundErr(err) {
 			status = http.StatusNotFound
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
@@ -796,14 +795,14 @@ func (h *TestableCommerceHandler) DeleteDriveAsset(c *gin.Context) {
 }
 
 func (h *TestableCommerceHandler) GetWhatsAppConfig(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireCommerceBusinessScope(c)
 	if !ok {
 		return
 	}
 	config, err := h.svc.GetWhatsAppConfig(c.Request.Context(), businessID)
 	if err != nil {
 		status := http.StatusInternalServerError
-		if isNotFoundErr(err) {
+		if isCommerceNotFoundErr(err) {
 			status = http.StatusNotFound
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
@@ -813,7 +812,7 @@ func (h *TestableCommerceHandler) GetWhatsAppConfig(c *gin.Context) {
 }
 
 func (h *TestableCommerceHandler) UpsertWhatsAppConfig(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireCommerceBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -831,7 +830,7 @@ func (h *TestableCommerceHandler) UpsertWhatsAppConfig(c *gin.Context) {
 }
 
 func (h *TestableCommerceHandler) ListNotificationDeliveries(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireCommerceBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -847,7 +846,7 @@ func requestContextWithActor(c *gin.Context) {
 	// No-op for testing
 }
 
-func requireBusinessScope(c *gin.Context) (string, bool) {
+func requireCommerceBusinessScope(c *gin.Context) (string, bool) {
 	businessID, exists := c.Get("business_id")
 	if !exists || businessID == "" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "business scope required"})
@@ -856,7 +855,7 @@ func requireBusinessScope(c *gin.Context) (string, bool) {
 	return businessID.(string), true
 }
 
-func requireUserScope(c *gin.Context) (string, bool) {
+func requireCommerceUserScope(c *gin.Context) (string, bool) {
 	userID, exists := c.Get("user_id")
 	if !exists || userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "user scope required"})
@@ -865,7 +864,7 @@ func requireUserScope(c *gin.Context) (string, bool) {
 	return userID.(string), true
 }
 
-func isNotFoundErr(err error) bool {
+func isCommerceNotFoundErr(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -1232,9 +1231,9 @@ func TestCreateStorefrontCoupon_Success(t *testing.T) {
 	})
 
 	reqBody := map[string]interface{}{
-		"code":            "SAVE20",
-		"discount_type":   "percentage",
-		"discount_value":   20,
+		"code":           "SAVE20",
+		"discount_type":  "percentage",
+		"discount_value": 20,
 	}
 	body, _ := json.Marshal(reqBody)
 	req := httptest.NewRequest(http.MethodPost, "/storefronts/sf-123/coupons", bytes.NewBuffer(body))
@@ -1270,9 +1269,9 @@ func TestUpdateStorefrontCoupon_Success(t *testing.T) {
 	})
 
 	reqBody := map[string]interface{}{
-		"code":            "SAVE30",
-		"discount_type":   "fixed",
-		"discount_value":   30,
+		"code":           "SAVE30",
+		"discount_type":  "fixed",
+		"discount_value": 30,
 	}
 	body, _ := json.Marshal(reqBody)
 	req := httptest.NewRequest(http.MethodPut, "/storefronts/sf-123/coupons/cp-1", bytes.NewBuffer(body))

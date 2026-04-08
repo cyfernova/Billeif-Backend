@@ -344,13 +344,42 @@ type UpdatePartyGroupInput struct {
 }
 
 type PartyGroupLedgerSummary struct {
-	GroupID       string                     `json:"group_id"`
-	Members       []*models.PartyGroupMember `json:"members"`
-	InvoiceCount  int64                      `json:"invoice_count"`
-	DocumentCount int64                      `json:"document_count"`
-	TotalAmount   float64                    `json:"total_amount"`
-	PaidAmount    float64                    `json:"paid_amount"`
-	BalanceDue    float64                    `json:"balance_due"`
+	GroupID          string                     `json:"group_id"`
+	Members          []*models.PartyGroupMember `json:"members"`
+	InvoiceCount     int64                      `json:"invoice_count"`
+	DocumentCount    int64                      `json:"document_count"`
+	TransactionCount int64                      `json:"transaction_count"`
+	TotalAmount      float64                    `json:"total_amount"`
+	PaidAmount       float64                    `json:"paid_amount"`
+	BalanceDue       float64                    `json:"balance_due"`
+	ReceivableTotal  float64                    `json:"receivable_total"`
+	PayableTotal     float64                    `json:"payable_total"`
+	NetBalance       float64                    `json:"net_balance"`
+}
+
+type InvoiceSubscriptionRunFeedItem struct {
+	ID                  string     `json:"id"`
+	SubscriptionID      string     `json:"subscription_id"`
+	SubscriptionName    string     `json:"subscription_name"`
+	SubscriptionStatus  string     `json:"subscription_status"`
+	SubscriptionCadence string     `json:"subscription_cadence"`
+	Status              string     `json:"status"`
+	ScheduledFor        time.Time  `json:"scheduled_for"`
+	AttemptCount        int        `json:"attempt_count"`
+	LastError           *string    `json:"last_error,omitempty"`
+	InvoiceID           *string    `json:"invoice_id,omitempty"`
+	DocumentID          *string    `json:"document_id,omitempty"`
+	CreatedAt           time.Time  `json:"created_at"`
+	CompletedAt         *time.Time `json:"completed_at,omitempty"`
+	NextRunAt           *time.Time `json:"next_run_at,omitempty"`
+	LastRunAt           *time.Time `json:"last_run_at,omitempty"`
+}
+
+type InvoiceSubscriptionRunStats struct {
+	ActiveCount int64 `json:"active_count"`
+	PausedCount int64 `json:"paused_count"`
+	TotalRuns   int64 `json:"total_runs"`
+	FailedRuns  int64 `json:"failed_runs"`
 }
 
 func (s *BillingOpsService) CreatePartyGroup(ctx context.Context, input CreatePartyGroupInput) (*models.PartyGroup, error) {
@@ -436,6 +465,9 @@ func (s *BillingOpsService) ListPartyGroups(ctx context.Context, businessID stri
 	for i := range rows {
 		result = append(result, &rows[i])
 	}
+	if err := s.decoratePartyGroups(ctx, businessID, result); err != nil {
+		return nil, 0, err
+	}
 	return result, total, nil
 }
 
@@ -490,59 +522,7 @@ func (s *BillingOpsService) GetPartyGroupLedger(ctx context.Context, businessID,
 	if err != nil {
 		return nil, err
 	}
-	partyByType := map[string][]string{}
-	for _, member := range group.Members {
-		partyByType[member.PartyType] = append(partyByType[member.PartyType], member.PartyID)
-	}
-	summary := &PartyGroupLedgerSummary{GroupID: id, Members: group.Members}
-	if len(partyByType[models.DocumentPartyTypeCustomer]) > 0 {
-		ids := partyByType[models.DocumentPartyTypeCustomer]
-		_ = s.db.WithContext(ctx).Model(&models.Invoice{}).
-			Where("business_id = ? AND customer_id IN ? AND deleted_at IS NULL", businessID, ids).
-			Count(&summary.InvoiceCount).Error
-		type totals struct {
-			Total   float64
-			Paid    float64
-			Balance float64
-		}
-		var invoiceTotals totals
-		if err := s.db.WithContext(ctx).Model(&models.Invoice{}).
-			Select("COALESCE(SUM(total),0) AS total, COALESCE(SUM(paid_amount),0) AS paid, COALESCE(SUM(balance_due),0) AS balance").
-			Where("business_id = ? AND customer_id IN ? AND deleted_at IS NULL", businessID, ids).
-			Scan(&invoiceTotals).Error; err == nil {
-			summary.TotalAmount += invoiceTotals.Total
-			summary.PaidAmount += invoiceTotals.Paid
-			summary.BalanceDue += invoiceTotals.Balance
-		}
-		var documentCount int64
-		_ = s.db.WithContext(ctx).Model(&models.Document{}).
-			Where("business_id = ? AND party_type = ? AND party_id IN ? AND deleted_at IS NULL", businessID, models.DocumentPartyTypeCustomer, ids).
-			Count(&documentCount).Error
-		summary.DocumentCount += documentCount
-	}
-	if len(partyByType[models.DocumentPartyTypeVendor]) > 0 {
-		ids := partyByType[models.DocumentPartyTypeVendor]
-		var documentCount int64
-		_ = s.db.WithContext(ctx).Model(&models.Document{}).
-			Where("business_id = ? AND party_type = ? AND party_id IN ? AND deleted_at IS NULL", businessID, models.DocumentPartyTypeVendor, ids).
-			Count(&documentCount).Error
-		summary.DocumentCount += documentCount
-		type totals struct {
-			Total   float64
-			Paid    float64
-			Balance float64
-		}
-		var documentTotals totals
-		if err := s.db.WithContext(ctx).Model(&models.Document{}).
-			Select("COALESCE(SUM(total),0) AS total, COALESCE(SUM(paid_amount),0) AS paid, COALESCE(SUM(balance_due),0) AS balance").
-			Where("business_id = ? AND party_type = ? AND party_id IN ? AND deleted_at IS NULL", businessID, models.DocumentPartyTypeVendor, ids).
-			Scan(&documentTotals).Error; err == nil {
-			summary.TotalAmount += documentTotals.Total
-			summary.PaidAmount += documentTotals.Paid
-			summary.BalanceDue += documentTotals.Balance
-		}
-	}
-	return summary, nil
+	return s.buildPartyGroupLedgerSummary(ctx, businessID, group)
 }
 
 type ActivityLogFilter struct {
@@ -1095,6 +1075,9 @@ func (s *BillingOpsService) ListInvoiceSubscriptions(ctx context.Context, busine
 	for i := range rows {
 		result = append(result, &rows[i])
 	}
+	if err := s.decorateInvoiceSubscriptions(ctx, businessID, result); err != nil {
+		return nil, 0, err
+	}
 	return result, total, nil
 }
 
@@ -1244,6 +1227,223 @@ func (s *BillingOpsService) ListInvoiceSubscriptionRuns(ctx context.Context, bus
 		result = append(result, &rows[i])
 	}
 	return result, total, nil
+}
+
+func (s *BillingOpsService) ListAggregatedInvoiceSubscriptionRuns(ctx context.Context, businessID string, page, limit int) ([]*InvoiceSubscriptionRunFeedItem, int64, *InvoiceSubscriptionRunStats, error) {
+	if s.db == nil {
+		return nil, 0, nil, fmt.Errorf("database is not configured")
+	}
+	if page <= 0 {
+		page = 1
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 20
+	}
+
+	query := s.db.WithContext(ctx).
+		Table("invoice_subscription_runs AS runs").
+		Joins("JOIN invoice_subscriptions AS subs ON subs.id = runs.subscription_id AND subs.deleted_at IS NULL").
+		Where("runs.business_id = ? AND runs.deleted_at IS NULL", businessID)
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, nil, err
+	}
+
+	var rows []InvoiceSubscriptionRunFeedItem
+	if err := query.
+		Select(`
+			runs.id,
+			runs.subscription_id,
+			subs.name AS subscription_name,
+			subs.status AS subscription_status,
+			subs.cadence AS subscription_cadence,
+			runs.status,
+			runs.scheduled_for,
+			runs.attempt_count,
+			runs.last_error,
+			runs.invoice_id,
+			runs.document_id,
+			runs.created_at,
+			runs.completed_at,
+			subs.next_run_at,
+			subs.last_run_at
+		`).
+		Order("runs.scheduled_for DESC, runs.created_at DESC").
+		Offset((page - 1) * limit).
+		Limit(limit).
+		Scan(&rows).Error; err != nil {
+		return nil, 0, nil, err
+	}
+
+	stats := &InvoiceSubscriptionRunStats{}
+	var statusRows []struct {
+		Status string
+		Total  int64
+	}
+	if err := s.db.WithContext(ctx).
+		Model(&models.InvoiceSubscription{}).
+		Select("status, COUNT(*) AS total").
+		Where("business_id = ? AND deleted_at IS NULL", businessID).
+		Group("status").
+		Scan(&statusRows).Error; err != nil {
+		return nil, 0, nil, err
+	}
+	for _, row := range statusRows {
+		switch row.Status {
+		case models.InvoiceSubscriptionStatusActive:
+			stats.ActiveCount = row.Total
+		case models.InvoiceSubscriptionStatusPaused:
+			stats.PausedCount = row.Total
+		}
+	}
+	stats.TotalRuns = total
+	if err := s.db.WithContext(ctx).
+		Model(&models.InvoiceSubscriptionRun{}).
+		Where("business_id = ? AND status = ? AND deleted_at IS NULL", businessID, "failed").
+		Count(&stats.FailedRuns).Error; err != nil {
+		return nil, 0, nil, err
+	}
+
+	result := make([]*InvoiceSubscriptionRunFeedItem, 0, len(rows))
+	for i := range rows {
+		result = append(result, &rows[i])
+	}
+	return result, total, stats, nil
+}
+
+func (s *BillingOpsService) decoratePartyGroups(ctx context.Context, businessID string, groups []*models.PartyGroup) error {
+	for _, group := range groups {
+		summary, err := s.buildPartyGroupLedgerSummary(ctx, businessID, group)
+		if err != nil {
+			return err
+		}
+		group.MemberCount = len(group.Members)
+		group.InvoiceCount = summary.InvoiceCount
+		group.DocumentCount = summary.DocumentCount
+		group.ReceivableTotal = summary.ReceivableTotal
+		group.PayableTotal = summary.PayableTotal
+		group.NetBalance = summary.NetBalance
+	}
+	return nil
+}
+
+func (s *BillingOpsService) buildPartyGroupLedgerSummary(ctx context.Context, businessID string, group *models.PartyGroup) (*PartyGroupLedgerSummary, error) {
+	partyByType := map[string][]string{}
+	for _, member := range group.Members {
+		partyByType[member.PartyType] = append(partyByType[member.PartyType], member.PartyID)
+	}
+	summary := &PartyGroupLedgerSummary{GroupID: group.ID, Members: group.Members}
+	if len(partyByType[models.DocumentPartyTypeCustomer]) > 0 {
+		ids := partyByType[models.DocumentPartyTypeCustomer]
+		_ = s.db.WithContext(ctx).Model(&models.Invoice{}).
+			Where("business_id = ? AND customer_id IN ? AND deleted_at IS NULL", businessID, ids).
+			Count(&summary.InvoiceCount).Error
+		type totals struct {
+			Total   float64
+			Paid    float64
+			Balance float64
+		}
+		var invoiceTotals totals
+		if err := s.db.WithContext(ctx).Model(&models.Invoice{}).
+			Select("COALESCE(SUM(total),0) AS total, COALESCE(SUM(paid_amount),0) AS paid, COALESCE(SUM(balance_due),0) AS balance").
+			Where("business_id = ? AND customer_id IN ? AND deleted_at IS NULL", businessID, ids).
+			Scan(&invoiceTotals).Error; err == nil {
+			summary.TotalAmount += invoiceTotals.Total
+			summary.PaidAmount += invoiceTotals.Paid
+			summary.BalanceDue += invoiceTotals.Balance
+			summary.ReceivableTotal += invoiceTotals.Balance
+		}
+		var documentCount int64
+		_ = s.db.WithContext(ctx).Model(&models.Document{}).
+			Where("business_id = ? AND party_type = ? AND party_id IN ? AND deleted_at IS NULL", businessID, models.DocumentPartyTypeCustomer, ids).
+			Count(&documentCount).Error
+		summary.DocumentCount += documentCount
+	}
+	if len(partyByType[models.DocumentPartyTypeVendor]) > 0 {
+		ids := partyByType[models.DocumentPartyTypeVendor]
+		var documentCount int64
+		_ = s.db.WithContext(ctx).Model(&models.Document{}).
+			Where("business_id = ? AND party_type = ? AND party_id IN ? AND deleted_at IS NULL", businessID, models.DocumentPartyTypeVendor, ids).
+			Count(&documentCount).Error
+		summary.DocumentCount += documentCount
+		type totals struct {
+			Total   float64
+			Paid    float64
+			Balance float64
+		}
+		var documentTotals totals
+		if err := s.db.WithContext(ctx).Model(&models.Document{}).
+			Select("COALESCE(SUM(total),0) AS total, COALESCE(SUM(paid_amount),0) AS paid, COALESCE(SUM(balance_due),0) AS balance").
+			Where("business_id = ? AND party_type = ? AND party_id IN ? AND deleted_at IS NULL", businessID, models.DocumentPartyTypeVendor, ids).
+			Scan(&documentTotals).Error; err == nil {
+			summary.TotalAmount += documentTotals.Total
+			summary.PaidAmount += documentTotals.Paid
+			summary.BalanceDue += documentTotals.Balance
+			summary.PayableTotal += documentTotals.Balance
+		}
+	}
+	summary.TransactionCount = summary.InvoiceCount + summary.DocumentCount
+	summary.NetBalance = summary.ReceivableTotal - summary.PayableTotal
+	return summary, nil
+}
+
+func (s *BillingOpsService) decorateInvoiceSubscriptions(ctx context.Context, businessID string, subscriptions []*models.InvoiceSubscription) error {
+	if len(subscriptions) == 0 {
+		return nil
+	}
+	subscriptionIDs := make([]string, 0, len(subscriptions))
+	for _, subscription := range subscriptions {
+		subscriptionIDs = append(subscriptionIDs, subscription.ID)
+	}
+
+	var runCounts []struct {
+		SubscriptionID string
+		Total          int64
+	}
+	if err := s.db.WithContext(ctx).
+		Model(&models.InvoiceSubscriptionRun{}).
+		Select("subscription_id, COUNT(*) AS total").
+		Where("business_id = ? AND subscription_id IN ? AND deleted_at IS NULL", businessID, subscriptionIDs).
+		Group("subscription_id").
+		Scan(&runCounts).Error; err != nil {
+		return err
+	}
+	runCountBySubscription := map[string]int64{}
+	for _, row := range runCounts {
+		runCountBySubscription[row.SubscriptionID] = row.Total
+	}
+
+	type latestRunRow struct {
+		SubscriptionID string
+		Status         string
+	}
+	subquery := s.db.WithContext(ctx).
+		Model(&models.InvoiceSubscriptionRun{}).
+		Select("subscription_id, MAX(scheduled_for) AS latest_scheduled_for").
+		Where("business_id = ? AND subscription_id IN ? AND deleted_at IS NULL", businessID, subscriptionIDs).
+		Group("subscription_id")
+	var latestRuns []latestRunRow
+	if err := s.db.WithContext(ctx).
+		Table("invoice_subscription_runs AS runs").
+		Select("runs.subscription_id, runs.status").
+		Joins("JOIN (?) AS latest ON latest.subscription_id = runs.subscription_id AND latest.latest_scheduled_for = runs.scheduled_for", subquery).
+		Where("runs.business_id = ? AND runs.subscription_id IN ? AND runs.deleted_at IS NULL", businessID, subscriptionIDs).
+		Scan(&latestRuns).Error; err != nil {
+		return err
+	}
+	lastRunStatusBySubscription := map[string]string{}
+	for _, row := range latestRuns {
+		if _, exists := lastRunStatusBySubscription[row.SubscriptionID]; !exists {
+			lastRunStatusBySubscription[row.SubscriptionID] = row.Status
+		}
+	}
+
+	for _, subscription := range subscriptions {
+		subscription.RunCount = runCountBySubscription[subscription.ID]
+		subscription.LastRunStatus = lastRunStatusBySubscription[subscription.ID]
+	}
+	return nil
 }
 
 func (s *BillingOpsService) DispatchDueInvoiceSubscriptions(ctx context.Context, limit int) ([]*models.InvoiceSubscriptionRun, error) {

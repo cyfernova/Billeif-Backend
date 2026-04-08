@@ -144,15 +144,21 @@ variable "jwt_secret" {
 }
 
 # Cognito/OIDC
+variable "google_oauth_secret_name" {
+  description = "AWS Secrets Manager secret name containing Google OAuth credentials as JSON with client_id and client_secret"
+  type        = string
+  default     = ""
+}
+
 variable "google_client_id" {
-  description = "Google OAuth Client ID"
+  description = "Legacy Google OAuth Client ID override. Prefer google_oauth_secret_name backed by AWS Secrets Manager."
   type        = string
   sensitive   = true
   default     = ""
 }
 
 variable "google_client_secret" {
-  description = "Google OAuth Client Secret"
+  description = "Legacy Google OAuth Client Secret override. Prefer google_oauth_secret_name backed by AWS Secrets Manager."
   type        = string
   sensitive   = true
   default     = ""
