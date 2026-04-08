@@ -80,8 +80,8 @@ resource "aws_cognito_user_pool_client" "main" {
 
   # OAuth configuration for Google Sign-In
   supported_identity_providers         = ["COGNITO", "Google"]
-  callback_urls                        = ["invoiceappv2://callback", "myapp://callback", "http://localhost:3000/callback"]
-  logout_urls                          = ["invoiceappv2://logout", "myapp://logout", "http://localhost:3000/logout"]
+  callback_urls                        = ["invoiceappv2://callback", "myapp://callback", "http://localhost:3000/callback", "https://auth.expo.io/@skythrill652/invoice-app-v2"]
+  logout_urls                          = ["invoiceappv2://logout", "myapp://logout", "http://localhost:3000/logout", "https://auth.expo.io/@skythrill652/invoice-app-v2"]
   allowed_oauth_flows_user_pool_client = true
   allowed_oauth_flows                  = ["code", "implicit"]
   allowed_oauth_scopes                 = ["email", "openid", "profile", "aws.cognito.signin.user.admin"]
