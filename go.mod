@@ -19,8 +19,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/wafv2 v1.71.3
 	github.com/awslabs/aws-lambda-go-api-proxy v0.16.2
 	github.com/boombuler/barcode v1.0.0
-	github.com/getsentry/sentry-go v0.42.0
-	github.com/getsentry/sentry-go/gin v0.42.0
+	github.com/getsentry/sentry-go v0.44.1
+	github.com/getsentry/sentry-go/gin v0.44.1
 	github.com/gin-contrib/cors v1.7.6
 	github.com/gin-gonic/gin v1.11.0
 	github.com/go-co-op/gocron v1.37.0
