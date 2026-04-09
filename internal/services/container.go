@@ -83,7 +83,7 @@ func NewContainer(
 	log *logger.Logger,
 ) *Container {
 	s3Svc := NewS3Service(cfg, aws, log)
-	emailSvc := NewEmailService(cfg, aws, s3Svc, log)
+	emailSvc := NewEmailService(cfg, aws, s3Svc, log).WithDB(db)
 	ap2Signer, _ := ap2.NewSignatureService()
 	ap2MandateSigner := ap2.NewMandateSigner(ap2Signer)
 	ap2MandateVerifier := ap2.NewMandateVerifier()
@@ -156,7 +156,7 @@ func NewContainer(
 		Ledger:              NewLedgerService(ledgerRepo, log),
 		Report:              reportSvc,
 		TaxCompliance:       taxComplianceSvc,
-		Team:                NewTeamService(teamRepo, log),
+		Team:                NewTeamService(teamRepo, log).WithDB(db),
 		Webhook:             webhookSvc,
 		Subscription:        NewSubscriptionService(subscriptionRepo, log),
 		Commerce:            commerceSvc,

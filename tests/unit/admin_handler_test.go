@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"invoice-backend/internal/middleware"
 	"invoice-backend/pkg/logger"
 
 	"github.com/gin-gonic/gin"
@@ -224,4 +225,33 @@ func TestAdminHandler_ListEmails_PreservesEmailData(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "Invoice #12345")
 	assert.Contains(t, w.Body.String(), "Dear Customer")
 	assert.Contains(t, w.Body.String(), "unique-msg-id-001")
+}
+
+func TestAdminHandler_ListEmails_ForbidNonAdmin(t *testing.T) {
+	mockEmail := &MockEmailServiceForAdmin{
+		ListAllCapturedEmailsFunc: func(ctx context.Context) ([]EmailPayloadMock, error) {
+			return []EmailPayloadMock{
+				{To: "recipient@example.com", Subject: "Invoice", Body: "content", SentAt: time.Now(), MessageID: "msg-1"},
+			}, nil
+		},
+	}
+
+	log := logger.New()
+	handler := NewAdminHandlerTestable(mockEmail, log)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("role", c.GetHeader("X-Role"))
+		c.Next()
+	})
+	router.GET("/admin/local-emails", middleware.RequireRole("admin"), handler.ListEmails)
+
+	req, _ := http.NewRequest(http.MethodGet, "/admin/local-emails", nil)
+	req.Header.Set("X-Role", "viewer")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Contains(t, w.Body.String(), "insufficient permissions")
 }

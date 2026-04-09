@@ -303,9 +303,39 @@ func TestCreateAgent_BadRequest_MissingBusinessID(t *testing.T) {
 	res := httptest.NewRecorder()
 	router.ServeHTTP(res, req)
 
-	if res.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", res.Code)
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", res.Code)
 	}
+}
+
+func TestCreateAgent_RejectsMismatchedBodyBusinessID(t *testing.T) {
+	mockSvc := new(MockAgentService)
+	log := logger.New()
+	handler := NewAgentHandlerTestable(mockSvc, log)
+
+	router := gin.New()
+	router.POST("/agents", func(c *gin.Context) {
+		createTestContext(c, "user-123", "biz-123")
+		handler.CreateAgent(c)
+	})
+
+	reqBody := map[string]interface{}{
+		"type":        "shopping",
+		"name":        "Test Agent",
+		"business_id": "biz-other",
+	}
+	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPost, "/agents", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", res.Code, res.Body.String())
+	}
+	mockSvc.AssertNotCalled(t, "CreatePersonalAgent", mock.Anything, mock.Anything)
+	mockSvc.AssertNotCalled(t, "CreateMerchantAgent", mock.Anything, mock.Anything)
 }
 
 func TestCreateAgent_BadRequest_InvalidAgentType(t *testing.T) {
@@ -1479,13 +1509,14 @@ func (h *AgentHandlerTestable) CreateAgent(c *gin.Context) {
 		return
 	}
 
-	if req.BusinessID != "" {
-		businessID = req.BusinessID
-	}
-
 	if businessID == "" {
-		h.log.Warn("business_id is required")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "business_id is required"})
+		h.log.Warn("business scope required")
+		c.JSON(http.StatusForbidden, gin.H{"error": "business scope required"})
+		return
+	}
+	if req.BusinessID != "" && req.BusinessID != businessID {
+		h.log.Warn("business scope mismatch", "requested_business_id", req.BusinessID, "effective_business_id", businessID)
+		c.JSON(http.StatusForbidden, gin.H{"error": "business_id does not match authenticated scope"})
 		return
 	}
 

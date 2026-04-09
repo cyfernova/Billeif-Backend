@@ -34,6 +34,8 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "business_logos" {
   bucket = aws_s3_bucket.business_logos.id
 
   rule {
+    blocked_encryption_types = ["NONE"]
+    bucket_key_enabled       = false
     apply_server_side_encryption_by_default {
       sse_algorithm = "AES256"
     }
@@ -65,6 +67,8 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "invoices_pdf" {
   bucket = aws_s3_bucket.invoices_pdf.id
 
   rule {
+    blocked_encryption_types = ["NONE"]
+    bucket_key_enabled       = false
     apply_server_side_encryption_by_default {
       sse_algorithm = "AES256"
     }
@@ -89,6 +93,8 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "product_images" {
   bucket = aws_s3_bucket.product_images.id
 
   rule {
+    blocked_encryption_types = ["NONE"]
+    bucket_key_enabled       = false
     apply_server_side_encryption_by_default {
       sse_algorithm = "AES256"
     }
@@ -113,6 +119,8 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "email_sink" {
   bucket = aws_s3_bucket.email_sink.id
 
   rule {
+    blocked_encryption_types = ["NONE"]
+    bucket_key_enabled       = false
     apply_server_side_encryption_by_default {
       sse_algorithm = "AES256"
     }
@@ -137,6 +145,8 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "integration_data"
   bucket = aws_s3_bucket.integration_data.id
 
   rule {
+    blocked_encryption_types = ["NONE"]
+    bucket_key_enabled       = false
     apply_server_side_encryption_by_default {
       sse_algorithm = "AES256"
     }

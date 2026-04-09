@@ -217,6 +217,37 @@ func TestPhoneRegisterRejectsExistingPhone(t *testing.T) {
 	assert.Contains(t, err.Error(), phoneAuthConflictMessage)
 }
 
+func TestPhoneRegisterUsesNormalizedPhoneAsUsername(t *testing.T) {
+	t.Parallel()
+
+	phoneClient := &mockCognitoClient{
+		signUp: func(ctx context.Context, params *cognitoidentityprovider.SignUpInput) (*cognitoidentityprovider.SignUpOutput, error) {
+			require.Equal(t, "phone-client-id", aws.ToString(params.ClientId))
+			require.Equal(t, "+919876543210", aws.ToString(params.Username))
+			return &cognitoidentityprovider.SignUpOutput{
+				UserSub: aws.String("phone-sub-1"),
+			}, nil
+		},
+	}
+
+	repo := &mockUserRepo{
+		create: func(ctx context.Context, user *models.User) error {
+			require.Equal(t, "+919876543210", user.PhoneNumber)
+			return nil
+		},
+	}
+
+	svc := newPhoneAuthService(t, repo, phoneClient)
+	result, err := svc.PhoneRegister(context.Background(), PhoneRegisterInput{
+		PhoneNumber: "9876543210",
+		Name:        "Phone User",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "+919876543210", result.PhoneNumber)
+}
+
 func TestPhoneLoginUsesUserAuthSMSOTP(t *testing.T) {
 	t.Parallel()
 
@@ -234,13 +265,43 @@ func TestPhoneLoginUsesUserAuthSMSOTP(t *testing.T) {
 		},
 	}
 
-	svc := newPhoneAuthService(t, &mockUserRepo{}, phoneClient)
+	repo := &mockUserRepo{
+		getByPhoneNumber: func(ctx context.Context, phone string) (*models.User, error) {
+			return &models.User{ID: "user-1", PhoneNumber: phone}, nil
+		},
+	}
+
+	svc := newPhoneAuthService(t, repo, phoneClient)
 	result, err := svc.PhoneLogin(context.Background(), PhoneLoginInput{PhoneNumber: "9876543210"})
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, "session-123", result.Session)
 	assert.Equal(t, "SMS_OTP", result.ChallengeName)
+}
+
+func TestPhoneLoginRejectsUnregisteredNumber(t *testing.T) {
+	t.Parallel()
+
+	repo := &mockUserRepo{
+		getByPhoneNumber: func(ctx context.Context, phone string) (*models.User, error) {
+			return nil, errors.New("user not found")
+		},
+	}
+
+	phoneClient := &mockCognitoClient{
+		initiateAuth: func(ctx context.Context, params *cognitoidentityprovider.InitiateAuthInput) (*cognitoidentityprovider.InitiateAuthOutput, error) {
+			t.Fatalf("initiateAuth should not be called for unregistered numbers")
+			return nil, nil
+		},
+	}
+
+	svc := newPhoneAuthService(t, repo, phoneClient)
+	result, err := svc.PhoneLogin(context.Background(), PhoneLoginInput{PhoneNumber: "9876543210"})
+
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "phone number not registered")
 }
 
 func TestPhoneVerifyLoginReturnsTokens(t *testing.T) {
@@ -277,4 +338,24 @@ func TestPhoneVerifyLoginReturnsTokens(t *testing.T) {
 	assert.Equal(t, "access", result.AccessToken)
 	assert.Equal(t, "refresh", result.RefreshToken)
 	assert.Equal(t, int32(3600), result.ExpiresIn)
+}
+
+func TestClassifyPhoneAuthErrorRateLimit(t *testing.T) {
+	t.Parallel()
+
+	err := classifyPhoneAuthError(&cognitotypes.LimitExceededException{})
+	require.Error(t, err)
+	assert.Equal(t, phoneAuthRateLimitMessage, err.Error())
+}
+
+func TestClassifyPhoneAuthErrorOTPValidation(t *testing.T) {
+	t.Parallel()
+
+	invalidCodeErr := classifyPhoneAuthError(&cognitotypes.CodeMismatchException{})
+	require.Error(t, invalidCodeErr)
+	assert.Equal(t, "invalid OTP code", invalidCodeErr.Error())
+
+	expiredCodeErr := classifyPhoneAuthError(&cognitotypes.ExpiredCodeException{})
+	require.Error(t, expiredCodeErr)
+	assert.Equal(t, "OTP code expired, please request a new code", expiredCodeErr.Error())
 }

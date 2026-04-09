@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,10 +33,12 @@ func TestAuthAcceptsPrimaryAndPhonePools(t *testing.T) {
 
 	cfg := config.CognitoConfig{
 		UserPoolID:      "us-east-1_primary",
+		ClientID:        "primary-client-id",
 		Region:          "us-east-1",
 		JWKSRefreshRate: time.Minute,
 		Phone: config.CognitoPhoneConfig{
 			UserPoolID: "ap-south-1_phone",
+			ClientID:   "phone-client-id",
 			Region:     "ap-south-1",
 		},
 	}
@@ -64,6 +67,7 @@ func TestAuthAcceptsPrimaryAndPhonePools(t *testing.T) {
 				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 			},
 			TokenUse: "access",
+			ClientID: "primary-client-id",
 			Email:    "primary@example.com",
 		})
 
@@ -86,6 +90,7 @@ func TestAuthAcceptsPrimaryAndPhonePools(t *testing.T) {
 				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 			},
 			TokenUse:    "access",
+			ClientID:    "phone-client-id",
 			PhoneNumber: "+919876543210",
 		})
 
@@ -101,6 +106,154 @@ func TestAuthAcceptsPrimaryAndPhonePools(t *testing.T) {
 	})
 }
 
+func TestAuth_DefaultRequiresAccessToken_AndGooglePathAllowsID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	primaryKey := mustGenerateRSAKey(t)
+	primaryServer, primaryJWKSURL := startJWKSServer(t, primaryKey, "primary-kid")
+	defer primaryServer.Close()
+
+	cfg := config.CognitoConfig{
+		UserPoolID:      "us-east-1_primary",
+		ClientID:        "primary-client-id",
+		Region:          "us-east-1",
+		JWKSRefreshRate: time.Minute,
+	}
+
+	seedJWKSCache(cognitoIssuer(cfg.Region, cfg.UserPoolID)+"/.well-known/jwks.json", primaryJWKSURL)
+	t.Cleanup(func() {
+		jwksCachesMu.Lock()
+		defer jwksCachesMu.Unlock()
+		jwksCaches = map[string]*JWKSCache{}
+	})
+
+	idToken := mustSignToken(t, primaryKey, "primary-kid", &CognitoClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   "id-subject",
+			Issuer:    cognitoIssuer(cfg.Region, cfg.UserPoolID),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+			Audience:  []string{"primary-client-id"},
+		},
+		TokenUse: "id",
+		Email:    "primary@example.com",
+	})
+
+	t.Run("default auth rejects id token", func(t *testing.T) {
+		router := gin.New()
+		router.Use(Auth(cfg, logger.New()))
+		router.GET("/protected", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+		req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+		req.Header.Set("Authorization", "Bearer "+idToken)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusUnauthorized, rec.Code)
+	})
+
+	t.Run("id-only auth accepts id token", func(t *testing.T) {
+		router := gin.New()
+		router.Use(AuthWithTokenUse(cfg, logger.New(), TokenUseID))
+		router.POST("/auth/google", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+		req := httptest.NewRequest(http.MethodPost, "/auth/google", nil)
+		req.Header.Set("Authorization", "Bearer "+idToken)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusOK, rec.Code)
+	})
+}
+
+func TestAuth_RejectsTokenWithWrongClientBinding(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	primaryKey := mustGenerateRSAKey(t)
+	primaryServer, primaryJWKSURL := startJWKSServer(t, primaryKey, "primary-kid")
+	defer primaryServer.Close()
+
+	cfg := config.CognitoConfig{
+		UserPoolID:      "us-east-1_primary",
+		ClientID:        "expected-client-id",
+		Region:          "us-east-1",
+		JWKSRefreshRate: time.Minute,
+	}
+
+	seedJWKSCache(cognitoIssuer(cfg.Region, cfg.UserPoolID)+"/.well-known/jwks.json", primaryJWKSURL)
+	t.Cleanup(func() {
+		jwksCachesMu.Lock()
+		defer jwksCachesMu.Unlock()
+		jwksCaches = map[string]*JWKSCache{}
+	})
+
+	router := gin.New()
+	router.Use(Auth(cfg, logger.New()))
+	router.GET("/protected", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	accessToken := mustSignToken(t, primaryKey, "primary-kid", &CognitoClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   "user-1",
+			Issuer:    cognitoIssuer(cfg.Region, cfg.UserPoolID),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		},
+		TokenUse: "access",
+		ClientID: "unexpected-client-id",
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestJWKSRefresh_RemovesRetiredKeys(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	primaryKey := mustGenerateRSAKey(t)
+	rotatedKey := mustGenerateRSAKey(t)
+	server, jwksURL, setJWKS := startMutableJWKSServer(t)
+	defer server.Close()
+
+	cfg := config.CognitoConfig{
+		UserPoolID:      "us-east-1_primary",
+		ClientID:        "primary-client-id",
+		Region:          "us-east-1",
+		JWKSRefreshRate: 5 * time.Millisecond,
+	}
+
+	cacheKey := cognitoIssuer(cfg.Region, cfg.UserPoolID) + "/.well-known/jwks.json"
+	seedJWKSCacheWithTTL(cacheKey, jwksURL, cfg.JWKSRefreshRate)
+	t.Cleanup(func() {
+		jwksCachesMu.Lock()
+		defer jwksCachesMu.Unlock()
+		jwksCaches = map[string]*JWKSCache{}
+	})
+
+	setJWKS([]map[string]string{jwkForKey(primaryKey, "initial-kid")})
+
+	initialToken := mustSignToken(t, primaryKey, "initial-kid", &CognitoClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   "user-1",
+			Issuer:    cognitoIssuer(cfg.Region, cfg.UserPoolID),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		},
+		TokenUse: "access",
+		ClientID: "primary-client-id",
+	})
+
+	_, err := ValidateCognitoToken(cfg, initialToken)
+	require.NoError(t, err)
+
+	time.Sleep(10 * time.Millisecond)
+	setJWKS([]map[string]string{jwkForKey(rotatedKey, "rotated-kid")})
+
+	_, err = ValidateCognitoToken(cfg, initialToken)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "key not found")
+}
+
 func mustGenerateRSAKey(t *testing.T) *rsa.PrivateKey {
 	t.Helper()
 
@@ -112,18 +265,7 @@ func mustGenerateRSAKey(t *testing.T) *rsa.PrivateKey {
 func startJWKSServer(t *testing.T, key *rsa.PrivateKey, kid string) (*httptest.Server, string) {
 	t.Helper()
 
-	jwks := map[string]any{
-		"keys": []map[string]string{
-			{
-				"alg": "RS256",
-				"e":   base64.RawURLEncoding.EncodeToString(bigEndianBytes(key.PublicKey.E)),
-				"kid": kid,
-				"kty": "RSA",
-				"n":   base64.RawURLEncoding.EncodeToString(key.PublicKey.N.Bytes()),
-				"use": "sig",
-			},
-		},
-	}
+	jwks := map[string]any{"keys": []map[string]string{jwkForKey(key, kid)}}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/jwks.json", r.URL.Path)
@@ -132,6 +274,42 @@ func startJWKSServer(t *testing.T, key *rsa.PrivateKey, kid string) (*httptest.S
 	}))
 
 	return server, server.URL + "/jwks.json"
+}
+
+func startMutableJWKSServer(t *testing.T) (*httptest.Server, string, func(keys []map[string]string)) {
+	t.Helper()
+
+	var mu sync.RWMutex
+	current := []map[string]string{}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/jwks.json", r.URL.Path)
+		mu.RLock()
+		payload := map[string]any{"keys": current}
+		mu.RUnlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(payload))
+	}))
+
+	setJWKS := func(keys []map[string]string) {
+		mu.Lock()
+		defer mu.Unlock()
+		current = keys
+	}
+
+	return server, server.URL + "/jwks.json", setJWKS
+}
+
+func jwkForKey(key *rsa.PrivateKey, kid string) map[string]string {
+	return map[string]string{
+		"alg": "RS256",
+		"e":   base64.RawURLEncoding.EncodeToString(bigEndianBytes(key.PublicKey.E)),
+		"kid": kid,
+		"kty": "RSA",
+		"n":   base64.RawURLEncoding.EncodeToString(key.PublicKey.N.Bytes()),
+		"use": "sig",
+	}
 }
 
 func mustSignToken(t *testing.T, key *rsa.PrivateKey, kid string, claims *CognitoClaims) string {
@@ -146,9 +324,13 @@ func mustSignToken(t *testing.T, key *rsa.PrivateKey, kid string, claims *Cognit
 }
 
 func seedJWKSCache(cacheKey, serverJWKSURL string) {
+	seedJWKSCacheWithTTL(cacheKey, serverJWKSURL, time.Minute)
+}
+
+func seedJWKSCacheWithTTL(cacheKey, serverJWKSURL string, ttl time.Duration) {
 	jwksCachesMu.Lock()
 	defer jwksCachesMu.Unlock()
-	jwksCaches[cacheKey] = NewJWKSCache(serverJWKSURL, time.Minute)
+	jwksCaches[cacheKey] = NewJWKSCache(serverJWKSURL, ttl)
 }
 
 func bigEndianBytes(exponent int) []byte {

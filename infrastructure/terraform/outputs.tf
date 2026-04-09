@@ -113,6 +113,16 @@ output "client_id" {
   value       = aws_cognito_user_pool_client.main.id
 }
 
+output "google_oauth_secret_name" {
+  description = "AWS Secrets Manager secret name for Google OAuth credentials"
+  value       = local.google_oauth_secret_name
+}
+
+output "google_oauth_secret_arn" {
+  description = "AWS Secrets Manager secret ARN for Google OAuth credentials"
+  value       = try(data.aws_secretsmanager_secret.google_oauth[0].arn, null)
+}
+
 output "phone_user_pool_id" {
   description = "India phone-auth Cognito User Pool ID"
   value       = aws_cognito_user_pool.phone.id

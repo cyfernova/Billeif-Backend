@@ -153,10 +153,18 @@ type ValidateCouponInput struct {
 type CreateDriveAssetInput struct {
 	BusinessID  string                 `json:"business_id,omitempty"`
 	Name        string                 `json:"name" binding:"required"`
+	FolderPath  string                 `json:"folder_path,omitempty"`
 	ContentType string                 `json:"content_type" binding:"required"`
 	SizeBytes   int64                  `json:"size_bytes" binding:"required,gte=0"`
 	Category    string                 `json:"category,omitempty"`
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+}
+
+type UpdateDriveAssetInput struct {
+	Name       string                 `json:"name,omitempty"`
+	FolderPath string                 `json:"folder_path,omitempty"`
+	Category   string                 `json:"category,omitempty"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 
 type UpsertWhatsAppConfigInput struct {
@@ -184,6 +192,21 @@ type CouponValidationResult struct {
 type DriveUploadSession struct {
 	Asset     *models.DriveAsset `json:"asset"`
 	UploadURL string             `json:"upload_url"`
+}
+
+type WhatsAppConfigResponse struct {
+	ID                      string     `json:"id"`
+	BusinessID              string     `json:"business_id"`
+	PhoneNumberID           string     `json:"phone_number_id,omitempty"`
+	DefaultRecipient        string     `json:"default_recipient,omitempty"`
+	Enabled                 bool       `json:"enabled"`
+	Metadata                string     `json:"metadata,omitempty"`
+	AccessTokenConfigured   bool       `json:"access_token_configured"`
+	WebhookSecretConfigured bool       `json:"webhook_secret_configured"`
+	VerifyTokenConfigured   bool       `json:"verify_token_configured"`
+	CreatedAt               time.Time  `json:"created_at"`
+	UpdatedAt               time.Time  `json:"updated_at"`
+	LastDeliveryAt          *time.Time `json:"last_delivery_at,omitempty"`
 }
 
 type StorefrontCatalogItem struct {
@@ -354,6 +377,35 @@ func (s *CommerceService) ListRoles(ctx context.Context, businessID string) ([]*
 		Order("is_system DESC, name ASC").
 		Find(&roles).Error; err != nil {
 		return nil, err
+	}
+	type roleCountRow struct {
+		RoleID *string
+		Role   string
+		Total  int64
+	}
+	var counts []roleCountRow
+	if err := s.db.WithContext(ctx).
+		Model(&models.TeamMember{}).
+		Select("role_id, LOWER(role) AS role, COUNT(*) AS total").
+		Where("business_id = ? AND deleted_at IS NULL", businessID).
+		Group("role_id, LOWER(role)").
+		Scan(&counts).Error; err != nil {
+		return nil, err
+	}
+	countByRoleID := map[string]int64{}
+	countByLegacyRole := map[string]int64{}
+	for _, count := range counts {
+		if count.RoleID != nil && strings.TrimSpace(*count.RoleID) != "" {
+			countByRoleID[*count.RoleID] += count.Total
+			continue
+		}
+		countByLegacyRole[count.Role] += count.Total
+	}
+	for _, role := range roles {
+		role.UserCount = countByRoleID[role.ID]
+		if role.IsSystem {
+			role.UserCount += countByLegacyRole[strings.ToLower(role.Key)]
+		}
 	}
 	return roles, nil
 }
@@ -1171,6 +1223,7 @@ func (s *CommerceService) CreateDriveUpload(ctx context.Context, businessID, use
 		BusinessID:  businessID,
 		UploadedBy:  stringPointer(userID),
 		Name:        input.Name,
+		FolderPath:  normalizeDriveFolderPath(input.FolderPath),
 		Bucket:      s.cfg.S3.BucketDrive,
 		ObjectKey:   fmt.Sprintf("%s/%s/%s", businessID, time.Now().UTC().Format("20060102"), uuid.NewString()),
 		ContentType: input.ContentType,
@@ -1188,6 +1241,32 @@ func (s *CommerceService) CreateDriveUpload(ctx context.Context, businessID, use
 	return &DriveUploadSession{Asset: asset, UploadURL: uploadURL}, nil
 }
 
+func (s *CommerceService) UpdateDriveAsset(ctx context.Context, businessID, assetID string, input UpdateDriveAssetInput) (*models.DriveAsset, error) {
+	var asset models.DriveAsset
+	if err := s.db.WithContext(ctx).
+		Where("id = ? AND business_id = ? AND deleted_at IS NULL", assetID, businessID).
+		First(&asset).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, fmt.Errorf("drive asset not found")
+		}
+		return nil, err
+	}
+	if input.Name != "" {
+		asset.Name = input.Name
+	}
+	if input.Category != "" {
+		asset.Category = input.Category
+	}
+	asset.FolderPath = normalizeDriveFolderPath(input.FolderPath)
+	if input.Metadata != nil {
+		asset.Metadata = mustMarshalMap(input.Metadata)
+	}
+	if err := s.db.WithContext(ctx).Save(&asset).Error; err != nil {
+		return nil, err
+	}
+	return &asset, nil
+}
+
 func (s *CommerceService) DeleteDriveAsset(ctx context.Context, businessID, assetID string) error {
 	var asset models.DriveAsset
 	if err := s.db.WithContext(ctx).
@@ -1201,18 +1280,21 @@ func (s *CommerceService) DeleteDriveAsset(ctx context.Context, businessID, asse
 	return s.db.WithContext(ctx).Delete(&asset).Error
 }
 
-func (s *CommerceService) GetWhatsAppConfig(ctx context.Context, businessID string) (*models.WhatsAppConfig, error) {
+func (s *CommerceService) GetWhatsAppConfig(ctx context.Context, businessID string) (*WhatsAppConfigResponse, error) {
 	var cfg models.WhatsAppConfig
 	if err := s.db.WithContext(ctx).
 		Where("business_id = ? AND deleted_at IS NULL", businessID).
 		Order("created_at DESC").
 		First(&cfg).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, fmt.Errorf("whatsapp config not found")
+		}
 		return nil, err
 	}
-	return &cfg, nil
+	return s.toWhatsAppConfigResponse(ctx, &cfg)
 }
 
-func (s *CommerceService) UpsertWhatsAppConfig(ctx context.Context, businessID string, input UpsertWhatsAppConfigInput) (*models.WhatsAppConfig, error) {
+func (s *CommerceService) UpsertWhatsAppConfig(ctx context.Context, businessID string, input UpsertWhatsAppConfigInput) (*WhatsAppConfigResponse, error) {
 	var cfg models.WhatsAppConfig
 	err := s.db.WithContext(ctx).
 		Where("business_id = ? AND deleted_at IS NULL", businessID).
@@ -1258,7 +1340,7 @@ func (s *CommerceService) UpsertWhatsAppConfig(ctx context.Context, businessID s
 	default:
 		return nil, err
 	}
-	return &cfg, nil
+	return s.toWhatsAppConfigResponse(ctx, &cfg)
 }
 
 func (s *CommerceService) ListNotificationDeliveries(ctx context.Context, businessID string, limit int) ([]*models.NotificationDelivery, error) {
@@ -1274,6 +1356,51 @@ func (s *CommerceService) ListNotificationDeliveries(ctx context.Context, busine
 		return nil, err
 	}
 	return deliveries, nil
+}
+
+func (s *CommerceService) toWhatsAppConfigResponse(ctx context.Context, cfg *models.WhatsAppConfig) (*WhatsAppConfigResponse, error) {
+	response := &WhatsAppConfigResponse{
+		ID:                      cfg.ID,
+		BusinessID:              cfg.BusinessID,
+		PhoneNumberID:           cfg.PhoneNumberID,
+		DefaultRecipient:        cfg.DefaultRecipient,
+		Enabled:                 cfg.Enabled,
+		Metadata:                cfg.Metadata,
+		AccessTokenConfigured:   strings.TrimSpace(cfg.AccessToken) != "",
+		WebhookSecretConfigured: strings.TrimSpace(cfg.WebhookSecret) != "",
+		VerifyTokenConfigured:   strings.TrimSpace(cfg.VerifyToken) != "",
+		CreatedAt:               cfg.CreatedAt,
+		UpdatedAt:               cfg.UpdatedAt,
+	}
+	var lastDelivery models.NotificationDelivery
+	if err := s.db.WithContext(ctx).
+		Where("business_id = ? AND channel = ? AND deleted_at IS NULL", cfg.BusinessID, models.NotificationChannelWhatsApp).
+		Order("created_at DESC").
+		First(&lastDelivery).Error; err == nil {
+		response.LastDeliveryAt = &lastDelivery.CreatedAt
+	}
+	return response, nil
+}
+
+func normalizeDriveFolderPath(folderPath string) string {
+	trimmed := strings.TrimSpace(folderPath)
+	trimmed = strings.ReplaceAll(trimmed, "\\", "/")
+	trimmed = strings.Trim(trimmed, "/")
+	if trimmed == "" {
+		return ""
+	}
+	parts := strings.FieldsFunc(trimmed, func(r rune) bool {
+		return r == '/'
+	})
+	cleaned := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" || part == "." {
+			continue
+		}
+		cleaned = append(cleaned, part)
+	}
+	return strings.Join(cleaned, "/")
 }
 
 func (s *CommerceService) ResolveFXRate(ctx context.Context, baseCurrency, quoteCurrency string) (*models.FXRate, error) {

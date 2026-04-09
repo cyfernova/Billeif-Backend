@@ -207,6 +207,23 @@ func WAFWebSocketRateLimit(client *awsclients.Config, cfg config.WAFConfig) gin.
 	return WAFRateLimit(client, cfg, time.Minute, 10)
 }
 
+// WAFUserWriteRateLimit returns middleware for standard write operations per authenticated user (100 req/min).
+// Uses user ID when authenticated, falls back to IP.
+func WAFUserWriteRateLimit(client *awsclients.Config, cfg config.WAFConfig) gin.HandlerFunc {
+	return WAFWithUserScope(client, cfg, time.Minute, 100)
+}
+
+// WAFUserHeavyRateLimit returns middleware for heavy operations per authenticated user (100 req/min).
+// Use for bulk imports, document merge/convert, e-invoice/ewaybill generation.
+func WAFUserHeavyRateLimit(client *awsclients.Config, cfg config.WAFConfig) gin.HandlerFunc {
+	return WAFWithUserScope(client, cfg, time.Minute, 100)
+}
+
+// WAFUserReportRateLimit returns middleware for report queries per authenticated user (100 req/min).
+func WAFUserReportRateLimit(client *awsclients.Config, cfg config.WAFConfig) gin.HandlerFunc {
+	return WAFWithUserScope(client, cfg, time.Minute, 100)
+}
+
 // WAFWithUserScope returns middleware that rate limits by user ID (from JWT).
 func WAFWithUserScope(client *awsclients.Config, cfg config.WAFConfig, interval time.Duration, maxHits int) gin.HandlerFunc {
 	limiter := NewWIPRateLimiter(client.WAF, cfg, interval, maxHits)

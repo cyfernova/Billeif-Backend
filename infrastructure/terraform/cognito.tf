@@ -1,3 +1,26 @@
+locals {
+  google_oauth_secret_name = var.google_oauth_secret_name != "" ? var.google_oauth_secret_name : "/${var.project_name}/${var.environment}/cognito/google-auth"
+}
+
+data "aws_secretsmanager_secret" "google_oauth" {
+  count = var.google_client_id == "" && var.google_client_secret == "" ? 1 : 0
+  name  = local.google_oauth_secret_name
+}
+
+data "aws_secretsmanager_secret_version" "google_oauth" {
+  count     = length(data.aws_secretsmanager_secret.google_oauth) > 0 ? 1 : 0
+  secret_id = data.aws_secretsmanager_secret.google_oauth[0].id
+}
+
+locals {
+  google_oauth_secret_sensitive  = length(data.aws_secretsmanager_secret_version.google_oauth) > 0 ? jsondecode(data.aws_secretsmanager_secret_version.google_oauth[0].secret_string) : {}
+  google_oauth_secret            = length(data.aws_secretsmanager_secret_version.google_oauth) > 0 ? jsondecode(nonsensitive(data.aws_secretsmanager_secret_version.google_oauth[0].secret_string)) : {}
+  google_client_id_resolved      = trimspace(var.google_client_id != "" ? var.google_client_id : try(local.google_oauth_secret.client_id, ""))
+  google_client_secret_resolved  = trimspace(var.google_client_secret != "" ? var.google_client_secret : try(local.google_oauth_secret.client_secret, ""))
+  google_client_id_sensitive     = var.google_client_id != "" ? sensitive(var.google_client_id) : try(local.google_oauth_secret_sensitive.client_id, sensitive(""))
+  google_client_secret_sensitive = var.google_client_secret != "" ? sensitive(var.google_client_secret) : try(local.google_oauth_secret_sensitive.client_secret, sensitive(""))
+}
+
 resource "aws_cognito_user_pool" "main" {
   name = var.user_pool_name
 
@@ -56,9 +79,9 @@ resource "aws_cognito_user_pool_client" "main" {
   enable_token_revocation       = true
 
   # OAuth configuration for Google Sign-In
-  supported_identity_providers         = var.google_client_id != "" && var.google_client_secret != "" ? ["COGNITO", "Google"] : ["COGNITO"]
-  callback_urls                        = ["myapp://callback", "http://localhost:3000/callback"]
-  logout_urls                          = ["myapp://logout", "http://localhost:3000/logout"]
+  supported_identity_providers         = ["COGNITO", "Google"]
+  callback_urls                        = ["invoiceappv2://callback", "myapp://callback", "http://localhost:3000/callback", "https://auth.expo.io/@skythrill652/invoice-app-v2"]
+  logout_urls                          = ["invoiceappv2://logout", "myapp://logout", "http://localhost:3000/logout", "https://auth.expo.io/@skythrill652/invoice-app-v2"]
   allowed_oauth_flows_user_pool_client = true
   allowed_oauth_flows                  = ["code", "implicit"]
   allowed_oauth_scopes                 = ["email", "openid", "profile", "aws.cognito.signin.user.admin"]
@@ -69,6 +92,12 @@ resource "aws_cognito_user_pool_client" "main" {
     refresh_token = "days"
   }
 
+  lifecycle {
+    precondition {
+      condition     = local.google_client_id_resolved != "" && local.google_client_secret_resolved != ""
+      error_message = "Google OAuth credentials are required. Store JSON with client_id and client_secret in AWS Secrets Manager secret ${local.google_oauth_secret_name} or provide the legacy google_client_id/google_client_secret variables."
+    }
+  }
 }
 
 resource "aws_cognito_user_group" "admin" {
@@ -100,16 +129,22 @@ resource "aws_cognito_user_pool_domain" "main" {
 
 # Google Identity Provider
 resource "aws_cognito_identity_provider" "google" {
-  count = var.google_client_id != "" && var.google_client_secret != "" ? 1 : 0
+  count = 1
 
   user_pool_id  = aws_cognito_user_pool.main.id
   provider_name = "Google"
   provider_type = "Google"
 
   provider_details = {
-    client_id        = var.google_client_id
-    client_secret    = var.google_client_secret
-    authorize_scopes = "profile email openid"
+    attributes_url                = "https://people.googleapis.com/v1/people/me?personFields="
+    attributes_url_add_attributes = "true"
+    authorize_url                 = "https://accounts.google.com/o/oauth2/v2/auth"
+    oidc_issuer                   = "https://accounts.google.com"
+    token_request_method          = "POST"
+    token_url                     = "https://www.googleapis.com/oauth2/v4/token"
+    client_id                     = local.google_client_id_sensitive
+    client_secret                 = local.google_client_secret_sensitive
+    authorize_scopes              = "profile email openid"
   }
 
   attribute_mapping = {
@@ -117,5 +152,12 @@ resource "aws_cognito_identity_provider" "google" {
     username = "sub"
     name     = "name"
     picture  = "picture"
+  }
+
+  lifecycle {
+    precondition {
+      condition     = local.google_client_id_resolved != "" && local.google_client_secret_resolved != ""
+      error_message = "Google OAuth credentials are required. Store JSON with client_id and client_secret in AWS Secrets Manager secret ${local.google_oauth_secret_name} or provide the legacy google_client_id/google_client_secret variables."
+    }
   }
 }

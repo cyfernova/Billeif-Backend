@@ -19,12 +19,22 @@ func NewTeamMemberRepository(db *gorm.DB) interfaces.TeamMemberRepository {
 }
 
 func (r *teamMemberRepository) Create(ctx context.Context, member *models.TeamMember) error {
-	return r.db.WithContext(ctx).Create(member).Error
+	if err := r.db.WithContext(ctx).Create(member).Error; err != nil {
+		return err
+	}
+	loaded, err := r.GetByID(ctx, member.ID, member.BusinessID)
+	if err != nil {
+		return err
+	}
+	*member = *loaded
+	return nil
 }
 
 func (r *teamMemberRepository) GetByID(ctx context.Context, id, businessID string) (*models.TeamMember, error) {
 	var member models.TeamMember
-	err := r.db.WithContext(ctx).Where("id = ? AND business_id = ? AND deleted_at IS NULL", id, businessID).First(&member).Error
+	err := r.baseQuery(ctx, businessID).
+		Where("id = ?", id).
+		First(&member).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, errors.New("team member not found")
 	}
@@ -37,7 +47,7 @@ func (r *teamMemberRepository) GetByBusinessID(ctx context.Context, businessID s
 
 	offset := (page - 1) * limit
 
-	query := r.db.WithContext(ctx).Model(&models.TeamMember{}).Where("business_id = ? AND deleted_at IS NULL", businessID).Order("created_at DESC")
+	query := r.baseQuery(ctx, businessID).Order("created_at DESC")
 
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -56,7 +66,15 @@ func (r *teamMemberRepository) GetByBusinessID(ctx context.Context, businessID s
 }
 
 func (r *teamMemberRepository) Update(ctx context.Context, member *models.TeamMember) error {
-	return r.db.WithContext(ctx).Save(member).Error
+	if err := r.db.WithContext(ctx).Save(member).Error; err != nil {
+		return err
+	}
+	loaded, err := r.GetByID(ctx, member.ID, member.BusinessID)
+	if err != nil {
+		return err
+	}
+	*member = *loaded
+	return nil
 }
 
 func (r *teamMemberRepository) Delete(ctx context.Context, id string) error {
@@ -66,6 +84,7 @@ func (r *teamMemberRepository) Delete(ctx context.Context, id string) error {
 func (r *teamMemberRepository) GetByUserID(ctx context.Context, userID string) ([]*models.TeamMember, error) {
 	var members []models.TeamMember
 	err := r.db.WithContext(ctx).
+		Preload("AssignedRole", "deleted_at IS NULL").
 		Where("user_id = ? AND deleted_at IS NULL", userID).
 		Order("created_at DESC").
 		Limit(defaultUnpaginatedQueryLimit).
@@ -80,4 +99,11 @@ func (r *teamMemberRepository) GetByUserID(ctx context.Context, userID string) (
 	}
 
 	return result, nil
+}
+
+func (r *teamMemberRepository) baseQuery(ctx context.Context, businessID string) *gorm.DB {
+	return r.db.WithContext(ctx).
+		Model(&models.TeamMember{}).
+		Preload("AssignedRole", "deleted_at IS NULL").
+		Where("business_id = ? AND deleted_at IS NULL", businessID)
 }

@@ -312,6 +312,9 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 		wafBulkRL := middleware.WAFBulkRateLimit(svcs.AWS, cfg.AWS.WAF)
 		wafLLMRL := middleware.WAFLLMRateLimit(svcs.AWS, cfg.AWS.WAF)
 		wafWSRL := middleware.WAFWebSocketRateLimit(svcs.AWS, cfg.AWS.WAF)
+		wafUserWriteRL := middleware.WAFUserWriteRateLimit(svcs.AWS, cfg.AWS.WAF)
+		wafUserHeavyRL := middleware.WAFUserHeavyRateLimit(svcs.AWS, cfg.AWS.WAF)
+		wafUserReportRL := middleware.WAFUserReportRateLimit(svcs.AWS, cfg.AWS.WAF)
 
 		auth := api.Group("/auth")
 		{
@@ -342,7 +345,7 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 		// And "protected" group has all the other protected routes.
 		// We can add it to "protected" group or create a small subgroup here.
 		googleAuth := api.Group("/auth")
-		googleAuth.Use(middleware.Auth(cfg.Cognito, log))
+		googleAuth.Use(middleware.AuthWithTokenUse(cfg.Cognito, log, middleware.TokenUseID))
 		{
 			googleAuth.POST("/google", h.Auth.GoogleLogin)
 		}
@@ -379,9 +382,9 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			{
 				businesses.GET("", h.Business.List)
 				businesses.GET("/:id", h.Business.Get)
-				businesses.POST("", h.Business.Create)
-				businesses.PUT("/:id", h.Business.Update)
-				businesses.DELETE("/:id", h.Business.Delete)
+				businesses.POST("", wafUserWriteRL, h.Business.Create)
+				businesses.PUT("/:id", wafUserWriteRL, h.Business.Update)
+				businesses.DELETE("/:id", wafUserWriteRL, h.Business.Delete)
 				businesses.POST("/:id/logo", h.Business.UploadLogo)
 			}
 
@@ -389,10 +392,10 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			{
 				customers.GET("", h.Customer.List)
 				customers.GET("/:id", h.Customer.Get)
-				customers.POST("", h.Customer.Create)
-				customers.PUT("/:id", h.Customer.Update)
-				customers.DELETE("/:id", h.Customer.Delete)
-				customers.POST("/import", h.Customer.Import)
+				customers.POST("", wafUserWriteRL, h.Customer.Create)
+				customers.PUT("/:id", wafUserWriteRL, h.Customer.Update)
+				customers.DELETE("/:id", wafUserWriteRL, h.Customer.Delete)
+				customers.POST("/import", wafBulkRL, h.Customer.Import)
 				customers.GET("/export", h.Customer.Export)
 			}
 
@@ -400,21 +403,21 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			{
 				vendors.GET("", h.Vendor.List)
 				vendors.GET("/:id", h.Vendor.Get)
-				vendors.POST("", h.Vendor.Create)
-				vendors.PUT("/:id", h.Vendor.Update)
-				vendors.DELETE("/:id", h.Vendor.Delete)
+				vendors.POST("", wafUserWriteRL, h.Vendor.Create)
+				vendors.PUT("/:id", wafUserWriteRL, h.Vendor.Update)
+				vendors.DELETE("/:id", wafUserWriteRL, h.Vendor.Delete)
 			}
 
 			products := protected.Group("/products")
 			{
 				products.GET("", h.Product.List)
 				products.GET("/:id", h.Product.Get)
-				products.POST("", h.Product.Create)
-				products.PUT("/:id", h.Product.Update)
-				products.DELETE("/:id", h.Product.Delete)
-				products.POST("/:id/clone", h.Product.Clone)
+				products.POST("", wafUserWriteRL, h.Product.Create)
+				products.PUT("/:id", wafUserWriteRL, h.Product.Update)
+				products.DELETE("/:id", wafUserWriteRL, h.Product.Delete)
+				products.POST("/:id/clone", wafUserWriteRL, h.Product.Clone)
 				products.POST("/:id/image", h.Product.UploadImage)
-				products.POST("/:id/stock", h.Product.AdjustStock)
+				products.POST("/:id/stock", wafUserWriteRL, h.Product.AdjustStock)
 			}
 
 			projects := protected.Group("/projects")
@@ -432,9 +435,9 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 				reports.GET("/shares/history", h.Report.ShareHistory)
 				reports.GET("/preferences/:key", h.Report.GetPreference)
 				reports.PUT("/preferences/:key", h.Report.SavePreference)
-				reports.POST("/:key/query", h.Report.Query)
-				reports.POST("/:key/export", h.Report.Export)
-				reports.POST("/:key/share", middleware.RequireRole("admin", "accountant"), h.Report.CreateShare)
+				reports.POST("/:key/query", wafUserReportRL, h.Report.Query)
+				reports.POST("/:key/export", wafUserReportRL, h.Report.Export)
+				reports.POST("/:key/share", wafUserHeavyRL, h.Report.CreateShare)
 			}
 
 			warehouses := protected.Group("/warehouses")
@@ -506,13 +509,13 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			{
 				invoices.GET("", h.Invoice.List)
 				invoices.GET("/:id", h.Invoice.Get)
-				invoices.POST("", h.Invoice.Create)
-				invoices.PUT("/:id", h.Invoice.Update)
-				invoices.DELETE("/:id", h.Invoice.Delete)
-				invoices.POST("/:id/send", h.Invoice.Send)
-				invoices.POST("/bulk-actions", h.BillingOps.CreateInvoiceBulkAction)
+				invoices.POST("", wafUserWriteRL, h.Invoice.Create)
+				invoices.PUT("/:id", wafUserWriteRL, h.Invoice.Update)
+				invoices.DELETE("", wafUserWriteRL, h.Invoice.Delete)
+				invoices.POST("/:id/send", wafUserWriteRL, h.Invoice.Send)
+				invoices.POST("/bulk-actions", wafUserHeavyRL, h.BillingOps.CreateInvoiceBulkAction)
 				invoices.GET("/:id/pdf", h.Invoice.GetPDF)
-				invoices.POST("/:id/einvoice", h.Invoice.GenerateEInvoice)
+				invoices.POST("/:id/einvoice", wafUserHeavyRL, h.Invoice.GenerateEInvoice)
 				invoices.GET("/next-number", h.Invoice.NextNumber)
 			}
 
@@ -520,27 +523,27 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			{
 				payments.GET("", h.Payment.List)
 				payments.GET("/:id", h.Payment.Get)
-				payments.POST("", h.Payment.Create)
-				payments.PUT("/:id", h.Payment.Update)
-				payments.DELETE("/:id", h.Payment.Delete)
+				payments.POST("", wafUserWriteRL, h.Payment.Create)
+				payments.PUT("/:id", wafUserWriteRL, h.Payment.Update)
+				payments.DELETE("", wafUserWriteRL, h.Payment.Delete)
 			}
 
 			documents := protected.Group("/documents")
 			{
-				documents.POST("/merge", h.DocumentUtility.Merge)
-				documents.POST("/bulk-actions", h.BillingOps.CreateDocumentBulkAction)
-				documents.POST("/:id/convert", h.DocumentUtility.Convert)
-				documents.POST("/:id/duplicate", h.DocumentUtility.Duplicate)
+				documents.POST("/merge", wafUserHeavyRL, h.DocumentUtility.Merge)
+				documents.POST("/bulk-actions", wafUserHeavyRL, h.BillingOps.CreateDocumentBulkAction)
+				documents.POST("/:id/convert", wafUserHeavyRL, h.DocumentUtility.Convert)
+				documents.POST("/:id/duplicate", wafUserHeavyRL, h.DocumentUtility.Duplicate)
 				documents.GET("/:id/history", h.DocumentUtility.History)
 				documents.GET("/:id/compliance", h.DocumentUtility.GetComplianceStatus)
-				documents.POST("/:id/einvoice", h.DocumentUtility.GenerateEInvoice)
+				documents.POST("/:id/einvoice", wafUserHeavyRL, h.DocumentUtility.GenerateEInvoice)
 				documents.GET("/:id/einvoice", h.DocumentUtility.GetEInvoice)
-				documents.POST("/:id/einvoice/cancel", h.DocumentUtility.CancelEInvoice)
-				documents.POST("/:id/ewaybill", h.DocumentUtility.GenerateEWayBill)
+				documents.POST("/:id/einvoice/cancel", wafUserHeavyRL, h.DocumentUtility.CancelEInvoice)
+				documents.POST("/:id/ewaybill", wafUserHeavyRL, h.DocumentUtility.GenerateEWayBill)
 				documents.GET("/:id/ewaybill", h.DocumentUtility.GetEWayBill)
 				documents.GET("/:id/ewaybill/pdf", h.DocumentUtility.GetEWayBillPDF)
-				documents.PATCH("/:id/ewaybill/part-b", h.DocumentUtility.UpdateEWayPartB)
-				documents.POST("/:id/ewaybill/multi-vehicle", h.DocumentUtility.InitiateMultiVehicle)
+				documents.PATCH("/:id/ewaybill/part-b", wafUserHeavyRL, h.DocumentUtility.UpdateEWayPartB)
+				documents.POST("/:id/ewaybill/multi-vehicle", wafUserHeavyRL, h.DocumentUtility.InitiateMultiVehicle)
 				documents.POST("/:id/render", h.DocumentUtility.Render)
 				documents.GET("/:id/pdf", h.DocumentUtility.GetPDF)
 			}
@@ -549,9 +552,9 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			{
 				priceLists.GET("", h.BillingOps.ListPriceLists)
 				priceLists.GET("/:id", h.BillingOps.GetPriceList)
-				priceLists.POST("", h.BillingOps.CreatePriceList)
-				priceLists.PUT("/:id", h.BillingOps.UpdatePriceList)
-				priceLists.DELETE("/:id", h.BillingOps.DeletePriceList)
+				priceLists.POST("", wafUserWriteRL, h.BillingOps.CreatePriceList)
+				priceLists.PUT("/:id", wafUserWriteRL, h.BillingOps.UpdatePriceList)
+				priceLists.DELETE("", wafUserWriteRL, h.BillingOps.DeletePriceList)
 			}
 
 			partyGroups := protected.Group("/party-groups")
@@ -559,9 +562,9 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 				partyGroups.GET("", h.BillingOps.ListPartyGroups)
 				partyGroups.GET("/:id", h.BillingOps.GetPartyGroup)
 				partyGroups.GET("/:id/ledger", h.BillingOps.GetPartyGroupLedger)
-				partyGroups.POST("", h.BillingOps.CreatePartyGroup)
-				partyGroups.PUT("/:id", h.BillingOps.UpdatePartyGroup)
-				partyGroups.DELETE("/:id", h.BillingOps.DeletePartyGroup)
+				partyGroups.POST("", wafUserWriteRL, h.BillingOps.CreatePartyGroup)
+				partyGroups.PUT("/:id", wafUserWriteRL, h.BillingOps.UpdatePartyGroup)
+				partyGroups.DELETE("", wafUserWriteRL, h.BillingOps.DeletePartyGroup)
 			}
 
 			activityLogs := protected.Group("/activity-logs")
@@ -596,6 +599,7 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			invoiceSubscriptions := protected.Group("/invoice-subscriptions")
 			{
 				invoiceSubscriptions.GET("", h.BillingOps.ListInvoiceSubscriptions)
+				invoiceSubscriptions.GET("/runs", h.BillingOps.ListAggregatedInvoiceSubscriptionRuns)
 				invoiceSubscriptions.GET("/:id", h.BillingOps.GetInvoiceSubscription)
 				invoiceSubscriptions.GET("/:id/runs", h.BillingOps.ListInvoiceSubscriptionRuns)
 				invoiceSubscriptions.POST("", h.BillingOps.CreateInvoiceSubscription)
@@ -609,11 +613,11 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			{
 				journals.GET("", h.Journal.List)
 				journals.GET("/:id", h.Journal.Get)
-				journals.POST("", h.Journal.Create)
-				journals.PUT("/:id", h.Journal.Update)
-				journals.DELETE("/:id", h.Journal.Delete)
-				journals.POST("/:id/post", h.Journal.Post)
-				journals.POST("/:id/reverse", h.Journal.Reverse)
+				journals.POST("", wafUserWriteRL, h.Journal.Create)
+				journals.PUT("/:id", wafUserWriteRL, h.Journal.Update)
+				journals.DELETE("/:id", wafUserWriteRL, h.Journal.Delete)
+				journals.POST("/:id/post", wafUserWriteRL, h.Journal.Post)
+				journals.POST("/:id/reverse", wafUserWriteRL, h.Journal.Reverse)
 			}
 
 			renderProfiles := protected.Group("/render-profiles")
@@ -621,9 +625,9 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 				renderProfiles.GET("", h.RenderProfile.List)
 				renderProfiles.GET("/default", h.RenderProfile.GetDefault)
 				renderProfiles.GET("/:id", h.RenderProfile.Get)
-				renderProfiles.POST("", h.RenderProfile.Create)
-				renderProfiles.PUT("/:id", h.RenderProfile.Update)
-				renderProfiles.DELETE("/:id", h.RenderProfile.Delete)
+				renderProfiles.POST("", wafUserWriteRL, h.RenderProfile.Create)
+				renderProfiles.PUT("/:id", wafUserWriteRL, h.RenderProfile.Update)
+				renderProfiles.DELETE("/:id", wafUserWriteRL, h.RenderProfile.Delete)
 			}
 
 			utils := protected.Group("/utils")
@@ -729,6 +733,7 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			{
 				drive.GET("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDriveView), h.Commerce.ListDriveAssets)
 				drive.POST("/presign", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDriveManage), h.Commerce.CreateDriveUpload)
+				drive.PATCH("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDriveManage), h.Commerce.UpdateDriveAsset)
 				drive.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDriveManage), h.Commerce.DeleteDriveAsset)
 			}
 
@@ -737,6 +742,15 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 				whatsapp.GET("/config", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.Commerce.GetWhatsAppConfig)
 				whatsapp.PUT("/config", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.Commerce.UpsertWhatsAppConfig)
 				whatsapp.GET("/deliveries", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.Commerce.ListNotificationDeliveries)
+			}
+
+			email := protected.Group("/email")
+			{
+				email.GET("/accounts", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.EmailConfig.ListAccounts)
+				email.POST("/accounts", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.EmailConfig.CreateAccount)
+				email.PUT("/accounts/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.EmailConfig.UpdateAccount)
+				email.GET("/deliveries", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.EmailConfig.ListDeliveries)
+				email.POST("/accounts/:id/test", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.EmailConfig.SendTest)
 			}
 
 			agents := protected.Group("/agents")
@@ -885,14 +899,14 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			ws.GET("", wafWSRL, h.WebSocket.HandleConnection)
 
 			// WebSocket management endpoints
-			ws.GET("/stats", wafCommonRL, h.WebSocket.GetStats)
-			ws.GET("/status/:userID", wafCommonRL, h.WebSocket.GetConnectionStatus)
-			ws.GET("/users", wafCommonRL, h.WebSocket.GetConnectedUsers)
+			ws.GET("/stats", h.WebSocket.GetStats)
+			ws.GET("/status/:userID", h.WebSocket.GetConnectionStatus)
+			ws.GET("/users", h.WebSocket.GetConnectedUsers)
 			ws.GET("/health", h.WebSocket.HealthCheck)
 
 			// Notification endpoints (for sending notifications via REST)
-			ws.POST("/notify/:userID", wafBulkRL, h.WebSocket.SendNotification)
-			ws.POST("/notify-all", wafBulkRL, h.WebSocket.SendNotificationToAll)
+			ws.POST("/notify/:userID", h.WebSocket.SendNotification)
+			ws.POST("/notify-all", h.WebSocket.SendNotificationToAll)
 		}
 
 		// Bargaining endpoints
@@ -918,11 +932,17 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 		admin := api.Group("/admin")
 		admin.Use(middleware.Auth(cfg.Cognito, log))
-		// admin.Use(middleware.RequireRole("admin"))
+		admin.Use(middleware.RequireRole("admin"))
 		{
-			admin.GET("/local-emails", h.Admin.ListEmails)
+			if shouldExposeAdminLocalEmails(cfg.Environment) {
+				admin.GET("/local-emails", h.Admin.ListEmails)
+			}
 		}
 	}
 
 	return router
+}
+
+func shouldExposeAdminLocalEmails(environment string) bool {
+	return !logger.IsProductionEnvironment(environment)
 }

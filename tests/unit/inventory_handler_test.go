@@ -189,11 +189,11 @@ func NewInventoryHandlerTestable(svc *MockInventoryService, log *logger.Logger) 
 }
 
 func (h *InventoryHandlerTestable) ListWarehouses(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireInventoryBusinessScope(c)
 	if !ok {
 		return
 	}
-	userID, ok := requireUserScope(c)
+	userID, ok := requireInventoryUserScope(c)
 	if !ok {
 		return
 	}
@@ -208,11 +208,11 @@ func (h *InventoryHandlerTestable) ListWarehouses(c *gin.Context) {
 }
 
 func (h *InventoryHandlerTestable) CreateWarehouse(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireInventoryBusinessScope(c)
 	if !ok {
 		return
 	}
-	userID, ok := requireUserScope(c)
+	userID, ok := requireInventoryUserScope(c)
 	if !ok {
 		return
 	}
@@ -239,7 +239,7 @@ func (h *InventoryHandlerTestable) CreateWarehouse(c *gin.Context) {
 }
 
 func (h *InventoryHandlerTestable) UpdateWarehouse(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireInventoryBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -264,7 +264,7 @@ func (h *InventoryHandlerTestable) UpdateWarehouse(c *gin.Context) {
 }
 
 func (h *InventoryHandlerTestable) DeleteWarehouse(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireInventoryBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -282,7 +282,7 @@ func (h *InventoryHandlerTestable) DeleteWarehouse(c *gin.Context) {
 }
 
 func (h *InventoryHandlerTestable) UpsertCatalog(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireInventoryBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -307,11 +307,11 @@ func (h *InventoryHandlerTestable) UpsertCatalog(c *gin.Context) {
 }
 
 func (h *InventoryHandlerTestable) CreateAdjustment(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireInventoryBusinessScope(c)
 	if !ok {
 		return
 	}
-	userID, ok := requireUserScope(c)
+	userID, ok := requireInventoryUserScope(c)
 	if !ok {
 		return
 	}
@@ -337,11 +337,11 @@ func (h *InventoryHandlerTestable) CreateAdjustment(c *gin.Context) {
 }
 
 func (h *InventoryHandlerTestable) CreateTransfer(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireInventoryBusinessScope(c)
 	if !ok {
 		return
 	}
-	userID, ok := requireUserScope(c)
+	userID, ok := requireInventoryUserScope(c)
 	if !ok {
 		return
 	}
@@ -366,7 +366,7 @@ func (h *InventoryHandlerTestable) CreateTransfer(c *gin.Context) {
 }
 
 func (h *InventoryHandlerTestable) ListBatches(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireInventoryBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -380,7 +380,7 @@ func (h *InventoryHandlerTestable) ListBatches(c *gin.Context) {
 }
 
 func (h *InventoryHandlerTestable) ListSerials(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireInventoryBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -394,7 +394,7 @@ func (h *InventoryHandlerTestable) ListSerials(c *gin.Context) {
 }
 
 func (h *InventoryHandlerTestable) CreateAssemblyRecipe(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireInventoryBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -415,7 +415,7 @@ func (h *InventoryHandlerTestable) CreateAssemblyRecipe(c *gin.Context) {
 }
 
 func (h *InventoryHandlerTestable) ListAssemblyRecipes(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireInventoryBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -437,7 +437,7 @@ func (h *InventoryHandlerTestable) DisassembleAssembly(c *gin.Context) {
 }
 
 func (h *InventoryHandlerTestable) executeAssembly(c *gin.Context, reverse bool) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireInventoryBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -466,7 +466,7 @@ func (h *InventoryHandlerTestable) executeAssembly(c *gin.Context, reverse bool)
 }
 
 func (h *InventoryHandlerTestable) Timeline(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireInventoryBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -494,7 +494,7 @@ func (h *InventoryHandlerTestable) Timeline(c *gin.Context) {
 }
 
 func (h *InventoryHandlerTestable) Valuation(c *gin.Context) {
-	businessID, ok := requireBusinessScope(c)
+	businessID, ok := requireInventoryBusinessScope(c)
 	if !ok {
 		return
 	}
@@ -555,7 +555,7 @@ func (h *InventoryHandlerTestable) hasWarehouseManagementAccess(c *gin.Context, 
 	return false
 }
 
-func requireBusinessScope(c *gin.Context) (string, bool) {
+func requireInventoryBusinessScope(c *gin.Context) (string, bool) {
 	businessID, exists := c.Get("business_id")
 	if !exists || businessID == "" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "business scope required"})
@@ -564,7 +564,7 @@ func requireBusinessScope(c *gin.Context) (string, bool) {
 	return businessID.(string), true
 }
 
-func requireUserScope(c *gin.Context) (string, bool) {
+func requireInventoryUserScope(c *gin.Context) (string, bool) {
 	userID, exists := c.Get("user_id")
 	if !exists || userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "user scope required"})

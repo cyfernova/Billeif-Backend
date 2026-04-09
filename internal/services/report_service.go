@@ -44,7 +44,10 @@ type ReportExportInput struct {
 }
 
 type ReportPreferenceInput struct {
-	Columns []string `json:"columns" binding:"required,min=1"`
+	Columns               []string `json:"columns,omitempty"`
+	DefaultExportFormat   string   `json:"default_export_format,omitempty"`
+	DefaultShareMode      string   `json:"default_share_mode,omitempty"`
+	ShareRequiresPasscode *bool    `json:"share_requires_passcode,omitempty"`
 }
 
 type ReportShareInput struct {
@@ -65,9 +68,14 @@ type ReportShareAccessInput struct {
 }
 
 type ReportPreferenceResponse struct {
-	ReportKey        string             `json:"report_key"`
-	Columns          []string           `json:"columns"`
-	AvailableColumns []reporting.Column `json:"available_columns"`
+	ReportKey              string             `json:"report_key"`
+	Columns                []string           `json:"columns"`
+	DefaultExportFormat    string             `json:"default_export_format"`
+	DefaultShareMode       string             `json:"default_share_mode"`
+	ShareRequiresPasscode  bool               `json:"share_requires_passcode"`
+	AvailableColumns       []reporting.Column `json:"available_columns"`
+	AvailableExportFormats []string           `json:"available_export_formats"`
+	AvailableShareModes    []string           `json:"available_share_modes"`
 }
 
 type ReportExportResponse struct {
@@ -226,14 +234,22 @@ func (s *ReportService) GetPreference(ctx context.Context, businessID, userID, r
 	if !ok {
 		return nil, fmt.Errorf("report not found")
 	}
-	columns, err := s.resolveColumns(ctx, businessID, userID, def, nil, true)
-	if err != nil {
+	config := defaultReportPreferenceConfig(def)
+	if pref, err := s.repo.GetReportPreference(ctx, businessID, userID, reportKey); err == nil && pref != nil {
+		config = mergeReportPreferenceConfig(config, pref.Config)
+	} else if err != nil && !reportPreferenceMissing(err) {
 		return nil, err
 	}
+	columns := normalizeColumns(config.Columns, def.DefaultColumns)
 	return &ReportPreferenceResponse{
-		ReportKey:        reportKey,
-		Columns:          columns,
-		AvailableColumns: def.DefaultColumns,
+		ReportKey:              reportKey,
+		Columns:                columns,
+		DefaultExportFormat:    config.DefaultExportFormat,
+		DefaultShareMode:       config.DefaultShareMode,
+		ShareRequiresPasscode:  config.ShareRequiresPasscode,
+		AvailableColumns:       def.DefaultColumns,
+		AvailableExportFormats: []string{"json", "csv"},
+		AvailableShareModes:    []string{models.ReportShareModeSnapshot, models.ReportShareModeLive},
 	}, nil
 }
 
@@ -242,26 +258,96 @@ func (s *ReportService) SavePreference(ctx context.Context, businessID, userID, 
 	if !ok {
 		return nil, fmt.Errorf("report not found")
 	}
-	columns := normalizeColumns(input.Columns, def.DefaultColumns)
-	if len(columns) == 0 {
-		return nil, fmt.Errorf("at least one valid column is required")
+	config := defaultReportPreferenceConfig(def)
+	if pref, err := s.repo.GetReportPreference(ctx, businessID, userID, reportKey); err == nil && pref != nil {
+		config = mergeReportPreferenceConfig(config, pref.Config)
+	} else if err != nil && !reportPreferenceMissing(err) {
+		return nil, err
+	}
+	if input.Columns != nil {
+		columns := normalizeColumns(input.Columns, def.DefaultColumns)
+		if len(columns) == 0 {
+			return nil, fmt.Errorf("at least one valid column is required")
+		}
+		config.Columns = columns
+	}
+	if input.DefaultExportFormat != "" {
+		format := strings.ToLower(strings.TrimSpace(input.DefaultExportFormat))
+		if format != "json" && format != "csv" {
+			return nil, fmt.Errorf("unsupported export format")
+		}
+		config.DefaultExportFormat = format
+	}
+	if input.DefaultShareMode != "" {
+		mode := strings.ToLower(strings.TrimSpace(input.DefaultShareMode))
+		if mode != models.ReportShareModeSnapshot && mode != models.ReportShareModeLive {
+			return nil, fmt.Errorf("unsupported share mode")
+		}
+		config.DefaultShareMode = mode
+	}
+	if input.ShareRequiresPasscode != nil {
+		config.ShareRequiresPasscode = *input.ShareRequiresPasscode
+	}
+	if len(config.Columns) == 0 {
+		config.Columns = normalizeColumns(nil, def.DefaultColumns)
 	}
 	pref := &models.ReportPreference{
 		BusinessID: businessID,
 		UserID:     userID,
 		ReportKey:  reportKey,
-		Config: mustMarshalJSON(map[string]interface{}{
-			"columns": columns,
-		}, "{}"),
+		Config:     mustMarshalJSON(config, "{}"),
 	}
 	if err := s.repo.UpsertReportPreference(ctx, pref); err != nil {
 		return nil, err
 	}
 	return &ReportPreferenceResponse{
-		ReportKey:        reportKey,
-		Columns:          columns,
-		AvailableColumns: def.DefaultColumns,
+		ReportKey:              reportKey,
+		Columns:                config.Columns,
+		DefaultExportFormat:    config.DefaultExportFormat,
+		DefaultShareMode:       config.DefaultShareMode,
+		ShareRequiresPasscode:  config.ShareRequiresPasscode,
+		AvailableColumns:       def.DefaultColumns,
+		AvailableExportFormats: []string{"json", "csv"},
+		AvailableShareModes:    []string{models.ReportShareModeSnapshot, models.ReportShareModeLive},
 	}, nil
+}
+
+type reportPreferenceConfig struct {
+	Columns               []string `json:"columns,omitempty"`
+	DefaultExportFormat   string   `json:"default_export_format,omitempty"`
+	DefaultShareMode      string   `json:"default_share_mode,omitempty"`
+	ShareRequiresPasscode bool     `json:"share_requires_passcode,omitempty"`
+}
+
+func defaultReportPreferenceConfig(def reporting.Definition) reportPreferenceConfig {
+	return reportPreferenceConfig{
+		Columns:               normalizeColumns(nil, def.DefaultColumns),
+		DefaultExportFormat:   "json",
+		DefaultShareMode:      models.ReportShareModeSnapshot,
+		ShareRequiresPasscode: false,
+	}
+}
+
+func mergeReportPreferenceConfig(base reportPreferenceConfig, raw string) reportPreferenceConfig {
+	var stored reportPreferenceConfig
+	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
+		return base
+	}
+	if len(stored.Columns) > 0 {
+		base.Columns = stored.Columns
+	}
+	if strings.TrimSpace(stored.DefaultExportFormat) != "" {
+		base.DefaultExportFormat = strings.ToLower(strings.TrimSpace(stored.DefaultExportFormat))
+	}
+	if strings.TrimSpace(stored.DefaultShareMode) != "" {
+		base.DefaultShareMode = strings.ToLower(strings.TrimSpace(stored.DefaultShareMode))
+	}
+	base.ShareRequiresPasscode = stored.ShareRequiresPasscode
+	return base
+}
+
+func reportPreferenceMissing(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "not found")
 }
 
 func (s *ReportService) CreateShare(ctx context.Context, businessID, userID, reportKey string, input ReportShareInput) (*ReportShareCreateResponse, error) {

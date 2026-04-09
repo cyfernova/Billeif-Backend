@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"invoice-backend/internal/middleware"
 	"invoice-backend/pkg/logger"
 	"invoice-backend/pkg/websocket"
 
@@ -936,5 +937,44 @@ func TestWebSocketHandleConnection_EmptyUserID(t *testing.T) {
 
 	if resp["error"] != "invalid user_id" {
 		t.Fatalf("expected error 'invalid user_id', got %v", resp["error"])
+	}
+}
+
+func TestWebSocketManagementEndpoints_ForbiddenForNonAdmin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("role", c.GetHeader("X-Role"))
+		c.Next()
+	})
+	router.GET("/ws/stats", middleware.RequireRole("admin"), func(c *gin.Context) { c.Status(http.StatusOK) })
+	router.GET("/ws/status/:userID", middleware.RequireRole("admin"), func(c *gin.Context) { c.Status(http.StatusOK) })
+	router.GET("/ws/users", middleware.RequireRole("admin"), func(c *gin.Context) { c.Status(http.StatusOK) })
+	router.POST("/ws/notify/:userID", middleware.RequireRole("admin"), func(c *gin.Context) { c.Status(http.StatusOK) })
+	router.POST("/ws/notify-all", middleware.RequireRole("admin"), func(c *gin.Context) { c.Status(http.StatusOK) })
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{name: "stats", method: http.MethodGet, path: "/ws/stats"},
+		{name: "status", method: http.MethodGet, path: "/ws/status/user-1"},
+		{name: "users", method: http.MethodGet, path: "/ws/users"},
+		{name: "notify user", method: http.MethodPost, path: "/ws/notify/user-1"},
+		{name: "notify all", method: http.MethodPost, path: "/ws/notify-all"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.path, nil)
+			req.Header.Set("X-Role", "viewer")
+			res := httptest.NewRecorder()
+			router.ServeHTTP(res, req)
+			if res.Code != http.StatusForbidden {
+				t.Fatalf("expected 403, got %d", res.Code)
+			}
+		})
 	}
 }

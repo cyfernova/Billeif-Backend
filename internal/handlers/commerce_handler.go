@@ -775,6 +775,29 @@ func (h *CommerceHandler) CreateDriveUpload(c *gin.Context) {
 	c.JSON(http.StatusCreated, session)
 }
 
+func (h *CommerceHandler) UpdateDriveAsset(c *gin.Context) {
+	requestContextWithActor(c)
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	var input services.UpdateDriveAssetInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	asset, err := h.svc.UpdateDriveAsset(c.Request.Context(), businessID, c.Param("id"), input)
+	if err != nil {
+		status := http.StatusBadRequest
+		if isNotFoundErr(err) {
+			status = http.StatusNotFound
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, asset)
+}
+
 // DeleteDriveAsset godoc
 // @Summary Delete drive asset
 // @Description Deletes a specific drive asset

@@ -422,8 +422,9 @@ func (s *AuthService) PhoneRegister(ctx context.Context, input PhoneRegisterInpu
 	}
 
 	signUpResp, err := s.cognitoPhone.SignUp(ctx, &cognitoidentityprovider.SignUpInput{
-		ClientId:       aws.String(s.cfg.Cognito.Phone.ClientID),
-		Username:       aws.String(generatePhonePoolUsername()),
+		ClientId: aws.String(s.cfg.Cognito.Phone.ClientID),
+		// Keep username aligned with phone-based login/confirm calls.
+		Username:       aws.String(normalizedPhone),
 		UserAttributes: userAttributes,
 	})
 	if err != nil {
@@ -516,6 +517,16 @@ func (s *AuthService) PhoneLogin(ctx context.Context, input PhoneLoginInput) (*P
 	if err != nil {
 		return nil, err
 	}
+
+	// Surface a clear error before contacting Cognito when the number isn't registered locally.
+	if _, err := s.userRepo.GetByPhoneNumber(ctx, normalizedPhone); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "user not found") {
+			return nil, fmt.Errorf("phone number not registered")
+		}
+		s.log.Error("phone login precheck failed", "phone_number", maskPhoneNumber(normalizedPhone), "error", err)
+		return nil, fmt.Errorf(phoneAuthGenericFailure)
+	}
+
 	if err := s.enforcePhoneOTPCooldown(ctx, phoneLoginCooldownPurpose, normalizedPhone); err != nil {
 		return nil, err
 	}
@@ -530,7 +541,7 @@ func (s *AuthService) PhoneLogin(ctx context.Context, input PhoneLoginInput) (*P
 	})
 	if err != nil {
 		s.log.Warn("phone login failed", "phone_number", maskPhoneNumber(normalizedPhone), "error", err)
-		return nil, fmt.Errorf(phoneAuthGenericFailure)
+		return nil, classifyPhoneAuthError(err)
 	}
 	if result.Session == nil || *result.Session == "" {
 		return nil, fmt.Errorf("authentication failed: missing challenge session")
@@ -575,7 +586,7 @@ func (s *AuthService) PhoneVerifyLogin(ctx context.Context, input PhoneVerifyLog
 	})
 	if err != nil {
 		s.log.Warn("phone OTP verification failed", "phone_number", maskPhoneNumber(normalizedPhone), "error", err)
-		return nil, fmt.Errorf(phoneAuthGenericFailure)
+		return nil, classifyPhoneAuthError(err)
 	}
 
 	return loginOutputFromAuthResult(result.AuthenticationResult)
@@ -745,6 +756,60 @@ func phonePoolIssuer(region, userPoolID string) string {
 
 func generatePhonePoolUsername() string {
 	return "phone-" + uuid.NewString()
+}
+
+func classifyPhoneAuthError(err error) error {
+	var tooManyRequests *types.TooManyRequestsException
+	if errors.As(err, &tooManyRequests) {
+		return fmt.Errorf(phoneAuthRateLimitMessage)
+	}
+
+	var limitExceeded *types.LimitExceededException
+	if errors.As(err, &limitExceeded) {
+		return fmt.Errorf(phoneAuthRateLimitMessage)
+	}
+
+	var codeDeliveryFailure *types.CodeDeliveryFailureException
+	if errors.As(err, &codeDeliveryFailure) {
+		return fmt.Errorf("unable to deliver OTP SMS right now")
+	}
+
+	var invalidSMSRoleAccess *types.InvalidSmsRoleAccessPolicyException
+	if errors.As(err, &invalidSMSRoleAccess) {
+		return fmt.Errorf("SMS delivery is not configured correctly")
+	}
+
+	var invalidSMSRoleTrust *types.InvalidSmsRoleTrustRelationshipException
+	if errors.As(err, &invalidSMSRoleTrust) {
+		return fmt.Errorf("SMS delivery is not configured correctly")
+	}
+
+	var userNotFound *types.UserNotFoundException
+	if errors.As(err, &userNotFound) {
+		return fmt.Errorf("phone number not registered")
+	}
+
+	var userNotConfirmed *types.UserNotConfirmedException
+	if errors.As(err, &userNotConfirmed) {
+		return fmt.Errorf("phone number not verified")
+	}
+
+	var codeMismatch *types.CodeMismatchException
+	if errors.As(err, &codeMismatch) {
+		return fmt.Errorf("invalid OTP code")
+	}
+
+	var expiredCode *types.ExpiredCodeException
+	if errors.As(err, &expiredCode) {
+		return fmt.Errorf("OTP code expired, please request a new code")
+	}
+
+	var notAuthorized *types.NotAuthorizedException
+	if errors.As(err, &notAuthorized) {
+		return fmt.Errorf("verification session expired or code is invalid")
+	}
+
+	return fmt.Errorf(phoneAuthGenericFailure)
 }
 
 func maskPhoneNumber(phoneNumber string) string {

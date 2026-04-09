@@ -16,7 +16,9 @@
       "Bash(go env:*)",
       "Bash(go get:*)",
       "Bash(go mod:*)",
-      "Bash(go fmt:*)"
+      "Bash(go fmt:*)",
+      "Bash(gofmt -w internal/middleware/rate_limit.go internal/middleware/aws_waf.go internal/app/runtime.go)",
+      "Bash(go run:*)"
     ]
   }
 }

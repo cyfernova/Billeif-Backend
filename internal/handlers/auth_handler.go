@@ -582,8 +582,20 @@ func statusCodeForAuthError(err error, fallback int) int {
 		return http.StatusConflict
 	case strings.Contains(message, "aliasexistsexception"):
 		return http.StatusConflict
+	case strings.Contains(message, "phone number not registered"):
+		return http.StatusNotFound
+	case strings.Contains(message, "phone number not verified"):
+		return http.StatusForbidden
+	case strings.Contains(message, "invalid otp code"):
+		return http.StatusBadRequest
+	case strings.Contains(message, "otp code expired"):
+		return http.StatusBadRequest
+	case strings.Contains(message, "verification session expired"):
+		return http.StatusUnauthorized
 	case strings.Contains(message, "too many otp requests"):
 		return http.StatusTooManyRequests
+	case strings.Contains(message, "unable to deliver otp sms"):
+		return http.StatusServiceUnavailable
 	case strings.Contains(message, "not configured"):
 		return http.StatusServiceUnavailable
 	default:

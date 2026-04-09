@@ -81,6 +81,8 @@ type InvoiceSubscription struct {
 	UpdatedAt          time.Time                  `gorm:"autoUpdateTime" json:"updated_at"`
 	DeletedAt          gorm.DeletedAt             `gorm:"index" json:"-"`
 	Lines              []*InvoiceSubscriptionLine `gorm:"foreignKey:SubscriptionID" json:"lines,omitempty"`
+	RunCount           int64                      `gorm:"-" json:"run_count,omitempty"`
+	LastRunStatus      string                     `gorm:"-" json:"last_run_status,omitempty"`
 }
 
 func (InvoiceSubscription) TableName() string {
@@ -191,14 +193,20 @@ func (PriceListAssignment) TableName() string {
 }
 
 type PartyGroup struct {
-	ID          string              `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
-	BusinessID  string              `gorm:"not null;index" json:"business_id" validate:"required,uuid"`
-	Name        string              `gorm:"not null;size:160" json:"name"`
-	Description string              `gorm:"type:text" json:"description,omitempty"`
-	CreatedAt   time.Time           `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt   time.Time           `gorm:"autoUpdateTime" json:"updated_at"`
-	DeletedAt   gorm.DeletedAt      `gorm:"index" json:"-"`
-	Members     []*PartyGroupMember `gorm:"foreignKey:PartyGroupID" json:"members,omitempty"`
+	ID              string              `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
+	BusinessID      string              `gorm:"not null;index" json:"business_id" validate:"required,uuid"`
+	Name            string              `gorm:"not null;size:160" json:"name"`
+	Description     string              `gorm:"type:text" json:"description,omitempty"`
+	CreatedAt       time.Time           `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt       time.Time           `gorm:"autoUpdateTime" json:"updated_at"`
+	DeletedAt       gorm.DeletedAt      `gorm:"index" json:"-"`
+	Members         []*PartyGroupMember `gorm:"foreignKey:PartyGroupID" json:"members,omitempty"`
+	MemberCount     int                 `gorm:"-" json:"member_count,omitempty"`
+	InvoiceCount    int64               `gorm:"-" json:"invoice_count,omitempty"`
+	DocumentCount   int64               `gorm:"-" json:"document_count,omitempty"`
+	ReceivableTotal float64             `gorm:"-" json:"receivable_total,omitempty"`
+	PayableTotal    float64             `gorm:"-" json:"payable_total,omitempty"`
+	NetBalance      float64             `gorm:"-" json:"net_balance,omitempty"`
 }
 
 func (PartyGroup) TableName() string {
