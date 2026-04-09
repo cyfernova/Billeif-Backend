@@ -479,8 +479,8 @@ func TestTaxExportReport_Success(t *testing.T) {
 	})
 
 	reqBody := map[string]interface{}{
-		"period_start": now.Format(time.RFC3339),
-		"period_end":   now.Format(time.RFC3339),
+		"period_start":  now.Format(time.RFC3339),
+		"period_end":    now.Format(time.RFC3339),
 		"export_format": "json",
 	}
 	body, _ := json.Marshal(reqBody)

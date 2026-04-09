@@ -1,7 +1,6 @@
 package unit
 
 import (
-	
 	"bytes"
 	"context"
 	"encoding/json"
@@ -1232,9 +1231,9 @@ func TestCreateStorefrontCoupon_Success(t *testing.T) {
 	})
 
 	reqBody := map[string]interface{}{
-		"code":            "SAVE20",
-		"discount_type":   "percentage",
-		"discount_value":   20,
+		"code":           "SAVE20",
+		"discount_type":  "percentage",
+		"discount_value": 20,
 	}
 	body, _ := json.Marshal(reqBody)
 	req := httptest.NewRequest(http.MethodPost, "/storefronts/sf-123/coupons", bytes.NewBuffer(body))
@@ -1270,9 +1269,9 @@ func TestUpdateStorefrontCoupon_Success(t *testing.T) {
 	})
 
 	reqBody := map[string]interface{}{
-		"code":            "SAVE30",
-		"discount_type":   "fixed",
-		"discount_value":   30,
+		"code":           "SAVE30",
+		"discount_type":  "fixed",
+		"discount_value": 30,
 	}
 	body, _ := json.Marshal(reqBody)
 	req := httptest.NewRequest(http.MethodPut, "/storefronts/sf-123/coupons/cp-1", bytes.NewBuffer(body))

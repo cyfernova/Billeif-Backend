@@ -56,6 +56,7 @@ type Container struct {
 	AgentConfig         *AgentConfigService
 	A2ABargaining       *A2ABargainingService
 	WebSocketConnection *WebSocketConnectionService
+	AWS                 *awsclients.Config
 }
 
 func NewContainer(
@@ -182,5 +183,6 @@ func NewContainer(
 		AgentConfig:         agentConfigSvc,
 		A2ABargaining:       a2aBargainingSvc,
 		WebSocketConnection: websocketConnectionSvc,
+		AWS:                 aws,
 	}
 }

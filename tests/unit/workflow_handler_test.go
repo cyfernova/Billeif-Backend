@@ -402,7 +402,7 @@ func TestWorkflowCreate_Success(t *testing.T) {
 	})
 
 	reqBody := map[string]interface{}{
-		"name":   "Test Workflow",
+		"name":    "Test Workflow",
 		"trigger": map[string]interface{}{"type": "time"},
 		"action":  map[string]interface{}{"type": "notify"},
 	}
@@ -451,7 +451,7 @@ func TestWorkflowCreate_MissingUser(t *testing.T) {
 	})
 
 	reqBody := map[string]interface{}{
-		"name":   "Test Workflow",
+		"name":    "Test Workflow",
 		"trigger": map[string]interface{}{"type": "time"},
 		"action":  map[string]interface{}{"type": "notify"},
 	}
@@ -480,7 +480,7 @@ func TestWorkflowCreate_ServiceError(t *testing.T) {
 	})
 
 	reqBody := map[string]interface{}{
-		"name":   "Test Workflow",
+		"name":    "Test Workflow",
 		"trigger": map[string]interface{}{"type": "time"},
 		"action":  map[string]interface{}{"type": "notify"},
 	}
@@ -507,10 +507,10 @@ func TestWorkflowGet_Success(t *testing.T) {
 	handler := NewWorkflowHandlerTestable(mockSvc, log)
 
 	workflow := &services.Workflow{
-		ID:       "workflow-123",
-		Name:     "Test Workflow",
-		UserID:   "user-123",
-		Status:   services.WorkflowStatusActive,
+		ID:        "workflow-123",
+		Name:      "Test Workflow",
+		UserID:    "user-123",
+		Status:    services.WorkflowStatusActive,
 		IsEnabled: true,
 	}
 
@@ -678,10 +678,10 @@ func TestWorkflowUpdate_Success(t *testing.T) {
 	handler := NewWorkflowHandlerTestable(mockSvc, log)
 
 	existingWorkflow := &services.Workflow{
-		ID:       "workflow-123",
-		Name:     "Old Name",
-		UserID:   "user-123",
-		Status:   services.WorkflowStatusActive,
+		ID:        "workflow-123",
+		Name:      "Old Name",
+		UserID:    "user-123",
+		Status:    services.WorkflowStatusActive,
 		IsEnabled: true,
 	}
 
@@ -894,10 +894,10 @@ func TestWorkflowPause_Success(t *testing.T) {
 	handler := NewWorkflowHandlerTestable(mockSvc, log)
 
 	workflow := &services.Workflow{
-		ID:       "workflow-123",
-		Name:     "Test Workflow",
-		UserID:   "user-123",
-		Status:   services.WorkflowStatusActive,
+		ID:        "workflow-123",
+		Name:      "Test Workflow",
+		UserID:    "user-123",
+		Status:    services.WorkflowStatusActive,
 		IsEnabled: true,
 	}
 
@@ -985,10 +985,10 @@ func TestWorkflowResume_Success(t *testing.T) {
 	handler := NewWorkflowHandlerTestable(mockSvc, log)
 
 	workflow := &services.Workflow{
-		ID:       "workflow-123",
-		Name:     "Test Workflow",
-		UserID:   "user-123",
-		Status:   services.WorkflowStatusPaused,
+		ID:        "workflow-123",
+		Name:      "Test Workflow",
+		UserID:    "user-123",
+		Status:    services.WorkflowStatusPaused,
 		IsEnabled: true,
 	}
 
@@ -1076,10 +1076,10 @@ func TestWorkflowRun_Success(t *testing.T) {
 	handler := NewWorkflowHandlerTestable(mockSvc, log)
 
 	workflow := &services.Workflow{
-		ID:       "workflow-123",
-		Name:     "Test Workflow",
-		UserID:   "user-123",
-		Status:   services.WorkflowStatusActive,
+		ID:        "workflow-123",
+		Name:      "Test Workflow",
+		UserID:    "user-123",
+		Status:    services.WorkflowStatusActive,
 		IsEnabled: true,
 	}
 
@@ -1172,10 +1172,10 @@ func TestWorkflowRun_ServiceError(t *testing.T) {
 	handler := NewWorkflowHandlerTestable(mockSvc, log)
 
 	workflow := &services.Workflow{
-		ID:       "workflow-123",
-		Name:     "Test Workflow",
-		UserID:   "user-123",
-		Status:   services.WorkflowStatusActive,
+		ID:        "workflow-123",
+		Name:      "Test Workflow",
+		UserID:    "user-123",
+		Status:    services.WorkflowStatusActive,
 		IsEnabled: true,
 	}
 
@@ -1209,10 +1209,10 @@ func TestWorkflowRuns_Success(t *testing.T) {
 	handler := NewWorkflowHandlerTestable(mockSvc, log)
 
 	workflow := &services.Workflow{
-		ID:       "workflow-123",
-		Name:     "Test Workflow",
-		UserID:   "user-123",
-		Status:   services.WorkflowStatusActive,
+		ID:        "workflow-123",
+		Name:      "Test Workflow",
+		UserID:    "user-123",
+		Status:    services.WorkflowStatusActive,
 		IsEnabled: true,
 	}
 
@@ -1302,10 +1302,10 @@ func TestWorkflowRuns_ServiceError(t *testing.T) {
 	handler := NewWorkflowHandlerTestable(mockSvc, log)
 
 	workflow := &services.Workflow{
-		ID:       "workflow-123",
-		Name:     "Test Workflow",
-		UserID:   "user-123",
-		Status:   services.WorkflowStatusActive,
+		ID:        "workflow-123",
+		Name:      "Test Workflow",
+		UserID:    "user-123",
+		Status:    services.WorkflowStatusActive,
 		IsEnabled: true,
 	}
 

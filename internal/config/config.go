@@ -83,11 +83,20 @@ type RedisConfig struct {
 }
 
 type AWSConfig struct {
-	Region       string `mapstructure:"REGION"`
-	AccessKey    string `mapstructure:"ACCESS_KEY_ID"`
-	SecretKey    string `mapstructure:"SECRET_ACCESS_KEY"`
-	SessionToken string `mapstructure:"SESSION_TOKEN"`
-	Endpoint     string `mapstructure:"ENDPOINT"`
+	Region       string    `mapstructure:"REGION"`
+	AccessKey    string    `mapstructure:"ACCESS_KEY_ID"`
+	SecretKey    string    `mapstructure:"SECRET_ACCESS_KEY"`
+	SessionToken string    `mapstructure:"SESSION_TOKEN"`
+	Endpoint     string    `mapstructure:"ENDPOINT"`
+	WAF          WAFConfig `mapstructure:"WAF"`
+}
+
+type WAFConfig struct {
+	Enabled          bool   `mapstructure:"ENABLED"`
+	WebACLArn        string `mapstructure:"WEB_ACL_ARN"`
+	RateLimitHeader  string `mapstructure:"RATE_LIMIT_HEADER"`
+	BlockedResponse  string `mapstructure:"BLOCKED_RESPONSE"`
+	HeaderMatchCount int    `mapstructure:"HEADER_MATCH_COUNT"`
 }
 
 type SSMConfig struct {
@@ -258,6 +267,11 @@ func Load() (*Config, error) {
 	_ = viper.BindEnv("AWS.SECRET_ACCESS_KEY", "AWS_SECRET_ACCESS_KEY")
 	_ = viper.BindEnv("AWS.SESSION_TOKEN", "AWS_SESSION_TOKEN")
 	_ = viper.BindEnv("AWS.ENDPOINT", "AWS_ENDPOINT")
+	_ = viper.BindEnv("AWS.WAF.ENABLED", "WAF_ENABLED")
+	_ = viper.BindEnv("AWS.WAF.WEB_ACL_ARN", "WAF_WEB_ACL_ARN")
+	_ = viper.BindEnv("AWS.WAF.RATE_LIMIT_HEADER", "WAF_RATE_LIMIT_HEADER")
+	_ = viper.BindEnv("AWS.WAF.BLOCKED_RESPONSE", "WAF_BLOCKED_RESPONSE")
+	_ = viper.BindEnv("AWS.WAF.HEADER_MATCH_COUNT", "WAF_HEADER_MATCH_COUNT")
 	_ = viper.BindEnv("SSM.DATABASE_HOST_PARAM", "DATABASE_HOST_SSM_PARAM")
 	_ = viper.BindEnv("SSM.DATABASE_USER_PARAM", "DATABASE_USER_SSM_PARAM")
 	_ = viper.BindEnv("SSM.DATABASE_PASSWORD_PARAM", "DATABASE_PASSWORD_SSM_PARAM")
@@ -465,6 +479,12 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.GSTLookup.Timeout == 0 {
 		cfg.GSTLookup.Timeout = 15
+	}
+	if cfg.AWS.WAF.HeaderMatchCount == 0 {
+		cfg.AWS.WAF.HeaderMatchCount = 100
+	}
+	if cfg.AWS.WAF.BlockedResponse == "" {
+		cfg.AWS.WAF.BlockedResponse = "rate limit exceeded"
 	}
 }
 

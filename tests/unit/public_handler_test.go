@@ -120,7 +120,7 @@ func (h *PublicReportHandlerTestable) PublicAccess(c *gin.Context) {
 
 type PublicAgentDiscoveryHandlerTestable struct {
 	discovery *MockAgentDiscoveryServicePublic
-	log      *logger.Logger
+	log       *logger.Logger
 }
 
 func NewPublicAgentDiscoveryHandlerTestable(discovery *MockAgentDiscoveryServicePublic, log *logger.Logger) *PublicAgentDiscoveryHandlerTestable {
@@ -157,8 +157,8 @@ func TestPublicReportMetadata_Success(t *testing.T) {
 
 	now := time.Now()
 	metadata := &services.PublicReportShareMetadata{
-		Title:             "Monthly Sales Report",
-		ReportKey:         "sales_monthly",
+		Title:            "Monthly Sales Report",
+		ReportKey:        "sales_monthly",
 		ReportName:       "Monthly Sales",
 		ShareMode:        "view",
 		RequiresPasscode: false,
@@ -242,8 +242,8 @@ func TestPublicReportAccess_Success(t *testing.T) {
 	handler := NewPublicReportHandlerTestable(mockSvc, log)
 
 	metadata := &services.PublicReportShareMetadata{
-		Title:   "Monthly Sales Report",
-		Status:  "active",
+		Title:  "Monthly Sales Report",
+		Status: "active",
 	}
 	response := &services.PublicReportShareAccessResponse{
 		Metadata: *metadata,

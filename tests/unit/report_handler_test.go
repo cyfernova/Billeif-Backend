@@ -553,8 +553,8 @@ func TestReportDashboard_Success(t *testing.T) {
 	handler := NewReportHandlerTestable(mockSvc, log)
 
 	data := map[string]interface{}{
-		"total_sales":   10000.0,
-		"total_orders":  float64(50),
+		"total_sales":  10000.0,
+		"total_orders": float64(50),
 	}
 
 	input := services.ReportQueryInput{Page: 1, Limit: 20}
@@ -615,7 +615,7 @@ func TestReportGetPreference_Success(t *testing.T) {
 
 	response := &services.ReportPreferenceResponse{
 		ReportKey: "sales",
-		Columns:  []string{"date", "amount"},
+		Columns:   []string{"date", "amount"},
 	}
 
 	mockSvc.On("GetPreference", mock.Anything, "biz-123", "user-123", "sales").Return(response, nil)
@@ -672,7 +672,7 @@ func TestReportSavePreference_Success(t *testing.T) {
 
 	response := &services.ReportPreferenceResponse{
 		ReportKey: "sales",
-		Columns:  []string{"date", "amount", "customer"},
+		Columns:   []string{"date", "amount", "customer"},
 	}
 
 	input := services.ReportPreferenceInput{
@@ -741,13 +741,13 @@ func TestReportCreateShare_Success(t *testing.T) {
 	now := time.Now()
 	response := &services.ReportShareCreateResponse{
 		Share: services.ReportShareHistoryItem{
-			ID:         "share-123",
-			ReportKey:  "sales",
-			Title:      "Monthly Sales",
-			ShareMode:  "view",
-			Status:     "active",
-			ExpiresAt:  &now,
-			CreatedAt:  now,
+			ID:        "share-123",
+			ReportKey: "sales",
+			Title:     "Monthly Sales",
+			ShareMode: "view",
+			Status:    "active",
+			ExpiresAt: &now,
+			CreatedAt: now,
 		},
 		Token:       "token-abc123",
 		MetadataURL: "/public/report-shares/token-abc123/metadata",
@@ -755,8 +755,8 @@ func TestReportCreateShare_Success(t *testing.T) {
 	}
 
 	input := services.ReportShareInput{
-		Title: "Monthly Sales",
-		Mode:  "view",
+		Title:   "Monthly Sales",
+		Mode:    "view",
 		Columns: []string{"date", "amount"},
 	}
 

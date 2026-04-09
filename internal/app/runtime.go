@@ -59,6 +59,7 @@ type Runtime struct {
 	H      *handlers.Handler
 	Router *gin.Engine
 	Worker *workers.Worker
+	WAF    *middleware.WAFRateLimiter
 }
 
 func Initialize(ctx context.Context, opts InitializeOptions) (*Runtime, error) {
@@ -121,6 +122,12 @@ func Initialize(ctx context.Context, opts InitializeOptions) (*Runtime, error) {
 		Svcs:   svcs,
 		H:      h,
 		Router: router,
+	}
+
+	// Initialize WAF rate limiter if enabled
+	if cfg.AWS.WAF.Enabled && awsClients.WAF != nil {
+		rt.WAF = middleware.NewWAFRateLimiter(awsClients.WAF, cfg.AWS.WAF)
+		log.Info("AWS WAF rate limiting enabled", "web_acl_arn", cfg.AWS.WAF.WebACLArn)
 	}
 
 	if opts.EnableWorker {
@@ -298,22 +305,30 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 		loginRL := middleware.AuthRateLimit(5, time.Minute)
 		sensitiveRL := middleware.AuthRateLimit(3, time.Hour)
 
+		// WAF rate limiting (falls back to in-memory if WAF disabled)
+		wafLoginRL := middleware.WAFRateLimit(svcs.AWS, cfg.AWS.WAF, time.Minute, 5)
+		wafSensitiveRL := middleware.WAFRateLimit(svcs.AWS, cfg.AWS.WAF, time.Hour, 3)
+		wafCommonRL := middleware.WAFCommonRateLimit(svcs.AWS, cfg.AWS.WAF)
+		wafBulkRL := middleware.WAFBulkRateLimit(svcs.AWS, cfg.AWS.WAF)
+		wafLLMRL := middleware.WAFLLMRateLimit(svcs.AWS, cfg.AWS.WAF)
+		wafWSRL := middleware.WAFWebSocketRateLimit(svcs.AWS, cfg.AWS.WAF)
+
 		auth := api.Group("/auth")
 		{
-			auth.POST("/register", sensitiveRL, h.Auth.Register)
-			auth.POST("/login", loginRL, h.Auth.Login)
+			auth.POST("/register", sensitiveRL, wafSensitiveRL, h.Auth.Register)
+			auth.POST("/login", loginRL, wafLoginRL, h.Auth.Login)
 			auth.POST("/logout", h.Auth.Logout)
 			auth.POST("/refresh", h.Auth.Refresh)
-			auth.POST("/phone/register", sensitiveRL, h.Auth.PhoneRegister)
-			auth.POST("/phone/confirm", sensitiveRL, h.Auth.PhoneConfirm)
-			auth.POST("/phone/resend-confirmation", sensitiveRL, h.Auth.PhoneResendConfirmation)
-			auth.POST("/phone/login", loginRL, h.Auth.PhoneLogin)
-			auth.POST("/phone/verify-login", sensitiveRL, h.Auth.PhoneVerifyLogin)
+			auth.POST("/phone/register", sensitiveRL, wafSensitiveRL, h.Auth.PhoneRegister)
+			auth.POST("/phone/confirm", sensitiveRL, wafSensitiveRL, h.Auth.PhoneConfirm)
+			auth.POST("/phone/resend-confirmation", sensitiveRL, wafSensitiveRL, h.Auth.PhoneResendConfirmation)
+			auth.POST("/phone/login", loginRL, wafLoginRL, h.Auth.PhoneLogin)
+			auth.POST("/phone/verify-login", sensitiveRL, wafSensitiveRL, h.Auth.PhoneVerifyLogin)
 			auth.POST("/phone/refresh", h.Auth.PhoneRefresh)
-			auth.POST("/forgot-password", sensitiveRL, h.Auth.ForgotPassword)
-			auth.POST("/reset-password", sensitiveRL, h.Auth.ResetPassword)
+			auth.POST("/forgot-password", sensitiveRL, wafSensitiveRL, h.Auth.ForgotPassword)
+			auth.POST("/reset-password", sensitiveRL, wafSensitiveRL, h.Auth.ResetPassword)
 			auth.POST("/verify-email", h.Auth.VerifyEmail)
-			auth.POST("/resend-verification", sensitiveRL, h.Auth.ResendVerification)
+			auth.POST("/resend-verification", sensitiveRL, wafSensitiveRL, h.Auth.ResendVerification)
 			// POST /auth/google needs to be protected because we need to validate the ID token
 			// However, typically "login" endpoints are public.
 			// But here, the flow is: Frontend gets token -> Backend validates token -> Backend syncs user.
@@ -571,11 +586,11 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 			imports := protected.Group("/imports")
 			{
-				imports.POST("/customers", h.BillingOps.CreateCustomerImportJob)
-				imports.POST("/vendors", h.BillingOps.CreateVendorImportJob)
-				imports.POST("/products", h.BillingOps.CreateProductImportJob)
-				imports.POST("/invoices", h.BillingOps.CreateInvoiceImportJob)
-				imports.POST("/documents", h.BillingOps.CreateDocumentImportJob)
+				imports.POST("/customers", wafBulkRL, h.BillingOps.CreateCustomerImportJob)
+				imports.POST("/vendors", wafBulkRL, h.BillingOps.CreateVendorImportJob)
+				imports.POST("/products", wafBulkRL, h.BillingOps.CreateProductImportJob)
+				imports.POST("/invoices", wafBulkRL, h.BillingOps.CreateInvoiceImportJob)
+				imports.POST("/documents", wafBulkRL, h.BillingOps.CreateDocumentImportJob)
 			}
 
 			invoiceSubscriptions := protected.Group("/invoice-subscriptions")
@@ -726,29 +741,29 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 			agents := protected.Group("/agents")
 			{
-				agents.POST("", middleware.AgentCreationRateLimit(), h.Agent.CreateAgent)
+				agents.POST("", middleware.AgentCreationRateLimit(), wafBulkRL, h.Agent.CreateAgent)
 				agents.GET("", h.Agent.ListAgents)
 				agents.GET("/:id", h.Agent.GetAgent)
 				agents.PUT("/:id", h.Agent.UpdateAgent)
 				agents.DELETE("/:id", h.Agent.DeleteAgent)
-				agents.POST("/:id/start", h.Procurement.StartAgent)
-				agents.POST("/:id/procurement-runs", h.Procurement.CreateProcurementRun)
+				agents.POST("/:id/start", wafBulkRL, h.Procurement.StartAgent)
+				agents.POST("/:id/procurement-runs", wafBulkRL, h.Procurement.CreateProcurementRun)
 				agents.GET("/:id/procurement-runs/:run_id", h.Procurement.GetProcurementRun)
 				agents.POST("/:id/procurement-runs/:run_id/cancel", h.Procurement.CancelProcurementRun)
 				agents.GET("/:id/capabilities", h.Agent.GetAgentCapabilities)
-				agents.POST("/:id/capabilities", h.Agent.AddCapability)
+				agents.POST("/:id/capabilities", wafBulkRL, h.Agent.AddCapability)
 				agents.DELETE("/:id/capabilities/:capability_id", h.Agent.RemoveCapability)
 				agents.GET("/active", h.Agent.GetActiveAgents)
 				agents.GET("/type/:type", h.Agent.GetAgentByType)
 				agents.POST("/validate-permissions/:id", h.Agent.ValidateAgentPermissions)
-				agents.POST("/ideate", h.ShoppingAgent.GenerateIdeas)
+				agents.POST("/ideate", wafLLMRL, h.ShoppingAgent.GenerateIdeas)
 
 				shopping := agents.Group("/shopping")
 				{
-					shopping.GET("/search", h.ShoppingAgent.SearchProducts)
+					shopping.GET("/search", wafCommonRL, h.ShoppingAgent.SearchProducts)
 					shopping.POST("/cart", middleware.ShoppingIntentRateLimit(), h.ShoppingAgent.CreateCart)
 					shopping.POST("/cart/add", middleware.ShoppingIntentRateLimit(), h.ShoppingAgent.AddToCart)
-					shopping.POST("/checkout", middleware.PaymentRateLimit(), h.ShoppingAgent.Checkout)
+					shopping.POST("/checkout", middleware.PaymentRateLimit(), wafBulkRL, h.ShoppingAgent.Checkout)
 					shopping.GET("/cart/:id", h.ShoppingAgent.GetCart)
 					shopping.GET("/carts", h.ShoppingAgent.ListCarts)
 					shopping.GET("/orders", h.ShoppingAgent.ListOrders)
@@ -792,16 +807,16 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 			marketplace := protected.Group("/marketplace")
 			{
-				marketplace.GET("/products", h.Marketplace.ListProducts)
-				marketplace.GET("/products/search", h.Marketplace.SearchProducts)
+				marketplace.GET("/products", wafCommonRL, h.Marketplace.ListProducts)
+				marketplace.GET("/products/search", wafCommonRL, h.Marketplace.SearchProducts)
 				marketplace.GET("/products/:id", h.Marketplace.GetProduct)
 				marketplace.GET("/products/available", h.Marketplace.GetAvailableProducts)
 				marketplace.GET("/merchant/products", h.Marketplace.GetMerchantProducts)
-				marketplace.POST("/merchant/products", h.Marketplace.AddProduct)
+				marketplace.POST("/merchant/products", wafBulkRL, h.Marketplace.AddProduct)
 				marketplace.PUT("/merchant/products/:id", h.Marketplace.UpdateProduct)
 				marketplace.GET("/orders", h.Marketplace.GetUserOrders)
 				marketplace.GET("/orders/status/:status", h.Marketplace.GetOrdersByStatus)
-				marketplace.GET("/stats", h.Marketplace.GetMarketplaceStats)
+				marketplace.GET("/stats", wafCommonRL, h.Marketplace.GetMarketplaceStats)
 			}
 		}
 
@@ -834,8 +849,8 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 		// LLM endpoints
 		llm := protected.Group("/llm")
 		{
-			llm.POST("/chat", h.LLM.Chat)
-			llm.POST("/agent-assist", h.LLM.AgentAssist)
+			llm.POST("/chat", wafLLMRL, h.LLM.Chat)
+			llm.POST("/agent-assist", wafLLMRL, h.LLM.AgentAssist)
 		}
 
 		// Workflow automation endpoints
@@ -867,17 +882,17 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 		ws := protected.Group("/ws")
 		{
 			// WebSocket connection
-			ws.GET("", h.WebSocket.HandleConnection)
+			ws.GET("", wafWSRL, h.WebSocket.HandleConnection)
 
 			// WebSocket management endpoints
-			ws.GET("/stats", h.WebSocket.GetStats)
-			ws.GET("/status/:userID", h.WebSocket.GetConnectionStatus)
-			ws.GET("/users", h.WebSocket.GetConnectedUsers)
+			ws.GET("/stats", wafCommonRL, h.WebSocket.GetStats)
+			ws.GET("/status/:userID", wafCommonRL, h.WebSocket.GetConnectionStatus)
+			ws.GET("/users", wafCommonRL, h.WebSocket.GetConnectedUsers)
 			ws.GET("/health", h.WebSocket.HealthCheck)
 
 			// Notification endpoints (for sending notifications via REST)
-			ws.POST("/notify/:userID", h.WebSocket.SendNotification)
-			ws.POST("/notify-all", h.WebSocket.SendNotificationToAll)
+			ws.POST("/notify/:userID", wafBulkRL, h.WebSocket.SendNotification)
+			ws.POST("/notify-all", wafBulkRL, h.WebSocket.SendNotificationToAll)
 		}
 
 		// Bargaining endpoints

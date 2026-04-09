@@ -59,9 +59,9 @@ func (m *MockWebSocketConnectionSvc) BroadcastToAll(ctx context.Context, msg *we
 // =============================================================================
 
 type WebSocketHandlerTestable struct {
-	hub    *websocket.Hub
-	svc    *MockWebSocketConnectionSvc
-	log    *logger.Logger
+	hub *websocket.Hub
+	svc *MockWebSocketConnectionSvc
+	log *logger.Logger
 }
 
 func NewWebSocketHandlerTestable(hub *websocket.Hub, svc *MockWebSocketConnectionSvc, log *logger.Logger) *WebSocketHandlerTestable {

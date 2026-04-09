@@ -258,9 +258,9 @@ func TestShipmentUpsertByDocument_Success(t *testing.T) {
 	})
 
 	reqBody := map[string]interface{}{
-		"provider":       "Delhivery",
-		"package_count":  1,
-		"weight_kg":      0.5,
+		"provider":      "Delhivery",
+		"package_count": 1,
+		"weight_kg":     0.5,
 	}
 	body, _ := json.Marshal(reqBody)
 	req := httptest.NewRequest(http.MethodPost, "/shipments/documents/doc-123", bytes.NewBuffer(body))
@@ -386,7 +386,7 @@ func TestShipmentGetLabelByDocument_Success(t *testing.T) {
 	label := &models.ShippingLabel{
 		ID:              "label-123",
 		BusinessID:      "biz-123",
-		DocumentID:     "doc-123",
+		DocumentID:      "doc-123",
 		LabelFormat:     "PDF",
 		ProviderLabelID: "DEL123456",
 	}

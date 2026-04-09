@@ -13,7 +13,10 @@
       "Bash(make swagger:*)",
       "Bash(sed 's/[\"\"\"\"\\\\047]//g')",
       "Bash(grep -h \"router\\\\.\\\\\\(GET\\\\|POST\\\\|PUT\\\\|DELETE\\\\|PATCH\\\\\\)\\(\" tests/unit/*_test.go)",
-      "Bash(go env:*)"
+      "Bash(go env:*)",
+      "Bash(go get:*)",
+      "Bash(go mod:*)",
+      "Bash(go fmt:*)"
     ]
   }
 }
