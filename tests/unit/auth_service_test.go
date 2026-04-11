@@ -142,6 +142,14 @@ func (m *MockCognitoIdentityProviderAPI) ChangePassword(ctx context.Context, par
 	return args.Get(0).(*cognitoidentityprovider.ChangePasswordOutput), args.Error(1)
 }
 
+func (m *MockCognitoIdentityProviderAPI) GetUser(ctx context.Context, params *cognitoidentityprovider.GetUserInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.GetUserOutput, error) {
+	args := m.Called(ctx, params, optFns)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*cognitoidentityprovider.GetUserOutput), args.Error(1)
+}
+
 func (m *MockCognitoIdentityProviderAPI) RespondToAuthChallenge(ctx context.Context, params *cognitoidentityprovider.RespondToAuthChallengeInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.RespondToAuthChallengeOutput, error) {
 	args := m.Called(ctx, params, optFns)
 	if args.Get(0) == nil {
@@ -240,6 +248,16 @@ func TestAuthService_Login(t *testing.T) {
 			TokenType:    aws.String("Bearer"),
 		},
 	}, nil)
+	mockCognito.On("GetUser", ctx, mock.AnythingOfType("*cognitoidentityprovider.GetUserInput"), mock.Anything).Return(&cognitoidentityprovider.GetUserOutput{
+		UserAttributes: []types.AttributeType{
+			{Name: aws.String("sub"), Value: aws.String("cognito-sub-123")},
+			{Name: aws.String("email"), Value: aws.String("test@example.com")},
+			{Name: aws.String("name"), Value: aws.String("Test User")},
+		},
+	}, nil)
+	mockUserRepo.On("GetByCognitoID", ctx, "cognito-sub-123").Return(nil, errors.New("user not found"))
+	mockUserRepo.On("GetByEmail", ctx, "test@example.com").Return(nil, errors.New("user not found"))
+	mockUserRepo.On("Create", ctx, mock.AnythingOfType("*models.User")).Return(nil)
 
 	result, err := svc.Login(ctx, input)
 

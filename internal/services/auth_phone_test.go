@@ -97,6 +97,10 @@ func (m *mockCognitoClient) GlobalSignOut(ctx context.Context, params *cognitoid
 	return &cognitoidentityprovider.GlobalSignOutOutput{}, nil
 }
 
+func (m *mockCognitoClient) GetUser(ctx context.Context, params *cognitoidentityprovider.GetUserInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.GetUserOutput, error) {
+	return &cognitoidentityprovider.GetUserOutput{}, nil
+}
+
 func (m *mockCognitoClient) InitiateAuth(ctx context.Context, params *cognitoidentityprovider.InitiateAuthInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.InitiateAuthOutput, error) {
 	if m.initiateAuth != nil {
 		return m.initiateAuth(ctx, params)

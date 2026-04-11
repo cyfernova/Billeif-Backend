@@ -21,10 +21,10 @@ import (
 
 func makeWAFConfig(enabled bool) config.WAFConfig {
 	return config.WAFConfig{
-		Enabled:         enabled,
-		WebACLArn:       "",
-		RateLimitHeader: "",
-		BlockedResponse: "rate limit exceeded. please try again.",
+		Enabled:          enabled,
+		WebACLArn:        "",
+		RateLimitHeader:  "",
+		BlockedResponse:  "rate limit exceeded. please try again.",
 		HeaderMatchCount: 0,
 	}
 }
@@ -400,7 +400,6 @@ func TestWAFWithUserScope_DifferentUsersIndependent(t *testing.T) {
 	res2 := makeReq("user-B", "127.0.0.1:8080")
 	assert.Equal(t, http.StatusOK, res2.Code, "User B should not be affected by User A's limit")
 }
-
 
 func TestWAFWithUserScope_Unauthenticated_FallsBackToIP(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -802,8 +801,8 @@ func TestWAFWithUserScope_HeaderOverridesUserID(t *testing.T) {
 
 func TestNewWIPRateLimiter_WAFEnabled(t *testing.T) {
 	cfg := config.WAFConfig{
-		Enabled:    true,
-		WebACLArn:  "arn:aws:wafv2:us-east-1:123:regional/webacl/test/abc",
+		Enabled:   true,
+		WebACLArn: "arn:aws:wafv2:us-east-1:123:regional/webacl/test/abc",
 	}
 	// With nil WAF client and WebACLArn set, wafEnabled becomes false due to nil client check
 	limiter := middleware.NewWIPRateLimiter(nil, cfg, time.Minute, 10)

@@ -48,6 +48,7 @@ type cognitoIdentityProviderAPI interface {
 	ConfirmSignUp(ctx context.Context, params *cognitoidentityprovider.ConfirmSignUpInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.ConfirmSignUpOutput, error)
 	ForgotPassword(ctx context.Context, params *cognitoidentityprovider.ForgotPasswordInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.ForgotPasswordOutput, error)
 	GlobalSignOut(ctx context.Context, params *cognitoidentityprovider.GlobalSignOutInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.GlobalSignOutOutput, error)
+	GetUser(ctx context.Context, params *cognitoidentityprovider.GetUserInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.GetUserOutput, error)
 	InitiateAuth(ctx context.Context, params *cognitoidentityprovider.InitiateAuthInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.InitiateAuthOutput, error)
 	ResendConfirmationCode(ctx context.Context, params *cognitoidentityprovider.ResendConfirmationCodeInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.ResendConfirmationCodeOutput, error)
 	RespondToAuthChallenge(ctx context.Context, params *cognitoidentityprovider.RespondToAuthChallengeInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.RespondToAuthChallengeOutput, error)
@@ -162,6 +163,14 @@ func (s *AuthService) Login(ctx context.Context, input LoginInput) (*LoginOutput
 	if err != nil {
 		s.log.Warn("login failed", "email", input.Email, "error", err)
 		return nil, fmt.Errorf(phoneAuthGenericFailure)
+	}
+
+	// Ensure local user record exists (handles users created outside the app)
+	if result.AuthenticationResult != nil && result.AuthenticationResult.AccessToken != nil {
+		if err := s.ensureUserFromCognito(ctx, aws.ToString(result.AuthenticationResult.AccessToken)); err != nil {
+			s.log.Warn("failed to ensure user exists", "error", err)
+			// Don't block login if user sync fails — tokens are still valid
+		}
 	}
 
 	return loginOutputFromAuthResult(result.AuthenticationResult)
@@ -378,6 +387,59 @@ func (s *AuthService) SyncGoogleUser(ctx context.Context, input SyncGoogleUserIn
 	}
 
 	return newUser, nil
+}
+
+// ensureUserFromCognito fetches user attributes from Cognito using the access token,
+// then finds or creates the local user record. This handles users who exist in Cognito
+// but have no local record (e.g., users created via AWS console, Google OAuth, etc.).
+func (s *AuthService) ensureUserFromCognito(ctx context.Context, accessToken string) error {
+	userResp, err := s.cognito.GetUser(ctx, &cognitoidentityprovider.GetUserInput{
+		AccessToken: aws.String(accessToken),
+	})
+	if err != nil {
+		s.log.Warn("failed to get user from cognito", "error", err)
+		return err
+	}
+
+	var email, name, sub string
+	for _, attr := range userResp.UserAttributes {
+		switch aws.ToString(attr.Name) {
+		case "email":
+			email = aws.ToString(attr.Value)
+		case "name":
+			name = aws.ToString(attr.Value)
+		case "sub":
+			sub = aws.ToString(attr.Value)
+		}
+	}
+
+	// Try by Cognito sub first
+	_, err = s.userRepo.GetByCognitoID(ctx, sub)
+	if err == nil {
+		return nil // user exists
+	}
+
+	// Try by email and link Cognito ID
+	if email != "" {
+		user, err := s.userRepo.GetByEmail(ctx, email)
+		if err == nil {
+			user.CognitoID = sub
+			user.UpdatedAt = time.Now()
+			return s.userRepo.Update(ctx, user)
+		}
+	}
+
+	// Create new user
+	newUser := &models.User{
+		Email:     email,
+		CognitoID: sub,
+		Name:      name,
+		Role:      "viewer",
+	}
+	if err := s.userRepo.Create(ctx, newUser); err != nil {
+		return fmt.Errorf("failed to create user from cognito: %w", err)
+	}
+	return nil
 }
 
 type PhoneRegisterInput struct {
