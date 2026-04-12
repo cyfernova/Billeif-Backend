@@ -78,6 +78,10 @@ type ProductVariantInput struct {
 
 func (s *ProductService) Create(ctx context.Context, input CreateProductInput) (*models.Product, error) {
 	log := logger.FromContext(ctx).With("service", "product", "operation", "create", "business_id", input.BusinessID, "sku", input.SKU)
+	if input.BusinessID == "" {
+		log.Error("business_id is empty")
+		return nil, fmt.Errorf("business_id is required")
+	}
 	existing, _ := s.repo.GetBySKU(ctx, input.BusinessID, input.SKU)
 	if existing != nil {
 		log.Warn("duplicate SKU rejected")
@@ -125,6 +129,7 @@ func (s *ProductService) Create(ctx context.Context, input CreateProductInput) (
 
 	if s.db == nil {
 		product.StockLevel = input.StockLevel
+		log.Info("about to insert product", "product_business_id", product.BusinessID, "product_sku", product.SKU)
 		if err := s.repo.Create(ctx, product); err != nil {
 			log.Error("failed to create product", "error", err)
 			return nil, fmt.Errorf("failed to create product: %w", err)
@@ -133,7 +138,9 @@ func (s *ProductService) Create(ctx context.Context, input CreateProductInput) (
 		return product, nil
 	}
 
+	log.Info("about to begin transaction", "product_business_id", product.BusinessID, "input_business_id", input.BusinessID)
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		log.Info("inside transaction", "product_business_id", product.BusinessID)
 		if err := tx.Create(product).Error; err != nil {
 			return err
 		}

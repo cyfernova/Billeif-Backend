@@ -72,6 +72,7 @@ type CreateAgentRequest struct {
 	Description string                 `json:"description"`
 	Config      map[string]interface{} `json:"config"`
 	BusinessID  string                 `json:"business_id"`
+	ProductIDs  []string               `json:"product_ids"`
 }
 
 type UpdateAgentRequest struct {
@@ -94,6 +95,7 @@ type AddCapabilityRequest struct {
 // @Accept json
 // @Produce json
 // @Security BearerAuth
+// @Param business_id query string false "Business ID"
 // @Param input body CreateAgentRequest true "Agent details"
 // @Success 201 {object} models.Agent
 // @Failure 400 {object} map[string]string
@@ -108,6 +110,11 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 		log.Warn("invalid create agent payload", "error", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	// Allow business_id from query param or body
+	if req.BusinessID == "" {
+		req.BusinessID = c.Query("business_id")
 	}
 
 	businessID, ok := requireEffectiveBusinessScope(c, req.BusinessID)
@@ -133,11 +140,15 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 		}
 		agent, err = h.svc.CreatePersonalAgent(c.Request.Context(), personalReq)
 	case "merchant":
+		productIDs := extractProductIDs(req.Config)
+		if len(productIDs) == 0 {
+			productIDs = req.ProductIDs
+		}
 		agent, err = h.svc.CreateMerchantAgent(c.Request.Context(), &services.CreateMerchantAgentRequest{
 			BusinessID:  businessID,
 			Name:        req.Name,
 			Description: req.Description,
-			ProductIDs:  extractProductIDs(req.Config),
+			ProductIDs:  productIDs,
 		})
 	default:
 		log.Warn("invalid agent type", "type", req.Type)

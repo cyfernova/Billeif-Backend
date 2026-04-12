@@ -377,6 +377,12 @@ const docTemplate = `{
                 "summary": "Create agent",
                 "parameters": [
                     {
+                        "type": "string",
+                        "description": "Business ID",
+                        "name": "business_id",
+                        "in": "query"
+                    },
+                    {
                         "description": "Agent details",
                         "name": "input",
                         "in": "body",
@@ -15519,6 +15525,12 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "product_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "type": {
                     "type": "string"
