@@ -19,14 +19,14 @@ type BusinessProfile struct {
 	PostalCode          string         `gorm:"size:20" json:"postal_code,omitempty" validate:"omitempty,max=20"`
 	TaxID               string         `gorm:"size:100" json:"tax_id,omitempty" validate:"omitempty,max=100"`
 	GSTIN               string         `gorm:"size:20" json:"gstin,omitempty" validate:"omitempty,max=20"`
-	BusinessStateCode   string         `gorm:"size:10" json:"business_state_code,omitempty" validate:"omitempty,max=10"`
-	CompositionEnabled  bool           `gorm:"default:false" json:"composition_enabled"`
-	DefaultGSTTreatment string         `gorm:"size:50;default:'regular'" json:"default_gst_treatment,omitempty"`
-	GSTFilingFrequency  string         `gorm:"size:20;default:'monthly'" json:"gst_filing_frequency,omitempty"`
-	GSTRegistered       bool           `gorm:"default:false" json:"gst_registered"`
-	GSTTDSEnabled       bool           `gorm:"default:false" json:"gst_tds_enabled"`
-	ExportLUTEnabled    bool           `gorm:"default:false" json:"export_lut_enabled"`
-	SEZEnabled          bool           `gorm:"default:false" json:"sez_enabled"`
+	BusinessStateCode   string         `gorm:"column:business_state_code;size:10" json:"business_state_code,omitempty" validate:"omitempty,max=10"`
+	CompositionEnabled  bool           `gorm:"column:composition_enabled;default:false" json:"composition_enabled"`
+	DefaultGSTTreatment string         `gorm:"column:default_gst_treatment;size:50;default:'regular'" json:"default_gst_treatment,omitempty"`
+	GSTFilingFrequency  string         `gorm:"column:gst_filing_frequency;size:20;default:'monthly'" json:"gst_filing_frequency,omitempty"`
+	GSTRegistered       bool           `gorm:"column:gst_registered;default:false" json:"gst_registered"`
+	GSTTDSEnabled       bool           `gorm:"column:gst_tds_enabled;default:false" json:"gst_tds_enabled"`
+	ExportLUTEnabled    bool           `gorm:"column:export_lut_enabled;default:false" json:"export_lut_enabled"`
+	SEZEnabled          bool           `gorm:"column:sez_enabled;default:false" json:"sez_enabled"`
 	NumberingRules      string         `gorm:"type:jsonb;default:'{}'" json:"numbering_rules,omitempty"`
 	TaxPreferencesJSON  string         `gorm:"type:jsonb;default:'{}'" json:"tax_preferences_json,omitempty"`
 	LogoURL             string         `gorm:"size:500" json:"logo_url,omitempty"`

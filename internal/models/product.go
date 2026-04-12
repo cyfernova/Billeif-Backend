@@ -18,7 +18,7 @@ type Product struct {
 	MRP                float64        `gorm:"type:decimal(15,2);default:0" json:"mrp"`
 	CostPrice          float64        `gorm:"type:decimal(15,2);default:0" json:"cost_price" validate:"gte=0"`
 	ValuationMethod    string         `gorm:"size:30;default:'last_purchase'" json:"valuation_method,omitempty"`
-	HSNSACCode         string         `gorm:"size:40" json:"hsn_sac_code,omitempty"`
+	HSNSACCode         string         `gorm:"column:hsn_sac_code;size:40" json:"hsn_sac_code,omitempty"`
 	UQCCode            string         `gorm:"size:20;default:'OTH'" json:"uqc_code,omitempty"`
 	GSTMetadata        string         `gorm:"type:jsonb;default:'{}'" json:"gst_metadata,omitempty"`
 	DefaultCessRate    float64        `gorm:"type:decimal(7,3);default:0" json:"default_cess_rate"`

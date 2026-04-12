@@ -9335,6 +9335,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Business ID",
+                        "name": "business_id",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -9379,6 +9385,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Business ID",
+                        "name": "business_id",
+                        "in": "query"
                     },
                     {
                         "description": "Product updates",
@@ -9438,11 +9450,35 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Business ID",
+                        "name": "business_id",
+                        "in": "query"
                     }
                 ],
                 "responses": {
                     "204": {
                         "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
                     },
                     "500": {
                         "description": "Internal Server Error",
@@ -17214,6 +17250,67 @@ const docTemplate = `{
                 }
             }
         },
+        "models.Role": {
+            "type": "object",
+            "properties": {
+                "business_id": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_system": {
+                    "type": "boolean"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "permissions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.RolePermission"
+                    }
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user_count": {
+                    "type": "integer"
+                }
+            }
+        },
+        "models.RolePermission": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "permission_key": {
+                    "type": "string"
+                },
+                "role_id": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
         "models.SeasonalAdj": {
             "type": "object",
             "properties": {
@@ -17363,6 +17460,9 @@ const docTemplate = `{
                 "user_id"
             ],
             "properties": {
+                "assigned_role": {
+                    "$ref": "#/definitions/models.Role"
+                },
                 "branch_scope_json": {
                     "type": "string"
                 },
@@ -18346,6 +18446,9 @@ const docTemplate = `{
                 "content_type": {
                     "type": "string"
                 },
+                "folder_path": {
+                    "type": "string"
+                },
                 "metadata": {
                     "type": "object",
                     "additionalProperties": true
@@ -18846,7 +18949,6 @@ const docTemplate = `{
         "services.CreateTeamMemberInput": {
             "type": "object",
             "required": [
-                "role",
                 "user_id"
             ],
             "properties": {
@@ -18854,12 +18956,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "role": {
-                    "type": "string",
-                    "enum": [
-                        "admin",
-                        "accountant",
-                        "viewer"
-                    ]
+                    "type": "string"
+                },
+                "role_id": {
+                    "type": "string"
                 },
                 "user_id": {
                     "type": "string"
@@ -19687,16 +19787,21 @@ const docTemplate = `{
         },
         "services.ReportPreferenceInput": {
             "type": "object",
-            "required": [
-                "columns"
-            ],
             "properties": {
                 "columns": {
                     "type": "array",
-                    "minItems": 1,
                     "items": {
                         "type": "string"
                     }
+                },
+                "default_export_format": {
+                    "type": "string"
+                },
+                "default_share_mode": {
+                    "type": "string"
+                },
+                "share_requires_passcode": {
+                    "type": "boolean"
                 }
             }
         },
@@ -20499,17 +20604,12 @@ const docTemplate = `{
         },
         "services.UpdateTeamMemberInput": {
             "type": "object",
-            "required": [
-                "role"
-            ],
             "properties": {
                 "role": {
-                    "type": "string",
-                    "enum": [
-                        "admin",
-                        "accountant",
-                        "viewer"
-                    ]
+                    "type": "string"
+                },
+                "role_id": {
+                    "type": "string"
                 }
             }
         },

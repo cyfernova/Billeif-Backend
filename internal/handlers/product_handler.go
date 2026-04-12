@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"invoice-backend/internal/middleware"
 	"invoice-backend/internal/models"
 	"net/http"
 
@@ -34,17 +35,31 @@ func NewProductHandler(svc *services.ProductService, log *logger.Logger) *Produc
 // @Router /products [post]
 func (h *ProductHandler) Create(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "create")
-	businessID, ok := requireBusinessScope(c)
-	if !ok {
-		return
-	}
+
 	var input services.CreateProductInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		log.Warn("invalid create product payload", "error", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	input.BusinessID = businessID
+
+	// Allow business_id from body or query param
+	if input.BusinessID == "" {
+		input.BusinessID = c.Query("business_id")
+	}
+
+	// If business_id provided, use it directly; otherwise require from token
+	var businessID string
+	if input.BusinessID != "" {
+		businessID = input.BusinessID
+	} else {
+		var ok bool
+		businessID, ok = requireBusinessScope(c)
+		if !ok {
+			return
+		}
+		input.BusinessID = businessID
+	}
 
 	var product *models.Product
 	product, err := h.svc.Create(c.Request.Context(), input)
@@ -65,15 +80,18 @@ func (h *ProductHandler) Create(c *gin.Context) {
 // @Produce json
 // @Security BearerAuth
 // @Param id path string true "Product ID"
+// @Param business_id query string false "Business ID"
 // @Success 200 {object} models.Product
 // @Failure 404 {object} map[string]string
 // @Router /products/{id} [get]
 func (h *ProductHandler) Get(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "get")
-	businessID, ok := requireBusinessScope(c)
-	if !ok {
-		return
+
+	businessID := c.Query("business_id")
+	if businessID == "" {
+		businessID = middleware.GetBusinessID(c)
 	}
+
 	id := c.Param("id")
 	var product *models.Product
 	product, err := h.svc.GetByBusiness(c.Request.Context(), businessID, id)
@@ -101,9 +119,10 @@ func (h *ProductHandler) Get(c *gin.Context) {
 // @Router /products [get]
 func (h *ProductHandler) List(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "list")
-	businessID, ok := requireBusinessScope(c)
-	if !ok {
-		return
+
+	businessID := c.Query("business_id")
+	if businessID == "" {
+		businessID = middleware.GetBusinessID(c)
 	}
 
 	page, limit := utils.ParsePagination(c)
@@ -138,6 +157,7 @@ func (h *ProductHandler) List(c *gin.Context) {
 // @Produce json
 // @Security BearerAuth
 // @Param id path string true "Product ID"
+// @Param business_id query string false "Business ID"
 // @Param input body services.UpdateProductInput true "Product updates"
 // @Success 200 {object} models.Product
 // @Failure 400 {object} map[string]string
@@ -145,16 +165,18 @@ func (h *ProductHandler) List(c *gin.Context) {
 // @Router /products/{id} [put]
 func (h *ProductHandler) Update(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "update")
-	businessID, ok := requireBusinessScope(c)
-	if !ok {
-		return
-	}
+
 	id := c.Param("id")
 	var input services.UpdateProductInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		log.Warn("invalid update product payload", "error", err, "product_id", id)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	businessID := c.Query("business_id")
+	if businessID == "" {
+		businessID = middleware.GetBusinessID(c)
 	}
 
 	var product *models.Product
@@ -175,10 +197,12 @@ func (h *ProductHandler) Update(c *gin.Context) {
 
 func (h *ProductHandler) Clone(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "clone")
-	businessID, ok := requireBusinessScope(c)
-	if !ok {
-		return
+
+	businessID := c.Query("business_id")
+	if businessID == "" {
+		businessID = middleware.GetBusinessID(c)
 	}
+
 	product, err := h.svc.CloneByBusiness(c.Request.Context(), businessID, c.Param("id"))
 	if err != nil {
 		log.Error("failed to clone product", "error", err)
@@ -199,15 +223,25 @@ func (h *ProductHandler) Clone(c *gin.Context) {
 // @Produce json
 // @Security BearerAuth
 // @Param id path string true "Product ID"
+// @Param business_id query string false "Business ID"
 // @Success 204 "No Content"
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /products/{id} [delete]
 func (h *ProductHandler) Delete(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "delete")
-	businessID, ok := requireBusinessScope(c)
-	if !ok {
+
+	businessID := c.Query("business_id")
+	if businessID == "" {
+		businessID = middleware.GetBusinessID(c)
+	}
+	if businessID == "" {
+		log.Warn("business scope required")
+		c.JSON(http.StatusBadRequest, gin.H{"error": "business scope required"})
 		return
 	}
+
 	id := c.Param("id")
 	if err := h.svc.DeleteByBusiness(c.Request.Context(), businessID, id); err != nil {
 		log.Error("failed to delete product", "error", err, "product_id", id)
@@ -236,10 +270,12 @@ func (h *ProductHandler) Delete(c *gin.Context) {
 // @Router /products/{id}/image [post]
 func (h *ProductHandler) UploadImage(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "upload_image")
-	businessID, ok := requireBusinessScope(c)
-	if !ok {
-		return
+
+	businessID := c.Query("business_id")
+	if businessID == "" {
+		businessID = middleware.GetBusinessID(c)
 	}
+
 	id := c.Param("id")
 	contentType, ok2 := validateImageContentType(c)
 	if !ok2 {
@@ -276,10 +312,12 @@ func (h *ProductHandler) UploadImage(c *gin.Context) {
 // @Router /products/{id}/stock [post]
 func (h *ProductHandler) AdjustStock(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "adjust_stock")
-	businessID, ok := requireBusinessScope(c)
-	if !ok {
-		return
+
+	businessID := c.Query("business_id")
+	if businessID == "" {
+		businessID = middleware.GetBusinessID(c)
 	}
+
 	id := c.Param("id")
 	var input services.StockAdjustmentInput
 	if err := c.ShouldBindJSON(&input); err != nil {
