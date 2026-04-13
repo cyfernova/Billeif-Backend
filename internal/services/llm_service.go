@@ -31,30 +31,63 @@ func NewLLMService(cfg config.LLMConfig, log *logger.Logger) *LLMService {
 	}
 }
 
-// ChatMessage represents a message in the chat conversation
+// ContentBlock represents a message content block
+type ContentBlock struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// ChatMessage represents a message in the chat conversation (content can be string or array)
 type ChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string          `json:"role"`
+	Content interface{}     `json:"content"`
 }
 
-// ChatRequest represents the request body for the chat API
-type ChatRequest struct {
-	Model    string        `json:"model"`
-	Messages []ChatMessage `json:"messages"`
-	Stream   bool          `json:"stream"`
+// ToAnthropicFormat converts a ChatMessage to Anthropic format with content as array
+func (m ChatMessage) ToAnthropicFormat() ChatMessage {
+	var contentBlocks []ContentBlock
+	switch v := m.Content.(type) {
+	case string:
+		contentBlocks = []ContentBlock{{Type: "text", Text: v}}
+	case []ContentBlock:
+		contentBlocks = v
+	case []interface{}:
+		for _, item := range v {
+			if block, ok := item.(ContentBlock); ok {
+				contentBlocks = append(contentBlocks, block)
+			} else if mmap, ok := item.(map[string]interface{}); ok {
+				contentBlocks = append(contentBlocks, ContentBlock{
+					Type: mmap["type"].(string),
+					Text: mmap["text"].(string),
+				})
+			}
+		}
+	}
+	return ChatMessage{Role: m.Role, Content: contentBlocks}
 }
 
-// ChatResponse represents the response from the chat API
-type ChatResponse struct {
-	ID      string `json:"id"`
-	Object  string `json:"object"`
-	Created int64  `json:"created"`
-	Model   string `json:"model"`
-	Choices []struct {
-		Index        int         `json:"index"`
-		Message      ChatMessage `json:"message"`
-		FinishReason string      `json:"finish_reason"`
-	} `json:"choices"`
+// AnthropicRequest represents the request body for Anthropic API via MinMax proxy
+type AnthropicRequest struct {
+	Model            string        `json:"model"`
+	Messages         []ChatMessage `json:"messages"`
+	MaxTokens        int           `json:"max_tokens"`
+	Stream           bool          `json:"stream"`
+	System           string        `json:"system,omitempty"`
+	AnthropicVersion string        `json:"anthropic_version"`
+}
+
+// AnthropicResponse represents the response from Anthropic API via MinMax proxy
+type AnthropicResponse struct {
+	ID         string `json:"id"`
+	Type       string `json:"type"`
+	Role       string `json:"role"`
+	Content    []struct {
+		Type     string `json:"type"`
+		Text     string `json:"text"`
+		Thinking string `json:"thinking,omitempty"`
+	} `json:"content"`
+	Model      string `json:"model"`
+	StopReason string `json:"stop_reason"`
 }
 
 // Chat sends a chat request to the LLM
@@ -62,10 +95,18 @@ func (s *LLMService) Chat(ctx context.Context, messages []ChatMessage) (string, 
 	log := logger.FromContext(ctx).With("service", "llm", "operation", "chat", "message_count", len(messages))
 	start := time.Now()
 
-	reqBody := ChatRequest{
-		Model:    s.config.Model,
-		Messages: messages,
-		Stream:   false,
+	// Convert messages to Anthropic format (content as array)
+	anthropicMessages := make([]ChatMessage, len(messages))
+	for i, msg := range messages {
+		anthropicMessages[i] = msg.ToAnthropicFormat()
+	}
+
+	reqBody := AnthropicRequest{
+		Model:            s.config.Model,
+		Messages:         anthropicMessages,
+		MaxTokens:        1024,
+		Stream:          false,
+		AnthropicVersion: "vertex-2023-06-01",
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -81,7 +122,7 @@ func (s *LLMService) Chat(ctx context.Context, messages []ChatMessage) (string, 
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+s.config.APIKey)
+	req.Header.Set("x-api-key", s.config.APIKey)
 
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -90,33 +131,47 @@ func (s *LLMService) Chat(ctx context.Context, messages []ChatMessage) (string, 
 	}
 	defer resp.Body.Close()
 
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Error("failed to read response body", "error", err)
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+	log.Info("LLM RAW RESPONSE", "body", string(bodyBytes))
+
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
 		log.Error("LLM API returned non-200",
 			"status_code", resp.StatusCode,
 			"duration_ms", time.Since(start).Milliseconds(),
 			"response_size", len(bodyBytes),
+			"response_body", string(bodyBytes),
 		)
 		return "", fmt.Errorf("API returned error: %s - %s", resp.Status, string(bodyBytes))
 	}
 
-	var chatResp ChatResponse
-	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
-		log.Error("failed to decode LLM response", "error", err, "duration_ms", time.Since(start).Milliseconds())
+	var chatResp AnthropicResponse
+	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
+		log.Error("failed to decode LLM response", "error", err, "duration_ms", time.Since(start).Milliseconds(), "body", string(bodyBytes))
 		return "", fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	if len(chatResp.Choices) == 0 {
-		log.Warn("LLM response contained no choices", "duration_ms", time.Since(start).Milliseconds())
-		return "", fmt.Errorf("no choices in response")
+	if len(chatResp.Content) == 0 {
+		log.Warn("LLM response contained no content", "duration_ms", time.Since(start).Milliseconds(), "response", chatResp, "raw_body", string(bodyBytes))
+		return "", fmt.Errorf("no content in response. Raw response: %s", string(bodyBytes))
 	}
 
 	log.Info("LLM chat completed",
 		"duration_ms", time.Since(start).Milliseconds(),
 		"model", chatResp.Model,
-		"choice_count", len(chatResp.Choices),
 	)
-	return chatResp.Choices[0].Message.Content, nil
+
+	// Find the text content block (skip thinking blocks)
+	for _, block := range chatResp.Content {
+		if block.Type == "text" && block.Text != "" {
+			return block.Text, nil
+		}
+	}
+
+	return "", fmt.Errorf("no text content found in response")
 }
 
 // ProcessAgentIntent processes a user intent with agent context

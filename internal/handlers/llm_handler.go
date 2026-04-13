@@ -56,7 +56,7 @@ func (h *LLMHandler) Chat(c *gin.Context) {
 	response, err := h.llm.Chat(c.Request.Context(), req.Messages)
 	if err != nil {
 		h.log.Error("failed to process chat request", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to process chat request"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "raw_response": "check server logs for MINMAX RAW RESPONSE"})
 		return
 	}
 
