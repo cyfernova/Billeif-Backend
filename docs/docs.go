@@ -48,6 +48,75 @@ const docTemplate = `{
                 }
             }
         },
+        "/a2a-bargaining/autonomous/start": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Starts a fully autonomous price negotiation driven by LLM decisions between buyer and seller agents. Real-time events are delivered via webhook callbacks.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "A2A Bargaining"
+                ],
+                "summary": "Start autonomous AI negotiation",
+                "parameters": [
+                    {
+                        "description": "Autonomous negotiation details",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.StartAutonomousNegotiationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/a2a-bargaining/progress/{sessionId}": {
             "get": {
                 "security": [
@@ -15863,6 +15932,34 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.StartAutonomousNegotiationRequest": {
+            "type": "object",
+            "required": [
+                "buyer_agent_id",
+                "callback_url",
+                "initial_amount",
+                "seller_agent_id"
+            ],
+            "properties": {
+                "buyer_agent_id": {
+                    "type": "string"
+                },
+                "callback_url": {
+                    "type": "string"
+                },
+                "initial_amount": {
+                    "type": "number"
+                },
+                "max_rounds": {
+                    "type": "integer",
+                    "maximum": 20,
+                    "minimum": 1
+                },
+                "seller_agent_id": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.UpdateAgentConfigRequest": {
             "type": "object",
             "properties": {
@@ -17860,9 +17957,7 @@ const docTemplate = `{
         "services.ChatMessage": {
             "type": "object",
             "properties": {
-                "content": {
-                    "type": "string"
-                },
+                "content": {},
                 "role": {
                     "type": "string"
                 }

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 
 	"invoice-backend/internal/config"
@@ -31,6 +32,15 @@ type StartA2ANegotiationRequest struct {
 	SellerAgentID string  `json:"seller_agent_id" binding:"required,uuid"`
 	InitialAmount float64 `json:"initial_amount" binding:"required,gt=0"`
 	MaxRounds     *int    `json:"max_rounds" binding:"omitempty,gte=1,lte=10"`
+}
+
+type StartAutonomousNegotiationRequest struct {
+	BuyerAgentID  string  `json:"buyer_agent_id" binding:"required,uuid"`
+	SellerAgentID string  `json:"seller_agent_id" binding:"required,uuid"`
+	InitialAmount float64 `json:"initial_amount" binding:"required,gt=0"`
+	MaxRounds     int     `json:"max_rounds" binding:"omitempty,gte=1,lte=20"`
+	CallbackURL   string  `json:"callback_url"`
+	UserID        string  `json:"user_id" binding:"omitempty,uuid"`
 }
 
 type A2ANegotiationSession struct {
@@ -161,6 +171,94 @@ func (h *A2ABargainingHandler) StartNegotiation(c *gin.Context) {
 	log.Info("A2A negotiation started", "session_id", session.NegotiationID, "buyer", req.BuyerAgentID, "seller", req.SellerAgentID)
 
 	c.JSON(http.StatusCreated, response)
+}
+
+// StartAutonomousNegotiation starts an AI-driven autonomous negotiation between buyer and seller agents
+// @Summary Start autonomous AI negotiation
+// @Description Starts a fully autonomous price negotiation driven by LLM decisions between buyer and seller agents. Real-time events are delivered via webhook callbacks.
+// @Tags A2A Bargaining
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body StartAutonomousNegotiationRequest true "Autonomous negotiation details"
+// @Success 202 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /a2a-bargaining/autonomous/start [post]
+func (h *A2ABargainingHandler) StartAutonomousNegotiation(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("a2a_bargaining_handler").With("operation", "start_autonomous_negotiation")
+
+	var req StartAutonomousNegotiationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Warn("invalid autonomous negotiation request", "error", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	buyerAgent, err := h.agentService.GetAgentByID(c.Request.Context(), req.BuyerAgentID)
+	if err != nil {
+		log.Error("buyer agent not found", "agent_id", req.BuyerAgentID, "error", err)
+		c.JSON(http.StatusNotFound, gin.H{"error": "buyer agent not found"})
+		return
+	}
+
+	sellerAgent, err := h.agentService.GetAgentByID(c.Request.Context(), req.SellerAgentID)
+	if err != nil {
+		log.Error("seller agent not found", "agent_id", req.SellerAgentID, "error", err)
+		c.JSON(http.StatusNotFound, gin.H{"error": "seller agent not found"})
+		return
+	}
+
+	if buyerAgent.Type != "shopping" {
+		log.Warn("buyer agent must be shopping type", "agent_type", buyerAgent.Type)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "buyer agent must be of type 'shopping'"})
+		return
+	}
+
+	if sellerAgent.Type != "merchant" {
+		log.Warn("seller agent must be merchant type", "agent_type", sellerAgent.Type)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "seller agent must be of type 'merchant'"})
+		return
+	}
+
+	autoReq := &services.AutonomousNegotiationRequest{
+		BuyerAgentID:  req.BuyerAgentID,
+		SellerAgentID: req.SellerAgentID,
+		InitialAmount: req.InitialAmount,
+		MaxRounds:     req.MaxRounds,
+		CallbackURL:   req.CallbackURL,
+		UserID: func() string {
+			if req.UserID != "" {
+				return req.UserID
+			}
+			return c.GetString("user_id")
+		}(),
+	}
+
+	session, err := h.a2aBargaining.StartAutonomousNegotiation(c.Request.Context(), autoReq)
+	if err != nil {
+		log.Error("failed to start autonomous negotiation", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start negotiation"})
+		return
+	}
+
+	log.Info("autonomous negotiation session created, starting background loop",
+		"session_id", session.NegotiationID,
+		"buyer", req.BuyerAgentID,
+		"seller", req.SellerAgentID,
+		"callback_url", req.CallbackURL)
+
+	go func() {
+		bgCtx := context.Background()
+		_ = h.a2aBargaining.RunAutonomousNegotiation(bgCtx, session.NegotiationID)
+	}()
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"message":    "autonomous negotiation started",
+		"session_id": session.NegotiationID,
+		"status":     "running",
+	})
 }
 
 // GetSessionProgress retrieves progress of an A2A negotiation

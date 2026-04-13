@@ -39,8 +39,8 @@ type ContentBlock struct {
 
 // ChatMessage represents a message in the chat conversation (content can be string or array)
 type ChatMessage struct {
-	Role    string          `json:"role"`
-	Content interface{}     `json:"content"`
+	Role    string      `json:"role"`
+	Content interface{} `json:"content"`
 }
 
 // ToAnthropicFormat converts a ChatMessage to Anthropic format with content as array
@@ -78,10 +78,10 @@ type AnthropicRequest struct {
 
 // AnthropicResponse represents the response from Anthropic API via MinMax proxy
 type AnthropicResponse struct {
-	ID         string `json:"id"`
-	Type       string `json:"type"`
-	Role       string `json:"role"`
-	Content    []struct {
+	ID      string `json:"id"`
+	Type    string `json:"type"`
+	Role    string `json:"role"`
+	Content []struct {
 		Type     string `json:"type"`
 		Text     string `json:"text"`
 		Thinking string `json:"thinking,omitempty"`
@@ -105,7 +105,7 @@ func (s *LLMService) Chat(ctx context.Context, messages []ChatMessage) (string, 
 		Model:            s.config.Model,
 		Messages:         anthropicMessages,
 		MaxTokens:        1024,
-		Stream:          false,
+		Stream:           false,
 		AnthropicVersion: "vertex-2023-06-01",
 	}
 
