@@ -101,7 +101,7 @@ variable "credential_encryption_key" {
   description = "Base64-encoded 32-byte key used for application credential encryption"
   type        = string
   sensitive   = true
-  default     = "SGVsbG8gV29ybGQgSGVsbG8gV29ybGQgSGVsbG8gV29ybGQh"
+  default     = "TPRzhZvL3pvBBvNXN26Sa+yfrLZogwLpyD5rCDmB140="
 }
 
 # Lambda Artifacts
