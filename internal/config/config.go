@@ -490,6 +490,11 @@ func setDefaults(cfg *Config) {
 	if cfg.AWS.WAF.BlockedResponse == "" {
 		cfg.AWS.WAF.BlockedResponse = "rate limit exceeded"
 	}
+	// WAF disabled by default - enable via WAF_ENABLED=true environment variable only in non-production
+	// In production, WAF must be explicitly enabled via WAF_ENABLED=true
+	if isProductionEnv(cfg.Environment) {
+		cfg.AWS.WAF.Enabled = false
+	}
 }
 
 func isProductionEnv(env string) bool {
