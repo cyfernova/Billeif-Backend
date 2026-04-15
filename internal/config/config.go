@@ -430,7 +430,11 @@ func setDefaults(cfg *Config) {
 		cfg.Cognito.Phone.Region = "ap-south-1"
 	}
 	if len(cfg.AllowedOrigins) == 0 {
-		cfg.AllowedOrigins = []string{"http://localhost:3000"}
+		if isProductionEnv(cfg.Environment) {
+			cfg.AllowedOrigins = []string{"*"}
+		} else {
+			cfg.AllowedOrigins = []string{"http://localhost:3000"}
+		}
 	}
 	if cfg.LLM.Timeout == 0 {
 		cfg.LLM.Timeout = 60
