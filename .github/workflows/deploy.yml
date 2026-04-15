@@ -63,7 +63,6 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: "20"
-          cache: 'npm'
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
@@ -126,7 +125,6 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: "20"
-          cache: 'npm'
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
