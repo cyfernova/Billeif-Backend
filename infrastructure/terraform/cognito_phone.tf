@@ -177,7 +177,7 @@ resource "aws_lambda_function" "custom_sms_sender" {
     }
 
     precondition {
-      condition     = trimspace(var.india_sms_sender_id) == "" || alltrue([
+      condition = trimspace(var.india_sms_sender_id) == "" || alltrue([
         trimspace(var.india_sms_sender_id) != "",
         trimspace(var.india_dlt_entity_id) != "",
         trimspace(var.india_signup_template_id) != "",
