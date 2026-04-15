@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
+	"invoice-backend/internal/gst"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/reporting"
 	interfaces "invoice-backend/internal/repositories/interfaces"
@@ -43,6 +45,9 @@ func (r *reportingRepository) QueryReport(ctx context.Context, def reporting.Def
 	}
 	if query.Limit > 500 {
 		query.Limit = 500
+	}
+	if def.Family == "gst_hsn_summary" {
+		return r.queryGSTHSNSummary(ctx, def, query)
 	}
 
 	var (
@@ -101,6 +106,112 @@ func (r *reportingRepository) QueryReport(ctx context.Context, def reporting.Def
 	}
 
 	return r.executeBundle(ctx, bundle, query.Page, query.Limit)
+}
+
+func (r *reportingRepository) queryGSTHSNSummary(ctx context.Context, def reporting.Definition, query reporting.Query) (*reporting.Result, error) {
+	whereClause, args := buildDocumentLineFilters(def.DocumentTypes, query)
+	sqlQuery := fmt.Sprintf(`
+		SELECT dl.hsn_sac_code,
+		       dl.unit,
+		       dl.uqc_code,
+		       dl.description,
+		       dl.tax_rate,
+		       dl.quantity,
+		       dl.line_subtotal,
+		       dl.igst_amount,
+		       dl.cgst_amount,
+		       dl.sgst_amount,
+		       dl.line_total,
+		       d.document_type,
+		       d.serial_number
+		FROM documents d
+		JOIN document_lines dl ON dl.document_id = d.id
+		LEFT JOIN products p ON p.id = dl.product_id AND p.deleted_at IS NULL
+		LEFT JOIN product_categories pc ON pc.id = p.category_id AND pc.deleted_at IS NULL
+		LEFT JOIN customers c ON c.id = d.party_id AND d.party_type = 'customer' AND c.deleted_at IS NULL
+		LEFT JOIN vendors v ON v.id = d.party_id AND d.party_type = 'vendor' AND v.deleted_at IS NULL
+		WHERE %s
+	`, whereClause)
+	rawRows, err := r.scanRows(ctx, sqlQuery, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	lines := make([]gst.HSNSummaryLine, 0, len(rawRows))
+	for _, row := range rawRows {
+		sign := 1.0
+		if asString(row["document_type"]) == models.DocumentTypeCreditNote {
+			sign = -1
+		}
+		lines = append(lines, gst.HSNSummaryLine{
+			HSNSACCode:   asString(row["hsn_sac_code"]),
+			Unit:         asString(row["unit"]),
+			LegacyUQC:    asString(row["uqc_code"]),
+			Description:  asString(row["description"]),
+			TaxRate:      toFloat64(row["tax_rate"]),
+			Quantity:     toFloat64(row["quantity"]),
+			TaxableValue: toFloat64(row["line_subtotal"]),
+			IGSTAmount:   toFloat64(row["igst_amount"]),
+			CGSTAmount:   toFloat64(row["cgst_amount"]),
+			SGSTAmount:   toFloat64(row["sgst_amount"]),
+			TotalValue:   toFloat64(row["line_total"]),
+			Sign:         sign,
+			WarningRef:   fmt.Sprintf("document %s line %s", asString(row["serial_number"]), asString(row["description"])),
+		})
+	}
+
+	summary := gst.AggregateHSNSummary(lines)
+	rows := make([]map[string]interface{}, 0, len(summary.Rows))
+	for _, row := range summary.Rows {
+		rows = append(rows, map[string]interface{}{
+			"hsn_sac_code":  row.HSNSACCode,
+			"description":   row.Description,
+			"unit":          row.Unit,
+			"tax_rate":      row.TaxRate,
+			"quantity":      row.Quantity,
+			"taxable_value": row.TaxableValue,
+			"igst_amount":   row.IGSTAmount,
+			"cgst_amount":   row.CGSTAmount,
+			"sgst_amount":   row.SGSTAmount,
+			"total_value":   row.TotalValue,
+		})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if asString(rows[i]["hsn_sac_code"]) != asString(rows[j]["hsn_sac_code"]) {
+			return asString(rows[i]["hsn_sac_code"]) < asString(rows[j]["hsn_sac_code"])
+		}
+		if asString(rows[i]["unit"]) != asString(rows[j]["unit"]) {
+			return asString(rows[i]["unit"]) < asString(rows[j]["unit"])
+		}
+		return toFloat64(rows[i]["tax_rate"]) < toFloat64(rows[j]["tax_rate"])
+	})
+
+	start := (query.Page - 1) * query.Limit
+	if start > len(rows) {
+		start = len(rows)
+	}
+	end := start + query.Limit
+	if end > len(rows) {
+		end = len(rows)
+	}
+
+	return &reporting.Result{
+		Columns: def.DefaultColumns,
+		Rows:    rows[start:end],
+		Totals: map[string]interface{}{
+			"quantity":      summary.Totals.Quantity,
+			"taxable_value": summary.Totals.TaxableValue,
+			"igst_amount":   summary.Totals.IGSTAmount,
+			"cgst_amount":   summary.Totals.CGSTAmount,
+			"sgst_amount":   summary.Totals.SGSTAmount,
+			"total_value":   summary.Totals.TotalValue,
+		},
+		Pagination: reporting.Pagination{
+			Page:  query.Page,
+			Limit: query.Limit,
+			Total: int64(len(rows)),
+		},
+	}, nil
 }
 
 func (r *reportingRepository) GetDashboard(ctx context.Context, query reporting.Query) (map[string]interface{}, error) {
@@ -1528,5 +1639,18 @@ func toFloat64(value interface{}) float64 {
 		return parsed
 	default:
 		return 0
+	}
+}
+
+func asString(value interface{}) string {
+	switch typed := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return typed
+	case []byte:
+		return string(typed)
+	default:
+		return fmt.Sprint(typed)
 	}
 }

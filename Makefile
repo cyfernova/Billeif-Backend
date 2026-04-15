@@ -2,7 +2,7 @@
 -include .env
 export
 
-.PHONY: help infra-backend-init infra-init infra-validate infra-apply infra-plan infra-destroy infra-output build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-payment build-lambda-sqs-gst build-lambda-ws build-lambda-custom-sms-sender package-lambda run-local test test-integration migrate-up migrate-down migrate-create fmt lint clean deps test-coverage swagger
+.PHONY: help infra-backend-init infra-init infra-validate infra-apply infra-plan infra-destroy infra-output build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-payment build-lambda-sqs-gst build-lambda-ws build-lambda-custom-sms-sender package-lambda run-local test test-integration migrate-up migrate-down migrate-rds-up migrate-rds-down migrate-create fmt lint clean deps test-coverage swagger
 
 LAMBDA_BUILD_DIR := .build/lambda
 TERRAFORM_DIR := infrastructure/terraform
@@ -125,6 +125,36 @@ migrate-up: ## Run database migrations up (using migrate CLI)
 
 migrate-down: ## Run database migrations down (using migrate CLI)
 	migrate -path ./migrations -database "postgres://invoice_user:invoice_pass@127.0.0.1:5432/invoice_db?sslmode=disable" down
+
+migrate-rds-up: ## Run migrations against Terraform-managed RDS (reads DB host/user/pass from Terraform + SSM)
+	@set -euo pipefail; \
+	cd $(TERRAFORM_DIR); \
+	DB_HOST=$$(terraform output -raw rds_address); \
+	DB_NAME=$$(terraform output -raw rds_database_name); \
+	DB_USER_PARAM=$$(terraform output -raw db_username_ssm_parameter); \
+	DB_PASS_PARAM=$$(terraform output -raw db_password_ssm_parameter); \
+	DB_USER=$$(aws ssm get-parameter --name "$$DB_USER_PARAM" --with-decryption --region $(TF_BACKEND_REGION) --query 'Parameter.Value' --output text); \
+	DB_PASS=$$(aws ssm get-parameter --name "$$DB_PASS_PARAM" --with-decryption --region $(TF_BACKEND_REGION) --query 'Parameter.Value' --output text); \
+	ENC_USER=$$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$$DB_USER"); \
+	ENC_PASS=$$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$$DB_PASS"); \
+	DB_URL="postgres://$$ENC_USER:$$ENC_PASS@$$DB_HOST/$$DB_NAME?sslmode=require"; \
+	cd - >/dev/null; \
+	migrate -path ./migrations -database "$$DB_URL" up
+
+migrate-rds-down: ## Roll back one migration on Terraform-managed RDS (reads DB host/user/pass from Terraform + SSM)
+	@set -euo pipefail; \
+	cd $(TERRAFORM_DIR); \
+	DB_HOST=$$(terraform output -raw rds_address); \
+	DB_NAME=$$(terraform output -raw rds_database_name); \
+	DB_USER_PARAM=$$(terraform output -raw db_username_ssm_parameter); \
+	DB_PASS_PARAM=$$(terraform output -raw db_password_ssm_parameter); \
+	DB_USER=$$(aws ssm get-parameter --name "$$DB_USER_PARAM" --with-decryption --region $(TF_BACKEND_REGION) --query 'Parameter.Value' --output text); \
+	DB_PASS=$$(aws ssm get-parameter --name "$$DB_PASS_PARAM" --with-decryption --region $(TF_BACKEND_REGION) --query 'Parameter.Value' --output text); \
+	ENC_USER=$$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$$DB_USER"); \
+	ENC_PASS=$$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$$DB_PASS"); \
+	DB_URL="postgres://$$ENC_USER:$$ENC_PASS@$$DB_HOST/$$DB_NAME?sslmode=require"; \
+	cd - >/dev/null; \
+	migrate -path ./migrations -database "$$DB_URL" down 1
 
 migrate-create: ## Create a new migration (usage: make migrate-create NAME=migration_name)
 	migrate create -ext sql -dir ./migrations -seq $(NAME)

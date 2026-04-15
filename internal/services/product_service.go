@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"invoice-backend/internal/gst"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/logger"
@@ -39,7 +40,7 @@ type CreateProductInput struct {
 	CostPrice         float64                `json:"cost_price"`
 	ValuationMethod   string                 `json:"valuation_method"`
 	HSNSACCode        string                 `json:"hsn_sac_code"`
-	UQCCode           string                 `json:"uqc_code"`
+	UQCCode           string                 `json:"uqc_code" swaggerignore:"true"`
 	GSTMetadata       map[string]interface{} `json:"gst_metadata,omitempty"`
 	IsService         bool                   `json:"is_service"`
 	Currency          string                 `json:"currency"`
@@ -114,14 +115,10 @@ func (s *ProductService) Create(ctx context.Context, input CreateProductInput) (
 	if product.Currency == "" {
 		product.Currency = "USD"
 	}
-	if product.Unit == "" {
-		product.Unit = "PCS"
-	}
+	product.Unit = gst.CanonicalProductUQC(input.Unit, input.UQCCode)
+	product.UQCCode = product.Unit
 	if product.ValuationMethod == "" {
 		product.ValuationMethod = "last_purchase"
-	}
-	if product.UQCCode == "" {
-		product.UQCCode = "OTH"
 	}
 	if product.LowStockThreshold == 0 {
 		product.LowStockThreshold = product.MinStock
@@ -240,7 +237,7 @@ type UpdateProductInput struct {
 	CostPrice         *float64               `json:"cost_price"`
 	ValuationMethod   string                 `json:"valuation_method"`
 	HSNSACCode        string                 `json:"hsn_sac_code"`
-	UQCCode           string                 `json:"uqc_code"`
+	UQCCode           string                 `json:"uqc_code" swaggerignore:"true"`
 	GSTMetadata       map[string]interface{} `json:"gst_metadata,omitempty"`
 	IsService         *bool                  `json:"is_service"`
 	Currency          string                 `json:"currency"`
@@ -287,9 +284,6 @@ func (s *ProductService) UpdateByBusiness(ctx context.Context, businessID, id st
 	if input.HSNSACCode != "" {
 		product.HSNSACCode = input.HSNSACCode
 	}
-	if input.UQCCode != "" {
-		product.UQCCode = input.UQCCode
-	}
 	if input.GSTMetadata != nil {
 		product.GSTMetadata = mustMarshalMap(input.GSTMetadata)
 	}
@@ -299,8 +293,9 @@ func (s *ProductService) UpdateByBusiness(ctx context.Context, businessID, id st
 	if input.Currency != "" {
 		product.Currency = input.Currency
 	}
-	if input.Unit != "" {
-		product.Unit = input.Unit
+	if input.Unit != "" || input.UQCCode != "" {
+		product.Unit = gst.CanonicalProductUQC(input.Unit, input.UQCCode)
+		product.UQCCode = product.Unit
 	}
 	if input.MinStock >= 0 {
 		product.MinStock = input.MinStock
@@ -464,7 +459,7 @@ func (s *ProductService) CloneByBusiness(ctx context.Context, businessID, id str
 		CostPrice:         product.CostPrice,
 		ValuationMethod:   product.ValuationMethod,
 		HSNSACCode:        product.HSNSACCode,
-		UQCCode:           product.UQCCode,
+		UQCCode:           product.Unit,
 		GSTMetadata:       unmarshalJSONMap(product.GSTMetadata),
 		IsService:         product.IsService,
 		Currency:          product.Currency,
@@ -875,9 +870,8 @@ func (s *ProductServiceTestable) Create(ctx context.Context, input CreateProduct
 	if product.Currency == "" {
 		product.Currency = "USD"
 	}
-	if product.Unit == "" {
-		product.Unit = "PCS"
-	}
+	product.Unit = gst.CanonicalProductUQC(input.Unit, input.UQCCode)
+	product.UQCCode = product.Unit
 
 	if err := s.repo.Create(ctx, product); err != nil {
 		return nil, fmt.Errorf("failed to create product: %w", err)
@@ -923,8 +917,9 @@ func (s *ProductServiceTestable) UpdateByBusiness(ctx context.Context, businessI
 	if input.Currency != "" {
 		product.Currency = input.Currency
 	}
-	if input.Unit != "" {
-		product.Unit = input.Unit
+	if input.Unit != "" || input.UQCCode != "" {
+		product.Unit = gst.CanonicalProductUQC(input.Unit, input.UQCCode)
+		product.UQCCode = product.Unit
 	}
 	if input.MinStock >= 0 {
 		product.MinStock = input.MinStock

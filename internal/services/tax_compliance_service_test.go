@@ -65,6 +65,10 @@ func TestTaxComplianceService_BuildGSTR1Report(t *testing.T) {
 	require.Len(t, sections["exports"], 1)
 	require.Len(t, sections["b2cs"], 1)
 	require.Len(t, sections["hsn_summary"], 3)
+	hsnSummary := sections["hsn_summary"].([]map[string]interface{})
+	require.Equal(t, "PCS", hsnSummary[0]["unit"])
+	_, hasTaxRate := hsnSummary[0]["tax_rate"]
+	require.True(t, hasTaxRate)
 
 	warnings := strings.Join(interfaceSliceToStrings(report["warnings"]), " | ")
 	require.Contains(t, warnings, "invalid HSN")

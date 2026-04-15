@@ -25,7 +25,7 @@ type Product struct {
 	DefaultPriceListID *string        `gorm:"index" json:"default_price_list_id,omitempty" validate:"omitempty,uuid"`
 	IsService          bool           `gorm:"default:false" json:"is_service"`
 	Currency           string         `gorm:"not null;size:3;default:'USD'" json:"currency" validate:"required,len=3"`
-	Unit               string         `gorm:"not null;size:50;default:'PCS'" json:"unit" validate:"required,max=50"`
+	Unit               string         `gorm:"not null;size:50;default:'PCS'" json:"unit" validate:"required,max=50"` // GST UQC code, e.g. PCS, KGS
 	StockLevel         int64          `gorm:"default:0" json:"stock_level" validate:"gte=0"`
 	MinStock           int64          `gorm:"default:0" json:"min_stock" validate:"gte=0"`
 	LowStockThreshold  int64          `gorm:"default:0" json:"low_stock_threshold" validate:"gte=0"`

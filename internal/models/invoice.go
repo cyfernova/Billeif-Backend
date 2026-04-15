@@ -12,6 +12,7 @@ type Invoice struct {
 	CustomerID           string         `gorm:"not null;index" json:"customer_id" validate:"required,uuid"`
 	ProjectID            *string        `gorm:"index" json:"project_id,omitempty" validate:"omitempty,uuid"`
 	PriceListID          *string        `gorm:"index" json:"price_list_id,omitempty" validate:"omitempty,uuid"`
+	RenderProfileID      *string        `gorm:"index" json:"render_profile_id,omitempty" validate:"omitempty,uuid"`
 	InvoiceNo            string         `gorm:"not null;uniqueIndex:idx_business_invoice;size:50" json:"invoice_no" validate:"required,max=50"`
 	InvoiceDate          time.Time      `gorm:"not null;index" json:"invoice_date" validate:"required"`
 	DueDate              time.Time      `json:"due_date,omitempty" validate:"omitempty"`
@@ -50,6 +51,8 @@ type InvoiceItem struct {
 	VariantID        *string   `gorm:"index" json:"variant_id,omitempty" validate:"omitempty,uuid"`
 	WarehouseID      *string   `gorm:"index" json:"warehouse_id,omitempty" validate:"omitempty,uuid"`
 	Description      string    `gorm:"not null" json:"description" validate:"required"`
+	HSNSACCode       string    `gorm:"size:40" json:"hsn_sac_code,omitempty"`
+	Unit             string    `gorm:"size:20;default:'OTH'" json:"unit,omitempty"`
 	Quantity         float64   `gorm:"not null;type:decimal(15,3)" json:"quantity" validate:"required,gt=0"`
 	FreeQuantity     float64   `gorm:"type:decimal(15,3);default:0" json:"free_quantity"`
 	UnitPrice        float64   `gorm:"not null;type:decimal(15,2)" json:"unit_price" validate:"required,gt=0"`

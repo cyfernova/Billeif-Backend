@@ -921,3 +921,33 @@ func TestProductService_UpdateImageURL_RepositoryError(t *testing.T) {
 	assert.Error(t, err)
 	mockRepo.AssertExpectations(t)
 }
+
+func TestCreateProduct_NormalizesUnitCode(t *testing.T) {
+	mockRepo := new(MockProductRepositoryProd)
+	mockS3 := new(MockS3Service)
+	log := logger.New()
+
+	svc := services.NewProductServiceForTesting(mockRepo, mockS3, log)
+
+	ctx := context.Background()
+	input := services.CreateProductInput{
+		BusinessID: "business-123",
+		Name:       "Widget UQC",
+		SKU:        "WGT-UQC",
+		Price:      19.99,
+		Unit:       "kgs",
+	}
+
+	mockRepo.On("GetBySKU", ctx, "business-123", "WGT-UQC").Return(nil, nil)
+	mockRepo.On("Create", ctx, mock.MatchedBy(func(p *models.Product) bool {
+		return p.Unit == "KGS" && p.UQCCode == "KGS"
+	})).Return(nil)
+
+	product, err := svc.Create(ctx, input)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, product)
+	assert.Equal(t, "KGS", product.Unit)
+	assert.Equal(t, "KGS", product.UQCCode)
+	mockRepo.AssertExpectations(t)
+}

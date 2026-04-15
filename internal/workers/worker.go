@@ -167,11 +167,16 @@ func generateInvoicePDF(ctx context.Context, cfg *config.Config, svc *services.C
 	}
 
 	document, err := svc.Document.GetForWorker(ctx, invoiceID)
-	if err != nil || document.DocumentType != models.DocumentTypeSalesInvoice {
+	if err != nil || (document.DocumentType != models.DocumentTypeSalesInvoice && document.DocumentType != models.DocumentTypeBillOfSupply) {
 		document = legacyInvoiceDocument(invoice)
 	}
 
-	pdfContent, filename, err := renderDocumentPDF(ctx, svc, document, nil)
+	profile, err := resolveRenderProfile(ctx, svc, document, "")
+	if err != nil {
+		return err
+	}
+
+	pdfContent, filename, err := renderDocumentPDF(ctx, svc, document, profile)
 	if err != nil {
 		return err
 	}
@@ -262,6 +267,7 @@ func legacyInvoiceDocument(invoice *services.Invoice) *models.Document {
 		DueDate:               &invoice.DueDate,
 		Currency:              invoice.Currency,
 		Locale:                "en-IN",
+		RenderProfileID:       invoice.RenderProfileID,
 		Notes:                 invoice.Notes,
 		Subtotal:              invoice.Subtotal,
 		DiscountTotal:         invoice.Discount,

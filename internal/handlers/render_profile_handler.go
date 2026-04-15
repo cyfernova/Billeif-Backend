@@ -155,6 +155,37 @@ func (h *RenderProfileHandler) Update(c *gin.Context) {
 	c.JSON(http.StatusOK, profile)
 }
 
+// SetDefault marks a render profile as default for the business.
+// @Summary Set default render profile
+// @Description Marks the specified render profile as default for the business
+// @Tags Render Profiles
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Render Profile ID"
+// @Success 200 {object} interface{}
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /render-profiles/{id}/default [post]
+func (h *RenderProfileHandler) SetDefault(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	value := true
+	profile, err := h.svc.UpdateRenderProfileByBusiness(c.Request.Context(), businessID, c.Param("id"), services.UpdateRenderProfileInput{
+		IsDefault: &value,
+	})
+	if err != nil {
+		statusCode := http.StatusInternalServerError
+		if isNotFoundErr(err) {
+			statusCode = http.StatusNotFound
+		}
+		c.JSON(statusCode, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, profile)
+}
+
 // Delete deletes a render profile
 // @Summary Delete render profile
 // @Description Deletes a render profile by ID

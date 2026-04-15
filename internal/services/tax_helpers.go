@@ -5,11 +5,9 @@ import (
 	"math"
 	"strconv"
 	"strings"
-)
 
-var validUQCCodes = map[string]struct{}{
-	"OTH": {}, "PCS": {}, "NOS": {}, "KGS": {}, "GMS": {}, "LTR": {}, "MTR": {}, "SQF": {}, "BOX": {}, "PAC": {}, "BAG": {}, "SET": {},
-}
+	"invoice-backend/internal/gst"
+)
 
 func readFloatCandidate(data map[string]interface{}, keys ...string) float64 {
 	for _, key := range keys {
@@ -80,24 +78,11 @@ func parsePANFromGSTIN(gstin string) string {
 }
 
 func normalizeUQCCode(code string) string {
-	code = strings.ToUpper(strings.TrimSpace(code))
-	if _, ok := validUQCCodes[code]; ok {
-		return code
-	}
-	return "OTH"
+	return gst.NormalizeReportUQC(code)
 }
 
 func isValidHSNCode(code string) bool {
-	code = strings.TrimSpace(code)
-	if len(code) != 4 && len(code) != 6 && len(code) != 8 {
-		return false
-	}
-	for _, ch := range code {
-		if ch < '0' || ch > '9' {
-			return false
-		}
-	}
-	return true
+	return gst.IsValidHSNCode(code)
 }
 
 func almostEqualFloat(a, b float64) bool {

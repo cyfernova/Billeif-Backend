@@ -7,6 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -25,6 +29,7 @@ var embeddedFonts embed.FS
 
 var htmlTagPattern = regexp.MustCompile(`<[^>]+>`)
 var filenameSanitizer = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
+var logoHTTPClient = &http.Client{Timeout: 8 * time.Second}
 
 type fontAsset struct {
 	family string
@@ -64,6 +69,28 @@ type renderParty struct {
 	address []string
 }
 
+type rgbColor struct {
+	r int
+	g int
+	b int
+}
+
+type renderTheme struct {
+	accent       rgbColor
+	density      string
+	marginTop    float64
+	marginBottom float64
+	marginLeft   float64
+	marginRight  float64
+	rowLine      float64
+	rowMinHeight float64
+}
+
+type registeredLogo struct {
+	name string
+	opts gofpdf.ImageOptions
+}
+
 func renderDocumentPDF(ctx context.Context, svc *services.Container, document *models.Document, profile *models.RenderProfile) ([]byte, string, error) {
 	if document == nil {
 		return nil, "", fmt.Errorf("document is required")
@@ -71,6 +98,8 @@ func renderDocumentPDF(ctx context.Context, svc *services.Container, document *m
 
 	labels := labelsForLocale(document.Locale)
 	applyCustomLabels(labels, profile)
+	theme := resolveRenderTheme(profile)
+	visibility := parseVisibilityConfig(profile)
 
 	business, err := svc.Business.Get(ctx, document.BusinessID)
 	if err != nil {
@@ -103,12 +132,13 @@ func renderDocumentPDF(ctx context.Context, svc *services.Container, document *m
 		pdf.SetProtection(permissions, userPassword, "")
 	}
 
-	pdf.SetMargins(12, 16, 12)
-	pdf.SetAutoPageBreak(true, 16)
+	pdf.SetMargins(theme.marginLeft, theme.marginTop, theme.marginRight)
+	pdf.SetAutoPageBreak(true, theme.marginBottom)
 	pdf.AliasNbPages("")
 	pdf.SetTitle(document.SerialNumber, false)
 	pdf.SetAuthor(business.Name, false)
 	pdf.SetCreator("Cyfernova Invoice Backend", false)
+	logo := registerBusinessLogo(ctx, pdf, business)
 
 	headerText := ""
 	footerText := ""
@@ -122,18 +152,21 @@ func renderDocumentPDF(ctx context.Context, svc *services.Container, document *m
 	}
 
 	pdf.SetHeaderFuncMode(func() {
-		renderPageHeader(pdf, fontFamily, business, document, labels, headerText, bannerText, watermarkText)
+		renderPageHeader(pdf, fontFamily, business, document, labels, headerText, bannerText, watermarkText, visibility, theme, logo)
 	}, true)
 	pdf.SetFooterFunc(func() {
-		renderPageFooter(pdf, fontFamily, labels, footerText)
+		renderPageFooter(pdf, fontFamily, labels, footerText, theme)
 	})
 
 	pdf.AddPage()
 	renderDocumentSummary(pdf, fontFamily, document, party, labels)
-	renderLineTable(pdf, fontFamily, document, labels)
-	renderTotalsSection(pdf, fontFamily, document, labels)
+	renderLineTable(pdf, fontFamily, document, labels, theme)
+	renderTotalsSection(pdf, fontFamily, document, labels, theme)
 	renderComplianceSection(ctx, pdf, fontFamily, svc, document)
 	renderTextSections(pdf, fontFamily, document, profile, labels)
+	if visibility["show_signature_line"] {
+		renderSignatureLine(pdf, fontFamily, theme)
+	}
 
 	if pdf.Err() {
 		return nil, "", fmt.Errorf("pdf rendering failed")
@@ -151,10 +184,12 @@ func renderDocumentPDF(ctx context.Context, svc *services.Container, document *m
 	return out.Bytes(), filename + ".pdf", nil
 }
 
-func renderPageHeader(pdf *gofpdf.Fpdf, fontFamily string, business *models.BusinessProfile, document *models.Document, labels *localeLabels, headerText, bannerText, watermarkText string) {
+func renderPageHeader(pdf *gofpdf.Fpdf, fontFamily string, business *models.BusinessProfile, document *models.Document, labels *localeLabels, headerText, bannerText, watermarkText string, visibility map[string]bool, theme renderTheme, logo *registeredLogo) {
+	accentLight := blendColor(theme.accent, 0.85)
+	accentBorder := blendColor(theme.accent, 0.65)
 	pdf.SetTextColor(18, 24, 38)
-	pdf.SetFillColor(244, 247, 251)
-	pdf.SetDrawColor(220, 227, 235)
+	pdf.SetFillColor(accentLight.r, accentLight.g, accentLight.b)
+	pdf.SetDrawColor(accentBorder.r, accentBorder.g, accentBorder.b)
 	pdf.SetY(12)
 
 	if watermarkText != "" {
@@ -168,8 +203,15 @@ func renderPageHeader(pdf *gofpdf.Fpdf, fontFamily string, business *models.Busi
 		pdf.SetTextColor(18, 24, 38)
 	}
 
+	leftCellWidth := 118.0
+	headerLeftX := 12.0
+	if visibility["show_logo"] && logo != nil {
+		pdf.ImageOptions(logo.name, headerLeftX, 12.5, 18, 10, false, logo.opts, 0, "")
+		leftCellWidth -= 22
+		pdf.SetX(headerLeftX + 22)
+	}
 	pdf.SetFont(fontFamily, "", 16)
-	pdf.CellFormat(118, 8, safeValue(business.Name, "Business"), "", 0, "L", false, 0, "")
+	pdf.CellFormat(leftCellWidth, 8, safeValue(business.Name, "Business"), "", 0, "L", false, 0, "")
 	pdf.SetFont(fontFamily, "", 13)
 	pdf.CellFormat(68, 8, documentTitle(labels, document.DocumentType), "", 1, "R", false, 0, "")
 
@@ -181,7 +223,11 @@ func renderPageHeader(pdf *gofpdf.Fpdf, fontFamily string, business *models.Busi
 	})
 	pdf.SetFont(fontFamily, "", 9)
 	for _, line := range addressLines {
-		pdf.CellFormat(118, 5, line, "", 0, "L", false, 0, "")
+		pdf.SetX(headerLeftX)
+		if visibility["show_logo"] && logo != nil {
+			pdf.SetX(headerLeftX + 22)
+		}
+		pdf.CellFormat(leftCellWidth, 5, line, "", 0, "L", false, 0, "")
 		pdf.CellFormat(68, 5, lineValue(labels.documentNumber, document.SerialNumber), "", 1, "R", false, 0, "")
 	}
 	if headerText != "" {
@@ -190,16 +236,19 @@ func renderPageHeader(pdf *gofpdf.Fpdf, fontFamily string, business *models.Busi
 	}
 	if bannerText != "" {
 		pdf.SetFont(fontFamily, "", 9)
-		pdf.SetFillColor(228, 236, 248)
+		bannerFill := blendColor(theme.accent, 0.78)
+		pdf.SetFillColor(bannerFill.r, bannerFill.g, bannerFill.b)
 		pdf.CellFormat(186, 7, bannerText, "1", 1, "C", true, 0, "")
 	}
 	pdf.Ln(2)
 }
 
-func renderPageFooter(pdf *gofpdf.Fpdf, fontFamily string, labels *localeLabels, footerText string) {
+func renderPageFooter(pdf *gofpdf.Fpdf, fontFamily string, labels *localeLabels, footerText string, theme renderTheme) {
 	pdf.SetY(-12)
-	pdf.SetTextColor(110, 118, 129)
+	footerColor := blendColor(theme.accent, 0.45)
+	pdf.SetTextColor(footerColor.r, footerColor.g, footerColor.b)
 	pdf.SetFont(fontFamily, "", 8)
+	footerText = safeValue(strings.TrimSpace(footerText), "Generated by Cyfernova")
 	pdf.CellFormat(120, 5, footerText, "", 0, "L", false, 0, "")
 	pdf.CellFormat(66, 5, fmt.Sprintf("%s %d/{nb}", labels.page, pdf.PageNo()), "", 0, "R", false, 0, "")
 }
@@ -241,9 +290,9 @@ func renderDocumentSummary(pdf *gofpdf.Fpdf, fontFamily string, document *models
 	pdf.SetY(startY + boxHeight + 6)
 }
 
-func renderLineTable(pdf *gofpdf.Fpdf, fontFamily string, document *models.Document, labels *localeLabels) {
+func renderLineTable(pdf *gofpdf.Fpdf, fontFamily string, document *models.Document, labels *localeLabels, theme renderTheme) {
 	widths := []float64{12, 72, 24, 28, 22, 28}
-	renderLineTableHeader(pdf, fontFamily, widths, labels)
+	renderLineTableHeader(pdf, fontFamily, widths, labels, theme)
 
 	pageWidth, pageHeight := pdf.GetPageSize()
 	_, _, _, bottomMargin := pdf.GetMargins()
@@ -255,33 +304,34 @@ func renderLineTable(pdf *gofpdf.Fpdf, fontFamily string, document *models.Docum
 		if len(descLines) == 0 {
 			descLines = [][]byte{[]byte("-")}
 		}
-		rowHeight := float64(len(descLines))*5 + 2
-		if rowHeight < 8 {
-			rowHeight = 8
+		rowHeight := float64(len(descLines))*theme.rowLine + 2
+		if rowHeight < theme.rowMinHeight {
+			rowHeight = theme.rowMinHeight
 		}
 		if pdf.GetY()+rowHeight > usableBottom {
 			pdf.AddPage()
-			renderLineTableHeader(pdf, fontFamily, widths, labels)
+			renderLineTableHeader(pdf, fontFamily, widths, labels, theme)
 		}
 
 		x := pdf.GetX()
 		y := pdf.GetY()
 
-		drawCell(pdf, x, y, widths[0], rowHeight, strconv.Itoa(i+1), "C", fontFamily, 9)
-		drawWrappedCell(pdf, x+widths[0], y, widths[1], rowHeight, safeValue(line.Description, "-"), "L", fontFamily, 9)
-		drawCell(pdf, x+widths[0]+widths[1], y, widths[2], rowHeight, formatQuantity(line.Quantity), "R", fontFamily, 9)
-		drawCell(pdf, x+widths[0]+widths[1]+widths[2], y, widths[3], rowHeight, formatMoney(document.Currency, line.UnitPrice), "R", fontFamily, 9)
-		drawCell(pdf, x+widths[0]+widths[1]+widths[2]+widths[3], y, widths[4], rowHeight, formatMoney(document.Currency, line.TaxAmount+line.CessAmount), "R", fontFamily, 9)
-		drawCell(pdf, x+widths[0]+widths[1]+widths[2]+widths[3]+widths[4], y, widths[5], rowHeight, formatMoney(document.Currency, line.LineTotal), "R", fontFamily, 9)
+		drawCell(pdf, x, y, widths[0], rowHeight, strconv.Itoa(i+1), "C", fontFamily, 9, theme.rowLine)
+		drawWrappedCell(pdf, x+widths[0], y, widths[1], rowHeight, safeValue(line.Description, "-"), "L", fontFamily, 9, theme.rowLine)
+		drawCell(pdf, x+widths[0]+widths[1], y, widths[2], rowHeight, formatQuantity(line.Quantity), "R", fontFamily, 9, theme.rowLine)
+		drawCell(pdf, x+widths[0]+widths[1]+widths[2], y, widths[3], rowHeight, formatMoney(document.Currency, line.UnitPrice), "R", fontFamily, 9, theme.rowLine)
+		drawCell(pdf, x+widths[0]+widths[1]+widths[2]+widths[3], y, widths[4], rowHeight, formatMoney(document.Currency, line.TaxAmount+line.CessAmount), "R", fontFamily, 9, theme.rowLine)
+		drawCell(pdf, x+widths[0]+widths[1]+widths[2]+widths[3]+widths[4], y, widths[5], rowHeight, formatMoney(document.Currency, line.LineTotal), "R", fontFamily, 9, theme.rowLine)
 		pdf.SetXY(x, y+rowHeight)
 	}
 	pdf.Ln(4)
 }
 
-func renderLineTableHeader(pdf *gofpdf.Fpdf, fontFamily string, widths []float64, labels *localeLabels) {
+func renderLineTableHeader(pdf *gofpdf.Fpdf, fontFamily string, widths []float64, labels *localeLabels, theme renderTheme) {
 	headers := []string{"#", labels.description, labels.quantity, labels.unitPrice, labels.tax, labels.total}
 	pdf.SetFont(fontFamily, "", 9)
-	pdf.SetFillColor(241, 245, 249)
+	fillColor := blendColor(theme.accent, 0.82)
+	pdf.SetFillColor(fillColor.r, fillColor.g, fillColor.b)
 	pdf.SetTextColor(32, 36, 42)
 	for idx, header := range headers {
 		pdf.CellFormat(widths[idx], 8, header, "1", 0, "C", true, 0, "")
@@ -289,7 +339,7 @@ func renderLineTableHeader(pdf *gofpdf.Fpdf, fontFamily string, widths []float64
 	pdf.Ln(-1)
 }
 
-func renderTotalsSection(pdf *gofpdf.Fpdf, fontFamily string, document *models.Document, labels *localeLabels) {
+func renderTotalsSection(pdf *gofpdf.Fpdf, fontFamily string, document *models.Document, labels *localeLabels, theme renderTheme) {
 	pageWidth, _ := pdf.GetPageSize()
 	left, _, right, _ := pdf.GetMargins()
 	tableWidth := 78.0
@@ -319,9 +369,14 @@ func renderTotalsSection(pdf *gofpdf.Fpdf, fontFamily string, document *models.D
 	pdf.SetX(left)
 	pdf.SetFont(fontFamily, "", 9)
 	for _, row := range rows {
+		highlight := row.label == labels.total || row.label == labels.balanceDue
+		if highlight {
+			fillColor := blendColor(theme.accent, 0.84)
+			pdf.SetFillColor(fillColor.r, fillColor.g, fillColor.b)
+		}
 		pdf.SetX(startX)
-		pdf.CellFormat(34, 7, row.label, "1", 0, "L", false, 0, "")
-		pdf.CellFormat(44, 7, row.value, "1", 1, "R", false, 0, "")
+		pdf.CellFormat(34, 7, row.label, "1", 0, "L", highlight, 0, "")
+		pdf.CellFormat(44, 7, row.value, "1", 1, "R", highlight, 0, "")
 	}
 	pdf.Ln(3)
 }
@@ -331,6 +386,23 @@ func renderTextSections(pdf *gofpdf.Fpdf, fontFamily string, document *models.Do
 	renderOptionalTextBlock(pdf, fontFamily, labels.notes, document.Notes, visibility["show_notes"])
 	renderOptionalTextBlock(pdf, fontFamily, labels.terms, document.Terms, visibility["show_terms"])
 	renderOptionalTextBlock(pdf, fontFamily, labels.declaration, document.Declaration, visibility["show_declaration"])
+}
+
+func renderSignatureLine(pdf *gofpdf.Fpdf, fontFamily string, theme renderTheme) {
+	pageWidth, pageHeight := pdf.GetPageSize()
+	_, _, right, bottom := pdf.GetMargins()
+	if pdf.GetY()+14 > pageHeight-bottom {
+		pdf.AddPage()
+	}
+	startX := pageWidth - right - 65
+	lineY := pdf.GetY() + 7
+	pdf.SetDrawColor(theme.accent.r, theme.accent.g, theme.accent.b)
+	pdf.Line(startX, lineY, startX+60, lineY)
+	pdf.SetXY(startX, lineY+1)
+	pdf.SetFont(fontFamily, "", 8.5)
+	pdf.SetTextColor(95, 104, 117)
+	pdf.CellFormat(60, 5, "Authorized Signature", "", 1, "C", false, 0, "")
+	pdf.Ln(1)
 }
 
 func renderComplianceSection(ctx context.Context, pdf *gofpdf.Fpdf, fontFamily string, svc *services.Container, document *models.Document) {
@@ -407,18 +479,18 @@ func renderKeyValue(pdf *gofpdf.Fpdf, fontFamily, key, value string) {
 	pdf.CellFormat(58, 5, safeValue(value, "-"), "", 1, "R", false, 0, "")
 }
 
-func drawCell(pdf *gofpdf.Fpdf, x, y, w, h float64, text, align, fontFamily string, fontSize float64) {
+func drawCell(pdf *gofpdf.Fpdf, x, y, w, h float64, text, align, fontFamily string, fontSize, lineHeight float64) {
 	pdf.Rect(x, y, w, h, "D")
 	pdf.SetXY(x+1, y+1.5)
 	pdf.SetFont(fontFamily, "", fontSize)
-	pdf.MultiCell(w-2, 4.5, text, "", align, false)
+	pdf.MultiCell(w-2, lineHeight, text, "", align, false)
 }
 
-func drawWrappedCell(pdf *gofpdf.Fpdf, x, y, w, h float64, text, align, fontFamily string, fontSize float64) {
+func drawWrappedCell(pdf *gofpdf.Fpdf, x, y, w, h float64, text, align, fontFamily string, fontSize, lineHeight float64) {
 	pdf.Rect(x, y, w, h, "D")
 	pdf.SetXY(x+1.5, y+1.5)
 	pdf.SetFont(fontFamily, "", fontSize)
-	pdf.MultiCell(w-3, 4.5, text, "", align, false)
+	pdf.MultiCell(w-3, lineHeight, text, "", align, false)
 }
 
 func resolveRenderParty(ctx context.Context, svc *services.Container, document *models.Document, labels *localeLabels) (renderParty, error) {
@@ -731,6 +803,7 @@ func applyCustomLabels(labels *localeLabels, profile *models.RenderProfile) {
 		}
 	}
 	replace("document_number", &labels.documentNumber)
+	replace("invoice_number", &labels.documentNumber)
 	replace("issue_date", &labels.issueDate)
 	replace("due_date", &labels.dueDate)
 	replace("dispatch_date", &labels.dispatchDate)
@@ -758,9 +831,12 @@ func applyCustomLabels(labels *localeLabels, profile *models.RenderProfile) {
 
 func parseVisibilityConfig(profile *models.RenderProfile) map[string]bool {
 	defaults := map[string]bool{
-		"show_notes":       true,
-		"show_terms":       true,
-		"show_declaration": true,
+		"show_notes":          true,
+		"show_terms":          true,
+		"show_declaration":    true,
+		"show_logo":           true,
+		"show_signature":      false,
+		"show_signature_line": false,
 	}
 	if profile == nil || strings.TrimSpace(profile.VisibilityConfig) == "" {
 		return defaults
@@ -772,7 +848,194 @@ func parseVisibilityConfig(profile *models.RenderProfile) map[string]bool {
 	for key, value := range raw {
 		defaults[key] = value
 	}
+	if defaults["show_signature"] {
+		defaults["show_signature_line"] = true
+	}
 	return defaults
+}
+
+func parseLayoutConfig(profile *models.RenderProfile) map[string]interface{} {
+	if profile == nil || strings.TrimSpace(profile.LayoutConfig) == "" {
+		return map[string]interface{}{}
+	}
+	var config map[string]interface{}
+	if err := json.Unmarshal([]byte(profile.LayoutConfig), &config); err != nil {
+		return map[string]interface{}{}
+	}
+	return config
+}
+
+func resolveRenderTheme(profile *models.RenderProfile) renderTheme {
+	density := "classic"
+	accent := rgbColor{r: 67, g: 97, b: 146}
+	config := parseLayoutConfig(profile)
+	if candidate := readLayoutString(config, "density", "layout_density", "layout_variant", "variant", "template"); candidate != "" {
+		normalized := strings.ToLower(strings.TrimSpace(candidate))
+		switch normalized {
+		case "compact":
+			density = "compact"
+		case "minimal":
+			density = "minimal"
+		default:
+			density = "classic"
+		}
+	}
+	if colorValue := readLayoutString(config, "accent_color", "accentColor", "primary_color", "primaryColor"); colorValue != "" {
+		if parsed, ok := parseHexColor(colorValue); ok {
+			accent = parsed
+		}
+	}
+	theme := renderTheme{
+		accent:       accent,
+		density:      density,
+		marginTop:    16,
+		marginBottom: 16,
+		marginLeft:   12,
+		marginRight:  12,
+		rowLine:      4.5,
+		rowMinHeight: 8,
+	}
+	switch density {
+	case "compact":
+		theme.marginTop = 12
+		theme.marginBottom = 12
+		theme.marginLeft = 10
+		theme.marginRight = 10
+		theme.rowLine = 4.0
+		theme.rowMinHeight = 7
+	case "minimal":
+		theme.marginTop = 18
+		theme.marginBottom = 18
+		theme.marginLeft = 14
+		theme.marginRight = 14
+		theme.rowLine = 5.0
+		theme.rowMinHeight = 9
+	}
+	return theme
+}
+
+func readLayoutString(config map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := config[key]; ok {
+			if asString, ok := value.(string); ok {
+				return strings.TrimSpace(asString)
+			}
+		}
+	}
+	return ""
+}
+
+func parseHexColor(value string) (rgbColor, bool) {
+	value = strings.TrimPrefix(strings.TrimSpace(value), "#")
+	if len(value) == 3 {
+		value = strings.Repeat(string(value[0]), 2) + strings.Repeat(string(value[1]), 2) + strings.Repeat(string(value[2]), 2)
+	}
+	if len(value) != 6 {
+		return rgbColor{}, false
+	}
+	r, err := strconv.ParseInt(value[0:2], 16, 64)
+	if err != nil {
+		return rgbColor{}, false
+	}
+	g, err := strconv.ParseInt(value[2:4], 16, 64)
+	if err != nil {
+		return rgbColor{}, false
+	}
+	b, err := strconv.ParseInt(value[4:6], 16, 64)
+	if err != nil {
+		return rgbColor{}, false
+	}
+	return rgbColor{r: int(r), g: int(g), b: int(b)}, true
+}
+
+func blendColor(base rgbColor, blend float64) rgbColor {
+	if blend < 0 {
+		blend = 0
+	}
+	if blend > 1 {
+		blend = 1
+	}
+	return rgbColor{
+		r: int(float64(base.r)*(1-blend) + 255*blend),
+		g: int(float64(base.g)*(1-blend) + 255*blend),
+		b: int(float64(base.b)*(1-blend) + 255*blend),
+	}
+}
+
+func registerBusinessLogo(ctx context.Context, pdf *gofpdf.Fpdf, business *models.BusinessProfile) *registeredLogo {
+	if business == nil || strings.TrimSpace(business.LogoURL) == "" {
+		return nil
+	}
+	data, imageType, err := fetchRemoteImage(ctx, business.LogoURL)
+	if err != nil {
+		return nil
+	}
+	name := "business-logo-" + sanitizeFilename(business.ID)
+	opts := gofpdf.ImageOptions{ImageType: imageType, ReadDpi: true}
+	pdf.RegisterImageOptionsReader(name, opts, bytes.NewReader(data))
+	if pdf.Err() {
+		return nil
+	}
+	return &registeredLogo{name: name, opts: opts}
+}
+
+func fetchRemoteImage(ctx context.Context, source string) ([]byte, string, error) {
+	parsed, err := sanitizeLogoURL(source)
+	if err != nil {
+		return nil, "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		return nil, "", err
+	}
+	resp, err := logoHTTPClient.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("logo fetch failed with status %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
+	if err != nil {
+		return nil, "", err
+	}
+	imageType := "JPG"
+	contentType := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Type")))
+	if strings.Contains(contentType, "png") || strings.HasSuffix(strings.ToLower(parsed.Path), ".png") {
+		imageType = "PNG"
+	}
+	if len(data) >= 4 && data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 {
+		imageType = "PNG"
+	}
+	return data, imageType, nil
+}
+
+func sanitizeLogoURL(source string) (*url.URL, error) {
+	trimmed := strings.TrimSpace(source)
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return nil, err
+	}
+	if parsed.Host == "" {
+		return nil, fmt.Errorf("logo source host is required")
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https":
+	default:
+		return nil, fmt.Errorf("logo source scheme must be http or https")
+	}
+
+	host := strings.ToLower(parsed.Hostname())
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return nil, fmt.Errorf("logo source host is not allowed")
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+			return nil, fmt.Errorf("logo source host is not allowed")
+		}
+	}
+	return parsed, nil
 }
 
 func supportedDocumentTypes() []string {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"invoice-backend/internal/config"
+	"invoice-backend/internal/gst"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/awsclients"
@@ -487,11 +488,8 @@ func (s *DocumentService) buildDocumentLines(ctx context.Context, business *mode
 			if line.HSNSACCode == "" {
 				line.HSNSACCode = product.HSNSACCode
 			}
-			if line.UQCCode == "" {
-				line.UQCCode = product.UQCCode
-			}
 			if line.Unit == "" {
-				line.Unit = product.Unit
+				line.Unit = firstNonEmpty(product.Unit, product.UQCCode)
 			}
 			line.CostSnapshot = product.CostPrice
 			if product.IsService {
@@ -505,9 +503,8 @@ func (s *DocumentService) buildDocumentLines(ctx context.Context, business *mode
 		if input.WarehouseID != "" {
 			line.WarehouseID = &input.WarehouseID
 		}
-		if line.UQCCode == "" {
-			line.UQCCode = normalizeUQCCode("")
-		}
+		line.Unit = gst.CanonicalSnapshotUQC(line.Unit, line.UQCCode)
+		line.UQCCode = line.Unit
 
 		line.LineSubtotal = (line.Quantity * line.UnitPrice) - line.DiscountAmount
 		if line.LineSubtotal < 0 {
@@ -1147,6 +1144,7 @@ func (s *DocumentService) MirrorLegacyInvoice(ctx context.Context, invoice *mode
 	doc.Locale = "en-IN"
 	doc.ProjectID = invoice.ProjectID
 	doc.PriceListID = invoice.PriceListID
+	doc.RenderProfileID = invoice.RenderProfileID
 	doc.OriginSubscriptionID = invoice.OriginSubscriptionID
 	doc.OriginRunID = invoice.OriginRunID
 	doc.SignedAt = invoice.SignedAt
@@ -1207,6 +1205,8 @@ func (s *DocumentService) MirrorLegacyInvoice(ctx context.Context, invoice *mode
 			ProductID:         item.ProductID,
 			VariantID:         item.VariantID,
 			Description:       item.Description,
+			HSNSACCode:        item.HSNSACCode,
+			Unit:              item.Unit,
 			WarehouseID:       item.WarehouseID,
 			Quantity:          item.Quantity,
 			FreeQuantity:      item.FreeQuantity,
@@ -1230,14 +1230,16 @@ func (s *DocumentService) MirrorLegacyInvoice(ctx context.Context, invoice *mode
 			if product, productErr := s.productRepo.GetByID(ctx, *item.ProductID, invoice.BusinessID); productErr == nil {
 				line.CostSnapshot = product.CostPrice
 				line.MarginSnapshot = line.LineSubtotal - (product.CostPrice * item.Quantity)
-				line.HSNSACCode = product.HSNSACCode
-				line.UQCCode = normalizeUQCCode(product.UQCCode)
-				line.Unit = product.Unit
+				if line.HSNSACCode == "" {
+					line.HSNSACCode = product.HSNSACCode
+				}
+				if line.Unit == "" {
+					line.Unit = firstNonEmpty(product.Unit, product.UQCCode)
+				}
 			}
 		}
-		if line.UQCCode == "" {
-			line.UQCCode = normalizeUQCCode("")
-		}
+		line.Unit = gst.CanonicalSnapshotUQC(line.Unit, item.Unit)
+		line.UQCCode = line.Unit
 		doc.Lines = append(doc.Lines, line)
 	}
 	doc.WithholdingTotal, doc.TDSTotal, doc.TCSTotal = summarizeWithholdings(mapSliceToWithholdings(readMapSlice(taxProfile, "tcs")))

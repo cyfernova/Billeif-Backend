@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"invoice-backend/internal/config"
+	"invoice-backend/internal/gst"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/awsclients"
@@ -415,8 +416,8 @@ func (s *TaxComplianceService) buildGSTR1Report(ctx context.Context, businessID 
 	cdnur := make([]map[string]interface{}, 0)
 	exports := make([]map[string]interface{}, 0)
 	b2cs := map[string]map[string]interface{}{}
-	hsnRows := map[string]map[string]interface{}{}
 	warnings := []string{}
+	hsnLines := make([]gst.HSNSummaryLine, 0)
 
 	for _, doc := range docs {
 		partyGSTIN := strings.ToUpper(strings.TrimSpace(doc.PartyGSTIN))
@@ -471,34 +472,25 @@ func (s *TaxComplianceService) buildGSTR1Report(ctx context.Context, businessID 
 		}
 
 		for _, line := range doc.Lines {
-			uqc := normalizeUQCCode(line.UQCCode)
-			if strings.TrimSpace(line.UQCCode) != "" && uqc == "OTH" && strings.ToUpper(strings.TrimSpace(line.UQCCode)) != "OTH" {
-				warnings = append(warnings, fmt.Sprintf("invalid UQC %q downgraded to OTH for document %s", line.UQCCode, doc.SerialNumber))
-			}
-			if !isValidHSNCode(line.HSNSACCode) {
-				warnings = append(warnings, fmt.Sprintf("excluded invalid HSN for document %s line %s", doc.SerialNumber, line.Description))
-				continue
-			}
-			key := line.HSNSACCode + "|" + uqc + "|" + boolBucket(partyGSTIN != "")
-			if _, ok := hsnRows[key]; !ok {
-				hsnRows[key] = map[string]interface{}{
-					"hsn_sac_code":  line.HSNSACCode,
-					"uqc_code":      uqc,
-					"b2b":           partyGSTIN != "",
-					"quantity":      0.0,
-					"taxable_value": 0.0,
-					"tax_amount":    0.0,
-					"total":         0.0,
-				}
-			}
 			sign := 1.0
 			if doc.DocumentType == models.DocumentTypeCreditNote {
 				sign = -1
 			}
-			hsnRows[key]["quantity"] = round2(hsnRows[key]["quantity"].(float64) + sign*line.Quantity)
-			hsnRows[key]["taxable_value"] = round2(hsnRows[key]["taxable_value"].(float64) + sign*line.LineSubtotal)
-			hsnRows[key]["tax_amount"] = round2(hsnRows[key]["tax_amount"].(float64) + sign*(line.TaxAmount+line.CessAmount))
-			hsnRows[key]["total"] = round2(hsnRows[key]["total"].(float64) + sign*line.LineTotal)
+			hsnLines = append(hsnLines, gst.HSNSummaryLine{
+				HSNSACCode:   line.HSNSACCode,
+				Unit:         line.Unit,
+				LegacyUQC:    line.UQCCode,
+				Description:  line.Description,
+				TaxRate:      line.TaxRate,
+				Quantity:     line.Quantity,
+				TaxableValue: line.LineSubtotal,
+				IGSTAmount:   line.IGSTAmount,
+				CGSTAmount:   line.CGSTAmount,
+				SGSTAmount:   line.SGSTAmount,
+				TotalValue:   line.LineTotal,
+				Sign:         sign,
+				WarningRef:   fmt.Sprintf("document %s line %s", doc.SerialNumber, line.Description),
+			})
 		}
 
 		if len(doc.SerialNumber) > 16 {
@@ -507,7 +499,26 @@ func (s *TaxComplianceService) buildGSTR1Report(ctx context.Context, businessID 
 	}
 
 	b2csList := mapsToSortedSlice(b2cs)
-	hsnList := mapsToSortedSlice(hsnRows)
+	hsnSummary := gst.AggregateHSNSummary(hsnLines)
+	warnings = append(warnings, hsnSummary.Warnings...)
+	hsnList := make([]map[string]interface{}, 0, len(hsnSummary.Rows))
+	for _, row := range hsnSummary.Rows {
+		hsnList = append(hsnList, map[string]interface{}{
+			"hsn_sac_code":  row.HSNSACCode,
+			"description":   row.Description,
+			"unit":          row.Unit,
+			"uqc_code":      row.Unit,
+			"tax_rate":      row.TaxRate,
+			"quantity":      row.Quantity,
+			"taxable_value": row.TaxableValue,
+			"igst_amount":   row.IGSTAmount,
+			"cgst_amount":   row.CGSTAmount,
+			"sgst_amount":   row.SGSTAmount,
+			"tax_amount":    row.TaxAmount,
+			"total":         row.TotalValue,
+			"total_value":   row.TotalValue,
+		})
+	}
 
 	report := map[string]interface{}{
 		"report_type":      models.GSTReportTypeGSTR1,

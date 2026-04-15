@@ -518,7 +518,178 @@ func TestInvoiceService_UpdateByBusiness_Success(t *testing.T) {
 	mockRepo.AssertExpectations(t)
 }
 
-// TestUpdateByBusiness_InvalidStatus tests update on non-draft invoice
+func TestInvoiceService_Create_WithRenderProfile(t *testing.T) {
+	mockRepo := new(MockInvoiceRepository)
+	mockCustomer := new(MockCustomerRepository)
+	mockProduct := new(MockProductRepository)
+	mockSQS := new(MockSQSService)
+	mockEmail := new(MockEmailService)
+	log := logger.New()
+
+	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+
+	ctx := context.Background()
+	businessID := "business-123"
+	customerID := "customer-456"
+	renderProfileID := "11111111-1111-1111-1111-111111111111"
+
+	customer := &models.Customer{
+		ID:         customerID,
+		BusinessID: businessID,
+		Name:       "Template Customer",
+		Email:      "customer@example.com",
+	}
+
+	mockCustomer.On("GetByID", ctx, customerID, businessID).Return(customer, nil)
+	mockRepo.On("Create", ctx, mock.MatchedBy(func(invoice *models.Invoice) bool {
+		return invoice.RenderProfileID != nil && *invoice.RenderProfileID == renderProfileID
+	})).Return(nil)
+	mockSQS.On("SendMessage", ctx, "invoice-queue", mock.AnythingOfType("map[string]string")).Return(nil)
+
+	input := services.CreateInvoiceInput{
+		BusinessID:      businessID,
+		CustomerID:      customerID,
+		RenderProfileID: renderProfileID,
+		DueDate:         time.Now().Add(24 * time.Hour),
+		Items: []services.CreateInvoiceItemInput{
+			{
+				Description: "Product A",
+				Quantity:    1,
+				UnitPrice:   100.00,
+				TaxRate:     0,
+			},
+		},
+	}
+
+	invoice, err := svc.Create(ctx, input)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, invoice)
+	if assert.NotNil(t, invoice.RenderProfileID) {
+		assert.Equal(t, renderProfileID, *invoice.RenderProfileID)
+	}
+	mockCustomer.AssertExpectations(t)
+	mockRepo.AssertExpectations(t)
+	mockSQS.AssertExpectations(t)
+}
+
+func TestInvoiceService_Create_WithInvalidRenderProfileID(t *testing.T) {
+	mockRepo := new(MockInvoiceRepository)
+	mockCustomer := new(MockCustomerRepository)
+	mockProduct := new(MockProductRepository)
+	mockSQS := new(MockSQSService)
+	mockEmail := new(MockEmailService)
+	log := logger.New()
+
+	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+
+	ctx := context.Background()
+	businessID := "business-123"
+	customerID := "customer-456"
+
+	input := services.CreateInvoiceInput{
+		BusinessID:      businessID,
+		CustomerID:      customerID,
+		RenderProfileID: "not-a-uuid",
+		DueDate:         time.Now().Add(24 * time.Hour),
+		Items: []services.CreateInvoiceItemInput{
+			{
+				Description: "Product A",
+				Quantity:    1,
+				UnitPrice:   100.00,
+				TaxRate:     0,
+			},
+		},
+	}
+
+	invoice, err := svc.Create(ctx, input)
+
+	assert.Error(t, err)
+	assert.Nil(t, invoice)
+	assert.Contains(t, err.Error(), "invalid render profile id")
+	mockCustomer.AssertNotCalled(t, "GetByID", mock.Anything, mock.Anything, mock.Anything)
+	mockRepo.AssertNotCalled(t, "Create", mock.Anything, mock.Anything)
+}
+
+func TestInvoiceService_UpdateByBusiness_AllowsSentWithRenderProfile(t *testing.T) {
+	mockRepo := new(MockInvoiceRepository)
+	mockCustomer := new(MockCustomerRepository)
+	mockProduct := new(MockProductRepository)
+	mockSQS := new(MockSQSService)
+	mockEmail := new(MockEmailService)
+	log := logger.New()
+
+	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+
+	ctx := context.Background()
+	businessID := "business-123"
+	invoiceID := "invoice-456"
+	renderProfileID := "22222222-2222-2222-2222-222222222222"
+
+	existingInvoice := &models.Invoice{
+		ID:         invoiceID,
+		BusinessID: businessID,
+		Status:     "sent",
+		Total:      100.00,
+	}
+
+	mockRepo.On("GetByID", ctx, invoiceID, businessID).Return(existingInvoice, nil)
+	mockRepo.On("Update", ctx, mock.MatchedBy(func(invoice *models.Invoice) bool {
+		return invoice.RenderProfileID != nil && *invoice.RenderProfileID == renderProfileID
+	})).Return(nil)
+
+	input := services.UpdateInvoiceInput{
+		Notes:           "Resent with updated template",
+		RenderProfileID: &renderProfileID,
+	}
+
+	invoice, err := svc.UpdateByBusiness(ctx, businessID, invoiceID, input)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, invoice)
+	if assert.NotNil(t, invoice.RenderProfileID) {
+		assert.Equal(t, renderProfileID, *invoice.RenderProfileID)
+	}
+	mockRepo.AssertExpectations(t)
+}
+
+func TestInvoiceService_UpdateByBusiness_RejectsInvalidRenderProfileID(t *testing.T) {
+	mockRepo := new(MockInvoiceRepository)
+	mockCustomer := new(MockCustomerRepository)
+	mockProduct := new(MockProductRepository)
+	mockSQS := new(MockSQSService)
+	mockEmail := new(MockEmailService)
+	log := logger.New()
+
+	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+
+	ctx := context.Background()
+	businessID := "business-123"
+	invoiceID := "invoice-456"
+	invalidID := "render-profile"
+
+	existingInvoice := &models.Invoice{
+		ID:         invoiceID,
+		BusinessID: businessID,
+		Status:     "sent",
+		Total:      100.00,
+	}
+
+	mockRepo.On("GetByID", ctx, invoiceID, businessID).Return(existingInvoice, nil)
+
+	input := services.UpdateInvoiceInput{
+		RenderProfileID: &invalidID,
+	}
+
+	invoice, err := svc.UpdateByBusiness(ctx, businessID, invoiceID, input)
+
+	assert.Error(t, err)
+	assert.Nil(t, invoice)
+	assert.Contains(t, err.Error(), "invalid render profile id")
+	mockRepo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything)
+}
+
+// TestUpdateByBusiness_InvalidStatus tests update on non-editable invoice
 func TestInvoiceService_UpdateByBusiness_InvalidStatus(t *testing.T) {
 	mockRepo := new(MockInvoiceRepository)
 	mockCustomer := new(MockCustomerRepository)
@@ -536,7 +707,7 @@ func TestInvoiceService_UpdateByBusiness_InvalidStatus(t *testing.T) {
 	existingInvoice := &models.Invoice{
 		ID:         invoiceID,
 		BusinessID: businessID,
-		Status:     "sent",
+		Status:     "paid",
 		Total:      100.00,
 	}
 
@@ -550,7 +721,7 @@ func TestInvoiceService_UpdateByBusiness_InvalidStatus(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Nil(t, invoice)
-	assert.Contains(t, err.Error(), "cannot update invoice with status: sent")
+	assert.Contains(t, err.Error(), "cannot update invoice with status: paid")
 	mockRepo.AssertExpectations(t)
 }
 
@@ -895,4 +1066,58 @@ func TestInvoiceService_Create_RepositoryError(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to create invoice")
 	mockCustomer.AssertExpectations(t)
 	mockRepo.AssertExpectations(t)
+}
+
+func TestInvoiceService_Create_SnapshotsUnitAndHSN(t *testing.T) {
+	mockRepo := new(MockInvoiceRepository)
+	mockCustomer := new(MockCustomerRepository)
+	mockProduct := new(MockProductRepository)
+	mockSQS := new(MockSQSService)
+	mockEmail := new(MockEmailService)
+	log := logger.New()
+
+	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+
+	ctx := context.Background()
+	businessID := "business-123"
+	customerID := "customer-456"
+
+	customer := &models.Customer{
+		ID:         customerID,
+		BusinessID: businessID,
+		Name:       "Test Customer",
+	}
+
+	mockCustomer.On("GetByID", ctx, customerID, businessID).Return(customer, nil)
+	mockRepo.On("Create", ctx, mock.MatchedBy(func(invoice *models.Invoice) bool {
+		return len(invoice.Items) == 1 &&
+			invoice.Items[0].Unit == "CBM" &&
+			invoice.Items[0].HSNSACCode == "1234"
+	})).Return(nil)
+	mockSQS.On("SendMessage", ctx, "invoice-queue", mock.AnythingOfType("map[string]string")).Return(nil)
+
+	invoice, err := svc.Create(ctx, services.CreateInvoiceInput{
+		BusinessID: businessID,
+		CustomerID: customerID,
+		DueDate:    time.Now().Add(24 * time.Hour),
+		Items: []services.CreateInvoiceItemInput{
+			{
+				Description: "Concrete",
+				Quantity:    2,
+				UnitPrice:   100,
+				TaxRate:     18,
+				Unit:        "cbm",
+				HSNSACCode:  "1234",
+			},
+		},
+	})
+
+	assert.NoError(t, err)
+	assert.NotNil(t, invoice)
+	assert.Len(t, invoice.Items, 1)
+	assert.Equal(t, "CBM", invoice.Items[0].Unit)
+	assert.Equal(t, "1234", invoice.Items[0].HSNSACCode)
+	mockCustomer.AssertExpectations(t)
+	mockRepo.AssertExpectations(t)
+	mockSQS.AssertExpectations(t)
 }

@@ -916,7 +916,7 @@ func (s *TaxComplianceService) buildEInvoicePayload(ctx context.Context, documen
 		items = append(items, map[string]interface{}{
 			"description":     line.Description,
 			"hsn_sac_code":    line.HSNSACCode,
-			"uqc_code":        line.UQCCode,
+			"uqc_code":        normalizeUQCCode(firstNonEmpty(line.Unit, line.UQCCode)),
 			"quantity":        line.Quantity,
 			"unit_price":      line.UnitPrice,
 			"line_total":      line.LineTotal,

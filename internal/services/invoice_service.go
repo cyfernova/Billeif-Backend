@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"strings"
 	"time"
 
 	"invoice-backend/internal/config"
+	"invoice-backend/internal/gst"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/awsclients"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -62,6 +65,8 @@ type CreateInvoiceItemInput struct {
 	VariantID        string                   `json:"variant_id,omitempty"`
 	WarehouseID      string                   `json:"warehouse_id,omitempty"`
 	Description      string                   `json:"description" binding:"required"`
+	HSNSACCode       string                   `json:"hsn_sac_code,omitempty"`
+	Unit             string                   `json:"unit,omitempty"`
 	Quantity         float64                  `json:"quantity" binding:"required,gt=0"`
 	FreeQuantity     float64                  `json:"free_quantity"`
 	UnitPrice        float64                  `json:"unit_price" binding:"gte=0"`
@@ -79,6 +84,7 @@ type CreateInvoiceInput struct {
 	CustomerID           string                   `json:"customer_id" binding:"required,uuid"`
 	ProjectID            string                   `json:"project_id,omitempty" binding:"omitempty,uuid"`
 	PriceListID          string                   `json:"price_list_id,omitempty"`
+	RenderProfileID      string                   `json:"render_profile_id,omitempty" binding:"omitempty,uuid"`
 	DueDate              time.Time                `json:"due_date" binding:"required"`
 	Notes                string                   `json:"notes"`
 	CustomFields         map[string]interface{}   `json:"custom_fields,omitempty"`
@@ -90,9 +96,21 @@ type CreateInvoiceInput struct {
 }
 
 func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (*models.Invoice, error) {
+	if input.RenderProfileID != "" {
+		normalized, err := normalizeRenderProfileID(input.RenderProfileID)
+		if err != nil {
+			return nil, err
+		}
+		input.RenderProfileID = normalized
+	}
 	_, err := s.customerRepo.GetByID(ctx, input.CustomerID, input.BusinessID)
 	if err != nil {
 		return nil, fmt.Errorf("customer not found: %w", err)
+	}
+	if input.RenderProfileID != "" && s.documents != nil {
+		if _, err := s.documents.GetRenderProfileByBusiness(ctx, input.BusinessID, input.RenderProfileID); err != nil {
+			return nil, fmt.Errorf("render profile not found: %w", err)
+		}
 	}
 	priceListID, err := resolvePriceListID(
 		ctx,
@@ -125,6 +143,10 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 		if err != nil {
 			return nil, err
 		}
+		var product *models.Product
+		if item.ProductID != "" {
+			product, _ = s.productRepo.GetByID(ctx, item.ProductID, input.BusinessID)
+		}
 		unitPrice := item.UnitPrice
 		if unitPrice <= 0 {
 			unitPrice = pricing.UnitPrice
@@ -156,12 +178,23 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 		if item.WarehouseID != "" {
 			warehouseID = &item.WarehouseID
 		}
+		legacyUnit := ""
+		if product != nil {
+			legacyUnit = firstNonEmpty(product.Unit, product.UQCCode)
+		}
+		hsnCode := item.HSNSACCode
+		if hsnCode == "" && product != nil {
+			hsnCode = product.HSNSACCode
+		}
+		unit := gst.CanonicalSnapshotUQC(item.Unit, legacyUnit)
 
 		items[i] = &models.InvoiceItem{
 			ProductID:        productID,
 			VariantID:        variantID,
 			WarehouseID:      warehouseID,
 			Description:      item.Description,
+			HSNSACCode:       hsnCode,
+			Unit:             unit,
 			Quantity:         item.Quantity,
 			FreeQuantity:     item.FreeQuantity,
 			UnitPrice:        unitPrice,
@@ -182,6 +215,7 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 		CustomerID:        input.CustomerID,
 		ProjectID:         projectIDPointer(projectID),
 		PriceListID:       priceListID,
+		RenderProfileID:   stringPointer(input.RenderProfileID),
 		InvoiceNo:         invoiceNo,
 		Status:            "draft",
 		InvoiceDate:       time.Now(),
@@ -269,6 +303,7 @@ type UpdateInvoiceInput struct {
 	Notes             string                   `json:"notes"`
 	ProjectID         *string                  `json:"project_id,omitempty"`
 	PriceListID       *string                  `json:"price_list_id,omitempty"`
+	RenderProfileID   *string                  `json:"render_profile_id,omitempty" binding:"omitempty,uuid"`
 	CustomFields      map[string]interface{}   `json:"custom_fields,omitempty"`
 	AdditionalCharges []map[string]interface{} `json:"additional_charges,omitempty"`
 	EditReason        string                   `json:"edit_reason,omitempty"`
@@ -284,7 +319,7 @@ func (s *InvoiceService) UpdateByBusiness(ctx context.Context, businessID, id st
 	if invoice.SignedAt != nil {
 		return nil, fmt.Errorf("signed invoices are immutable")
 	}
-	if invoice.Status != "draft" {
+	if !isInvoiceEditableStatus(invoice.Status) {
 		return nil, fmt.Errorf("cannot update invoice with status: %s", invoice.Status)
 	}
 
@@ -296,6 +331,23 @@ func (s *InvoiceService) UpdateByBusiness(ctx context.Context, businessID, id st
 	}
 	if input.PriceListID != nil {
 		invoice.PriceListID = input.PriceListID
+	}
+	if input.RenderProfileID != nil {
+		candidate := strings.TrimSpace(*input.RenderProfileID)
+		if candidate == "" {
+			invoice.RenderProfileID = nil
+		} else {
+			normalized, err := normalizeRenderProfileID(candidate)
+			if err != nil {
+				return nil, err
+			}
+			if s.documents != nil {
+				if _, err := s.documents.GetRenderProfileByBusiness(ctx, businessID, normalized); err != nil {
+					return nil, fmt.Errorf("render profile not found: %w", err)
+				}
+			}
+			invoice.RenderProfileID = &normalized
+		}
 	}
 	if input.CustomFields != nil {
 		invoice.CustomFields = mustMarshalMap(input.CustomFields)
@@ -334,6 +386,15 @@ func (s *InvoiceService) UpdateByBusiness(ctx context.Context, businessID, id st
 	return invoice, nil
 }
 
+func isInvoiceEditableStatus(status string) bool {
+	switch status {
+	case "draft", "sent", "overdue":
+		return true
+	default:
+		return false
+	}
+}
+
 func taxProfileToMap(input TaxProfileInput) map[string]interface{} {
 	return map[string]interface{}{
 		"gst_treatment":           input.GSTTreatment,
@@ -358,6 +419,17 @@ func taxProfileToMap(input TaxProfileInput) map[string]interface{} {
 		"source_linkage":          input.SourceLinkage,
 		"report_tags":             input.ReportTags,
 	}
+}
+
+func normalizeRenderProfileID(value string) (string, error) {
+	candidate := strings.TrimSpace(value)
+	if candidate == "" {
+		return "", nil
+	}
+	if _, err := uuid.Parse(candidate); err != nil {
+		return "", fmt.Errorf("invalid render profile id: %w", err)
+	}
+	return candidate, nil
 }
 
 func withholdingsToList(inputs []WithholdingInput) []map[string]interface{} {
@@ -526,6 +598,13 @@ func NewInvoiceServiceForTesting(
 
 // Create creates an invoice (testable version)
 func (s *InvoiceServiceTestable) Create(ctx context.Context, input CreateInvoiceInput) (*models.Invoice, error) {
+	if input.RenderProfileID != "" {
+		normalized, err := normalizeRenderProfileID(input.RenderProfileID)
+		if err != nil {
+			return nil, err
+		}
+		input.RenderProfileID = normalized
+	}
 	_, err := s.customerRepo.GetByID(ctx, input.CustomerID, input.BusinessID)
 	if err != nil {
 		return nil, fmt.Errorf("customer not found: %w", err)
@@ -553,6 +632,8 @@ func (s *InvoiceServiceTestable) Create(ctx context.Context, input CreateInvoice
 		items[i] = &models.InvoiceItem{
 			ProductID:   productID,
 			Description: item.Description,
+			HSNSACCode:  item.HSNSACCode,
+			Unit:        gst.CanonicalSnapshotUQC(item.Unit, ""),
 			Quantity:    item.Quantity,
 			UnitPrice:   item.UnitPrice,
 			TaxRate:     item.TaxRate,
@@ -561,19 +642,20 @@ func (s *InvoiceServiceTestable) Create(ctx context.Context, input CreateInvoice
 	}
 
 	invoice := &models.Invoice{
-		BusinessID:  input.BusinessID,
-		CustomerID:  input.CustomerID,
-		InvoiceNo:   invoiceNo,
-		Status:      "draft",
-		InvoiceDate: time.Now(),
-		DueDate:     input.DueDate,
-		Subtotal:    subtotal,
-		Tax:         taxTotal,
-		Total:       subtotal + taxTotal,
-		BalanceDue:  subtotal + taxTotal,
-		Notes:       input.Notes,
-		Currency:    "USD",
-		Items:       items,
+		BusinessID:      input.BusinessID,
+		CustomerID:      input.CustomerID,
+		RenderProfileID: stringPointer(input.RenderProfileID),
+		InvoiceNo:       invoiceNo,
+		Status:          "draft",
+		InvoiceDate:     time.Now(),
+		DueDate:         input.DueDate,
+		Subtotal:        subtotal,
+		Tax:             taxTotal,
+		Total:           subtotal + taxTotal,
+		BalanceDue:      subtotal + taxTotal,
+		Notes:           input.Notes,
+		Currency:        "USD",
+		Items:           items,
 	}
 
 	if err := s.repo.Create(ctx, invoice); err != nil {
@@ -604,7 +686,7 @@ func (s *InvoiceServiceTestable) UpdateByBusiness(ctx context.Context, businessI
 		return nil, err
 	}
 
-	if invoice.Status != "draft" {
+	if !isInvoiceEditableStatus(invoice.Status) {
 		return nil, fmt.Errorf("cannot update invoice with status: %s", invoice.Status)
 	}
 
@@ -613,6 +695,17 @@ func (s *InvoiceServiceTestable) UpdateByBusiness(ctx context.Context, businessI
 	}
 	if input.Notes != "" {
 		invoice.Notes = input.Notes
+	}
+	if input.RenderProfileID != nil {
+		if strings.TrimSpace(*input.RenderProfileID) == "" {
+			invoice.RenderProfileID = nil
+		} else {
+			value, err := normalizeRenderProfileID(*input.RenderProfileID)
+			if err != nil {
+				return nil, err
+			}
+			invoice.RenderProfileID = &value
+		}
 	}
 
 	if err := s.repo.Update(ctx, invoice); err != nil {

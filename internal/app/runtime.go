@@ -626,6 +626,7 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 				renderProfiles.GET("/default", h.RenderProfile.GetDefault)
 				renderProfiles.GET("/:id", h.RenderProfile.Get)
 				renderProfiles.POST("", wafUserWriteRL, h.RenderProfile.Create)
+				renderProfiles.POST("/:id/default", wafUserWriteRL, h.RenderProfile.SetDefault)
 				renderProfiles.PUT("/:id", wafUserWriteRL, h.RenderProfile.Update)
 				renderProfiles.DELETE("/:id", wafUserWriteRL, h.RenderProfile.Delete)
 			}

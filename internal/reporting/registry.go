@@ -13,6 +13,7 @@ var catalog = []Definition{
 	{Key: "category_wise_sales", Name: "Category-wise Sales", Category: "sales", Description: "Sales grouped by category.", Family: "line_summary", GroupBy: "category", DocumentTypes: []string{"sales_invoice", "bill_of_supply", "credit_note"}, DefaultColumns: summaryColumns("entity_key", "Category")},
 	{Key: "category_wise_profit_loss", Name: "Category-wise Profit/Loss", Category: "profitability", Description: "Profitability by category.", Family: "line_profit", GroupBy: "category", DefaultColumns: profitColumns("entity_key", "Category")},
 	{Key: "party_wise_sales", Name: "Party-wise Sales", Category: "sales", Description: "Sales grouped by party.", Family: "line_summary", GroupBy: "party", DocumentTypes: []string{"sales_invoice", "bill_of_supply", "credit_note"}, DefaultColumns: summaryColumns("entity_key", "Party")},
+	{Key: "gstr1_hsn_summary", Name: "GSTR-1 HSN Summary", Category: "sales", Description: "GSTR-1 Table 12 HSN-wise outward supplies.", Family: "gst_hsn_summary", DocumentTypes: []string{"sales_invoice", "bill_of_supply", "credit_note"}, DefaultColumns: gstr1HSNColumns()},
 	{Key: "customer_wise_profit_loss", Name: "Customer-wise Profit/Loss", Category: "profitability", Description: "Profitability by customer.", Family: "line_profit", GroupBy: "party", DefaultColumns: profitColumns("entity_key", "Party")},
 	{Key: "item_wise_purchase", Name: "Item-wise Purchase", Category: "purchase", Description: "Purchases grouped by item.", Family: "line_summary", GroupBy: "product", DocumentTypes: []string{"purchase_invoice", "debit_note"}, DefaultColumns: summaryColumns("entity_key", "Item")},
 	{Key: "vendor_wise_purchases", Name: "Vendor-wise Purchases", Category: "purchase", Description: "Purchases grouped by vendor.", Family: "line_summary", GroupBy: "party", DocumentTypes: []string{"purchase_invoice", "debit_note"}, DefaultColumns: summaryColumns("entity_key", "Vendor")},
@@ -105,6 +106,21 @@ func summaryColumns(key, label string) []Column {
 		{Key: "subtotal", Label: "Subtotal", Type: "number"},
 		{Key: "tax_total", Label: "Tax", Type: "number"},
 		{Key: "total", Label: "Total", Type: "number"},
+	}
+}
+
+func gstr1HSNColumns() []Column {
+	return []Column{
+		{Key: "hsn_sac_code", Label: "HSN/SAC", Type: "string"},
+		{Key: "description", Label: "Description", Type: "string"},
+		{Key: "unit", Label: "UQC", Type: "string"},
+		{Key: "tax_rate", Label: "Tax Rate", Type: "number"},
+		{Key: "quantity", Label: "Quantity", Type: "number"},
+		{Key: "taxable_value", Label: "Taxable Value", Type: "number"},
+		{Key: "igst_amount", Label: "IGST", Type: "number"},
+		{Key: "cgst_amount", Label: "CGST", Type: "number"},
+		{Key: "sgst_amount", Label: "SGST", Type: "number"},
+		{Key: "total_value", Label: "Total Value", Type: "number"},
 	}
 }
 
