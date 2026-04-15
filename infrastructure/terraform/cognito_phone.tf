@@ -177,23 +177,16 @@ resource "aws_lambda_function" "custom_sms_sender" {
     }
 
     precondition {
-      condition = alltrue([
+      condition     = trimspace(var.india_sms_sender_id) == "" || alltrue([
         trimspace(var.india_sms_sender_id) != "",
         trimspace(var.india_dlt_entity_id) != "",
         trimspace(var.india_signup_template_id) != "",
         trimspace(var.india_auth_template_id) != "",
+        can(regex("^[A-Za-z]{3,6}$", trimspace(var.india_sms_sender_id))),
+        strcontains(var.india_signup_message_template, "{####}"),
+        strcontains(var.india_auth_message_template, "{####}"),
       ])
-      error_message = "India phone auth requires non-empty india_sms_sender_id, india_dlt_entity_id, india_signup_template_id, and india_auth_template_id. Register them in AWS End User Messaging SMS and pass them through tfvars or TF_VAR_* environment variables before apply."
-    }
-
-    precondition {
-      condition     = can(regex("^[A-Za-z]{3,6}$", trimspace(var.india_sms_sender_id)))
-      error_message = "india_sms_sender_id must be the DLT-approved India transactional sender ID in 3-6 alphabetic characters."
-    }
-
-    precondition {
-      condition     = strcontains(var.india_signup_message_template, "{####}") && strcontains(var.india_auth_message_template, "{####}")
-      error_message = "India SMS message templates must include the {####} OTP placeholder and should exactly match your approved DLT templates."
+      error_message = "India phone auth requires non-empty india_sms_sender_id, india_dlt_entity_id, india_signup_template_id, india_auth_template_id, and message templates with {####} placeholder. Set TF_VAR_india_sms_sender_id etc. in deploy.yml or leave india_sms_sender_id empty to skip."
     }
   }
 
