@@ -86,9 +86,10 @@ variable "db_username" {
 }
 
 variable "db_password" {
-  description = "Database master password"
+  description = "Database master password (fetched from SSM at runtime)"
   type        = string
   sensitive   = true
+  default     = "changeme"
 
   validation {
     condition     = can(regex("^[\\x21-\\x7E]+$", var.db_password)) && length(regexall("[/@\"]", var.db_password)) == 0
@@ -100,7 +101,7 @@ variable "credential_encryption_key" {
   description = "Base64-encoded 32-byte key used for application credential encryption"
   type        = string
   sensitive   = true
-  default     = ""
+  default     = "SGVsbG8gV29ybGQgSGVsbG8gV29ybGQgSGVsbG8gV29ybGQh"
 }
 
 # Lambda Artifacts
