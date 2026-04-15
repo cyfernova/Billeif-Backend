@@ -16,4 +16,3 @@ func requestContextWithActor(c *gin.Context) {
 	})
 	c.Request = c.Request.WithContext(ctx)
 }
-// 
