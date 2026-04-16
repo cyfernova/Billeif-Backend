@@ -2,11 +2,15 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
 	"strings"
 	"time"
 	_ "time/tzdata"
 
+	"invoice-backend/docs"
 	"invoice-backend/internal/config"
 	"invoice-backend/internal/handlers"
 	"invoice-backend/internal/middleware"
@@ -18,11 +22,10 @@ import (
 	"invoice-backend/pkg/logger"
 	pkgsentry "invoice-backend/pkg/sentry"
 
-	_ "invoice-backend/docs"
-
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
+	"github.com/swaggo/swag"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -40,9 +43,9 @@ import (
 
 // @BasePath /api/v1
 
-// @securityDefinitions.apikey BearerAuth
-// @in header
-// @name Authorization
+// @securityDefinitions.oauth2.accessCode BearerAuth
+// @authorizationurl https://example.com/oauth2/authorize
+// @tokenUrl https://example.com/oauth2/token
 
 type InitializeOptions struct {
 	EnableWorker bool
@@ -289,10 +292,7 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 	router.GET("/health", h.Health.Check)
 
-	// Only expose Swagger docs in non-production environments
-	if !isProd {
-		router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
-	}
+	registerSwaggerRoutes(router, cfg)
 
 	// Well-known endpoints
 	router.GET("/.well-known/agent-card.json", h.WellKnown.GetAgentCard)
@@ -947,6 +947,78 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 	}
 
 	return router
+}
+
+func registerSwaggerRoutes(router *gin.Engine, cfg *config.Config) {
+	const swaggerDocPath = "/swagger.json"
+
+	router.GET(swaggerDocPath, func(c *gin.Context) {
+		doc, err := swag.ReadDoc("swagger")
+		if err != nil {
+			c.AbortWithStatus(http.StatusInternalServerError)
+			return
+		}
+
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(doc), &payload); err != nil {
+			c.AbortWithStatus(http.StatusInternalServerError)
+			return
+		}
+
+		schemes, host, basePath := resolveSwaggerEndpoint(cfg)
+		if len(schemes) > 0 {
+			payload["schemes"] = schemes
+		}
+		if host != "" {
+			payload["host"] = host
+		}
+		if basePath != "" {
+			payload["basePath"] = basePath
+		}
+
+		cognitoDomain := cfg.Cognito.ResolveHostedUIDomain()
+		payload["securityDefinitions"] = map[string]any{
+			"BearerAuth": map[string]any{
+				"type":             "oauth2",
+				"flow":             "accessCode",
+				"authorizationUrl": cognitoDomain + "/oauth2/authorize",
+				"tokenUrl":         cognitoDomain + "/oauth2/token",
+				"scopes":           map[string]string{},
+			},
+		}
+
+		c.JSON(http.StatusOK, payload)
+	})
+
+	router.GET(
+		"/swagger/*any",
+		ginSwagger.WrapHandler(
+			swaggerFiles.Handler,
+			ginSwagger.URL("../swagger.json"),
+			ginSwagger.PersistAuthorization(true),
+			ginSwagger.Oauth2DefaultClientID(cfg.Cognito.ClientID),
+			ginSwagger.Oauth2UsePkce(true),
+		),
+	)
+}
+
+func resolveSwaggerEndpoint(cfg *config.Config) ([]string, string, string) {
+	baseURL := cfg.Server.ResolveBaseURL()
+	if baseURL == "" {
+		return nil, "", docs.SwaggerInfo.BasePath
+	}
+
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return nil, "", docs.SwaggerInfo.BasePath
+	}
+
+	basePath := strings.TrimRight(parsed.Path, "/") + docs.SwaggerInfo.BasePath
+	if basePath == "" {
+		basePath = docs.SwaggerInfo.BasePath
+	}
+
+	return []string{parsed.Scheme}, parsed.Host, basePath
 }
 
 func shouldExposeAdminLocalEmails(environment string) bool {

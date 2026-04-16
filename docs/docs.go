@@ -50,11 +50,6 @@ const docTemplate = `{
         },
         "/a2a-bargaining/autonomous/start": {
             "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
                 "description": "Starts a fully autonomous price negotiation driven by LLM decisions between buyer and seller agents. Real-time events are delivered via webhook callbacks.",
                 "consumes": [
                     "application/json"
@@ -114,7 +109,12 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
             }
         },
         "/a2a-bargaining/progress/{sessionId}": {
@@ -10970,6 +10970,56 @@ const docTemplate = `{
                 }
             }
         },
+        "/render-profiles/{id}/default": {
+            "post": {
+                "description": "Marks the specified render profile as default for the business",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Render Profiles"
+                ],
+                "summary": "Set default render profile",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Render Profile ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {}
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/reports/catalog": {
             "get": {
                 "security": [
@@ -21579,9 +21629,10 @@ const docTemplate = `{
     },
     "securityDefinitions": {
         "BearerAuth": {
-            "type": "apiKey",
-            "name": "Authorization",
-            "in": "header"
+            "type": "oauth2",
+            "flow": "accessCode",
+            "authorizationUrl": "https://example.com/oauth2/authorize",
+            "tokenUrl": "https://example.com/oauth2/token"
         }
     }
 }`
