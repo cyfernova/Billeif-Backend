@@ -45,6 +45,7 @@ type AP2Repository interface {
 	DeleteAgent(ctx context.Context, id string) error
 
 	CreateAgentWithCapabilities(ctx context.Context, agent *models.Agent, capabilities []*models.AgentCapability) error
+	CreateAgentWithDiscovery(ctx context.Context, agent *models.Agent, capabilities []*models.AgentCapability, registry *models.AgentRegistry) error
 
 	// Agent Capabilities
 	CreateAgentCapability(ctx context.Context, capability *models.AgentCapability) error

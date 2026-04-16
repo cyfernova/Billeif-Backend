@@ -22,6 +22,7 @@ type Agent struct {
 	CreatedAt       time.Time      `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt       time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
 	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`
+	ProductIDs      []string       `gorm:"-" json:"product_ids,omitempty"`
 
 	AgentCapabilities   []AgentCapability    `gorm:"foreignKey:AgentID" json:"agent_capabilities,omitempty"`
 	AgentTransactions   []AgentTransaction   `gorm:"foreignKey:AgentID" json:"agent_transactions,omitempty"`

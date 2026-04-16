@@ -80,6 +80,11 @@ func (m *MockMarketplaceAP2Repository) CreateAgentWithCapabilities(ctx context.C
 	return args.Error(0)
 }
 
+func (m *MockMarketplaceAP2Repository) CreateAgentWithDiscovery(ctx context.Context, agent *models.Agent, capabilities []*models.AgentCapability, registry *models.AgentRegistry) error {
+	args := m.Called(ctx, agent, capabilities, registry)
+	return args.Error(0)
+}
+
 func (m *MockMarketplaceAP2Repository) CreateAgentCapability(ctx context.Context, capability *models.AgentCapability) error {
 	args := m.Called(ctx, capability)
 	return args.Error(0)

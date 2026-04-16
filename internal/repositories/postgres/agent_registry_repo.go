@@ -105,48 +105,54 @@ func (r *ap2Repository) SearchAgents(ctx context.Context, filter *models.AgentDi
 
 	query := r.db.WithContext(ctx)
 
-	// Base query
-	query = query.Where("is_active = ? AND deleted_at IS NULL", true)
+	// Base query - join with agents table to access business_id
+	query = query.Table("agent_registry ar").Where("ar.is_active = ? AND ar.deleted_at IS NULL", true)
+
+	// Join with agents table if we need to filter by business_id
+	if filter.BusinessID != "" {
+		query = query.Joins("JOIN agents a ON a.id = ar.agent_id").
+			Where("a.business_id = ?", filter.BusinessID)
+	}
 
 	// Apply filters
 	if len(filter.AgentTypes) > 0 {
-		query = query.Where("agent_type IN ?", filter.AgentTypes)
+		query = query.Where("ar.agent_type IN ?", filter.AgentTypes)
 	}
 
 	if filter.IsVerified != nil {
-		query = query.Where("is_verified = ?", *filter.IsVerified)
+		query = query.Where("ar.is_verified = ?", *filter.IsVerified)
 	}
 
 	if filter.IsPublic != nil {
-		query = query.Where("is_public = ?", *filter.IsPublic)
+		query = query.Where("ar.is_public = ?", *filter.IsPublic)
 	}
 
 	if len(filter.Capabilities) > 0 {
 		for _, cap := range filter.Capabilities {
-			query = query.Where("? = ANY(capabilities)", cap)
+			query = query.Where("? = ANY(ar.capabilities)", cap)
 		}
 	}
 
 	if len(filter.Tags) > 0 {
 		for _, tag := range filter.Tags {
-			query = query.Where("? = ANY(tags)", tag)
+			query = query.Where("? = ANY(ar.tags)", tag)
 		}
 	}
 
 	if len(filter.Jurisdictions) > 0 {
-		query = query.Where("jurisdictions && ?", datatypes.JSONQuery(fmt.Sprintf(`["%s"]`, filter.Jurisdictions[0])))
+		query = query.Where("ar.jurisdictions && ?", datatypes.JSONQuery(fmt.Sprintf(`["%s"]`, filter.Jurisdictions[0])))
 	}
 
 	if len(filter.Currencies) > 0 {
-		query = query.Where("currencies && ?", datatypes.JSONQuery(fmt.Sprintf(`["%s"]`, filter.Currencies[0])))
+		query = query.Where("ar.currencies && ?", datatypes.JSONQuery(fmt.Sprintf(`["%s"]`, filter.Currencies[0])))
 	}
 
 	if filter.MinAverageRating != nil {
-		query = query.Where("average_rating >= ?", *filter.MinAverageRating)
+		query = query.Where("ar.average_rating >= ?", *filter.MinAverageRating)
 	}
 
 	if filter.HealthCheckStatus != nil {
-		query = query.Where("health_check_status = ?", *filter.HealthCheckStatus)
+		query = query.Where("ar.health_check_status = ?", *filter.HealthCheckStatus)
 	}
 
 	// Get total count
@@ -157,7 +163,7 @@ func (r *ap2Repository) SearchAgents(ctx context.Context, filter *models.AgentDi
 	// Apply pagination
 	offset := (page - 1) * limit
 	if err := query.
-		Order("average_rating DESC, total_reviews DESC, created_at DESC").
+		Order("ar.average_rating DESC, ar.total_reviews DESC, ar.created_at DESC").
 		Offset(offset).
 		Limit(limit).
 		Find(&registries).Error; err != nil {

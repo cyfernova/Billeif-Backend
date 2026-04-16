@@ -102,7 +102,7 @@ func NewContainer(
 	intentProcessingSvc, _ := NewIntentProcessingService(productMatchingSvc, marketplaceSvc, log)
 	llmSvc := NewLLMService(cfg.LLM, log)
 
-	agentSvc := NewAgentService(ap2Repo, ap2Signer, log)
+	agentSvc := NewAgentService(ap2Repo, productRepo, ap2Signer, log)
 	menteeSvc := NewMenteeService(log)
 
 	a2aPushSvc := NewA2APushService(db, ap2Repo, log)
@@ -172,7 +172,7 @@ func NewContainer(
 		Marketplace:         marketplaceSvc,
 		ProductMatching:     productMatchingSvc,
 		IntentProcessing:    intentProcessingSvc,
-		AgentDiscovery:      NewAgentDiscoveryService(ap2Repo, log),
+		AgentDiscovery:      NewAgentDiscoveryService(ap2Repo, productRepo, llmSvc, log),
 		LLM:                 llmSvc,
 		A2ATask:             a2aTaskSvc,
 		A2APush:             a2aPushSvc,

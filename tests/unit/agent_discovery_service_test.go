@@ -238,6 +238,9 @@ func (m *MockAP2Repository) DeleteAgent(ctx context.Context, id string) error {
 func (m *MockAP2Repository) CreateAgentWithCapabilities(ctx context.Context, agent *models.Agent, capabilities []*models.AgentCapability) error {
 	return nil
 }
+func (m *MockAP2Repository) CreateAgentWithDiscovery(ctx context.Context, agent *models.Agent, capabilities []*models.AgentCapability, registry *models.AgentRegistry) error {
+	return nil
+}
 func (m *MockAP2Repository) CreateAgentCapability(ctx context.Context, capability *models.AgentCapability) error {
 	return nil
 }
@@ -419,8 +422,9 @@ func (m *MockAP2Repository) GetBargainingRoundsByAgent(ctx context.Context, agen
 // TestAgentDiscoveryService_RegisterAgent tests successful agent registration
 func TestAgentDiscoveryService_RegisterAgent(t *testing.T) {
 	mockRepo := new(MockAP2Repository)
+	mockProductRepo := new(MockProductRepository)
 	log := logger.New()
-	svc := services.NewAgentDiscoveryService(mockRepo, log)
+	svc := services.NewAgentDiscoveryService(mockRepo, mockProductRepo, nil, log)
 
 	ctx := context.Background()
 	agentID := uuid.New().String()
@@ -455,8 +459,9 @@ func TestAgentDiscoveryService_RegisterAgent(t *testing.T) {
 // TestAgentDiscoveryService_RegisterAgent_MissingEndpoint tests registration fails without A2A endpoint
 func TestAgentDiscoveryService_RegisterAgent_MissingEndpoint(t *testing.T) {
 	mockRepo := new(MockAP2Repository)
+	mockProductRepo := new(MockProductRepository)
 	log := logger.New()
-	svc := services.NewAgentDiscoveryService(mockRepo, log)
+	svc := services.NewAgentDiscoveryService(mockRepo, mockProductRepo, nil, log)
 
 	ctx := context.Background()
 	req := &services.RegisterAgentRequest{
@@ -476,8 +481,9 @@ func TestAgentDiscoveryService_RegisterAgent_MissingEndpoint(t *testing.T) {
 // TestAgentDiscoveryService_DiscoverAgents tests agent discovery with filters
 func TestAgentDiscoveryService_DiscoverAgents(t *testing.T) {
 	mockRepo := new(MockAP2Repository)
+	mockProductRepo := new(MockProductRepository)
 	log := logger.New()
-	svc := services.NewAgentDiscoveryService(mockRepo, log)
+	svc := services.NewAgentDiscoveryService(mockRepo, mockProductRepo, nil, log)
 
 	ctx := context.Background()
 	expectedAgents := []*models.AgentRegistry{
@@ -502,8 +508,9 @@ func TestAgentDiscoveryService_DiscoverAgents(t *testing.T) {
 // TestAgentDiscoveryService_GetPublicAgents tests retrieving public agents
 func TestAgentDiscoveryService_GetPublicAgents(t *testing.T) {
 	mockRepo := new(MockAP2Repository)
+	mockProductRepo := new(MockProductRepository)
 	log := logger.New()
-	svc := services.NewAgentDiscoveryService(mockRepo, log)
+	svc := services.NewAgentDiscoveryService(mockRepo, mockProductRepo, nil, log)
 
 	ctx := context.Background()
 	expectedAgents := []*models.AgentRegistry{
@@ -524,8 +531,9 @@ func TestAgentDiscoveryService_GetPublicAgents(t *testing.T) {
 // TestAgentDiscoveryService_GetVerifiedAgents tests retrieving verified agents
 func TestAgentDiscoveryService_GetVerifiedAgents(t *testing.T) {
 	mockRepo := new(MockAP2Repository)
+	mockProductRepo := new(MockProductRepository)
 	log := logger.New()
-	svc := services.NewAgentDiscoveryService(mockRepo, log)
+	svc := services.NewAgentDiscoveryService(mockRepo, mockProductRepo, nil, log)
 
 	ctx := context.Background()
 	expectedAgents := []*models.AgentRegistry{
@@ -546,8 +554,9 @@ func TestAgentDiscoveryService_GetVerifiedAgents(t *testing.T) {
 // TestAgentDiscoveryService_GetAgentsByCapability tests retrieving agents by capability
 func TestAgentDiscoveryService_GetAgentsByCapability(t *testing.T) {
 	mockRepo := new(MockAP2Repository)
+	mockProductRepo := new(MockProductRepository)
 	log := logger.New()
-	svc := services.NewAgentDiscoveryService(mockRepo, log)
+	svc := services.NewAgentDiscoveryService(mockRepo, mockProductRepo, nil, log)
 
 	ctx := context.Background()
 	expectedAgents := []*models.AgentRegistry{
@@ -567,8 +576,9 @@ func TestAgentDiscoveryService_GetAgentsByCapability(t *testing.T) {
 // TestAgentDiscoveryService_GetAgentRegistry tests retrieving a specific agent registry
 func TestAgentDiscoveryService_GetAgentRegistry(t *testing.T) {
 	mockRepo := new(MockAP2Repository)
+	mockProductRepo := new(MockProductRepository)
 	log := logger.New()
-	svc := services.NewAgentDiscoveryService(mockRepo, log)
+	svc := services.NewAgentDiscoveryService(mockRepo, mockProductRepo, nil, log)
 
 	ctx := context.Background()
 	agentID := uuid.New()
@@ -592,8 +602,9 @@ func TestAgentDiscoveryService_GetAgentRegistry(t *testing.T) {
 // TestAgentDiscoveryService_VerifyAgent tests marking an agent as verified
 func TestAgentDiscoveryService_VerifyAgent(t *testing.T) {
 	mockRepo := new(MockAP2Repository)
+	mockProductRepo := new(MockProductRepository)
 	log := logger.New()
-	svc := services.NewAgentDiscoveryService(mockRepo, log)
+	svc := services.NewAgentDiscoveryService(mockRepo, mockProductRepo, nil, log)
 
 	ctx := context.Background()
 	registryID := uuid.New().String()
@@ -610,8 +621,9 @@ func TestAgentDiscoveryService_VerifyAgent(t *testing.T) {
 // TestAgentDiscoveryService_UnverifyAgent tests removing verification from an agent
 func TestAgentDiscoveryService_UnverifyAgent(t *testing.T) {
 	mockRepo := new(MockAP2Repository)
+	mockProductRepo := new(MockProductRepository)
 	log := logger.New()
-	svc := services.NewAgentDiscoveryService(mockRepo, log)
+	svc := services.NewAgentDiscoveryService(mockRepo, mockProductRepo, nil, log)
 
 	ctx := context.Background()
 	registryID := uuid.New().String()
@@ -628,8 +640,9 @@ func TestAgentDiscoveryService_UnverifyAgent(t *testing.T) {
 // TestAgentDiscoveryService_DeactivateAgent tests deactivating an agent
 func TestAgentDiscoveryService_DeactivateAgent(t *testing.T) {
 	mockRepo := new(MockAP2Repository)
+	mockProductRepo := new(MockProductRepository)
 	log := logger.New()
-	svc := services.NewAgentDiscoveryService(mockRepo, log)
+	svc := services.NewAgentDiscoveryService(mockRepo, mockProductRepo, nil, log)
 
 	ctx := context.Background()
 	registryID := uuid.New().String()
@@ -646,8 +659,9 @@ func TestAgentDiscoveryService_DeactivateAgent(t *testing.T) {
 // TestAgentDiscoveryService_ActivateAgent tests activating a deactivated agent
 func TestAgentDiscoveryService_ActivateAgent(t *testing.T) {
 	mockRepo := new(MockAP2Repository)
+	mockProductRepo := new(MockProductRepository)
 	log := logger.New()
-	svc := services.NewAgentDiscoveryService(mockRepo, log)
+	svc := services.NewAgentDiscoveryService(mockRepo, mockProductRepo, nil, log)
 
 	ctx := context.Background()
 	registryID := uuid.New().String()
@@ -664,8 +678,9 @@ func TestAgentDiscoveryService_ActivateAgent(t *testing.T) {
 // TestAgentDiscoveryService_UpdateAgentRating tests updating agent rating
 func TestAgentDiscoveryService_UpdateAgentRating(t *testing.T) {
 	mockRepo := new(MockAP2Repository)
+	mockProductRepo := new(MockProductRepository)
 	log := logger.New()
-	svc := services.NewAgentDiscoveryService(mockRepo, log)
+	svc := services.NewAgentDiscoveryService(mockRepo, mockProductRepo, nil, log)
 
 	ctx := context.Background()
 	registryID := uuid.New().String()
@@ -688,8 +703,9 @@ func TestAgentDiscoveryService_UpdateAgentRating(t *testing.T) {
 // TestAgentDiscoveryService_RecordAgentInquiry tests recording an inquiry
 func TestAgentDiscoveryService_RecordAgentInquiry(t *testing.T) {
 	mockRepo := new(MockAP2Repository)
+	mockProductRepo := new(MockProductRepository)
 	log := logger.New()
-	svc := services.NewAgentDiscoveryService(mockRepo, log)
+	svc := services.NewAgentDiscoveryService(mockRepo, mockProductRepo, nil, log)
 
 	ctx := context.Background()
 	registryID := uuid.New().String()
@@ -705,8 +721,9 @@ func TestAgentDiscoveryService_RecordAgentInquiry(t *testing.T) {
 // TestAgentDiscoveryService_RecordAgentIntegration tests recording an integration
 func TestAgentDiscoveryService_RecordAgentIntegration(t *testing.T) {
 	mockRepo := new(MockAP2Repository)
+	mockProductRepo := new(MockProductRepository)
 	log := logger.New()
-	svc := services.NewAgentDiscoveryService(mockRepo, log)
+	svc := services.NewAgentDiscoveryService(mockRepo, mockProductRepo, nil, log)
 
 	ctx := context.Background()
 	registryID := uuid.New().String()
@@ -722,8 +739,9 @@ func TestAgentDiscoveryService_RecordAgentIntegration(t *testing.T) {
 // TestAgentDiscoveryService_DiscoveryCapabilitiesForType_Merchant tests capabilities added for merchant agents
 func TestAgentDiscoveryService_DiscoveryCapabilitiesForType_Merchant(t *testing.T) {
 	mockRepo := new(MockAP2Repository)
+	mockProductRepo := new(MockProductRepository)
 	log := logger.New()
-	svc := services.NewAgentDiscoveryService(mockRepo, log)
+	svc := services.NewAgentDiscoveryService(mockRepo, mockProductRepo, nil, log)
 
 	ctx := context.Background()
 	agentID := uuid.New().String()
@@ -755,8 +773,9 @@ func TestAgentDiscoveryService_DiscoveryCapabilitiesForType_Merchant(t *testing.
 // TestAgentDiscoveryService_DiscoveryCapabilitiesForType_Shopping tests capabilities added for shopping agents
 func TestAgentDiscoveryService_DiscoveryCapabilitiesForType_Shopping(t *testing.T) {
 	mockRepo := new(MockAP2Repository)
+	mockProductRepo := new(MockProductRepository)
 	log := logger.New()
-	svc := services.NewAgentDiscoveryService(mockRepo, log)
+	svc := services.NewAgentDiscoveryService(mockRepo, mockProductRepo, nil, log)
 
 	ctx := context.Background()
 	agentID := uuid.New().String()
@@ -785,8 +804,9 @@ func TestAgentDiscoveryService_DiscoveryCapabilitiesForType_Shopping(t *testing.
 // TestNormalizeMarketplaceAgentType_BuyerToShopping tests that "buyer" type is normalized to "shopping"
 func TestNormalizeMarketplaceAgentType_BuyerToShopping(t *testing.T) {
 	mockRepo := new(MockAP2Repository)
+	mockProductRepo := new(MockProductRepository)
 	log := logger.New()
-	svc := services.NewAgentDiscoveryService(mockRepo, log)
+	svc := services.NewAgentDiscoveryService(mockRepo, mockProductRepo, nil, log)
 
 	ctx := context.Background()
 	agentID := uuid.New().String()
@@ -813,8 +833,9 @@ func TestNormalizeMarketplaceAgentType_BuyerToShopping(t *testing.T) {
 // TestNormalizeMarketplaceAgentType_SellerToMerchant tests that "seller" type is normalized to "merchant"
 func TestNormalizeMarketplaceAgentType_SellerToMerchant(t *testing.T) {
 	mockRepo := new(MockAP2Repository)
+	mockProductRepo := new(MockProductRepository)
 	log := logger.New()
-	svc := services.NewAgentDiscoveryService(mockRepo, log)
+	svc := services.NewAgentDiscoveryService(mockRepo, mockProductRepo, nil, log)
 
 	ctx := context.Background()
 	agentID := uuid.New().String()

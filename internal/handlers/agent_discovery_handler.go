@@ -472,3 +472,177 @@ func (h *AgentDiscoveryHandler) RecordIntegration(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "integration recorded"})
 }
+
+// FindSellersByProduct finds seller agents that sell a specific product
+// @Summary Find sellers for product
+// @Description Discover seller and merchant agents that sell the specified product.
+// @Tags Discovery
+// @Produce json
+// @Security BearerAuth
+// @Param product_id query string true "Product ID to find sellers for"
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page" default(10)
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /discovery/agents/find-sellers [get]
+func (h *AgentDiscoveryHandler) FindSellersByProduct(c *gin.Context) {
+	productID := c.Query("product_id")
+	if productID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "product_id is required"})
+		return
+	}
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 10
+	}
+
+	agents, total, err := h.discovery.DiscoverSellersByProduct(c.Request.Context(), productID, page, limit)
+	if err != nil {
+		h.log.Error("failed to discover sellers for product", "error", err, "product_id", productID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to find sellers for product"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"agents": agents,
+		"total":  total,
+		"page":   page,
+		"limit":  limit,
+	})
+}
+
+// FindSellersByCategory finds seller agents that sell products in a specific category
+// @Summary Find sellers by category
+// @Description Discover seller and merchant agents that sell products in the specified category.
+// @Tags Discovery
+// @Produce json
+// @Security BearerAuth
+// @Param category query string true "Product category to find sellers for"
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page" default(10)
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /discovery/agents/find-sellers-by-category [get]
+func (h *AgentDiscoveryHandler) FindSellersByCategory(c *gin.Context) {
+	category := c.Query("category")
+	if category == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "category is required"})
+		return
+	}
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 10
+	}
+
+	agents, total, err := h.discovery.DiscoverSellersByCategory(c.Request.Context(), category, page, limit)
+	if err != nil {
+		h.log.Error("failed to discover sellers for category", "error", err, "category", category)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to find sellers for category"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"agents": agents,
+		"total":  total,
+		"page":   page,
+		"limit":  limit,
+	})
+}
+
+// SearchAgentsWithLLM searches agents using natural language query parsed by LLM
+// @Summary Search agents with LLM
+// @Description Uses AI to parse natural language queries and find matching agents from the registry.
+// @Tags Discovery
+// @Produce json
+// @Security BearerAuth
+// @Param query query string true "Natural language search query (e.g., 'find verified electronics sellers in the US')"
+// @Param business_id query string false "Filter by business ID"
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page" default(10)
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /discovery/agents/search [get]
+func (h *AgentDiscoveryHandler) SearchAgentsWithLLM(c *gin.Context) {
+	query := c.Query("query")
+	if query == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "query parameter is required"})
+		return
+	}
+
+	businessID := c.Query("business_id")
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 10
+	}
+
+	agents, total, discoveryResult, err := h.discovery.DiscoverAgentsByLLMSearch(c.Request.Context(), query, businessID, page, limit)
+	if err != nil {
+		h.log.Error("failed to search agents with LLM", "error", err, "query", query)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"agents":       agents,
+		"total":        total,
+		"page":         page,
+		"limit":        limit,
+		"llm_explain":  discoveryResult.Explanation,
+		"query_parsed": discoveryResult,
+	})
+}
+
+// RegisterAgentFromAgents registers an agent from the agents table into the discovery registry
+// @Summary Register agent from agents table
+// @Description Finds an agent by ID from the agents table and registers it in the discovery registry
+// @Tags Discovery
+// @Produce json
+// @Security BearerAuth
+// @Param agent_id query string true "Agent ID to register in discovery"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /discovery/agents/register-from-agents [post]
+func (h *AgentDiscoveryHandler) RegisterAgentFromAgents(c *gin.Context) {
+	agentID := c.Query("agent_id")
+	if agentID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "agent_id query parameter is required"})
+		return
+	}
+
+	registry, err := h.discovery.RegisterAgentFromAgentsTable(c.Request.Context(), agentID)
+	if err != nil {
+		h.log.Error("failed to register agent from agents table", "error", err, "agent_id", agentID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":     "agent registered in discovery",
+		"registry_id": registry.ID.String(),
+		"agent_id":    agentID,
+		"agent_name":  registry.AgentName,
+		"agent_type":  registry.AgentType,
+	})
+}

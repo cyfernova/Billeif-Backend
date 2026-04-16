@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"invoice-backend/internal/models"
@@ -16,15 +17,38 @@ import (
 
 // AgentDiscoveryService handles agent discovery operations
 type AgentDiscoveryService struct {
-	ap2Repo interfaces.AP2Repository
-	log     *logger.Logger
+	ap2Repo     interfaces.AP2Repository
+	productRepo interfaces.ProductRepository
+	llmSvc      *LLMService
+	log         *logger.Logger
+}
+
+// LLMDiscoveryResult represents the parsed result from LLM query analysis
+type LLMDiscoveryResult struct {
+	Query         string   `json:"query"`
+	BusinessID    string   `json:"business_id"`
+	AgentTypes    []string `json:"agent_types"`
+	Capabilities  []string `json:"capabilities"`
+	Tags          []string `json:"tags"`
+	Jurisdictions []string `json:"jurisdictions"`
+	Currencies    []string `json:"currencies"`
+	Category      string   `json:"category"`
+	IsVerified    *bool    `json:"is_verified"`
+	IsPublic      *bool    `json:"is_public"`
+	MinRating     *float64 `json:"min_rating"`
+	Explanation   string   `json:"explanation"`
+	ProductQuery  string   `json:"product_query"` // LLM-extracted product search query
+	ProductNames  []string `json:"product_names"` // Specific product names if mentioned
+	ProductTags   []string `json:"product_tags"`  // Product categories/tags to search
 }
 
 // NewAgentDiscoveryService creates a new agent discovery service
-func NewAgentDiscoveryService(ap2Repo interfaces.AP2Repository, log *logger.Logger) *AgentDiscoveryService {
+func NewAgentDiscoveryService(ap2Repo interfaces.AP2Repository, productRepo interfaces.ProductRepository, llmSvc *LLMService, log *logger.Logger) *AgentDiscoveryService {
 	return &AgentDiscoveryService{
-		ap2Repo: ap2Repo,
-		log:     log,
+		ap2Repo:     ap2Repo,
+		productRepo: productRepo,
+		llmSvc:      llmSvc,
+		log:         log,
 	}
 }
 
@@ -44,6 +68,88 @@ type RegisterAgentRequest struct {
 	PricingModel       map[string]interface{} `json:"pricing_model"`
 	PublicKey          *string                `json:"public_key"`
 	IsPublic           bool                   `json:"is_public"`
+}
+
+// BuildAgentRegistryFromAgent creates an AgentRegistry entry from an existing Agent
+func (s *AgentDiscoveryService) BuildAgentRegistryFromAgent(ctx context.Context, agent *models.Agent, domain string, a2aEndpoint string) (*models.AgentRegistry, error) {
+	agentType := NormalizeMarketplaceAgentType(agent.Type)
+
+	// Parse capabilities from JSON string
+	var capabilities []string
+	if agent.Capabilities != "" {
+		if err := json.Unmarshal([]byte(agent.Capabilities), &capabilities); err != nil {
+			s.log.Warn("failed to parse agent capabilities", "error", err)
+			capabilities = []string{}
+		}
+	} else {
+		capabilities = []string{}
+	}
+
+	// Build agent card from agent data
+	agentCard := map[string]interface{}{
+		"name":        agent.Name,
+		"description": agent.Description,
+		"type":        agent.Type,
+	}
+	cardJSON, err := json.Marshal(agentCard)
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize agent card: %w", err)
+	}
+
+	if domain == "" {
+		domain = fmt.Sprintf("agent-%s.internal", agent.ID)
+	}
+	wellKnownURI := fmt.Sprintf("https://%s/.well-known/agent-card.json", domain)
+
+	registry := &models.AgentRegistry{
+		ID:                 uuid.New(),
+		AgentID:            uuid.MustParse(agent.ID),
+		AgentName:          agent.Name,
+		AgentDescription:   agent.Description,
+		AgentType:          agentType,
+		AgentCard:          datatypes.JSON(cardJSON),
+		Domain:             &domain,
+		WellKnownURI:       &wellKnownURI,
+		A2AEndpoint:        &a2aEndpoint,
+		Capabilities:       capabilities,
+		Tags:               []string{},
+		Jurisdictions:      []string{},
+		Currencies:         []string{},
+		SupportedLanguages: []string{},
+		PricingModel:       datatypes.JSON("{}"),
+		IsPublic:           agent.IsPublic,
+		IsActive:           agent.IsActive,
+		IsVerified:         false,
+		HealthCheckStatus:  stringPtr("healthy"),
+		CreatedAt:          time.Now(),
+		UpdatedAt:          time.Now(),
+	}
+
+	ApplyMarketplaceRoleToRegistry(registry)
+	return registry, nil
+}
+
+// RegisterAgentFromAgentsTable looks up an agent by ID from the agents table and registers it in discovery
+func (s *AgentDiscoveryService) RegisterAgentFromAgentsTable(ctx context.Context, agentID string) (*models.AgentRegistry, error) {
+	// Look up the agent in the agents table
+	agent, err := s.ap2Repo.GetAgentByID(ctx, agentID)
+	if err != nil {
+		return nil, fmt.Errorf("agent not found in agents table: %w", err)
+	}
+
+	// Build registry entry from agent
+	registry, err := s.BuildAgentRegistryFromAgent(ctx, agent, "", "")
+	if err != nil {
+		return nil, fmt.Errorf("failed to build registry entry: %w", err)
+	}
+
+	// Register in discovery
+	if err := s.ap2Repo.RegisterAgent(ctx, registry); err != nil {
+		return nil, fmt.Errorf("failed to register agent in discovery: %w", err)
+	}
+
+	s.log.Info("agent registered in discovery from agents table", "agent_id", agentID, "registry_id", registry.ID.String())
+	return registry, nil
 }
 
 // RegisterAgent registers a new agent in the discovery registry
@@ -135,8 +241,74 @@ func (s *AgentDiscoveryService) DiscoverAgents(ctx context.Context, query string
 	}
 
 	ApplyMarketplaceRoleToRegistries(agents)
+	s.loadProductsForAgents(ctx, agents)
 
 	s.log.Info("discovered agents", "count", len(agents), "total", total, "filters", fmt.Sprintf("%+v", filters))
+
+	return agents, total, nil
+}
+
+// DiscoverSellersByProduct finds seller/merchant agents that sell the given product
+func (s *AgentDiscoveryService) DiscoverSellersByProduct(ctx context.Context, productID string, page, limit int) ([]*models.AgentRegistry, int64, error) {
+	// Look up the product to get its details
+	product, err := s.productRepo.GetByID(ctx, productID, "")
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to get product: %w", err)
+	}
+
+	// Build filter for seller agents
+	filters := &models.AgentDiscoveryFilter{
+		AgentTypes:     []string{"seller", "merchant"},
+		IsPublic:       boolPtr(true),
+		IsActive:       boolPtr(true),
+		ExcludeDeleted: true,
+	}
+
+	// If product has a category, filter by category in capabilities/tags
+	// If product has HSN code, that can be used for matching
+	// For now, we filter by seller/merchant type and match product attributes
+	agents, total, err := s.ap2Repo.SearchAgents(ctx, filters, page, limit)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to search seller agents: %w", err)
+	}
+
+	ApplyMarketplaceRoleToRegistries(agents)
+	s.loadProductsForAgents(ctx, agents)
+
+	s.log.Info("discovered sellers for product",
+		"product_id", productID,
+		"product_name", product.Name,
+		"agent_count", len(agents),
+		"total", total,
+	)
+
+	return agents, total, nil
+}
+
+// DiscoverSellersByCategory finds seller/merchant agents that sell products in a given category
+func (s *AgentDiscoveryService) DiscoverSellersByCategory(ctx context.Context, category string, page, limit int) ([]*models.AgentRegistry, int64, error) {
+	// Build filter for seller agents with matching category tag
+	filters := &models.AgentDiscoveryFilter{
+		AgentTypes:     []string{"seller", "merchant"},
+		IsPublic:       boolPtr(true),
+		IsActive:       boolPtr(true),
+		ExcludeDeleted: true,
+		Tags:           []string{category},
+	}
+
+	agents, total, err := s.ap2Repo.SearchAgents(ctx, filters, page, limit)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to search seller agents by category: %w", err)
+	}
+
+	ApplyMarketplaceRoleToRegistries(agents)
+	s.loadProductsForAgents(ctx, agents)
+
+	s.log.Info("discovered sellers for category",
+		"category", category,
+		"agent_count", len(agents),
+		"total", total,
+	)
 
 	return agents, total, nil
 }
@@ -149,6 +321,7 @@ func (s *AgentDiscoveryService) GetPublicAgents(ctx context.Context, page, limit
 	}
 
 	ApplyMarketplaceRoleToRegistries(agents)
+	s.loadProductsForAgents(ctx, agents)
 	return agents, total, nil
 }
 
@@ -160,6 +333,7 @@ func (s *AgentDiscoveryService) GetVerifiedAgents(ctx context.Context, agentType
 	}
 
 	ApplyMarketplaceRoleToRegistries(agents)
+	s.loadProductsForAgents(ctx, agents)
 	return agents, total, nil
 }
 
@@ -171,6 +345,7 @@ func (s *AgentDiscoveryService) GetAgentsByCapability(ctx context.Context, capab
 	}
 
 	ApplyMarketplaceRoleToRegistries(agents)
+	s.loadProductsForAgents(ctx, agents)
 	return agents, total, nil
 }
 
@@ -187,6 +362,10 @@ func (s *AgentDiscoveryService) GetAgentRegistry(ctx context.Context, agentID st
 	}
 
 	ApplyMarketplaceRoleToRegistry(registry)
+
+	// Load product details
+	s.loadProductsForAgents(ctx, []*models.AgentRegistry{registry})
+
 	return registry, nil
 }
 
@@ -360,4 +539,276 @@ func (s *AgentDiscoveryService) createAuditLog(ctx context.Context, registryID u
 
 func stringPtr(s string) *string {
 	return &s
+}
+
+func boolPtr(b bool) *bool {
+	return &b
+}
+
+// DiscoverAgentsByLLMSearch uses LLM to parse natural language query and search agents
+func (s *AgentDiscoveryService) DiscoverAgentsByLLMSearch(ctx context.Context, naturalQuery string, businessID string, page, limit int) ([]*models.AgentRegistry, int64, *LLMDiscoveryResult, error) {
+	if s.llmSvc == nil {
+		return nil, 0, nil, fmt.Errorf("LLM service not available")
+	}
+
+	result, err := s.parseQueryWithLLM(ctx, naturalQuery)
+	if err != nil {
+		return nil, 0, nil, fmt.Errorf("failed to parse query with LLM: %w", err)
+	}
+
+	// Override business_id if provided directly
+	if businessID != "" {
+		result.BusinessID = businessID
+	}
+
+	// If we have a product query, search marketplace products first
+	var matchingAgentIDs []string
+	if result.ProductQuery != "" || len(result.ProductNames) > 0 || len(result.ProductTags) > 0 {
+		matchingAgentIDs, err = s.findAgentsByProductSearch(ctx, result)
+		if err != nil {
+			s.log.Warn("failed to search products, falling back to regular search", "error", err)
+		}
+	}
+
+	filter := &models.AgentDiscoveryFilter{
+		ExcludeDeleted: true,
+	}
+
+	// If we found agents via product search, filter to only those agents
+	if len(matchingAgentIDs) > 0 {
+		// We need to filter by agent IDs - we'll handle this specially in the repo
+		filter.IDs = make([]uuid.UUID, len(matchingAgentIDs))
+		for i, id := range matchingAgentIDs {
+			filter.IDs[i] = uuid.MustParse(id)
+		}
+	}
+
+	if result.BusinessID != "" {
+		filter.BusinessID = result.BusinessID
+	}
+
+	if len(result.AgentTypes) > 0 {
+		normalized := make([]string, len(result.AgentTypes))
+		for i, t := range result.AgentTypes {
+			normalized[i] = NormalizeMarketplaceAgentType(t)
+		}
+		filter.AgentTypes = normalized
+	}
+
+	if len(result.Capabilities) > 0 {
+		filter.Capabilities = result.Capabilities
+	}
+
+	if len(result.Tags) > 0 {
+		filter.Tags = result.Tags
+	}
+
+	if len(result.Jurisdictions) > 0 {
+		filter.Jurisdictions = result.Jurisdictions
+	}
+
+	if len(result.Currencies) > 0 {
+		filter.Currencies = result.Currencies
+	}
+
+	if result.Category != "" {
+		if filter.Tags == nil {
+			filter.Tags = []string{}
+		}
+		filter.Tags = append(filter.Tags, result.Category)
+	}
+
+	if result.IsVerified != nil {
+		filter.IsVerified = result.IsVerified
+	}
+
+	if result.IsPublic != nil {
+		filter.IsPublic = result.IsPublic
+	}
+
+	if result.MinRating != nil {
+		filter.MinAverageRating = result.MinRating
+	}
+
+	agents, total, err := s.ap2Repo.SearchAgents(ctx, filter, page, limit)
+	if err != nil {
+		return nil, 0, nil, fmt.Errorf("failed to search agents: %w", err)
+	}
+
+	ApplyMarketplaceRoleToRegistries(agents)
+
+	// Load product details for each agent
+	s.loadProductsForAgents(ctx, agents)
+
+	s.log.Info("LLM-driven agent discovery completed",
+		"query", naturalQuery,
+		"found_count", len(agents),
+		"total", total,
+		"explanation", result.Explanation,
+		"product_match_count", len(matchingAgentIDs),
+	)
+
+	return agents, total, result, nil
+}
+
+// findAgentsByProductSearch searches marketplace products and returns agent IDs that have matching products
+func (s *AgentDiscoveryService) findAgentsByProductSearch(ctx context.Context, result *LLMDiscoveryResult) ([]string, error) {
+	var allAgentIDs []string
+	uniqueAgents := make(map[string]struct{})
+
+	// If specific product names are mentioned, search by exact names
+	if len(result.ProductNames) > 0 {
+		for _, name := range result.ProductNames {
+			products, _, err := s.ap2Repo.SearchMarketplaceProducts(ctx, name, 1, 50)
+			if err != nil {
+				s.log.Warn("failed to search marketplace product by name", "name", name, "error", err)
+				continue
+			}
+			for _, p := range products {
+				uniqueAgents[p.AgentID] = struct{}{}
+			}
+		}
+	}
+
+	// If product tags/categories are mentioned, search by tags
+	if len(result.ProductTags) > 0 {
+		for _, tag := range result.ProductTags {
+			products, _, err := s.ap2Repo.GetMarketplaceProducts(ctx, map[string]interface{}{
+				"category": tag,
+			}, 1, 50)
+			if err != nil {
+				s.log.Warn("failed to search marketplace products by tag", "tag", tag, "error", err)
+				continue
+			}
+			for _, p := range products {
+				uniqueAgents[p.AgentID] = struct{}{}
+			}
+		}
+	}
+
+	// If there's a general product query, search by that
+	if result.ProductQuery != "" {
+		products, _, err := s.ap2Repo.SearchMarketplaceProducts(ctx, result.ProductQuery, 1, 100)
+		if err != nil {
+			s.log.Warn("failed to search marketplace products", "query", result.ProductQuery, "error", err)
+		} else {
+			for _, p := range products {
+				uniqueAgents[p.AgentID] = struct{}{}
+			}
+		}
+	}
+
+	for id := range uniqueAgents {
+		allAgentIDs = append(allAgentIDs, id)
+	}
+
+	s.log.Info("found agents by product search", "count", len(allAgentIDs), "query", result.ProductQuery)
+	return allAgentIDs, nil
+}
+
+// loadProductsForAgents loads product details for each agent's product_ids
+func (s *AgentDiscoveryService) loadProductsForAgents(ctx context.Context, agents []*models.AgentRegistry) {
+	for _, agent := range agents {
+		if len(agent.ProductIDs) == 0 {
+			continue
+		}
+
+		for _, productID := range agent.ProductIDs {
+			product, err := s.productRepo.GetByID(ctx, productID, "")
+			if err != nil {
+				s.log.Warn("failed to load product for agent", "product_id", productID, "agent_id", agent.AgentID.String(), "error", err)
+				continue
+			}
+			agent.Products = append(agent.Products, product)
+		}
+	}
+}
+
+func (s *AgentDiscoveryService) parseQueryWithLLM(ctx context.Context, query string) (*LLMDiscoveryResult, error) {
+	systemPrompt := `You are an AI agent discovery query parser. Your job is to analyze natural language queries and extract structured filter criteria for finding agents and their products.
+
+## Available Agent Types:
+- buyer, seller: bargaining/negotiation agents
+- shopping, merchant: marketplace agents
+- credential_provider: authentication agents
+- payment_processor: payment handling agents
+
+## Capabilities (examples):
+- bargaining, shopping.procurement, shopping.search
+- merchant.process_cart, inventory.reserve, cart.sign
+- payment.process, payment.refund
+- credential.issue, credential.verify
+
+## Categories (for products):
+Common product categories like electronics, clothing, food, furniture, etc.
+
+## Your Task:
+Parse the user's natural language query and extract relevant filters. Be generous with matching - if someone says "electronics sellers" that implies both agent type "seller" and tag "electronics".
+
+## Product Search:
+When the user describes a product they want (e.g., "laptops", "cheap phones", "furniture for office"), extract:
+- product_query: A search string to find products matching the description
+- product_names: Specific product names mentioned (if any)
+- product_tags: Product category tags (e.g., "electronics", "clothing")
+
+## Output Format:
+Return a JSON object with these fields:
+- query: the original query (sanitized)
+- business_id: UUID of the business if mentioned (only include if user explicitly provides a business ID)
+- agent_types: array of agent types to search (e.g., ["seller", "merchant"])
+- capabilities: array of required capabilities
+- tags: array of category/keyword tags
+- jurisdictions: array of geographic jurisdictions if mentioned
+- currencies: array of currencies if specified (e.g., ["USD", "EUR"])
+- category: primary product category if identifiable
+- is_verified: boolean (true if user wants only verified agents)
+- is_public: boolean (true if user wants only public agents)
+- min_rating: minimum rating if specified (1.0-5.0)
+- product_query: Natural language search query for products (e.g., "laptops with 16GB RAM" -> "laptops")
+- product_names: Array of specific product names mentioned (empty if none)
+- product_tags: Array of product category tags extracted from query (e.g., ["electronics", "phone"])
+- explanation: brief sentence explaining what the search is doing
+
+## Examples:
+Input: "find me verified electronics sellers in the US"
+Output: {"agent_types":["seller","merchant"],"tags":["electronics"],"jurisdictions":["US"],"is_verified":true,"explanation":"Finding verified electronics sellers in the US"}
+
+Input: "who sells furniture"
+Output: {"agent_types":["seller","merchant"],"tags":["furniture"],"is_public":true,"explanation":"Finding public agents that sell furniture"}
+
+Input: "i need a shopping agent for clothing"
+Output: {"agent_types":["shopping"],"tags":["clothing"],"explanation":"Finding shopping agents for clothing"}
+
+Input: "find sellers that have laptops"
+Output: {"agent_types":["seller","merchant"],"product_query":"laptops","tags":["electronics"],"explanation":"Finding seller agents that have laptops in their marketplace"}`
+
+	messages := []ChatMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: query},
+	}
+
+	response, err := s.llmSvc.Chat(ctx, messages)
+	if err != nil {
+		s.log.Error("failed to call LLM for query parsing", "error", err)
+		return nil, err
+	}
+
+	var result LLMDiscoveryResult
+	if err := json.Unmarshal([]byte(response), &result); err != nil {
+		s.log.Warn("failed to parse LLM response as JSON, attempting cleanup", "error", err, "response", response)
+		// Try to extract JSON from response
+		trimmed := strings.TrimSpace(response)
+		start := strings.Index(trimmed, "{")
+		end := strings.LastIndex(trimmed, "}")
+		if start != -1 && end != -1 {
+			trimmed = trimmed[start : end+1]
+			if err2 := json.Unmarshal([]byte(trimmed), &result); err2 != nil {
+				return nil, fmt.Errorf("failed to parse LLM response: %w", err2)
+			}
+		} else {
+			return nil, fmt.Errorf("failed to parse LLM response: no JSON found in response")
+		}
+	}
+
+	return &result, nil
 }

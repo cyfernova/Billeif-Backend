@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/ap2"
 	"invoice-backend/pkg/logger"
+
+	"github.com/google/uuid"
 )
 
 var (
@@ -18,16 +21,18 @@ var (
 )
 
 type AgentService struct {
-	ap2Repo interfaces.AP2Repository
-	signer  *ap2.SignatureService
-	log     *logger.Logger
+	ap2Repo     interfaces.AP2Repository
+	productRepo interfaces.ProductRepository
+	signer      *ap2.SignatureService
+	log         *logger.Logger
 }
 
-func NewAgentService(ap2Repo interfaces.AP2Repository, signer *ap2.SignatureService, log *logger.Logger) *AgentService {
+func NewAgentService(ap2Repo interfaces.AP2Repository, productRepo interfaces.ProductRepository, signer *ap2.SignatureService, log *logger.Logger) *AgentService {
 	return &AgentService{
-		ap2Repo: ap2Repo,
-		signer:  signer,
-		log:     log,
+		ap2Repo:     ap2Repo,
+		productRepo: productRepo,
+		signer:      signer,
+		log:         log,
 	}
 }
 
@@ -99,14 +104,100 @@ func (s *AgentService) CreateMerchantAgent(ctx context.Context, req *CreateMerch
 
 	agentCapabilities := s.buildCapabilities(s.getMerchantCapabilityList())
 
+	// Use transaction to create agent and register in discovery
 	if err := s.ap2Repo.CreateAgentWithCapabilities(ctx, agent, agentCapabilities); err != nil {
 		s.log.Error("failed to create merchant agent with capabilities", "error", err, "business_id", req.BusinessID)
 		return nil, fmt.Errorf("failed to create merchant agent: %w", err)
 	}
 
+	// Register in discovery agent_registry
+	if err := s.registerAgentInDiscovery(ctx, agent); err != nil {
+		s.log.Warn("failed to register merchant agent in discovery", "error", err, "agent_id", agent.ID)
+		// Don't fail the creation, just log warning
+	}
+
+	// Populate product_ids for response
+	agent.ProductIDs = extractProductIDs(agent.Config)
+
 	ApplyMarketplaceRoleToAgent(agent)
 	s.log.Info("created merchant agent", "agent_id", agent.ID, "business_id", req.BusinessID)
 	return agent, nil
+}
+
+// extractProductIDs extracts product_ids from agent config
+func extractProductIDs(config string) []string {
+	var productIDs []string
+	if config == "" {
+		return productIDs
+	}
+	var cfg map[string]interface{}
+	if err := json.Unmarshal([]byte(config), &cfg); err != nil {
+		return productIDs
+	}
+	if ids, ok := cfg["product_ids"].([]interface{}); ok {
+		for _, id := range ids {
+			if str, ok := id.(string); ok {
+				productIDs = append(productIDs, str)
+			}
+		}
+	}
+	return productIDs
+}
+
+// registerAgentInDiscovery creates an AgentRegistry entry for an existing agent
+func (s *AgentService) registerAgentInDiscovery(ctx context.Context, agent *models.Agent) error {
+	productIDs := extractProductIDs(agent.Config)
+
+	// Fetch product categories from product IDs
+	var tags []string
+	uniqueTags := make(map[string]struct{})
+	for _, pid := range productIDs {
+		product, err := s.productRepo.GetByID(ctx, pid, agent.BusinessID)
+		if err != nil {
+			s.log.Warn("failed to get product for category", "product_id", pid, "error", err)
+			continue
+		}
+		// Add category name as tag
+		if product.Category != nil && product.Category.Name != "" {
+			uniqueTags[product.Category.Name] = struct{}{}
+		}
+		// Add product name as tag
+		if product.Name != "" {
+			uniqueTags[product.Name] = struct{}{}
+		}
+	}
+	for tag := range uniqueTags {
+		tags = append(tags, tag)
+	}
+
+	// If no tags from products, add default merchant tag
+	if len(tags) == 0 {
+		tags = []string{"merchant"}
+	}
+
+	registry := &models.AgentRegistry{
+		ID:                uuid.New(),
+		AgentID:           uuid.MustParse(agent.ID),
+		AgentName:         agent.Name,
+		AgentDescription:  agent.Description,
+		AgentType:         NormalizeMarketplaceAgentType(agent.Type),
+		Tags:              tags,
+		ProductIDs:        productIDs,
+		IsPublic:          agent.IsPublic,
+		IsActive:          agent.IsActive,
+		IsVerified:        false,
+		HealthCheckStatus: stringPtr("healthy"),
+		CreatedAt:         time.Now(),
+		UpdatedAt:         time.Now(),
+	}
+
+	if err := s.ap2Repo.RegisterAgent(ctx, registry); err != nil {
+		return fmt.Errorf("failed to register agent in discovery: %w", err)
+	}
+
+	ApplyMarketplaceRoleToRegistry(registry)
+	s.log.Info("agent registered in discovery", "agent_id", agent.ID, "registry_id", registry.ID.String(), "tags", tags)
+	return nil
 }
 
 func (s *AgentService) GetAgentByID(ctx context.Context, agentID string) (*models.Agent, error) {
@@ -115,6 +206,7 @@ func (s *AgentService) GetAgentByID(ctx context.Context, agentID string) (*model
 		s.log.Error("failed to get agent", "error", err, "agent_id", agentID)
 		return nil, ErrAgentNotFound
 	}
+	agent.ProductIDs = extractProductIDs(agent.Config)
 	ApplyMarketplaceRoleToAgent(agent)
 	return agent, nil
 }
@@ -124,6 +216,9 @@ func (s *AgentService) GetAgentsByBusiness(ctx context.Context, businessID strin
 	if err != nil {
 		return nil, 0, err
 	}
+	for _, agent := range agents {
+		agent.ProductIDs = extractProductIDs(agent.Config)
+	}
 	ApplyMarketplaceRoleToAgents(agents)
 	return agents, total, nil
 }
@@ -132,6 +227,9 @@ func (s *AgentService) GetAgentsByUser(ctx context.Context, userID string, page,
 	agents, total, err := s.ap2Repo.GetAgentsByUser(ctx, userID, page, limit)
 	if err != nil {
 		return nil, 0, err
+	}
+	for _, agent := range agents {
+		agent.ProductIDs = extractProductIDs(agent.Config)
 	}
 	ApplyMarketplaceRoleToAgents(agents)
 	return agents, total, nil

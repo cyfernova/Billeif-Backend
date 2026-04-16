@@ -28,7 +28,7 @@ type AgentRegistry struct {
 	// Discovery metadata
 	Domain       *string `gorm:"type:varchar(255)" json:"domain"`
 	WellKnownURI *string `gorm:"type:varchar(500);uniqueIndex" json:"well_known_uri"`
-	A2AEndpoint  *string `gorm:"type:varchar(500)" json:"a2a_endpoint"`
+	A2AEndpoint  *string `gorm:"column:a2a_endpoint;type:varchar(500)" json:"a2a_endpoint"`
 
 	// Searchable fields (denormalized for faster queries)
 	Capabilities       pq.StringArray `gorm:"type:text[];default:'{}'" json:"capabilities"`
@@ -36,6 +36,10 @@ type AgentRegistry struct {
 	Jurisdictions      pq.StringArray `gorm:"type:text[];default:'{}'" json:"jurisdictions"`
 	Currencies         pq.StringArray `gorm:"type:text[];default:'{}'" json:"currencies"`
 	SupportedLanguages pq.StringArray `gorm:"type:text[];default:'{}'" json:"supported_languages"`
+	ProductIDs         pq.StringArray `gorm:"type:text[];default:'{}'" json:"product_ids"`
+
+	// Products (loaded on demand via productRepo)
+	Products []*Product `gorm:"-" json:"products,omitempty"`
 
 	// Pricing information
 	PricingModel datatypes.JSON `gorm:"type:jsonb;default:'{}'" json:"pricing_model"`
@@ -192,6 +196,7 @@ type AgentSearchQuery struct {
 
 // AgentDiscoveryFilter helps with advanced filtering
 type AgentDiscoveryFilter struct {
+	BusinessID        string
 	IDs               []uuid.UUID
 	AgentTypes        []string
 	Capabilities      []string

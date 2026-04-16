@@ -843,10 +843,14 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			discovery.GET("/agents/public", h.AgentDiscovery.GetPublicAgents)
 			discovery.GET("/agents/verified", h.AgentDiscovery.GetVerifiedAgents)
 			discovery.GET("/agents/by-capability", h.AgentDiscovery.GetAgentsByCapability)
+			discovery.GET("/agents/find-sellers", h.AgentDiscovery.FindSellersByProduct)
+			discovery.GET("/agents/find-sellers-by-category", h.AgentDiscovery.FindSellersByCategory)
+			discovery.GET("/agents/search", h.AgentDiscovery.SearchAgentsWithLLM)
 			discovery.GET("/agents/:agentID", h.AgentDiscovery.GetAgentRegistry)
 
 			// Register agent
 			discovery.POST("/agents/register", h.AgentDiscovery.RegisterAgent)
+			discovery.POST("/agents/register-from-agents", h.AgentDiscovery.RegisterAgentFromAgents)
 
 			// Admin operations
 			discovery.POST("/agents/:registryID/verify", middleware.RequireRole("admin"), h.AgentDiscovery.VerifyAgent)
