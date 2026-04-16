@@ -113,6 +113,26 @@ output "client_id" {
   value       = aws_cognito_user_pool_client.main.id
 }
 
+output "cognito_region" {
+  description = "Cognito region used by the primary user pool"
+  value       = var.aws_region
+}
+
+output "cognito_domain" {
+  description = "Hosted UI domain for the primary Cognito user pool"
+  value       = "${aws_cognito_user_pool_domain.main.domain}.auth.${var.aws_region}.amazoncognito.com"
+}
+
+output "cognito_callback_urls" {
+  description = "Allowed callback URLs for the primary Cognito app client"
+  value       = aws_cognito_user_pool_client.main.callback_urls
+}
+
+output "cognito_logout_urls" {
+  description = "Allowed logout URLs for the primary Cognito app client"
+  value       = aws_cognito_user_pool_client.main.logout_urls
+}
+
 output "google_oauth_secret_name" {
   description = "AWS Secrets Manager secret name for Google OAuth credentials"
   value       = local.google_oauth_secret_name

@@ -50,11 +50,6 @@ const docTemplate = `{
         },
         "/a2a-bargaining/autonomous/start": {
             "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
                 "description": "Starts a fully autonomous price negotiation driven by LLM decisions between buyer and seller agents. Real-time events are delivered via webhook callbacks.",
                 "consumes": [
                     "application/json"
@@ -114,7 +109,12 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
             }
         },
         "/a2a-bargaining/progress/{sessionId}": {
@@ -10651,6 +10651,56 @@ const docTemplate = `{
                 ]
             }
         },
+        "/render-profiles/{id}/default": {
+            "post": {
+                "description": "Marks the specified render profile as default for the business",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Render Profiles"
+                ],
+                "summary": "Set default render profile",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Render Profile ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {}
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/reports/catalog": {
             "get": {
                 "description": "Returns all available report types",
@@ -15936,7 +15986,6 @@ const docTemplate = `{
             "type": "object",
             "required": [
                 "buyer_agent_id",
-                "callback_url",
                 "initial_amount",
                 "seller_agent_id"
             ],
@@ -15956,6 +16005,9 @@ const docTemplate = `{
                     "minimum": 1
                 },
                 "seller_agent_id": {
+                    "type": "string"
+                },
+                "user_id": {
                     "type": "string"
                 }
             }
@@ -16706,6 +16758,9 @@ const docTemplate = `{
                 "project_id": {
                     "type": "string"
                 },
+                "render_profile_id": {
+                    "type": "string"
+                },
                 "sent_at": {
                     "type": "string"
                 },
@@ -17077,6 +17132,9 @@ const docTemplate = `{
                     "maxLength": 50
                 },
                 "updated_at": {
+                    "type": "string"
+                },
+                "uqc_code": {
                     "type": "string"
                 },
                 "valuation_method": {
@@ -18621,6 +18679,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "project_id": {
+                    "type": "string"
+                },
+                "render_profile_id": {
                     "type": "string"
                 },
                 "tax_profile": {
@@ -20455,6 +20516,9 @@ const docTemplate = `{
                 "project_id": {
                     "type": "string"
                 },
+                "render_profile_id": {
+                    "type": "string"
+                },
                 "tax_profile": {
                     "$ref": "#/definitions/services.TaxProfileInput"
                 }
@@ -21240,9 +21304,10 @@ const docTemplate = `{
     },
     "securityDefinitions": {
         "BearerAuth": {
-            "type": "apiKey",
-            "name": "Authorization",
-            "in": "header"
+            "type": "oauth2",
+            "flow": "accessCode",
+            "authorizationUrl": "https://example.com/oauth2/authorize",
+            "tokenUrl": "https://example.com/oauth2/token"
         }
     }
 }`

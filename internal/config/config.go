@@ -114,6 +114,7 @@ type WebSocketConfig struct {
 type CognitoConfig struct {
 	UserPoolID      string             `mapstructure:"USER_POOL_ID"`
 	ClientID        string             `mapstructure:"CLIENT_ID"`
+	Domain          string             `mapstructure:"DOMAIN"`
 	Region          string             `mapstructure:"REGION"`
 	JWKSRefreshRate time.Duration      `mapstructure:"JWKS_REFRESH_RATE"`
 	Phone           CognitoPhoneConfig `mapstructure:"PHONE"`
@@ -280,6 +281,7 @@ func Load() (*Config, error) {
 	_ = viper.BindEnv("WEBSOCKET.CONNECTIONS_TABLE", "WEBSOCKET_CONNECTIONS_TABLE")
 	_ = viper.BindEnv("COGNITO.USER_POOL_ID", "COGNITO_USER_POOL_ID")
 	_ = viper.BindEnv("COGNITO.CLIENT_ID", "COGNITO_CLIENT_ID")
+	_ = viper.BindEnv("COGNITO.DOMAIN", "COGNITO_DOMAIN")
 	_ = viper.BindEnv("COGNITO.REGION", "COGNITO_REGION")
 	_ = viper.BindEnv("COGNITO.JWKS_REFRESH_RATE", "COGNITO_JWKS_REFRESH_RATE")
 	_ = viper.BindEnv("COGNITO.PHONE.USER_POOL_ID", "COGNITO_PHONE_USER_POOL_ID")
@@ -426,6 +428,9 @@ func setDefaults(cfg *Config) {
 	if cfg.Cognito.Region == "" {
 		cfg.Cognito.Region = "us-east-1"
 	}
+	if cfg.Cognito.Domain == "" {
+		cfg.Cognito.Domain = fmt.Sprintf("invoice-backend-app.auth.%s.amazoncognito.com", cfg.Cognito.Region)
+	}
 	if cfg.Cognito.Phone.Region == "" && cfg.Cognito.Phone.UserPoolID != "" {
 		cfg.Cognito.Phone.Region = "ap-south-1"
 	}
@@ -526,4 +531,18 @@ func (s ServerConfig) A2AMessageEndpoint() string {
 		return a2aBasePath
 	}
 	return baseURL + a2aBasePath
+}
+
+func (c CognitoConfig) ResolveHostedUIDomain() string {
+	domain := strings.TrimSpace(c.Domain)
+	if domain == "" {
+		return ""
+	}
+
+	domain = strings.TrimRight(domain, "/")
+	if strings.HasPrefix(domain, "http://") || strings.HasPrefix(domain, "https://") {
+		return domain
+	}
+
+	return "https://" + domain
 }

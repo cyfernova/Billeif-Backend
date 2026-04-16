@@ -171,6 +171,18 @@ variable "cognito_domain_prefix" {
   default     = "invoice-backend-app"
 }
 
+variable "cognito_additional_callback_urls" {
+  description = "Additional Cognito callback URLs to allow, such as the current Expo Go exp://... redirect URI."
+  type        = list(string)
+  default     = []
+}
+
+variable "cognito_additional_logout_urls" {
+  description = "Additional Cognito logout URLs to allow, such as the current Expo Go exp://... redirect URI."
+  type        = list(string)
+  default     = []
+}
+
 variable "india_sms_sender_id" {
   description = "DLT-approved sender ID for India SMS delivery"
   type        = string
