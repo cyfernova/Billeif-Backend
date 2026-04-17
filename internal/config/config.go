@@ -62,8 +62,9 @@ type SentryConfig struct {
 }
 
 type ServerConfig struct {
-	Port    int    `mapstructure:"PORT"`
-	BaseURL string `mapstructure:"BASE_URL"`
+	Port           int    `mapstructure:"PORT"`
+	BaseURL        string `mapstructure:"BASE_URL"`
+	SwaggerUsePkce bool   `mapstructure:"SWAGGER_USE_PKCE"`
 }
 
 type DatabaseConfig struct {
@@ -253,6 +254,7 @@ func Load() (*Config, error) {
 	_ = viper.BindEnv("LOGGING.STACKTRACE_LEVEL", "LOG_STACKTRACE_LEVEL")
 	_ = viper.BindEnv("SERVER.PORT", "SERVER_PORT")
 	_ = viper.BindEnv("SERVER.BASE_URL", "SERVER_BASE_URL", "A2A_SERVER_DOMAIN")
+	_ = viper.BindEnv("SERVER.SWAGGER_USE_PKCE", "SERVER_SWAGGER_USE_PKCE")
 	_ = viper.BindEnv("DATABASE.HOST", "DATABASE_HOST")
 	_ = viper.BindEnv("DATABASE.PORT", "DATABASE_PORT")
 	_ = viper.BindEnv("DATABASE.USER", "DATABASE_USER")

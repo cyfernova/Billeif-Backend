@@ -997,7 +997,7 @@ func registerSwaggerRoutes(router *gin.Engine, cfg *config.Config) {
 			ginSwagger.URL("../swagger.json"),
 			ginSwagger.PersistAuthorization(true),
 			ginSwagger.Oauth2DefaultClientID(cfg.Cognito.ClientID),
-			ginSwagger.Oauth2UsePkce(true),
+			ginSwagger.Oauth2UsePkce(cfg.Server.SwaggerUsePkce),
 		),
 	)
 }
