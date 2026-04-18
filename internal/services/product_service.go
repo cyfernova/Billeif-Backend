@@ -14,6 +14,7 @@ import (
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/logger"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -33,7 +34,7 @@ type CreateProductInput struct {
 	BusinessID        string                 `json:"business_id,omitempty"`
 	CategoryID        string                 `json:"category_id"`
 	Name              string                 `json:"name" binding:"required,min=2"`
-	SKU               string                 `json:"sku" binding:"required"`
+	SKU               string                 `json:"sku"`
 	Barcode           string                 `json:"barcode"`
 	Description       string                 `json:"description"`
 	Price             float64                `json:"price" binding:"required,gt=0"`
@@ -78,6 +79,11 @@ type ProductVariantInput struct {
 }
 
 func (s *ProductService) Create(ctx context.Context, input CreateProductInput) (*models.Product, error) {
+	// Auto-generate SKU if not provided
+	if strings.TrimSpace(input.SKU) == "" {
+		input.SKU = fmt.Sprintf("SKU-%s", uuid.New().String()[:8])
+	}
+
 	log := logger.FromContext(ctx).With("service", "product", "operation", "create", "business_id", input.BusinessID, "sku", input.SKU)
 	if input.BusinessID == "" {
 		log.Error("business_id is empty")
