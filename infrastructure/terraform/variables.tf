@@ -259,3 +259,23 @@ variable "apns_certificate" {
   sensitive   = true
   default     = ""
 }
+
+# LLM Configuration (Minimax)
+variable "llm_api_key" {
+  description = "Minimax API key for LLM"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "llm_api_url" {
+  description = "Minimax API URL"
+  type        = string
+  default     = "https://api.minimax.io/anthropic/v1/messages"
+}
+
+variable "llm_model" {
+  description = "Minimax LLM model name"
+  type        = string
+  default     = "MiniMax-M2.7"
+}

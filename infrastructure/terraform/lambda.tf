@@ -49,6 +49,9 @@ locals {
     JWT_ACCESS_TOKEN_EXPIRY          = "1h"
     JWT_REFRESH_TOKEN_EXPIRY         = "720h"
     WEBSOCKET_CONNECTIONS_TABLE      = aws_dynamodb_table.ws_connections.name
+    LLM_API_KEY                      = var.llm_api_key
+    LLM_API_URL                      = var.llm_api_url
+    LLM_MODEL                        = var.llm_model
   }
 }
 

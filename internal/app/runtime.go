@@ -1005,12 +1005,14 @@ func registerSwaggerRoutes(router *gin.Engine, cfg *config.Config) {
 func resolveSwaggerEndpoint(cfg *config.Config) ([]string, string, string) {
 	baseURL := cfg.Server.ResolveBaseURL()
 	if baseURL == "" {
-		return nil, "", docs.SwaggerInfo.BasePath
+		// Default to localhost for local development
+		return []string{"http"}, "localhost:8080", docs.SwaggerInfo.BasePath
 	}
 
 	parsed, err := url.Parse(baseURL)
-	if err != nil {
-		return nil, "", docs.SwaggerInfo.BasePath
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		// Fall back to localhost for local development
+		return []string{"http"}, "localhost:8080", docs.SwaggerInfo.BasePath
 	}
 
 	basePath := strings.TrimRight(parsed.Path, "/") + docs.SwaggerInfo.BasePath

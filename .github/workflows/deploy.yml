@@ -34,6 +34,9 @@ env:
   TF_VAR_fcm_api_key: ${{ secrets.TF_VAR_FCM_API_KEY }}
   TF_VAR_apns_private_key: ${{ secrets.TF_VAR_APNS_PRIVATE_KEY }}
   TF_VAR_apns_certificate: ${{ secrets.TF_VAR_APNS_CERTIFICATE }}
+  TF_VAR_llm_api_key: ${{ secrets.TF_VAR_LLM_API_KEY }}
+  TF_VAR_llm_api_url: ${{ secrets.TF_VAR_LLM_API_URL }}
+  TF_VAR_llm_model: ${{ secrets.TF_VAR_LLM_MODEL }}
   TF_VAR_environment_override: ${{ vars.TF_ENVIRONMENT }}
   TF_VAR_project_name_override: ${{ vars.TF_PROJECT_NAME }}
   TF_VAR_user_pool_name_override: ${{ vars.TF_USER_POOL_NAME }}
