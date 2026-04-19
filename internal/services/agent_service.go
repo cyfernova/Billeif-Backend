@@ -106,7 +106,7 @@ func (s *AgentService) CreateMerchantAgent(ctx context.Context, req *CreateMerch
 		Description:  &req.Description,
 		Capabilities: capabilities,
 		Categories:   pq.StringArray(req.Categories),
-		Price:       req.Price,
+		Price:        req.Price,
 		Config:       s.marshalConfig(config),
 		IsPublic:     true,
 		IsActive:     true,

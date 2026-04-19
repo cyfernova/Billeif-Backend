@@ -16,7 +16,7 @@ type Agent struct {
 	Description     *string        `gorm:"type:text" json:"description,omitempty" validate:"omitempty,max=1000"`
 	Capabilities    string         `gorm:"type:jsonb;not null;default:'[]'" json:"capabilities"`
 	Categories      pq.StringArray `gorm:"type:text[];default:'{}'" json:"categories" swaggerignore:"true"`
-	Price          *float64       `gorm:"type:float;default:0" json:"price"`
+	Price           *float64       `gorm:"type:float;default:0" json:"price"`
 	Config          string         `gorm:"type:jsonb;not null;default:'{}'" json:"config"`
 	A2AEndpoint     *string        `gorm:"column:a2a_endpoint;type:varchar(500)" json:"a2a_endpoint,omitempty" validate:"omitempty,url,max=500"`
 	MarketplaceRole string         `gorm:"-" json:"marketplace_role,omitempty"`

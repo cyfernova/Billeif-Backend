@@ -724,14 +724,66 @@ func (h *AgentDiscoveryHandler) RegisterAgentFromAgents(c *gin.Context) {
 	})
 }
 
-// DiscoverAgentsByCategoriesAndBudget discovers agents from the agents table by categories and budget
-// @Summary Discover agents by categories and budget
-// @Description Find agents from the agents table whose categories match and whose minimum_order is within budget.
+// DiscoverAgentsByBudget discovers merchant agents with price within budget
+// @Summary Discover merchant agents by budget
+// @Description Find merchant agents from the agents table whose price is within the given budget.
 // @Tags Discovery
 // @Produce json
 // @Security BearerAuth
-// @Param categories query []string true "Categories to search (e.g., Laptop,Tech)"
-// @Param budget query number false "Maximum minimum_order price filter"
+// @Param budget query number true "Maximum price filter"
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page" default(10)
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /discovery/agents/by-budget [get]
+func (h *AgentDiscoveryHandler) DiscoverAgentsByBudget(c *gin.Context) {
+	budgetStr := c.Query("budget")
+	if budgetStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "budget parameter is required"})
+		return
+	}
+
+	budget, err := strconv.ParseFloat(budgetStr, 64)
+	if err != nil || budget <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "budget must be a positive number"})
+		return
+	}
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 10
+	}
+
+	agents, total, err := h.discovery.DiscoverAgentsByBudget(c.Request.Context(), budget, page, limit)
+	if err != nil {
+		h.log.Error("failed to discover agents by budget", "error", err, "budget", budget)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"agents": agents,
+		"total":  total,
+		"page":   page,
+		"limit":  limit,
+		"budget": budget,
+	})
+}
+
+// DiscoverAgentsByCategoriesAndBudget discovers agents by categories and/or budget
+// @Summary Discover agents by categories and budget
+// @Description Find agents from the agents table whose categories contain any of the specified categories, and whose price is within the given budget.
+// @Tags Discovery
+// @Produce json
+// @Security BearerAuth
+// @Param categories query string false "Comma-separated categories to filter by"
+// @Param budget query number true "Maximum price filter"
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page" default(10)
 // @Success 200 {object} map[string]interface{}
@@ -739,31 +791,24 @@ func (h *AgentDiscoveryHandler) RegisterAgentFromAgents(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /discovery/agents/by-categories [get]
 func (h *AgentDiscoveryHandler) DiscoverAgentsByCategoriesAndBudget(c *gin.Context) {
-	categoriesParam := c.Query("categories")
-	if categoriesParam == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "categories parameter is required"})
+	budgetStr := c.Query("budget")
+	if budgetStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "budget parameter is required"})
 		return
 	}
 
-	// Parse comma-separated categories
+	budget, err := strconv.ParseFloat(budgetStr, 64)
+	if err != nil || budget <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "budget must be a positive number"})
+		return
+	}
+
+	categoriesParam := c.Query("categories")
 	var categories []string
 	for _, cat := range strings.Split(categoriesParam, ",") {
 		cat = strings.TrimSpace(cat)
 		if cat != "" {
 			categories = append(categories, cat)
-		}
-	}
-
-	if len(categories) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "at least one category is required"})
-		return
-	}
-
-	// Parse budget parameter (optional)
-	var budget *float64
-	if budgetStr := c.Query("budget"); budgetStr != "" {
-		if b, err := strconv.ParseFloat(budgetStr, 64); err == nil && b > 0 {
-			budget = &b
 		}
 	}
 
@@ -779,7 +824,7 @@ func (h *AgentDiscoveryHandler) DiscoverAgentsByCategoriesAndBudget(c *gin.Conte
 
 	agents, total, err := h.discovery.DiscoverAgentsByCategoriesAndBudget(c.Request.Context(), categories, budget, page, limit)
 	if err != nil {
-		h.log.Error("failed to discover agents by categories and budget", "error", err, "categories", categories)
+		h.log.Error("failed to discover agents by categories and budget", "error", err, "budget", budget, "categories", categories)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -789,7 +834,7 @@ func (h *AgentDiscoveryHandler) DiscoverAgentsByCategoriesAndBudget(c *gin.Conte
 		"total":      total,
 		"page":       page,
 		"limit":      limit,
-		"categories": categories,
 		"budget":     budget,
+		"categories": categories,
 	})
 }

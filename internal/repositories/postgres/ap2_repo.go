@@ -372,6 +372,28 @@ func (r *ap2Repository) SearchAgentsByCategories(ctx context.Context, categories
 	return result, total, nil
 }
 
+func (r *ap2Repository) SearchAgentsByBudget(ctx context.Context, budget float64, page, limit int) ([]*models.Agent, int64, error) {
+	var agents []models.Agent
+	var total int64
+
+	offset := (page - 1) * limit
+	query := r.db.WithContext(ctx).Model(&models.Agent{}).Where("deleted_at IS NULL").Where("price <= ?", budget)
+
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	if err := query.Offset(offset).Limit(limit).Order("created_at DESC").Find(&agents).Error; err != nil {
+		return nil, 0, err
+	}
+
+	result := make([]*models.Agent, len(agents))
+	for i := range agents {
+		result[i] = &agents[i]
+	}
+	return result, total, nil
+}
+
 func (r *ap2Repository) GetActiveAgentsByType(ctx context.Context, agentType string) ([]*models.Agent, error) {
 	var agents []models.Agent
 	err := r.db.WithContext(ctx).

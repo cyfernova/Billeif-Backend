@@ -5325,6 +5325,73 @@ const docTemplate = `{
                 }
             }
         },
+        "/discovery/agents/by-budget": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Find merchant agents from the agents table whose price is within the given budget.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Discovery"
+                ],
+                "summary": "Discover merchant agents by budget",
+                "parameters": [
+                    {
+                        "type": "number",
+                        "description": "Maximum price filter",
+                        "name": "budget",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Items per page",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/discovery/agents/by-capability": {
             "get": {
                 "security": [
@@ -5403,7 +5470,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Find agents from the agents table whose categories match and whose minimum_order is within budget.",
+                "description": "Find agents from the agents table whose categories contain any of the specified categories, and whose price is within the given budget.",
                 "produces": [
                     "application/json"
                 ],
@@ -5413,21 +5480,17 @@ const docTemplate = `{
                 "summary": "Discover agents by categories and budget",
                 "parameters": [
                     {
-                        "type": "array",
-                        "items": {
-                            "type": "string"
-                        },
-                        "collectionFormat": "csv",
-                        "description": "Categories to search (e.g., Laptop,Tech)",
+                        "type": "string",
+                        "description": "Comma-separated categories to filter by",
                         "name": "categories",
-                        "in": "query",
-                        "required": true
+                        "in": "query"
                     },
                     {
                         "type": "number",
-                        "description": "Maximum minimum_order price filter",
+                        "description": "Maximum price filter",
                         "name": "budget",
-                        "in": "query"
+                        "in": "query",
+                        "required": true
                     },
                     {
                         "type": "integer",

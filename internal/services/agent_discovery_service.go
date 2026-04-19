@@ -521,12 +521,33 @@ func (s *AgentDiscoveryService) GetAgentsByCapability(ctx context.Context, capab
 	return filtered[start:end], total, nil
 }
 
-// DiscoverAgentsByCategoriesAndBudget searches the agents table (not agent_registry) for agents
-// matching the given categories and budget filter.
-func (s *AgentDiscoveryService) DiscoverAgentsByCategoriesAndBudget(ctx context.Context, categories []string, budget *float64, page, limit int) ([]*models.Agent, int64, error) {
-	agents, total, err := s.ap2Repo.SearchAgentsByCategories(ctx, categories, budget, page, limit)
+// DiscoverAgentsByBudget searches the agents table for merchant agents with price within budget.
+func (s *AgentDiscoveryService) DiscoverAgentsByBudget(ctx context.Context, budget float64, page, limit int) ([]*models.Agent, int64, error) {
+	agents, total, err := s.ap2Repo.SearchAgentsByBudget(ctx, budget, page, limit)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to search agents by categories: %w", err)
+		return nil, 0, fmt.Errorf("failed to search agents by budget: %w", err)
+	}
+
+	// Populate product_ids from config for each agent
+	for _, agent := range agents {
+		agent.ProductIDs = extractProductIDsFromConfig(agent.Config)
+	}
+
+	s.log.Info("discovered agents by budget",
+		"budget", budget,
+		"found", len(agents),
+		"total", total,
+	)
+
+	return agents, total, nil
+}
+
+// DiscoverAgentsByCategoriesAndBudget searches the agents table for agents with matching categories and price within budget.
+func (s *AgentDiscoveryService) DiscoverAgentsByCategoriesAndBudget(ctx context.Context, categories []string, budget float64, page, limit int) ([]*models.Agent, int64, error) {
+	budgetPtr := &budget
+	agents, total, err := s.ap2Repo.SearchAgentsByCategories(ctx, categories, budgetPtr, page, limit)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to search agents by categories and budget: %w", err)
 	}
 
 	// Populate product_ids from config for each agent

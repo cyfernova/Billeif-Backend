@@ -43,6 +43,7 @@ type AP2Repository interface {
 	GetAgents(ctx context.Context, page, limit int) ([]*models.Agent, int64, error)
 	GetActiveAgentsByType(ctx context.Context, agentType string) ([]*models.Agent, error)
 	SearchAgentsByCategories(ctx context.Context, categories []string, budget *float64, page, limit int) ([]*models.Agent, int64, error)
+	SearchAgentsByBudget(ctx context.Context, budget float64, page, limit int) ([]*models.Agent, int64, error)
 	UpdateAgent(ctx context.Context, agent *models.Agent) error
 	DeleteAgent(ctx context.Context, id string) error
 
