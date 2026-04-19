@@ -250,6 +250,9 @@ func (s *AgentService) GetActiveAgentsByType(ctx context.Context, agentType stri
 	if err != nil {
 		return nil, err
 	}
+	for _, agent := range agents {
+		agent.ProductIDs = extractProductIDs(agent.Config)
+	}
 	ApplyMarketplaceRoleToAgents(agents)
 	return agents, nil
 }

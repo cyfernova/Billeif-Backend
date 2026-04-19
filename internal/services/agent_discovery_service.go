@@ -492,6 +492,11 @@ func (s *AgentDiscoveryService) GetAgentsByCapability(ctx context.Context, capab
 		return nil, 0, fmt.Errorf("failed to get agents: %w", err)
 	}
 
+	// Populate product_ids for all agents
+	for _, agent := range agents {
+		agent.ProductIDs = extractProductIDsFromConfig(agent.Config)
+	}
+
 	// If no capabilities filter specified, return all agents
 	if len(capabilities) == 0 {
 		return agents, total, nil
@@ -543,26 +548,76 @@ func (s *AgentDiscoveryService) DiscoverAgentsByBudget(ctx context.Context, budg
 }
 
 // DiscoverAgentsByCategoriesAndBudget searches the agents table for agents with matching categories and price within budget.
+// It filters based on product categories and product names, not agent categories.
 func (s *AgentDiscoveryService) DiscoverAgentsByCategoriesAndBudget(ctx context.Context, categories []string, budget float64, page, limit int) ([]*models.Agent, int64, error) {
-	budgetPtr := &budget
-	agents, total, err := s.ap2Repo.SearchAgentsByCategories(ctx, categories, budgetPtr, page, limit)
+	// First get agents within budget (search by budget, not agent categories)
+	agents, total, err := s.ap2Repo.SearchAgentsByBudget(ctx, budget, 1, 1000) // Get more to filter
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to search agents by categories and budget: %w", err)
+		return nil, 0, fmt.Errorf("failed to search agents by budget: %w", err)
 	}
 
-	// Populate product_ids from config for each agent
+	// Populate product_ids and products for each agent
 	for _, agent := range agents {
 		agent.ProductIDs = extractProductIDsFromConfig(agent.Config)
+	}
+
+	// Load product details for each agent
+	s.loadProductsForAgentsFromAgents(ctx, agents)
+
+	// Filter agents based on product categories and product names (not agent categories)
+	var filtered []*models.Agent
+	for _, agent := range agents {
+		if s.agentMatchesSearchTerms(agent, categories) {
+			filtered = append(filtered, agent)
+		}
+	}
+
+	// Apply pagination to filtered results
+	total = int64(len(filtered))
+	start := (page - 1) * limit
+	end := start + limit
+	if start >= len(filtered) {
+		return []*models.Agent{}, total, nil
+	}
+	if end > len(filtered) {
+		end = len(filtered)
 	}
 
 	s.log.Info("discovered agents by categories and budget",
 		"categories", categories,
 		"budget", budget,
-		"found", len(agents),
+		"found", len(filtered),
 		"total", total,
 	)
 
-	return agents, total, nil
+	return filtered[start:end], total, nil
+}
+
+// agentMatchesSearchTerms checks if an agent has any product matching the search terms via category OR product name
+func (s *AgentDiscoveryService) agentMatchesSearchTerms(agent *models.Agent, searchTerms []string) bool {
+	if len(searchTerms) == 0 {
+		return true
+	}
+
+	for _, product := range agent.Products {
+		// Check product name match
+		for _, term := range searchTerms {
+			if strings.Contains(strings.ToLower(product.Name), strings.ToLower(strings.TrimSpace(term))) {
+				return true
+			}
+		}
+
+		// Check product categories match
+		for _, productCategory := range product.Categories {
+			for _, searchTerm := range searchTerms {
+				if strings.EqualFold(strings.TrimSpace(productCategory), strings.TrimSpace(searchTerm)) {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
 }
 
 // agentHasMatchingProductCategories checks if an agent has any product with matching categories
@@ -998,6 +1053,24 @@ func (s *AgentDiscoveryService) loadProductsForAgents(ctx context.Context, agent
 			product, err := s.productRepo.GetByIDWithoutTenant(ctx, productID)
 			if err != nil {
 				s.log.Warn("failed to load product for agent", "product_id", productID, "agent_id", agent.AgentID.String(), "error", err)
+				continue
+			}
+			agent.Products = append(agent.Products, product)
+		}
+	}
+}
+
+// loadProductsForAgentsFromAgents loads product details for each agent's product_ids (for Agent models)
+func (s *AgentDiscoveryService) loadProductsForAgentsFromAgents(ctx context.Context, agents []*models.Agent) {
+	for _, agent := range agents {
+		if len(agent.ProductIDs) == 0 {
+			continue
+		}
+
+		for _, productID := range agent.ProductIDs {
+			product, err := s.productRepo.GetByIDWithoutTenant(ctx, productID)
+			if err != nil {
+				s.log.Warn("failed to load product for agent", "product_id", productID, "agent_id", agent.ID, "error", err)
 				continue
 			}
 			agent.Products = append(agent.Products, product)
