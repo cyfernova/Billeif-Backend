@@ -521,6 +521,29 @@ func (s *AgentDiscoveryService) GetAgentsByCapability(ctx context.Context, capab
 	return filtered[start:end], total, nil
 }
 
+// DiscoverAgentsByCategoriesAndBudget searches the agents table (not agent_registry) for agents
+// matching the given categories and budget filter.
+func (s *AgentDiscoveryService) DiscoverAgentsByCategoriesAndBudget(ctx context.Context, categories []string, budget *float64, page, limit int) ([]*models.Agent, int64, error) {
+	agents, total, err := s.ap2Repo.SearchAgentsByCategories(ctx, categories, budget, page, limit)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to search agents by categories: %w", err)
+	}
+
+	// Populate product_ids from config for each agent
+	for _, agent := range agents {
+		agent.ProductIDs = extractProductIDsFromConfig(agent.Config)
+	}
+
+	s.log.Info("discovered agents by categories and budget",
+		"categories", categories,
+		"budget", budget,
+		"found", len(agents),
+		"total", total,
+	)
+
+	return agents, total, nil
+}
+
 // agentHasMatchingProductCategories checks if an agent has any product with matching categories
 func agentHasMatchingProductCategories(ctx context.Context, agent *models.Agent, categories []string, productRepo interfaces.ProductRepository) bool {
 	productIDs := agent.ProductIDs

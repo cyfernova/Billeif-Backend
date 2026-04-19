@@ -9,6 +9,7 @@ import (
 
 	"invoice-backend/pkg/logger"
 
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
@@ -323,6 +324,38 @@ func (r *ap2Repository) GetAgents(ctx context.Context, page, limit int) ([]*mode
 
 	offset := (page - 1) * limit
 	query := r.db.WithContext(ctx).Model(&models.Agent{}).Where("deleted_at IS NULL")
+
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	if err := query.Offset(offset).Limit(limit).Order("created_at DESC").Find(&agents).Error; err != nil {
+		return nil, 0, err
+	}
+
+	result := make([]*models.Agent, len(agents))
+	for i := range agents {
+		result[i] = &agents[i]
+	}
+	return result, total, nil
+}
+
+func (r *ap2Repository) SearchAgentsByCategories(ctx context.Context, categories []string, budget *float64, page, limit int) ([]*models.Agent, int64, error) {
+	var agents []models.Agent
+	var total int64
+
+	offset := (page - 1) * limit
+	query := r.db.WithContext(ctx).Model(&models.Agent{}).Where("deleted_at IS NULL")
+
+	// Filter by categories (intersection: agent must have at least one matching category)
+	if len(categories) > 0 {
+		query = query.Where("categories && ?", pq.Array(categories))
+	}
+
+	// Filter by budget: price <= budget
+	if budget != nil && *budget > 0 {
+		query = query.Where("price <= ?", *budget)
+	}
 
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err

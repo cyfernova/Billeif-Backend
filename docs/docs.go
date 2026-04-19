@@ -5396,6 +5396,83 @@ const docTemplate = `{
                 }
             }
         },
+        "/discovery/agents/by-categories": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Find agents from the agents table whose categories match and whose minimum_order is within budget.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Discovery"
+                ],
+                "summary": "Discover agents by categories and budget",
+                "parameters": [
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "collectionFormat": "csv",
+                        "description": "Categories to search (e.g., Laptop,Tech)",
+                        "name": "categories",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "number",
+                        "description": "Maximum minimum_order price filter",
+                        "name": "budget",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Items per page",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/discovery/agents/by-product-categories": {
             "get": {
                 "security": [
@@ -15981,6 +16058,12 @@ const docTemplate = `{
                 "business_id": {
                     "type": "string"
                 },
+                "categories": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "config": {
                     "type": "object",
                     "additionalProperties": true
@@ -15990,6 +16073,9 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "price": {
+                    "type": "number"
                 },
                 "product_ids": {
                     "type": "array",
@@ -16375,6 +16461,12 @@ const docTemplate = `{
         "handlers.UpdateAgentRequest": {
             "type": "object",
             "properties": {
+                "categories": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "config": {
                     "type": "object",
                     "additionalProperties": true
@@ -16387,6 +16479,9 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "price": {
+                    "type": "number"
                 }
             }
         },
@@ -16541,6 +16636,9 @@ const docTemplate = `{
                 },
                 "owner_id": {
                     "type": "string"
+                },
+                "price": {
+                    "type": "number"
                 },
                 "product_ids": {
                     "type": "array",
@@ -17377,13 +17475,6 @@ const docTemplate = `{
                 },
                 "business_id": {
                     "type": "string"
-                },
-                "categories": {
-                    "description": "Parsed from CategoriesJSON",
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    }
                 },
                 "category": {
                     "$ref": "#/definitions/models.ProductCategory"

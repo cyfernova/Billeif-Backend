@@ -45,6 +45,7 @@ type CreatePersonalAgentRequest struct {
 	Description string
 	Config      map[string]interface{}
 	Categories  []string
+	Price       *float64
 }
 
 type CreateMerchantAgentRequest struct {
@@ -53,6 +54,7 @@ type CreateMerchantAgentRequest struct {
 	Description string
 	ProductIDs  []string
 	Categories  []string
+	Price       *float64
 }
 
 func (s *AgentService) CreatePersonalAgent(ctx context.Context, req *CreatePersonalAgentRequest) (*models.Agent, error) {
@@ -71,6 +73,7 @@ func (s *AgentService) CreatePersonalAgent(ctx context.Context, req *CreatePerso
 		Description:  &req.Description,
 		Capabilities: capabilities,
 		Categories:   pq.StringArray(req.Categories),
+		Price:        req.Price,
 		Config:       s.marshalConfig(config),
 		IsPublic:     false,
 		IsActive:     true,
@@ -103,6 +106,7 @@ func (s *AgentService) CreateMerchantAgent(ctx context.Context, req *CreateMerch
 		Description:  &req.Description,
 		Capabilities: capabilities,
 		Categories:   pq.StringArray(req.Categories),
+		Price:       req.Price,
 		Config:       s.marshalConfig(config),
 		IsPublic:     true,
 		IsActive:     true,
@@ -270,6 +274,9 @@ func (s *AgentService) UpdateAgent(ctx context.Context, agentID string, updates 
 	}
 	if categories, ok := updates["categories"].([]string); ok {
 		agent.Categories = pq.StringArray(categories)
+	}
+	if price, ok := updates["price"].(*float64); ok {
+		agent.Price = price
 	}
 
 	return s.ap2Repo.UpdateAgent(ctx, agent)

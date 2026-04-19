@@ -74,6 +74,7 @@ type CreateAgentRequest struct {
 	BusinessID  string                 `json:"business_id"`
 	ProductIDs  []string               `json:"product_ids"`
 	Categories  []string               `json:"categories"`
+	Price       *float64               `json:"price"`
 }
 
 type UpdateAgentRequest struct {
@@ -82,6 +83,7 @@ type UpdateAgentRequest struct {
 	IsActive    *bool                  `json:"is_active"`
 	Config      map[string]interface{} `json:"config"`
 	Categories  []string               `json:"categories"`
+	Price       *float64               `json:"price"`
 }
 
 type AddCapabilityRequest struct {
@@ -140,6 +142,7 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 			Description: req.Description,
 			Config:      req.Config,
 			Categories:  req.Categories,
+			Price:       req.Price,
 		}
 		agent, err = h.svc.CreatePersonalAgent(c.Request.Context(), personalReq)
 	case "merchant":
@@ -153,6 +156,7 @@ func (h *AgentHandler) CreateAgent(c *gin.Context) {
 			Description: req.Description,
 			ProductIDs:  productIDs,
 			Categories:  req.Categories,
+			Price:       req.Price,
 		})
 	default:
 		log.Warn("invalid agent type", "type", req.Type)
@@ -284,6 +288,9 @@ func (h *AgentHandler) UpdateAgent(c *gin.Context) {
 	}
 	if req.Categories != nil {
 		updates["categories"] = req.Categories
+	}
+	if req.Price != nil {
+		updates["price"] = req.Price
 	}
 
 	if err := h.svc.UpdateAgent(c.Request.Context(), id, updates); err != nil {

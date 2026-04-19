@@ -230,6 +230,10 @@ func (m *MockAP2Repository) GetAgents(ctx context.Context, page, limit int) ([]*
 	args := m.Called(ctx, page, limit)
 	return args.Get(0).([]*models.Agent), args.Get(1).(int64), args.Error(2)
 }
+func (m *MockAP2Repository) SearchAgentsByCategories(ctx context.Context, categories []string, budget *float64, page, limit int) ([]*models.Agent, int64, error) {
+	args := m.Called(ctx, categories, budget, page, limit)
+	return args.Get(0).([]*models.Agent), args.Get(1).(int64), args.Error(2)
+}
 func (m *MockAP2Repository) GetActiveAgentsByType(ctx context.Context, agentType string) ([]*models.Agent, error) {
 	return nil, nil
 }

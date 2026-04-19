@@ -846,6 +846,7 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			discovery.GET("/agents/find-sellers", h.AgentDiscovery.FindSellersByProduct)
 			discovery.GET("/agents/find-sellers-by-category", h.AgentDiscovery.FindSellersByCategory)
 			discovery.GET("/agents/by-product-categories", h.AgentDiscovery.DiscoverAgentsByProductCategories)
+			discovery.GET("/agents/by-categories", h.AgentDiscovery.DiscoverAgentsByCategoriesAndBudget)
 			discovery.GET("/agents/search", h.AgentDiscovery.SearchAgentsWithLLM)
 			discovery.GET("/agents/:agentID", h.AgentDiscovery.GetAgentRegistry)
 

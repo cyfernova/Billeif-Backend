@@ -53,3 +53,30 @@ resource "null_resource" "add_categories_to_agents" {
     EOT
   }
 }
+
+resource "null_resource" "add_price_to_agents" {
+  depends_on = [null_resource.add_categories_to_agents]
+
+  triggers = {
+    migration_version = timestamp()
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      echo "Running migration: Adding price column to agents table..."
+      PGPASSWORD="${var.db_password}" psql \
+        -h "${aws_db_instance.main.address}" \
+        -U "${var.db_username}" \
+        -d "${var.db_name}" \
+        -p "${var.db_port}" \
+        -c "ALTER TABLE agents ADD COLUMN IF NOT EXISTS price FLOAT DEFAULT 0;"
+      PGPASSWORD="${var.db_password}" psql \
+        -h "${aws_db_instance.main.address}" \
+        -U "${var.db_username}" \
+        -d "${var.db_name}" \
+        -p "${var.db_port}" \
+        -c "CREATE INDEX IF NOT EXISTS idx_agents_price ON agents (price);"
+      echo "Migration completed successfully."
+    EOT
+  }
+}
