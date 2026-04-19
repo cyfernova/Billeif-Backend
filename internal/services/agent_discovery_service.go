@@ -268,13 +268,7 @@ func (s *AgentDiscoveryService) DiscoverAgents(ctx context.Context, query string
 
 // DiscoverSellersByProduct finds seller/merchant agents that sell the given product
 func (s *AgentDiscoveryService) DiscoverSellersByProduct(ctx context.Context, productID string, page, limit int) ([]*models.AgentRegistry, int64, error) {
-	// Look up the product to get its details
-	product, err := s.productRepo.GetByID(ctx, productID, "")
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to get product: %w", err)
-	}
-
-	// Build filter for seller agents
+	// Build filter for seller agents that have this product in their product_ids
 	filters := &models.AgentDiscoveryFilter{
 		AgentTypes:     []string{"seller", "merchant"},
 		IsPublic:       boolPtr(true),
@@ -282,9 +276,6 @@ func (s *AgentDiscoveryService) DiscoverSellersByProduct(ctx context.Context, pr
 		ExcludeDeleted: true,
 	}
 
-	// If product has a category, filter by category in capabilities/tags
-	// If product has HSN code, that can be used for matching
-	// For now, we filter by seller/merchant type and match product attributes
 	agents, total, err := s.ap2Repo.SearchAgents(ctx, filters, page, limit)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to search seller agents: %w", err)
@@ -293,42 +284,179 @@ func (s *AgentDiscoveryService) DiscoverSellersByProduct(ctx context.Context, pr
 	ApplyMarketplaceRoleToRegistries(agents)
 	s.loadProductsForAgents(ctx, agents)
 
+	// Filter to agents that actually have this product
+	var matchingAgents []*models.AgentRegistry
+	for _, agent := range agents {
+		for _, pid := range agent.ProductIDs {
+			if pid == productID {
+				matchingAgents = append(matchingAgents, agent)
+				break
+			}
+		}
+	}
+
 	s.log.Info("discovered sellers for product",
 		"product_id", productID,
-		"product_name", product.Name,
-		"agent_count", len(agents),
+		"agent_count", len(matchingAgents),
 		"total", total,
 	)
 
-	return agents, total, nil
+	return matchingAgents, total, nil
 }
 
 // DiscoverSellersByCategory finds seller/merchant agents that sell products in a given category
+// It searches through product categories, not agent tags
 func (s *AgentDiscoveryService) DiscoverSellersByCategory(ctx context.Context, category string, page, limit int) ([]*models.AgentRegistry, int64, error) {
-	// Build filter for seller agents with matching category tag
-	filters := &models.AgentDiscoveryFilter{
-		AgentTypes:     []string{"seller", "merchant"},
-		IsPublic:       boolPtr(true),
-		IsActive:       boolPtr(true),
+	// Get all agents that could be sellers (we'll filter by product categories)
+	filter := &models.AgentDiscoveryFilter{
 		ExcludeDeleted: true,
-		Tags:           []string{category},
 	}
 
-	agents, total, err := s.ap2Repo.SearchAgents(ctx, filters, page, limit)
+	agents, total, err := s.ap2Repo.SearchAgents(ctx, filter, 1, 1000)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to search seller agents by category: %w", err)
+		return nil, 0, fmt.Errorf("failed to search agents: %w", err)
 	}
 
 	ApplyMarketplaceRoleToRegistries(agents)
 	s.loadProductsForAgents(ctx, agents)
 
+	// Filter to merchant/shopping agents with products in the given category
+	var matchingAgents []*models.AgentRegistry
+	for _, agent := range agents {
+		if agent.AgentType != "merchant" && agent.AgentType != "shopping" {
+			continue
+		}
+		if s.agentHasMatchingCategories(agent, []string{category}) {
+			matchingAgents = append(matchingAgents, agent)
+			// Log product names for this agent
+			var productNames []string
+			for _, p := range agent.Products {
+				for _, cat := range p.Categories {
+					if strings.EqualFold(strings.TrimSpace(cat), strings.TrimSpace(category)) {
+						productNames = append(productNames, p.Name)
+						break
+					}
+				}
+			}
+			s.log.Info("agent matched for category", "agent_name", agent.AgentName, "category", category, "products", productNames)
+		}
+	}
+
+	// Update total
+	total = int64(len(matchingAgents))
+
+	// Apply pagination
+	start := (page - 1) * limit
+	end := start + limit
+	if start >= len(matchingAgents) {
+		return []*models.AgentRegistry{}, total, nil
+	}
+	if end > len(matchingAgents) {
+		end = len(matchingAgents)
+	}
+
 	s.log.Info("discovered sellers for category",
 		"category", category,
-		"agent_count", len(agents),
+		"agent_count", len(matchingAgents),
 		"total", total,
 	)
 
-	return agents, total, nil
+	return matchingAgents[start:end], total, nil
+}
+
+// DiscoverAgentsByProductCategories finds agents whose products have matching categories and are within budget
+// This searches through the product_ids of each agent and matches against product categories
+// budget parameter filters agents with at least one product priced at or below the budget
+func (s *AgentDiscoveryService) DiscoverAgentsByProductCategories(ctx context.Context, categories []string, agentTypes []string, budget *float64, page, limit int) ([]*models.AgentRegistry, int64, error) {
+	// Normalize agent types if provided
+	var normalizedTypes []string
+	for _, t := range agentTypes {
+		normalizedTypes = append(normalizedTypes, NormalizeMarketplaceAgentType(t))
+	}
+
+	// Build filter - get agents that could match
+	filter := &models.AgentDiscoveryFilter{
+		IsPublic:       boolPtr(true),
+		IsActive:       boolPtr(true),
+		ExcludeDeleted: true,
+	}
+	if len(normalizedTypes) > 0 {
+		filter.AgentTypes = normalizedTypes
+	}
+
+	// Search for potential agents
+	agents, total, err := s.ap2Repo.SearchAgents(ctx, filter, 1, 1000) // Get more agents initially for filtering
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to search agents: %w", err)
+	}
+
+	// Load products for each agent and filter by categories and budget
+	ApplyMarketplaceRoleToRegistries(agents)
+	s.loadProductsForAgents(ctx, agents)
+
+	// Filter agents whose products have matching categories and are within budget
+	var matchingAgents []*models.AgentRegistry
+	for _, agent := range agents {
+		if s.agentHasMatchingCategories(agent, categories) {
+			// If budget is specified, check if any product is within budget
+			if budget != nil && *budget > 0 {
+				if !s.agentHasProductsWithinBudget(agent, *budget) {
+					continue
+				}
+			}
+			matchingAgents = append(matchingAgents, agent)
+		}
+	}
+
+	// Apply pagination
+	total = int64(len(matchingAgents))
+	start := (page - 1) * limit
+	end := start + limit
+	if start >= len(matchingAgents) {
+		return []*models.AgentRegistry{}, total, nil
+	}
+	if end > len(matchingAgents) {
+		end = len(matchingAgents)
+	}
+
+	s.log.Info("discovered agents by product categories",
+		"categories", categories,
+		"agent_types", agentTypes,
+		"budget", budget,
+		"matched_count", len(matchingAgents),
+		"total", total,
+	)
+
+	return matchingAgents[start:end], total, nil
+}
+
+// agentHasMatchingCategories checks if an agent has any product with matching categories
+func (s *AgentDiscoveryService) agentHasMatchingCategories(agent *models.AgentRegistry, categories []string) bool {
+	if len(categories) == 0 {
+		return true
+	}
+
+	for _, product := range agent.Products {
+		for _, productCategory := range product.Categories {
+			for _, searchCategory := range categories {
+				if strings.EqualFold(strings.TrimSpace(productCategory), strings.TrimSpace(searchCategory)) {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// agentHasProductsWithinBudget checks if an agent has at least one product within the budget
+func (s *AgentDiscoveryService) agentHasProductsWithinBudget(agent *models.AgentRegistry, budget float64) bool {
+	for _, product := range agent.Products {
+		if product.Price <= budget {
+			return true
+		}
+	}
+	return false
 }
 
 // GetPublicAgents retrieves all public agents
@@ -355,16 +483,91 @@ func (s *AgentDiscoveryService) GetVerifiedAgents(ctx context.Context, agentType
 	return agents, total, nil
 }
 
-// GetAgentsByCapability retrieves agents with specific capabilities
-func (s *AgentDiscoveryService) GetAgentsByCapability(ctx context.Context, capabilities []string, page, limit int) ([]*models.AgentRegistry, int64, error) {
-	agents, total, err := s.ap2Repo.DiscoverAgentsByCapability(ctx, capabilities, page, limit)
+// GetAgentsByCapability retrieves agents from the agents table filtered by product categories
+// If capabilities include product category names, it finds agents whose products have matching categories
+func (s *AgentDiscoveryService) GetAgentsByCapability(ctx context.Context, capabilities []string, page, limit int) ([]*models.Agent, int64, error) {
+	// Get all agents from the agents table
+	agents, total, err := s.ap2Repo.GetAgents(ctx, page, limit)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to discover agents by capability: %w", err)
+		return nil, 0, fmt.Errorf("failed to get agents: %w", err)
 	}
 
-	ApplyMarketplaceRoleToRegistries(agents)
-	s.loadProductsForAgents(ctx, agents)
-	return agents, total, nil
+	// If no capabilities filter specified, return all agents
+	if len(capabilities) == 0 {
+		return agents, total, nil
+	}
+
+	// Filter agents by product categories
+	var filtered []*models.Agent
+	for _, agent := range agents {
+		if agentHasMatchingProductCategories(ctx, agent, capabilities, s.productRepo) {
+			filtered = append(filtered, agent)
+		}
+	}
+
+	// Update total to reflect filtered count
+	total = int64(len(filtered))
+
+	// Apply pagination to filtered results
+	start := (page - 1) * limit
+	end := start + limit
+	if start >= len(filtered) {
+		return []*models.Agent{}, total, nil
+	}
+	if end > len(filtered) {
+		end = len(filtered)
+	}
+
+	return filtered[start:end], total, nil
+}
+
+// agentHasMatchingProductCategories checks if an agent has any product with matching categories
+func agentHasMatchingProductCategories(ctx context.Context, agent *models.Agent, categories []string, productRepo interfaces.ProductRepository) bool {
+	productIDs := agent.ProductIDs
+	if len(productIDs) == 0 {
+		// Parse product_ids from config if not already populated
+		productIDs = extractProductIDsFromConfig(agent.Config)
+	}
+
+	if len(categories) == 0 || len(productIDs) == 0 {
+		return false
+	}
+
+	for _, productID := range productIDs {
+		product, err := productRepo.GetByID(ctx, productID, "")
+		if err != nil {
+			continue
+		}
+		for _, cat := range categories {
+			for _, productCat := range product.Categories {
+				if strings.EqualFold(strings.TrimSpace(cat), strings.TrimSpace(productCat)) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// extractProductIDsFromConfig extracts product_ids from agent config JSON
+func extractProductIDsFromConfig(config string) []string {
+	if config == "" {
+		return nil
+	}
+	var cfg map[string]interface{}
+	if err := json.Unmarshal([]byte(config), &cfg); err != nil {
+		return nil
+	}
+	if ids, ok := cfg["product_ids"].([]interface{}); ok {
+		result := make([]string, 0, len(ids))
+		for _, id := range ids {
+			if s, ok := id.(string); ok {
+				result = append(result, s)
+			}
+		}
+		return result
+	}
+	return nil
 }
 
 // GetAgentRegistry retrieves an agent's registry entry
@@ -748,7 +951,7 @@ func (s *AgentDiscoveryService) loadProductsForAgents(ctx context.Context, agent
 		}
 
 		for _, productID := range agent.ProductIDs {
-			product, err := s.productRepo.GetByID(ctx, productID, "")
+			product, err := s.productRepo.GetByIDWithoutTenant(ctx, productID)
 			if err != nil {
 				s.log.Warn("failed to load product for agent", "product_id", productID, "agent_id", agent.AgentID.String(), "error", err)
 				continue

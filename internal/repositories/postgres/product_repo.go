@@ -31,6 +31,15 @@ func (r *productRepository) GetByID(ctx context.Context, id, businessID string) 
 	return &product, err
 }
 
+func (r *productRepository) GetByIDWithoutTenant(ctx context.Context, id string) (*models.Product, error) {
+	var product models.Product
+	err := r.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", id).First(&product).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, errors.New("product not found")
+	}
+	return &product, err
+}
+
 func (r *productRepository) GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.Product, int64, error) {
 	var products []models.Product
 	var total int64

@@ -226,6 +226,10 @@ func (m *MockAP2Repository) GetAgentsByBusiness(ctx context.Context, businessID 
 func (m *MockAP2Repository) GetAgentsByType(ctx context.Context, agentType string, page, limit int) ([]*models.Agent, int64, error) {
 	return nil, 0, nil
 }
+func (m *MockAP2Repository) GetAgents(ctx context.Context, page, limit int) ([]*models.Agent, int64, error) {
+	args := m.Called(ctx, page, limit)
+	return args.Get(0).([]*models.Agent), args.Get(1).(int64), args.Error(2)
+}
 func (m *MockAP2Repository) GetActiveAgentsByType(ctx context.Context, agentType string) ([]*models.Agent, error) {
 	return nil, nil
 }
@@ -551,7 +555,7 @@ func TestAgentDiscoveryService_GetVerifiedAgents(t *testing.T) {
 	mockRepo.AssertExpectations(t)
 }
 
-// TestAgentDiscoveryService_GetAgentsByCapability tests retrieving agents by capability
+// TestAgentDiscoveryService_GetAgentsByCapability tests retrieving agents by product category
 func TestAgentDiscoveryService_GetAgentsByCapability(t *testing.T) {
 	mockRepo := new(MockAP2Repository)
 	mockProductRepo := new(MockProductRepository)
@@ -559,18 +563,30 @@ func TestAgentDiscoveryService_GetAgentsByCapability(t *testing.T) {
 	svc := services.NewAgentDiscoveryService(mockRepo, mockProductRepo, nil, log)
 
 	ctx := context.Background()
-	expectedAgents := []*models.AgentRegistry{
-		{ID: uuid.New(), AgentName: "Shopping Agent", Capabilities: []string{"shopping.procurement"}},
+	productID := uuid.New().String()
+	expectedAgents := []*models.Agent{
+		{ID: uuid.New().String(), Name: "Laptop Seller", Type: "merchant", ProductIDs: []string{productID}},
 	}
 
-	mockRepo.On("DiscoverAgentsByCapability", ctx, []string{"shopping.procurement"}, 1, 10).Return(expectedAgents, int64(1), nil)
+	// Mock product with matching category
+	mockProduct := &models.Product{
+		ID:         productID,
+		Name:       "Gaming Laptop",
+		Price:      1599.99,
+		Categories: []string{"electronics", "laptops", "gamings"},
+	}
 
-	agents, total, err := svc.GetAgentsByCapability(ctx, []string{"shopping.procurement"}, 1, 10)
+	mockRepo.On("GetAgents", ctx, 1, 10).Return(expectedAgents, int64(1), nil)
+	mockProductRepo.On("GetByID", ctx, productID, "").Return(mockProduct, nil)
+
+	agents, total, err := svc.GetAgentsByCapability(ctx, []string{"laptops"}, 1, 10)
 
 	assert.NoError(t, err)
 	assert.Len(t, agents, 1)
 	assert.Equal(t, int64(1), total)
+	assert.Equal(t, "Laptop Seller", agents[0].Name)
 	mockRepo.AssertExpectations(t)
+	mockProductRepo.AssertExpectations(t)
 }
 
 // TestAgentDiscoveryService_GetAgentRegistry tests retrieving a specific agent registry

@@ -132,6 +132,14 @@ func (m *MockProductRepository) GetByID(ctx context.Context, id, businessID stri
 	return args.Get(0).(*models.Product), args.Error(1)
 }
 
+func (m *MockProductRepository) GetByIDWithoutTenant(ctx context.Context, id string) (*models.Product, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.Product), args.Error(1)
+}
+
 func (m *MockProductRepository) GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.Product, int64, error) {
 	args := m.Called(ctx, businessID, page, limit)
 	return args.Get(0).([]*models.Product), args.Get(1).(int64), args.Error(2)

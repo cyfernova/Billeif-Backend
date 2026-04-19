@@ -12,8 +12,8 @@ type Product struct {
 	BusinessID         string         `gorm:"not null;index" json:"business_id" validate:"required,uuid"`
 	CategoryID         *string        `gorm:"index" json:"category_id,omitempty" validate:"omitempty,uuid"`
 	Name               string         `gorm:"not null;size:255" json:"name" validate:"required,min=2,max=255"`
-	SKU                string         `gorm:"not null;uniqueIndex:idx_business_sku;size:100" json:"sku" validate:"required,max=100"`
-	Barcode            string         `gorm:"size:128;index" json:"barcode,omitempty" validate:"omitempty,max=128"`
+	SKU                string         `gorm:"not null;uniqueIndex:idx_business_sku;size:100" json:"sku" validate:"required,max:100"`
+	Barcode            string         `gorm:"size:128;index" json:"barcode,omitempty" validate:"omitempty,max:128"`
 	Description        string         `gorm:"type:text" json:"description,omitempty"`
 	Price              float64        `gorm:"not null;type:decimal(15,2)" json:"price" validate:"required,gt=0"`
 	MRP                float64        `gorm:"type:decimal(15,2);default:0" json:"mrp"`
@@ -33,7 +33,7 @@ type Product struct {
 	ImageURL           string         `gorm:"size:500" json:"image_url,omitempty"`
 	ImageKey           string         `gorm:"size:255" json:"image_key,omitempty"`
 	ExtraAttributes    string         `gorm:"type:jsonb;default:'{}'" json:"extra_attributes,omitempty"`
-	Categories         pq.StringArray `gorm:"type:text[];default:'{}'" json:"categories"`
+	Categories         pq.StringArray `gorm:"type:text[];default:'{}'" json:"categories"` // PostgreSQL text array
 	IsActive           bool           `gorm:"default:true;index" json:"is_active"`
 	CreatedAt          time.Time      `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt          time.Time      `gorm:"autoUpdateTime" json:"updated_at"`

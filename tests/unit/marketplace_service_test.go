@@ -52,6 +52,11 @@ func (m *MockMarketplaceAP2Repository) GetAgentsByType(ctx context.Context, agen
 	return args.Get(0).([]*models.Agent), args.Get(1).(int64), args.Error(2)
 }
 
+func (m *MockMarketplaceAP2Repository) GetAgents(ctx context.Context, page, limit int) ([]*models.Agent, int64, error) {
+	args := m.Called(ctx, page, limit)
+	return args.Get(0).([]*models.Agent), args.Get(1).(int64), args.Error(2)
+}
+
 func (m *MockMarketplaceAP2Repository) GetActiveAgentsByType(ctx context.Context, agentType string) ([]*models.Agent, error) {
 	args := m.Called(ctx, agentType)
 	if args.Get(0) == nil {

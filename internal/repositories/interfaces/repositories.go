@@ -44,6 +44,7 @@ type VendorRepository interface {
 type ProductRepository interface {
 	Create(ctx context.Context, product *models.Product) error
 	GetByID(ctx context.Context, id, businessID string) (*models.Product, error)
+	GetByIDWithoutTenant(ctx context.Context, id string) (*models.Product, error)
 	GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.Product, int64, error)
 	GetBySKU(ctx context.Context, businessID, sku string) (*models.Product, error)
 	Update(ctx context.Context, product *models.Product) error

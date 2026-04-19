@@ -5396,6 +5396,83 @@ const docTemplate = `{
                 }
             }
         },
+        "/discovery/agents/by-product-categories": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Find agents whose products have matching categories. Searches through product categories.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Discovery"
+                ],
+                "summary": "Discover agents by product categories",
+                "parameters": [
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "collectionFormat": "csv",
+                        "description": "Product categories to search (e.g., electronics,laptops,gaming)",
+                        "name": "categories",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by agent type (buyer, seller, merchant, shopping)",
+                        "name": "type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Items per page",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/discovery/agents/find-sellers": {
             "get": {
                 "security": [
@@ -17296,11 +17373,17 @@ const docTemplate = `{
             ],
             "properties": {
                 "barcode": {
-                    "type": "string",
-                    "maxLength": 128
+                    "type": "string"
                 },
                 "business_id": {
                     "type": "string"
+                },
+                "categories": {
+                    "description": "Parsed from CategoriesJSON",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "category": {
                     "$ref": "#/definitions/models.ProductCategory"
@@ -17387,8 +17470,7 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "sku": {
-                    "type": "string",
-                    "maxLength": 100
+                    "type": "string"
                 },
                 "stock_level": {
                     "type": "integer",
@@ -19227,6 +19309,13 @@ const docTemplate = `{
                 "business_id": {
                     "type": "string"
                 },
+                "categories": {
+                    "description": "e.g. [\"electronics\", \"laptops\", \"computers\"]",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "category_id": {
                     "type": "string"
                 },
@@ -20829,6 +20918,13 @@ const docTemplate = `{
             "properties": {
                 "barcode": {
                     "type": "string"
+                },
+                "categories": {
+                    "description": "e.g. [\"electronics\", \"laptops\", \"computers\"]",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "category_id": {
                     "type": "string"
