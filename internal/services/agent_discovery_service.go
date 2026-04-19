@@ -42,6 +42,24 @@ type LLMDiscoveryResult struct {
 	ProductTags   []string `json:"product_tags"`  // Product categories/tags to search
 }
 
+// AgentProductMatch represents LLM matching result for an agent's products
+type AgentProductMatch struct {
+	AgentID         uuid.UUID       `json:"agent_id"`
+	AgentName       string          `json:"agent_name"`
+	MatchScore      float64         `json:"match_score"`      // 0.0 - 1.0
+	MatchReason     string          `json:"match_reason"`     // LLM explanation
+	MatchedProducts []*ProductMatch `json:"matched_products"` // Which products matched
+}
+
+// ProductMatch represents a single product's match result
+type ProductMatch struct {
+	ProductID   string  `json:"product_id"`
+	ProductName string  `json:"product_name"`
+	Description string  `json:"description"`
+	MatchScore  float64 `json:"match_score"` // 0.0 - 1.0
+	MatchReason string  `json:"match_reason"`
+}
+
 // NewAgentDiscoveryService creates a new agent discovery service
 func NewAgentDiscoveryService(ap2Repo interfaces.AP2Repository, productRepo interfaces.ProductRepository, llmSvc *LLMService, log *logger.Logger) *AgentDiscoveryService {
 	return &AgentDiscoveryService{
@@ -637,8 +655,23 @@ func (s *AgentDiscoveryService) DiscoverAgentsByLLMSearch(ctx context.Context, n
 
 	ApplyMarketplaceRoleToRegistries(agents)
 
-	// Load product details for each agent
+	// Load product details for each agent from their product_ids
 	s.loadProductsForAgents(ctx, agents)
+
+	// Use LLM to analyze query against agent products for better matching
+	var productMatches []*AgentProductMatch
+	if len(result.ProductQuery) > 0 || result.ProductNames != nil || result.ProductTags != nil {
+		productMatches, err = s.matchAgentsProductsWithLLM(ctx, naturalQuery, agents)
+		if err != nil {
+			s.log.Warn("failed to match products with LLM, using fallback", "error", err)
+		}
+	}
+
+	// If we have LLM product matches, rank agents by match score
+	if len(productMatches) > 0 {
+		// Sort agents by LLM match score
+		s.rankAgentsByProductMatch(agents, productMatches)
+	}
 
 	s.log.Info("LLM-driven agent discovery completed",
 		"query", naturalQuery,
@@ -646,6 +679,7 @@ func (s *AgentDiscoveryService) DiscoverAgentsByLLMSearch(ctx context.Context, n
 		"total", total,
 		"explanation", result.Explanation,
 		"product_match_count", len(matchingAgentIDs),
+		"llm_product_match_count", len(productMatches),
 	)
 
 	return agents, total, result, nil
@@ -722,6 +756,197 @@ func (s *AgentDiscoveryService) loadProductsForAgents(ctx context.Context, agent
 			agent.Products = append(agent.Products, product)
 		}
 	}
+}
+
+// matchAgentsProductsWithLLM uses LLM to match the query against agent products and returns match results
+func (s *AgentDiscoveryService) matchAgentsProductsWithLLM(ctx context.Context, query string, agents []*models.AgentRegistry) ([]*AgentProductMatch, error) {
+	if s.llmSvc == nil {
+		return nil, fmt.Errorf("LLM service not available")
+	}
+
+	var matches []*AgentProductMatch
+
+	for _, agent := range agents {
+		if len(agent.ProductIDs) == 0 || len(agent.Products) == 0 {
+			continue
+		}
+
+		// Call LLM to match query against products
+		match, err := s.evaluateProductMatchWithLLM(ctx, query, agent.AgentName, agent.Products)
+		if err != nil {
+			s.log.Warn("failed to evaluate product match with LLM", "agent_id", agent.AgentID.String(), "error", err)
+			continue
+		}
+
+		// Only include agents with some match (score > 0)
+		if match.MatchScore > 0 {
+			match.AgentID = agent.AgentID
+			match.AgentName = agent.AgentName
+			matches = append(matches, match)
+		}
+	}
+
+	return matches, nil
+}
+
+// rankAgentsByProductMatch reorders agents based on LLM product match scores
+// Agents with higher match scores appear first; agents without matches go last
+func (s *AgentDiscoveryService) rankAgentsByProductMatch(agents []*models.AgentRegistry, matches []*AgentProductMatch) {
+	// Build a map of agent ID to match score
+	matchScores := make(map[string]float64)
+	for _, m := range matches {
+		matchScores[m.AgentID.String()] = m.MatchScore
+	}
+
+	// Sort agents: matched ones by score (desc), then unmatched
+	sorted := make([]*models.AgentRegistry, 0, len(agents))
+	unmatched := make([]*models.AgentRegistry, 0)
+
+	for _, agent := range agents {
+		if score, ok := matchScores[agent.AgentID.String()]; ok && score > 0 {
+			sorted = append(sorted, agent)
+		} else {
+			unmatched = append(unmatched, agent)
+		}
+	}
+
+	// Sort matched agents by score descending (simple bubble sort for small lists)
+	for i := 0; i < len(sorted)-1; i++ {
+		for j := 0; j < len(sorted)-i-1; j++ {
+			scoreA := matchScores[sorted[j].AgentID.String()]
+			scoreB := matchScores[sorted[j+1].AgentID.String()]
+			if scoreA < scoreB {
+				sorted[j], sorted[j+1] = sorted[j+1], sorted[j]
+			}
+		}
+	}
+
+	// Append unmatched agents at the end
+	sorted = append(sorted, unmatched...)
+
+	// Copy back to original slice
+	copy(agents, sorted)
+}
+
+// buildProductContext builds a readable context string from products for LLM analysis
+func (s *AgentDiscoveryService) buildProductContext(products []*models.Product) string {
+	if len(products) == 0 {
+		return "No products available"
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Products available (%d items):\n", len(products))
+
+	for i, p := range products {
+		fmt.Fprintf(&sb, "\n[%d] %s", i+1, p.Name)
+		if p.Description != "" {
+			fmt.Fprintf(&sb, " - %s", p.Description)
+		}
+		if p.SKU != "" {
+			fmt.Fprintf(&sb, " (SKU: %s)", p.SKU)
+		}
+		if p.Category != nil && p.Category.Name != "" {
+			fmt.Fprintf(&sb, " - Category: %s", p.Category.Name)
+		}
+		if p.Price > 0 {
+			fmt.Fprintf(&sb, " - Price: %.2f %s", p.Price, p.Currency)
+		}
+	}
+
+	return sb.String()
+}
+
+// evaluateProductMatchWithLLM uses LLM to evaluate how well products match a query
+func (s *AgentDiscoveryService) evaluateProductMatchWithLLM(ctx context.Context, query, agentName string, products []*models.Product) (*AgentProductMatch, error) {
+	if s.llmSvc == nil {
+		return nil, fmt.Errorf("LLM service not available")
+	}
+
+	productContext := s.buildProductContext(products)
+
+	systemPrompt := `You are a product matching expert. Your job is to evaluate how well a user's search query matches a set of products.
+
+## Your Task:
+Given a user's search query and a list of products, determine:
+1. Which products match the query (partial matches count)
+2. A match score from 0.0 (no match) to 1.0 (perfect match)
+3. A brief explanation of why products do or don't match
+
+## Matching Guidelines:
+- Consider product name, description, category, SKU, and any other relevant attributes
+- Partial matches count (e.g., "laptop" matches "gaming laptop")
+- Price range mentions should be considered if relevant
+- Generic queries like "electronics" should match most tech products
+- If no products match at all, return score 0.0
+
+## Output Format:
+Return a JSON object with these fields:
+- match_score: number between 0.0 and 1.0 (overall match for the agent)
+- match_reason: brief sentence explaining the match
+- matched_products: array of products that matched with individual scores (use exact product names from the input)
+
+Example output:
+{"match_score": 0.85, "match_reason": "Agent has 3 laptops that match the query", "matched_products": [{"product_name": "Gaming Laptop", "score": 0.9, "reason": "Matches 'gaming laptop' query"}, {"product_name": "Business Laptop", "score": 0.8, "reason": "Matches 'laptop' requirement"}]}`
+
+	messages := []ChatMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: fmt.Sprintf("User Query: %s\n\nAgent Name: %s\n\n%s", query, agentName, productContext)},
+	}
+
+	response, err := s.llmSvc.Chat(ctx, messages)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call LLM for product matching: %w", err)
+	}
+
+	// Parse LLM response
+	var matchResult struct {
+		MatchScore      float64 `json:"match_score"`
+		MatchReason     string  `json:"match_reason"`
+		MatchedProducts []struct {
+			ProductName string  `json:"product_name"`
+			Score       float64 `json:"score"`
+			Reason      string  `json:"reason"`
+		} `json:"matched_products"`
+	}
+
+	trimmed := strings.TrimSpace(response)
+	start := strings.Index(trimmed, "{")
+	end := strings.LastIndex(trimmed, "}")
+	if start == -1 || end == -1 {
+		return nil, fmt.Errorf("no JSON found in LLM response")
+	}
+	trimmed = trimmed[start : end+1]
+
+	if err := json.Unmarshal([]byte(trimmed), &matchResult); err != nil {
+		return nil, fmt.Errorf("failed to parse LLM response: %w", err)
+	}
+
+	// Build matched products - try to find product ID by name
+	productNameToID := make(map[string]string)
+	for _, p := range products {
+		productNameToID[strings.ToLower(p.Name)] = p.ID
+	}
+
+	var matchedProducts []*ProductMatch
+	for _, mp := range matchResult.MatchedProducts {
+		productID := ""
+		if pid, ok := productNameToID[strings.ToLower(mp.ProductName)]; ok {
+			productID = pid
+		}
+		matchedProducts = append(matchedProducts, &ProductMatch{
+			ProductID:   productID,
+			ProductName: mp.ProductName,
+			Description: mp.Reason,
+			MatchScore:  mp.Score,
+			MatchReason: mp.Reason,
+		})
+	}
+
+	return &AgentProductMatch{
+		MatchScore:      matchResult.MatchScore,
+		MatchReason:     matchResult.MatchReason,
+		MatchedProducts: matchedProducts,
+	}, nil
 }
 
 func (s *AgentDiscoveryService) parseQueryWithLLM(ctx context.Context, query string) (*LLMDiscoveryResult, error) {

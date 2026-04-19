@@ -3,6 +3,7 @@ package models
 import (
 	"time"
 
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 )
 
@@ -32,6 +33,7 @@ type Product struct {
 	ImageURL           string         `gorm:"size:500" json:"image_url,omitempty"`
 	ImageKey           string         `gorm:"size:255" json:"image_key,omitempty"`
 	ExtraAttributes    string         `gorm:"type:jsonb;default:'{}'" json:"extra_attributes,omitempty"`
+	Categories         pq.StringArray `gorm:"type:text[];default:'{}'" json:"categories"`
 	IsActive           bool           `gorm:"default:true;index" json:"is_active"`
 	CreatedAt          time.Time      `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt          time.Time      `gorm:"autoUpdateTime" json:"updated_at"`

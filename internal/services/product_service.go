@@ -52,6 +52,7 @@ type CreateProductInput struct {
 	Images            []ProductImageInput    `json:"images,omitempty"`
 	CustomColumns     map[string]interface{} `json:"custom_columns,omitempty"`
 	Variants          []ProductVariantInput  `json:"variants,omitempty"`
+	Categories        []string               `json:"categories"` // e.g. ["electronics", "laptops", "computers"]
 }
 
 type ProductImageInput struct {
@@ -115,6 +116,7 @@ func (s *ProductService) Create(ctx context.Context, input CreateProductInput) (
 		MinStock:          input.MinStock,
 		LowStockThreshold: input.LowStockThreshold,
 		ExtraAttributes:   mustMarshalMap(nil),
+		Categories:        input.Categories,
 		IsActive:          true,
 	}
 
@@ -253,6 +255,7 @@ type UpdateProductInput struct {
 	Images            []ProductImageInput    `json:"images,omitempty"`
 	CustomColumns     map[string]interface{} `json:"custom_columns,omitempty"`
 	Variants          []ProductVariantInput  `json:"variants,omitempty"`
+	Categories        []string               `json:"categories"` // e.g. ["electronics", "laptops", "computers"]
 }
 
 func (s *ProductService) UpdateByBusiness(ctx context.Context, businessID, id string, input UpdateProductInput) (*models.Product, error) {
@@ -308,6 +311,9 @@ func (s *ProductService) UpdateByBusiness(ctx context.Context, businessID, id st
 	}
 	if input.LowStockThreshold != nil {
 		product.LowStockThreshold = *input.LowStockThreshold
+	}
+	if input.Categories != nil {
+		product.Categories = input.Categories
 	}
 
 	if s.db != nil {
