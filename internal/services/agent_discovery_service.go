@@ -492,9 +492,11 @@ func (s *AgentDiscoveryService) GetAgentsByCapability(ctx context.Context, capab
 		return nil, 0, fmt.Errorf("failed to get agents: %w", err)
 	}
 
-	// Populate product_ids for all agents
+	// Populate product_ids for all agents (only if not already set)
 	for _, agent := range agents {
-		agent.ProductIDs = extractProductIDsFromConfig(agent.Config)
+		if len(agent.ProductIDs) == 0 && agent.Config != "" {
+			agent.ProductIDs = extractProductIDsFromConfig(agent.Config)
+		}
 	}
 
 	// If no capabilities filter specified, return all agents
