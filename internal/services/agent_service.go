@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lib/pq"
+
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/ap2"
@@ -42,6 +44,7 @@ type CreatePersonalAgentRequest struct {
 	Name        string
 	Description string
 	Config      map[string]interface{}
+	Categories  []string
 }
 
 type CreateMerchantAgentRequest struct {
@@ -49,6 +52,7 @@ type CreateMerchantAgentRequest struct {
 	Name        string
 	Description string
 	ProductIDs  []string
+	Categories  []string
 }
 
 func (s *AgentService) CreatePersonalAgent(ctx context.Context, req *CreatePersonalAgentRequest) (*models.Agent, error) {
@@ -66,6 +70,7 @@ func (s *AgentService) CreatePersonalAgent(ctx context.Context, req *CreatePerso
 		Type:         "shopping",
 		Description:  &req.Description,
 		Capabilities: capabilities,
+		Categories:   pq.StringArray(req.Categories),
 		Config:       s.marshalConfig(config),
 		IsPublic:     false,
 		IsActive:     true,
@@ -97,6 +102,7 @@ func (s *AgentService) CreateMerchantAgent(ctx context.Context, req *CreateMerch
 		Type:         "merchant",
 		Description:  &req.Description,
 		Capabilities: capabilities,
+		Categories:   pq.StringArray(req.Categories),
 		Config:       s.marshalConfig(config),
 		IsPublic:     true,
 		IsActive:     true,
@@ -261,6 +267,9 @@ func (s *AgentService) UpdateAgent(ctx context.Context, agentID string, updates 
 	}
 	if config, ok := updates["config"].(map[string]interface{}); ok {
 		agent.Config = s.marshalConfig(config)
+	}
+	if categories, ok := updates["categories"].([]string); ok {
+		agent.Categories = pq.StringArray(categories)
 	}
 
 	return s.ap2Repo.UpdateAgent(ctx, agent)
