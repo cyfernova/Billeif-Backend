@@ -292,12 +292,45 @@ func (h *A2ABargainingHandler) GetSessionProgress(c *gin.Context) {
 
 	progress := h.a2aBargaining.GetSessionProgress(sessionID)
 
-	if progress.Round == -1 {
+	if progress == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "negotiation session not found"})
 		return
 	}
 
 	log.Info("A2A negotiation progress retrieved", "session_id", sessionID, "round", progress.Round, "current_amount", progress.CurrentAmount)
+
+	c.JSON(http.StatusOK, progress)
+}
+
+// GetNegotiationProgress retrieves progress of a bargaining negotiation by its UUID
+// @Summary Get negotiation progress by negotiation ID
+// @Description Returns the progress of a bargaining negotiation using the database UUID
+// @Tags A2A Bargaining
+// @Produce json
+// @Security BearerAuth
+// @Param negotiationId path string true "Negotiation ID (UUID)"
+// @Success 200 {object} interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /a2a-bargaining/negotiation/{negotiationId}/progress [get]
+func (h *A2ABargainingHandler) GetNegotiationProgress(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("a2a_bargaining_handler").With("operation", "get_negotiation_progress")
+
+	negotiationID := c.Param("negotiationId")
+	if negotiationID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "negotiation_id is required"})
+		return
+	}
+
+	progress := h.a2aBargaining.GetSessionProgressByNegotiationID(c.Request.Context(), negotiationID)
+
+	if progress == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "negotiation not found"})
+		return
+	}
+
+	log.Info("A2A negotiation progress retrieved", "negotiation_id", negotiationID, "round", progress.Round, "current_amount", progress.CurrentAmount, "status", progress.Status)
 
 	c.JSON(http.StatusOK, progress)
 }

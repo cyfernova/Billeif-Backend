@@ -47,6 +47,34 @@ type A2ASession struct {
 	NegotiationReady chan struct{}
 }
 
+type A2ASessionProgress struct {
+	NegotiationID   string  `json:"session_id"`
+	NegotiationUUID string  `json:"negotiation_id"`
+	BuyerAgentID    string  `json:"buyer_agent_id"`
+	SellerAgentID   string  `json:"seller_agent_id"`
+	UserID          string  `json:"user_id,omitempty"`
+	InitialAmount   float64 `json:"initial_amount"`
+	CurrentAmount   float64 `json:"current_amount"`
+	Round           int     `json:"round"`
+	MaxRounds       int     `json:"max_rounds"`
+	Status          string  `json:"status"`
+}
+
+func (s *A2ASession) ToProgressResponse() A2ASessionProgress {
+	return A2ASessionProgress{
+		NegotiationID:   s.NegotiationID,
+		NegotiationUUID: s.DBNegotiationID,
+		BuyerAgentID:    s.BuyerAgentID,
+		SellerAgentID:   s.SellerAgentID,
+		UserID:          s.UserID,
+		InitialAmount:   s.InitialAmount,
+		CurrentAmount:   s.CurrentAmount,
+		Round:           s.Round,
+		MaxRounds:       s.MaxRounds,
+		Status:          s.Status,
+	}
+}
+
 type AutonomousNegotiationRequest struct {
 	BuyerAgentID  string  `json:"buyer_agent_id" binding:"required,uuid"`
 	SellerAgentID string  `json:"seller_agent_id" binding:"required,uuid"`
@@ -148,7 +176,18 @@ func (s *A2ABargainingService) StartAutonomousNegotiation(ctx context.Context, r
 	return session, nil
 }
 
-func (s *A2ABargainingService) RunAutonomousNegotiation(ctx context.Context, sessionID string) error {
+func (s *A2ABargainingService) RunAutonomousNegotiation(ctx context.Context, sessionID string) (err error) {
+	var session *A2ASession
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic in RunAutonomousNegotiation: %v", r)
+			s.log.Error("panic in autonomous negotiation goroutine", "error", r, "session_id", sessionID)
+		}
+		if err != nil && session != nil {
+			session.Status = "failed"
+		}
+	}()
+
 	s.sessionsLock.RLock()
 	session, exists := s.sessions[sessionID]
 	s.sessionsLock.RUnlock()
@@ -183,6 +222,7 @@ func (s *A2ABargainingService) RunAutonomousNegotiation(ctx context.Context, ses
 	negotiation, err := s.bargaining.CreateNegotiation(ctx, negReq)
 	if err != nil {
 		s.log.Error("failed to create negotiation", "error", err, "session_id", sessionID)
+		close(session.NegotiationReady)
 		s.sendWebhook(session.CallbackURL, WebhookPayload{
 			Event:         "negotiation_error",
 			SessionID:     sessionID,
@@ -398,16 +438,17 @@ func (s *A2ABargainingService) sendWebhook(callbackURL string, payload WebhookPa
 	s.log.Warn("webhook delivery failed after retries", "url", callbackURL, "event", payload.Event, "error", lastErr)
 }
 
-func (s *A2ABargainingService) GetSessionProgress(sessionID string) *A2ASession {
+func (s *A2ABargainingService) GetSessionProgress(sessionID string) *A2ASessionProgress {
 	s.sessionsLock.RLock()
 	session, exists := s.sessions[sessionID]
 	s.sessionsLock.RUnlock()
 
 	if !exists {
-		return &A2ASession{Round: -1}
+		return nil
 	}
 
-	return session
+	progress := session.ToProgressResponse()
+	return &progress
 }
 
 func (s *A2ABargainingService) StopNegotiation(sessionID string) {
@@ -417,6 +458,39 @@ func (s *A2ABargainingService) StopNegotiation(sessionID string) {
 		s.log.Info("A2A negotiation session stopped", "session_id", sessionID)
 	}
 	s.sessionsLock.Unlock()
+}
+
+func (s *A2ABargainingService) GetSessionProgressByNegotiationID(ctx context.Context, negotiationID string) *A2ASessionProgress {
+	// Try to find in-memory session by DB negotiation ID
+	s.sessionsLock.RLock()
+	for _, session := range s.sessions {
+		if session.DBNegotiationID == negotiationID {
+			s.sessionsLock.RUnlock()
+			progress := session.ToProgressResponse()
+			return &progress
+		}
+	}
+	s.sessionsLock.RUnlock()
+
+	// Fall back to DB lookup
+	neg, err := s.bargaining.GetNegotiation(ctx, negotiationID)
+	if err != nil || neg == nil {
+		return nil
+	}
+
+	// Return DB-backed session state
+	return &A2ASessionProgress{
+		NegotiationID:   "",
+		NegotiationUUID: neg.ID,
+		BuyerAgentID:    neg.BuyerAgentID,
+		SellerAgentID:   neg.SellerAgentID,
+		UserID:          neg.UserID,
+		InitialAmount:   neg.InitialAmount,
+		CurrentAmount:   neg.CurrentAmount,
+		Round:           neg.Rounds,
+		MaxRounds:       neg.MaxRounds,
+		Status:          neg.Status,
+	}
 }
 
 func generateA2ANegotiationID() string {

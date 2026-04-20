@@ -935,6 +935,7 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			a2aBargaining.POST("/start", h.A2ABargaining.StartNegotiation)
 			a2aBargaining.POST("/autonomous/start", h.A2ABargaining.StartAutonomousNegotiation)
 			a2aBargaining.GET("/progress/:sessionId", h.A2ABargaining.GetSessionProgress)
+			a2aBargaining.GET("/negotiation/:negotiationId/progress", h.A2ABargaining.GetNegotiationProgress)
 			a2aBargaining.POST("/stop/:sessionId", h.A2ABargaining.StopNegotiation)
 		}
 
