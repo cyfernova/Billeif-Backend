@@ -110,7 +110,7 @@ func (s *LLMService) Chat(ctx context.Context, messages []ChatMessage) (string, 
 	reqBody := AnthropicRequest{
 		Model:            s.config.Model,
 		Messages:         anthropicMessages,
-		MaxTokens:        256,
+		MaxTokens:        8192,
 		Stream:           false,
 		AnthropicVersion: "vertex-2023-06-01",
 	}
