@@ -52,6 +52,7 @@ type CreateNegotiationRequest struct {
 	MarketplaceOrderID *string                `json:"marketplace_order_id,omitempty"`
 	MaxRounds          int                    `json:"max_rounds" validate:"omitempty,gte=1,lte=20"`
 	Metadata           map[string]interface{} `json:"metadata,omitempty"`
+	SessionID          *string                `json:"session_id,omitempty"`
 }
 
 type CounterOfferRequest struct {
@@ -101,6 +102,7 @@ func (s *BargainingService) CreateNegotiation(ctx context.Context, req *CreateNe
 		MaxRounds:          maxRounds,
 		ExpiresAt:          time.Now().Add(24 * time.Hour),
 		Metadata:           s.marshalMetadata(req.Metadata),
+		SessionID:          req.SessionID,
 	}
 
 	if err := s.ap2Repo.CreateBargainingNegotiation(ctx, negotiation); err != nil {
@@ -937,6 +939,7 @@ func (s *BargainingServiceTestable) CreateNegotiation(ctx context.Context, req *
 		MaxRounds:          maxRounds,
 		ExpiresAt:          time.Now().Add(24 * time.Hour),
 		Metadata:           s.marshalMetadata(req.Metadata),
+		SessionID:          req.SessionID,
 	}
 
 	if err := s.ap2Repo.CreateBargainingNegotiation(ctx, negotiation); err != nil {

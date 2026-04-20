@@ -31,18 +31,19 @@ type A2ABargainingService struct {
 }
 
 type A2ASession struct {
-	NegotiationID string
-	BuyerAgentID  string
-	SellerAgentID string
-	UserID        string
-	InitialAmount float64
-	CurrentAmount float64
-	Round         int
-	MaxRounds     int
-	Status        string
-	StartTime     time.Time
-	CallbackURL   string
-	RunStarted    bool
+	NegotiationID   string
+	DBNegotiationID string
+	BuyerAgentID    string
+	SellerAgentID   string
+	UserID          string
+	InitialAmount   float64
+	CurrentAmount   float64
+	Round           int
+	MaxRounds       int
+	Status          string
+	StartTime       time.Time
+	CallbackURL     string
+	RunStarted      bool
 }
 
 type AutonomousNegotiationRequest struct {
@@ -174,6 +175,7 @@ func (s *A2ABargainingService) RunAutonomousNegotiation(ctx context.Context, ses
 		UserID:        session.UserID,
 		InitialAmount: session.InitialAmount,
 		MaxRounds:     session.MaxRounds,
+		SessionID:     &sessionID,
 	}
 
 	negotiation, err := s.bargaining.CreateNegotiation(ctx, negReq)
@@ -188,6 +190,8 @@ func (s *A2ABargainingService) RunAutonomousNegotiation(ctx context.Context, ses
 		})
 		return err
 	}
+
+	session.DBNegotiationID = negotiation.ID
 
 	activeAgentID := session.BuyerAgentID
 	activeAgentType := "buyer"

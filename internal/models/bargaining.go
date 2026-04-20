@@ -6,6 +6,7 @@ import (
 
 type BargainingNegotiation struct {
 	ID                 string     `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
+	SessionID          *string    `gorm:"index" json:"session_id,omitempty"`
 	BuyerAgentID       string     `gorm:"not null;index" json:"buyer_agent_id" validate:"required,uuid"`
 	SellerAgentID      string     `gorm:"not null;index" json:"seller_agent_id" validate:"required,uuid"`
 	UserID             string     `gorm:"not null;index" json:"user_id" validate:"required,uuid"`
