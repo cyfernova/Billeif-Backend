@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"invoice-backend/internal/config"
 	"invoice-backend/internal/services"
@@ -254,10 +255,17 @@ func (h *A2ABargainingHandler) StartAutonomousNegotiation(c *gin.Context) {
 		_ = h.a2aBargaining.RunAutonomousNegotiation(bgCtx, session.NegotiationID)
 	}()
 
+	select {
+	case <-session.NegotiationReady:
+	case <-time.After(30 * time.Second):
+		log.Warn("timeout waiting for negotiation to be created, returning without negotiation_id", "session_id", session.NegotiationID)
+	}
+
 	c.JSON(http.StatusAccepted, gin.H{
-		"message":    "autonomous negotiation started",
-		"session_id": session.NegotiationID,
-		"status":     "running",
+		"message":        "autonomous negotiation started",
+		"session_id":     session.NegotiationID,
+		"negotiation_id": session.DBNegotiationID,
+		"status":         "running",
 	})
 }
 
