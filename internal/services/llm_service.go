@@ -74,14 +74,20 @@ type AnthropicRequest struct {
 	Stream           bool          `json:"stream"`
 	System           string        `json:"system,omitempty"`
 	AnthropicVersion string        `json:"anthropic_version"`
+	Thinking         *ThinkingConfig `json:"thinking,omitempty"`
+}
+
+type ThinkingConfig struct {
+	Type   string `json:"type"`
+	BudgetTokens int `json:"budget_tokens,omitempty"`
 }
 
 // AnthropicResponse represents the response from Anthropic API via MinMax proxy
 type AnthropicResponse struct {
-	ID      string `json:"id"`
-	Type    string `json:"type"`
-	Role    string `json:"role"`
-	Content []struct {
+	ID         string `json:"id"`
+	Type       string `json:"type"`
+	Role       string `json:"role"`
+	Content    []struct {
 		Type     string `json:"type"`
 		Text     string `json:"text"`
 		Thinking string `json:"thinking,omitempty"`
@@ -104,7 +110,7 @@ func (s *LLMService) Chat(ctx context.Context, messages []ChatMessage) (string, 
 	reqBody := AnthropicRequest{
 		Model:            s.config.Model,
 		Messages:         anthropicMessages,
-		MaxTokens:        1024,
+		MaxTokens:        256,
 		Stream:           false,
 		AnthropicVersion: "vertex-2023-06-01",
 	}

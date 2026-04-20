@@ -629,15 +629,12 @@ func (s *BargainingService) GetLLMBargainingDecision(ctx context.Context, agentI
 	}
 
 	var agent *models.Agent
-	var opponentID string
 
 	switch agentID {
 	case negotiation.BuyerAgentID:
 		agent = buyerAgent
-		opponentID = negotiation.SellerAgentID
 	case negotiation.SellerAgentID:
 		agent = sellerAgent
-		opponentID = negotiation.BuyerAgentID
 	default:
 		return nil, errors.New("agent is not part of this negotiation")
 	}
@@ -649,55 +646,14 @@ func (s *BargainingService) GetLLMBargainingDecision(ctx context.Context, agentI
 		}
 	}
 
-	contextText := fmt.Sprintf(`# Bargaining Strategy Advisor
+	contextText := fmt.Sprintf(`You are a bargaining agent.
+Role: %s (buyer=minimize price, seller=maximize price)
+Options: counteroffer, accept, reject
+Constraints: buyer proposes <= current (min 30%% of initial), seller proposes >= current (max 150%% of initial)
+Output JSON: {"action":"counteroffer|accept|reject","proposed_amount":<number>,"reason":"<short>","confidence":0.0-1.0}
 
-You are an AI bargaining assistant helping an agent make optimal negotiation decisions.
-
-## Your Role
-Analyze current negotiation state and provide a strategic recommendation for next move.
-
-## Agent Types
-- Buyer: Wants to minimize price, can accept any price lower than current
-- Seller: Wants to maximize price, can accept any price higher than current
-
-## Decision Options
-1. counteroffer: Propose a new amount (decrease if buyer, increase if seller)
-2. accept: Agree to current amount (negotiation ends successfully)
-3. reject: Walk away from negotiation (ends without agreement)
-
-## Strategic Considerations
-- Consider round number (early rounds can be more aggressive)
-- Current amount vs initial amount (total concession so far)
-- Remaining rounds (less rounds = more urgency)
-- Volatility factors (higher volatility = more flexibility)
-- Historical patterns from opponent (if available)
-
-## Response Format
-Respond with ONLY valid JSON:
-{
-  "action": "counteroffer|accept|reject",
-  "proposed_amount": <number>,
-  "reason": "<brief strategic reasoning>",
-  "confidence": <0.0-1.0>
-}
-
-## Constraints
-- proposed_amount must be positive
-- For buyers: proposed_amount must be less than or equal to current_amount (and ideally greater than or equal to 30%% of initial)
-- For sellers: proposed_amount must be greater than or equal to current_amount (and ideally less than or equal to 150%% of initial)
-- Confidence should reflect your certainty in the recommendation
-
-## Current Negotiation Context
-- Agent ID: %s
-- Agent Type: %s
-- Opponent ID: %s
-- Current Amount: %.2f
-- Initial Amount: %.2f
-- Round: %d / %d
-- Buyer Volatility: %.2f
-- Seller Volatility: %.2f
-- Previous Rounds: %d
-`, agentID, agentType, opponentID, negotiation.CurrentAmount, negotiation.InitialAmount, negotiation.Rounds, negotiation.MaxRounds, negotiation.BuyerVolatility, negotiation.SellerVolatility, len(rounds))
+State: round %d/%d, current=%.2f, initial=%.2f, buyer_vol=%.2f, seller_vol=%.2f, prev_rounds=%d
+`, agentType, negotiation.Rounds, negotiation.MaxRounds, negotiation.CurrentAmount, negotiation.InitialAmount, negotiation.BuyerVolatility, negotiation.SellerVolatility, len(rounds))
 
 	if len(agentConfig) > 0 {
 		if volatility, ok := agentConfig["volatility"].(float64); ok {
