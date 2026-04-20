@@ -331,3 +331,11 @@ resource "aws_lambda_event_source_mapping" "gst_queue" {
   function_response_types            = ["ReportBatchItemFailures"]
   maximum_batching_window_in_seconds = 5
 }
+
+resource "aws_lambda_event_source_mapping" "bargaining_queue" {
+  event_source_arn                   = aws_sqs_queue.bargaining_negotiation.arn
+  function_name                      = aws_lambda_function.sqs_bargaining.arn
+  batch_size                         = 10
+  function_response_types            = ["ReportBatchItemFailures"]
+  maximum_batching_window_in_seconds = 5
+}

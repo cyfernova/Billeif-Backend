@@ -58,11 +58,13 @@ data "aws_iam_policy_document" "lambda_app" {
       aws_sqs_queue.invoice_processing.arn,
       aws_sqs_queue.payment_processing.arn,
       aws_sqs_queue.gst_processing.arn,
+      aws_sqs_queue.bargaining_negotiation.arn,
       aws_sqs_queue.workflow_runs.arn,
       aws_sqs_queue.invoice_processing_dlq.arn,
       aws_sqs_queue.payment_processing_dlq.arn,
       aws_sqs_queue.gst_processing_dlq.arn,
-      aws_sqs_queue.workflow_runs_dlq.arn
+      aws_sqs_queue.workflow_runs_dlq.arn,
+      aws_sqs_queue.bargaining_negotiation_dlq.arn
     ]
   }
 
