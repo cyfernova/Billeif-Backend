@@ -133,7 +133,7 @@ resource "aws_dynamodb_table" "customers_cache" {
   }
 
   global_secondary_index {
-    name            = "business_id_index"
+    name = "business_id_index"
     key_schema {
       attribute_name = "business_id"
       key_type       = "HASH"
@@ -162,7 +162,7 @@ resource "aws_dynamodb_table" "vendors_cache" {
   }
 
   global_secondary_index {
-    name            = "business_id_index"
+    name = "business_id_index"
     key_schema {
       attribute_name = "business_id"
       key_type       = "HASH"
@@ -191,7 +191,7 @@ resource "aws_dynamodb_table" "products_cache" {
   }
 
   global_secondary_index {
-    name            = "business_id_index"
+    name = "business_id_index"
     key_schema {
       attribute_name = "business_id"
       key_type       = "HASH"
@@ -200,7 +200,7 @@ resource "aws_dynamodb_table" "products_cache" {
   }
 
   global_secondary_index {
-    name            = "sku_index"
+    name = "sku_index"
     key_schema {
       attribute_name = "sku"
       key_type       = "HASH"
@@ -234,7 +234,7 @@ resource "aws_dynamodb_table" "invoices_cache" {
   }
 
   global_secondary_index {
-    name            = "invoice_no_index"
+    name = "invoice_no_index"
     key_schema {
       attribute_name = "invoice_no"
       key_type       = "HASH"
@@ -243,7 +243,7 @@ resource "aws_dynamodb_table" "invoices_cache" {
   }
 
   global_secondary_index {
-    name            = "business_id_index"
+    name = "business_id_index"
     key_schema {
       attribute_name = "business_id"
       key_type       = "HASH"
@@ -302,7 +302,7 @@ resource "aws_dynamodb_table" "ledger_cache" {
   }
 
   global_secondary_index {
-    name            = "business_id_index"
+    name = "business_id_index"
     key_schema {
       attribute_name = "business_id"
       key_type       = "HASH"
@@ -331,7 +331,7 @@ resource "aws_dynamodb_table" "payments_cache" {
   }
 
   global_secondary_index {
-    name            = "business_id_index"
+    name = "business_id_index"
     key_schema {
       attribute_name = "business_id"
       key_type       = "HASH"
@@ -366,7 +366,7 @@ resource "aws_dynamodb_table" "ws_connections" {
   }
 
   global_secondary_index {
-    name            = "user_id-index"
+    name = "user_id-index"
     key_schema {
       attribute_name = "user_id"
       key_type       = "HASH"
