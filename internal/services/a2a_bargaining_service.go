@@ -31,19 +31,20 @@ type A2ABargainingService struct {
 }
 
 type A2ASession struct {
-	NegotiationID   string
-	DBNegotiationID string
-	BuyerAgentID    string
-	SellerAgentID   string
-	UserID          string
-	InitialAmount   float64
-	CurrentAmount   float64
-	Round           int
-	MaxRounds       int
-	Status          string
-	StartTime       time.Time
-	CallbackURL     string
-	RunStarted      bool
+	NegotiationID    string
+	DBNegotiationID  string
+	BuyerAgentID     string
+	SellerAgentID    string
+	UserID           string
+	InitialAmount    float64
+	CurrentAmount    float64
+	Round            int
+	MaxRounds        int
+	Status           string
+	StartTime        time.Time
+	CallbackURL      string
+	RunStarted       bool
+	NegotiationReady chan struct{}
 }
 
 type AutonomousNegotiationRequest struct {
@@ -116,18 +117,19 @@ func (s *A2ABargainingService) StartAutonomousNegotiation(ctx context.Context, r
 	}
 
 	session := &A2ASession{
-		NegotiationID: negotiationID,
-		BuyerAgentID:  req.BuyerAgentID,
-		SellerAgentID: req.SellerAgentID,
-		UserID:        req.UserID,
-		InitialAmount: req.InitialAmount,
-		CurrentAmount: req.InitialAmount,
-		Round:         0,
-		MaxRounds:     maxRounds,
-		Status:        "running",
-		StartTime:     time.Now(),
-		CallbackURL:   req.CallbackURL,
-		RunStarted:    false,
+		NegotiationID:    negotiationID,
+		BuyerAgentID:     req.BuyerAgentID,
+		SellerAgentID:    req.SellerAgentID,
+		UserID:           req.UserID,
+		InitialAmount:    req.InitialAmount,
+		CurrentAmount:    req.InitialAmount,
+		Round:            0,
+		MaxRounds:        maxRounds,
+		Status:           "running",
+		StartTime:        time.Now(),
+		CallbackURL:      req.CallbackURL,
+		RunStarted:       false,
+		NegotiationReady: make(chan struct{}),
 	}
 
 	s.sessionsLock.Lock()
@@ -192,6 +194,7 @@ func (s *A2ABargainingService) RunAutonomousNegotiation(ctx context.Context, ses
 	}
 
 	session.DBNegotiationID = negotiation.ID
+	close(session.NegotiationReady)
 
 	activeAgentID := session.BuyerAgentID
 	activeAgentType := "buyer"
