@@ -10,6 +10,7 @@ locals {
     sqs_invoice       = "${var.lambda_artifact_dir}/sqs-invoice.zip"
     sqs_payment       = "${var.lambda_artifact_dir}/sqs-payment.zip"
     sqs_gst           = "${var.lambda_artifact_dir}/sqs-gst.zip"
+    sqs_bargaining    = "${var.lambda_artifact_dir}/sqs-bargaining.zip"
     ws_handler        = "${var.lambda_artifact_dir}/ws.zip"
     custom_sms_sender = "${var.lambda_artifact_dir}/custom-sms-sender.zip"
   }
@@ -38,6 +39,7 @@ locals {
     SQS_INVOICE_QUEUE                = aws_sqs_queue.invoice_processing.url
     SQS_PAYMENT_QUEUE                = aws_sqs_queue.payment_processing.url
     SQS_GST_QUEUE                    = aws_sqs_queue.gst_processing.url
+    SQS_BARGAINING_QUEUE             = aws_sqs_queue.bargaining_negotiation.url
     COGNITO_USER_POOL_ID             = aws_cognito_user_pool.main.id
     COGNITO_CLIENT_ID                = aws_cognito_user_pool_client.main.id
     COGNITO_DOMAIN                   = "${aws_cognito_user_pool_domain.main.domain}.auth.${var.aws_region}.amazoncognito.com"
@@ -230,6 +232,40 @@ resource "aws_lambda_function" "sqs_gst" {
   }
 
   depends_on = [aws_cloudwatch_log_group.lambda_sqs_gst]
+}
+
+resource "aws_cloudwatch_log_group" "lambda_sqs_bargaining" {
+  name              = "/aws/lambda/${var.project_name}-sqs-bargaining"
+  retention_in_days = var.log_retention_days
+}
+
+resource "aws_lambda_function" "sqs_bargaining" {
+  function_name    = "${var.project_name}-sqs-bargaining"
+  role             = aws_iam_role.lambda_exec.arn
+  runtime          = "provided.al2023"
+  handler          = "bootstrap"
+  architectures    = ["arm64"]
+  filename         = local.lambda_artifacts.sqs_bargaining
+  source_code_hash = local.lambda_artifact_hashes.sqs_bargaining
+  memory_size      = 1024
+  timeout          = 350
+
+  reserved_concurrent_executions = var.enable_lambda_reserved_concurrency ? 5 : null
+
+  environment {
+    variables = merge(local.common_lambda_env, {
+      WEBSOCKET_API_ENDPOINT = local.websocket_api_invoke_url
+    })
+  }
+
+  lifecycle {
+    precondition {
+      condition     = fileexists(local.lambda_artifacts.sqs_bargaining)
+      error_message = "Missing Lambda artifact ${local.lambda_artifacts.sqs_bargaining}. Run make package-lambda from the repository root before running Terraform."
+    }
+  }
+
+  depends_on = [aws_cloudwatch_log_group.lambda_sqs_bargaining]
 }
 
 resource "aws_lambda_function" "ws_handler" {

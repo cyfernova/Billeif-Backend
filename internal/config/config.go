@@ -162,9 +162,10 @@ type WhatsAppConfig struct {
 }
 
 type SQSConfig struct {
-	InvoiceQueue string `mapstructure:"INVOICE_QUEUE"`
-	PaymentQueue string `mapstructure:"PAYMENT_QUEUE"`
-	GSTQueue     string `mapstructure:"GST_QUEUE"`
+	InvoiceQueue    string `mapstructure:"INVOICE_QUEUE"`
+	PaymentQueue    string `mapstructure:"PAYMENT_QUEUE"`
+	GSTQueue        string `mapstructure:"GST_QUEUE"`
+	BargainingQueue string `mapstructure:"BARGAINING_QUEUE"`
 }
 
 type ShippingConfig struct {

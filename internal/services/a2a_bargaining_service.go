@@ -9,6 +9,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
+
+	"invoice-backend/internal/config"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/a2a"
@@ -26,6 +30,8 @@ type A2ABargainingService struct {
 	bargaining   *BargainingService
 	mentee       *MenteeService
 	ap2Repo      interfaces.AP2Repository
+	sqs          *sqs.Client
+	cfg          *config.Config
 	log          *logger.Logger
 	sessions     map[string]*A2ASession
 	sessionsLock sync.RWMutex
@@ -102,12 +108,14 @@ type WebhookPayload struct {
 	SellerAgentID  string  `json:"seller_agent_id,omitempty"`
 }
 
-func NewA2ABargainingService(a2aClient *a2a.A2AClient, bargaining *BargainingService, mentee *MenteeService, ap2Repo interfaces.AP2Repository, log *logger.Logger) *A2ABargainingService {
+func NewA2ABargainingService(a2aClient *a2a.A2AClient, bargaining *BargainingService, mentee *MenteeService, ap2Repo interfaces.AP2Repository, sqsClient *sqs.Client, cfg *config.Config, log *logger.Logger) *A2ABargainingService {
 	return &A2ABargainingService{
 		a2aClient:    a2aClient,
 		bargaining:   bargaining,
 		mentee:       mentee,
 		ap2Repo:      ap2Repo,
+		sqs:          sqsClient,
+		cfg:          cfg,
 		log:          log,
 		sessions:     make(map[string]*A2ASession),
 		sessionLocks: make(map[string]*sync.Mutex),
@@ -370,6 +378,148 @@ func (s *A2ABargainingService) RunAutonomousNegotiation(ctx context.Context, ses
 	return nil
 }
 
+func (s *A2ABargainingService) RunAutonomousNegotiationRound(ctx context.Context, sessionID string) error {
+	var session *A2ASession
+	s.sessionsLock.RLock()
+	session, exists := s.sessions[sessionID]
+	s.sessionsLock.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+
+	if session.DBNegotiationID == "" {
+		return fmt.Errorf("no database negotiation ID for session: %s", sessionID)
+	}
+
+	lock, ok := s.sessionLocks[sessionID]
+	if !ok {
+		return fmt.Errorf("session lock not found: %s", sessionID)
+	}
+	lock.Lock()
+	session.RunStarted = true
+	lock.Unlock()
+
+	s.log.Info("running autonomous negotiation round", "session_id", sessionID, "current_round", session.Round)
+
+	negotiation, err := s.bargaining.GetNegotiation(ctx, session.DBNegotiationID)
+	if err != nil {
+		return fmt.Errorf("failed to get negotiation: %w", err)
+	}
+
+	activeAgentID := session.BuyerAgentID
+	activeAgentType := "buyer"
+	if session.Round > 0 {
+		if session.Round%2 == 0 {
+			activeAgentID = session.BuyerAgentID
+			activeAgentType = "buyer"
+		} else {
+			activeAgentID = session.SellerAgentID
+			activeAgentType = "seller"
+		}
+	}
+
+	rounds, err := s.ap2Repo.GetBargainingRounds(ctx, session.DBNegotiationID)
+	if err != nil {
+		s.log.Warn("failed to get negotiation rounds", "error", err)
+		rounds = []*models.BargainingRound{}
+	}
+
+	if len(rounds) > 0 {
+		lastRound := rounds[len(rounds)-1]
+		if lastRound.AgentID == session.BuyerAgentID {
+			activeAgentID = session.SellerAgentID
+			activeAgentType = "seller"
+		} else {
+			activeAgentID = session.BuyerAgentID
+			activeAgentType = "buyer"
+		}
+	}
+
+	if session.Round >= session.MaxRounds {
+		session.Status = "expired"
+		s.sendWebhook(session.CallbackURL, WebhookPayload{
+			Event:         "negotiation_completed",
+			SessionID:     sessionID,
+			Status:        "expired",
+			FinalAmount:   session.CurrentAmount,
+			Rounds:        session.MaxRounds,
+			BuyerAgentID:  session.BuyerAgentID,
+			SellerAgentID: session.SellerAgentID,
+		})
+		return nil
+	}
+
+	decision, err := s.bargaining.GetLLMBargainingDecision(ctx, activeAgentID, activeAgentType, negotiation.ID)
+	if err != nil {
+		s.log.Error("LLM decision failed", "error", err, "session_id", sessionID, "round", session.Round+1, "agent_id", activeAgentID)
+		return fmt.Errorf("LLM decision failed: %w", err)
+	}
+
+	counterReq := &CounterOfferRequest{
+		AgentID:        activeAgentID,
+		ProposedAmount: decision.ProposedAmount,
+		Reason:         &decision.Reason,
+		Action:         decision.Action,
+	}
+
+	_, updatedNegotiation, err := s.bargaining.SubmitCounterOffer(ctx, negotiation.ID, counterReq)
+	if err != nil {
+		s.log.Error("submit counter offer failed", "error", err, "session_id", sessionID, "round", session.Round+1)
+		return fmt.Errorf("submit counter offer failed: %w", err)
+	}
+
+	session.CurrentAmount = updatedNegotiation.CurrentAmount
+	session.Round++
+
+	s.sendWebhook(session.CallbackURL, WebhookPayload{
+		Event:          "round_completed",
+		SessionID:      sessionID,
+		Round:          session.Round,
+		AgentID:        activeAgentID,
+		AgentType:      activeAgentType,
+		Action:         decision.Action,
+		ProposedAmount: decision.ProposedAmount,
+		CurrentAmount:  updatedNegotiation.CurrentAmount,
+		Status:         updatedNegotiation.Status,
+	})
+
+	if decision.Action == "accept" || decision.Action == "reject" || updatedNegotiation.Status == "accepted" || updatedNegotiation.Status == "rejected" {
+		session.Status = updatedNegotiation.Status
+		if session.Status == "" {
+			session.Status = decision.Action
+		}
+
+		s.recordLearning(updatedNegotiation, activeAgentID, activeAgentType, decision.Action, session.Round)
+
+		s.sendWebhook(session.CallbackURL, WebhookPayload{
+			Event:         "negotiation_completed",
+			SessionID:     sessionID,
+			Status:        session.Status,
+			FinalAmount:   updatedNegotiation.CurrentAmount,
+			Rounds:        session.Round,
+			BuyerAgentID:  session.BuyerAgentID,
+			SellerAgentID: session.SellerAgentID,
+		})
+
+		s.log.Info("autonomous negotiation completed",
+			"session_id", sessionID,
+			"status", session.Status,
+			"final_amount", updatedNegotiation.CurrentAmount,
+			"total_rounds", session.Round)
+
+		return nil
+	}
+
+	s.log.Info("autonomous negotiation round completed, session may continue",
+		"session_id", sessionID,
+		"round", session.Round,
+		"max_rounds", session.MaxRounds,
+		"current_amount", session.CurrentAmount)
+
+	return nil
+}
+
 func (s *A2ABargainingService) recordLearning(negotiation *models.BargainingNegotiation, lastAgentID, lastAgentType, action string, rounds int) {
 	if s.mentee == nil {
 		return
@@ -413,6 +563,43 @@ func (s *A2ABargainingService) recordLearning(negotiation *models.BargainingNego
 		"final_amount", negotiation.CurrentAmount,
 		"status", status,
 		"rounds", rounds)
+}
+
+func (s *A2ABargainingService) EnqueueNegotiationRound(sessionID, negotiationID string, currentRound int) error {
+	if s.sqs == nil || s.cfg == nil {
+		s.log.Warn("SQS not configured, cannot enqueue negotiation round")
+		return nil
+	}
+
+	msg := BargainingQueueMessage{
+		Type:          "process_round",
+		SessionID:     sessionID,
+		NegotiationID: negotiationID,
+		Round:         currentRound + 1,
+	}
+
+	body, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal queue message: %w", err)
+	}
+
+	_, err = s.sqs.SendMessage(context.Background(), &sqs.SendMessageInput{
+		QueueUrl:    aws.String(s.cfg.SQS.BargainingQueue),
+		MessageBody: aws.String(string(body)),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to send SQS message: %w", err)
+	}
+
+	s.log.Info("enqueued negotiation round", "session_id", sessionID, "round", currentRound+1)
+	return nil
+}
+
+type BargainingQueueMessage struct {
+	Type          string `json:"type"`
+	SessionID     string `json:"session_id"`
+	NegotiationID string `json:"negotiation_id"`
+	Round         int    `json:"round"`
 }
 
 func (s *A2ABargainingService) sendWebhook(callbackURL string, payload WebhookPayload) {

@@ -109,6 +109,33 @@ resource "aws_sqs_queue" "workflow_runs" {
   visibility_timeout_seconds = 60
 }
 
+# Autonomous Bargaining Negotiation Queue
+resource "aws_sqs_queue" "bargaining_negotiation" {
+  name                       = "bargaining-negotiation-queue"
+  message_retention_seconds  = 86400
+  visibility_timeout_seconds = 390
+}
+
+resource "aws_sqs_queue" "bargaining_negotiation_dlq" {
+  name = "bargaining-negotiation-dlq"
+}
+
+resource "aws_sqs_queue_redrive_allow_policy" "bargaining_negotiation_dlq" {
+  queue_url = aws_sqs_queue.bargaining_negotiation_dlq.id
+  redrive_allow_policy = jsonencode({
+    redrivePermission = "byQueue",
+    sourceQueueArns   = [aws_sqs_queue.bargaining_negotiation.arn]
+  })
+}
+
+resource "aws_sqs_queue_redrive_policy" "bargaining_negotiation" {
+  queue_url = aws_sqs_queue.bargaining_negotiation.id
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.bargaining_negotiation_dlq.arn
+    maxReceiveCount     = 5
+  })
+}
+
 resource "aws_sqs_queue" "invoice_processing_dlq" {
   name = "invoice-processing-dlq"
 }

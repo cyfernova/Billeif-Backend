@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"net/http"
 	"time"
 
@@ -244,16 +243,16 @@ func (h *A2ABargainingHandler) StartAutonomousNegotiation(c *gin.Context) {
 		return
 	}
 
-	log.Info("autonomous negotiation session created, starting background loop",
+	log.Info("autonomous negotiation session created, enqueuing for processing",
 		"session_id", session.NegotiationID,
 		"buyer", req.BuyerAgentID,
 		"seller", req.SellerAgentID,
 		"callback_url", req.CallbackURL)
 
-	go func() {
-		bgCtx := context.Background()
-		_ = h.a2aBargaining.RunAutonomousNegotiation(bgCtx, session.NegotiationID)
-	}()
+	// Enqueue first round to SQS worker
+	if err := h.a2aBargaining.EnqueueNegotiationRound(session.NegotiationID, session.DBNegotiationID, 0); err != nil {
+		log.Error("failed to enqueue negotiation round", "error", err, "session_id", session.NegotiationID)
+	}
 
 	select {
 	case <-session.NegotiationReady:

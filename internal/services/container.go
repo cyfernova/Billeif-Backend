@@ -112,7 +112,7 @@ func NewContainer(
 	merchantAgentSvc := NewMerchantAgentService(ap2Repo, log)
 	agentConfigSvc := NewAgentConfigService(".well-known", log)
 	sellerNegotiationSvc := NewSellerNegotiationService(ap2Repo, agentConfigSvc, log)
-	a2aBargainingSvc := NewA2ABargainingService(a2aClient, bargainingSvc, menteeSvc, ap2Repo, log)
+	a2aBargainingSvc := NewA2ABargainingService(a2aClient, bargainingSvc, menteeSvc, ap2Repo, aws.SQS, cfg, log)
 	websocketConnectionSvc := NewWebSocketConnectionService(cfg, aws, log)
 	credentialProviderSvc, err := NewCredentialProviderService(ap2Repo, cfg.Credentials.EncryptionKey, log)
 	if err != nil {
