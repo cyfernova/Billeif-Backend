@@ -68,26 +68,26 @@ func (m ChatMessage) ToAnthropicFormat() ChatMessage {
 
 // AnthropicRequest represents the request body for Anthropic API via MinMax proxy
 type AnthropicRequest struct {
-	Model            string        `json:"model"`
-	Messages         []ChatMessage `json:"messages"`
-	MaxTokens        int           `json:"max_tokens"`
-	Stream           bool          `json:"stream"`
-	System           string        `json:"system,omitempty"`
-	AnthropicVersion string        `json:"anthropic_version"`
+	Model            string          `json:"model"`
+	Messages         []ChatMessage   `json:"messages"`
+	MaxTokens        int             `json:"max_tokens"`
+	Stream           bool            `json:"stream"`
+	System           string          `json:"system,omitempty"`
+	AnthropicVersion string          `json:"anthropic_version"`
 	Thinking         *ThinkingConfig `json:"thinking,omitempty"`
 }
 
 type ThinkingConfig struct {
-	Type   string `json:"type"`
-	BudgetTokens int `json:"budget_tokens,omitempty"`
+	Type         string `json:"type"`
+	BudgetTokens int    `json:"budget_tokens,omitempty"`
 }
 
 // AnthropicResponse represents the response from Anthropic API via MinMax proxy
 type AnthropicResponse struct {
-	ID         string `json:"id"`
-	Type       string `json:"type"`
-	Role       string `json:"role"`
-	Content    []struct {
+	ID      string `json:"id"`
+	Type    string `json:"type"`
+	Role    string `json:"role"`
+	Content []struct {
 		Type     string `json:"type"`
 		Text     string `json:"text"`
 		Thinking string `json:"thinking,omitempty"`

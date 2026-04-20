@@ -1083,6 +1083,19 @@ func (r *ap2Repository) GetBargainingNegotiationByID(ctx context.Context, id str
 	return &negotiation, err
 }
 
+func (r *ap2Repository) GetBargainingNegotiationBySessionID(ctx context.Context, sessionID string) (*models.BargainingNegotiation, error) {
+	var negotiation models.BargainingNegotiation
+	err := r.db.WithContext(ctx).
+		Preload("BuyerAgent").
+		Preload("SellerAgent").
+		Where("session_id = ?", sessionID).
+		First(&negotiation).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, errors.New("negotiation not found")
+	}
+	return &negotiation, err
+}
+
 func (r *ap2Repository) GetNegotiationsByUser(ctx context.Context, userID string, page, limit int) ([]*models.BargainingNegotiation, int64, error) {
 	var negotiations []models.BargainingNegotiation
 	var total int64

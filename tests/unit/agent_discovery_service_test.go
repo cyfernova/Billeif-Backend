@@ -406,6 +406,9 @@ func (m *MockAP2Repository) CreateBargainingNegotiation(ctx context.Context, neg
 func (m *MockAP2Repository) GetBargainingNegotiationByID(ctx context.Context, id string) (*models.BargainingNegotiation, error) {
 	return nil, nil
 }
+func (m *MockAP2Repository) GetBargainingNegotiationBySessionID(ctx context.Context, sessionID string) (*models.BargainingNegotiation, error) {
+	return nil, nil
+}
 func (m *MockAP2Repository) GetNegotiationsByUser(ctx context.Context, userID string, page, limit int) ([]*models.BargainingNegotiation, int64, error) {
 	return nil, 0, nil
 }

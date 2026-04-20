@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"invoice-backend/internal/models"
+	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/a2a"
 	"invoice-backend/pkg/logger"
 )
@@ -24,6 +25,7 @@ type A2ABargainingService struct {
 	a2aClient    *a2a.A2AClient
 	bargaining   *BargainingService
 	mentee       *MenteeService
+	ap2Repo      interfaces.AP2Repository
 	log          *logger.Logger
 	sessions     map[string]*A2ASession
 	sessionsLock sync.RWMutex
@@ -100,11 +102,12 @@ type WebhookPayload struct {
 	SellerAgentID  string  `json:"seller_agent_id,omitempty"`
 }
 
-func NewA2ABargainingService(a2aClient *a2a.A2AClient, bargaining *BargainingService, mentee *MenteeService, log *logger.Logger) *A2ABargainingService {
+func NewA2ABargainingService(a2aClient *a2a.A2AClient, bargaining *BargainingService, mentee *MenteeService, ap2Repo interfaces.AP2Repository, log *logger.Logger) *A2ABargainingService {
 	return &A2ABargainingService{
 		a2aClient:    a2aClient,
 		bargaining:   bargaining,
 		mentee:       mentee,
+		ap2Repo:      ap2Repo,
 		log:          log,
 		sessions:     make(map[string]*A2ASession),
 		sessionLocks: make(map[string]*sync.Mutex),
@@ -443,12 +446,34 @@ func (s *A2ABargainingService) GetSessionProgress(sessionID string) *A2ASessionP
 	session, exists := s.sessions[sessionID]
 	s.sessionsLock.RUnlock()
 
-	if !exists {
+	if exists {
+		progress := session.ToProgressResponse()
+		return &progress
+	}
+
+	// Fall back to DB lookup (handles Lambda cold starts where in-memory session is lost)
+	neg, err := s.ap2Repo.GetBargainingNegotiationBySessionID(context.Background(), sessionID)
+	if err != nil || neg == nil {
 		return nil
 	}
 
-	progress := session.ToProgressResponse()
-	return &progress
+	sessionIDStr := ""
+	if neg.SessionID != nil {
+		sessionIDStr = *neg.SessionID
+	}
+
+	return &A2ASessionProgress{
+		NegotiationID:   sessionIDStr,
+		NegotiationUUID: neg.ID,
+		BuyerAgentID:    neg.BuyerAgentID,
+		SellerAgentID:   neg.SellerAgentID,
+		UserID:          neg.UserID,
+		InitialAmount:   neg.InitialAmount,
+		CurrentAmount:   neg.CurrentAmount,
+		Round:           neg.Rounds,
+		MaxRounds:       neg.MaxRounds,
+		Status:          neg.Status,
+	}
 }
 
 func (s *A2ABargainingService) StopNegotiation(sessionID string) {
