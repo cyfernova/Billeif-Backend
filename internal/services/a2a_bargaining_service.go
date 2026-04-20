@@ -134,6 +134,21 @@ func (s *A2ABargainingService) StartNegotiation(ctx context.Context, buyerAgentI
 	s.sessionLocks[negotiationID] = &sync.Mutex{}
 	s.sessionsLock.Unlock()
 
+	// Persist negotiation to DB so rounds survive cold starts
+	negReq := &CreateNegotiationRequest{
+		BuyerAgentID:  buyerAgentID,
+		SellerAgentID: sellerAgentID,
+		InitialAmount: initialAmount,
+		MaxRounds:     5,
+		SessionID:     &negotiationID,
+	}
+	negotiation, err := s.bargaining.CreateNegotiation(ctx, negReq)
+	if err != nil {
+		s.log.Error("failed to persist negotiation", "error", err, "negotiation_id", negotiationID)
+	} else {
+		session.DBNegotiationID = negotiation.ID
+	}
+
 	s.log.Info("A2A negotiation session started", "negotiation_id", negotiationID, "buyer_id", buyerAgentID, "seller_id", sellerAgentID, "initial_amount", initialAmount)
 
 	return session, nil
