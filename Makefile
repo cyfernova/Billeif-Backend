@@ -2,7 +2,7 @@
 -include .env
 export
 
-.PHONY: help infra-backend-init infra-init infra-validate infra-apply infra-plan infra-destroy infra-output build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-payment build-lambda-sqs-gst build-lambda-ws build-lambda-custom-sms-sender package-lambda run-local test test-integration migrate-up migrate-down migrate-rds-up migrate-rds-down migrate-create fmt lint clean deps test-coverage swagger
+.PHONY: help infra-backend-init infra-init infra-validate infra-apply infra-plan infra-destroy infra-output build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-payment build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-custom-sms-sender package-lambda run-local test test-integration migrate-up migrate-down migrate-rds-up migrate-rds-down migrate-create fmt lint clean deps test-coverage swagger
 
 LAMBDA_BUILD_DIR := .build/lambda
 TERRAFORM_DIR := infrastructure/terraform
@@ -68,7 +68,7 @@ infra-output: ## Save Terraform output to file
 	@echo "Terraform output saved to infrastructure/terraform/terraform_output.txt"
 
 # Build targets
-build-lambda: build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-payment build-lambda-sqs-gst build-lambda-ws ## Build all Lambda binaries
+build-lambda: build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-payment build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws ## Build all Lambda binaries
 
 build-lambda-http: ## Build HTTP API Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/http
@@ -90,6 +90,10 @@ build-lambda-sqs-gst: ## Build GST SQS Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/sqs-gst
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(LAMBDA_BUILD_DIR)/sqs-gst/bootstrap ./cmd/lambda/sqs-gst
 
+build-lambda-sqs-bargaining: ## Build bargaining SQS Lambda bootstrap binary
+	mkdir -p $(LAMBDA_BUILD_DIR)/sqs-bargaining
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(LAMBDA_BUILD_DIR)/sqs-bargaining/bootstrap ./cmd/lambda/sqs-bargaining
+
 build-lambda-ws: ## Build WebSocket Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/ws
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(LAMBDA_BUILD_DIR)/ws/bootstrap ./cmd/lambda/ws
@@ -106,6 +110,7 @@ package-lambda: build-lambda build-lambda-custom-sms-sender ## Package Lambda ar
 	cd $(LAMBDA_BUILD_DIR)/sqs-invoice && zip -q -r ../sqs-invoice.zip bootstrap
 	cd $(LAMBDA_BUILD_DIR)/sqs-payment && zip -q -r ../sqs-payment.zip bootstrap
 	cd $(LAMBDA_BUILD_DIR)/sqs-gst && zip -q -r ../sqs-gst.zip bootstrap
+	cd $(LAMBDA_BUILD_DIR)/sqs-bargaining && zip -q -r ../sqs-bargaining.zip bootstrap
 	cd $(LAMBDA_BUILD_DIR)/ws && zip -q -r ../ws.zip bootstrap
 	cd $(LAMBDA_BUILD_DIR)/custom-sms-sender && zip -q -r ../custom-sms-sender.zip .
 
