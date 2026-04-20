@@ -4,7 +4,7 @@
 
 resource "null_resource" "add_categories_column" {
   triggers = {
-    migration_version = timestamp()
+    migration_version = md5(templatefile("${path.module}/migrations/add_categories_column.sql", {}))
   }
 
   provisioner "local-exec" {
@@ -31,7 +31,7 @@ resource "null_resource" "add_categories_to_agents" {
   depends_on = [null_resource.add_categories_column]
 
   triggers = {
-    migration_version = timestamp()
+    migration_version = md5(templatefile("${path.module}/migrations/add_categories_to_agents.sql", {}))
   }
 
   provisioner "local-exec" {
@@ -58,7 +58,7 @@ resource "null_resource" "add_price_to_agents" {
   depends_on = [null_resource.add_categories_to_agents]
 
   triggers = {
-    migration_version = timestamp()
+    migration_version = md5(templatefile("${path.module}/migrations/add_price_to_agents.sql", {}))
   }
 
   provisioner "local-exec" {
@@ -85,7 +85,7 @@ resource "null_resource" "add_session_id_to_bargaining_negotiations" {
   depends_on = [null_resource.add_price_to_agents]
 
   triggers = {
-    migration_version = timestamp()
+    migration_version = md5(templatefile("${path.module}/migrations/add_session_id_to_bargaining_negotiations.sql", {}))
   }
 
   provisioner "local-exec" {

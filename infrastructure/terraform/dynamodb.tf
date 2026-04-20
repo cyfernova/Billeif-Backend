@@ -1,8 +1,16 @@
 resource "aws_dynamodb_table" "users_sessions" {
   name         = "users_sessions"
   billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "user_id"
-  range_key    = "session_id"
+
+  key_schema {
+    attribute_name = "user_id"
+    key_type       = "HASH"
+  }
+
+  key_schema {
+    attribute_name = "session_id"
+    key_type       = "RANGE"
+  }
 
   attribute {
     name = "user_id"
@@ -23,7 +31,11 @@ resource "aws_dynamodb_table" "users_sessions" {
 resource "aws_dynamodb_table" "refresh_tokens" {
   name         = "refresh_tokens"
   billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "token"
+
+  key_schema {
+    attribute_name = "token"
+    key_type       = "HASH"
+  }
 
   attribute {
     name = "token"
@@ -39,7 +51,11 @@ resource "aws_dynamodb_table" "refresh_tokens" {
 resource "aws_dynamodb_table" "password_reset_tokens" {
   name         = "password_reset_tokens"
   billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "token"
+
+  key_schema {
+    attribute_name = "token"
+    key_type       = "HASH"
+  }
 
   attribute {
     name = "token"
@@ -55,8 +71,16 @@ resource "aws_dynamodb_table" "password_reset_tokens" {
 resource "aws_dynamodb_table" "mfa_codes" {
   name         = "mfa_codes"
   billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "user_id"
-  range_key    = "code"
+
+  key_schema {
+    attribute_name = "user_id"
+    key_type       = "HASH"
+  }
+
+  key_schema {
+    attribute_name = "code"
+    key_type       = "RANGE"
+  }
 
   attribute {
     name = "user_id"
@@ -77,7 +101,11 @@ resource "aws_dynamodb_table" "mfa_codes" {
 resource "aws_dynamodb_table" "phone_auth_cooldowns" {
   name         = var.phone_auth_cooldown_table_name
   billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "cooldown_key"
+
+  key_schema {
+    attribute_name = "cooldown_key"
+    key_type       = "HASH"
+  }
 
   attribute {
     name = "cooldown_key"
@@ -93,7 +121,11 @@ resource "aws_dynamodb_table" "phone_auth_cooldowns" {
 resource "aws_dynamodb_table" "customers_cache" {
   name         = "customers_cache"
   billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "customer_id"
+
+  key_schema {
+    attribute_name = "customer_id"
+    key_type       = "HASH"
+  }
 
   attribute {
     name = "customer_id"
@@ -102,7 +134,10 @@ resource "aws_dynamodb_table" "customers_cache" {
 
   global_secondary_index {
     name            = "business_id_index"
-    hash_key        = "business_id"
+    key_schema {
+      attribute_name = "business_id"
+      key_type       = "HASH"
+    }
     projection_type = "ALL"
   }
 
@@ -115,7 +150,11 @@ resource "aws_dynamodb_table" "customers_cache" {
 resource "aws_dynamodb_table" "vendors_cache" {
   name         = "vendors_cache"
   billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "vendor_id"
+
+  key_schema {
+    attribute_name = "vendor_id"
+    key_type       = "HASH"
+  }
 
   attribute {
     name = "vendor_id"
@@ -124,7 +163,10 @@ resource "aws_dynamodb_table" "vendors_cache" {
 
   global_secondary_index {
     name            = "business_id_index"
-    hash_key        = "business_id"
+    key_schema {
+      attribute_name = "business_id"
+      key_type       = "HASH"
+    }
     projection_type = "ALL"
   }
 
@@ -137,7 +179,11 @@ resource "aws_dynamodb_table" "vendors_cache" {
 resource "aws_dynamodb_table" "products_cache" {
   name         = "products_cache"
   billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "product_id"
+
+  key_schema {
+    attribute_name = "product_id"
+    key_type       = "HASH"
+  }
 
   attribute {
     name = "product_id"
@@ -146,13 +192,19 @@ resource "aws_dynamodb_table" "products_cache" {
 
   global_secondary_index {
     name            = "business_id_index"
-    hash_key        = "business_id"
+    key_schema {
+      attribute_name = "business_id"
+      key_type       = "HASH"
+    }
     projection_type = "ALL"
   }
 
   global_secondary_index {
     name            = "sku_index"
-    hash_key        = "sku"
+    key_schema {
+      attribute_name = "sku"
+      key_type       = "HASH"
+    }
     projection_type = "ALL"
   }
 
@@ -170,7 +222,11 @@ resource "aws_dynamodb_table" "products_cache" {
 resource "aws_dynamodb_table" "invoices_cache" {
   name         = "invoices_cache"
   billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "invoice_id"
+
+  key_schema {
+    attribute_name = "invoice_id"
+    key_type       = "HASH"
+  }
 
   attribute {
     name = "invoice_id"
@@ -179,13 +235,19 @@ resource "aws_dynamodb_table" "invoices_cache" {
 
   global_secondary_index {
     name            = "invoice_no_index"
-    hash_key        = "invoice_no"
+    key_schema {
+      attribute_name = "invoice_no"
+      key_type       = "HASH"
+    }
     projection_type = "ALL"
   }
 
   global_secondary_index {
     name            = "business_id_index"
-    hash_key        = "business_id"
+    key_schema {
+      attribute_name = "business_id"
+      key_type       = "HASH"
+    }
     projection_type = "ALL"
   }
 
@@ -203,8 +265,16 @@ resource "aws_dynamodb_table" "invoices_cache" {
 resource "aws_dynamodb_table" "invoice_sequences" {
   name         = "invoice_sequences"
   billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "business_id"
-  range_key    = "invoice_type"
+
+  key_schema {
+    attribute_name = "business_id"
+    key_type       = "HASH"
+  }
+
+  key_schema {
+    attribute_name = "invoice_type"
+    key_type       = "RANGE"
+  }
 
   attribute {
     name = "business_id"
@@ -220,7 +290,11 @@ resource "aws_dynamodb_table" "invoice_sequences" {
 resource "aws_dynamodb_table" "ledger_cache" {
   name         = "ledger_cache"
   billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "ledger_entry_id"
+
+  key_schema {
+    attribute_name = "ledger_entry_id"
+    key_type       = "HASH"
+  }
 
   attribute {
     name = "ledger_entry_id"
@@ -229,7 +303,10 @@ resource "aws_dynamodb_table" "ledger_cache" {
 
   global_secondary_index {
     name            = "business_id_index"
-    hash_key        = "business_id"
+    key_schema {
+      attribute_name = "business_id"
+      key_type       = "HASH"
+    }
     projection_type = "ALL"
   }
 
@@ -242,7 +319,11 @@ resource "aws_dynamodb_table" "ledger_cache" {
 resource "aws_dynamodb_table" "payments_cache" {
   name         = "payments_cache"
   billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "payment_id"
+
+  key_schema {
+    attribute_name = "payment_id"
+    key_type       = "HASH"
+  }
 
   attribute {
     name = "payment_id"
@@ -251,7 +332,10 @@ resource "aws_dynamodb_table" "payments_cache" {
 
   global_secondary_index {
     name            = "business_id_index"
-    hash_key        = "business_id"
+    key_schema {
+      attribute_name = "business_id"
+      key_type       = "HASH"
+    }
     projection_type = "ALL"
   }
 
@@ -265,7 +349,11 @@ resource "aws_dynamodb_table" "payments_cache" {
 resource "aws_dynamodb_table" "ws_connections" {
   name         = var.websocket_connections_table
   billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "connection_id"
+
+  key_schema {
+    attribute_name = "connection_id"
+    key_type       = "HASH"
+  }
 
   attribute {
     name = "connection_id"
@@ -279,7 +367,10 @@ resource "aws_dynamodb_table" "ws_connections" {
 
   global_secondary_index {
     name            = "user_id-index"
-    hash_key        = "user_id"
+    key_schema {
+      attribute_name = "user_id"
+      key_type       = "HASH"
+    }
     projection_type = "ALL"
   }
 
