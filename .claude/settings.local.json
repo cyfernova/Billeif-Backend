@@ -27,7 +27,12 @@
       "Bash(terraform validate *)",
       "Bash(terraform plan *)",
       "Bash(aws s3api *)",
-      "Bash(terraform apply *)"
+      "Bash(terraform apply *)",
+      "Bash(aws dynamodb *)",
+      "Bash(aws sts get-caller-identity *)",
+      "Bash(aws *)",
+      "PowerShell(aws dynamodb scan *)",
+      "Bash(terraform *)"
     ]
   }
 }
