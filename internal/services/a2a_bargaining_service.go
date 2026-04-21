@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -51,7 +52,7 @@ type A2ASession struct {
 	Status           string
 	StartTime        time.Time
 	CallbackURL      string
-	RunStarted       bool
+	ProcessingRound  int32 // atomic: 0 = not processing, >0 = round being processed
 	NegotiationReady chan struct{}
 }
 
@@ -199,7 +200,6 @@ func (s *A2ABargainingService) StartAutonomousNegotiation(ctx context.Context, r
 		Status:           "running",
 		StartTime:        time.Now(),
 		CallbackURL:      req.CallbackURL,
-		RunStarted:       false,
 		NegotiationReady: make(chan struct{}),
 	}
 
@@ -245,12 +245,13 @@ func (s *A2ABargainingService) RunAutonomousNegotiation(ctx context.Context, ses
 		return fmt.Errorf("session lock not found: %s", sessionID)
 	}
 	lock.Lock()
-	if session.RunStarted {
+	if atomic.LoadInt32(&session.ProcessingRound) != 0 {
 		lock.Unlock()
 		return fmt.Errorf("negotiation already started for session: %s", sessionID)
 	}
-	session.RunStarted = true
+	atomic.StoreInt32(&session.ProcessingRound, -1) // -1 indicates full negotiation loop running
 	lock.Unlock()
+	defer atomic.StoreInt32(&session.ProcessingRound, 0) // reset when done
 
 	s.log.Info("starting autonomous negotiation loop", "session_id", sessionID)
 
@@ -434,40 +435,57 @@ func (s *A2ABargainingService) RunAutonomousNegotiationRound(ctx context.Context
 		return fmt.Errorf("no database negotiation ID for session: %s", sessionID)
 	}
 
-	lock, ok := s.sessionLocks[sessionID]
-	if !ok {
-		return fmt.Errorf("session lock not found: %s", sessionID)
-	}
-	lock.Lock()
-	session.RunStarted = true
-	lock.Unlock()
-
-	s.log.Info("running autonomous negotiation round", "session_id", sessionID, "current_round", session.Round)
-
-	negotiation, err := s.bargaining.GetNegotiation(ctx, session.DBNegotiationID)
-	if err != nil {
-		return fmt.Errorf("failed to get negotiation: %w", err)
-	}
-
-	activeAgentID := session.BuyerAgentID
-	activeAgentType := "buyer"
-	if session.Round > 0 {
-		if session.Round%2 == 0 {
-			activeAgentID = session.BuyerAgentID
-			activeAgentType = "buyer"
-		} else {
-			activeAgentID = session.SellerAgentID
-			activeAgentType = "seller"
-		}
-	}
-
+	// Determine which round to process by checking DB rounds
+	// This must be done before claiming to know which round to atomically claim
 	rounds, err := s.ap2Repo.GetBargainingRounds(ctx, session.DBNegotiationID)
 	if err != nil {
 		s.log.Warn("failed to get negotiation rounds", "error", err)
 		rounds = []*models.BargainingRound{}
 	}
 
-	if len(rounds) > 0 {
+	// Calculate the round to process: if DB has N rounds completed, next is N+1
+	// But we need to account for session.Round which might be ahead or behind
+	// Use DB state as source of truth for which rounds exist
+	dbRoundCount := len(rounds)
+	nextRound := dbRoundCount + 1
+
+	if nextRound > session.MaxRounds {
+		session.Status = "expired"
+		s.sendWebhook(session.CallbackURL, WebhookPayload{
+			Event:         "negotiation_completed",
+			SessionID:     sessionID,
+			Status:        "expired",
+			FinalAmount:   session.CurrentAmount,
+			Rounds:        session.MaxRounds,
+			BuyerAgentID:  session.BuyerAgentID,
+			SellerAgentID: session.SellerAgentID,
+		})
+		return nil
+	}
+
+	// Atomically claim this specific round to prevent concurrent processing
+	// If another Lambda already claimed it, CAS returns false
+	if !atomic.CompareAndSwapInt32(&session.ProcessingRound, 0, int32(nextRound)) {
+		s.log.Info("round already being processed by another Lambda", "session_id", sessionID, "round", nextRound)
+		return fmt.Errorf("round %d already being processed", nextRound)
+	}
+	defer atomic.StoreInt32(&session.ProcessingRound, 0) // release when done
+
+	s.log.Info("running autonomous negotiation round", "session_id", sessionID, "round", nextRound)
+
+	negotiation, err := s.bargaining.GetNegotiation(ctx, session.DBNegotiationID)
+	if err != nil {
+		return fmt.Errorf("failed to get negotiation: %w", err)
+	}
+
+	// Determine which agent should act based on who went last
+	// If no rounds yet, buyer starts. If last round was by buyer, seller goes next.
+	var activeAgentID string
+	var activeAgentType string
+	if len(rounds) == 0 {
+		activeAgentID = session.BuyerAgentID
+		activeAgentType = "buyer"
+	} else {
 		lastRound := rounds[len(rounds)-1]
 		if lastRound.AgentID == session.BuyerAgentID {
 			activeAgentID = session.SellerAgentID
@@ -478,7 +496,7 @@ func (s *A2ABargainingService) RunAutonomousNegotiationRound(ctx context.Context
 		}
 	}
 
-	if session.Round >= session.MaxRounds {
+	if nextRound > session.MaxRounds {
 		session.Status = "expired"
 		s.sendWebhook(session.CallbackURL, WebhookPayload{
 			Event:         "negotiation_completed",
@@ -494,7 +512,7 @@ func (s *A2ABargainingService) RunAutonomousNegotiationRound(ctx context.Context
 
 	decision, err := s.bargaining.GetLLMBargainingDecision(ctx, activeAgentID, activeAgentType, negotiation.ID)
 	if err != nil {
-		s.log.Error("LLM decision failed", "error", err, "session_id", sessionID, "round", session.Round+1, "agent_id", activeAgentID)
+		s.log.Error("LLM decision failed", "error", err, "session_id", sessionID, "round", nextRound, "agent_id", activeAgentID)
 		return fmt.Errorf("LLM decision failed: %w", err)
 	}
 
@@ -507,7 +525,7 @@ func (s *A2ABargainingService) RunAutonomousNegotiationRound(ctx context.Context
 
 	_, updatedNegotiation, err := s.bargaining.SubmitCounterOffer(ctx, negotiation.ID, counterReq)
 	if err != nil {
-		s.log.Error("submit counter offer failed", "error", err, "session_id", sessionID, "round", session.Round+1)
+		s.log.Error("submit counter offer failed", "error", err, "session_id", sessionID, "round", nextRound)
 		return fmt.Errorf("submit counter offer failed: %w", err)
 	}
 
@@ -799,7 +817,6 @@ func (s *A2ABargainingService) reloadSessionFromDB(ctx context.Context, sessionI
 		MaxRounds:        neg.MaxRounds,
 		Status:           neg.Status,
 		StartTime:        neg.CreatedAt,
-		RunStarted:       true,
 		NegotiationReady: nil,
 	}
 
