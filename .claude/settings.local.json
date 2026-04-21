@@ -21,7 +21,8 @@
       "Bash(go run:*)",
       "Bash(terraform fmt *)",
       "Bash(make package-lambda *)",
-      "Bash(powershell *)"
+      "Bash(powershell *)",
+      "Bash(curl *)"
     ]
   }
 }

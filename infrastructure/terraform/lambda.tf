@@ -96,7 +96,7 @@ resource "aws_lambda_function" "api_http" {
   filename         = local.lambda_artifacts.api_http
   source_code_hash = local.lambda_artifact_hashes.api_http
   memory_size      = 1024
-  timeout          = 30
+  timeout          = 500
 
   reserved_concurrent_executions = var.enable_lambda_reserved_concurrency ? 10 : null
 
