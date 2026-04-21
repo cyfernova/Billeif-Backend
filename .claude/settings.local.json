@@ -22,7 +22,12 @@
       "Bash(terraform fmt *)",
       "Bash(make package-lambda *)",
       "Bash(powershell *)",
-      "Bash(curl *)"
+      "Bash(curl *)",
+      "Bash(terraform init *)",
+      "Bash(terraform validate *)",
+      "Bash(terraform plan *)",
+      "Bash(aws s3api *)",
+      "Bash(terraform apply *)"
     ]
   }
 }

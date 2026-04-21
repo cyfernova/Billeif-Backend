@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"net/http"
-	"time"
 
 	"invoice-backend/internal/config"
 	"invoice-backend/internal/services"
@@ -252,12 +251,6 @@ func (h *A2ABargainingHandler) StartAutonomousNegotiation(c *gin.Context) {
 	// Enqueue first round to SQS worker
 	if err := h.a2aBargaining.EnqueueNegotiationRound(session.NegotiationID, session.DBNegotiationID, 0); err != nil {
 		log.Error("failed to enqueue negotiation round", "error", err, "session_id", session.NegotiationID)
-	}
-
-	select {
-	case <-session.NegotiationReady:
-	case <-time.After(30 * time.Second):
-		log.Warn("timeout waiting for negotiation to be created, returning without negotiation_id", "session_id", session.NegotiationID)
 	}
 
 	c.JSON(http.StatusAccepted, gin.H{
