@@ -162,7 +162,7 @@ func (s *AuthService) Login(ctx context.Context, input LoginInput) (*LoginOutput
 	})
 	if err != nil {
 		s.log.Warn("login failed", "email", input.Email, "error", err)
-		return nil, fmt.Errorf(phoneAuthGenericFailure)
+		return nil, classifyEmailAuthError(err)
 	}
 
 	// Ensure local user record exists (handles users created outside the app)
@@ -869,6 +869,35 @@ func classifyPhoneAuthError(err error) error {
 	var notAuthorized *types.NotAuthorizedException
 	if errors.As(err, &notAuthorized) {
 		return fmt.Errorf("verification session expired or code is invalid")
+	}
+
+	return fmt.Errorf(phoneAuthGenericFailure)
+}
+
+func classifyEmailAuthError(err error) error {
+	var tooManyRequests *types.TooManyRequestsException
+	if errors.As(err, &tooManyRequests) {
+		return fmt.Errorf("too many login attempts, please try again later")
+	}
+
+	var limitExceeded *types.LimitExceededException
+	if errors.As(err, &limitExceeded) {
+		return fmt.Errorf("too many login attempts, please try again later")
+	}
+
+	var userNotConfirmed *types.UserNotConfirmedException
+	if errors.As(err, &userNotConfirmed) {
+		return fmt.Errorf("Please verify your email address")
+	}
+
+	var notAuthorized *types.NotAuthorizedException
+	if errors.As(err, &notAuthorized) {
+		return fmt.Errorf("incorrect email or password")
+	}
+
+	var userNotFound *types.UserNotFoundException
+	if errors.As(err, &userNotFound) {
+		return fmt.Errorf("incorrect email or password")
 	}
 
 	return fmt.Errorf(phoneAuthGenericFailure)

@@ -288,12 +288,40 @@ func TestAuthService_Login_InvalidCredentials(t *testing.T) {
 		Password: "wrongpassword",
 	}
 
-	mockCognito.On("InitiateAuth", ctx, mock.AnythingOfType("*cognitoidentityprovider.InitiateAuthInput"), mock.Anything).Return(nil, errors.New("incorrect username or password"))
+	mockCognito.On("InitiateAuth", ctx, mock.AnythingOfType("*cognitoidentityprovider.InitiateAuthInput"), mock.Anything).Return(nil, &types.NotAuthorizedException{})
 
 	result, err := svc.Login(ctx, input)
 
 	assert.Error(t, err)
 	assert.Nil(t, result)
+	assert.Equal(t, "incorrect email or password", err.Error())
+	mockCognito.AssertExpectations(t)
+}
+
+func TestAuthService_Login_UnverifiedEmail(t *testing.T) {
+	mockCognito := new(MockCognitoIdentityProviderAPI)
+	mockUserRepo := new(MockUserRepository)
+	log := logger.New()
+
+	cfg := &services.TestAuthConfig{
+		CognitoClientID: "test-client-id",
+	}
+
+	svc := services.NewAuthServiceWithMocks(cfg, mockUserRepo, mockCognito, nil, nil, log)
+
+	ctx := context.Background()
+	input := services.LoginInput{
+		Email:    "test@example.com",
+		Password: "password123!",
+	}
+
+	mockCognito.On("InitiateAuth", ctx, mock.AnythingOfType("*cognitoidentityprovider.InitiateAuthInput"), mock.Anything).Return(nil, &types.UserNotConfirmedException{})
+
+	result, err := svc.Login(ctx, input)
+
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Equal(t, "Please verify your email address", err.Error())
 	mockCognito.AssertExpectations(t)
 }
 

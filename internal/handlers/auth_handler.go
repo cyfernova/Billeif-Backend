@@ -65,7 +65,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	result, err := h.svc.Login(c.Request.Context(), input)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		c.JSON(statusCodeForAuthError(err, http.StatusUnauthorized), gin.H{"error": err.Error()})
 		return
 	}
 
@@ -613,6 +613,10 @@ func statusCodeForAuthError(err error, fallback int) int {
 		return http.StatusNotFound
 	case strings.Contains(message, "phone number not verified"):
 		return http.StatusForbidden
+	case strings.Contains(message, "verify your email"):
+		return http.StatusForbidden
+	case strings.Contains(message, "too many login attempts"):
+		return http.StatusTooManyRequests
 	case strings.Contains(message, "invalid otp code"):
 		return http.StatusBadRequest
 	case strings.Contains(message, "otp code expired"):
