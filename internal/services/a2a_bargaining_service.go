@@ -385,7 +385,12 @@ func (s *A2ABargainingService) RunAutonomousNegotiationRound(ctx context.Context
 	s.sessionsLock.RUnlock()
 
 	if !exists {
-		return fmt.Errorf("session not found: %s", sessionID)
+		// Cold start: session not in memory. Try to reload from DB.
+		var err error
+		session, err = s.reloadSessionFromDB(ctx, sessionID)
+		if err != nil {
+			return fmt.Errorf("session not found: %s", sessionID)
+		}
 	}
 
 	if session.DBNegotiationID == "" {
@@ -718,6 +723,49 @@ func (s *A2ABargainingService) GetSessionProgressByNegotiationID(ctx context.Con
 		MaxRounds:       neg.MaxRounds,
 		Status:          neg.Status,
 	}
+}
+
+func (s *A2ABargainingService) reloadSessionFromDB(ctx context.Context, sessionID string) (*A2ASession, error) {
+	// Try to find negotiation by session_id in DB
+	neg, err := s.ap2Repo.GetBargainingNegotiationBySessionID(ctx, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("negotiation not found for session_id: %s", sessionID)
+	}
+
+	// Check if negotiation is still active
+	if neg.Status != "running" {
+		return nil, fmt.Errorf("negotiation is not active: %s (status: %s)", sessionID, neg.Status)
+	}
+
+	// Reload rounds from DB to determine current state
+	rounds, err := s.ap2Repo.GetBargainingRounds(ctx, neg.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get bargaining rounds: %w", err)
+	}
+
+	session := &A2ASession{
+		NegotiationID:   sessionID,
+		DBNegotiationID: neg.ID,
+		BuyerAgentID:    neg.BuyerAgentID,
+		SellerAgentID:   neg.SellerAgentID,
+		UserID:          neg.UserID,
+		InitialAmount:   neg.InitialAmount,
+		CurrentAmount:   neg.CurrentAmount,
+		Round:           len(rounds),
+		MaxRounds:       neg.MaxRounds,
+		Status:          neg.Status,
+		StartTime:       neg.CreatedAt,
+		RunStarted:       true,
+		NegotiationReady: nil,
+	}
+
+	// Re-register session in memory
+	s.sessionsLock.Lock()
+	s.sessions[sessionID] = session
+	s.sessionLocks[sessionID] = &sync.Mutex{}
+	s.sessionsLock.Unlock()
+
+	return session, nil
 }
 
 func generateA2ANegotiationID() string {
