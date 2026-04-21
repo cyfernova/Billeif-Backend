@@ -170,8 +170,25 @@ func (s *A2ABargainingService) StartAutonomousNegotiation(ctx context.Context, r
 		maxRounds = 5
 	}
 
+	// Create the database negotiation first so DBNegotiationID is available before enqueuing
+	negReq := &CreateNegotiationRequest{
+		BuyerAgentID:  req.BuyerAgentID,
+		SellerAgentID: req.SellerAgentID,
+		UserID:        req.UserID,
+		InitialAmount: req.InitialAmount,
+		MaxRounds:     maxRounds,
+		SessionID:     &negotiationID,
+	}
+
+	negotiation, err := s.bargaining.CreateNegotiation(ctx, negReq)
+	if err != nil {
+		s.log.Error("failed to create negotiation in database", "error", err, "session_id", negotiationID)
+		return nil, fmt.Errorf("failed to create negotiation: %w", err)
+	}
+
 	session := &A2ASession{
 		NegotiationID:    negotiationID,
+		DBNegotiationID: negotiation.ID,
 		BuyerAgentID:     req.BuyerAgentID,
 		SellerAgentID:    req.SellerAgentID,
 		UserID:           req.UserID,
@@ -193,6 +210,7 @@ func (s *A2ABargainingService) StartAutonomousNegotiation(ctx context.Context, r
 
 	s.log.Info("A2A autonomous negotiation session created",
 		"session_id", negotiationID,
+		"db_negotiation_id", negotiation.ID,
 		"buyer_id", req.BuyerAgentID,
 		"seller_id", req.SellerAgentID,
 		"initial_amount", req.InitialAmount,
@@ -236,31 +254,50 @@ func (s *A2ABargainingService) RunAutonomousNegotiation(ctx context.Context, ses
 
 	s.log.Info("starting autonomous negotiation loop", "session_id", sessionID)
 
-	negReq := &CreateNegotiationRequest{
-		BuyerAgentID:  session.BuyerAgentID,
-		SellerAgentID: session.SellerAgentID,
-		UserID:        session.UserID,
-		InitialAmount: session.InitialAmount,
-		MaxRounds:     session.MaxRounds,
-		SessionID:     &sessionID,
-	}
+	var negotiation *models.BargainingNegotiation
 
-	negotiation, err := s.bargaining.CreateNegotiation(ctx, negReq)
-	if err != nil {
-		s.log.Error("failed to create negotiation", "error", err, "session_id", sessionID)
-		close(session.NegotiationReady)
-		s.sendWebhook(session.CallbackURL, WebhookPayload{
-			Event:         "negotiation_error",
-			SessionID:     sessionID,
-			Status:        "failed",
+	// If DBNegotiationID is already set, reuse the existing negotiation
+	if session.DBNegotiationID != "" {
+		negotiation, err = s.bargaining.GetNegotiation(ctx, session.DBNegotiationID)
+		if err != nil {
+			s.log.Error("failed to get existing negotiation", "error", err, "session_id", sessionID, "db_negotiation_id", session.DBNegotiationID)
+			s.sendWebhook(session.CallbackURL, WebhookPayload{
+				Event:         "negotiation_error",
+				SessionID:     sessionID,
+				Status:        "failed",
+				BuyerAgentID:  session.BuyerAgentID,
+				SellerAgentID: session.SellerAgentID,
+			})
+			return fmt.Errorf("failed to get existing negotiation: %w", err)
+		}
+		s.log.Info("reusing existing negotiation", "session_id", sessionID, "db_negotiation_id", session.DBNegotiationID)
+	} else {
+		// DBNegotiationID not set yet, create a new negotiation
+		negReq := &CreateNegotiationRequest{
 			BuyerAgentID:  session.BuyerAgentID,
 			SellerAgentID: session.SellerAgentID,
-		})
-		return err
-	}
+			UserID:        session.UserID,
+			InitialAmount: session.InitialAmount,
+			MaxRounds:     session.MaxRounds,
+			SessionID:     &sessionID,
+		}
 
-	session.DBNegotiationID = negotiation.ID
-	close(session.NegotiationReady)
+		negotiation, err = s.bargaining.CreateNegotiation(ctx, negReq)
+		if err != nil {
+			s.log.Error("failed to create negotiation", "error", err, "session_id", sessionID)
+			s.sendWebhook(session.CallbackURL, WebhookPayload{
+				Event:         "negotiation_error",
+				SessionID:     sessionID,
+				Status:        "failed",
+				BuyerAgentID:  session.BuyerAgentID,
+				SellerAgentID: session.SellerAgentID,
+			})
+			return err
+		}
+
+		session.DBNegotiationID = negotiation.ID
+		s.log.Info("created new negotiation", "session_id", sessionID, "db_negotiation_id", negotiation.ID)
+	}
 
 	activeAgentID := session.BuyerAgentID
 	activeAgentType := "buyer"
@@ -572,8 +609,15 @@ func (s *A2ABargainingService) recordLearning(negotiation *models.BargainingNego
 
 func (s *A2ABargainingService) EnqueueNegotiationRound(sessionID, negotiationID string, currentRound int) error {
 	if s.sqs == nil || s.cfg == nil {
-		s.log.Warn("SQS not configured, cannot enqueue negotiation round")
-		return nil
+		err := fmt.Errorf("SQS not configured: sqs=%v, cfg=%v", s.sqs == nil, s.cfg == nil)
+		s.log.Error("cannot enqueue negotiation round", "error", err, "session_id", sessionID)
+		return err
+	}
+
+	if negotiationID == "" {
+		err := fmt.Errorf("negotiation ID is empty, cannot enqueue round")
+		s.log.Error("cannot enqueue negotiation round", "error", err, "session_id", sessionID)
+		return err
 	}
 
 	msg := BargainingQueueMessage{
@@ -596,7 +640,7 @@ func (s *A2ABargainingService) EnqueueNegotiationRound(sessionID, negotiationID 
 		return fmt.Errorf("failed to send SQS message: %w", err)
 	}
 
-	s.log.Info("enqueued negotiation round", "session_id", sessionID, "round", currentRound+1)
+	s.log.Info("enqueued negotiation round", "session_id", sessionID, "negotiation_id", negotiationID, "round", currentRound+1)
 	return nil
 }
 
@@ -733,7 +777,7 @@ func (s *A2ABargainingService) reloadSessionFromDB(ctx context.Context, sessionI
 	}
 
 	// Check if negotiation is still active
-	if neg.Status != "running" {
+	if neg.Status != "running" && neg.Status != "initiated" {
 		return nil, fmt.Errorf("negotiation is not active: %s (status: %s)", sessionID, neg.Status)
 	}
 

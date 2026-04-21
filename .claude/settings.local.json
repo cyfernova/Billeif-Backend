@@ -33,7 +33,8 @@
       "Bash(aws *)",
       "PowerShell(aws dynamodb scan *)",
       "Bash(terraform *)",
-      "Bash(make infra-plan *)"
+      "Bash(make infra-plan *)",
+      "Bash(make build-lambda-sqs-bargaining *)"
     ]
   }
 }
