@@ -132,7 +132,7 @@ func (s *A2ABargainingService) StartNegotiation(ctx context.Context, buyerAgentI
 		SellerAgentID: sellerAgentID,
 		InitialAmount: initialAmount,
 		CurrentAmount: initialAmount,
-		Round:         0,
+		Round:         0,//
 		MaxRounds:     5,
 		Status:        "running",
 		StartTime:     time.Now(),
