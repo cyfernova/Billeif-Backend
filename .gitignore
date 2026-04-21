@@ -67,3 +67,5 @@ docs/swagger.yaml
 
 # Binary
 api
+
+node_modules

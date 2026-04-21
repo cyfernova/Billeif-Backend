@@ -188,7 +188,7 @@ func (s *A2ABargainingService) StartAutonomousNegotiation(ctx context.Context, r
 
 	session := &A2ASession{
 		NegotiationID:    negotiationID,
-		DBNegotiationID: negotiation.ID,
+		DBNegotiationID:  negotiation.ID,
 		BuyerAgentID:     req.BuyerAgentID,
 		SellerAgentID:    req.SellerAgentID,
 		UserID:           req.UserID,
@@ -788,17 +788,17 @@ func (s *A2ABargainingService) reloadSessionFromDB(ctx context.Context, sessionI
 	}
 
 	session := &A2ASession{
-		NegotiationID:   sessionID,
-		DBNegotiationID: neg.ID,
-		BuyerAgentID:    neg.BuyerAgentID,
-		SellerAgentID:   neg.SellerAgentID,
-		UserID:          neg.UserID,
-		InitialAmount:   neg.InitialAmount,
-		CurrentAmount:   neg.CurrentAmount,
-		Round:           len(rounds),
-		MaxRounds:       neg.MaxRounds,
-		Status:          neg.Status,
-		StartTime:       neg.CreatedAt,
+		NegotiationID:    sessionID,
+		DBNegotiationID:  neg.ID,
+		BuyerAgentID:     neg.BuyerAgentID,
+		SellerAgentID:    neg.SellerAgentID,
+		UserID:           neg.UserID,
+		InitialAmount:    neg.InitialAmount,
+		CurrentAmount:    neg.CurrentAmount,
+		Round:            len(rounds),
+		MaxRounds:        neg.MaxRounds,
+		Status:           neg.Status,
+		StartTime:        neg.CreatedAt,
 		RunStarted:       true,
 		NegotiationReady: nil,
 	}

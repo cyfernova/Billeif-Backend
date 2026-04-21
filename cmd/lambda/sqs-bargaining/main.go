@@ -110,6 +110,22 @@ func processBargainingRound(ctx context.Context, cfg *config.Config, svc *servic
 		return err
 	}
 
+	// Enqueue next round if negotiation is still active
+	updatedProgress := a2aSvc.GetSessionProgress(sessionID)
+	if updatedProgress == nil {
+		updatedProgress = a2aSvc.GetSessionProgressByNegotiationID(ctx, negotiationID)
+	}
+	if updatedProgress != nil {
+		isDone := updatedProgress.Status == "completed" || updatedProgress.Status == "accepted" ||
+			updatedProgress.Status == "rejected" || updatedProgress.Status == "expired"
+		hasMoreRounds := updatedProgress.Round < updatedProgress.MaxRounds
+		if !isDone && hasMoreRounds {
+			if enqueueErr := a2aSvc.EnqueueNegotiationRound(sessionID, negotiationID, updatedProgress.Round); enqueueErr != nil {
+				log.Warn("failed to enqueue next round", "error", enqueueErr, "session_id", sessionID, "round", updatedProgress.Round)
+			}
+		}
+	}
+
 	log.Info("bargaining round completed", "session_id", sessionID, "round", progress.Round)
 	return nil
 }
