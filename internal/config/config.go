@@ -312,6 +312,7 @@ func Load() (*Config, error) {
 	_ = viper.BindEnv("SQS.INVOICE_QUEUE", "SQS_INVOICE_QUEUE")
 	_ = viper.BindEnv("SQS.PAYMENT_QUEUE", "SQS_PAYMENT_QUEUE")
 	_ = viper.BindEnv("SQS.GST_QUEUE", "SQS_GST_QUEUE")
+	_ = viper.BindEnv("SQS.BARGAINING_QUEUE", "SQS_BARGAINING_QUEUE")
 	_ = viper.BindEnv("SENTRY.DSN", "SENTRY_DSN")
 	_ = viper.BindEnv("SENTRY.SAMPLE_RATE", "SENTRY_SAMPLE_RATE")
 	_ = viper.BindEnv("SENTRY.TRACES_SAMPLE_RATE", "SENTRY_TRACES_SAMPLE_RATE")
