@@ -689,6 +689,11 @@ func (m *MockMarketplaceAP2Repository) GetNegotiationsByAgent(ctx context.Contex
 	return args.Get(0).([]*models.BargainingNegotiation), args.Get(1).(int64), args.Error(2)
 }
 
+func (m *MockMarketplaceAP2Repository) GetNegotiationsInProgress(ctx context.Context, limit int) ([]*models.BargainingNegotiation, error) {
+	args := m.Called(ctx, limit)
+	return args.Get(0).([]*models.BargainingNegotiation), args.Error(1)
+}
+
 func (m *MockMarketplaceAP2Repository) UpdateNegotiationStatus(ctx context.Context, id, status string) error {
 	args := m.Called(ctx, id, status)
 	return args.Error(0)

@@ -32,7 +32,8 @@
       "Bash(aws sts get-caller-identity *)",
       "Bash(aws *)",
       "PowerShell(aws dynamodb scan *)",
-      "Bash(terraform *)"
+      "Bash(terraform *)",
+      "Bash(make infra-plan *)"
     ]
   }
 }

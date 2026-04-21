@@ -1124,6 +1124,26 @@ func (r *ap2Repository) GetNegotiationsByUser(ctx context.Context, userID string
 	return result, total, nil
 }
 
+func (r *ap2Repository) GetNegotiationsInProgress(ctx context.Context, limit int) ([]*models.BargainingNegotiation, error) {
+	var negotiations []models.BargainingNegotiation
+	if err := r.db.WithContext(ctx).Model(&models.BargainingNegotiation{}).
+		Where("status = ?", "in_progress").
+		Where("expires_at > ?", time.Now()).
+		Where("rounds < max_rounds").
+		Preload("BuyerAgent").
+		Preload("SellerAgent").
+		Order("created_at ASC").
+		Limit(limit).
+		Find(&negotiations).Error; err != nil {
+		return nil, err
+	}
+	result := make([]*models.BargainingNegotiation, len(negotiations))
+	for i := range negotiations {
+		result[i] = &negotiations[i]
+	}
+	return result, nil
+}
+
 func (r *ap2Repository) GetNegotiationsByAgent(ctx context.Context, agentID string, page, limit int) ([]*models.BargainingNegotiation, int64, error) {
 	var negotiations []models.BargainingNegotiation
 	var total int64

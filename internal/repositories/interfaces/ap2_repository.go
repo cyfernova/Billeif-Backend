@@ -150,6 +150,7 @@ type AP2Repository interface {
 	GetBargainingNegotiationBySessionID(ctx context.Context, sessionID string) (*models.BargainingNegotiation, error)
 	GetNegotiationsByUser(ctx context.Context, userID string, page, limit int) ([]*models.BargainingNegotiation, int64, error)
 	GetNegotiationsByAgent(ctx context.Context, agentID string, page, limit int) ([]*models.BargainingNegotiation, int64, error)
+	GetNegotiationsInProgress(ctx context.Context, limit int) ([]*models.BargainingNegotiation, error)
 	UpdateNegotiationStatus(ctx context.Context, id, status string) error
 	UpdateNegotiationAmountAndRounds(ctx context.Context, id string, amount float64, rounds int, status string) error
 	CompleteNegotiation(ctx context.Context, id, status string, finalAmount float64, completedAt *time.Time) error

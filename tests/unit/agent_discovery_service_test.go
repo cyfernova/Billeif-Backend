@@ -415,6 +415,9 @@ func (m *MockAP2Repository) GetNegotiationsByUser(ctx context.Context, userID st
 func (m *MockAP2Repository) GetNegotiationsByAgent(ctx context.Context, agentID string, page, limit int) ([]*models.BargainingNegotiation, int64, error) {
 	return nil, 0, nil
 }
+func (m *MockAP2Repository) GetNegotiationsInProgress(ctx context.Context, limit int) ([]*models.BargainingNegotiation, error) {
+	return nil, nil
+}
 func (m *MockAP2Repository) UpdateNegotiationStatus(ctx context.Context, id, status string) error {
 	return nil
 }
