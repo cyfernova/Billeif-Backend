@@ -34,12 +34,13 @@ type StartA2ANegotiationRequest struct {
 }
 
 type StartAutonomousNegotiationRequest struct {
-	BuyerAgentID  string  `json:"buyer_agent_id" binding:"required,uuid"`
-	SellerAgentID string  `json:"seller_agent_id" binding:"required,uuid"`
-	InitialAmount float64 `json:"initial_amount" binding:"required,gt=0"`
-	MaxRounds     int     `json:"max_rounds" binding:"omitempty,gte=1,lte=20"`
-	CallbackURL   string  `json:"callback_url"`
-	UserID        string  `json:"user_id" binding:"omitempty,uuid"`
+	BuyerAgentID   string  `json:"buyer_agent_id" binding:"required,uuid"`
+	SellerAgentID  string  `json:"seller_agent_id" binding:"required,uuid"`
+	InitialAmount  float64 `json:"initial_amount" binding:"required,gt=0"`
+	ReferencePrice float64 `json:"reference_price" binding:"omitempty,gt=0"`
+	MaxRounds      int     `json:"max_rounds" binding:"omitempty,gte=1,lte=20"`
+	CallbackURL    string  `json:"callback_url"`
+	UserID         string  `json:"user_id" binding:"omitempty,uuid"`
 }
 
 type A2ANegotiationSession struct {
@@ -222,11 +223,12 @@ func (h *A2ABargainingHandler) StartAutonomousNegotiation(c *gin.Context) {
 	}
 
 	autoReq := &services.AutonomousNegotiationRequest{
-		BuyerAgentID:  req.BuyerAgentID,
-		SellerAgentID: req.SellerAgentID,
-		InitialAmount: req.InitialAmount,
-		MaxRounds:     req.MaxRounds,
-		CallbackURL:   req.CallbackURL,
+		BuyerAgentID:   req.BuyerAgentID,
+		SellerAgentID:  req.SellerAgentID,
+		InitialAmount:  req.InitialAmount,
+		ReferencePrice: req.ReferencePrice,
+		MaxRounds:      req.MaxRounds,
+		CallbackURL:    req.CallbackURL,
 		UserID: func() string {
 			if req.UserID != "" {
 				return req.UserID

@@ -49,6 +49,7 @@ type CreateNegotiationRequest struct {
 	SellerAgentID      string                 `json:"seller_agent_id" validate:"required,uuid"`
 	UserID             string                 `json:"user_id" validate:"required,uuid"`
 	InitialAmount      float64                `json:"initial_amount" validate:"required,gt=0"`
+	ReferencePrice     float64                `json:"reference_price" validate:"omitempty,gt=0"`
 	MarketplaceOrderID *string                `json:"marketplace_order_id,omitempty"`
 	MaxRounds          int                    `json:"max_rounds" validate:"omitempty,gte=1,lte=20"`
 	Metadata           map[string]interface{} `json:"metadata,omitempty"`
@@ -88,6 +89,22 @@ func (s *BargainingService) CreateNegotiation(ctx context.Context, req *CreateNe
 		maxRounds = 5
 	}
 
+	// Use ReferencePrice if provided, otherwise fall back to seller's listed price from agent config
+	referencePrice := req.ReferencePrice
+	if referencePrice == 0 && sellerAgent.Price != nil && *sellerAgent.Price > 0 {
+		referencePrice = *sellerAgent.Price
+	}
+	if referencePrice == 0 {
+		referencePrice = req.InitialAmount
+	}
+
+	// Store reference_price in metadata
+	metadata := req.Metadata
+	if metadata == nil {
+		metadata = make(map[string]interface{})
+	}
+	metadata["reference_price"] = referencePrice
+
 	negotiation := &models.BargainingNegotiation{
 		BuyerAgentID:       req.BuyerAgentID,
 		SellerAgentID:      req.SellerAgentID,
@@ -101,7 +118,7 @@ func (s *BargainingService) CreateNegotiation(ctx context.Context, req *CreateNe
 		Rounds:             0,
 		MaxRounds:          maxRounds,
 		ExpiresAt:          time.Now().Add(24 * time.Hour),
-		Metadata:           s.marshalMetadata(req.Metadata),
+		Metadata:           s.marshalMetadata(metadata),
 		SessionID:          req.SessionID,
 	}
 
@@ -646,14 +663,27 @@ func (s *BargainingService) GetLLMBargainingDecision(ctx context.Context, agentI
 		}
 	}
 
+	// Get reference price from metadata
+	referencePrice := getReferencePriceFromMetadata(negotiation)
+
 	contextText := fmt.Sprintf(`You are a bargaining agent.
-Role: %s (buyer=minimize price, seller=maximize price)
+Role: %s
+- BUYER: Your goal is to MINIMIZE the price. You start with initial_offer. Counter offers should be LOWER than current.
+- SELLER: Your goal is to MAXIMIZE the price. You start with reference_price (your listed price). Counter offers should be HIGHER than current, approaching reference_price.
 Options: counteroffer, accept, reject
-Constraints: buyer proposes <= current (min 30%% of initial), seller proposes >= current (max 150%% of initial)
+Constraints:
+  - buyer: proposes <= current_amount (minimum 30%% of reference_price)
+  - seller: proposes >= current_amount (maximum 150%% of reference_price)
 Output JSON: {"action":"counteroffer|accept|reject","proposed_amount":<number>,"reason":"<short>","confidence":0.0-1.0}
 
-State: round %d/%d, current=%.2f, initial=%.2f, buyer_vol=%.2f, seller_vol=%.2f, prev_rounds=%d
-`, agentType, negotiation.Rounds, negotiation.MaxRounds, negotiation.CurrentAmount, negotiation.InitialAmount, negotiation.BuyerVolatility, negotiation.SellerVolatility, len(rounds))
+State: round %d/%d
+- reference_price: %.2f (seller's listed price)
+- initial_offer: %.2f (buyer's first offer)
+- current_amount: %.2f (latest negotiated amount)
+- buyer_volatility: %.2f
+- seller_volatility: %.2f
+- previous_rounds: %d
+`, agentType, negotiation.Rounds+1, negotiation.MaxRounds, referencePrice, negotiation.InitialAmount, negotiation.CurrentAmount, negotiation.BuyerVolatility, negotiation.SellerVolatility, len(rounds))
 
 	if len(agentConfig) > 0 {
 		if volatility, ok := agentConfig["volatility"].(float64); ok {
@@ -688,8 +718,21 @@ State: round %d/%d, current=%.2f, initial=%.2f, buyer_vol=%.2f, seller_vol=%.2f,
 		if agentType == "buyer" {
 			result.ProposedAmount = s.calculateFallbackCounterOffer(negotiation, agentType)
 		} else {
-			markup := negotiation.CurrentAmount/negotiation.InitialAmount - 1.0
-			result.ProposedAmount = negotiation.InitialAmount * (1.0 + markup*0.95)
+			// Seller fallback: INCREASE price toward reference_price
+			referencePrice := getReferencePriceFromMetadata(negotiation)
+			// Calculate how close we are to reference and move closer
+			volatility := negotiation.SellerVolatility
+			if volatility == 0 {
+				volatility = 0.5
+			}
+			markupFactor := volatility * 0.15
+			// Move current_amount UP toward reference_price
+			distance := referencePrice - negotiation.CurrentAmount
+			increase := distance * markupFactor
+			result.ProposedAmount = negotiation.CurrentAmount + increase
+			if result.ProposedAmount > referencePrice {
+				result.ProposedAmount = referencePrice
+			}
 		}
 		result.Reason = "Using fallback calculation (LLM parsing failed)"
 		result.Confidence = 0.5
@@ -881,6 +924,22 @@ func (s *BargainingServiceTestable) CreateNegotiation(ctx context.Context, req *
 		maxRounds = 5
 	}
 
+	// Use ReferencePrice if provided, otherwise fall back to seller's listed price from agent config
+	referencePrice := req.ReferencePrice
+	if referencePrice == 0 && sellerAgent.Price != nil && *sellerAgent.Price > 0 {
+		referencePrice = *sellerAgent.Price
+	}
+	if referencePrice == 0 {
+		referencePrice = req.InitialAmount
+	}
+
+	// Store reference_price in metadata
+	metadata := req.Metadata
+	if metadata == nil {
+		metadata = make(map[string]interface{})
+	}
+	metadata["reference_price"] = referencePrice
+
 	negotiation := &models.BargainingNegotiation{
 		BuyerAgentID:       req.BuyerAgentID,
 		SellerAgentID:      req.SellerAgentID,
@@ -894,7 +953,7 @@ func (s *BargainingServiceTestable) CreateNegotiation(ctx context.Context, req *
 		Rounds:             0,
 		MaxRounds:          maxRounds,
 		ExpiresAt:          time.Now().Add(24 * time.Hour),
-		Metadata:           s.marshalMetadata(req.Metadata),
+		Metadata:           s.marshalMetadata(metadata),
 		SessionID:          req.SessionID,
 	}
 
@@ -1119,6 +1178,24 @@ func getAgentVolatilityInternal(agent *models.Agent) float64 {
 	return 0.5
 }
 
+// getReferencePriceFromMetadata extracts reference_price from negotiation metadata
+func getReferencePriceFromMetadata(negotiation *models.BargainingNegotiation) float64 {
+	if negotiation == nil || negotiation.Metadata == "" {
+		return negotiation.InitialAmount
+	}
+
+	var metadata map[string]interface{}
+	if err := json.Unmarshal([]byte(negotiation.Metadata), &metadata); err != nil {
+		return negotiation.InitialAmount
+	}
+
+	if refPrice, ok := metadata["reference_price"].(float64); ok {
+		return refPrice
+	}
+
+	return negotiation.InitialAmount
+}
+
 func isValidCounterOfferInternal(negotiation *models.BargainingNegotiation, agentType string, proposedAmount float64) bool {
 	if proposedAmount <= 0 {
 		return false
@@ -1165,6 +1242,8 @@ func calculateFallbackCounterOfferInternal(negotiation *models.BargainingNegotia
 		currentAmount = negotiation.CurrentAmount
 	}
 
+	referencePrice := getReferencePriceFromMetadata(negotiation)
+
 	maxDiscount := volatility * 0.15
 	minDiscount := volatility * 0.02
 
@@ -1174,7 +1253,13 @@ func calculateFallbackCounterOfferInternal(negotiation *models.BargainingNegotia
 	if agentType == "buyer" {
 		suggestedAmount = currentAmount * (1 - discountFactor)
 	} else {
-		suggestedAmount = currentAmount * (1 + discountFactor)
+		// Seller: INCREASE price toward reference_price
+		distance := referencePrice - currentAmount
+		increase := distance * discountFactor
+		suggestedAmount = currentAmount + increase
+		if suggestedAmount > referencePrice {
+			suggestedAmount = referencePrice
+		}
 	}
 
 	return math.Round(suggestedAmount*100) / 100

@@ -35,7 +35,8 @@
       "Bash(terraform *)",
       "Bash(make infra-plan *)",
       "Bash(make build-lambda-sqs-bargaining *)",
-      "Bash(make build-lambda *)"
+      "Bash(make build-lambda *)",
+      "Bash(make migrate-up *)"
     ]
   }
 }
