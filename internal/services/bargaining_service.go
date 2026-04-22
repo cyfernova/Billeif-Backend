@@ -736,6 +736,24 @@ State: round %d/%d
 		}
 		result.Reason = "Using fallback calculation (LLM parsing failed)"
 		result.Confidence = 0.5
+	} else if agentType == "seller" {
+		// For seller, ALWAYS use fallback calculation to ensure price moves UP toward reference_price
+		// LLM tends to give wrong values for seller (moving price down instead of up)
+		referencePrice := getReferencePriceFromMetadata(negotiation)
+		volatility := negotiation.SellerVolatility
+		if volatility == 0 {
+			volatility = 0.5
+		}
+		markupFactor := volatility * 0.15
+		// Move current_amount UP toward reference_price
+		distance := referencePrice - negotiation.CurrentAmount
+		increase := distance * markupFactor
+		result.ProposedAmount = negotiation.CurrentAmount + increase
+		if result.ProposedAmount > referencePrice {
+			result.ProposedAmount = referencePrice
+		}
+		result.Reason = "Using seller fallback (LLM response overridden for correct direction)"
+		s.log.Info("seller LLM response overridden with fallback", "llm_proposed", result.ProposedAmount, "fallback_proposed", result.ProposedAmount)
 	}
 
 	s.log.Info("LLM bargaining decision generated",
