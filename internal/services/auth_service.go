@@ -102,29 +102,57 @@ type RegisterOutput struct {
 }
 
 func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*RegisterOutput, error) {
+	normalizedEmail := normalizeOptionalEmail(input.Email)
+	normalizedName := strings.TrimSpace(input.Name)
+
 	signUpResp, err := s.cognito.SignUp(ctx, &cognitoidentityprovider.SignUpInput{
 		ClientId: aws.String(s.cfg.Cognito.ClientID),
-		Username: aws.String(input.Email),
+		Username: aws.String(normalizedEmail),
 		Password: aws.String(input.Password),
 		UserAttributes: []types.AttributeType{
-			{Name: aws.String("email"), Value: aws.String(input.Email)},
-			{Name: aws.String("name"), Value: aws.String(input.Name)},
+			{Name: aws.String("email"), Value: aws.String(normalizedEmail)},
+			{Name: aws.String("name"), Value: aws.String(normalizedName)},
 		},
 	})
 	if err != nil {
+		var usernameExists *types.UsernameExistsException
+		if errors.As(err, &usernameExists) {
+			resendErr := s.ResendVerification(ctx, normalizedEmail)
+			if resendErr == nil || shouldIgnoreVerificationResendError(resendErr) {
+				if resendErr != nil {
+					s.log.Warn("existing signup verification resend throttled", "email", normalizedEmail, "error", resendErr)
+				}
+				return &RegisterOutput{
+					UserID:  "",
+					Message: "Account already exists. Please verify your email address",
+				}, nil
+			}
+
+			if isAlreadyConfirmedResendError(resendErr) {
+				return nil, fmt.Errorf("email already registered")
+			}
+
+			s.log.Warn("existing signup verification resend failed", "email", normalizedEmail, "error", resendErr)
+			return nil, fmt.Errorf("email already registered")
+		}
+
 		s.log.Error("cognito signup failed", "error", err)
 		return nil, fmt.Errorf("registration failed: %w", err)
 	}
 
-	cognitoID := input.Email
+	if signUpResp != nil && !signUpResp.UserConfirmed {
+		s.ensureEmailVerificationCodeDispatched(ctx, normalizedEmail, signUpResp)
+	}
+
+	cognitoID := normalizedEmail
 	if signUpResp.UserSub != nil {
 		cognitoID = *signUpResp.UserSub
 	}
 
 	user := &models.User{
-		Email:     input.Email,
+		Email:     normalizedEmail,
 		CognitoID: cognitoID,
-		Name:      input.Name,
+		Name:      normalizedName,
 		Role:      "viewer",
 	}
 
@@ -137,6 +165,47 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*Regis
 		UserID:  user.ID,
 		Message: "Please verify your email address",
 	}, nil
+}
+
+func (s *AuthService) ensureEmailVerificationCodeDispatched(ctx context.Context, email string, signUpResp *cognitoidentityprovider.SignUpOutput) {
+	if signUpResp != nil && signUpResp.CodeDeliveryDetails != nil {
+		return
+	}
+
+	if err := s.ResendVerification(ctx, email); err != nil {
+		if shouldIgnoreVerificationResendError(err) {
+			s.log.Warn("email verification fallback resend throttled; assuming code was already sent", "email", email, "error", err)
+			return
+		}
+		s.log.Warn("email verification fallback resend failed", "email", email, "error", err)
+	}
+}
+
+func shouldIgnoreVerificationResendError(err error) bool {
+	var tooManyRequests *types.TooManyRequestsException
+	if errors.As(err, &tooManyRequests) {
+		return true
+	}
+
+	var limitExceeded *types.LimitExceededException
+	if errors.As(err, &limitExceeded) {
+		return true
+	}
+
+	return false
+}
+
+func isAlreadyConfirmedResendError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var invalidParameter *types.InvalidParameterException
+	if errors.As(err, &invalidParameter) {
+		return strings.Contains(strings.ToLower(aws.ToString(invalidParameter.Message)), "already confirmed")
+	}
+
+	return strings.Contains(strings.ToLower(err.Error()), "already confirmed")
 }
 
 type LoginInput struct {

@@ -180,6 +180,9 @@ func TestAuthService_Register(t *testing.T) {
 	userSub := "user-sub-123"
 	mockCognito.On("SignUp", ctx, mock.AnythingOfType("*cognitoidentityprovider.SignUpInput"), mock.Anything).Return(&cognitoidentityprovider.SignUpOutput{
 		UserSub: aws.String(userSub),
+		CodeDeliveryDetails: &types.CodeDeliveryDetailsType{
+			DeliveryMedium: types.DeliveryMediumTypeEmail,
+		},
 	}, nil)
 
 	mockUserRepo.On("Create", ctx, mock.AnythingOfType("*models.User")).Return(nil)
@@ -191,6 +194,100 @@ func TestAuthService_Register(t *testing.T) {
 	assert.Equal(t, "Please verify your email address", result.Message)
 	mockCognito.AssertExpectations(t)
 	mockUserRepo.AssertExpectations(t)
+}
+
+func TestAuthService_Register_TriggersFallbackResendWhenDeliveryMissing(t *testing.T) {
+	mockCognito := new(MockCognitoIdentityProviderAPI)
+	mockUserRepo := new(MockUserRepository)
+	log := logger.New()
+
+	cfg := &services.TestAuthConfig{
+		CognitoClientID: "test-client-id",
+	}
+
+	svc := services.NewAuthServiceWithMocks(cfg, mockUserRepo, mockCognito, nil, nil, log)
+
+	ctx := context.Background()
+	input := services.RegisterInput{
+		Email:    "test@example.com",
+		Password: "password123!",
+		Name:     "Test User",
+	}
+
+	userSub := "user-sub-123"
+	mockCognito.On("SignUp", ctx, mock.AnythingOfType("*cognitoidentityprovider.SignUpInput"), mock.Anything).Return(&cognitoidentityprovider.SignUpOutput{
+		UserSub: aws.String(userSub),
+	}, nil)
+	mockCognito.On("ResendConfirmationCode", ctx, mock.AnythingOfType("*cognitoidentityprovider.ResendConfirmationCodeInput"), mock.Anything).Return(&cognitoidentityprovider.ResendConfirmationCodeOutput{}, nil)
+	mockUserRepo.On("Create", ctx, mock.AnythingOfType("*models.User")).Return(nil)
+
+	result, err := svc.Register(ctx, input)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, "Please verify your email address", result.Message)
+	mockCognito.AssertExpectations(t)
+	mockUserRepo.AssertExpectations(t)
+}
+
+func TestAuthService_Register_ExistingUnverifiedUserReturnsVerificationMessage(t *testing.T) {
+	mockCognito := new(MockCognitoIdentityProviderAPI)
+	mockUserRepo := new(MockUserRepository)
+	log := logger.New()
+
+	cfg := &services.TestAuthConfig{
+		CognitoClientID: "test-client-id",
+	}
+
+	svc := services.NewAuthServiceWithMocks(cfg, mockUserRepo, mockCognito, nil, nil, log)
+
+	ctx := context.Background()
+	input := services.RegisterInput{
+		Email:    "test@example.com",
+		Password: "password123!",
+		Name:     "Test User",
+	}
+
+	mockCognito.On("SignUp", ctx, mock.AnythingOfType("*cognitoidentityprovider.SignUpInput"), mock.Anything).Return(nil, &types.UsernameExistsException{})
+	mockCognito.On("ResendConfirmationCode", ctx, mock.AnythingOfType("*cognitoidentityprovider.ResendConfirmationCodeInput"), mock.Anything).Return(&cognitoidentityprovider.ResendConfirmationCodeOutput{}, nil)
+
+	result, err := svc.Register(ctx, input)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Contains(t, result.Message, "verify your email")
+	mockCognito.AssertExpectations(t)
+}
+
+func TestAuthService_Register_ExistingConfirmedUserReturnsConflictError(t *testing.T) {
+	mockCognito := new(MockCognitoIdentityProviderAPI)
+	mockUserRepo := new(MockUserRepository)
+	log := logger.New()
+
+	cfg := &services.TestAuthConfig{
+		CognitoClientID: "test-client-id",
+	}
+
+	svc := services.NewAuthServiceWithMocks(cfg, mockUserRepo, mockCognito, nil, nil, log)
+
+	ctx := context.Background()
+	input := services.RegisterInput{
+		Email:    "test@example.com",
+		Password: "password123!",
+		Name:     "Test User",
+	}
+
+	mockCognito.On("SignUp", ctx, mock.AnythingOfType("*cognitoidentityprovider.SignUpInput"), mock.Anything).Return(nil, &types.UsernameExistsException{})
+	mockCognito.On("ResendConfirmationCode", ctx, mock.AnythingOfType("*cognitoidentityprovider.ResendConfirmationCodeInput"), mock.Anything).Return(nil, &types.InvalidParameterException{
+		Message: aws.String("User is already confirmed"),
+	})
+
+	result, err := svc.Register(ctx, input)
+
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "email already registered")
+	mockCognito.AssertExpectations(t)
 }
 
 // TestAuthService_Register_CognitoError tests Register when Cognito fails
