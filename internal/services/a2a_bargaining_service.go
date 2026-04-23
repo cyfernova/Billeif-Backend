@@ -677,7 +677,7 @@ func (s *A2ABargainingService) sendWebhook(callbackURL string, payload WebhookPa
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		s.log.Error("failed to marshal webhook payload", "error", err)
+		s.log.Error("failed to marshal webhook payload", "error", err)//
 		return
 	}
 
