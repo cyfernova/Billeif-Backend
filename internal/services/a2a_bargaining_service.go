@@ -717,11 +717,23 @@ func (s *A2ABargainingService) GetSessionProgress(sessionID string) *A2ASessionP
 	s.sessionsLock.RUnlock()
 
 	if exists {
+		// Sync in-memory session with DB state to catch external modifications
+		dbProgress := s.getDBProgressBySessionID(sessionID)
+		if dbProgress != nil {
+			session.Round = dbProgress.Round
+			session.Status = dbProgress.Status
+			session.CurrentAmount = dbProgress.CurrentAmount
+		}
 		progress := session.ToProgressResponse()
 		return &progress
 	}
 
 	// Fall back to DB lookup (handles Lambda cold starts where in-memory session is lost)
+	dbProgress := s.getDBProgressBySessionID(sessionID)
+	return dbProgress
+}
+
+func (s *A2ABargainingService) getDBProgressBySessionID(sessionID string) *A2ASessionProgress {
 	neg, err := s.ap2Repo.GetBargainingNegotiationBySessionID(context.Background(), sessionID)
 	if err != nil || neg == nil {
 		return nil
@@ -761,6 +773,13 @@ func (s *A2ABargainingService) GetSessionProgressByNegotiationID(ctx context.Con
 	for _, session := range s.sessions {
 		if session.DBNegotiationID == negotiationID {
 			s.sessionsLock.RUnlock()
+			// Validate session state against DB to avoid stale in-memory data
+			dbProgress := s.getDBProgress(ctx, negotiationID)
+			if dbProgress != nil {
+				session.Round = dbProgress.Round
+				session.Status = dbProgress.Status
+				session.CurrentAmount = dbProgress.CurrentAmount
+			}
 			progress := session.ToProgressResponse()
 			return &progress
 		}
@@ -768,12 +787,15 @@ func (s *A2ABargainingService) GetSessionProgressByNegotiationID(ctx context.Con
 	s.sessionsLock.RUnlock()
 
 	// Fall back to DB lookup
+	dbProgress := s.getDBProgress(ctx, negotiationID)
+	return dbProgress
+}
+
+func (s *A2ABargainingService) getDBProgress(ctx context.Context, negotiationID string) *A2ASessionProgress {
 	neg, err := s.bargaining.GetNegotiation(ctx, negotiationID)
 	if err != nil || neg == nil {
 		return nil
 	}
-
-	// Return DB-backed session state
 	return &A2ASessionProgress{
 		NegotiationID:   "",
 		NegotiationUUID: neg.ID,
