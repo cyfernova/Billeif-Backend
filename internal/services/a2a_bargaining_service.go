@@ -479,6 +479,14 @@ func (s *A2ABargainingService) RunAutonomousNegotiationRound(ctx context.Context
 		return fmt.Errorf("failed to get negotiation: %w", err)
 	}
 
+	// Sync session state from DB before processing
+	latestNeg, err := s.bargaining.GetNegotiation(ctx, session.DBNegotiationID)
+	if err == nil && latestNeg != nil {
+		session.Round = latestNeg.Rounds
+		session.Status = latestNeg.Status
+		session.CurrentAmount = latestNeg.CurrentAmount
+	}
+
 	// Determine which agent should act based on who went last
 	// If no rounds yet, buyer starts. If last round was by buyer, seller goes next.
 	var activeAgentID string
@@ -724,6 +732,7 @@ func (s *A2ABargainingService) GetSessionProgress(sessionID string) *A2ASessionP
 			session.Status = dbProgress.Status
 			session.CurrentAmount = dbProgress.CurrentAmount
 		}
+		// Return pointer to the actual in-memory session's progress (not a copy)
 		progress := session.ToProgressResponse()
 		return &progress
 	}
