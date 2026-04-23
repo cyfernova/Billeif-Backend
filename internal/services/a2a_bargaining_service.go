@@ -89,9 +89,9 @@ type AutonomousNegotiationRequest struct {
 	SellerAgentID  string  `json:"seller_agent_id" binding:"required,uuid"`
 	InitialAmount  float64 `json:"initial_amount" binding:"required,gt=0"`
 	ReferencePrice float64 `json:"reference_price"`
-	MaxRounds     int     `json:"max_rounds" binding:"omitempty,gte=1,lte=20"`
-	CallbackURL   string  `json:"callback_url"`
-	UserID        string  `json:"user_id"`
+	MaxRounds      int     `json:"max_rounds" binding:"omitempty,gte=1,lte=20"`
+	CallbackURL    string  `json:"callback_url"`
+	UserID         string  `json:"user_id"`
 }
 
 type WebhookPayload struct {
@@ -133,7 +133,7 @@ func (s *A2ABargainingService) StartNegotiation(ctx context.Context, buyerAgentI
 		SellerAgentID: sellerAgentID,
 		InitialAmount: initialAmount,
 		CurrentAmount: initialAmount,
-		Round:         0,//
+		Round:         0, //
 		MaxRounds:     5,
 		Status:        "running",
 		StartTime:     time.Now(),
@@ -691,7 +691,7 @@ func (s *A2ABargainingService) sendWebhook(callbackURL string, payload WebhookPa
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		s.log.Error("failed to marshal webhook payload", "error", err)//
+		s.log.Error("failed to marshal webhook payload", "error", err) //
 		return
 	}
 
