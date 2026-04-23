@@ -89,9 +89,9 @@ type AutonomousNegotiationRequest struct {
 	SellerAgentID  string  `json:"seller_agent_id" binding:"required,uuid"`
 	InitialAmount  float64 `json:"initial_amount" binding:"required,gt=0"`
 	ReferencePrice float64 `json:"reference_price"`
-	MaxRounds      int     `json:"max_rounds" binding:"omitempty,gte=1,lte=20"`
-	CallbackURL    string  `json:"callback_url"`
-	UserID         string  `json:"user_id"`
+	MaxRounds     int     `json:"max_rounds" binding:"omitempty,gte=1,lte=20"`
+	CallbackURL   string  `json:"callback_url"`
+	UserID        string  `json:"user_id"`
 }
 
 type WebhookPayload struct {
@@ -174,11 +174,10 @@ func (s *A2ABargainingService) StartAutonomousNegotiation(ctx context.Context, r
 
 	// Create the database negotiation first so DBNegotiationID is available before enqueuing
 	negReq := &CreateNegotiationRequest{
-		BuyerAgentID:   req.BuyerAgentID,
+		BuyerAgentID:  req.BuyerAgentID,
 		SellerAgentID: req.SellerAgentID,
 		UserID:        req.UserID,
 		InitialAmount: req.InitialAmount,
-		ReferencePrice: req.ReferencePrice,
 		MaxRounds:     maxRounds,
 		SessionID:     &negotiationID,
 	}
@@ -578,13 +577,6 @@ func (s *A2ABargainingService) RunAutonomousNegotiationRound(ctx context.Context
 		"round", session.Round,
 		"max_rounds", session.MaxRounds,
 		"current_amount", session.CurrentAmount)
-
-	// Enqueue next round if negotiation not complete and not at max rounds
-	if session.Round < session.MaxRounds {
-		if err := s.EnqueueNegotiationRound(sessionID, negotiation.ID, session.Round); err != nil {
-			s.log.Error("failed to enqueue next round", "error", err, "session_id", sessionID, "next_round", session.Round+1)
-		}
-	}
 
 	return nil
 }
