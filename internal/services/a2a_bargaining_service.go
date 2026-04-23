@@ -796,7 +796,7 @@ func (s *A2ABargainingService) reloadSessionFromDB(ctx context.Context, sessionI
 	}
 
 	// Check if negotiation is still active
-	if neg.Status != "running" && neg.Status != "initiated" {
+	if neg.Status != "running" && neg.Status != "initiated" && neg.Status != "in_progress" {
 		return nil, fmt.Errorf("negotiation is not active: %s (status: %s)", sessionID, neg.Status)
 	}
 
