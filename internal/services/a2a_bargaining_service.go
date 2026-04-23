@@ -474,24 +474,30 @@ func (s *A2ABargainingService) RunAutonomousNegotiationRound(ctx context.Context
 
 	s.log.Info("running autonomous negotiation round", "session_id", sessionID, "round", nextRound)
 
-	negotiation, err := s.bargaining.GetNegotiation(ctx, session.DBNegotiationID)
+	// Sync session state from DB before processing
+	// This ensures we use the authoritative DB round count, not stale in-memory state
+	latestNeg, err := s.bargaining.GetNegotiation(ctx, session.DBNegotiationID)
 	if err != nil {
 		return fmt.Errorf("failed to get negotiation: %w", err)
 	}
+	// Update in-memory session with authoritative DB state
+	session.Round = latestNeg.Rounds
+	session.Status = latestNeg.Status
+	session.CurrentAmount = latestNeg.CurrentAmount
 
-	// Sync session state from DB before processing
-	latestNeg, err := s.bargaining.GetNegotiation(ctx, session.DBNegotiationID)
-	if err == nil && latestNeg != nil {
-		session.Round = latestNeg.Rounds
-		session.Status = latestNeg.Status
-		session.CurrentAmount = latestNeg.CurrentAmount
+	// Re-calculate nextRound from synced DB state to stay in sync
+	// If DB rounds advanced (e.g. concurrent submission), use that
+	syncedNextRound := latestNeg.Rounds + 1
+	if syncedNextRound != nextRound {
+		s.log.Info("round count updated from DB sync", "session_id", sessionID, "old_next_round", nextRound, "new_next_round", syncedNextRound, "db_rounds", latestNeg.Rounds)
+		nextRound = syncedNextRound
 	}
 
 	// Determine which agent should act based on who went last
 	// If no rounds yet, buyer starts. If last round was by buyer, seller goes next.
 	var activeAgentID string
 	var activeAgentType string
-	if len(rounds) == 0 {
+	if latestNeg.Rounds == 0 {
 		activeAgentID = session.BuyerAgentID
 		activeAgentType = "buyer"
 	} else {
@@ -519,7 +525,7 @@ func (s *A2ABargainingService) RunAutonomousNegotiationRound(ctx context.Context
 		return nil
 	}
 
-	decision, err := s.bargaining.GetLLMBargainingDecision(ctx, activeAgentID, activeAgentType, negotiation.ID)
+	decision, err := s.bargaining.GetLLMBargainingDecision(ctx, activeAgentID, activeAgentType, latestNeg.ID)
 	if err != nil {
 		s.log.Error("LLM decision failed", "error", err, "session_id", sessionID, "round", nextRound, "agent_id", activeAgentID)
 		return fmt.Errorf("LLM decision failed: %w", err)
@@ -532,14 +538,14 @@ func (s *A2ABargainingService) RunAutonomousNegotiationRound(ctx context.Context
 		Action:         decision.Action,
 	}
 
-	_, updatedNegotiation, err := s.bargaining.SubmitCounterOffer(ctx, negotiation.ID, counterReq)
+	_, updatedNegotiation, err := s.bargaining.SubmitCounterOffer(ctx, latestNeg.ID, counterReq)
 	if err != nil {
 		s.log.Error("submit counter offer failed", "error", err, "session_id", sessionID, "round", nextRound)
 		return fmt.Errorf("submit counter offer failed: %w", err)
 	}
 
 	session.CurrentAmount = updatedNegotiation.CurrentAmount
-	session.Round++
+	session.Round = updatedNegotiation.Rounds
 
 	s.sendWebhook(session.CallbackURL, WebhookPayload{
 		Event:          "round_completed",
