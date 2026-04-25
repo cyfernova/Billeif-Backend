@@ -733,10 +733,15 @@ State: round %d/%d
 			markupFactor := volatility * 0.15
 			// Move current_amount UP toward reference_price
 			distance := referencePrice - negotiation.CurrentAmount
-			increase := distance * markupFactor
-			result.ProposedAmount = negotiation.CurrentAmount + increase
-			if result.ProposedAmount > referencePrice {
-				result.ProposedAmount = referencePrice
+			// If current >= referencePrice (buyer overpaid scenario), use minimal increase
+			if distance <= 0 {
+				result.ProposedAmount = negotiation.CurrentAmount * 1.001
+			} else {
+				increase := distance * markupFactor
+				result.ProposedAmount = negotiation.CurrentAmount + increase
+				if result.ProposedAmount > referencePrice {
+					result.ProposedAmount = referencePrice
+				}
 			}
 		}
 		result.Reason = "Using fallback calculation (LLM parsing failed)"
@@ -775,13 +780,24 @@ State: round %d/%d
 			markupFactor := volatility * 0.15
 			// Move current_amount UP toward reference_price
 			distance := referencePrice - negotiation.CurrentAmount
-			increase := distance * markupFactor
-			result.ProposedAmount = negotiation.CurrentAmount + increase
-			if result.ProposedAmount > referencePrice {
-				result.ProposedAmount = referencePrice
+			// If current >= referencePrice (which can happen when buyer offers above reference),
+			// use minimal increase to stay valid
+			if distance <= 0 {
+				result.ProposedAmount = negotiation.CurrentAmount * 1.001
+			} else {
+				increase := distance * markupFactor
+				result.ProposedAmount = negotiation.CurrentAmount + increase
+				if result.ProposedAmount > referencePrice {
+					result.ProposedAmount = referencePrice
+				}
 			}
 			result.Reason = "Using seller fallback (LLM response overridden for correct direction)"
 			s.log.Info("seller LLM response overridden with fallback", "llm_proposed", result.ProposedAmount, "fallback_proposed", result.ProposedAmount)
+			// Validate fallback amount before returning - if still invalid, use a safe valid value
+			if !s.isValidCounterOffer(negotiation, agentType, result.ProposedAmount) {
+				s.log.Warn("seller fallback also invalid, using safe minimum", "fallback_amount", result.ProposedAmount, "current", negotiation.CurrentAmount)
+				result.ProposedAmount = negotiation.CurrentAmount + (referencePrice-negotiation.CurrentAmount)*0.01
+			}
 		}
 	}
 

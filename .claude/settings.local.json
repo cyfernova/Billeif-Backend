@@ -40,7 +40,13 @@
       "PowerShell(aws logs describe-log-streams *)",
       "PowerShell(aws logs filter-log-events *)",
       "PowerShell(Out-File *)",
-      "Bash(env)"
+      "Bash(env)",
+      "Bash(rm -f .build/lambda/latest_logs.json)",
+      "Bash(AWS_PAGER=\"\" aws logs filter-log-events --log-group-name '/aws/lambda/invoice-backend-sqs-bargaining' --region us-east-1 --start-time 1777128600000 --output json)",
+      "Bash(iconv -f UTF-8 -t UTF-8 //IGNORE)",
+      "Bash(tee .build/lambda/raw_output.txt)",
+      "PowerShell(aws s3 cp *)",
+      "PowerShell(aws lambda update-function-code *)"
     ]
   }
 }
