@@ -712,6 +712,11 @@ State: round %d/%d
 	}
 
 	var result LLMBargainingResponse
+	// Strip markdown code fences if LLM wraps JSON in ```json ... ```
+	response = strings.TrimSpace(response)
+	response = strings.TrimPrefix(response, "```json")
+	response = strings.TrimPrefix(response, "```")
+	response = strings.TrimSuffix(response, "```")
 	if err := json.Unmarshal([]byte(response), &result); err != nil {
 		s.log.Error("failed to parse LLM bargaining response", "error", err, "response", response)
 		result.Action = "counteroffer"

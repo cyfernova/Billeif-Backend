@@ -36,7 +36,11 @@
       "Bash(make infra-plan *)",
       "Bash(make build-lambda-sqs-bargaining *)",
       "Bash(make build-lambda *)",
-      "Bash(make migrate-up *)"
+      "Bash(make migrate-up *)",
+      "PowerShell(aws logs describe-log-streams *)",
+      "PowerShell(aws logs filter-log-events *)",
+      "PowerShell(Out-File *)",
+      "Bash(env)"
     ]
   }
 }
