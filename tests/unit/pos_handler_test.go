@@ -12,6 +12,7 @@ import (
 
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/services"
+	"invoice-backend/internal/utils"
 	"invoice-backend/pkg/logger"
 
 	"github.com/gin-gonic/gin"
@@ -32,6 +33,14 @@ func (m *MockPOSService) CreateSession(ctx context.Context, businessID, userID s
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*models.POSSession), args.Error(1)
+}
+
+func (m *MockPOSService) ListSessions(ctx context.Context, businessID string, page, limit int, status string) ([]models.POSSession, int64, error) {
+	args := m.Called(ctx, businessID, page, limit, status)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), args.Error(2)
+	}
+	return args.Get(0).([]models.POSSession), args.Get(1).(int64), args.Error(2)
 }
 
 func (m *MockPOSService) SearchCatalog(ctx context.Context, businessID, query, warehouseID string, limit int) ([]services.POSCatalogSearchResult, error) {
@@ -99,6 +108,30 @@ func (h *POSHandlerTestable) CreateSession(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, session)
+}
+
+func (h *POSHandlerTestable) ListSessions(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	page, limit := utils.ParsePagination(c)
+	sessions, total, err := h.svc.ListSessions(c.Request.Context(), businessID, page, limit, c.Query("status"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	response := utils.NewPaginatedResponse(sessions, total, page, limit)
+	c.JSON(http.StatusOK, gin.H{
+		"data":        response.Data,
+		"items":       sessions,
+		"total":       response.Total,
+		"page":        response.Page,
+		"limit":       response.Limit,
+		"total_pages": response.TotalPages,
+		"has_next":    response.HasNext,
+		"has_prev":    response.HasPrev,
+	})
 }
 
 func (h *POSHandlerTestable) SearchCatalog(c *gin.Context) {
@@ -240,6 +273,78 @@ func TestPOSCreateSession_ServiceError(t *testing.T) {
 	body, _ := json.Marshal(reqBody)
 	req := httptest.NewRequest(http.MethodPost, "/pos/sessions", bytes.NewBuffer(body))
 	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", res.Code, res.Body.String())
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+// =============================================================================
+// ListSessions Tests
+// =============================================================================
+
+func TestPOSListSessions_Success(t *testing.T) {
+	mockSvc := new(MockPOSService)
+	log := logger.New()
+	handler := NewPOSHandlerTestable(mockSvc, log)
+
+	sessions := []models.POSSession{
+		{
+			ID:         "session-123",
+			BusinessID: "biz-123",
+			UserID:     "user-123",
+			Status:     "open",
+		},
+	}
+
+	mockSvc.On("ListSessions", mock.Anything, "biz-123", 1, 10, "active").Return(sessions, int64(1), nil)
+
+	router := gin.New()
+	router.GET("/pos/sessions", func(c *gin.Context) {
+		createPOSTestContext(c, "user-123", "biz-123")
+		handler.ListSessions(c)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/pos/sessions?status=active", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
+	}
+
+	var response map[string]interface{}
+	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
+		t.Fatalf("expected JSON response: %v", err)
+	}
+	if response["total"].(float64) != 1 {
+		t.Fatalf("expected total 1, got %v", response["total"])
+	}
+	if _, ok := response["items"].([]interface{}); !ok {
+		t.Fatalf("expected items array, got %T", response["items"])
+	}
+
+	mockSvc.AssertExpectations(t)
+}
+
+func TestPOSListSessions_ServiceError(t *testing.T) {
+	mockSvc := new(MockPOSService)
+	log := logger.New()
+	handler := NewPOSHandlerTestable(mockSvc, log)
+
+	mockSvc.On("ListSessions", mock.Anything, "biz-123", 1, 10, "").Return(nil, int64(0), errors.New("list error"))
+
+	router := gin.New()
+	router.GET("/pos/sessions", func(c *gin.Context) {
+		createPOSTestContext(c, "user-123", "biz-123")
+		handler.ListSessions(c)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/pos/sessions", nil)
 	res := httptest.NewRecorder()
 	router.ServeHTTP(res, req)
 

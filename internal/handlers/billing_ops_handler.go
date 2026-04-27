@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"io"
 	"net/http"
 
@@ -187,7 +188,11 @@ func (h *BillingOpsHandler) CreatePartyGroup(c *gin.Context) {
 	requestContextWithActor(c)
 	group, err := h.svc.CreatePartyGroup(c.Request.Context(), input)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		statusCode := http.StatusInternalServerError
+		if errors.Is(err, services.ErrInvalidPartyGroupMember) {
+			statusCode = http.StatusBadRequest
+		}
+		c.JSON(statusCode, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusCreated, group)
@@ -209,6 +214,8 @@ func (h *BillingOpsHandler) UpdatePartyGroup(c *gin.Context) {
 		statusCode := http.StatusInternalServerError
 		if isNotFoundErr(err) {
 			statusCode = http.StatusNotFound
+		} else if errors.Is(err, services.ErrInvalidPartyGroupMember) {
+			statusCode = http.StatusBadRequest
 		}
 		c.JSON(statusCode, gin.H{"error": err.Error()})
 		return

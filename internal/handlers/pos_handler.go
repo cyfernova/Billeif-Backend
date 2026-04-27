@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"invoice-backend/internal/services"
+	"invoice-backend/internal/utils"
 	"invoice-backend/pkg/logger"
 
 	"github.com/gin-gonic/gin"
@@ -51,6 +52,43 @@ func (h *POSHandler) CreateSession(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, session)
+}
+
+// ListSessions returns POS sessions for the active business
+// @Summary List POS sessions
+// @Description Lists Point of Sale sessions
+// @Tags POS
+// @Produce json
+// @Security BearerAuth
+// @Param status query string false "Session status (active/open/closed)"
+// @Param page query int false "Page number"
+// @Param limit query int false "Page size"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /pos/sessions [get]
+func (h *POSHandler) ListSessions(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	page, limit := utils.ParsePagination(c)
+	sessions, total, err := h.svc.ListSessions(c.Request.Context(), businessID, page, limit, c.Query("status"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	response := utils.NewPaginatedResponse(sessions, total, page, limit)
+	c.JSON(http.StatusOK, gin.H{
+		"data":        response.Data,
+		"items":       sessions,
+		"total":       response.Total,
+		"page":        response.Page,
+		"limit":       response.Limit,
+		"total_pages": response.TotalPages,
+		"has_next":    response.HasNext,
+		"has_prev":    response.HasPrev,
+	})
 }
 
 // SearchCatalog searches the product catalog

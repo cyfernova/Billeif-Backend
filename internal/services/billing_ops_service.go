@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"path"
@@ -30,6 +31,8 @@ type BillingOpsService struct {
 	s3           *S3Service
 	log          *logger.Logger
 }
+
+var ErrInvalidPartyGroupMember = errors.New("invalid party group member")
 
 func NewBillingOpsService(
 	cfg *config.Config,
@@ -386,6 +389,9 @@ func (s *BillingOpsService) CreatePartyGroup(ctx context.Context, input CreatePa
 	if s.db == nil {
 		return nil, fmt.Errorf("database is not configured")
 	}
+	if err := s.validatePartyGroupMembers(ctx, input.BusinessID, input.Members); err != nil {
+		return nil, err
+	}
 	group := &models.PartyGroup{
 		BusinessID:  input.BusinessID,
 		Name:        input.Name,
@@ -416,11 +422,52 @@ func (s *BillingOpsService) replacePartyGroupMembersTx(tx *gorm.DB, businessID, 
 		records = append(records, models.PartyGroupMember{
 			PartyGroupID: groupID,
 			BusinessID:   businessID,
-			PartyType:    member.PartyType,
-			PartyID:      member.PartyID,
+			PartyType:    strings.TrimSpace(member.PartyType),
+			PartyID:      strings.TrimSpace(member.PartyID),
 		})
 	}
 	return tx.Create(&records).Error
+}
+
+func (s *BillingOpsService) validatePartyGroupMembers(ctx context.Context, businessID string, members []PartyGroupMemberInput) error {
+	seen := map[string]struct{}{}
+	for _, member := range members {
+		partyType := strings.TrimSpace(member.PartyType)
+		partyID := strings.TrimSpace(member.PartyID)
+		if partyID == "" {
+			return fmt.Errorf("%w: party_id is required", ErrInvalidPartyGroupMember)
+		}
+		switch partyType {
+		case models.DocumentPartyTypeCustomer, models.DocumentPartyTypeVendor:
+		default:
+			return fmt.Errorf("%w: unsupported member type %q", ErrInvalidPartyGroupMember, partyType)
+		}
+		memberKey := partyType + ":" + partyID
+		if _, exists := seen[memberKey]; exists {
+			return fmt.Errorf("%w: duplicate member %s", ErrInvalidPartyGroupMember, partyID)
+		}
+		seen[memberKey] = struct{}{}
+
+		var count int64
+		switch partyType {
+		case models.DocumentPartyTypeCustomer:
+			if err := s.db.WithContext(ctx).Model(&models.Customer{}).
+				Where("id = ? AND business_id = ? AND deleted_at IS NULL", partyID, businessID).
+				Count(&count).Error; err != nil {
+				return err
+			}
+		case models.DocumentPartyTypeVendor:
+			if err := s.db.WithContext(ctx).Model(&models.Vendor{}).
+				Where("id = ? AND business_id = ? AND deleted_at IS NULL", partyID, businessID).
+				Count(&count).Error; err != nil {
+				return err
+			}
+		}
+		if count == 0 {
+			return fmt.Errorf("%w: %s %s not found", ErrInvalidPartyGroupMember, partyType, partyID)
+		}
+	}
+	return nil
 }
 
 func (s *BillingOpsService) GetPartyGroup(ctx context.Context, businessID, id string) (*models.PartyGroup, error) {
@@ -478,6 +525,11 @@ func (s *BillingOpsService) UpdatePartyGroup(ctx context.Context, businessID, id
 	group, err := s.GetPartyGroup(ctx, businessID, id)
 	if err != nil {
 		return nil, err
+	}
+	if input.Members != nil {
+		if err := s.validatePartyGroupMembers(ctx, businessID, input.Members); err != nil {
+			return nil, err
+		}
 	}
 	if input.Name != "" {
 		group.Name = input.Name
