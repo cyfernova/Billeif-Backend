@@ -672,6 +672,43 @@ func TestAuthService_UpdateProfile(t *testing.T) {
 	ctx := context.Background()
 	userID := "user-123"
 	existingUser := &models.User{
+		ID:          userID,
+		Email:       "test@example.com",
+		PhoneNumber: "+919999999999",
+		Name:        "Old Name",
+		Role:        "viewer",
+	}
+
+	input := services.UpdateProfileInput{
+		Name:        "New Name",
+		Email:       "new@example.com",
+		PhoneNumber: "9876543210",
+	}
+
+	mockUserRepo.On("GetByID", ctx, userID).Return(existingUser, nil)
+	mockUserRepo.On("GetByEmail", ctx, "new@example.com").Return(nil, errors.New("user not found"))
+	mockUserRepo.On("GetByPhoneNumber", ctx, "+919876543210").Return(nil, errors.New("user not found"))
+	mockUserRepo.On("Update", ctx, mock.AnythingOfType("*models.User")).Return(nil)
+
+	user, err := svc.UpdateProfile(ctx, userID, input)
+
+	assert.NoError(t, err)
+	assert.Equal(t, "New Name", user.Name)
+	assert.Equal(t, "new@example.com", user.Email)
+	assert.Equal(t, "+919876543210", user.PhoneNumber)
+	mockUserRepo.AssertExpectations(t)
+}
+
+func TestAuthService_UpdateProfileRejectsInvalidPhone(t *testing.T) {
+	mockCognito := new(MockCognitoIdentityProviderAPI)
+	mockUserRepo := new(MockUserRepository)
+	log := logger.New()
+
+	svc := services.NewAuthServiceWithMocks(&services.TestAuthConfig{}, mockUserRepo, mockCognito, nil, nil, log)
+
+	ctx := context.Background()
+	userID := "user-123"
+	existingUser := &models.User{
 		ID:    userID,
 		Email: "test@example.com",
 		Name:  "Old Name",
@@ -679,17 +716,19 @@ func TestAuthService_UpdateProfile(t *testing.T) {
 	}
 
 	input := services.UpdateProfileInput{
-		Name: "New Name",
+		Name:        "New Name",
+		PhoneNumber: "12345",
 	}
 
 	mockUserRepo.On("GetByID", ctx, userID).Return(existingUser, nil)
-	mockUserRepo.On("Update", ctx, mock.AnythingOfType("*models.User")).Return(nil)
 
 	user, err := svc.UpdateProfile(ctx, userID, input)
 
-	assert.NoError(t, err)
-	assert.Equal(t, "New Name", user.Name)
+	assert.Nil(t, user)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "phone_number must be a valid Indian mobile number")
 	mockUserRepo.AssertExpectations(t)
+	mockUserRepo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything)
 }
 
 // TestAuthService_ChangePassword tests the ChangePassword method

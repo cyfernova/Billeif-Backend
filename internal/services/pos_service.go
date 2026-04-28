@@ -170,6 +170,52 @@ func (s *POSService) CreateSession(ctx context.Context, businessID, userID strin
 	return session, nil
 }
 
+func (s *POSService) ListSessions(ctx context.Context, businessID string, page, limit int, status string) ([]models.POSSession, int64, error) {
+	if err := s.entitlements.EnsureFeature(ctx, businessID, FeaturePOS); err != nil {
+		return nil, 0, err
+	}
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 10
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	normalizedStatus := strings.ToLower(strings.TrimSpace(status))
+	switch normalizedStatus {
+	case "active":
+		normalizedStatus = posSessionStatusOpen
+	case "all":
+		normalizedStatus = ""
+	}
+
+	baseQuery := s.db.WithContext(ctx).
+		Model(&models.POSSession{}).
+		Where("business_id = ? AND deleted_at IS NULL", businessID)
+	if normalizedStatus != "" {
+		baseQuery = baseQuery.Where("status = ?", normalizedStatus)
+	}
+
+	var total int64
+	if err := baseQuery.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var sessions []models.POSSession
+	if err := baseQuery.
+		Order("opened_at DESC").
+		Limit(limit).
+		Offset((page - 1) * limit).
+		Find(&sessions).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return sessions, total, nil
+}
+
 func (s *POSService) SearchCatalog(ctx context.Context, businessID, query, warehouseID string, limit int) ([]POSCatalogSearchResult, error) {
 	if err := s.entitlements.EnsureFeature(ctx, businessID, FeaturePOS); err != nil {
 		return nil, err

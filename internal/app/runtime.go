@@ -576,7 +576,7 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 				partyGroups.GET("/:id/ledger", h.BillingOps.GetPartyGroupLedger)
 				partyGroups.POST("", wafUserWriteRL, h.BillingOps.CreatePartyGroup)
 				partyGroups.PUT("/:id", wafUserWriteRL, h.BillingOps.UpdatePartyGroup)
-				partyGroups.DELETE("", wafUserWriteRL, h.BillingOps.DeletePartyGroup)
+				partyGroups.DELETE("/:id", wafUserWriteRL, h.BillingOps.DeletePartyGroup)
 			}
 
 			activityLogs := protected.Group("/activity-logs")
@@ -663,6 +663,7 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			pos := protected.Group("/pos")
 			{
 				pos.POST("/sessions", h.POS.CreateSession)
+				pos.GET("/sessions", h.POS.ListSessions)
 				pos.GET("/catalog/search", h.POS.SearchCatalog)
 				pos.POST("/carts/:id/items/scan", h.POS.ScanItem)
 				pos.POST("/carts/:id/checkout", h.POS.Checkout)

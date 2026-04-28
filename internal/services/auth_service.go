@@ -363,6 +363,8 @@ func (s *AuthService) UpdateUserCognitoID(ctx context.Context, userID string, co
 
 type UpdateProfileInput struct {
 	Name              string `json:"name" binding:"required,min=2"`
+	Email             string `json:"email,omitempty" binding:"omitempty,email,max=255"`
+	PhoneNumber       string `json:"phone_number,omitempty" binding:"omitempty,max=20"`
 	ProfilePictureURL string `json:"profile_picture_url,omitempty"`
 }
 
@@ -373,10 +375,39 @@ func (s *AuthService) UpdateProfile(ctx context.Context, userID string, input Up
 	}
 
 	if input.Name != "" {
-		user.Name = input.Name
+		user.Name = strings.TrimSpace(input.Name)
+	}
+	if input.Email != "" {
+		email := normalizeOptionalEmail(input.Email)
+		if email != "" && email != user.Email {
+			existing, err := s.userRepo.GetByEmail(ctx, email)
+			if err == nil && existing != nil && existing.ID != user.ID {
+				return nil, fmt.Errorf("email already registered")
+			}
+			if err != nil && !isUserNotFoundError(err) {
+				return nil, err
+			}
+			user.Email = email
+		}
+	}
+	if input.PhoneNumber != "" {
+		normalizedPhone, err := normalizeIndianPhoneNumber(input.PhoneNumber)
+		if err != nil {
+			return nil, err
+		}
+		if normalizedPhone != user.PhoneNumber {
+			existing, err := s.userRepo.GetByPhoneNumber(ctx, normalizedPhone)
+			if err == nil && existing != nil && existing.ID != user.ID {
+				return nil, fmt.Errorf(phoneAuthConflictMessage)
+			}
+			if err != nil && !isUserNotFoundError(err) {
+				return nil, err
+			}
+			user.PhoneNumber = normalizedPhone
+		}
 	}
 	if input.ProfilePictureURL != "" {
-		user.ProfilePictureURL = input.ProfilePictureURL
+		user.ProfilePictureURL = strings.TrimSpace(input.ProfilePictureURL)
 	}
 	user.UpdatedAt = time.Now()
 
@@ -867,6 +898,10 @@ func normalizeIndianPhoneNumber(input string) (string, error) {
 
 func normalizeOptionalEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
+}
+
+func isUserNotFoundError(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "user not found")
 }
 
 func canonicalPhoneCognitoID(userPoolID, subject string) string {
