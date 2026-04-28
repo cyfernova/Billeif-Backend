@@ -526,7 +526,7 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 				invoices.GET("/:id", h.Invoice.Get)
 				invoices.POST("", wafUserWriteRL, h.Invoice.Create)
 				invoices.PUT("/:id", wafUserWriteRL, h.Invoice.Update)
-				invoices.DELETE("", wafUserWriteRL, h.Invoice.Delete)
+				invoices.DELETE("/:id", wafUserWriteRL, h.Invoice.Delete)
 				invoices.POST("/:id/send", wafUserWriteRL, h.Invoice.Send)
 				invoices.POST("/bulk-actions", wafUserHeavyRL, h.BillingOps.CreateInvoiceBulkAction)
 				invoices.GET("/:id/pdf", h.Invoice.GetPDF)
@@ -540,7 +540,7 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 				payments.GET("/:id", h.Payment.Get)
 				payments.POST("", wafUserWriteRL, h.Payment.Create)
 				payments.PUT("/:id", wafUserWriteRL, h.Payment.Update)
-				payments.DELETE("", wafUserWriteRL, h.Payment.Delete)
+				payments.DELETE("/:id", wafUserWriteRL, h.Payment.Delete)
 			}
 
 			documents := protected.Group("/documents")
@@ -569,7 +569,7 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 				priceLists.GET("/:id", h.BillingOps.GetPriceList)
 				priceLists.POST("", wafUserWriteRL, h.BillingOps.CreatePriceList)
 				priceLists.PUT("/:id", wafUserWriteRL, h.BillingOps.UpdatePriceList)
-				priceLists.DELETE("", wafUserWriteRL, h.BillingOps.DeletePriceList)
+				priceLists.DELETE("/:id", wafUserWriteRL, h.BillingOps.DeletePriceList)
 			}
 
 			partyGroups := protected.Group("/party-groups")

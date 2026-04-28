@@ -925,6 +925,141 @@ paths:
               schema:
                 $ref: '#/components/schemas/Payment'
 
+  /api/v1/payments/{id}:
+    get:
+      tags: [Payments]
+      summary: Get payment
+      operationId: getPayment
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Payment details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '404':
+          description: Payment not found
+    put:
+      tags: [Payments]
+      summary: Update payment
+      operationId: updatePayment
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePaymentRequest'
+      responses:
+        '200':
+          description: Payment updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+    delete:
+      tags: [Payments]
+      summary: Delete payment
+      operationId: deletePayment
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '204':
+          description: Payment deleted
+
+  /api/v1/price-lists:
+    get:
+      tags: [Billing Ops]
+      summary: List price lists
+      operationId: listPriceLists
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/BusinessID'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: List of price lists
+    post:
+      tags: [Billing Ops]
+      summary: Create price list
+      operationId: createPriceList
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Price list created
+
+  /api/v1/price-lists/{id}:
+    get:
+      tags: [Billing Ops]
+      summary: Get price list
+      operationId: getPriceList
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Price list details
+    put:
+      tags: [Billing Ops]
+      summary: Update price list
+      operationId: updatePriceList
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Price list updated
+    delete:
+      tags: [Billing Ops]
+      summary: Delete price list
+      operationId: deletePriceList
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '204':
+          description: Price list deleted
+
+  /api/v1/price-lists/{id}/items:
+    get:
+      tags: [Billing Ops]
+      summary: List price list items
+      operationId: listPriceListItems
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ID'
+      responses:
+        '200':
+          description: Price list items
+
   /api/v1/ledger:
     get:
       tags: [Ledger]
@@ -1002,47 +1137,47 @@ components:
       schema:
         type: string
         format: uuid
-      Page:
-       name: page
-       in: query
-       schema:
-         type: integer
-         default: 1
-      Limit:
-       name: limit
-       in: query
-       schema:
-         type: integer
-         default: 10
-         maximum: 100
-      ContentType:
-       name: Content-Type
-       in: header
-       schema:
-         type: string
-         default: image/png
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        default: 1
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        default: 10
+        maximum: 100
+    ContentType:
+      name: Content-Type
+      in: header
+      schema:
+        type: string
+        default: image/png
  
-     responses:
+  responses:
     BadRequest:
-       description: Bad request
-       content:
+      description: Bad request
+      content:
         application/json:
-           schema:
-             $ref: '#/components/schemas/Error'
+          schema:
+            $ref: '#/components/schemas/Error'
     Unauthorized:
-       description: Unauthorized
-       content:
+      description: Unauthorized
+      content:
         application/json:
-           schema:
-             $ref: '#/components/schemas/Error'
+          schema:
+            $ref: '#/components/schemas/Error'
     NotFound:
-       description: Not found
-       content:
+      description: Not found
+      content:
         application/json:
-           schema:
-             $ref: '#/components/schemas/Error'
+          schema:
+            $ref: '#/components/schemas/Error'
 
-   schemas:
+  schemas:
     Error:
       type: object
       properties:

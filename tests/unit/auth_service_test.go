@@ -791,7 +791,40 @@ func TestAuthService_SyncGoogleUser_ExistingUser(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.Equal(t, existingUser.ID, user.ID)
+	assert.Equal(t, input.ProfilePictureURL, user.ProfilePictureURL)
 	mockUserRepo.AssertExpectations(t)
+}
+
+func TestAuthService_SyncGoogleUser_PreservesExistingProfilePicture(t *testing.T) {
+	mockCognito := new(MockCognitoIdentityProviderAPI)
+	mockUserRepo := new(MockUserRepository)
+	log := logger.New()
+
+	svc := services.NewAuthServiceWithMocks(&services.TestAuthConfig{}, mockUserRepo, mockCognito, nil, nil, log)
+
+	ctx := context.Background()
+	existingUser := &models.User{
+		ID:                "user-123",
+		Email:             "test@example.com",
+		Name:              "Existing User",
+		Role:              "viewer",
+		ProfilePictureURL: "https://example.com/current-pic.jpg",
+	}
+	input := services.SyncGoogleUserInput{
+		Email:             "test@example.com",
+		CognitoID:         "cognito-id-123",
+		Name:              "Google User",
+		ProfilePictureURL: "https://example.com/google-pic.jpg",
+	}
+
+	mockUserRepo.On("GetByCognitoID", ctx, input.CognitoID).Return(existingUser, nil)
+
+	user, err := svc.SyncGoogleUser(ctx, input)
+
+	assert.NoError(t, err)
+	assert.Equal(t, "https://example.com/current-pic.jpg", user.ProfilePictureURL)
+	mockUserRepo.AssertExpectations(t)
+	mockUserRepo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything)
 }
 
 // TestAuthService_SyncGoogleUser_NewUser tests SyncGoogleUser when user doesn't exist

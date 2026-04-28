@@ -448,8 +448,8 @@ type SyncGoogleUserInput struct {
 func (s *AuthService) SyncGoogleUser(ctx context.Context, input SyncGoogleUserInput) (*models.User, error) {
 	user, err := s.userRepo.GetByCognitoID(ctx, input.CognitoID)
 	if err == nil {
-		if input.ProfilePictureURL != "" && user.ProfilePictureURL != input.ProfilePictureURL {
-			user.ProfilePictureURL = input.ProfilePictureURL
+		if input.ProfilePictureURL != "" && strings.TrimSpace(user.ProfilePictureURL) == "" {
+			user.ProfilePictureURL = strings.TrimSpace(input.ProfilePictureURL)
 			user.UpdatedAt = time.Now()
 			if err := s.userRepo.Update(ctx, user); err != nil {
 				s.log.Warn("failed to update profile picture", "error", err)
@@ -464,8 +464,8 @@ func (s *AuthService) SyncGoogleUser(ctx context.Context, input SyncGoogleUserIn
 		if input.Name != "" {
 			user.Name = input.Name
 		}
-		if input.ProfilePictureURL != "" {
-			user.ProfilePictureURL = input.ProfilePictureURL
+		if input.ProfilePictureURL != "" && strings.TrimSpace(user.ProfilePictureURL) == "" {
+			user.ProfilePictureURL = strings.TrimSpace(input.ProfilePictureURL)
 		}
 		user.UpdatedAt = time.Now()
 		if err := s.userRepo.Update(ctx, user); err != nil {
