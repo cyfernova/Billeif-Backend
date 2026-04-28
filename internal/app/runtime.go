@@ -302,6 +302,18 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 	api := router.Group("/api/v1")
 	{
+		// MCP tool routing endpoints
+		log.Info("MCP handler status", "mcp_handler_nil", h.MCP == nil)
+		if h.MCP != nil {
+			mcpGroup := api.Group("/mcp")
+			mcpGroup.Use(middleware.Auth(cfg.Cognito, log))
+			{
+				mcpGroup.GET("/tools/list", h.MCP.ListTools)
+				mcpGroup.POST("/tools/call", h.MCP.CallTool)
+				mcpGroup.GET("/health", h.MCP.HealthCheck)
+			}
+		}
+
 		loginRL := middleware.AuthRateLimit(5, time.Minute)
 		sensitiveRL := middleware.AuthRateLimit(3, time.Hour)
 

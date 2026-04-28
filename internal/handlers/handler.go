@@ -63,6 +63,7 @@ type Handler struct {
 	Procurement     *ProcurementHandler
 	AgentConfig     *AgentConfigHandler
 	A2ABargaining   *A2ABargainingHandler
+	MCP            *MCPHandler
 }
 
 func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log *logger.Logger) *Handler {
@@ -127,6 +128,7 @@ func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log 
 		Procurement:     NewProcurementHandler(svcs.Procurement, repos.AP2, log),
 		AgentConfig:     NewAgentConfigHandler(svcs.AgentConfig, svcs.Agent, svcs.Bargaining, svcs.Mentee, log),
 		A2ABargaining:   NewA2ABargainingHandler(svcs.A2ABargaining, svcs.Agent, cfg, log),
+		MCP:             NewMCPHandlerFromConfig(cfg, log),
 	}
 }
 

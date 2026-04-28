@@ -32,6 +32,7 @@ type Config struct {
 	AllowedOrigins []string           `mapstructure:"ALLOWED_ORIGINS"`
 	LLM            LLMConfig          `mapstructure:"LLM"`
 	Credentials    CredentialsConfig  `mapstructure:"CREDENTIALS"`
+	MCP            MCPConfig          `mapstructure:"MCP"`
 }
 
 type LoggingConfig struct {
@@ -357,6 +358,12 @@ func Load() (*Config, error) {
 	_ = viper.BindEnv("LLM.MODEL", "LLM_MODEL")
 	_ = viper.BindEnv("LLM.TIMEOUT", "LLM_TIMEOUT")
 	_ = viper.BindEnv("CREDENTIALS.ENCRYPTION_KEY", "CREDENTIAL_ENCRYPTION_KEY")
+	_ = viper.BindEnv("MCP.SERVER_URL", "MCP_SERVER_URL")
+	_ = viper.BindEnv("MCP.TIMEOUT", "MCP_TIMEOUT")
+	_ = viper.BindEnv("MCP.INSECURE_SKIP_VERIFY", "MCP_INSECURE_SKIP_VERIFY")
+	_ = viper.BindEnv("MCP.TLS_CERT_FILE", "MCP_TLS_CERT_FILE")
+	_ = viper.BindEnv("MCP.TLS_KEY_FILE", "MCP_TLS_KEY_FILE")
+	_ = viper.BindEnv("MCP.TLS_CA_FILE", "MCP_TLS_CA_FILE")
 
 	var cfg Config
 	if err := viper.Unmarshal(&cfg); err != nil {

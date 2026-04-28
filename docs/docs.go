@@ -117,6 +117,65 @@ const docTemplate = `{
                 }
             }
         },
+        "/a2a-bargaining/negotiation/{negotiationId}/progress": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the progress of a bargaining negotiation using the database UUID",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "A2A Bargaining"
+                ],
+                "summary": "Get negotiation progress by negotiation ID",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Negotiation ID (UUID)",
+                        "name": "negotiationId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {}
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/a2a-bargaining/progress/{sessionId}": {
             "get": {
                 "security": [
@@ -9091,6 +9150,87 @@ const docTemplate = `{
                 }
             }
         },
+        "/mcp/tools/call": {
+            "post": {
+                "description": "Routes a tool call request to the MCP server",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "Call an MCP tool",
+                "parameters": [
+                    {
+                        "description": "Tool call request",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CallToolRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ToolCallResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/mcp/tools/list": {
+            "get": {
+                "description": "Returns all available tools from the MCP server",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "List MCP tools",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ListToolsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/payments": {
             "get": {
                 "security": [
@@ -16045,6 +16185,18 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.CallToolRequest": {
+            "type": "object",
+            "required": [
+                "tool"
+            ],
+            "properties": {
+                "args": {},
+                "tool": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.CancelRequest": {
             "type": "object",
             "properties": {
@@ -16393,6 +16545,17 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.ListToolsResponse": {
+            "type": "object",
+            "properties": {
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handlers.ToolInfo"
+                    }
+                }
+            }
+        },
         "handlers.ParseIntentRequest": {
             "type": "object",
             "required": [
@@ -16499,11 +16662,47 @@ const docTemplate = `{
                     "maximum": 20,
                     "minimum": 1
                 },
+                "reference_price": {
+                    "type": "number"
+                },
                 "seller_agent_id": {
                     "type": "string"
                 },
                 "user_id": {
                     "type": "string"
+                }
+            }
+        },
+        "handlers.ToolCallResponse": {
+            "type": "object",
+            "properties": {
+                "backend_route": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "request_id": {
+                    "type": "string"
+                },
+                "result": {},
+                "status": {
+                    "type": "integer"
+                }
+            }
+        },
+        "handlers.ToolInfo": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "schema": {
+                    "type": "object",
+                    "additionalProperties": {}
                 }
             }
         },
@@ -16709,6 +16908,12 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "products": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.Product"
+                    }
+                },
                 "type": {
                     "type": "string",
                     "enum": [
@@ -16891,6 +17096,9 @@ const docTemplate = `{
                     "type": "number",
                     "maximum": 1,
                     "minimum": 0
+                },
+                "session_id": {
+                    "type": "string"
                 },
                 "status": {
                     "type": "string",
