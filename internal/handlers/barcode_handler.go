@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 
 	"invoice-backend/internal/services"
 	"invoice-backend/pkg/logger"
@@ -16,6 +17,29 @@ type BarcodeHandler struct {
 
 func NewBarcodeHandler(svc *services.BarcodeService, log *logger.Logger) *BarcodeHandler {
 	return &BarcodeHandler{svc: svc, log: log}
+}
+
+// List returns generated/assigned barcodes for the business
+// @Summary List barcodes
+// @Description Lists product barcodes for the active business
+// @Tags Barcodes
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /barcodes [get]
+func (h *BarcodeHandler) List(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "100"))
+	rows, err := h.svc.List(c.Request.Context(), businessID, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": rows, "items": rows, "total": len(rows)})
 }
 
 // GenerateRequest represents barcode generation request

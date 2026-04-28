@@ -298,6 +298,59 @@ func (h *InventoryHandler) CreateTransfer(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
+func (h *InventoryHandler) ListTransfers(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	page := parseIntOrDefault(c.Query("page"), 1)
+	limit := parseIntOrDefault(c.Query("limit"), 20)
+	rows, err := h.svc.GetTimeline(c.Request.Context(), services.InventoryTimelineFilter{
+		BusinessID: businessID,
+		Limit:      page * limit,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	transfers := make([]gin.H, 0, len(rows))
+	for _, row := range rows {
+		if row.TransactionType != "transfer" || row.Direction != "out" {
+			continue
+		}
+		transfers = append(transfers, gin.H{
+			"id":                row.ID,
+			"product_id":        row.ProductID,
+			"product_name":      row.ProductName,
+			"from_warehouse_id": row.WarehouseID,
+			"from_warehouse":    row.WarehouseName,
+			"quantity":          row.Quantity,
+			"status":            "completed",
+			"created_at":        row.RecordedAt,
+			"completed_at":      row.RecordedAt,
+		})
+	}
+	start := (page - 1) * limit
+	if start > len(transfers) {
+		start = len(transfers)
+	}
+	end := start + limit
+	if end > len(transfers) {
+		end = len(transfers)
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"data":  transfers[start:end],
+		"items": transfers[start:end],
+		"total": len(transfers),
+		"page":  page,
+		"limit": limit,
+	})
+}
+
+func (h *InventoryHandler) CompleteTransfer(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"id": c.Param("id"), "status": "completed"})
+}
+
 func (h *InventoryHandler) ResetStock(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {

@@ -91,6 +91,29 @@ func (h *POSHandler) ListSessions(c *gin.Context) {
 	})
 }
 
+// CloseSession closes an active POS session
+// @Summary Close POS session
+// @Description Closes a Point of Sale session
+// @Tags POS
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Session ID"
+// @Success 200 {object} interface{}
+// @Failure 400 {object} map[string]string
+// @Router /pos/sessions/{id}/close [post]
+func (h *POSHandler) CloseSession(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	session, err := h.svc.CloseSession(c.Request.Context(), businessID, c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, session)
+}
+
 // SearchCatalog searches the product catalog
 // @Summary Search POS catalog
 // @Description Searches the product catalog for POS

@@ -98,6 +98,7 @@ type CheckoutPOSCartInput struct {
 	Vehicle             map[string]interface{} `json:"vehicle,omitempty"`
 	Notes               string                 `json:"notes,omitempty"`
 	Source              string                 `json:"source,omitempty"`
+	Lines               []POSSessionCartLine   `json:"lines,omitempty"`
 }
 
 type POSReceiptResponse struct {
@@ -363,6 +364,10 @@ func (s *POSService) Checkout(ctx context.Context, businessID, sessionID, idempo
 	}
 
 	cart := s.readCart(session)
+	if len(cart.Items) == 0 && len(input.Lines) > 0 {
+		cart.Items = input.Lines
+		recalculatePOSCart(&cart)
+	}
 	if len(cart.Items) == 0 {
 		return nil, fmt.Errorf("pos cart is empty")
 	}
@@ -436,6 +441,27 @@ func (s *POSService) Checkout(ctx context.Context, businessID, sessionID, idempo
 		return nil, err
 	}
 	return document, nil
+}
+
+func (s *POSService) CloseSession(ctx context.Context, businessID, sessionID string) (*models.POSSession, error) {
+	if err := s.entitlements.EnsureFeature(ctx, businessID, FeaturePOS); err != nil {
+		return nil, err
+	}
+	var session models.POSSession
+	if err := s.db.WithContext(ctx).
+		Where("id = ? AND business_id = ? AND deleted_at IS NULL", sessionID, businessID).
+		First(&session).Error; err != nil {
+		return nil, err
+	}
+	if session.Status != posSessionStatusClosed {
+		now := time.Now().UTC()
+		session.Status = posSessionStatusClosed
+		session.ClosedAt = &now
+		if err := s.db.WithContext(ctx).Save(&session).Error; err != nil {
+			return nil, err
+		}
+	}
+	return &session, nil
 }
 
 func (s *POSService) GetThermalReceipt(ctx context.Context, businessID, documentID, format, width string) (*POSReceiptResponse, error) {

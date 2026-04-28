@@ -466,7 +466,9 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			inventory := protected.Group("/inventory")
 			{
 				inventory.POST("/adjustments", h.Inventory.CreateAdjustment)
+				inventory.GET("/transfers", h.Inventory.ListTransfers)
 				inventory.POST("/transfers", h.Inventory.CreateTransfer)
+				inventory.POST("/transfers/:id/complete", h.Inventory.CompleteTransfer)
 				inventory.POST("/resets", h.Inventory.ResetStock)
 				inventory.GET("/timeline", h.Inventory.Timeline)
 				inventory.GET("/valuation", h.Inventory.Valuation)
@@ -485,6 +487,7 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 			barcodes := protected.Group("/barcodes")
 			{
+				barcodes.GET("", h.Barcode.List)
 				barcodes.POST("/generate", h.Barcode.Generate)
 				barcodes.POST("/assign", h.Barcode.Assign)
 				barcodes.GET("/lookup", h.Barcode.Lookup)
@@ -664,6 +667,7 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			{
 				pos.POST("/sessions", h.POS.CreateSession)
 				pos.GET("/sessions", h.POS.ListSessions)
+				pos.POST("/sessions/:id/close", h.POS.CloseSession)
 				pos.GET("/catalog/search", h.POS.SearchCatalog)
 				pos.POST("/carts/:id/items/scan", h.POS.ScanItem)
 				pos.POST("/carts/:id/checkout", h.POS.Checkout)

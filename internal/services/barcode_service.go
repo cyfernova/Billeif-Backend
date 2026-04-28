@@ -9,6 +9,7 @@ import (
 	"image/draw"
 	"image/png"
 	"strings"
+	"time"
 
 	"invoice-backend/internal/models"
 	"invoice-backend/pkg/logger"
@@ -29,6 +30,15 @@ type BarcodeRenderInput struct {
 	Label  string `json:"label,omitempty"`
 	Width  int    `json:"width,omitempty"`
 	Height int    `json:"height,omitempty"`
+}
+
+type BarcodeRecord struct {
+	ID          string `json:"id"`
+	ProductID   string `json:"product_id,omitempty"`
+	ProductName string `json:"product_name"`
+	Barcode     string `json:"barcode"`
+	Format      string `json:"format"`
+	CreatedAt   string `json:"created_at"`
 }
 
 func NewBarcodeService(db *gorm.DB, log *logger.Logger) *BarcodeService {
@@ -71,6 +81,32 @@ func (s *BarcodeService) EnsureBarcode(ctx context.Context, businessID, productI
 		}
 	}
 	return product.Barcode, nil
+}
+
+func (s *BarcodeService) List(ctx context.Context, businessID string, limit int) ([]BarcodeRecord, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	var products []models.Product
+	if err := s.db.WithContext(ctx).
+		Where("business_id = ? AND deleted_at IS NULL AND COALESCE(barcode, '') <> ''", businessID).
+		Order("updated_at DESC").
+		Limit(limit).
+		Find(&products).Error; err != nil {
+		return nil, err
+	}
+	records := make([]BarcodeRecord, 0, len(products))
+	for _, product := range products {
+		records = append(records, BarcodeRecord{
+			ID:          product.ID,
+			ProductID:   product.ID,
+			ProductName: product.Name,
+			Barcode:     product.Barcode,
+			Format:      "CODE128",
+			CreatedAt:   product.UpdatedAt.Format(time.RFC3339),
+		})
+	}
+	return records, nil
 }
 
 func (s *BarcodeService) Lookup(ctx context.Context, businessID, code string) (map[string]interface{}, error) {
