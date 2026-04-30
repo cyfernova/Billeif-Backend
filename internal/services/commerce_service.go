@@ -16,7 +16,6 @@ import (
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/logger"
-	"invoice-backend/pkg/razorpay"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -33,7 +32,6 @@ type CommerceService struct {
 	documents        *DocumentService
 	s3               *S3Service
 	httpClient       *http.Client
-	razorpay         *razorpay.RazorpayService
 	log              *logger.Logger
 }
 
@@ -232,16 +230,6 @@ func NewCommerceService(
 	s3 *S3Service,
 	log *logger.Logger,
 ) *CommerceService {
-	var rp *razorpay.RazorpayService
-	if cfg != nil && strings.TrimSpace(cfg.Razorpay.Key) != "" && strings.TrimSpace(cfg.Razorpay.Secret) != "" {
-		rp = razorpay.NewRazorpayService(&razorpay.Config{
-			Key:           cfg.Razorpay.Key,
-			Secret:        cfg.Razorpay.Secret,
-			WebhookSecret: cfg.Razorpay.WebhookSecret,
-			BaseURL:       cfg.Razorpay.BaseURL,
-			Timeout:       time.Duration(cfg.Razorpay.Timeout) * time.Second,
-		}, log.Named("razorpay"))
-	}
 	httpTimeout := 15 * time.Second
 	if cfg != nil && cfg.WhatsApp.Timeout > 0 {
 		httpTimeout = time.Duration(cfg.WhatsApp.Timeout) * time.Second
@@ -257,7 +245,6 @@ func NewCommerceService(
 		documents:        documents,
 		s3:               s3,
 		httpClient:       &http.Client{Timeout: httpTimeout},
-		razorpay:         rp,
 		log:              log,
 	}
 }
@@ -1121,26 +1108,10 @@ func (s *CommerceService) Checkout(ctx context.Context, slug, idempotencyKey str
 		_ = s.db.WithContext(ctx).Model(order).Update("sales_order_id", salesOrderID).Error
 	}
 
-	var gatewayOrderID string
-	if order.PaymentMethod == "online" && s.razorpay != nil {
-		gatewayOrderID, err = s.razorpay.CreateOrder(ctx, &razorpay.CreateOrderRequest{
-			Amount:         currencyToMinorUnits(order.Total),
-			Currency:       order.Currency,
-			Receipt:        order.OrderNumber,
-			PaymentCapture: "1",
-		})
-		if err != nil {
-			s.log.Warn("failed to create razorpay order", "order_id", order.ID, "error", err)
-		} else {
-			order.GatewayOrderID = gatewayOrderID
-			_ = s.db.WithContext(ctx).Model(order).Update("gateway_order_id", gatewayOrderID).Error
-		}
-	}
-
 	s.queueStoreOrderNotification(ctx, order, "store_order.created")
 	return &CheckoutResult{
 		Order:          order,
-		GatewayOrderID: gatewayOrderID,
+		GatewayOrderID: order.GatewayOrderID,
 	}, nil
 }
 
@@ -1158,35 +1129,6 @@ func (s *CommerceService) GetPublicOrder(ctx context.Context, slug, token string
 		return nil, err
 	}
 	return &order, nil
-}
-
-func (s *CommerceService) HandleRazorpayWebhook(ctx context.Context, signature string, rawBody []byte) error {
-	if s.cfg == nil || strings.TrimSpace(s.cfg.Razorpay.WebhookSecret) == "" {
-		return fmt.Errorf("razorpay webhook secret is not configured")
-	}
-	handler := razorpay.NewWebhookHandler(s.cfg.Razorpay.WebhookSecret)
-	if !handler.VerifyWebhookSignature(rawBody, signature) {
-		return fmt.Errorf("invalid webhook signature")
-	}
-	event, err := handler.ParseWebhookEvent(rawBody)
-	if err != nil {
-		return err
-	}
-
-	switch event.Event {
-	case "payment.captured", "payment.authorized":
-		orderID, _ := handler.GetOrderID(*event)
-		paymentID, _ := handler.GetPaymentID(*event)
-		return s.markOrderPaidByGateway(ctx, orderID, paymentID, event.Event)
-	case "payment.failed":
-		orderID, _ := handler.GetOrderID(*event)
-		return s.markOrderFailedByGateway(ctx, orderID, event.Event)
-	case "refund.processed", "payment.refunded":
-		orderID, _ := handler.GetOrderID(*event)
-		return s.markOrderRefundedByGateway(ctx, orderID, event.Event)
-	default:
-		return nil
-	}
 }
 
 func (s *CommerceService) ListDriveAssets(ctx context.Context, businessID string) ([]*models.DriveAsset, int64, error) {
@@ -1979,70 +1921,6 @@ func (s *CommerceService) sendWhatsAppDelivery(ctx context.Context, cfg *models.
 		updates["status"] = "failed"
 	}
 	_ = s.db.WithContext(context.Background()).Model(delivery).Updates(updates).Error
-}
-
-func (s *CommerceService) markOrderPaidByGateway(ctx context.Context, gatewayOrderID, paymentID, webhookReference string) error {
-	var order models.StoreOrder
-	if err := s.db.WithContext(ctx).
-		Where("gateway_order_id = ? AND deleted_at IS NULL", gatewayOrderID).
-		First(&order).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil
-		}
-		return err
-	}
-	now := time.Now().UTC()
-	updates := map[string]interface{}{
-		"payment_status":     models.StoreOrderPaymentStatusPaid,
-		"status":             models.StoreOrderStatusPaid,
-		"gateway_payment_id": paymentID,
-		"webhook_reference":  webhookReference,
-		"paid_at":            &now,
-	}
-	if err := s.db.WithContext(ctx).Model(&order).Updates(updates).Error; err != nil {
-		return err
-	}
-	order.PaymentStatus = models.StoreOrderPaymentStatusPaid
-	order.Status = models.StoreOrderStatusPaid
-	order.GatewayPaymentID = paymentID
-	order.WebhookReference = webhookReference
-	order.PaidAt = &now
-
-	var storefront models.Storefront
-	if err := s.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", order.StorefrontID).First(&storefront).Error; err == nil && storefront.AutoInvoiceOnPaid && (order.SalesInvoiceID == nil || *order.SalesInvoiceID == "") {
-		invoiceID, err := s.createSalesInvoiceForOrder(ctx, &order)
-		if err == nil {
-			order.SalesInvoiceID = stringPointer(invoiceID)
-			_ = s.db.WithContext(ctx).Model(&order).Update("sales_invoice_id", invoiceID).Error
-		}
-	}
-	_ = s.recordStoreOrderEvent(ctx, order.ID, "store_order.paid", order.Status, map[string]interface{}{
-		"gateway_order_id":   gatewayOrderID,
-		"gateway_payment_id": paymentID,
-	})
-	s.queueStoreOrderNotification(ctx, &order, "store_order.paid")
-	return nil
-}
-
-func (s *CommerceService) markOrderFailedByGateway(ctx context.Context, gatewayOrderID, webhookReference string) error {
-	return s.db.WithContext(ctx).
-		Model(&models.StoreOrder{}).
-		Where("gateway_order_id = ? AND deleted_at IS NULL", gatewayOrderID).
-		Updates(map[string]interface{}{
-			"payment_status":    models.StoreOrderPaymentStatusFailed,
-			"status":            models.StoreOrderStatusPaymentFailed,
-			"webhook_reference": webhookReference,
-		}).Error
-}
-
-func (s *CommerceService) markOrderRefundedByGateway(ctx context.Context, gatewayOrderID, webhookReference string) error {
-	return s.db.WithContext(ctx).
-		Model(&models.StoreOrder{}).
-		Where("gateway_order_id = ? AND deleted_at IS NULL", gatewayOrderID).
-		Updates(map[string]interface{}{
-			"payment_status":    models.StoreOrderPaymentStatusRefunded,
-			"webhook_reference": webhookReference,
-		}).Error
 }
 
 type entitlementSeed struct {

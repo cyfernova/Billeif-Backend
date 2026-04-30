@@ -106,6 +106,9 @@ type SSMConfig struct {
 	DatabaseUserParam            string `mapstructure:"DATABASE_USER_PARAM"`
 	DatabasePasswordParam        string `mapstructure:"DATABASE_PASSWORD_PARAM"`
 	CredentialEncryptionKeyParam string `mapstructure:"CREDENTIAL_ENCRYPTION_KEY_PARAM"`
+	RazorpayKeyIDParam           string `mapstructure:"RAZORPAY_KEY_ID_PARAM"`
+	RazorpayKeySecretParam       string `mapstructure:"RAZORPAY_KEY_SECRET_PARAM"`
+	RazorpayWebhookSecretParam   string `mapstructure:"RAZORPAY_WEBHOOK_SECRET_PARAM"`
 }
 
 type WebSocketConfig struct {
@@ -143,8 +146,8 @@ type S3Config struct {
 }
 
 type RazorpayConfig struct {
-	Key           string `mapstructure:"KEY"`
-	Secret        string `mapstructure:"SECRET"`
+	KeyID         string `mapstructure:"KEY_ID"`
+	KeySecret     string `mapstructure:"KEY_SECRET"`
 	WebhookSecret string `mapstructure:"WEBHOOK_SECRET"`
 	BaseURL       string `mapstructure:"BASE_URL"`
 	Timeout       int    `mapstructure:"TIMEOUT"`
@@ -281,6 +284,9 @@ func Load() (*Config, error) {
 	_ = viper.BindEnv("SSM.DATABASE_USER_PARAM", "DATABASE_USER_SSM_PARAM")
 	_ = viper.BindEnv("SSM.DATABASE_PASSWORD_PARAM", "DATABASE_PASSWORD_SSM_PARAM")
 	_ = viper.BindEnv("SSM.CREDENTIAL_ENCRYPTION_KEY_PARAM", "CREDENTIAL_ENCRYPTION_KEY_SSM_PARAM")
+	_ = viper.BindEnv("SSM.RAZORPAY_KEY_ID_PARAM", "RAZORPAY_KEY_ID_SSM_PARAM")
+	_ = viper.BindEnv("SSM.RAZORPAY_KEY_SECRET_PARAM", "RAZORPAY_KEY_SECRET_SSM_PARAM")
+	_ = viper.BindEnv("SSM.RAZORPAY_WEBHOOK_SECRET_PARAM", "RAZORPAY_WEBHOOK_SECRET_SSM_PARAM")
 	_ = viper.BindEnv("WEBSOCKET.API_ENDPOINT", "WEBSOCKET_API_ENDPOINT")
 	_ = viper.BindEnv("WEBSOCKET.CONNECTIONS_TABLE", "WEBSOCKET_CONNECTIONS_TABLE")
 	_ = viper.BindEnv("COGNITO.USER_POOL_ID", "COGNITO_USER_POOL_ID")
@@ -299,8 +305,8 @@ func Load() (*Config, error) {
 	_ = viper.BindEnv("S3.BUCKET_PRODUCTS", "S3_BUCKET_PRODUCTS")
 	_ = viper.BindEnv("S3.BUCKET_EMAIL_SINK", "S3_BUCKET_EMAIL_SINK")
 	_ = viper.BindEnv("S3.BUCKET_DRIVE", "S3_BUCKET_DRIVE")
-	_ = viper.BindEnv("RAZORPAY.KEY", "RAZORPAY_KEY")
-	_ = viper.BindEnv("RAZORPAY.SECRET", "RAZORPAY_SECRET")
+	_ = viper.BindEnv("RAZORPAY.KEY_ID", "RAZORPAY_KEY_ID", "RAZORPAY_KEY")
+	_ = viper.BindEnv("RAZORPAY.KEY_SECRET", "RAZORPAY_KEY_SECRET", "RAZORPAY_SECRET")
 	_ = viper.BindEnv("RAZORPAY.WEBHOOK_SECRET", "RAZORPAY_WEBHOOK_SECRET")
 	_ = viper.BindEnv("RAZORPAY.BASE_URL", "RAZORPAY_BASE_URL")
 	_ = viper.BindEnv("RAZORPAY.TIMEOUT", "RAZORPAY_TIMEOUT")

@@ -38,6 +38,7 @@ type Handler struct {
 	Invoice         *InvoiceHandler
 	BillingOps      *BillingOpsHandler
 	Payment         *PaymentHandler
+	RazorpayPayment *RazorpayPaymentHandler
 	Ledger          *LedgerHandler
 	Report          *ReportHandler
 	Tax             *TaxHandler
@@ -63,7 +64,7 @@ type Handler struct {
 	Procurement     *ProcurementHandler
 	AgentConfig     *AgentConfigHandler
 	A2ABargaining   *A2ABargainingHandler
-	MCP            *MCPHandler
+	MCP             *MCPHandler
 }
 
 func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log *logger.Logger) *Handler {
@@ -102,6 +103,7 @@ func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log 
 		Invoice:         NewInvoiceHandler(svcs.Invoice, svcs.TaxCompliance, log),
 		BillingOps:      NewBillingOpsHandler(svcs.BillingOps, log),
 		Payment:         NewPaymentHandler(svcs.Payment, log),
+		RazorpayPayment: NewRazorpayPaymentHandler(svcs.RazorpayPayment, log),
 		Ledger:          NewLedgerHandler(svcs.Ledger, log),
 		Report:          NewReportHandler(svcs.Report, log),
 		Tax:             NewTaxHandler(svcs.TaxCompliance, log),

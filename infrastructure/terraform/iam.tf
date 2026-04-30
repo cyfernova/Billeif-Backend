@@ -141,7 +141,10 @@ data "aws_iam_policy_document" "lambda_app" {
     resources = [
       local.db_username_ssm_parameter_arn,
       local.db_password_ssm_parameter_arn,
-      local.db_host_ssm_parameter_arn
+      local.db_host_ssm_parameter_arn,
+      local.razorpay_key_id_ssm_parameter_arn,
+      local.razorpay_key_secret_ssm_parameter_arn,
+      local.razorpay_webhook_secret_ssm_parameter_arn
     ]
   }
 

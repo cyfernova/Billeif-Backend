@@ -104,6 +104,27 @@ variable "credential_encryption_key" {
   default     = "TPRzhZvL3pvBBvNXN26Sa+yfrLZogwLpyD5rCDmB140="
 }
 
+variable "razorpay_key_id" {
+  description = "Razorpay test/live key ID stored as an SSM SecureString"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "razorpay_key_secret" {
+  description = "Razorpay test/live key secret stored as an SSM SecureString"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "razorpay_webhook_secret" {
+  description = "Razorpay webhook signing secret stored as an SSM SecureString"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 # Lambda Artifacts
 variable "lambda_artifact_dir" {
   description = "Directory containing built lambda zip artifacts"

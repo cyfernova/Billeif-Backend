@@ -135,31 +135,41 @@ migrate-rds-up: ## Run migrations against Terraform-managed RDS (reads DB host/u
 	@set -euo pipefail; \
 	cd $(TERRAFORM_DIR); \
 	DB_HOST=$$(terraform output -raw rds_address); \
+	DB_PORT=$$(terraform output -raw rds_port); \
 	DB_NAME=$$(terraform output -raw rds_database_name); \
 	DB_USER_PARAM=$$(terraform output -raw db_username_ssm_parameter); \
 	DB_PASS_PARAM=$$(terraform output -raw db_password_ssm_parameter); \
 	DB_USER=$$(aws ssm get-parameter --name "$$DB_USER_PARAM" --with-decryption --region $(TF_BACKEND_REGION) --query 'Parameter.Value' --output text); \
 	DB_PASS=$$(aws ssm get-parameter --name "$$DB_PASS_PARAM" --with-decryption --region $(TF_BACKEND_REGION) --query 'Parameter.Value' --output text); \
+	PGPASS_FILE=$$(mktemp); \
+	trap 'rm -f "$$PGPASS_FILE"' EXIT; \
+	escape_pgpass() { printf '%s' "$$1" | sed -e 's/\\/\\\\/g' -e 's/:/\\:/g'; }; \
+	printf '%s:%s:%s:%s:%s\n' "$$(escape_pgpass "$$DB_HOST")" "$$(escape_pgpass "$$DB_PORT")" "$$(escape_pgpass "$$DB_NAME")" "$$(escape_pgpass "$$DB_USER")" "$$(escape_pgpass "$$DB_PASS")" > "$$PGPASS_FILE"; \
+	chmod 600 "$$PGPASS_FILE"; \
 	ENC_USER=$$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$$DB_USER"); \
-	ENC_PASS=$$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$$DB_PASS"); \
-	DB_URL="postgres://$$ENC_USER:$$ENC_PASS@$$DB_HOST/$$DB_NAME?sslmode=require"; \
+	DB_URL="postgres://$$ENC_USER@$$DB_HOST:$$DB_PORT/$$DB_NAME?sslmode=require&connect_timeout=10"; \
 	cd - >/dev/null; \
-	migrate -path ./migrations -database "$$DB_URL" up
+	PGPASSFILE="$$PGPASS_FILE" migrate -path ./migrations -database "$$DB_URL" up
 
 migrate-rds-down: ## Roll back one migration on Terraform-managed RDS (reads DB host/user/pass from Terraform + SSM)
 	@set -euo pipefail; \
 	cd $(TERRAFORM_DIR); \
 	DB_HOST=$$(terraform output -raw rds_address); \
+	DB_PORT=$$(terraform output -raw rds_port); \
 	DB_NAME=$$(terraform output -raw rds_database_name); \
 	DB_USER_PARAM=$$(terraform output -raw db_username_ssm_parameter); \
 	DB_PASS_PARAM=$$(terraform output -raw db_password_ssm_parameter); \
 	DB_USER=$$(aws ssm get-parameter --name "$$DB_USER_PARAM" --with-decryption --region $(TF_BACKEND_REGION) --query 'Parameter.Value' --output text); \
 	DB_PASS=$$(aws ssm get-parameter --name "$$DB_PASS_PARAM" --with-decryption --region $(TF_BACKEND_REGION) --query 'Parameter.Value' --output text); \
+	PGPASS_FILE=$$(mktemp); \
+	trap 'rm -f "$$PGPASS_FILE"' EXIT; \
+	escape_pgpass() { printf '%s' "$$1" | sed -e 's/\\/\\\\/g' -e 's/:/\\:/g'; }; \
+	printf '%s:%s:%s:%s:%s\n' "$$(escape_pgpass "$$DB_HOST")" "$$(escape_pgpass "$$DB_PORT")" "$$(escape_pgpass "$$DB_NAME")" "$$(escape_pgpass "$$DB_USER")" "$$(escape_pgpass "$$DB_PASS")" > "$$PGPASS_FILE"; \
+	chmod 600 "$$PGPASS_FILE"; \
 	ENC_USER=$$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$$DB_USER"); \
-	ENC_PASS=$$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$$DB_PASS"); \
-	DB_URL="postgres://$$ENC_USER:$$ENC_PASS@$$DB_HOST/$$DB_NAME?sslmode=require"; \
+	DB_URL="postgres://$$ENC_USER@$$DB_HOST:$$DB_PORT/$$DB_NAME?sslmode=require&connect_timeout=10"; \
 	cd - >/dev/null; \
-	migrate -path ./migrations -database "$$DB_URL" down 1
+	PGPASSFILE="$$PGPASS_FILE" migrate -path ./migrations -database "$$DB_URL" down 1
 
 migrate-create: ## Create a new migration (usage: make migrate-create NAME=migration_name)
 	migrate create -ext sql -dir ./migrations -seq $(NAME)

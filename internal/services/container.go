@@ -26,6 +26,7 @@ type Container struct {
 	Invoice             *InvoiceService
 	BillingOps          *BillingOpsService
 	Payment             *PaymentService
+	RazorpayPayment     *RazorpayPaymentService
 	Ledger              *LedgerService
 	Report              *ReportService
 	TaxCompliance       *TaxComplianceService
@@ -127,6 +128,7 @@ func NewContainer(
 	taxComplianceSvc.AttachDocumentService(documentSvc)
 	posSvc := NewPOSService(db, documentSvc, barcodeSvc, taxComplianceSvc.entitlements, log)
 	commerceSvc := NewCommerceService(cfg, db, businessRepo, customerRepo, productRepo, subscriptionRepo, inventorySvc, documentSvc, s3Svc, log)
+	razorpayPaymentSvc := NewRazorpayPaymentService(cfg, db, log)
 
 	log.Info("service container initialized",
 		"components", 34,
@@ -153,6 +155,7 @@ func NewContainer(
 		Invoice:             invoiceSvc,
 		BillingOps:          billingOpsSvc,
 		Payment:             NewPaymentService(db, paymentRepo, invoiceRepo, documentSvc, journalSvc, log),
+		RazorpayPayment:     razorpayPaymentSvc,
 		Ledger:              NewLedgerService(ledgerRepo, log),
 		Report:              reportSvc,
 		TaxCompliance:       taxComplianceSvc,

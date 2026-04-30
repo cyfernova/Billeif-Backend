@@ -173,6 +173,26 @@ output "db_host_ssm_parameter" {
   value       = aws_ssm_parameter.db_host.name
 }
 
+output "razorpay_key_id_ssm_parameter" {
+  description = "SSM parameter name for the Razorpay key ID"
+  value       = aws_ssm_parameter.razorpay_key_id.name
+}
+
+output "razorpay_key_secret_ssm_parameter" {
+  description = "SSM parameter name for the Razorpay key secret"
+  value       = aws_ssm_parameter.razorpay_key_secret.name
+}
+
+output "razorpay_webhook_secret_ssm_parameter" {
+  description = "SSM parameter name for the Razorpay webhook secret"
+  value       = aws_ssm_parameter.razorpay_webhook_secret.name
+}
+
+output "razorpay_webhook_url" {
+  description = "Public Razorpay webhook endpoint URL"
+  value       = "${local.rest_api_invoke_url}/api/v1/webhooks/razorpay"
+}
+
 output "websocket_connections_table" {
   description = "DynamoDB table name for WebSocket connections"
   value       = aws_dynamodb_table.ws_connections.name

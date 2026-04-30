@@ -196,6 +196,73 @@ func PaymentRateLimit() gin.HandlerFunc {
 	}
 }
 
+// RazorpayCreateOrderRateLimit limits Razorpay order creation per authenticated user.
+func RazorpayCreateOrderRateLimit() gin.HandlerFunc {
+	limiter := NewRateLimiter(time.Minute, 10)
+
+	return func(c *gin.Context) {
+		userID := c.GetString("user_id")
+		if userID == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+			c.Abort()
+			return
+		}
+		if !limiter.isAllowed(userID) {
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error":   "too many requests",
+				"message": "payment order rate limit exceeded. please try again shortly",
+			})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
+// RazorpayVerifyRateLimit limits Razorpay verification attempts per authenticated user.
+func RazorpayVerifyRateLimit() gin.HandlerFunc {
+	limiter := NewRateLimiter(time.Minute, 20)
+
+	return func(c *gin.Context) {
+		userID := c.GetString("user_id")
+		if userID == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+			c.Abort()
+			return
+		}
+		if !limiter.isAllowed(userID) {
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error":   "too many requests",
+				"message": "payment verification rate limit exceeded. please try again shortly",
+			})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
+// RazorpayWebhookRateLimit limits unauthenticated Razorpay webhook traffic per IP.
+func RazorpayWebhookRateLimit() gin.HandlerFunc {
+	limiter := NewRateLimiter(time.Minute, 120)
+
+	return func(c *gin.Context) {
+		clientIP := c.ClientIP()
+		if clientIP == "" {
+			clientIP = "unknown"
+		}
+		if !limiter.isAllowed(clientIP) {
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error":   "too many requests",
+				"message": "webhook rate limit exceeded. please try again shortly",
+			})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
 // ReportShareRateLimit limits anonymous access attempts to shared reports.
 // 20 requests per minute per client IP.
 func ReportShareRateLimit() gin.HandlerFunc {

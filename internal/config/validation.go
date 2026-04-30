@@ -91,6 +91,18 @@ func validate(cfg *Config) error {
 		return fmt.Errorf("both shipping shiprocket email and password must be configured together")
 	}
 
+	if isProductionEnv(cfg.Environment) {
+		if strings.TrimSpace(cfg.Razorpay.KeyID) == "" {
+			return fmt.Errorf("RAZORPAY_KEY_ID is required in production")
+		}
+		if strings.TrimSpace(cfg.Razorpay.KeySecret) == "" {
+			return fmt.Errorf("RAZORPAY_KEY_SECRET is required in production")
+		}
+		if strings.TrimSpace(cfg.Razorpay.WebhookSecret) == "" {
+			return fmt.Errorf("RAZORPAY_WEBHOOK_SECRET is required in production")
+		}
+	}
+
 	return nil
 }
 

@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"io"
 	"net/http"
 	"strconv"
 
@@ -1041,28 +1040,4 @@ func (h *CommerceHandler) PublicOrder(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, order)
-}
-
-// PublicRazorpayWebhook godoc
-// @Summary Razorpay webhook
-// @Description Handles Razorpay payment webhook notifications
-// @Tags Public Storefront
-// @Accept json
-// @Produce json
-// @Param X-Razorpay-Signature header string true "Razorpay signature"
-// @Success 200 {object} map[string]string
-// @Failure 400 {object} map[string]string
-// @Failure 401 {object} map[string]string
-// @Router /public/store/webhooks/payment/razorpay [post]
-func (h *CommerceHandler) PublicRazorpayWebhook(c *gin.Context) {
-	rawBody, err := io.ReadAll(c.Request.Body)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read request body"})
-		return
-	}
-	if err := h.svc.HandleRazorpayWebhook(c.Request.Context(), c.GetHeader("X-Razorpay-Signature"), rawBody); err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }

@@ -20,6 +20,9 @@ func resolveSSMParameters(cfg *Config) error {
 		cfg.SSM.DatabaseUserParam:            &cfg.Database.User,
 		cfg.SSM.DatabasePasswordParam:        &cfg.Database.Password,
 		cfg.SSM.CredentialEncryptionKeyParam: &cfg.Credentials.EncryptionKey,
+		cfg.SSM.RazorpayKeyIDParam:           &cfg.Razorpay.KeyID,
+		cfg.SSM.RazorpayKeySecretParam:       &cfg.Razorpay.KeySecret,
+		cfg.SSM.RazorpayWebhookSecretParam:   &cfg.Razorpay.WebhookSecret,
 	}
 
 	hasParams := false

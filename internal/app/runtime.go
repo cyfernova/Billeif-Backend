@@ -375,9 +375,10 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 				store.POST("/coupons/validate", middleware.StorefrontCouponRateLimit(), h.Commerce.PublicValidateCoupon)
 				store.POST("/checkout", middleware.StorefrontCheckoutRateLimit(), h.Commerce.PublicCheckout)
 				store.GET("/orders/:token", h.Commerce.PublicOrder)
-				store.POST("/webhooks/payment/razorpay", h.Commerce.PublicRazorpayWebhook)
 			}
 		}
+
+		api.POST("/webhooks/razorpay", middleware.RazorpayWebhookRateLimit(), wafCommonRL, h.RazorpayPayment.Webhook)
 
 		protected := api.Group("")
 		protected.Use(middleware.Auth(cfg.Cognito, log))
@@ -537,6 +538,8 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			payments := protected.Group("/payments")
 			{
 				payments.GET("", h.Payment.List)
+				payments.POST("/razorpay/order", middleware.RazorpayCreateOrderRateLimit(), wafUserHeavyRL, h.RazorpayPayment.CreateOrder)
+				payments.POST("/razorpay/verify", middleware.RazorpayVerifyRateLimit(), wafUserHeavyRL, h.RazorpayPayment.VerifyPayment)
 				payments.GET("/:id", h.Payment.Get)
 				payments.POST("", wafUserWriteRL, h.Payment.Create)
 				payments.PUT("/:id", wafUserWriteRL, h.Payment.Update)
