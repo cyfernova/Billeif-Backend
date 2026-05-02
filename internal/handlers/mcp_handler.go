@@ -47,12 +47,12 @@ func NewMCPHandlerFromConfig(cfg *config.Config, log *logger.Logger) *MCPHandler
 	}
 
 	mcpCfg := mcp.Config{
-		ServerURL:         serverURL,
-		Timeout:           cfg.MCP.Timeout,
+		ServerURL:          serverURL,
+		Timeout:            cfg.MCP.Timeout,
 		InsecureSkipVerify: insecureSkipVerify,
-		TLSCertFile:       cfg.MCP.TLSCertFile,
-		TLSKeyFile:        cfg.MCP.TLSKeyFile,
-		TLSCACertFile:     cfg.MCP.TLSCACertFile,
+		TLSCertFile:        cfg.MCP.TLSCertFile,
+		TLSKeyFile:         cfg.MCP.TLSKeyFile,
+		TLSCACertFile:      cfg.MCP.TLSCACertFile,
 	}
 
 	log.Info("Creating MCP client with config", "url", mcpCfg.ServerURL, "insecure", mcpCfg.InsecureSkipVerify)
@@ -151,9 +151,9 @@ func (h *MCPHandler) CallTool(c *gin.Context) {
 	if err != nil {
 		h.log.Error("MCP tool call failed", "tool", req.Tool, "request_id", reqID, "error", err)
 		c.JSON(http.StatusInternalServerError, ToolCallResponse{
-			Status:   http.StatusInternalServerError,
+			Status:    http.StatusInternalServerError,
 			RequestID: reqID,
-			Error:    err.Error(),
+			Error:     err.Error(),
 		})
 		return
 	}

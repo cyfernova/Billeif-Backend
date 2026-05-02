@@ -894,6 +894,13 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			llm.POST("/agent-assist", wafLLMRL, h.LLM.AgentAssist)
 		}
 
+		// Voice transcription endpoints
+		voice := protected.Group("/voice")
+		{
+			voice.POST("/transcribe", h.Voice.Transcribe)
+			voice.POST("/transcribe-bytes", h.Voice.TranscribeBytes)
+		}
+
 		// Workflow automation endpoints
 		workflows := protected.Group("/workflows")
 		{

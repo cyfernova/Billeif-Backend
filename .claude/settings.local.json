@@ -46,7 +46,8 @@
       "Bash(iconv -f UTF-8 -t UTF-8 //IGNORE)",
       "Bash(tee .build/lambda/raw_output.txt)",
       "PowerShell(aws s3 cp *)",
-      "PowerShell(aws lambda update-function-code *)"
+      "PowerShell(aws lambda update-function-code *)",
+      "Bash(make test *)"
     ]
   }
 }

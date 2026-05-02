@@ -17,18 +17,18 @@ import (
 
 // Config holds configuration for the MCP client.
 type Config struct {
-	ServerURL         string
-	Timeout           time.Duration
+	ServerURL          string
+	Timeout            time.Duration
 	InsecureSkipVerify bool
-	TLSCertFile       string
-	TLSKeyFile        string
-	TLSCACertFile     string
+	TLSCertFile        string
+	TLSKeyFile         string
+	TLSCACertFile      string
 }
 
 // Client makes calls to the MCP server.
 type Client struct {
-	baseURL    *url.URL
-	httpClient *http.Client
+	baseURL     *url.URL
+	httpClient  *http.Client
 	tlsCertFile string
 	tlsKeyFile  string
 	tlsCAFile   string
@@ -50,9 +50,9 @@ func NewClient(cfg Config) (*Client, error) {
 	}
 
 	transport := &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
-		DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
-		TLSHandshakeTimeout: 10 * time.Second,
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
+		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: timeout,
 	}
 
@@ -83,7 +83,7 @@ func NewClient(cfg Config) (*Client, error) {
 	}
 
 	return &Client{
-		baseURL:    parsed,
+		baseURL: parsed,
 		httpClient: &http.Client{
 			Transport: transport,
 			Timeout:   timeout,
