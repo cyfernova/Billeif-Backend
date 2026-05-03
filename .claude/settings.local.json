@@ -47,7 +47,14 @@
       "Bash(tee .build/lambda/raw_output.txt)",
       "PowerShell(aws s3 cp *)",
       "PowerShell(aws lambda update-function-code *)",
-      "Bash(make test *)"
+      "Bash(make test *)",
+      "Bash(Get-ChildItem -Path \".\" -Force)",
+      "Bash(Select-Object Name, Mode)",
+      "WebFetch(domain:www.minimaxi.com)",
+      "WebFetch(domain:platform.minimaxi.com)",
+      "mcp__ide__getDiagnostics",
+      "Bash(Select-String -Path \"logs.txt\" -Pattern \"voice_transcription|MiniMax.*404|text/voice\" -AllMatches)",
+      "Bash(Select-Object -First 20)"
     ]
   }
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"time"
@@ -83,6 +84,11 @@ func (c *MiniMaxClient) TranscribeAudio(ctx context.Context, audioData []byte, f
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
 
+	log.Printf("[MiniMaxClient] POST %s", url)
+	log.Printf("[MiniMaxClient] Authorization: Bearer %s...", c.apiKey[:10])
+	log.Printf("[MiniMaxClient] Content-Type: %s", writer.FormDataContentType())
+	log.Printf("[MiniMaxClient] Body bytes: %d", body.Len())
+
 	// Make request
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -90,11 +96,11 @@ func (c *MiniMaxClient) TranscribeAudio(ctx context.Context, audioData []byte, f
 	}
 	defer resp.Body.Close()
 
-	// Read response
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("failed to read response: %w", err)
 	}
+	log.Printf("[MiniMaxClient] Status: %d | Body: %s", resp.StatusCode, string(respBody))
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("MiniMax API returned status %d: %s", resp.StatusCode, string(respBody))
