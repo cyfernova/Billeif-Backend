@@ -103,7 +103,7 @@ func NewContainer(
 	productMatchingSvc := NewProductMatchingService(marketplaceSvc, log)
 	intentProcessingSvc, _ := NewIntentProcessingService(productMatchingSvc, marketplaceSvc, log)
 	llmSvc := NewLLMService(cfg.LLM, log)
-	voiceSvc := NewVoiceService(cfg.LLM, log)
+	voiceSvc := NewVoiceService(cfg.Deepgram, log)
 
 	agentSvc := NewAgentService(ap2Repo, productRepo, ap2Signer, log)
 	menteeSvc := NewMenteeService(log)

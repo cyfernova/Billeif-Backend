@@ -6,10 +6,11 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/spf13/viper"
 	"invoice-backend/internal/config"
 	"invoice-backend/pkg/logger"
 	"invoice-backend/pkg/mcp"
+
+	"github.com/spf13/viper"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"

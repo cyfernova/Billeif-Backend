@@ -31,6 +31,7 @@ type Config struct {
 	Entitlements   EntitlementsConfig `mapstructure:"ENTITLEMENTS"`
 	AllowedOrigins []string           `mapstructure:"ALLOWED_ORIGINS"`
 	LLM            LLMConfig          `mapstructure:"LLM"`
+	Deepgram       DeepgramConfig     `mapstructure:"DEEPGRAM"`
 	Credentials    CredentialsConfig  `mapstructure:"CREDENTIALS"`
 	MCP            MCPConfig          `mapstructure:"MCP"`
 }
@@ -44,6 +45,13 @@ type LoggingConfig struct {
 }
 
 type LLMConfig struct {
+	APIKey  string `mapstructure:"API_KEY"`
+	APIURL  string `mapstructure:"API_URL"`
+	Model   string `mapstructure:"MODEL"`
+	Timeout int    `mapstructure:"TIMEOUT"`
+}
+
+type DeepgramConfig struct {
 	APIKey  string `mapstructure:"API_KEY"`
 	APIURL  string `mapstructure:"API_URL"`
 	Model   string `mapstructure:"MODEL"`
@@ -363,6 +371,10 @@ func Load() (*Config, error) {
 	_ = viper.BindEnv("LLM.API_URL", "LLM_API_URL")
 	_ = viper.BindEnv("LLM.MODEL", "LLM_MODEL")
 	_ = viper.BindEnv("LLM.TIMEOUT", "LLM_TIMEOUT")
+	_ = viper.BindEnv("DEEPGRAM.API_KEY", "DEEPGRAM_API_KEY")
+	_ = viper.BindEnv("DEEPGRAM.API_URL", "DEEPGRAM_API_URL")
+	_ = viper.BindEnv("DEEPGRAM.MODEL", "DEEPGRAM_MODEL")
+	_ = viper.BindEnv("DEEPGRAM.TIMEOUT", "DEEPGRAM_TIMEOUT")
 	_ = viper.BindEnv("CREDENTIALS.ENCRYPTION_KEY", "CREDENTIAL_ENCRYPTION_KEY")
 	_ = viper.BindEnv("MCP.SERVER_URL", "MCP_SERVER_URL")
 	_ = viper.BindEnv("MCP.TIMEOUT", "MCP_TIMEOUT")
@@ -460,6 +472,15 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.LLM.Timeout == 0 {
 		cfg.LLM.Timeout = 60
+	}
+	if cfg.Deepgram.Timeout == 0 {
+		cfg.Deepgram.Timeout = 60
+	}
+	if cfg.Deepgram.APIURL == "" {
+		cfg.Deepgram.APIURL = "https://api.deepgram.com/v1/listen"
+	}
+	if cfg.Deepgram.Model == "" {
+		cfg.Deepgram.Model = "nova-2"
 	}
 	if cfg.S3.BucketDrive == "" {
 		cfg.S3.BucketDrive = cfg.S3.BucketInvoices

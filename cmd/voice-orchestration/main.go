@@ -1,5 +1,5 @@
 // Package main is the entry point for the voice orchestration service.
-// It provides a middleware API that handles: .wav upload -> STT transcription -> MIN MAX LLM processing.
+// It provides a middleware API that handles: .wav upload -> STT transcription -> LLM processing.
 package main
 
 import (
@@ -8,18 +8,41 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"mime/multipart"
 	"net/http"
 	"strings"
+
+	"github.com/spf13/viper"
 )
 
 // Config holds the service endpoint configuration.
-// Swap these values for different environments (local, staging, production).
 var (
-	MINMAX_STT_URL  = "https://api.minimax.io/v1/text/voice_transcription"
-	MINMAX_LLM_URL  = "https://api.minimax.io/anthropic/v1/messages"
-	MINMAX_API_KEY  = "sk-cp-zqif4snq4REvqsQ4Wmrw2jKeBI4PQs6jT2ENfYjM2N5nwkmS3GBvZoUvWnYG8aDclplWweqsEX_ybzZFh-aeremTMNhs4DptzZFuEzVsrCDpvhEqh_LsPKc"
+	DEEPGRAM_STT_URL string
+	DEEPGRAM_API_KEY string
+	MINMAX_LLM_URL   string
+	MINMAX_API_KEY   string
 )
+
+func init() {
+	viper.SetConfigName(".env")
+	viper.AddConfigPath(".")
+	viper.AutomaticEnv()
+
+	if err := viper.ReadInConfig(); err != nil {
+		log.Fatalf("Failed to read .env file: %v", err)
+	}
+
+	DEEPGRAM_STT_URL = viper.GetString("DEEPGRAM_API_URL")
+	DEEPGRAM_API_KEY = viper.GetString("DEEPGRAM_API_KEY")
+	MINMAX_LLM_URL = viper.GetString("LLM_API_URL")
+	MINMAX_API_KEY = viper.GetString("LLM_API_KEY")
+
+	if DEEPGRAM_STT_URL == "" {
+		DEEPGRAM_STT_URL = "https://api.deepgram.com/v1/listen"
+	}
+	if DEEPGRAM_API_KEY == "" {
+		log.Fatal("DEEPGRAM_API_KEY is required")
+	}
+}
 
 // Response represents the JSON body returned on successful transcription + LLM processing.
 type Response struct {
@@ -41,45 +64,19 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
-// transcribeSTT sends the .wav file to the MiniMax STT service and extracts the transcript.
-// It tries "text", "transcript", and "result" keys in that order.
+// transcribeSTT sends the .wav file to the Deepgram STT service and extracts the transcript.
 func transcribeSTT(wavContent []byte, filename string) (string, error) {
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
+	url := DEEPGRAM_STT_URL + "?model=nova-2&smart_format=true&punctuate=true"
 
-	// Add audio file under "file" field.
-	part, err := writer.CreateFormFile("file", filename)
-	if err != nil {
-		return "", fmt.Errorf("failed to create multipart form file: %w", err)
-	}
-	if _, err := part.Write(wavContent); err != nil {
-		return "", fmt.Errorf("failed to write wav content: %w", err)
-	}
-
-	// Add model parameter (MiniMax expects "speech-01" for transcription).
-	if err := writer.WriteField("model", "speech-01"); err != nil {
-		return "", fmt.Errorf("failed to write model field: %w", err)
-	}
-
-	// Add language parameter (default to English).
-	if err := writer.WriteField("language", "en"); err != nil {
-		return "", fmt.Errorf("failed to write language field: %w", err)
-	}
-
-	if err := writer.Close(); err != nil {
-		return "", fmt.Errorf("failed to close multipart writer: %w", err)
-	}
-
-	req, err := http.NewRequest(http.MethodPost, MINMAX_STT_URL, bytes.NewReader(body.Bytes()))
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(wavContent))
 	if err != nil {
 		return "", fmt.Errorf("failed to create STT request: %w", err)
 	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", MINMAX_API_KEY))
+	req.Header.Set("Authorization", "Token "+DEEPGRAM_API_KEY)
+	req.Header.Set("Content-Type", "audio/wav")
 
-	log.Printf("[STT] POST %s", MINMAX_STT_URL)
-	log.Printf("[STT] Content-Type: %s", writer.FormDataContentType())
-	log.Printf("[STT] Authorization: Bearer %s... [REDACTED]", MINMAX_API_KEY[:10])
+	log.Printf("[STT] POST %s", url)
+	log.Printf("[STT] Authorization: Token %s...", DEEPGRAM_API_KEY[:10])
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -95,32 +92,42 @@ func transcribeSTT(wavContent []byte, filename string) (string, error) {
 		return "", fmt.Errorf("STT returned status %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	// MiniMax transcription response has fields: text, code, msg.
 	var data map[string]any
 	if err := json.Unmarshal(respBody, &data); err != nil {
 		return "", fmt.Errorf("failed to parse STT JSON response: %w", err)
 	}
 
-	// Check for API error code.
-	if code, ok := data["code"].(float64); ok && code != 0 {
-		return "", fmt.Errorf("STT API error: %v", data["msg"])
+	// Navigate Deepgram response structure: results -> channels[0] -> alternatives[0] -> transcript
+	results, ok := data["results"].(map[string]any)
+	if !ok {
+		return "", fmt.Errorf("STT response contained no results")
+	}
+	channels, ok := results["channels"].([]any)
+	if !ok || len(channels) == 0 {
+		return "", fmt.Errorf("STT response contained no channels")
+	}
+	channel0, ok := channels[0].(map[string]any)
+	if !ok {
+		return "", fmt.Errorf("STT response contained invalid channel structure")
+	}
+	alternatives, ok := channel0["alternatives"].([]any)
+	if !ok || len(alternatives) == 0 {
+		return "", fmt.Errorf("STT response contained no alternatives")
+	}
+	alt0, ok := alternatives[0].(map[string]any)
+	if !ok {
+		return "", fmt.Errorf("STT response contained invalid alternative structure")
+	}
+	transcript, ok := alt0["transcript"].(string)
+	if !ok || transcript == "" {
+		return "", fmt.Errorf("STT response contained no transcript")
 	}
 
-	// Try keys in order of preference.
-	for _, key := range []string{"text", "transcript", "result"} {
-		if val, ok := data[key]; ok {
-			if str, ok := val.(string); ok && str != "" {
-				log.Printf("[STT] Transcript extracted via key %q: %s", key, str)
-				return str, nil
-			}
-		}
-	}
-	return "", fmt.Errorf("STT response contained no usable transcript field (tried text, transcript, result)")
+	log.Printf("[STT] Transcript: %s", transcript)
+	return transcript, nil
 }
 
 // queryMINMAX sends the transcript to the MIN MAX LLM and extracts the reply.
-// It tries "reply", "response", and "choices[0].message.content" keys in that order.
-// MIN MAX (Anthropic-compatible) expects model + messages payload.
 func queryMINMAX(transcript string) (string, error) {
 	payload := map[string]any{
 		"model": "MiniMax-M2.7",
@@ -193,7 +200,6 @@ func queryMINMAX(transcript string) (string, error) {
 }
 
 // voiceTranscribeHandler handles POST /api/v1/voice/transcribe.
-// It expects a multipart form upload with a .wav file under field name "file".
 func voiceTranscribeHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		errResp := ErrorResponse{Error: "method not allowed", Details: "only POST is accepted"}
@@ -222,7 +228,7 @@ func voiceTranscribeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// Validate .wav extension by sniffing the Content-Type header too.
+	// Validate .wav extension.
 	filename := header.Filename
 	if !strings.HasSuffix(strings.ToLower(filename), ".wav") {
 		errResp := ErrorResponse{Error: "invalid file type", Details: "only .wav files are accepted"}
@@ -241,7 +247,7 @@ func voiceTranscribeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 1: Transcribe via STT.
+	// Step 1: Transcribe via Deepgram STT.
 	log.Printf("[HANDLER] Received file: %s (%d bytes), starting STT transcription...", filename, len(wavContent))
 	transcript, err := transcribeSTT(wavContent, filename)
 	if err != nil {
@@ -280,5 +286,6 @@ func main() {
 	mux.HandleFunc("/api/v1/voice/transcribe", voiceTranscribeHandler)
 
 	fmt.Println("Voice Orchestration Service listening on :8080")
+	fmt.Printf("Deepgram STT: %s\n", DEEPGRAM_STT_URL)
 	log.Fatal(http.ListenAndServe(":8080", mux))
 }

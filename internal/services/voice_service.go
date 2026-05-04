@@ -8,16 +8,16 @@ import (
 	"invoice-backend/pkg/pipecat"
 )
 
-// VoiceService handles voice transcription using pipecat orchestration
+// VoiceService handles voice transcription using Deepgram
 type VoiceService struct {
-	transcriber *pipecat.MiniMaxClient
+	transcriber *pipecat.DeepgramClient
 	log         *logger.Logger
 }
 
 // NewVoiceService creates a new voice service
-func NewVoiceService(cfg config.LLMConfig, log *logger.Logger) *VoiceService {
+func NewVoiceService(cfg config.DeepgramConfig, log *logger.Logger) *VoiceService {
 	return &VoiceService{
-		transcriber: pipecat.NewMiniMaxClient(cfg.APIKey),
+		transcriber: pipecat.NewDeepgramClient(cfg.APIKey),
 		log:         log,
 	}
 }
