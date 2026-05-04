@@ -27,11 +27,16 @@ type TranscriptionResult struct {
 	Text string `json:"text"`
 }
 
-// Transcribe processes audio data and returns transcription
-func (s *VoiceService) Transcribe(ctx context.Context, audioData []byte, filename string) (*TranscriptionResult, error) {
-	s.log.Debug("transcribing audio", "filename", filename, "size", len(audioData))
+type SpeechResult struct {
+	Audio       []byte
+	ContentType string
+}
 
-	text, err := s.transcriber.TranscribeAudio(ctx, audioData, filename)
+// Transcribe processes audio data and returns transcription.
+func (s *VoiceService) Transcribe(ctx context.Context, audioData []byte, filename string, contentType string) (*TranscriptionResult, error) {
+	s.log.Debug("transcribing audio", "filename", filename, "size", len(audioData), "content_type", contentType)
+
+	text, err := s.transcriber.TranscribeAudio(ctx, audioData, filename, contentType)
 	if err != nil {
 		s.log.Error("transcription failed", "error", err)
 		return nil, err
@@ -40,4 +45,19 @@ func (s *VoiceService) Transcribe(ctx context.Context, audioData []byte, filenam
 	s.log.Info("transcription completed", "text_length", len(text))
 
 	return &TranscriptionResult{Text: text}, nil
+}
+
+// Speak synthesizes assistant text into speech audio.
+func (s *VoiceService) Speak(ctx context.Context, text string) (*SpeechResult, error) {
+	s.log.Debug("synthesizing voice response", "text_length", len(text))
+
+	audio, contentType, err := s.transcriber.SpeakText(ctx, text)
+	if err != nil {
+		s.log.Error("speech synthesis failed", "error", err)
+		return nil, err
+	}
+
+	s.log.Info("speech synthesis completed", "audio_size", len(audio), "content_type", contentType)
+
+	return &SpeechResult{Audio: audio, ContentType: contentType}, nil
 }

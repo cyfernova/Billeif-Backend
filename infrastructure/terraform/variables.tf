@@ -300,3 +300,22 @@ variable "llm_model" {
   type        = string
   default     = "MiniMax-M2.7"
 }
+
+variable "deepgram_api_key" {
+  description = "Deepgram API key for voice transcription"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "deepgram_api_url" {
+  description = "Deepgram API URL"
+  type        = string
+  default     = "https://api.deepgram.com/v1/listen"
+}
+
+variable "deepgram_model" {
+  description = "Deepgram transcription model"
+  type        = string
+  default     = "nova-2"
+}

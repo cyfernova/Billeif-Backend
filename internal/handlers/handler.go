@@ -124,7 +124,7 @@ func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log 
 		Intent:          NewIntentHandler(svcs.IntentProcessing, log),
 		WebSocket:       NewWebSocketHandler(wsHub, svcs.WebSocketConnection, log),
 		LLM:             NewLLMHandler(svcs.LLM, log),
-		Voice:           NewVoiceHandler(svcs.Voice, log),
+		Voice:           NewVoiceHandler(svcs.Voice, svcs.LLM, log),
 		WellKnown:       NewWellKnownHandler(cfg, log),
 		A2ATask:         NewA2ATaskHandler(svcs.A2ATask, svcs.A2APush, log),
 		Workflow:        NewWorkflowHandler(svcs.Workflow, log),

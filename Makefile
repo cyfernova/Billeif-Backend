@@ -15,6 +15,12 @@ TF_VAR_india_sms_sender_id ?= $(INDIA_SMS_SENDER_ID)
 TF_VAR_india_dlt_entity_id ?= $(INDIA_DLT_ENTITY_ID)
 TF_VAR_india_signup_template_id ?= $(INDIA_SIGNUP_TEMPLATE_ID)
 TF_VAR_india_auth_template_id ?= $(INDIA_AUTH_TEMPLATE_ID)
+TF_VAR_llm_api_key ?= $(LLM_API_KEY)
+TF_VAR_llm_api_url ?= $(LLM_API_URL)
+TF_VAR_llm_model ?= $(LLM_MODEL)
+TF_VAR_deepgram_api_key ?= $(DEEPGRAM_API_KEY)
+TF_VAR_deepgram_api_url ?= $(DEEPGRAM_API_URL)
+TF_VAR_deepgram_model ?= $(DEEPGRAM_MODEL)
 TF_INIT_BACKEND_ARGS := \
 	-backend-config=bucket=$(TF_BACKEND_BUCKET) \
 	-backend-config=region=$(TF_BACKEND_REGION) \

@@ -897,6 +897,7 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 		// Voice transcription endpoints
 		voice := protected.Group("/voice")
 		{
+			voice.POST("/agent", wafLLMRL, h.Voice.Agent)
 			voice.POST("/transcribe", h.Voice.Transcribe)
 			voice.POST("/transcribe-bytes", h.Voice.TranscribeBytes)
 		}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"invoice-backend/internal/config"
@@ -18,6 +19,11 @@ type LLMService struct {
 	config config.LLMConfig
 	log    *logger.Logger
 	client *http.Client
+}
+
+type LLMChatOptions struct {
+	MaxTokens int
+	System    string
 }
 
 // NewLLMService creates a new LLM service
@@ -98,8 +104,17 @@ type AnthropicResponse struct {
 
 // Chat sends a chat request to the LLM
 func (s *LLMService) Chat(ctx context.Context, messages []ChatMessage) (string, error) {
+	return s.ChatWithOptions(ctx, messages, LLMChatOptions{})
+}
+
+// ChatWithOptions sends a chat request to the LLM with call-site-specific generation limits.
+func (s *LLMService) ChatWithOptions(ctx context.Context, messages []ChatMessage, options LLMChatOptions) (string, error) {
 	log := logger.FromContext(ctx).With("service", "llm", "operation", "chat", "message_count", len(messages))
 	start := time.Now()
+	maxTokens := options.MaxTokens
+	if maxTokens <= 0 {
+		maxTokens = 8192
+	}
 
 	// Convert messages to Anthropic format (content as array)
 	anthropicMessages := make([]ChatMessage, len(messages))
@@ -110,8 +125,9 @@ func (s *LLMService) Chat(ctx context.Context, messages []ChatMessage) (string, 
 	reqBody := AnthropicRequest{
 		Model:            s.config.Model,
 		Messages:         anthropicMessages,
-		MaxTokens:        8192,
+		MaxTokens:        maxTokens,
 		Stream:           false,
+		System:           options.System,
 		AnthropicVersion: "vertex-2023-06-01",
 	}
 
@@ -128,7 +144,10 @@ func (s *LLMService) Chat(ctx context.Context, messages []ChatMessage) (string, 
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", s.config.APIKey)
+	apiKey := strings.TrimSpace(s.config.APIKey)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("x-api-key", apiKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
 
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -142,7 +161,7 @@ func (s *LLMService) Chat(ctx context.Context, messages []ChatMessage) (string, 
 		log.Error("failed to read response body", "error", err)
 		return "", fmt.Errorf("failed to read response: %w", err)
 	}
-	log.Info("LLM RAW RESPONSE", "body", string(bodyBytes))
+	log.Debug("LLM response received", "response_size", len(bodyBytes))
 
 	if resp.StatusCode != http.StatusOK {
 		log.Error("LLM API returned non-200",

@@ -20,6 +20,11 @@ locals {
     name => fileexists(path) ? filebase64sha256(path) : null
   }
 
+  lambda_artifact_hex_hashes = {
+    for name, path in local.lambda_artifacts :
+    name => fileexists(path) ? filesha256(path) : null
+  }
+
   common_lambda_env = {
     ENVIRONMENT                       = var.environment
     LOG_LEVEL                         = "info"
@@ -57,6 +62,9 @@ locals {
     LLM_API_KEY                       = var.llm_api_key
     LLM_API_URL                       = var.llm_api_url
     LLM_MODEL                         = var.llm_model
+    DEEPGRAM_API_KEY                  = var.deepgram_api_key
+    DEEPGRAM_API_URL                  = var.deepgram_api_url
+    DEEPGRAM_MODEL                    = var.deepgram_model
   }
 }
 
@@ -91,15 +99,17 @@ resource "aws_cloudwatch_log_group" "lambda_ws_handler" {
 }
 
 resource "aws_lambda_function" "api_http" {
-  function_name    = "${var.project_name}-api-http"
-  role             = aws_iam_role.lambda_exec.arn
-  runtime          = "provided.al2023"
-  handler          = "bootstrap"
-  architectures    = ["arm64"]
-  filename         = local.lambda_artifacts.api_http
-  source_code_hash = local.lambda_artifact_hashes.api_http
-  memory_size      = 1024
-  timeout          = 500
+  function_name     = "${var.project_name}-api-http"
+  role              = aws_iam_role.lambda_exec.arn
+  runtime           = "provided.al2023"
+  handler           = "bootstrap"
+  architectures     = ["arm64"]
+  s3_bucket         = aws_s3_bucket.lambda_artifacts.id
+  s3_key            = aws_s3_object.api_http_lambda_artifact.key
+  s3_object_version = aws_s3_object.api_http_lambda_artifact.version_id
+  source_code_hash  = local.lambda_artifact_hashes.api_http
+  memory_size       = 1024
+  timeout           = 500
 
   reserved_concurrent_executions = var.enable_lambda_reserved_concurrency ? 10 : null
 
@@ -243,15 +253,17 @@ resource "aws_cloudwatch_log_group" "lambda_sqs_bargaining" {
 }
 
 resource "aws_lambda_function" "sqs_bargaining" {
-  function_name    = "${var.project_name}-sqs-bargaining"
-  role             = aws_iam_role.lambda_exec.arn
-  runtime          = "provided.al2023"
-  handler          = "bootstrap"
-  architectures    = ["arm64"]
-  filename         = local.lambda_artifacts.sqs_bargaining
-  source_code_hash = local.lambda_artifact_hashes.sqs_bargaining
-  memory_size      = 1024
-  timeout          = 350
+  function_name     = "${var.project_name}-sqs-bargaining"
+  role              = aws_iam_role.lambda_exec.arn
+  runtime           = "provided.al2023"
+  handler           = "bootstrap"
+  architectures     = ["arm64"]
+  s3_bucket         = aws_s3_bucket.lambda_artifacts.id
+  s3_key            = aws_s3_object.sqs_bargaining_lambda_artifact.key
+  s3_object_version = aws_s3_object.sqs_bargaining_lambda_artifact.version_id
+  source_code_hash  = local.lambda_artifact_hashes.sqs_bargaining
+  memory_size       = 1024
+  timeout           = 350
 
   reserved_concurrent_executions = var.enable_lambda_reserved_concurrency ? 5 : null
 
