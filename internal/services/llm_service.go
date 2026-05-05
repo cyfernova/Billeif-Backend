@@ -37,69 +37,121 @@ func NewLLMService(cfg config.LLMConfig, log *logger.Logger) *LLMService {
 	}
 }
 
-// ContentBlock represents a message content block
+// ContentBlock represents a text content block accepted by callers that build rich messages.
 type ContentBlock struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
 }
 
-// ChatMessage represents a message in the chat conversation (content can be string or array)
+// ChatMessage represents a message in the chat conversation.
 type ChatMessage struct {
 	Role    string      `json:"role"`
 	Content interface{} `json:"content"`
 }
 
-// ToAnthropicFormat converts a ChatMessage to Anthropic format with content as array
-func (m ChatMessage) ToAnthropicFormat() ChatMessage {
-	var contentBlocks []ContentBlock
-	switch v := m.Content.(type) {
+// ToOpenAIFormat converts a ChatMessage to an OpenAI-compatible chat message.
+func (m ChatMessage) ToOpenAIFormat() OpenAIChatMessage {
+	return OpenAIChatMessage{
+		Role:    m.Role,
+		Content: stringifyMessageContent(m.Content),
+	}
+}
+
+type OpenAIChatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type OpenAIChatRequest struct {
+	Model     string              `json:"model"`
+	Messages  []OpenAIChatMessage `json:"messages"`
+	MaxTokens int                 `json:"max_tokens,omitempty"`
+	Stream    bool                `json:"stream"`
+}
+
+type OpenAIChatResponse struct {
+	ID      string         `json:"id"`
+	Model   string         `json:"model"`
+	Choices []OpenAIChoice `json:"choices"`
+	Error   *OpenAIError   `json:"error,omitempty"`
+}
+
+type OpenAIChoice struct {
+	Index        int               `json:"index"`
+	Message      OpenAIChatMessage `json:"message"`
+	FinishReason string            `json:"finish_reason"`
+}
+
+type OpenAIError struct {
+	Message string `json:"message"`
+	Type    string `json:"type,omitempty"`
+	Param   string `json:"param,omitempty"`
+	Code    string `json:"code,omitempty"`
+}
+
+func stringifyMessageContent(content interface{}) string {
+	switch v := content.(type) {
+	case nil:
+		return ""
 	case string:
-		contentBlocks = []ContentBlock{{Type: "text", Text: v}}
+		return v
+	case ContentBlock:
+		return v.Text
 	case []ContentBlock:
-		contentBlocks = v
+		return joinContentBlocks(v)
 	case []interface{}:
-		for _, item := range v {
-			if block, ok := item.(ContentBlock); ok {
-				contentBlocks = append(contentBlocks, block)
-			} else if mmap, ok := item.(map[string]interface{}); ok {
-				contentBlocks = append(contentBlocks, ContentBlock{
-					Type: mmap["type"].(string),
-					Text: mmap["text"].(string),
-				})
+		return joinInterfaceContentBlocks(v)
+	case map[string]interface{}:
+		return textFromMap(v)
+	default:
+		return fmt.Sprint(v)
+	}
+}
+
+func joinContentBlocks(blocks []ContentBlock) string {
+	parts := make([]string, 0, len(blocks))
+	for _, block := range blocks {
+		if block.Text != "" {
+			parts = append(parts, block.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func joinInterfaceContentBlocks(items []interface{}) string {
+	parts := make([]string, 0, len(items))
+	for _, item := range items {
+		switch v := item.(type) {
+		case string:
+			if v != "" {
+				parts = append(parts, v)
+			}
+		case ContentBlock:
+			if v.Text != "" {
+				parts = append(parts, v.Text)
+			}
+		case map[string]interface{}:
+			if text := textFromMap(v); text != "" {
+				parts = append(parts, text)
+			}
+		default:
+			text := fmt.Sprint(v)
+			if text != "" {
+				parts = append(parts, text)
 			}
 		}
 	}
-	return ChatMessage{Role: m.Role, Content: contentBlocks}
+	return strings.Join(parts, "\n")
 }
 
-// AnthropicRequest represents the request body for Anthropic API via MinMax proxy
-type AnthropicRequest struct {
-	Model            string          `json:"model"`
-	Messages         []ChatMessage   `json:"messages"`
-	MaxTokens        int             `json:"max_tokens"`
-	Stream           bool            `json:"stream"`
-	System           string          `json:"system,omitempty"`
-	AnthropicVersion string          `json:"anthropic_version"`
-	Thinking         *ThinkingConfig `json:"thinking,omitempty"`
-}
-
-type ThinkingConfig struct {
-	Type         string `json:"type"`
-	BudgetTokens int    `json:"budget_tokens,omitempty"`
-}
-
-// AnthropicResponse represents the response from Anthropic API via MinMax proxy
-type AnthropicResponse struct {
-	ID      string `json:"id"`
-	Type    string `json:"type"`
-	Role    string `json:"role"`
-	Content []struct {
-		Type     string `json:"type"`
-		Text     string `json:"text"`
-		Thinking string `json:"thinking,omitempty"`
-	} `json:"content"`
-	Model      string `json:"model"`
-	StopReason string `json:"stop_reason"`
+func textFromMap(m map[string]interface{}) string {
+	if text, ok := m["text"].(string); ok {
+		return text
+	}
+	if content, ok := m["content"].(string); ok {
+		return content
+	}
+	return ""
 }
 
 // Chat sends a chat request to the LLM
@@ -116,19 +168,22 @@ func (s *LLMService) ChatWithOptions(ctx context.Context, messages []ChatMessage
 		maxTokens = 8192
 	}
 
-	// Convert messages to Anthropic format (content as array)
-	anthropicMessages := make([]ChatMessage, len(messages))
-	for i, msg := range messages {
-		anthropicMessages[i] = msg.ToAnthropicFormat()
+	openAIMessages := make([]OpenAIChatMessage, 0, len(messages)+1)
+	if options.System != "" {
+		openAIMessages = append(openAIMessages, OpenAIChatMessage{
+			Role:    "system",
+			Content: options.System,
+		})
+	}
+	for _, msg := range messages {
+		openAIMessages = append(openAIMessages, msg.ToOpenAIFormat())
 	}
 
-	reqBody := AnthropicRequest{
-		Model:            s.config.Model,
-		Messages:         anthropicMessages,
-		MaxTokens:        maxTokens,
-		Stream:           false,
-		System:           options.System,
-		AnthropicVersion: "vertex-2023-06-01",
+	reqBody := OpenAIChatRequest{
+		Model:     s.config.Model,
+		Messages:  openAIMessages,
+		MaxTokens: maxTokens,
+		Stream:    false,
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -146,8 +201,6 @@ func (s *LLMService) ChatWithOptions(ctx context.Context, messages []ChatMessage
 	req.Header.Set("Content-Type", "application/json")
 	apiKey := strings.TrimSpace(s.config.APIKey)
 	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("x-api-key", apiKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
 
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -173,15 +226,24 @@ func (s *LLMService) ChatWithOptions(ctx context.Context, messages []ChatMessage
 		return "", fmt.Errorf("API returned error: %s - %s", resp.Status, string(bodyBytes))
 	}
 
-	var chatResp AnthropicResponse
+	var chatResp OpenAIChatResponse
 	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
 		log.Error("failed to decode LLM response", "error", err, "duration_ms", time.Since(start).Milliseconds(), "body", string(bodyBytes))
 		return "", fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	if len(chatResp.Content) == 0 {
-		log.Warn("LLM response contained no content", "duration_ms", time.Since(start).Milliseconds(), "response", chatResp, "raw_body", string(bodyBytes))
-		return "", fmt.Errorf("no content in response. Raw response: %s", string(bodyBytes))
+	if chatResp.Error != nil && chatResp.Error.Message != "" {
+		log.Error("LLM API returned error payload",
+			"error_type", chatResp.Error.Type,
+			"error_code", chatResp.Error.Code,
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
+		return "", fmt.Errorf("LLM API error: %s", chatResp.Error.Message)
+	}
+
+	if len(chatResp.Choices) == 0 {
+		log.Warn("LLM response contained no choices", "duration_ms", time.Since(start).Milliseconds(), "response", chatResp, "raw_body", string(bodyBytes))
+		return "", fmt.Errorf("no choices in response. Raw response: %s", string(bodyBytes))
 	}
 
 	log.Info("LLM chat completed",
@@ -189,14 +251,12 @@ func (s *LLMService) ChatWithOptions(ctx context.Context, messages []ChatMessage
 		"model", chatResp.Model,
 	)
 
-	// Find the text content block (skip thinking blocks)
-	for _, block := range chatResp.Content {
-		if block.Type == "text" && block.Text != "" {
-			return block.Text, nil
-		}
+	content := chatResp.Choices[0].Message.Content
+	if strings.TrimSpace(content) == "" {
+		return "", fmt.Errorf("no text content found in response")
 	}
 
-	return "", fmt.Errorf("no text content found in response")
+	return content, nil
 }
 
 // ProcessAgentIntent processes a user intent with agent context
