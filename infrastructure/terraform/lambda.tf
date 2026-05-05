@@ -1,8 +1,9 @@
 locals {
   # Construct invoke URLs from API IDs to avoid circular dependencies
   # (lambdas need stage URL, but stages depend on lambdas via deployments).
-  rest_api_invoke_url      = "https://${aws_api_gateway_rest_api.main.id}.execute-api.${var.aws_region}.amazonaws.com/${var.environment}"
-  websocket_api_invoke_url = "wss://${aws_apigatewayv2_api.websocket.id}.execute-api.${var.aws_region}.amazonaws.com/$default"
+  rest_api_invoke_url               = "https://${aws_api_gateway_rest_api.main.id}.execute-api.${var.aws_region}.amazonaws.com/${var.environment}"
+  websocket_api_invoke_url          = "wss://${aws_apigatewayv2_api.websocket.id}.execute-api.${var.aws_region}.amazonaws.com/${var.environment}"
+  websocket_management_api_endpoint = "https://${aws_apigatewayv2_api.websocket.id}.execute-api.${var.aws_region}.amazonaws.com/${var.environment}"
 
   lambda_artifacts = {
     api_http          = "${var.lambda_artifact_dir}/http.zip"
@@ -12,6 +13,7 @@ locals {
     sqs_gst           = "${var.lambda_artifact_dir}/sqs-gst.zip"
     sqs_bargaining    = "${var.lambda_artifact_dir}/sqs-bargaining.zip"
     ws_handler        = "${var.lambda_artifact_dir}/ws.zip"
+    voice_session     = "${var.lambda_artifact_dir}/voice-session.zip"
     custom_sms_sender = "${var.lambda_artifact_dir}/custom-sms-sender.zip"
   }
 
@@ -78,6 +80,11 @@ locals {
     VOICE_WS_WRITE_TIMEOUT_SECONDS            = tostring(var.voice_ws_write_timeout_seconds)
     VOICE_WS_MAX_FRAME_BYTES                  = tostring(var.voice_ws_max_frame_bytes)
     VOICE_WS_MAX_CONCURRENT_SESSIONS_PER_USER = tostring(var.voice_ws_max_concurrent_sessions_per_user)
+    VOICE_WS_EVENT_POLL_INTERVAL_MS           = tostring(var.voice_ws_event_poll_interval_ms)
+    VOICE_WS_EVENT_TTL_SECONDS                = tostring(var.voice_ws_event_ttl_seconds)
+    VOICE_WS_MAX_OUTBOUND_CHUNK_BYTES         = tostring(var.voice_ws_max_outbound_chunk_bytes)
+    VOICE_WS_PROVIDER_READY_TIMEOUT_SECONDS   = tostring(var.voice_ws_provider_ready_timeout_seconds)
+    VOICE_SESSIONS_TABLE                      = aws_dynamodb_table.voice_sessions.name
   }
 }
 
@@ -108,6 +115,11 @@ resource "aws_cloudwatch_log_group" "lambda_sqs_gst" {
 
 resource "aws_cloudwatch_log_group" "lambda_ws_handler" {
   name              = "/aws/lambda/${var.project_name}-ws-handler"
+  retention_in_days = var.log_retention_days
+}
+
+resource "aws_cloudwatch_log_group" "lambda_voice_session" {
+  name              = "/aws/lambda/${var.voice_session_lambda_function_name}"
   retention_in_days = var.log_retention_days
 }
 
@@ -310,20 +322,11 @@ resource "aws_lambda_function" "ws_handler" {
   reserved_concurrent_executions = var.enable_lambda_reserved_concurrency ? 5 : null
 
   environment {
-    variables = {
-      ENVIRONMENT                 = var.environment
-      LOG_LEVEL                   = "info"
-      LOG_FORMAT                  = "json"
-      AWS_ENDPOINT                = ""
-      COGNITO_USER_POOL_ID        = aws_cognito_user_pool.main.id
-      COGNITO_CLIENT_ID           = aws_cognito_user_pool_client.main.id
-      COGNITO_REGION              = var.aws_region
-      COGNITO_PHONE_USER_POOL_ID  = aws_cognito_user_pool.phone.id
-      COGNITO_PHONE_CLIENT_ID     = aws_cognito_user_pool_client.phone.id
-      COGNITO_PHONE_REGION        = "ap-south-1"
-      WEBSOCKET_API_ENDPOINT      = local.websocket_api_invoke_url
-      WEBSOCKET_CONNECTIONS_TABLE = aws_dynamodb_table.ws_connections.name
-    }
+    variables = merge(local.common_lambda_env, {
+      AWS_ENDPOINT                       = ""
+      WEBSOCKET_API_ENDPOINT             = local.websocket_management_api_endpoint
+      VOICE_SESSION_WORKER_FUNCTION_NAME = aws_lambda_function.voice_session.function_name
+    })
   }
 
   lifecycle {
@@ -334,6 +337,36 @@ resource "aws_lambda_function" "ws_handler" {
   }
 
   depends_on = [aws_cloudwatch_log_group.lambda_ws_handler]
+}
+
+resource "aws_lambda_function" "voice_session" {
+  function_name    = var.voice_session_lambda_function_name
+  role             = aws_iam_role.lambda_exec.arn
+  runtime          = "provided.al2023"
+  handler          = "bootstrap"
+  architectures    = ["arm64"]
+  filename         = local.lambda_artifacts.voice_session
+  source_code_hash = local.lambda_artifact_hashes.voice_session
+  memory_size      = var.voice_session_lambda_memory_size
+  timeout          = var.voice_session_lambda_timeout_seconds
+
+  reserved_concurrent_executions = var.enable_lambda_reserved_concurrency ? var.voice_session_reserved_concurrency : null
+
+  environment {
+    variables = merge(local.common_lambda_env, {
+      AWS_ENDPOINT           = ""
+      WEBSOCKET_API_ENDPOINT = local.websocket_management_api_endpoint
+    })
+  }
+
+  lifecycle {
+    precondition {
+      condition     = fileexists(local.lambda_artifacts.voice_session)
+      error_message = "Missing Lambda artifact ${local.lambda_artifacts.voice_session}. Run make package-lambda from the repository root before running Terraform."
+    }
+  }
+
+  depends_on = [aws_cloudwatch_log_group.lambda_voice_session]
 }
 
 resource "aws_lambda_event_source_mapping" "invoice_queue" {

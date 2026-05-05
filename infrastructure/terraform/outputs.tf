@@ -38,6 +38,11 @@ output "websocket_api_url" {
   value       = aws_apigatewayv2_stage.websocket_default.invoke_url
 }
 
+output "voice_realtime_ws_url" {
+  description = "Realtime voice WebSocket API endpoint"
+  value       = aws_apigatewayv2_stage.websocket_default.invoke_url
+}
+
 output "lambda_api_http_arn" {
   description = "Lambda ARN for HTTP API"
   value       = aws_lambda_function.api_http.arn
@@ -66,6 +71,11 @@ output "lambda_sqs_gst_arn" {
 output "lambda_ws_handler_arn" {
   description = "Lambda ARN for WebSocket routes"
   value       = aws_lambda_function.ws_handler.arn
+}
+
+output "lambda_voice_session_arn" {
+  description = "Lambda ARN for realtime voice sessions"
+  value       = aws_lambda_function.voice_session.arn
 }
 
 output "invoice_processing_queue_url" {
@@ -196,6 +206,21 @@ output "razorpay_webhook_url" {
 output "websocket_connections_table" {
   description = "DynamoDB table name for WebSocket connections"
   value       = aws_dynamodb_table.ws_connections.name
+}
+
+output "voice_sessions_table" {
+  description = "DynamoDB table name for realtime voice session state"
+  value       = aws_dynamodb_table.voice_sessions.name
+}
+
+output "voice_realtime_input_sample_rate" {
+  description = "Realtime voice input sample rate"
+  value       = var.deepgram_voice_input_sample_rate
+}
+
+output "voice_realtime_output_sample_rate" {
+  description = "Realtime voice output sample rate"
+  value       = var.deepgram_voice_output_sample_rate
 }
 
 output "cloudwatch_dashboard_url" {
