@@ -55,6 +55,14 @@ func extractBusinessID(c *gin.Context) string {
 		return id
 	}
 
+	if id := c.GetHeader("business_id"); id != "" {
+		return id
+	}
+
+	if id := c.GetHeader("X-Business-ID"); id != "" {
+		return id
+	}
+
 	// Check path param
 	if id := c.Param("business_id"); id != "" {
 		return id

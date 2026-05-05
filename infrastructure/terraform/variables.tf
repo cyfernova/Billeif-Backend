@@ -281,41 +281,119 @@ variable "apns_certificate" {
   default     = ""
 }
 
-# LLM Configuration (Minimax)
+# LLM Configuration (DeepSeek)
 variable "llm_api_key" {
-  description = "Minimax API key for LLM"
+  description = "DeepSeek API key for LLM"
   type        = string
   sensitive   = true
   default     = ""
 }
 
 variable "llm_api_url" {
-  description = "Minimax API URL"
+  description = "DeepSeek chat completions API URL"
   type        = string
-  default     = "https://api.minimax.io/anthropic/v1/messages"
+  default     = "https://api.deepseek.com/chat/completions"
 }
 
 variable "llm_model" {
-  description = "Minimax LLM model name"
+  description = "DeepSeek LLM model name"
   type        = string
-  default     = "MiniMax-M2.7"
+  default     = "deepseek-v4-flash"
 }
 
 variable "deepgram_api_key" {
-  description = "Deepgram API key for voice transcription"
+  description = "Deepgram API key for realtime voice"
+  type        = string
+  sensitive   = true
+}
+
+variable "deepgram_voice_agent_url" {
+  description = "Deepgram Voice Agent websocket URL"
+  type        = string
+  default     = "wss://agent.deepgram.com/v1/agent/converse"
+}
+
+variable "deepgram_voice_listen_model" {
+  description = "Deepgram Voice Agent listen model"
+  type        = string
+  default     = "nova-3"
+}
+
+variable "deepgram_voice_speak_model" {
+  description = "Deepgram Voice Agent speak model"
+  type        = string
+  default     = "aura-2-thalia-en"
+}
+
+variable "deepgram_voice_input_encoding" {
+  description = "Realtime voice input encoding"
+  type        = string
+  default     = "linear16"
+}
+
+variable "deepgram_voice_input_sample_rate" {
+  description = "Realtime voice input sample rate"
+  type        = number
+  default     = 24000
+}
+
+variable "deepgram_voice_output_encoding" {
+  description = "Realtime voice output encoding"
+  type        = string
+  default     = "linear16"
+}
+
+variable "deepgram_voice_output_sample_rate" {
+  description = "Realtime voice output sample rate"
+  type        = number
+  default     = 24000
+}
+
+variable "deepseek_api_key" {
+  description = "DeepSeek API key for Deepgram Voice Agent OpenAI-compatible LLM calls"
   type        = string
   sensitive   = true
   default     = ""
 }
 
-variable "deepgram_api_url" {
-  description = "Deepgram API URL"
+variable "deepseek_base_url" {
+  description = "DeepSeek OpenAI-compatible base URL"
   type        = string
-  default     = "https://api.deepgram.com/v1/listen"
+  default     = "https://api.deepseek.com"
 }
 
-variable "deepgram_model" {
-  description = "Deepgram transcription model"
+variable "deepseek_model" {
+  description = "DeepSeek OpenAI-compatible model for realtime voice"
   type        = string
-  default     = "nova-2"
+  default     = "deepseek-v4-flash"
+}
+
+variable "voice_ws_max_session_seconds" {
+  description = "Maximum realtime voice session duration"
+  type        = number
+  default     = 900
+}
+
+variable "voice_ws_ping_interval_seconds" {
+  description = "Realtime voice websocket ping interval"
+  type        = number
+  default     = 20
+}
+
+variable "voice_ws_write_timeout_seconds" {
+  description = "Realtime voice websocket write timeout"
+  type        = number
+  default     = 5
+}
+
+variable "voice_ws_max_frame_bytes" {
+  description = "Maximum realtime voice websocket binary frame size"
+  type        = number
+  default     = 32768
+}
+
+variable "voice_ws_max_concurrent_sessions_per_user" {
+  description = "Maximum concurrent realtime voice sessions per authenticated user"
+  type        = number
+  default     = 1
 }

@@ -58,6 +58,7 @@ type Handler struct {
 	WebSocket       *WebSocketHandler
 	LLM             *LLMHandler
 	Voice           *VoiceHandler
+	RealtimeVoice   *RealtimeVoiceHandler
 	WellKnown       *WellKnownHandler
 	A2ATask         *A2ATaskHandler
 	Workflow        *WorkflowHandler
@@ -124,7 +125,8 @@ func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log 
 		Intent:          NewIntentHandler(svcs.IntentProcessing, log),
 		WebSocket:       NewWebSocketHandler(wsHub, svcs.WebSocketConnection, log),
 		LLM:             NewLLMHandler(svcs.LLM, log),
-		Voice:           NewVoiceHandler(svcs.Voice, svcs.LLM, log),
+		Voice:           NewVoiceHandler(log),
+		RealtimeVoice:   NewRealtimeVoiceHandler(svcs.RealtimeVoice, cfg.AllowedOrigins, log),
 		WellKnown:       NewWellKnownHandler(cfg, log),
 		A2ATask:         NewA2ATaskHandler(svcs.A2ATask, svcs.A2APush, log),
 		Workflow:        NewWorkflowHandler(svcs.Workflow, log),

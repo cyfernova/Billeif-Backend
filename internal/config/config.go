@@ -8,32 +8,38 @@ import (
 	"github.com/spf13/viper"
 )
 
+const (
+	defaultLLMAPIURL = "https://api.deepseek.com/chat/completions"
+	defaultLLMModel  = "deepseek-v4-flash"
+)
+
 type Config struct {
-	Environment    string             `mapstructure:"ENVIRONMENT"`
-	Logging        LoggingConfig      `mapstructure:"LOGGING"`
-	Server         ServerConfig       `mapstructure:"SERVER"`
-	Database       DatabaseConfig     `mapstructure:"DATABASE"`
-	Redis          RedisConfig        `mapstructure:"REDIS"`
-	AWS            AWSConfig          `mapstructure:"AWS"`
-	SSM            SSMConfig          `mapstructure:"SSM"`
-	WebSocket      WebSocketConfig    `mapstructure:"WEBSOCKET"`
-	Cognito        CognitoConfig      `mapstructure:"COGNITO"`
-	JWT            JWTConfig          `mapstructure:"JWT"`
-	S3             S3Config           `mapstructure:"S3"`
-	Razorpay       RazorpayConfig     `mapstructure:"RAZORPAY"`
-	FX             FXConfig           `mapstructure:"FX"`
-	WhatsApp       WhatsAppConfig     `mapstructure:"WHATSAPP"`
-	SQS            SQSConfig          `mapstructure:"SQS"`
-	Sentry         SentryConfig       `mapstructure:"SENTRY"`
-	Shipping       ShippingConfig     `mapstructure:"SHIPPING"`
-	GST            GSTConfig          `mapstructure:"GST"`
-	GSTLookup      GSTLookupConfig    `mapstructure:"GST_LOOKUP"`
-	Entitlements   EntitlementsConfig `mapstructure:"ENTITLEMENTS"`
-	AllowedOrigins []string           `mapstructure:"ALLOWED_ORIGINS"`
-	LLM            LLMConfig          `mapstructure:"LLM"`
-	Deepgram       DeepgramConfig     `mapstructure:"DEEPGRAM"`
-	Credentials    CredentialsConfig  `mapstructure:"CREDENTIALS"`
-	MCP            MCPConfig          `mapstructure:"MCP"`
+	Environment    string              `mapstructure:"ENVIRONMENT"`
+	Logging        LoggingConfig       `mapstructure:"LOGGING"`
+	Server         ServerConfig        `mapstructure:"SERVER"`
+	Database       DatabaseConfig      `mapstructure:"DATABASE"`
+	Redis          RedisConfig         `mapstructure:"REDIS"`
+	AWS            AWSConfig           `mapstructure:"AWS"`
+	SSM            SSMConfig           `mapstructure:"SSM"`
+	WebSocket      WebSocketConfig     `mapstructure:"WEBSOCKET"`
+	Cognito        CognitoConfig       `mapstructure:"COGNITO"`
+	JWT            JWTConfig           `mapstructure:"JWT"`
+	S3             S3Config            `mapstructure:"S3"`
+	Razorpay       RazorpayConfig      `mapstructure:"RAZORPAY"`
+	FX             FXConfig            `mapstructure:"FX"`
+	WhatsApp       WhatsAppConfig      `mapstructure:"WHATSAPP"`
+	SQS            SQSConfig           `mapstructure:"SQS"`
+	Sentry         SentryConfig        `mapstructure:"SENTRY"`
+	Shipping       ShippingConfig      `mapstructure:"SHIPPING"`
+	GST            GSTConfig           `mapstructure:"GST"`
+	GSTLookup      GSTLookupConfig     `mapstructure:"GST_LOOKUP"`
+	Entitlements   EntitlementsConfig  `mapstructure:"ENTITLEMENTS"`
+	AllowedOrigins []string            `mapstructure:"ALLOWED_ORIGINS"`
+	LLM            LLMConfig           `mapstructure:"LLM"`
+	Deepgram       DeepgramConfig      `mapstructure:"DEEPGRAM"`
+	VoiceRealtime  VoiceRealtimeConfig `mapstructure:"VOICE_REALTIME"`
+	Credentials    CredentialsConfig   `mapstructure:"CREDENTIALS"`
+	MCP            MCPConfig           `mapstructure:"MCP"`
 }
 
 type LoggingConfig struct {
@@ -52,10 +58,7 @@ type LLMConfig struct {
 }
 
 type DeepgramConfig struct {
-	APIKey  string `mapstructure:"API_KEY"`
-	APIURL  string `mapstructure:"API_URL"`
-	Model   string `mapstructure:"MODEL"`
-	Timeout int    `mapstructure:"TIMEOUT"`
+	APIKey string `mapstructure:"API_KEY"`
 }
 
 type CredentialsConfig struct {
@@ -372,9 +375,22 @@ func Load() (*Config, error) {
 	_ = viper.BindEnv("LLM.MODEL", "LLM_MODEL")
 	_ = viper.BindEnv("LLM.TIMEOUT", "LLM_TIMEOUT")
 	_ = viper.BindEnv("DEEPGRAM.API_KEY", "DEEPGRAM_API_KEY")
-	_ = viper.BindEnv("DEEPGRAM.API_URL", "DEEPGRAM_API_URL")
-	_ = viper.BindEnv("DEEPGRAM.MODEL", "DEEPGRAM_MODEL")
-	_ = viper.BindEnv("DEEPGRAM.TIMEOUT", "DEEPGRAM_TIMEOUT")
+	_ = viper.BindEnv("VOICE_REALTIME.DEEPGRAM_API_KEY", "DEEPGRAM_API_KEY")
+	_ = viper.BindEnv("VOICE_REALTIME.DEEPGRAM_VOICE_AGENT_URL", "DEEPGRAM_VOICE_AGENT_URL")
+	_ = viper.BindEnv("VOICE_REALTIME.INPUT_ENCODING", "DEEPGRAM_VOICE_INPUT_ENCODING")
+	_ = viper.BindEnv("VOICE_REALTIME.INPUT_SAMPLE_RATE", "DEEPGRAM_VOICE_INPUT_SAMPLE_RATE")
+	_ = viper.BindEnv("VOICE_REALTIME.OUTPUT_ENCODING", "DEEPGRAM_VOICE_OUTPUT_ENCODING")
+	_ = viper.BindEnv("VOICE_REALTIME.OUTPUT_SAMPLE_RATE", "DEEPGRAM_VOICE_OUTPUT_SAMPLE_RATE")
+	_ = viper.BindEnv("VOICE_REALTIME.LISTEN_MODEL", "DEEPGRAM_VOICE_LISTEN_MODEL")
+	_ = viper.BindEnv("VOICE_REALTIME.SPEAK_MODEL", "DEEPGRAM_VOICE_SPEAK_MODEL")
+	_ = viper.BindEnv("VOICE_REALTIME.DEEPSEEK_API_KEY", "DEEPSEEK_API_KEY")
+	_ = viper.BindEnv("VOICE_REALTIME.DEEPSEEK_BASE_URL", "DEEPSEEK_BASE_URL")
+	_ = viper.BindEnv("VOICE_REALTIME.DEEPSEEK_MODEL", "DEEPSEEK_MODEL")
+	_ = viper.BindEnv("VOICE_REALTIME.MAX_SESSION_SECONDS", "VOICE_WS_MAX_SESSION_SECONDS")
+	_ = viper.BindEnv("VOICE_REALTIME.PING_INTERVAL_SECONDS", "VOICE_WS_PING_INTERVAL_SECONDS")
+	_ = viper.BindEnv("VOICE_REALTIME.WRITE_TIMEOUT_SECONDS", "VOICE_WS_WRITE_TIMEOUT_SECONDS")
+	_ = viper.BindEnv("VOICE_REALTIME.MAX_FRAME_BYTES", "VOICE_WS_MAX_FRAME_BYTES")
+	_ = viper.BindEnv("VOICE_REALTIME.MAX_CONCURRENT_SESSIONS_PER_USER", "VOICE_WS_MAX_CONCURRENT_SESSIONS_PER_USER")
 	_ = viper.BindEnv("CREDENTIALS.ENCRYPTION_KEY", "CREDENTIAL_ENCRYPTION_KEY")
 	_ = viper.BindEnv("MCP.SERVER_URL", "MCP_SERVER_URL")
 	_ = viper.BindEnv("MCP.TIMEOUT", "MCP_TIMEOUT")
@@ -473,15 +489,13 @@ func setDefaults(cfg *Config) {
 	if cfg.LLM.Timeout == 0 {
 		cfg.LLM.Timeout = 60
 	}
-	if cfg.Deepgram.Timeout == 0 {
-		cfg.Deepgram.Timeout = 60
+	if cfg.LLM.APIURL == "" {
+		cfg.LLM.APIURL = defaultLLMAPIURL
 	}
-	if cfg.Deepgram.APIURL == "" {
-		cfg.Deepgram.APIURL = "https://api.deepgram.com/v1/listen"
+	if cfg.LLM.Model == "" {
+		cfg.LLM.Model = defaultLLMModel
 	}
-	if cfg.Deepgram.Model == "" {
-		cfg.Deepgram.Model = "nova-2"
-	}
+	cfg.VoiceRealtime = cfg.VoiceRealtime.WithDefaults(cfg.Deepgram)
 	if cfg.S3.BucketDrive == "" {
 		cfg.S3.BucketDrive = cfg.S3.BucketInvoices
 	}

@@ -37,6 +37,22 @@ env:
   TF_VAR_llm_api_key: ${{ secrets.TF_VAR_LLM_API_KEY }}
   TF_VAR_llm_api_url: ${{ secrets.TF_VAR_LLM_API_URL }}
   TF_VAR_llm_model: ${{ secrets.TF_VAR_LLM_MODEL }}
+  TF_VAR_deepgram_api_key: ${{ secrets.TF_VAR_DEEPGRAM_API_KEY }}
+  TF_VAR_deepgram_voice_agent_url: ${{ secrets.TF_VAR_DEEPGRAM_VOICE_AGENT_URL }}
+  TF_VAR_deepgram_voice_listen_model: ${{ secrets.TF_VAR_DEEPGRAM_VOICE_LISTEN_MODEL }}
+  TF_VAR_deepgram_voice_speak_model: ${{ secrets.TF_VAR_DEEPGRAM_VOICE_SPEAK_MODEL }}
+  TF_VAR_deepgram_voice_input_encoding: ${{ secrets.TF_VAR_DEEPGRAM_VOICE_INPUT_ENCODING }}
+  TF_VAR_deepgram_voice_input_sample_rate: ${{ secrets.TF_VAR_DEEPGRAM_VOICE_INPUT_SAMPLE_RATE }}
+  TF_VAR_deepgram_voice_output_encoding: ${{ secrets.TF_VAR_DEEPGRAM_VOICE_OUTPUT_ENCODING }}
+  TF_VAR_deepgram_voice_output_sample_rate: ${{ secrets.TF_VAR_DEEPGRAM_VOICE_OUTPUT_SAMPLE_RATE }}
+  TF_VAR_deepseek_api_key: ${{ secrets.TF_VAR_DEEPSEEK_API_KEY }}
+  TF_VAR_deepseek_base_url: ${{ secrets.TF_VAR_DEEPSEEK_BASE_URL }}
+  TF_VAR_deepseek_model: ${{ secrets.TF_VAR_DEEPSEEK_MODEL }}
+  TF_VAR_voice_ws_max_session_seconds: ${{ secrets.TF_VAR_VOICE_WS_MAX_SESSION_SECONDS }}
+  TF_VAR_voice_ws_ping_interval_seconds: ${{ secrets.TF_VAR_VOICE_WS_PING_INTERVAL_SECONDS }}
+  TF_VAR_voice_ws_write_timeout_seconds: ${{ secrets.TF_VAR_VOICE_WS_WRITE_TIMEOUT_SECONDS }}
+  TF_VAR_voice_ws_max_frame_bytes: ${{ secrets.TF_VAR_VOICE_WS_MAX_FRAME_BYTES }}
+  TF_VAR_voice_ws_max_concurrent_sessions_per_user: ${{ secrets.TF_VAR_VOICE_WS_MAX_CONCURRENT_SESSIONS_PER_USER }}
   TF_VAR_environment_override: ${{ vars.TF_ENVIRONMENT }}
   TF_VAR_project_name_override: ${{ vars.TF_PROJECT_NAME }}
   TF_VAR_user_pool_name_override: ${{ vars.TF_USER_POOL_NAME }}
