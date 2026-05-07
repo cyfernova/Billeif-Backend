@@ -310,36 +310,43 @@ variable "deepgram_api_key" {
 variable "deepgram_voice_agent_url" {
   description = "Deepgram Voice Agent websocket URL"
   type        = string
+  default     = ""
 }
 
 variable "deepgram_voice_listen_model" {
   description = "Deepgram Voice Agent listen model"
   type        = string
+  default     = "nova-2"
 }
 
 variable "deepgram_voice_speak_model" {
   description = "Deepgram Voice Agent speak model"
   type        = string
+  default     = "nova-2"
 }
 
 variable "deepgram_voice_input_encoding" {
   description = "Realtime voice input encoding"
   type        = string
+  default     = "linear16"
 }
 
 variable "deepgram_voice_input_sample_rate" {
   description = "Realtime voice input sample rate"
   type        = number
+  default     = 24000
 }
 
 variable "deepgram_voice_output_encoding" {
   description = "Realtime voice output encoding"
   type        = string
+  default     = "linear16"
 }
 
 variable "deepgram_voice_output_sample_rate" {
   description = "Realtime voice output sample rate"
   type        = number
+  default     = 24000
 }
 
 variable "deepseek_api_key" {
@@ -351,79 +358,95 @@ variable "deepseek_api_key" {
 variable "deepseek_base_url" {
   description = "DeepSeek OpenAI-compatible base URL"
   type        = string
+  default     = "https://api.deepseek.com/v1"
 }
 
 variable "deepseek_model" {
   description = "DeepSeek OpenAI-compatible model for realtime voice"
   type        = string
+  default     = "deepseek-chat"
 }
 
 variable "voice_ws_max_session_seconds" {
   description = "Maximum realtime voice session duration"
   type        = number
+  default     = 3600
 }
 
 variable "voice_ws_ping_interval_seconds" {
   description = "Realtime voice websocket ping interval"
   type        = number
+  default     = 30
 }
 
 variable "voice_ws_write_timeout_seconds" {
   description = "Realtime voice websocket write timeout"
   type        = number
+  default     = 10
 }
 
 variable "voice_ws_max_frame_bytes" {
   description = "Maximum realtime voice websocket binary frame size"
   type        = number
+  default     = 16384
 }
 
 variable "voice_ws_max_concurrent_sessions_per_user" {
   description = "Maximum concurrent realtime voice sessions per authenticated user"
   type        = number
+  default     = 3
 }
 
 variable "voice_ws_event_poll_interval_ms" {
   description = "Realtime voice Lambda worker DynamoDB event poll interval"
   type        = number
+  default     = 250
 }
 
 variable "voice_ws_event_ttl_seconds" {
   description = "Realtime voice queued event TTL"
   type        = number
+  default     = 300
 }
 
 variable "voice_ws_max_outbound_chunk_bytes" {
   description = "Maximum raw assistant audio bytes per API Gateway WebSocket message before base64 encoding"
   type        = number
+  default     = 32768
 }
 
 variable "voice_ws_provider_ready_timeout_seconds" {
   description = "Realtime voice provider welcome timeout"
   type        = number
+  default     = 30
 }
 
 variable "voice_sessions_table_name" {
   description = "DynamoDB table name for realtime voice session state"
   type        = string
+  default     = "voice_sessions"
 }
 
 variable "voice_session_lambda_function_name" {
   description = "Lambda function name for realtime voice session worker"
   type        = string
+  default     = "invoice-backend-voice-session"
 }
 
 variable "voice_session_lambda_memory_size" {
   description = "Memory size for realtime voice session worker Lambda"
   type        = number
+  default     = 1024
 }
 
 variable "voice_session_lambda_timeout_seconds" {
   description = "Timeout for realtime voice session worker Lambda"
   type        = number
+  default     = 60
 }
 
 variable "voice_session_reserved_concurrency" {
   description = "Reserved concurrency for realtime voice session worker when reserved concurrency is enabled"
   type        = number
+  default     = 5
 }

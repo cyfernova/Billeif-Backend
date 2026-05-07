@@ -55,7 +55,9 @@
       "mcp__ide__getDiagnostics",
       "Bash(Select-String -Path \"logs.txt\" -Pattern \"voice_transcription|MiniMax.*404|text/voice\" -AllMatches)",
       "Bash(Select-Object -First 20)",
-      "Bash(Select-Object -First 50)"
+      "Bash(Select-Object -First 50)",
+      "Bash(grep -v \"^--$\")",
+      "Bash(grep -B2 \"^}$\")"
     ]
   }
 }
