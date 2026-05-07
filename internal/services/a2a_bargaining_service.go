@@ -592,6 +592,15 @@ func (s *A2ABargainingService) RunAutonomousNegotiationRound(ctx context.Context
 		"max_rounds", session.MaxRounds,
 		"current_amount", session.CurrentAmount)
 
+	// Enqueue next round if not complete
+	if session.Round < session.MaxRounds && session.Status == "running" {
+		if err := s.EnqueueNegotiationRound(sessionID, session.DBNegotiationID, session.Round); err != nil {
+			s.log.Warn("failed to self-enqueue next round", "error", err, "session_id", sessionID, "round", session.Round)
+		} else {
+			s.log.Info("enqueued next round from service", "session_id", sessionID, "next_round", session.Round+1)
+		}
+	}
+
 	return nil
 }
 

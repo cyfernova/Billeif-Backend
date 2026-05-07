@@ -90,10 +90,25 @@ func processBargainingRound(ctx context.Context, cfg *config.Config, svc *servic
 		return fmt.Errorf("session not found: session_id=%s, negotiation_id=%s", sessionID, negotiationID)
 	}
 
+	log.Info("processing bargaining round",
+		"session_id", sessionID,
+		"negotiation_id", negotiationID,
+		"current_round", currentRound,
+		"db_round", progress.Round,
+		"max_rounds", progress.MaxRounds,
+		"status", progress.Status)
+
 	// Check if negotiation is complete
 	if progress.Status == "completed" || progress.Status == "accepted" || progress.Status == "rejected" || progress.Status == "expired" {
 		log.Info("negotiation already completed", "session_id", sessionID, "status", progress.Status)
 		return nil
+	}
+
+	// Guard: if max_rounds is 0 or negative, negotiation can never progress
+	if progress.MaxRounds <= 0 {
+		log.Error("invalid max_rounds on negotiation, cannot process", "session_id", sessionID, "max_rounds", progress.MaxRounds, "db_round", progress.Round)
+		a2aSvc.StopNegotiation(sessionID)
+		return fmt.Errorf("invalid max_rounds: %d", progress.MaxRounds)
 	}
 
 	// Check if max rounds reached
@@ -117,13 +132,24 @@ func processBargainingRound(ctx context.Context, cfg *config.Config, svc *servic
 	}
 	if updatedProgress != nil {
 		isDone := updatedProgress.Status == "completed" || updatedProgress.Status == "accepted" ||
-			updatedProgress.Status == "rejected" || updatedProgress.Status == "expired"
+			updatedProgress.Status == "rejected" || updatedProgress.Status == "expired" || updatedProgress.Status == "stopped"
 		hasMoreRounds := updatedProgress.Round < updatedProgress.MaxRounds
+
+		log.Info("round processing result",
+			"session_id", sessionID,
+			"round_completed", updatedProgress.Round,
+			"max_rounds", updatedProgress.MaxRounds,
+			"is_done", isDone,
+			"has_more_rounds", hasMoreRounds,
+			"status", updatedProgress.Status)
+
 		if !isDone && hasMoreRounds {
 			if enqueueErr := a2aSvc.EnqueueNegotiationRound(sessionID, negotiationID, updatedProgress.Round); enqueueErr != nil {
 				log.Warn("failed to enqueue next round", "error", enqueueErr, "session_id", sessionID, "round", updatedProgress.Round)
 			}
 		}
+	} else {
+		log.Error("could not get updated progress after round processing", "session_id", sessionID)
 	}
 
 	log.Info("bargaining round completed", "session_id", sessionID, "round", progress.Round)

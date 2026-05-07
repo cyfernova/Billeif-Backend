@@ -222,12 +222,19 @@ func (h *A2ABargainingHandler) StartAutonomousNegotiation(c *gin.Context) {
 		return
 	}
 
+	// Ensure max_rounds defaults to 5 if not provided or invalid
+	maxRounds := req.MaxRounds
+	if maxRounds <= 0 {
+		maxRounds = 5
+		log.Info("max_rounds not provided, defaulting to 5", "buyer", req.BuyerAgentID, "seller", req.SellerAgentID)
+	}
+
 	autoReq := &services.AutonomousNegotiationRequest{
 		BuyerAgentID:   req.BuyerAgentID,
 		SellerAgentID:  req.SellerAgentID,
 		InitialAmount:  req.InitialAmount,
 		ReferencePrice: req.ReferencePrice,
-		MaxRounds:      req.MaxRounds,
+		MaxRounds:      maxRounds,
 		CallbackURL:    req.CallbackURL,
 		UserID: func() string {
 			if req.UserID != "" {
