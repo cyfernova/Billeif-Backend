@@ -1,6 +1,7 @@
 resource "aws_api_gateway_rest_api" "main" {
-  name        = "${var.project_name}-rest-api"
-  description = "REST API for ${var.project_name} Lambda backend"
+  name               = "${var.project_name}-rest-api"
+  description        = "REST API for ${var.project_name} Lambda backend"
+  binary_media_types = ["multipart/form-data", "application/octet-stream", "audio/mp4", "audio/mpeg", "audio/wav", "audio/webm", "audio/x-caf"]
 }
 
 locals {
@@ -130,7 +131,8 @@ resource "aws_api_gateway_deployment" "main" {
       aws_api_gateway_integration.root_any.id,
       aws_api_gateway_integration.proxy_any.id,
       aws_api_gateway_integration.api_v1_a2a_message_stream_post.id,
-      aws_api_gateway_integration.api_v1_a2a_task_subscribe_get.id
+      aws_api_gateway_integration.api_v1_a2a_task_subscribe_get.id,
+      aws_api_gateway_rest_api.main.binary_media_types
     ]))
   }
 

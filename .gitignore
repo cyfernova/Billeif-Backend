@@ -24,6 +24,8 @@ go.work
 .env
 .env.local
 terraform.tfvars
+*.auto.tfvars
+*.auto.tfvars.json
 *.pem
 *.key
 *.crt
@@ -54,6 +56,8 @@ postgres-data/
 .terraform/
 tfplan
 tfplan.*
+terraform_output.json
+terraform_output.txt
 
 # Generated docs
 docs/swagger.json
@@ -61,6 +65,7 @@ docs/swagger.yaml
 
 # Logs
 *.log
+logs.txt
 
 
 

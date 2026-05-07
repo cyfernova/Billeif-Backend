@@ -1,5 +1,7 @@
 data "aws_caller_identity" "current" {}
 
+data "aws_partition" "current" {}
+
 data "aws_iam_policy_document" "lambda_assume_role" {
   statement {
     effect  = "Allow"
@@ -10,6 +12,34 @@ data "aws_iam_policy_document" "lambda_assume_role" {
       identifiers = ["lambda.amazonaws.com"]
     }
   }
+}
+
+data "aws_iam_policy_document" "apigateway_cloudwatch_assume_role" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["apigateway.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "apigateway_cloudwatch" {
+  name               = "${var.project_name}-apigateway-cloudwatch-role"
+  assume_role_policy = data.aws_iam_policy_document.apigateway_cloudwatch_assume_role.json
+}
+
+resource "aws_iam_role_policy_attachment" "apigateway_cloudwatch" {
+  role       = aws_iam_role.apigateway_cloudwatch.name
+  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"
+}
+
+resource "aws_api_gateway_account" "main" {
+  cloudwatch_role_arn = aws_iam_role.apigateway_cloudwatch.arn
+
+  depends_on = [aws_iam_role_policy_attachment.apigateway_cloudwatch]
 }
 
 resource "aws_iam_role" "lambda_exec" {
@@ -116,6 +146,8 @@ data "aws_iam_policy_document" "lambda_app" {
     resources = [
       aws_dynamodb_table.ws_connections.arn,
       "${aws_dynamodb_table.ws_connections.arn}/index/*",
+      aws_dynamodb_table.voice_sessions.arn,
+      "${aws_dynamodb_table.voice_sessions.arn}/index/*",
       aws_dynamodb_table.users_sessions.arn,
       aws_dynamodb_table.refresh_tokens.arn,
       aws_dynamodb_table.password_reset_tokens.arn,
@@ -155,6 +187,17 @@ data "aws_iam_policy_document" "lambda_app" {
       "execute-api:ManageConnections"
     ]
     resources = ["*"]
+  }
+
+  statement {
+    sid    = "InvokeVoiceSessionWorker"
+    effect = "Allow"
+    actions = [
+      "lambda:InvokeFunction"
+    ]
+    resources = [
+      aws_lambda_function.voice_session.arn
+    ]
   }
 }
 

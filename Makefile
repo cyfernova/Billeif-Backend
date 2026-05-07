@@ -2,7 +2,7 @@
 -include .env
 export
 
-.PHONY: help infra-backend-init infra-init infra-validate infra-apply infra-plan infra-destroy infra-output build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-payment build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-custom-sms-sender package-lambda run-local test test-integration migrate-up migrate-down migrate-rds-up migrate-rds-down migrate-create fmt lint clean deps test-coverage swagger
+.PHONY: help infra-backend-init infra-init infra-validate infra-apply infra-plan infra-destroy infra-output build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-payment build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-voice-session build-lambda-custom-sms-sender package-lambda run-local test test-integration migrate-up migrate-down migrate-rds-up migrate-rds-down migrate-create fmt lint clean deps test-coverage swagger
 
 LAMBDA_BUILD_DIR := .build/lambda
 TERRAFORM_DIR := infrastructure/terraform
@@ -15,6 +15,25 @@ TF_VAR_india_sms_sender_id ?= $(INDIA_SMS_SENDER_ID)
 TF_VAR_india_dlt_entity_id ?= $(INDIA_DLT_ENTITY_ID)
 TF_VAR_india_signup_template_id ?= $(INDIA_SIGNUP_TEMPLATE_ID)
 TF_VAR_india_auth_template_id ?= $(INDIA_AUTH_TEMPLATE_ID)
+TF_VAR_llm_api_key ?= $(LLM_API_KEY)
+TF_VAR_llm_api_url ?= $(LLM_API_URL)
+TF_VAR_llm_model ?= $(LLM_MODEL)
+TF_VAR_deepgram_api_key ?= $(DEEPGRAM_API_KEY)
+TF_VAR_deepgram_voice_agent_url ?= $(DEEPGRAM_VOICE_AGENT_URL)
+TF_VAR_deepgram_voice_listen_model ?= $(DEEPGRAM_VOICE_LISTEN_MODEL)
+TF_VAR_deepgram_voice_speak_model ?= $(DEEPGRAM_VOICE_SPEAK_MODEL)
+TF_VAR_deepgram_voice_input_encoding ?= $(DEEPGRAM_VOICE_INPUT_ENCODING)
+TF_VAR_deepgram_voice_input_sample_rate ?= $(DEEPGRAM_VOICE_INPUT_SAMPLE_RATE)
+TF_VAR_deepgram_voice_output_encoding ?= $(DEEPGRAM_VOICE_OUTPUT_ENCODING)
+TF_VAR_deepgram_voice_output_sample_rate ?= $(DEEPGRAM_VOICE_OUTPUT_SAMPLE_RATE)
+TF_VAR_deepseek_api_key ?= $(DEEPSEEK_API_KEY)
+TF_VAR_deepseek_base_url ?= $(DEEPSEEK_BASE_URL)
+TF_VAR_deepseek_model ?= $(DEEPSEEK_MODEL)
+TF_VAR_voice_ws_max_session_seconds ?= $(VOICE_WS_MAX_SESSION_SECONDS)
+TF_VAR_voice_ws_ping_interval_seconds ?= $(VOICE_WS_PING_INTERVAL_SECONDS)
+TF_VAR_voice_ws_write_timeout_seconds ?= $(VOICE_WS_WRITE_TIMEOUT_SECONDS)
+TF_VAR_voice_ws_max_frame_bytes ?= $(VOICE_WS_MAX_FRAME_BYTES)
+TF_VAR_voice_ws_max_concurrent_sessions_per_user ?= $(VOICE_WS_MAX_CONCURRENT_SESSIONS_PER_USER)
 TF_INIT_BACKEND_ARGS := \
 	-backend-config=bucket=$(TF_BACKEND_BUCKET) \
 	-backend-config=region=$(TF_BACKEND_REGION) \
@@ -68,7 +87,7 @@ infra-output: ## Save Terraform output to file
 	@echo "Terraform output saved to infrastructure/terraform/terraform_output.txt"
 
 # Build targets
-build-lambda: build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-payment build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws ## Build all Lambda binaries
+build-lambda: build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-payment build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-voice-session ## Build all Lambda binaries
 
 build-lambda-http: ## Build HTTP API Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/http
@@ -98,6 +117,10 @@ build-lambda-ws: ## Build WebSocket Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/ws
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(LAMBDA_BUILD_DIR)/ws/bootstrap ./cmd/lambda/ws
 
+build-lambda-voice-session: ## Build realtime voice session Lambda bootstrap binary
+	mkdir -p $(LAMBDA_BUILD_DIR)/voice-session
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(LAMBDA_BUILD_DIR)/voice-session/bootstrap ./cmd/lambda/voice-session
+
 build-lambda-custom-sms-sender: ## Build the Node.js custom SMS sender Lambda package
 	rm -rf $(LAMBDA_BUILD_DIR)/custom-sms-sender
 	mkdir -p $(LAMBDA_BUILD_DIR)/custom-sms-sender
@@ -112,6 +135,7 @@ package-lambda: build-lambda build-lambda-custom-sms-sender ## Package Lambda ar
 	cd $(LAMBDA_BUILD_DIR)/sqs-gst && zip -q -r ../sqs-gst.zip bootstrap
 	cd $(LAMBDA_BUILD_DIR)/sqs-bargaining && zip -q -r ../sqs-bargaining.zip bootstrap
 	cd $(LAMBDA_BUILD_DIR)/ws && zip -q -r ../ws.zip bootstrap
+	cd $(LAMBDA_BUILD_DIR)/voice-session && zip -q -r ../voice-session.zip bootstrap
 	cd $(LAMBDA_BUILD_DIR)/custom-sms-sender && zip -q -r ../custom-sms-sender.zip .
 
 run-local: ## Run the HTTP server locally

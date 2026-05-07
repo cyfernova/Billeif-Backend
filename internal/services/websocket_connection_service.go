@@ -24,6 +24,7 @@ const defaultWSConnectionsTable = "invoice-backend-ws-connections"
 type WebSocketConnection struct {
 	ConnectionID string    `dynamodbav:"connection_id"`
 	UserID       string    `dynamodbav:"user_id"`
+	BusinessID   string    `dynamodbav:"business_id,omitempty"`
 	ConnectedAt  time.Time `dynamodbav:"connected_at"`
 	LastSeenAt   time.Time `dynamodbav:"last_seen_at"`
 }
@@ -61,6 +62,10 @@ func NewWebSocketConnectionService(cfg *config.Config, awsCfg *awsclients.Config
 }
 
 func (s *WebSocketConnectionService) RegisterConnection(ctx context.Context, connectionID, userID string) error {
+	return s.RegisterConnectionWithBusiness(ctx, connectionID, userID, "")
+}
+
+func (s *WebSocketConnectionService) RegisterConnectionWithBusiness(ctx context.Context, connectionID, userID, businessID string) error {
 	if connectionID == "" || userID == "" {
 		return fmt.Errorf("connection ID and user ID are required")
 	}
@@ -68,6 +73,7 @@ func (s *WebSocketConnectionService) RegisterConnection(ctx context.Context, con
 	rec := WebSocketConnection{
 		ConnectionID: connectionID,
 		UserID:       userID,
+		BusinessID:   strings.TrimSpace(businessID),
 		ConnectedAt:  time.Now().UTC(),
 		LastSeenAt:   time.Now().UTC(),
 	}
@@ -85,6 +91,31 @@ func (s *WebSocketConnectionService) RegisterConnection(ctx context.Context, con
 		return fmt.Errorf("put websocket connection: %w", err)
 	}
 	return nil
+}
+
+func (s *WebSocketConnectionService) GetConnection(ctx context.Context, connectionID string) (*WebSocketConnection, error) {
+	if connectionID == "" {
+		return nil, nil
+	}
+
+	out, err := s.db.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(s.table),
+		Key: map[string]types.AttributeValue{
+			"connection_id": &types.AttributeValueMemberS{Value: connectionID},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get websocket connection: %w", err)
+	}
+	if len(out.Item) == 0 {
+		return nil, nil
+	}
+
+	var rec WebSocketConnection
+	if err := attributevalue.UnmarshalMap(out.Item, &rec); err != nil {
+		return nil, fmt.Errorf("unmarshal websocket connection: %w", err)
+	}
+	return &rec, nil
 }
 
 func (s *WebSocketConnectionService) UnregisterConnection(ctx context.Context, connectionID string) error {

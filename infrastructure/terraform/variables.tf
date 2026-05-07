@@ -281,22 +281,149 @@ variable "apns_certificate" {
   default     = ""
 }
 
-# LLM Configuration (Minimax)
+# LLM Configuration (DeepSeek)
 variable "llm_api_key" {
-  description = "Minimax API key for LLM"
+  description = "DeepSeek API key for LLM"
   type        = string
   sensitive   = true
   default     = ""
 }
 
 variable "llm_api_url" {
-  description = "Minimax API URL"
+  description = "DeepSeek chat completions API URL"
   type        = string
-  default     = "https://api.minimax.io/anthropic/v1/messages"
+  default     = "https://api.deepseek.com/chat/completions"
 }
 
 variable "llm_model" {
-  description = "Minimax LLM model name"
+  description = "DeepSeek LLM model name"
   type        = string
-  default     = "MiniMax-M2.7"
+  default     = "deepseek-v4-flash"
+}
+
+variable "deepgram_api_key" {
+  description = "Deepgram API key for realtime voice"
+  type        = string
+  sensitive   = true
+}
+
+variable "deepgram_voice_agent_url" {
+  description = "Deepgram Voice Agent websocket URL"
+  type        = string
+}
+
+variable "deepgram_voice_listen_model" {
+  description = "Deepgram Voice Agent listen model"
+  type        = string
+}
+
+variable "deepgram_voice_speak_model" {
+  description = "Deepgram Voice Agent speak model"
+  type        = string
+}
+
+variable "deepgram_voice_input_encoding" {
+  description = "Realtime voice input encoding"
+  type        = string
+}
+
+variable "deepgram_voice_input_sample_rate" {
+  description = "Realtime voice input sample rate"
+  type        = number
+}
+
+variable "deepgram_voice_output_encoding" {
+  description = "Realtime voice output encoding"
+  type        = string
+}
+
+variable "deepgram_voice_output_sample_rate" {
+  description = "Realtime voice output sample rate"
+  type        = number
+}
+
+variable "deepseek_api_key" {
+  description = "DeepSeek API key for Deepgram Voice Agent OpenAI-compatible LLM calls"
+  type        = string
+  sensitive   = true
+}
+
+variable "deepseek_base_url" {
+  description = "DeepSeek OpenAI-compatible base URL"
+  type        = string
+}
+
+variable "deepseek_model" {
+  description = "DeepSeek OpenAI-compatible model for realtime voice"
+  type        = string
+}
+
+variable "voice_ws_max_session_seconds" {
+  description = "Maximum realtime voice session duration"
+  type        = number
+}
+
+variable "voice_ws_ping_interval_seconds" {
+  description = "Realtime voice websocket ping interval"
+  type        = number
+}
+
+variable "voice_ws_write_timeout_seconds" {
+  description = "Realtime voice websocket write timeout"
+  type        = number
+}
+
+variable "voice_ws_max_frame_bytes" {
+  description = "Maximum realtime voice websocket binary frame size"
+  type        = number
+}
+
+variable "voice_ws_max_concurrent_sessions_per_user" {
+  description = "Maximum concurrent realtime voice sessions per authenticated user"
+  type        = number
+}
+
+variable "voice_ws_event_poll_interval_ms" {
+  description = "Realtime voice Lambda worker DynamoDB event poll interval"
+  type        = number
+}
+
+variable "voice_ws_event_ttl_seconds" {
+  description = "Realtime voice queued event TTL"
+  type        = number
+}
+
+variable "voice_ws_max_outbound_chunk_bytes" {
+  description = "Maximum raw assistant audio bytes per API Gateway WebSocket message before base64 encoding"
+  type        = number
+}
+
+variable "voice_ws_provider_ready_timeout_seconds" {
+  description = "Realtime voice provider welcome timeout"
+  type        = number
+}
+
+variable "voice_sessions_table_name" {
+  description = "DynamoDB table name for realtime voice session state"
+  type        = string
+}
+
+variable "voice_session_lambda_function_name" {
+  description = "Lambda function name for realtime voice session worker"
+  type        = string
+}
+
+variable "voice_session_lambda_memory_size" {
+  description = "Memory size for realtime voice session worker Lambda"
+  type        = number
+}
+
+variable "voice_session_lambda_timeout_seconds" {
+  description = "Timeout for realtime voice session worker Lambda"
+  type        = number
+}
+
+variable "voice_session_reserved_concurrency" {
+  description = "Reserved concurrency for realtime voice session worker when reserved concurrency is enabled"
+  type        = number
 }
