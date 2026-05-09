@@ -419,8 +419,30 @@ func (s *AuthService) UpdateProfile(ctx context.Context, userID string, input Up
 }
 
 func (s *AuthService) GetProfilePictureUploadURL(ctx context.Context, userID, contentType string) (string, error) {
-	key := fmt.Sprintf("profile-pictures/%s/profile", userID)
+	key := fmt.Sprintf(
+		"profile-pictures/%s/%s%s",
+		userID,
+		uuid.NewString(),
+		profilePictureExtension(contentType),
+	)
 	return s.s3.GeneratePresignedUploadURL(ctx, "user-profile-pictures", key, contentType, 3600)
+}
+
+func profilePictureExtension(contentType string) string {
+	switch strings.ToLower(strings.TrimSpace(contentType)) {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	case "image/svg+xml":
+		return ".svg"
+	default:
+		return ""
+	}
 }
 
 type ChangePasswordInput struct {
