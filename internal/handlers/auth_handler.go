@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"io"
 	"net/http"
 	"strings"
 
@@ -10,6 +11,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+const maxProfilePictureBytes int64 = 5 * 1024 * 1024
 
 type AuthHandler struct {
 	svc *services.AuthService
@@ -533,6 +536,11 @@ func (h *AuthHandler) UploadProfilePicture(c *gin.Context) {
 		return
 	}
 
+	if c.ContentType() == "multipart/form-data" {
+		h.uploadProfilePictureFile(c, userID)
+		return
+	}
+
 	contentType, ok := validateImageContentType(c)
 	if !ok {
 		return
@@ -545,6 +553,58 @@ func (h *AuthHandler) UploadProfilePicture(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"upload_url": url})
+}
+
+func (h *AuthHandler) uploadProfilePictureFile(c *gin.Context, userID string) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxProfilePictureBytes)
+
+	fileHeader, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "profile picture file is required"})
+		return
+	}
+	if fileHeader.Size > maxProfilePictureBytes {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "profile picture must be 5MB or smaller"})
+		return
+	}
+
+	file, err := fileHeader.Open()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to open profile picture"})
+		return
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read profile picture"})
+		return
+	}
+	if len(data) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "profile picture file is empty"})
+		return
+	}
+	if int64(len(data)) > maxProfilePictureBytes {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "profile picture must be 5MB or smaller"})
+		return
+	}
+
+	contentType := strings.ToLower(strings.TrimSpace(fileHeader.Header.Get("Content-Type")))
+	if contentType == "" || contentType == "application/octet-stream" {
+		contentType = http.DetectContentType(data)
+	}
+	if !allowedImageTypes[contentType] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported content type; allowed: image/png, image/jpeg, image/gif, image/webp, image/svg+xml"})
+		return
+	}
+
+	user, err := h.svc.UploadProfilePicture(c.Request.Context(), userID, data, contentType)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, user)
 }
 
 // UpdateProfilePicture updates the user's profile picture URL
