@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"strings"
@@ -530,9 +531,8 @@ func (h *AuthHandler) GoogleLogin(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /auth/profile-picture [post]
 func (h *AuthHandler) UploadProfilePicture(c *gin.Context) {
-	userID := middleware.GetUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+	userID, ok := h.authenticatedDatabaseUserID(c)
+	if !ok {
 		return
 	}
 
@@ -620,9 +620,8 @@ func (h *AuthHandler) uploadProfilePictureFile(c *gin.Context, userID string) {
 // @Failure 500 {object} map[string]string
 // @Router /auth/profile-picture [put]
 func (h *AuthHandler) UpdateProfilePicture(c *gin.Context) {
-	userID := middleware.GetUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+	userID, ok := h.authenticatedDatabaseUserID(c)
+	if !ok {
 		return
 	}
 
@@ -644,6 +643,57 @@ func (h *AuthHandler) UpdateProfilePicture(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, user)
+}
+
+func (h *AuthHandler) authenticatedDatabaseUserID(c *gin.Context) (string, bool) {
+	userID := middleware.GetUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return "", false
+	}
+
+	resolvedID, err := h.resolveDatabaseUserID(
+		c.Request.Context(),
+		userID,
+		middleware.GetEmail(c),
+		c.GetString("phone_number"),
+	)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return "", false
+	}
+
+	return resolvedID, true
+}
+
+func (h *AuthHandler) resolveDatabaseUserID(ctx context.Context, userID, email, phoneNumber string) (string, error) {
+	user, err := h.svc.GetUser(ctx, userID)
+	if err == nil {
+		return user.ID, nil
+	}
+
+	user, err = h.svc.GetUserByCognitoID(ctx, userID)
+	if err == nil {
+		return user.ID, nil
+	}
+
+	if email != "" {
+		user, err = h.svc.GetUserByEmail(ctx, email)
+		if err == nil {
+			_ = h.svc.UpdateUserCognitoID(ctx, user.ID, userID)
+			return user.ID, nil
+		}
+	}
+
+	if phoneNumber != "" {
+		user, err = h.svc.GetUserByPhoneNumber(ctx, phoneNumber)
+		if err == nil {
+			_ = h.svc.UpdateUserCognitoID(ctx, user.ID, userID)
+			return user.ID, nil
+		}
+	}
+
+	return "", err
 }
 
 func extractToken(c *gin.Context) string {
