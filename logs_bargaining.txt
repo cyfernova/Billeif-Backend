@@ -4026,5 +4026,75 @@ EVENTS	39655380508302088212336583102041887968966061943476256774	1778208770871	20
 	1778208761872
 EVENTS	39655380508346689702733644348324959405511358666488217607	1778208770871	2026/05/08/[$LATEST]5a4c643e640347c599966b6b6690e81d	END RequestId: 65c8ab0c-5037-52b9-a761-c97b01c57bdb
 	1778208761874
-EVENTS	39655380508346689702733644348324959405511358666488217608	1778208770871	2026/05/08/[$LATEST]5a4c643e640347c599966b6b6690e81d	REPORT RequestId: 65c8ab0c-5037-52b9-a761-c97b01c57bdb	Duration: 36091.31 ms	Billed Duration: 36092 ms	Memory Size: 1024 MB	Max Memory Used: 88 MB	
+EVENTS	39655380508346689702733644348324959405511358666488217608	1778208770871	2026/05/08/[$LATEST]5a4c643e640347c599966b6b6690e81d	REPORT RequestId: 65c8ab0c-5037-52b9-a761-c97b01c57bdb	Duration: 36091.31 ms	Billed Duration: 36092 ms	Memory Size: 1024 MB	Max Memory Used: 88 MB
 	1778208761874
+4032	EVENTS	39655379256538959473614175476662815633536546609944199177	1778208714757	2026/05/08/[$LATEST]5a4c643e640347c599966b6b6690e81d	END RequestId: d8ffbe8a-ea9f-5799-9514-dcfdbb261e94
+	1778208705741
+4033	EVENTS	39655379256538959473614175476662815633536546609944199178	1778208714757	2026/05/08/[$LATEST]5a4c643e640347c599966b6b6690e81d	REPORT RequestId: d8ffbe8a-ea9f-5799-9514-dcfdbb261e94	Duration: 44593.49 ms	Billed Duration: 44935 ms	Memory Size: 1024 MB	Max Memory Used: 88 MB	Init Duration: 341.28 ms
+	1778208705741
+4034	EVENTS	39655379703468193997366393880413828909506298182720684032	1778208734803	2026/05/08/[$LATEST]5a4c643e640347c599966b6b6690e81d	START RequestId: 65c8ab0c-5037-52b9-a761-c97b01c57bdb Version: $LATEST
+	1778208725782
+4035	EVENTS	39655379703490494742564924503555364627778946544226664449	1778208734803	2026/05/08/[$LATEST]5a4c643e640347c599966b6b6690e81d	{"L":"INFO","timestamp":"2026-05-08T02:52:05.783Z","N":"api","C":"sqs-bargaining/main.go:66","M":"processing bargaining message","type":"process_round","session_id":"a2a_20260508024343_6v5fhr1b","negotiation_id":"c43fb2b4-e356-4876-9bcf-70a59ca282aa","round":3}
+	1778208725783
+4036	EVENTS	39655379703579697723359046996121507500869539990250586114	1778208734803	2026/05/08/[$LATEST]5a4c643e640347c599966b6b6690e81d	{"L":"INFO","timestamp":"2026-05-08T02:52:05.787Z","N":"api","C":"sqs-bargaining/main.go:93","M":"processing bargaining round","session_id":"a2a_20260508024343_6v5fhr1b","negotiation_id":"c43fb2b4-e356-4876-9bcf-70a59ca282aa","current_round":3,"db_round":2,"max_rounds":3,"status":"in_progress"}
+	1778208725787
+4037	EVENTS	39655379703601998468557577619263043219142188351756566531	1778208734803	2026/05/08/[$LATEST]5a4c643e640347c599966b6b6690e81d	{"L":"INFO","timestamp":"2026-05-08T02:52:05.788Z","N":"api","C":"services/a2a_bargaining_service.go:475","M":"running autonomous negotiation round","session_id":"a2a_20260508024343_6v5fhr1b","round":3}
+	1778208725788
+4038	EVENTS	39655380507945276289160093131777316476603688159380570112	1778208770871	2026/05/08/[$LATEST]5a4c643e640347c599966b6b6690e81d	{"L":"INFO","timestamp":"2026-05-08T02:52:41.856Z","N":"api","C":"services/llm_service.go:249","M":"LLM chat completed","service":"llm","operation":"chat","message_count":2,"duration_ms":36060,"model":"deepseek-v4-flash"}
+	1778208761856
+4039	EVENTS	39655380507945276289160093131777316476603688159380570113	1778208770871	2026/05/08/[$LATEST]5a4c643e640347c599966b6b6690e81d	{"L":"INFO","timestamp":"2026-05-08T02:52:41.856Z","N":"api","C":"services/bargaining_service.go:804","M":"LLM bargaining decision generated","negotiation_id":"c43fb2b4-e356-4876-9bcf-70a59ca282aa","agent_id":"2931791c-39bd-4da7-a82d-1cc099484fde","agent_type":"buyer","action":"counteroffer","proposed_amount":3200,"confidence":0.5}
+	1778208761856
+4040	EVENTS	39655380508235185976740991232617280814148116858958315522	1778208770871	2026/05/08/[$LATEST]5a4c643e640347c599966b6b6690e81d	{"L":"INFO","timestamp":"2026-05-08T02:52:41.869Z","N":"api","C":"services/bargaining_service.go:299","M":"counteroffer submitted","negotiation_id":"c43fb2b4-e356-4876-9bcf-70a59ca282aa","agent_type":"buyer","amount":3200,"round":3}
+	1778208761869
+4041	EVENTS	39655380508235185976740991232617280814148116858958315523	1778208770871	2026/05/08/[$LATEST]5a4c643e640347c599966b6b6690e81d	{"L":"INFO","timestamp":"2026-05-08T02:52:41.869Z","N":"api","C":"services/a2a_bargaining_service.go:589","M":"autonomous negotiation round completed, session may continue","session_id":"a2a_20260508024343_6v5fhr1b","round":3,"max_rounds":3,"current_amount":3200}
+	1778208761869
+4042	EVENTS	39655380508235185976740991232617280814148116858958315524	1778208770871	2026/05/08/[$LATEST]5a4c643e640347c599966b6b6690e81d	{"L":"WARN","timestamp":"2026-05-08T02:52:41.869Z","N":"api","C":"services/bargaining_service.go:534","M":"receiver agent has no A2A endpoint","receiver_id":"8e45942c-13eb-43ca-812f-15e125ea9593"}
+	1778208761869
+4043	EVENTS	39655380508302088212336583102041887968966061943476256773	1778208770871	2026/05/08/[$LATEST]5a4c643e640347c599966b6b6690e81d	{"L":"INFO","timestamp":"2026-05-08T02:52:41.872Z","N":"api","C":"sqs-bargaining/main.go:138","M":"round processing result","session_id":"a2a_20260508024343_6v5fhr1b","round_completed":3,"max_rounds":3,"is_done":false,"has_more_rounds":false,"status":"in_progress"}
+	1778208761872
+4044	EVENTS	39655380508302088212336583102041887968966061943476256774	1778208770871	2026/05/08/[$LATEST]5a4c643e640347c599966b6b6690e81d	{"L":"INFO","timestamp":"2026-05-08T02:52:41.872Z","N":"api","C":"sqs-bargaining/main.go:155","M":"bargaining round completed","session_id":"a2a_20260508024343_6v5fhr1b","round":2}
+	1778208761872
+4045	EVENTS	39655380508346689702733644348324959405511358666488217607	1778208770871	2026/05/08/[$LATEST]5a4c643e640347c599966b6b6690e81d	END RequestId: 65c8ab0c-5037-52b9-a761-c97b01c57bdb
+	1778208761874
+4046	EVENTS	39655380508346689702733644348324959405511358666488217608	1778208770871	2026/05/08/[$LATEST]5a4c643e640347c599966b6b6690e81d	REPORT RequestId: 65c8ab0c-5037-52b9-a761-c97b01c57bdb	Duration: 36091.31 ms	Billed Duration: 36092 ms	Memory Size: 1024 MB	Max Memory Used: 88 MB
+	1778208761874
+4047	EVENTS	1778313351143	2026/05/09/[$LATEST]3e79cccd07b348c4baa89506c6a817b7	{"L":"INFO","timestamp":"2026-05-09T07:55:46.479Z","N":"api","C":"app/runtime.go:86","M":"application startup","service":"invoice-backend","environment":"dev","log_level":"info","log_format":"json","sentry_enabled":false}
+	1778313346480
+4048	EVENTS	1778313351143	2026/05/09/[$LATEST]3e79cccd07b348c4baa89506c6a817b7	{"L":"WARN","timestamp":"2026-05-09T07:55:46.539Z","N":"api","C":"services/intent_processing_service.go:53","M":"CLAUDE_API_KEY not set, falling back to rule-based parser"}
+	1778313346539
+4049	EVENTS	1778313351143	2026/05/09/[$LATEST]3e79cccd07b348c4baa89506c6a817b7	{"L":"ERROR","timestamp":"2026-05-09T07:55:46.541Z","N":"api","C":"services/agent_config_service.go:36","M":"failed to create .well-known directory","error":"mkdir .well-known: read-only file system","dir":".well-known"}
+	1778313346541
+4050	EVENTS	1778313351143	2026/05/09/[$LATEST]3e79cccd07b348c4baa89506c6a817b7	{"L":"INFO","timestamp":"2026-05-09T07:55:46.541Z","N":"api","C":"services/container.go:135","M":"service container initialized","components":34,"llm_model":"deepseek-v4-flash","workflow_enabled":true}
+	1778313346541
+4051	EVENTS	1778313377321	2026/05/09/[$LATEST]3e79cccd07b348c4baa89506c6a817b7	{"L":"INFO","timestamp":"2026-05-09T07:56:08.307Z","N":"api","C":"services/bargaining_service.go:752","M":"LLM proposed invalid amount, using fallback","agent_type":"buyer","proposed_amount":300}
+	1778313368307
+4052	EVENTS	1778313377321	2026/05/09/[$LATEST]3e79cccd07b348c4baa89506c6a817b7	{"L":"WARN","timestamp":"2026-05-09T07:56:08.320Z","N":"api","C":"services/bargaining_service.go:534","M":"receiver agent has no A2A endpoint","receiver_id":"77a2da99-2861-4c22-843e-a5bf41083601"}
+	1778313368320
+4053	EVENTS	1778313414948	2026/05/09/[$LATEST]3e79cccd07b348c4baa89506c6a817b7	{"L":"INFO","timestamp":"2026-05-09T07:56:45.937Z","N":"api","C":"services/a2a_bargaining_service.go:580","M":"autonomous negotiation completed","session_id":"a2a_20260509075524_4lv5fpz9","status":"accepted","final_amount":1341.8404999999998,"total_rounds":2}
+	1778313405937
+4054	EVENTS	1778313414948	2026/05/09/[$LATEST]3e79cccd07b348c4baa89506c6a817b7	{"L":"WARN","timestamp":"2026-05-09T07:56:45.937Z","N":"api","C":"services/bargaining_service.go:576","M":"receiver agent has no A2A endpoint","receiver_id":"c7c0961b-a8e6-4cad-8ec2-0ea0f8c086d4"}
+	1778313405937
+4055	EVENTS	1778313414948	2026/05/09/[$LATEST]3e79cccd07b348c4baa89506c6a817b7	{"L":"INFO","timestamp":"2026-05-09T07:56:45.939Z","N":"api","C":"sqs-bargaining/main.go:138","M":"round processing result","session_id":"a2a_20260509075524_4lv5fpz9","round_completed":1,"max_rounds":5,"is_done":true,"has_more_rounds":true,"status":"accepted"}
+	1778313405939
+4056	EVENTS	1778313414948	2026/05/09/[$LATEST]3e79cccd07b348c4baa89506c6a817b7	{"L":"INFO","timestamp":"2026-05-09T07:56:45.939Z","N":"api","C":"sqs-bargaining/main.go:155","M":"bargaining round completed","session_id":"a2a_20260509075524_4lv5fpz9","round":1}
+	1778313405939
+4057	EVENTS	1778313414948	2026/05/09/[$LATEST]3e79cccd07b348c4baa89506c6a817b7	END RequestId: 5dff4ad1-d454-57ad-be43-28a93e994576
+	1778313405941
+4058	EVENTS	1778313414948	2026/05/09/[$LATEST]3e79cccd07b348c4baa89506c6a817b7	REPORT RequestId: 5dff4ad1-d454-57ad-be43-28a93e994576	Duration: 12723.42 ms	Billed Duration: 12724 ms	Memory Size: 1024 MB	Max Memory Used: 88 MB
+	1778313405941
+4059	EVENTS	1778313863656	2026/05/09/[$LATEST]2183f21fccba42d2b378f34198e64996	{"L":"INFO","timestamp":"2026-05-09T08:04:15.013Z","N":"api","C":"app/runtime.go:86","M":"application startup","service":"invoice-backend","environment":"dev","log_level":"info","log_format":"json","sentry_enabled":false}
+	1778313855018
+4060	EVENTS	1778313863656	2026/05/09/[$LATEST]2183f21fccba42d2b378f34198e64996	{"L":"WARN","timestamp":"2026-05-09T08:04:15.072Z","N":"api","C":"services/intent_processing_service.go:53","M":"CLAUDE_API_KEY not set, falling back to rule-based parser"}
+	1778313855072
+4061	EVENTS	1778313863656	2026/05/09/[$LATEST]2183f21fccba42d2b378f34198e64996	{"L":"ERROR","timestamp":"2026-05-09T08:04:15.074Z","N":"api","C":"services/agent_config_service.go:36","M":"failed to create .well-known directory","error":"mkdir .well-known: read-only file system","dir":".well-known"}
+	1778313855075
+4062	EVENTS	1778313863656	2026/05/09/[$LATEST]2183f21fccba42d2b378f34198e64996	{"L":"INFO","timestamp":"2026-05-09T08:04:15.075Z","N":"api","C":"services/container.go:135","M":"service container initialized","components":34,"llm_model":"deepseek-v4-flash","workflow_enabled":true}
+	1778313855075
+4063	EVENTS	1778313863656	2026/05/09/[$LATEST]2183f21fccba42d2b378f34198e64996	{"L":"INFO","timestamp":"2026-05-09T08:04:15.132Z","N":"api","C":"middleware/logging.go:64","M":"request completed","request_id":"c1f6c8cb-7c5d-4552-b956-195846eb8099","method":"GET","route":"/api/v1/vendors","path":"/api/v1/vendors","status":200,"duration_ms":50,"user_agent":"invoiceappv2/1 CFNetwork/3860.500.112 Darwin/25.5.0","user_id":"04e8f4a8-6011-7046-6cfc-8768f6acf099"}
+	1778313855134
+4064	EVENTS	1778313863656	2026/05/09/[$LATEST]2183f21fccba42d2b378f34198e64996	{"L":"INFO","timestamp":"2026-05-09T08:04:29.350Z","N":"api","C":"middleware/logging.go:64","M":"request completed","request_id":"13a2fa02-0d23-474f-87ca-7f2173dde351","method":"GET","route":"/api/v1/customers","path":"/api/v1/customers","status":200,"duration_ms":4,"user_agent":"invoiceappv2/1 CFNetwork/3860.500.112 Darwin/25.5.0","user_id":"04e8f4a8-6011-7046-6cfc-8768f6acf099"}
+	1778313869350
+4065	EVENTS	1778313863656	2026/05/09/[$LATEST]2183f21fccba42d2b378f34198e64996	{"L":"WARN","timestamp":"2026-05-09T08:04:29.861Z","N":"api.auth_middleware.payment_handler","C":"handlers/payment_handler.go:109","M":"missing invoice_id query param","request_id":"4bb51720-3dea-469d-a21d-7b63d4391114","method":"GET","route":"/api/v1/payments","path":"/api/v1/payments","status":400}
+	1778313869861
+4066	EVENTS	1778313863656	2026/05/09/[$LATEST]2183f21fccba42d2b378f34198e64996	{"L":"INFO","timestamp":"2026-05-09T08:05:23.237Z","N":"api","C":"middleware/logging.go:64","M":"request completed","request_id":"88b789b8-16b5-468d-bb86-87729cf125c5","method":"GET","route":"/api/v1/bargaining/negotiations","path":"/api/v1/bargaining/negotiations","status":200,"duration_ms":13,"user_agent":"okhttp/4.12.0","user_id":"6428c478-3041-7006-d8f7-ea7a62040679"}
+	1778313923237

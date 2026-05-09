@@ -419,8 +419,59 @@ func (s *AuthService) UpdateProfile(ctx context.Context, userID string, input Up
 }
 
 func (s *AuthService) GetProfilePictureUploadURL(ctx context.Context, userID, contentType string) (string, error) {
-	key := fmt.Sprintf("profile-pictures/%s/profile", userID)
-	return s.s3.GeneratePresignedUploadURL(ctx, "user-profile-pictures", key, contentType, 3600)
+	key := s.profilePictureKey(userID, contentType)
+	return s.s3.GeneratePresignedUploadURL(ctx, s.profilePictureBucket(), key, contentType, 3600)
+}
+
+func (s *AuthService) UploadProfilePicture(ctx context.Context, userID string, data []byte, contentType string) (*models.User, error) {
+	if s.s3 == nil {
+		return nil, fmt.Errorf("profile picture storage is not configured")
+	}
+
+	bucket := s.profilePictureBucket()
+	key := s.profilePictureKey(userID, contentType)
+	if err := s.s3.Upload(ctx, bucket, key, data, contentType); err != nil {
+		return nil, fmt.Errorf("failed to upload profile picture: %w", err)
+	}
+
+	return s.UpdateProfile(ctx, userID, UpdateProfileInput{
+		ProfilePictureURL: s.s3.GetObjectURL(bucket, key),
+	})
+}
+
+func (s *AuthService) profilePictureKey(userID, contentType string) string {
+	return fmt.Sprintf(
+		"profile-pictures/%s/%s%s",
+		userID,
+		uuid.NewString(),
+		profilePictureExtension(contentType),
+	)
+}
+
+func (s *AuthService) profilePictureBucket() string {
+	if s != nil && s.cfg != nil {
+		if bucket := strings.TrimSpace(s.cfg.S3.BucketLogos); bucket != "" {
+			return bucket
+		}
+	}
+	return "business-logos"
+}
+
+func profilePictureExtension(contentType string) string {
+	switch strings.ToLower(strings.TrimSpace(contentType)) {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	case "image/svg+xml":
+		return ".svg"
+	default:
+		return ""
+	}
 }
 
 type ChangePasswordInput struct {

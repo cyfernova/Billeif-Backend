@@ -167,7 +167,7 @@ func (s *BargainingService) SubmitCounterOffer(ctx context.Context, negotiationI
 		return nil, nil, errors.New("negotiation already completed")
 	}
 
-	if negotiation.Rounds >= negotiation.MaxRounds {
+	if negotiation.Rounds > negotiation.MaxRounds {
 		if err := s.ap2Repo.UpdateNegotiationStatus(ctx, negotiationID, "expired"); err == nil {
 			negotiation.Status = "expired"
 		}
@@ -1071,7 +1071,7 @@ func (s *BargainingServiceTestable) SubmitCounterOffer(ctx context.Context, nego
 		return nil, nil, errors.New("negotiation already completed")
 	}
 
-	if negotiation.Rounds >= negotiation.MaxRounds {
+	if negotiation.Rounds > negotiation.MaxRounds {
 		if err := s.ap2Repo.UpdateNegotiationStatus(ctx, negotiationID, "expired"); err == nil {
 			negotiation.Status = "expired"
 		}

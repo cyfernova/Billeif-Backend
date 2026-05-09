@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"context"
+	"io"
 	"net/http"
 	"strings"
 
@@ -10,6 +12,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+const maxProfilePictureBytes int64 = 5 * 1024 * 1024
 
 type AuthHandler struct {
 	svc *services.AuthService
@@ -527,9 +531,13 @@ func (h *AuthHandler) GoogleLogin(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /auth/profile-picture [post]
 func (h *AuthHandler) UploadProfilePicture(c *gin.Context) {
-	userID := middleware.GetUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+	userID, ok := h.authenticatedDatabaseUserID(c)
+	if !ok {
+		return
+	}
+
+	if c.ContentType() == "multipart/form-data" {
+		h.uploadProfilePictureFile(c, userID)
 		return
 	}
 
@@ -547,6 +555,58 @@ func (h *AuthHandler) UploadProfilePicture(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"upload_url": url})
 }
 
+func (h *AuthHandler) uploadProfilePictureFile(c *gin.Context, userID string) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxProfilePictureBytes)
+
+	fileHeader, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "profile picture file is required"})
+		return
+	}
+	if fileHeader.Size > maxProfilePictureBytes {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "profile picture must be 5MB or smaller"})
+		return
+	}
+
+	file, err := fileHeader.Open()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to open profile picture"})
+		return
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read profile picture"})
+		return
+	}
+	if len(data) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "profile picture file is empty"})
+		return
+	}
+	if int64(len(data)) > maxProfilePictureBytes {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "profile picture must be 5MB or smaller"})
+		return
+	}
+
+	contentType := strings.ToLower(strings.TrimSpace(fileHeader.Header.Get("Content-Type")))
+	if contentType == "" || contentType == "application/octet-stream" {
+		contentType = http.DetectContentType(data)
+	}
+	if !allowedImageTypes[contentType] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported content type; allowed: image/png, image/jpeg, image/gif, image/webp, image/svg+xml"})
+		return
+	}
+
+	user, err := h.svc.UploadProfilePicture(c.Request.Context(), userID, data, contentType)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, user)
+}
+
 // UpdateProfilePicture updates the user's profile picture URL
 // @Summary Update profile picture URL
 // @Description Updates the user's profile picture URL after successful upload.
@@ -560,9 +620,8 @@ func (h *AuthHandler) UploadProfilePicture(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /auth/profile-picture [put]
 func (h *AuthHandler) UpdateProfilePicture(c *gin.Context) {
-	userID := middleware.GetUserID(c)
-	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+	userID, ok := h.authenticatedDatabaseUserID(c)
+	if !ok {
 		return
 	}
 
@@ -584,6 +643,57 @@ func (h *AuthHandler) UpdateProfilePicture(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, user)
+}
+
+func (h *AuthHandler) authenticatedDatabaseUserID(c *gin.Context) (string, bool) {
+	userID := middleware.GetUserID(c)
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return "", false
+	}
+
+	resolvedID, err := h.resolveDatabaseUserID(
+		c.Request.Context(),
+		userID,
+		middleware.GetEmail(c),
+		c.GetString("phone_number"),
+	)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return "", false
+	}
+
+	return resolvedID, true
+}
+
+func (h *AuthHandler) resolveDatabaseUserID(ctx context.Context, userID, email, phoneNumber string) (string, error) {
+	user, err := h.svc.GetUser(ctx, userID)
+	if err == nil {
+		return user.ID, nil
+	}
+
+	user, err = h.svc.GetUserByCognitoID(ctx, userID)
+	if err == nil {
+		return user.ID, nil
+	}
+
+	if email != "" {
+		user, err = h.svc.GetUserByEmail(ctx, email)
+		if err == nil {
+			_ = h.svc.UpdateUserCognitoID(ctx, user.ID, userID)
+			return user.ID, nil
+		}
+	}
+
+	if phoneNumber != "" {
+		user, err = h.svc.GetUserByPhoneNumber(ctx, phoneNumber)
+		if err == nil {
+			_ = h.svc.UpdateUserCognitoID(ctx, user.ID, userID)
+			return user.ID, nil
+		}
+	}
+
+	return "", err
 }
 
 func extractToken(c *gin.Context) string {

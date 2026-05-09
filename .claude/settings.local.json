@@ -59,7 +59,11 @@
       "Bash(grep -v \"^--$\")",
       "Bash(grep -B2 \"^}$\")",
       "PowerShell($start = \\(Get-Date\\).AddHours\\(-1\\).ToString\\(\"o\"\\); aws logs filter-log-events --log-group-name '/aws/lambda/invoice-bargaining' --start-time $start 2>&1 | Select-Object -First 300)",
-      "PowerShell($epoch = [DateTime]::new\\(1970,1,1,0,0,0,[DateTimeKind]::Utc\\); $now = [DateTime]::UtcNow; $startMs = [long]\\($now - $epoch\\).TotalMilliseconds - 3600000; Write-Host \"Start time: $startMs\"; aws logs filter-log-events --log-group-name '/aws/lambda/invoice-bargaining' --start-time $startMs --output text 2>&1 | Select-Object -First 500)"
+      "PowerShell($epoch = [DateTime]::new\\(1970,1,1,0,0,0,[DateTimeKind]::Utc\\); $now = [DateTime]::UtcNow; $startMs = [long]\\($now - $epoch\\).TotalMilliseconds - 3600000; Write-Host \"Start time: $startMs\"; aws logs filter-log-events --log-group-name '/aws/lambda/invoice-bargaining' --start-time $startMs --output text 2>&1 | Select-Object -First 500)",
+      "PowerShell(aws logs get-log-events *)",
+      "PowerShell(aws logs get-log-events --log-group-name \"/aws/lambda/invoice-backend-api-http\" --log-stream-name \"2026/05/09/[$LATEST]de197639fc12499585387d9c8607e422\" --output text 2>&1 | Select-Object -Last 100)",
+      "PowerShell(aws logs get-log-events --log-group-name \"/aws/lambda/invoice-backend-api-http\" --log-stream-name \"2026/05/09/[$LATEST]b8b4c2a0271f42ffa4c66c2f019c8a45\" --output text 2>&1)",
+      "Bash(gofmt -w internal/services/bargaining_service.go)"
     ]
   }
 }
