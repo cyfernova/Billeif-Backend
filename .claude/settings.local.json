@@ -57,7 +57,9 @@
       "Bash(Select-Object -First 20)",
       "Bash(Select-Object -First 50)",
       "Bash(grep -v \"^--$\")",
-      "Bash(grep -B2 \"^}$\")"
+      "Bash(grep -B2 \"^}$\")",
+      "PowerShell($start = \\(Get-Date\\).AddHours\\(-1\\).ToString\\(\"o\"\\); aws logs filter-log-events --log-group-name '/aws/lambda/invoice-bargaining' --start-time $start 2>&1 | Select-Object -First 300)",
+      "PowerShell($epoch = [DateTime]::new\\(1970,1,1,0,0,0,[DateTimeKind]::Utc\\); $now = [DateTime]::UtcNow; $startMs = [long]\\($now - $epoch\\).TotalMilliseconds - 3600000; Write-Host \"Start time: $startMs\"; aws logs filter-log-events --log-group-name '/aws/lambda/invoice-bargaining' --start-time $startMs --output text 2>&1 | Select-Object -First 500)"
     ]
   }
 }
