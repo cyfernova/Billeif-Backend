@@ -13,6 +13,15 @@ const (
 	defaultLLMModel  = "deepseek-v4-flash"
 )
 
+var defaultDevelopmentAllowedOrigins = []string{
+	"http://localhost:3000",
+	"http://127.0.0.1:3000",
+	"http://localhost:8081",
+	"http://127.0.0.1:8081",
+	"http://localhost:19006",
+	"http://127.0.0.1:19006",
+}
+
 type Config struct {
 	Environment    string              `mapstructure:"ENVIRONMENT"`
 	Logging        LoggingConfig       `mapstructure:"LOGGING"`
@@ -404,6 +413,10 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
+	if rawAllowedOrigins := viper.GetString("ALLOWED_ORIGINS"); rawAllowedOrigins != "" {
+		cfg.AllowedOrigins = parseAllowedOrigins(rawAllowedOrigins)
+	}
+
 	if err := resolveSSMParameters(&cfg); err != nil {
 		return nil, fmt.Errorf("failed to resolve SSM parameters: %w", err)
 	}
@@ -483,7 +496,7 @@ func setDefaults(cfg *Config) {
 		if isProductionEnv(cfg.Environment) {
 			cfg.AllowedOrigins = []string{"*"}
 		} else {
-			cfg.AllowedOrigins = []string{"http://localhost:3000"}
+			cfg.AllowedOrigins = append([]string(nil), defaultDevelopmentAllowedOrigins...)
 		}
 	}
 	if cfg.LLM.Timeout == 0 {
@@ -552,6 +565,18 @@ func setDefaults(cfg *Config) {
 	if isProductionEnv(cfg.Environment) {
 		cfg.AWS.WAF.Enabled = false
 	}
+}
+
+func parseAllowedOrigins(raw string) []string {
+	parts := strings.Split(raw, ",")
+	origins := make([]string, 0, len(parts))
+	for _, part := range parts {
+		origin := strings.TrimSpace(part)
+		if origin != "" {
+			origins = append(origins, origin)
+		}
+	}
+	return origins
 }
 
 func isProductionEnv(env string) bool {
