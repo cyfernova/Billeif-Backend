@@ -98,6 +98,34 @@ func TestBusinessService_Create_Success(t *testing.T) {
 	mockRepo.AssertExpectations(t)
 }
 
+// TestBusinessService_Create_AcceptsPostalCodeAlias verifies API clients can send postal_code.
+func TestBusinessService_Create_AcceptsPostalCodeAlias(t *testing.T) {
+	mockRepo := new(MockBusinessRepository)
+	mockS3 := new(MockBusinessS3Service)
+	log := logger.New()
+
+	svc := services.NewBusinessServiceForTesting(mockRepo, mockS3, log)
+
+	ctx := context.Background()
+	userID := "user-123"
+	input := services.CreateBusinessInput{
+		Name:       "Cyfernova",
+		Email:      "accounts@cyfernova.com",
+		PostalCode: "743127",
+	}
+
+	mockRepo.On("Create", ctx, mock.MatchedBy(func(b *models.BusinessProfile) bool {
+		return b.OwnerID == userID && b.PostalCode == input.PostalCode
+	})).Return(nil)
+
+	business, err := svc.Create(ctx, userID, input)
+
+	assert.NoError(t, err)
+	assert.NotNil(t, business)
+	assert.Equal(t, input.PostalCode, business.PostalCode)
+	mockRepo.AssertExpectations(t)
+}
+
 // TestBusinessService_Create_DefaultCurrency tests business creation with default currency
 func TestBusinessService_Create_DefaultCurrency(t *testing.T) {
 	mockRepo := new(MockBusinessRepository)

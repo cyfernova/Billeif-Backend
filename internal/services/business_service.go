@@ -29,6 +29,7 @@ type CreateBusinessInput struct {
 	State               string                 `json:"state"`
 	Country             string                 `json:"country"`
 	ZipCode             string                 `json:"zip_code"`
+	PostalCode          string                 `json:"postal_code"`
 	TaxID               string                 `json:"tax_id"`
 	GSTIN               string                 `json:"gstin"`
 	BusinessStateCode   string                 `json:"business_state_code"`
@@ -45,6 +46,13 @@ type CreateBusinessInput struct {
 	InvoicePrefix       string                 `json:"invoice_prefix"`
 }
 
+func resolvedPostalCode(zipCode, postalCode string) string {
+	if zipCode != "" {
+		return zipCode
+	}
+	return postalCode
+}
+
 func (s *BusinessService) Create(ctx context.Context, userID string, input CreateBusinessInput) (*models.BusinessProfile, error) {
 	log := logger.FromContext(ctx).With("service", "business", "operation", "create", "owner_id", userID)
 	business := &models.BusinessProfile{
@@ -56,7 +64,7 @@ func (s *BusinessService) Create(ctx context.Context, userID string, input Creat
 		City:                input.City,
 		State:               input.State,
 		Country:             input.Country,
-		PostalCode:          input.ZipCode,
+		PostalCode:          resolvedPostalCode(input.ZipCode, input.PostalCode),
 		TaxID:               input.TaxID,
 		GSTIN:               input.GSTIN,
 		BusinessStateCode:   input.BusinessStateCode,
@@ -132,6 +140,7 @@ type UpdateBusinessInput struct {
 	State               string                 `json:"state"`
 	Country             string                 `json:"country"`
 	ZipCode             string                 `json:"zip_code"`
+	PostalCode          string                 `json:"postal_code"`
 	TaxID               string                 `json:"tax_id"`
 	GSTIN               string                 `json:"gstin"`
 	BusinessStateCode   string                 `json:"business_state_code"`
@@ -177,8 +186,8 @@ func (s *BusinessService) Update(ctx context.Context, id string, input UpdateBus
 	if input.Country != "" {
 		business.Country = input.Country
 	}
-	if input.ZipCode != "" {
-		business.PostalCode = input.ZipCode
+	if postalCode := resolvedPostalCode(input.ZipCode, input.PostalCode); postalCode != "" {
+		business.PostalCode = postalCode
 	}
 	if input.TaxID != "" {
 		business.TaxID = input.TaxID
@@ -258,8 +267,8 @@ func (s *BusinessService) UpdateByOwner(ctx context.Context, userID, id string, 
 	if input.Country != "" {
 		business.Country = input.Country
 	}
-	if input.ZipCode != "" {
-		business.PostalCode = input.ZipCode
+	if postalCode := resolvedPostalCode(input.ZipCode, input.PostalCode); postalCode != "" {
+		business.PostalCode = postalCode
 	}
 	if input.TaxID != "" {
 		business.TaxID = input.TaxID
@@ -410,7 +419,7 @@ func (s *BusinessServiceTestable) Create(ctx context.Context, userID string, inp
 		City:       input.City,
 		State:      input.State,
 		Country:    input.Country,
-		PostalCode: input.ZipCode,
+		PostalCode: resolvedPostalCode(input.ZipCode, input.PostalCode),
 		TaxID:      input.TaxID,
 		Currency:   input.Currency,
 	}
@@ -476,8 +485,8 @@ func (s *BusinessServiceTestable) Update(ctx context.Context, id string, input U
 	if input.Country != "" {
 		business.Country = input.Country
 	}
-	if input.ZipCode != "" {
-		business.PostalCode = input.ZipCode
+	if postalCode := resolvedPostalCode(input.ZipCode, input.PostalCode); postalCode != "" {
+		business.PostalCode = postalCode
 	}
 	if input.TaxID != "" {
 		business.TaxID = input.TaxID
@@ -521,8 +530,8 @@ func (s *BusinessServiceTestable) UpdateByOwner(ctx context.Context, userID, id 
 	if input.Country != "" {
 		business.Country = input.Country
 	}
-	if input.ZipCode != "" {
-		business.PostalCode = input.ZipCode
+	if postalCode := resolvedPostalCode(input.ZipCode, input.PostalCode); postalCode != "" {
+		business.PostalCode = postalCode
 	}
 	if input.TaxID != "" {
 		business.TaxID = input.TaxID
