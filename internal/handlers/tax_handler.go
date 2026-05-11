@@ -19,14 +19,14 @@ func NewTaxHandler(svc *services.TaxComplianceService, log *logger.Logger) *TaxH
 	return &TaxHandler{svc: svc, log: log}
 }
 
-// FetchGSTIN fetches GSTIN details
-// @Summary Fetch GSTIN details
-// @Description Fetches GSTIN details from government registry
+// FetchGSTIN verifies GSTIN details
+// @Summary Verify GSTIN details
+// @Description Verifies GSTIN details through the configured GST lookup provider and falls back to local format validation when the provider is unavailable.
 // @Tags Tax
 // @Produce json
 // @Security BearerAuth
 // @Param gstin path string true "GSTIN"
-// @Success 200 {object} interface{}
+// @Success 200 {object} services.GSTINLookupResult
 // @Failure 500 {object} map[string]string
 // @Router /utils/gstin/{gstin}/fetch [post]
 func (h *TaxHandler) FetchGSTIN(c *gin.Context) {

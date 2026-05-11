@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -41,16 +43,23 @@ type TaxComplianceService struct {
 	log              *logger.Logger
 }
 
+var gstinFormatPattern = regexp.MustCompile(`^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$`)
+
 type GSTINLookupResult struct {
-	GSTIN       string                 `json:"gstin"`
-	PAN         string                 `json:"pan,omitempty"`
-	LegalName   string                 `json:"legal_name,omitempty"`
-	TradeName   string                 `json:"trade_name,omitempty"`
-	Address     string                 `json:"address,omitempty"`
-	StateCode   string                 `json:"state_code,omitempty"`
-	Source      string                 `json:"source"`
-	IsValid     bool                   `json:"is_valid"`
-	RawMetadata map[string]interface{} `json:"raw_metadata,omitempty"`
+	GSTIN            string                 `json:"gstin"`
+	PAN              string                 `json:"pan,omitempty"`
+	LegalName        string                 `json:"legal_name,omitempty"`
+	TradeName        string                 `json:"trade_name,omitempty"`
+	Address          string                 `json:"address,omitempty"`
+	StateCode        string                 `json:"state_code,omitempty"`
+	Status           string                 `json:"status,omitempty"`
+	RegistrationDate string                 `json:"registration_date,omitempty"`
+	Constitution     string                 `json:"constitution,omitempty"`
+	NatureOfBusiness []string               `json:"nature_of_business,omitempty"`
+	ProviderMessage  string                 `json:"provider_message,omitempty"`
+	Source           string                 `json:"source"`
+	IsValid          bool                   `json:"is_valid"`
+	RawMetadata      map[string]interface{} `json:"raw_metadata,omitempty"`
 }
 
 type GSTReportOptions struct {
@@ -128,56 +137,217 @@ func (s *TaxComplianceService) AttachDocumentService(documents *DocumentService)
 }
 
 func (s *TaxComplianceService) FetchGSTIN(ctx context.Context, gstin string) (*GSTINLookupResult, error) {
+	normalizedGSTIN := strings.ToUpper(strings.TrimSpace(gstin))
 	result := &GSTINLookupResult{
-		GSTIN:   strings.ToUpper(strings.TrimSpace(gstin)),
-		PAN:     parsePANFromGSTIN(gstin),
+		GSTIN:   normalizedGSTIN,
+		PAN:     parsePANFromGSTIN(normalizedGSTIN),
 		Source:  "local_fallback",
-		IsValid: len(strings.TrimSpace(gstin)) == 15,
+		IsValid: isValidGSTINFormat(normalizedGSTIN),
+	}
+	if !result.IsValid {
+		result.ProviderMessage = "invalid GSTIN format"
+		return result, nil
 	}
 	if s.cfg == nil || strings.TrimSpace(s.cfg.GSTLookup.BaseURL) == "" {
 		return result, nil
 	}
 
-	requestURL := strings.TrimSpace(s.cfg.GSTLookup.BaseURL)
-	if strings.Contains(requestURL, "{gstin}") {
-		requestURL = strings.ReplaceAll(requestURL, "{gstin}", result.GSTIN)
-	} else {
-		requestURL = joinURL(requestURL, result.GSTIN)
+	requestURL, apiKeyInURL, ok := s.buildGSTINLookupURL(result.GSTIN)
+	if !ok {
+		result.ProviderMessage = "GSTIN lookup provider is not configured"
+		return result, nil
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return result, nil
 	}
-	if apiKey := strings.TrimSpace(s.cfg.GSTLookup.APIKey); apiKey != "" {
+	if apiKey := strings.TrimSpace(s.cfg.GSTLookup.APIKey); apiKey != "" && !apiKeyInURL {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
+		result.ProviderMessage = "GSTIN lookup provider is unavailable"
 		return result, nil
 	}
 	defer resp.Body.Close()
 
-	var payload map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		result.ProviderMessage = fmt.Sprintf("GSTIN lookup provider returned HTTP %d", resp.StatusCode)
 		return result, nil
 	}
 
-	result.Source = "external"
-	result.LegalName = readStringCandidate(payload, "legal_name", "lgnm", "data.legal_name")
-	result.TradeName = readStringCandidate(payload, "trade_name", "tradeNam", "data.trade_name")
+	var payload map[string]interface{}
+	decoder := json.NewDecoder(resp.Body)
+	decoder.UseNumber()
+	if err := decoder.Decode(&payload); err != nil {
+		result.ProviderMessage = "GSTIN lookup provider returned an unreadable response"
+		return result, nil
+	}
+
+	result.Source = "gstincheck"
+	result.ProviderMessage = readStringCandidate(payload, "message", "error", "data.message", "data.error")
+	result.LegalName = readStringCandidate(payload, "legal_name", "legalName", "lgnm", "data.legal_name", "data.legalName", "data.lgnm")
+	result.TradeName = readStringCandidate(payload, "trade_name", "tradeName", "tradeNam", "data.trade_name", "data.tradeName", "data.tradeNam")
 	result.Address = coalesceString(
-		readStringCandidate(payload, "address", "pradr.addr", "data.address"),
+		readStringCandidate(payload, "address", "pradr.addr", "data.address", "data.pradr.addr"),
 		readStringCandidate(nestedMap(payload, "pradr"), "addr"),
+		readGSTINAddress(payload),
 	)
 	defaultStateCode := ""
 	if len(result.GSTIN) >= 2 {
 		defaultStateCode = result.GSTIN[0:2]
 	}
-	result.StateCode = coalesceString(readStringCandidate(payload, "state_code", "stcd", "data.state_code"), defaultStateCode)
+	result.StateCode = coalesceString(readStringCandidate(payload, "state_code", "stateCode", "stcd", "data.state_code", "data.stateCode", "data.stcd"), defaultStateCode)
+	result.Status = readStringCandidate(payload, "status", "sts", "gst_status", "gstin_status", "data.status", "data.sts", "data.gst_status", "data.gstin_status")
+	result.RegistrationDate = readStringCandidate(payload, "registration_date", "registrationDate", "rgdt", "data.registration_date", "data.registrationDate", "data.rgdt")
+	result.Constitution = readStringCandidate(payload, "constitution", "ctb", "data.constitution", "data.ctb")
+	result.NatureOfBusiness = readStringSliceCandidate(payload, "nature_of_business", "natureOfBusiness", "nba", "data.nature_of_business", "data.natureOfBusiness", "data.nba")
+	if valid, ok := readGSTINBoolCandidate(payload, "valid", "is_valid", "success", "data.valid", "data.is_valid"); ok {
+		result.IsValid = valid
+	} else if result.LegalName != "" || result.TradeName != "" || result.Status != "" {
+		result.IsValid = !strings.EqualFold(result.Status, "invalid")
+	}
 	result.RawMetadata = payload
 	return result, nil
+}
+
+func (s *TaxComplianceService) buildGSTINLookupURL(gstin string) (string, bool, bool) {
+	if s == nil || s.cfg == nil {
+		return "", false, false
+	}
+	requestURL := strings.TrimSpace(s.cfg.GSTLookup.BaseURL)
+	if requestURL == "" {
+		return "", false, false
+	}
+	apiKey := strings.TrimSpace(s.cfg.GSTLookup.APIKey)
+	apiKeyInURL := strings.Contains(requestURL, "{api_key}") || strings.Contains(requestURL, "{apiKey}")
+	if apiKeyInURL {
+		if apiKey == "" {
+			return "", true, false
+		}
+		escapedAPIKey := url.PathEscape(apiKey)
+		requestURL = strings.ReplaceAll(requestURL, "{api_key}", escapedAPIKey)
+		requestURL = strings.ReplaceAll(requestURL, "{apiKey}", escapedAPIKey)
+	}
+	if strings.Contains(requestURL, "{gstin}") {
+		requestURL = strings.ReplaceAll(requestURL, "{gstin}", url.PathEscape(gstin))
+	} else {
+		requestURL = joinURL(requestURL, url.PathEscape(gstin))
+	}
+	return requestURL, apiKeyInURL, true
+}
+
+func isValidGSTINFormat(gstin string) bool {
+	return gstinFormatPattern.MatchString(strings.ToUpper(strings.TrimSpace(gstin)))
+}
+
+func readGSTINBoolCandidate(data map[string]interface{}, paths ...string) (bool, bool) {
+	for _, candidate := range paths {
+		if value, ok := readGSTINBoolPath(data, candidate); ok {
+			return value, true
+		}
+	}
+	return false, false
+}
+
+func readGSTINBoolPath(data map[string]interface{}, path string) (bool, bool) {
+	current := interface{}(data)
+	for _, part := range strings.Split(path, ".") {
+		asMap, ok := current.(map[string]interface{})
+		if !ok {
+			return false, false
+		}
+		current = asMap[part]
+	}
+	switch typed := current.(type) {
+	case bool:
+		return typed, true
+	case string:
+		switch strings.ToLower(strings.TrimSpace(typed)) {
+		case "true", "yes", "valid", "active", "success":
+			return true, true
+		case "false", "no", "invalid", "failed":
+			return false, true
+		}
+	default:
+		return false, false
+	}
+	return false, false
+}
+
+func readStringSliceCandidate(data map[string]interface{}, paths ...string) []string {
+	for _, candidate := range paths {
+		if values := readStringSlicePath(data, candidate); len(values) > 0 {
+			return values
+		}
+	}
+	return nil
+}
+
+func readStringSlicePath(data map[string]interface{}, path string) []string {
+	current := interface{}(data)
+	for _, part := range strings.Split(path, ".") {
+		asMap, ok := current.(map[string]interface{})
+		if !ok {
+			return nil
+		}
+		current = asMap[part]
+	}
+	switch typed := current.(type) {
+	case []interface{}:
+		values := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if value := stringValue(item); value != "" {
+				values = append(values, value)
+			}
+		}
+		return values
+	case []string:
+		return typed
+	case string:
+		if strings.TrimSpace(typed) == "" {
+			return nil
+		}
+		parts := strings.Split(typed, ",")
+		values := make([]string, 0, len(parts))
+		for _, part := range parts {
+			if value := strings.TrimSpace(part); value != "" {
+				values = append(values, value)
+			}
+		}
+		return values
+	default:
+		return nil
+	}
+}
+
+func readGSTINAddress(payload map[string]interface{}) string {
+	for _, address := range []map[string]interface{}{
+		nestedMap(nestedMap(payload, "pradr"), "addr"),
+		nestedMap(nestedMap(nestedMap(payload, "data"), "pradr"), "addr"),
+		nestedMap(payload, "address"),
+		nestedMap(nestedMap(payload, "data"), "address"),
+	} {
+		if formatted := formatGSTINAddress(address); formatted != "" {
+			return formatted
+		}
+	}
+	return ""
+}
+
+func formatGSTINAddress(address map[string]interface{}) string {
+	if len(address) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, 9)
+	for _, key := range []string{"bno", "flno", "bnm", "st", "loc", "city", "dst", "stcd", "pncd"} {
+		if value := strings.TrimSpace(stringValue(address[key])); value != "" {
+			parts = append(parts, value)
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 func (s *TaxComplianceService) GetReport(ctx context.Context, businessID, reportType string, opts GSTReportOptions) (map[string]interface{}, error) {

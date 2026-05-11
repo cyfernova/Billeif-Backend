@@ -2,11 +2,15 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"invoice-backend/internal/config"
 	"invoice-backend/internal/models"
 	interfaces "invoice-backend/internal/repositories/interfaces"
 	postgresrepo "invoice-backend/internal/repositories/postgres"
@@ -25,6 +29,82 @@ func TestTaxComplianceService_FetchGSTINFallback(t *testing.T) {
 	require.Equal(t, "ABCDE1234F", result.PAN)
 	require.Equal(t, "local_fallback", result.Source)
 	require.True(t, result.IsValid)
+}
+
+func TestTaxComplianceService_FetchGSTINGSTINCheckSuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodGet, r.Method)
+		require.Equal(t, "/check/test-key/29ABCDE1234F1Z5", r.URL.EscapedPath())
+		require.Empty(t, r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		err := json.NewEncoder(w).Encode(map[string]interface{}{
+			"valid": true,
+			"data": map[string]interface{}{
+				"lgnm":     "ACME PRIVATE LIMITED",
+				"tradeNam": "ACME",
+				"sts":      "Active",
+				"rgdt":     "01/07/2017",
+				"ctb":      "Private Limited Company",
+				"nba":      []interface{}{"Supplier of Services"},
+				"pradr": map[string]interface{}{
+					"addr": map[string]interface{}{
+						"bno":  "10",
+						"st":   "Market Road",
+						"loc":  "Bengaluru",
+						"stcd": "Karnataka",
+						"pncd": json.Number("560001"),
+					},
+				},
+			},
+		})
+		require.NoError(t, err)
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{GSTLookup: config.GSTLookupConfig{
+		BaseURL: server.URL + "/check/{api_key}/{gstin}",
+		APIKey:  "test-key",
+		Timeout: 1,
+	}}
+	svc := NewTaxComplianceService(cfg, nil, nil, nil, nil, nil, nil, nil, nil, logger.New())
+
+	result, err := svc.FetchGSTIN(context.Background(), "29abcde1234f1z5")
+	require.NoError(t, err)
+	require.True(t, result.IsValid)
+	require.Equal(t, "gstincheck", result.Source)
+	require.Equal(t, "29ABCDE1234F1Z5", result.GSTIN)
+	require.Equal(t, "ABCDE1234F", result.PAN)
+	require.Equal(t, "ACME PRIVATE LIMITED", result.LegalName)
+	require.Equal(t, "ACME", result.TradeName)
+	require.Equal(t, "Active", result.Status)
+	require.Equal(t, "01/07/2017", result.RegistrationDate)
+	require.Equal(t, "Private Limited Company", result.Constitution)
+	require.Equal(t, []string{"Supplier of Services"}, result.NatureOfBusiness)
+	require.Contains(t, result.Address, "Market Road")
+	require.NotEmpty(t, result.RawMetadata)
+}
+
+func TestTaxComplianceService_FetchGSTINSkipsProviderForInvalidFormat(t *testing.T) {
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{GSTLookup: config.GSTLookupConfig{
+		BaseURL: server.URL + "/check/{api_key}/{gstin}",
+		APIKey:  "test-key",
+		Timeout: 1,
+	}}
+	svc := NewTaxComplianceService(cfg, nil, nil, nil, nil, nil, nil, nil, nil, logger.New())
+
+	result, err := svc.FetchGSTIN(context.Background(), "invalid")
+	require.NoError(t, err)
+	require.False(t, result.IsValid)
+	require.False(t, called)
+	require.Equal(t, "local_fallback", result.Source)
+	require.Equal(t, "invalid GSTIN format", result.ProviderMessage)
 }
 
 func TestTaxComplianceService_BuildGSTR1Report(t *testing.T) {

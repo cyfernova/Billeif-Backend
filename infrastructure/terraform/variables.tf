@@ -301,6 +301,25 @@ variable "llm_model" {
   default     = "deepseek-v4-flash"
 }
 
+variable "gst_lookup_api_key" {
+  description = "GSTINCheck API key for GSTIN lookup"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "gst_lookup_base_url" {
+  description = "GSTIN lookup endpoint template. Supports {api_key} and {gstin} placeholders."
+  type        = string
+  default     = "https://sheet.gstincheck.co.in/check/{api_key}/{gstin}"
+}
+
+variable "gst_lookup_timeout" {
+  description = "GSTIN lookup HTTP timeout in seconds"
+  type        = number
+  default     = 15
+}
+
 variable "deepgram_api_key" {
   description = "Deepgram API key for realtime voice"
   type        = string

@@ -14157,14 +14157,14 @@ const docTemplate = `{
         },
         "/utils/gstin/{gstin}/fetch": {
             "post": {
-                "description": "Fetches GSTIN details from government registry",
+                "description": "Verifies GSTIN details through the configured GST lookup provider and falls back to local format validation when the provider is unavailable.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Tax"
                 ],
-                "summary": "Fetch GSTIN details",
+                "summary": "Verify GSTIN details",
                 "parameters": [
                     {
                         "type": "string",
@@ -14177,7 +14177,9 @@ const docTemplate = `{
                 "responses": {
                     "200": {
                         "description": "OK",
-                        "schema": {}
+                        "schema": {
+                            "$ref": "#/definitions/services.GSTINLookupResult"
+                        }
                     },
                     "500": {
                         "description": "Internal Server Error",
@@ -19327,6 +19329,9 @@ const docTemplate = `{
                 "phone": {
                     "type": "string"
                 },
+                "postal_code": {
+                    "type": "string"
+                },
                 "sez_enabled": {
                     "type": "boolean"
                 },
@@ -20423,6 +20428,57 @@ const docTemplate = `{
             ],
             "properties": {
                 "email": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.GSTINLookupResult": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "constitution": {
+                    "type": "string"
+                },
+                "gstin": {
+                    "type": "string"
+                },
+                "is_valid": {
+                    "type": "boolean"
+                },
+                "legal_name": {
+                    "type": "string"
+                },
+                "nature_of_business": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "pan": {
+                    "type": "string"
+                },
+                "provider_message": {
+                    "type": "string"
+                },
+                "raw_metadata": {
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "registration_date": {
+                    "type": "string"
+                },
+                "source": {
+                    "type": "string"
+                },
+                "state_code": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "trade_name": {
                     "type": "string"
                 }
             }
@@ -21534,6 +21590,9 @@ const docTemplate = `{
                     "additionalProperties": true
                 },
                 "phone": {
+                    "type": "string"
+                },
+                "postal_code": {
                     "type": "string"
                 },
                 "sez_enabled": {

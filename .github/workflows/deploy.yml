@@ -37,6 +37,9 @@ env:
   TF_VAR_llm_api_key: ${{ secrets.TF_VAR_LLM_API_KEY }}
   TF_VAR_llm_api_url: ${{ secrets.TF_VAR_LLM_API_URL }}
   TF_VAR_llm_model: ${{ secrets.TF_VAR_LLM_MODEL }}
+  TF_VAR_gst_lookup_api_key: ${{ secrets.TF_VAR_GST_LOOKUP_API_KEY }}
+  TF_VAR_gst_lookup_base_url: ${{ secrets.TF_VAR_GST_LOOKUP_BASE_URL }}
+  TF_VAR_gst_lookup_timeout: ${{ secrets.TF_VAR_GST_LOOKUP_TIMEOUT }}
   TF_VAR_deepgram_api_key: ${{ secrets.TF_VAR_DEEPGRAM_API_KEY }}
   TF_VAR_deepgram_voice_agent_url: ${{ secrets.TF_VAR_DEEPGRAM_VOICE_AGENT_URL }}
   TF_VAR_deepgram_voice_listen_model: ${{ secrets.TF_VAR_DEEPGRAM_VOICE_LISTEN_MODEL }}

@@ -64,6 +64,9 @@ locals {
     LLM_API_KEY                               = var.llm_api_key
     LLM_API_URL                               = var.llm_api_url
     LLM_MODEL                                 = var.llm_model
+    GST_LOOKUP_BASE_URL                       = var.gst_lookup_base_url
+    GST_LOOKUP_API_KEY                        = var.gst_lookup_api_key
+    GST_LOOKUP_TIMEOUT                        = tostring(var.gst_lookup_timeout)
     DEEPGRAM_API_KEY                          = var.deepgram_api_key
     DEEPGRAM_VOICE_AGENT_URL                  = var.deepgram_voice_agent_url
     DEEPGRAM_VOICE_LISTEN_MODEL               = var.deepgram_voice_listen_model
