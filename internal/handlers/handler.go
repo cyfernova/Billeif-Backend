@@ -132,7 +132,7 @@ func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log 
 		Workflow:        NewWorkflowHandler(svcs.Workflow, log),
 		Bargaining:      NewBargainingHandler(svcs.Bargaining, repos.AP2, log),
 		Procurement:     NewProcurementHandler(svcs.Procurement, repos.AP2, log),
-		AgentConfig:     NewAgentConfigHandler(svcs.AgentConfig, repos.AP2, svcs.Bargaining, svcs.Mentee, log),
+		AgentConfig:     NewAgentConfigHandler(svcs.AgentConfig, repos.AP2, svcs.Agent, svcs.Bargaining, svcs.Mentee, log),
 		A2ABargaining:   NewA2ABargainingHandler(svcs.A2ABargaining, svcs.Agent, cfg, log),
 		MCP:             NewMCPHandlerFromConfig(cfg, log),
 	}

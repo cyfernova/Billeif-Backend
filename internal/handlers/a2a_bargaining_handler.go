@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strings"
 
 	"invoice-backend/internal/config"
 	"invoice-backend/internal/services"
@@ -247,6 +248,10 @@ func (h *A2ABargainingHandler) StartAutonomousNegotiation(c *gin.Context) {
 	session, err := h.a2aBargaining.StartAutonomousNegotiation(c.Request.Context(), autoReq)
 	if err != nil {
 		log.Error("failed to start autonomous negotiation", "error", err)
+		if strings.Contains(err.Error(), "invalid callback URL") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start negotiation"})
 		return
 	}

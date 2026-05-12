@@ -4,12 +4,16 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
 
 	_ "github.com/lib/pq"
 )
 
 func main() {
-	connStr := "host=172.19.0.2 port=5432 user=invoice_user password=invoice_pass dbname=invoice_db sslmode=disable"
+	connStr := os.Getenv("DATABASE_URL")
+	if connStr == "" {
+		log.Fatal("DATABASE_URL is required")
+	}
 
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {

@@ -42,26 +42,14 @@ func (h *ProductHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	log.Info("parsed input", "business_id", input.BusinessID, "name", input.Name, "sku", input.SKU)
-
-	// Allow business_id from body or query param
 	if input.BusinessID == "" {
 		input.BusinessID = c.Query("business_id")
 	}
-	log.Info("after business_id check", "business_id", input.BusinessID, "query_business_id", c.Query("business_id"))
-
-	// If business_id provided, use it directly; otherwise require from token
-	var businessID string
-	if input.BusinessID != "" {
-		businessID = input.BusinessID
-	} else {
-		var ok bool
-		businessID, ok = requireBusinessScope(c)
-		if !ok {
-			return
-		}
-		input.BusinessID = businessID
+	businessID, ok := requireEffectiveBusinessScope(c, input.BusinessID)
+	if !ok {
+		return
 	}
+	input.BusinessID = businessID
 
 	var product *models.Product
 	product, err := h.svc.Create(c.Request.Context(), input)

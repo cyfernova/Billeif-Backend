@@ -40,8 +40,8 @@ func NewClient(cfg Config) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse MCP server URL: %w", err)
 	}
-	if parsed.Scheme != "https" && parsed.Scheme != "http" {
-		return nil, fmt.Errorf("MCP server URL must use http or https")
+	if parsed.Scheme != "https" {
+		return nil, fmt.Errorf("MCP server URL must use https")
 	}
 
 	timeout := cfg.Timeout
@@ -50,7 +50,7 @@ func NewClient(cfg Config) (*Client, error) {
 	}
 
 	transport := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
+		Proxy:                 nil,
 		DialContext:           (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: timeout,

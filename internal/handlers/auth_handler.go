@@ -355,8 +355,11 @@ func (h *AuthHandler) Me(c *gin.Context) {
 				user, err = h.svc.GetUserByEmail(c.Request.Context(), email)
 				if err == nil {
 					// Auto-fix the cognito_id for this legacy user
-					_ = h.svc.UpdateUserCognitoID(c.Request.Context(), user.ID, userID)
-					user.CognitoID = userID // Update in response
+					if updateErr := h.svc.UpdateUserCognitoID(c.Request.Context(), user.ID, userID); updateErr != nil {
+						err = updateErr
+					} else {
+						user.CognitoID = userID // Update in response
+					}
 				}
 			}
 			if err != nil && phoneNumber != "" {
@@ -409,8 +412,11 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 				user, err = h.svc.GetUserByEmail(c.Request.Context(), email)
 				if err == nil {
 					// Auto-fix the cognito_id for this legacy user
-					_ = h.svc.UpdateUserCognitoID(c.Request.Context(), user.ID, userID)
-					user.CognitoID = userID
+					if updateErr := h.svc.UpdateUserCognitoID(c.Request.Context(), user.ID, userID); updateErr != nil {
+						err = updateErr
+					} else {
+						user.CognitoID = userID
+					}
 				}
 			}
 			if err != nil && phoneNumber != "" {
@@ -680,16 +686,22 @@ func (h *AuthHandler) resolveDatabaseUserID(ctx context.Context, userID, email, 
 	if email != "" {
 		user, err = h.svc.GetUserByEmail(ctx, email)
 		if err == nil {
-			_ = h.svc.UpdateUserCognitoID(ctx, user.ID, userID)
-			return user.ID, nil
+			if updateErr := h.svc.UpdateUserCognitoID(ctx, user.ID, userID); updateErr != nil {
+				err = updateErr
+			} else {
+				return user.ID, nil
+			}
 		}
 	}
 
 	if phoneNumber != "" {
 		user, err = h.svc.GetUserByPhoneNumber(ctx, phoneNumber)
 		if err == nil {
-			_ = h.svc.UpdateUserCognitoID(ctx, user.ID, userID)
-			return user.ID, nil
+			if updateErr := h.svc.UpdateUserCognitoID(ctx, user.ID, userID); updateErr != nil {
+				err = updateErr
+			} else {
+				return user.ID, nil
+			}
 		}
 	}
 

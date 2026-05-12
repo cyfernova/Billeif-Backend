@@ -153,10 +153,12 @@ test-integration: ## Run integration tests (requires local dependencies running)
 
 # Migration targets (using golang-migrate CLI)
 migrate-up: ## Run database migrations up (using migrate CLI)
-	migrate -path ./migrations -database "postgres://invoice_user:invoice_pass@127.0.0.1:5432/invoice_db?sslmode=disable" up
+	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL is required for migrate-up" >&2; exit 1)
+	migrate -path ./migrations -database "$$DATABASE_URL" up
 
 migrate-down: ## Run database migrations down (using migrate CLI)
-	migrate -path ./migrations -database "postgres://invoice_user:invoice_pass@127.0.0.1:5432/invoice_db?sslmode=disable" down
+	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL is required for migrate-down" >&2; exit 1)
+	migrate -path ./migrations -database "$$DATABASE_URL" down
 
 migrate-rds-up: ## Run migrations against Terraform-managed RDS (reads DB host/user/pass from Terraform + SSM)
 	@set -euo pipefail; \

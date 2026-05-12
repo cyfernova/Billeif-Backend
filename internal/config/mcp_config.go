@@ -4,7 +4,7 @@ import "time"
 
 // MCPConfig holds configuration for connecting to the MCP server.
 type MCPConfig struct {
-	// ServerURL is the base URL of the MCP server (e.g., "https://localhost:9090")
+	// ServerURL is the base URL of the MCP server (for example, "https://mcp.example.test")
 	ServerURL string `mapstructure:"MCP_SERVER_URL"`
 	// Timeout is the HTTP client timeout for MCP server calls
 	Timeout time.Duration `mapstructure:"MCP_TIMEOUT"`

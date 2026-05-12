@@ -32,6 +32,7 @@ const (
 	phoneAuthDisabledMessage    = "phone authentication is not configured"
 	phoneAuthConflictMessage    = "phone number already registered"
 	phoneAuthEmailConflict      = "email already registered with another account"
+	phoneAuthEmailUnsupported   = "email cannot be set during phone registration"
 	phoneAuthRateLimitMessage   = "too many OTP requests, please wait before trying again"
 	phoneAuthGenericFailure     = "authentication failed"
 	defaultPhoneRegisterPrompt  = "OTP sent to your phone number"
@@ -356,6 +357,9 @@ func (s *AuthService) UpdateUserCognitoID(ctx context.Context, userID string, co
 	if err != nil {
 		return err
 	}
+	if err := s.ensureCognitoRelinkAllowed(user, cognitoID); err != nil {
+		return err
+	}
 	user.CognitoID = cognitoID
 	user.UpdatedAt = time.Now()
 	return s.userRepo.Update(ctx, user)
@@ -511,6 +515,9 @@ func (s *AuthService) SyncGoogleUser(ctx context.Context, input SyncGoogleUserIn
 
 	user, err = s.userRepo.GetByEmail(ctx, input.Email)
 	if err == nil {
+		if err := s.ensureCognitoRelinkAllowed(user, input.CognitoID); err != nil {
+			return nil, err
+		}
 		user.CognitoID = input.CognitoID
 		if input.Name != "" {
 			user.Name = input.Name
@@ -574,6 +581,9 @@ func (s *AuthService) ensureUserFromCognito(ctx context.Context, accessToken str
 	if email != "" {
 		user, err := s.userRepo.GetByEmail(ctx, email)
 		if err == nil {
+			if err := s.ensureCognitoRelinkAllowed(user, sub); err != nil {
+				return err
+			}
 			user.CognitoID = sub
 			user.UpdatedAt = time.Now()
 			return s.userRepo.Update(ctx, user)
@@ -615,11 +625,8 @@ func (s *AuthService) PhoneRegister(ctx context.Context, input PhoneRegisterInpu
 		return nil, err
 	}
 
-	normalizedEmail := normalizeOptionalEmail(input.Email)
-	if normalizedEmail != "" {
-		if _, err := s.userRepo.GetByEmail(ctx, normalizedEmail); err == nil {
-			return nil, fmt.Errorf(phoneAuthEmailConflict)
-		}
+	if strings.TrimSpace(input.Email) != "" {
+		return nil, fmt.Errorf(phoneAuthEmailUnsupported)
 	}
 	if _, err := s.userRepo.GetByPhoneNumber(ctx, normalizedPhone); err == nil {
 		return nil, fmt.Errorf(phoneAuthConflictMessage)
@@ -649,7 +656,6 @@ func (s *AuthService) PhoneRegister(ctx context.Context, input PhoneRegisterInpu
 	}
 
 	user := &models.User{
-		Email:       normalizedEmail,
 		PhoneNumber: normalizedPhone,
 		CognitoID:   canonicalPhoneCognitoID(s.cfg.Cognito.Phone.UserPoolID, *signUpResp.UserSub),
 		Name:        strings.TrimSpace(input.Name),
@@ -666,6 +672,29 @@ func (s *AuthService) PhoneRegister(ctx context.Context, input PhoneRegisterInpu
 		PhoneNumber: normalizedPhone,
 		Message:     defaultPhoneRegisterPrompt,
 	}, nil
+}
+
+func (s *AuthService) ensureCognitoRelinkAllowed(user *models.User, nextCognitoID string) error {
+	if user == nil {
+		return nil
+	}
+	current := strings.TrimSpace(user.CognitoID)
+	next := strings.TrimSpace(nextCognitoID)
+	if current == "" || current == next {
+		return nil
+	}
+	if s.isPhonePoolCognitoID(current) != s.isPhonePoolCognitoID(next) {
+		return fmt.Errorf("cannot relink user across identity providers")
+	}
+	return nil
+}
+
+func (s *AuthService) isPhonePoolCognitoID(cognitoID string) bool {
+	if s == nil || s.cfg == nil {
+		return false
+	}
+	poolID := strings.TrimSpace(s.cfg.Cognito.Phone.UserPoolID)
+	return poolID != "" && strings.HasPrefix(strings.TrimSpace(cognitoID), poolID+":")
 }
 
 type PhoneConfirmInput struct {

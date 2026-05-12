@@ -696,7 +696,7 @@ func encodeCSV(result *reporting.Result) (string, error) {
 	writer := csv.NewWriter(&buffer)
 	headers := make([]string, 0, len(result.Columns))
 	for _, column := range result.Columns {
-		headers = append(headers, column.Label)
+		headers = append(headers, sanitizeSpreadsheetCell(column.Label))
 	}
 	if err := writer.Write(headers); err != nil {
 		return "", err
@@ -704,7 +704,7 @@ func encodeCSV(result *reporting.Result) (string, error) {
 	for _, row := range result.Rows {
 		record := make([]string, 0, len(result.Columns))
 		for _, column := range result.Columns {
-			record = append(record, fmtValue(row[column.Key]))
+			record = append(record, sanitizeSpreadsheetCell(fmtValue(row[column.Key])))
 		}
 		if err := writer.Write(record); err != nil {
 			return "", err
@@ -712,6 +712,22 @@ func encodeCSV(result *reporting.Result) (string, error) {
 	}
 	writer.Flush()
 	return buffer.String(), writer.Error()
+}
+
+func sanitizeSpreadsheetCell(value string) string {
+	if value == "" {
+		return value
+	}
+	trimmedLeft := strings.TrimLeft(value, " \r\n")
+	if trimmedLeft == "" {
+		return value
+	}
+	switch trimmedLeft[0] {
+	case '=', '+', '-', '@', '\t':
+		return "'" + value
+	default:
+		return value
+	}
 }
 
 func encodeJSON(value interface{}) (string, error) {

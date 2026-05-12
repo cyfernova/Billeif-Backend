@@ -438,14 +438,19 @@ func (s *ShoppingAgentService) validateCartTotal(ctx context.Context, cartMandat
 // QueryMerchantAgentsA2A fetches latest A2A Agent Cards from merchant agent well-known endpoints.
 func (s *ShoppingAgentService) QueryMerchantAgentsA2A(ctx context.Context, merchantAgentEndpoints []string) (map[string]*a2a.AgentCard, error) {
 	cards := make(map[string]*a2a.AgentCard)
+	client := newWebhookDeliveryHTTPClient(10 * time.Second)
 
 	for _, endpoint := range merchantAgentEndpoints {
 		cardURL := strings.TrimRight(endpoint, "/") + "/.well-known/agent-card.json"
+		if err := validateWebhookURL(ctx, cardURL); err != nil {
+			s.log.Warn("unsafe merchant agent card URL rejected", "endpoint", endpoint, "error", err)
+			continue
+		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, cardURL, nil)
 		if err != nil {
 			return nil, fmt.Errorf("build agent card request: %w", err)
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			s.log.Warn("failed to fetch merchant agent card", "endpoint", endpoint, "error", err)
 			continue

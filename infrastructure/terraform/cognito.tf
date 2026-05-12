@@ -1,19 +1,8 @@
 locals {
   google_oauth_secret_name   = var.google_oauth_secret_name != "" ? var.google_oauth_secret_name : "/${var.project_name}/${var.environment}/cognito/google-auth"
   swagger_oauth_redirect_url = "${local.rest_api_invoke_url}/swagger/oauth2-redirect.html"
-  cognito_callback_urls = distinct(concat([
-    "invoiceappv2://callback",
-    "myapp://callback",
-    "http://localhost:3000/callback",
-    "https://auth.expo.io/@skythrill652/invoice-app-v2",
-    local.swagger_oauth_redirect_url,
-  ], var.cognito_additional_callback_urls))
-  cognito_logout_urls = distinct(concat([
-    "invoiceappv2://logout",
-    "myapp://logout",
-    "http://localhost:3000/logout",
-    "https://auth.expo.io/@skythrill652/invoice-app-v2",
-  ], var.cognito_additional_logout_urls))
+  cognito_callback_urls      = distinct(concat([local.swagger_oauth_redirect_url], var.cognito_additional_callback_urls))
+  cognito_logout_urls        = distinct(var.cognito_additional_logout_urls)
 }
 
 data "aws_secretsmanager_secret" "google_oauth" {
@@ -97,7 +86,7 @@ resource "aws_cognito_user_pool_client" "main" {
   callback_urls                        = local.cognito_callback_urls
   logout_urls                          = local.cognito_logout_urls
   allowed_oauth_flows_user_pool_client = true
-  allowed_oauth_flows                  = ["code", "implicit"]
+  allowed_oauth_flows                  = ["code"]
   allowed_oauth_scopes                 = ["email", "openid", "profile", "aws.cognito.signin.user.admin"]
 
   token_validity_units {

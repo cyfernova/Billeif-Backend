@@ -2,12 +2,15 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/logger"
 )
+
+var ErrSubscriptionPlanChangeRequiresPayment = errors.New("subscription plan changes must be completed through verified payment")
 
 type SubscriptionService struct {
 	repo interfaces.SubscriptionRepository
@@ -25,6 +28,9 @@ type CreateSubscriptionInput struct {
 
 func (s *SubscriptionService) Create(ctx context.Context, input CreateSubscriptionInput) (*models.Subscription, error) {
 	log := logger.FromContext(ctx).With("service", "subscription", "operation", "create", "business_id", input.BusinessID, "plan", input.Plan)
+	if normalizePlanCode(input.Plan, "") != "free" {
+		return nil, ErrSubscriptionPlanChangeRequiresPayment
+	}
 	existing, _ := s.repo.GetByBusinessID(ctx, input.BusinessID)
 	if existing != nil {
 		log.Warn("subscription already exists for business")
@@ -72,8 +78,7 @@ func (s *SubscriptionService) Update(ctx context.Context, businessID string, inp
 	}
 
 	if input.Plan != "" {
-		subscription.Plan = input.Plan
-		subscription.PlanCode = normalizePlanCode(input.Plan, subscription.PlanCode)
+		return nil, ErrSubscriptionPlanChangeRequiresPayment
 	}
 	if input.Status != "" {
 		subscription.Status = input.Status

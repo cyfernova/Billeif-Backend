@@ -68,6 +68,24 @@ func TestSendMessageDoesNotFollowRedirects(t *testing.T) {
 	}
 }
 
+func TestApplyStandardHeadersDoesNotForwardCallerAuthorization(t *testing.T) {
+	req, err := http.NewRequestWithContext(
+		WithAuthorizationHeader(context.Background(), "Bearer caller-token"),
+		http.MethodPost,
+		"https://example.com/api/v1/a2a/message:send",
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	applyStandardHeaders(req, ContentTypeA2AJSON)
+
+	if got := req.Header.Get("Authorization"); got != "" {
+		t.Fatalf("expected outbound A2A request to omit caller Authorization header, got %q", got)
+	}
+}
+
 func validSendMessageRequest() *SendMessageRequest {
 	return &SendMessageRequest{
 		Message: NewTextMessage(RoleUser, "hello"),

@@ -27,16 +27,17 @@ const (
 )
 
 type A2ABargainingService struct {
-	a2aClient    *a2a.A2AClient
-	bargaining   *BargainingService
-	mentee       *MenteeService
-	ap2Repo      interfaces.AP2Repository
-	sqs          *sqs.Client
-	cfg          *config.Config
-	log          *logger.Logger
-	sessions     map[string]*A2ASession
-	sessionsLock sync.RWMutex
-	sessionLocks map[string]*sync.Mutex
+	a2aClient     *a2a.A2AClient
+	bargaining    *BargainingService
+	mentee        *MenteeService
+	ap2Repo       interfaces.AP2Repository
+	sqs           *sqs.Client
+	cfg           *config.Config
+	log           *logger.Logger
+	webhookClient *http.Client
+	sessions      map[string]*A2ASession
+	sessionsLock  sync.RWMutex
+	sessionLocks  map[string]*sync.Mutex
 }
 
 type A2ASession struct {
@@ -112,15 +113,16 @@ type WebhookPayload struct {
 
 func NewA2ABargainingService(a2aClient *a2a.A2AClient, bargaining *BargainingService, mentee *MenteeService, ap2Repo interfaces.AP2Repository, sqsClient *sqs.Client, cfg *config.Config, log *logger.Logger) *A2ABargainingService {
 	return &A2ABargainingService{
-		a2aClient:    a2aClient,
-		bargaining:   bargaining,
-		mentee:       mentee,
-		ap2Repo:      ap2Repo,
-		sqs:          sqsClient,
-		cfg:          cfg,
-		log:          log,
-		sessions:     make(map[string]*A2ASession),
-		sessionLocks: make(map[string]*sync.Mutex),
+		a2aClient:     a2aClient,
+		bargaining:    bargaining,
+		mentee:        mentee,
+		ap2Repo:       ap2Repo,
+		sqs:           sqsClient,
+		cfg:           cfg,
+		log:           log,
+		webhookClient: newWebhookDeliveryHTTPClient(webhookTimeout),
+		sessions:      make(map[string]*A2ASession),
+		sessionLocks:  make(map[string]*sync.Mutex),
 	}
 }
 
@@ -165,6 +167,12 @@ func (s *A2ABargainingService) StartNegotiation(ctx context.Context, buyerAgentI
 }
 
 func (s *A2ABargainingService) StartAutonomousNegotiation(ctx context.Context, req *AutonomousNegotiationRequest) (*A2ASession, error) {
+	if req != nil && req.CallbackURL != "" {
+		if err := validateWebhookURL(ctx, req.CallbackURL); err != nil {
+			return nil, fmt.Errorf("invalid callback URL: %w", err)
+		}
+	}
+
 	negotiationID := generateA2ANegotiationID()
 
 	maxRounds := req.MaxRounds
@@ -697,6 +705,10 @@ func (s *A2ABargainingService) sendWebhook(callbackURL string, payload WebhookPa
 	if callbackURL == "" {
 		return
 	}
+	if err := validateWebhookURL(context.Background(), callbackURL); err != nil {
+		s.log.Warn("unsafe webhook callback rejected", "url", callbackURL, "event", payload.Event, "error", err)
+		return
+	}
 
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -705,15 +717,18 @@ func (s *A2ABargainingService) sendWebhook(callbackURL string, payload WebhookPa
 	}
 
 	var lastErr error
+	client := s.webhookClient
+	if client == nil {
+		client = newWebhookDeliveryHTTPClient(webhookTimeout)
+	}
 	for attempt := 0; attempt <= webhookMaxRetries; attempt++ {
-		req, err := http.NewRequest(http.MethodPost, callbackURL, bytes.NewReader(body))
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, callbackURL, bytes.NewReader(body))
 		if err != nil {
 			s.log.Error("failed to create webhook request", "error", err)
 			return
 		}
 		req.Header.Set("Content-Type", "application/json")
 
-		client := &http.Client{Timeout: webhookTimeout}
 		resp, err := client.Do(req)
 		if err == nil {
 			resp.Body.Close()

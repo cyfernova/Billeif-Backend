@@ -4,12 +4,16 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
 
 	_ "github.com/lib/pq"
 )
 
 func main() {
-	connStr := "host=127.0.0.1 port=5432 user=testuser password=testpass dbname=invoice_db sslmode=disable"
+	connStr := os.Getenv("DATABASE_URL")
+	if connStr == "" {
+		log.Fatal("DATABASE_URL is required")
+	}
 
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
@@ -22,7 +26,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fmt.Println("Successfully connected to PostgreSQL as testuser!")
+	fmt.Println("Successfully connected to PostgreSQL!")
 
 	var result int
 	err = db.QueryRow("SELECT 1").Scan(&result)

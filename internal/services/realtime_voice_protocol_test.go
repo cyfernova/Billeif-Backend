@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBuildDeepgramVoiceAgentSettingsUsesCustomDeepSeekEndpoint(t *testing.T) {
+func TestBuildDeepgramVoiceAgentSettingsUsesConfiguredLLMEndpoint(t *testing.T) {
 	cfg := config.VoiceRealtimeConfig{
 		DeepgramAPIKey:        "dg",
 		DeepgramVoiceAgentURL: "wss://agent.deepgram.test/v1/agent/converse",
@@ -19,9 +19,9 @@ func TestBuildDeepgramVoiceAgentSettingsUsesCustomDeepSeekEndpoint(t *testing.T)
 		OutputSampleRate:      24000,
 		ListenModel:           "nova-3",
 		SpeakModel:            "aura-2-thalia-en",
-		DeepSeekAPIKey:        "deepseek-key",
-		DeepSeekBaseURL:       "https://api.deepseek.com",
-		DeepSeekModel:         "deepseek-v4-flash",
+		DeepSeekAPIKey:        "voice-llm-key",
+		DeepSeekBaseURL:       "https://voice-llm.example.test",
+		DeepSeekModel:         "voice-test-model",
 	}
 
 	settings := BuildDeepgramVoiceAgentSettings(cfg, DeepgramVoiceAgentSettingsOptions{
@@ -45,9 +45,9 @@ func TestBuildDeepgramVoiceAgentSettingsUsesCustomDeepSeekEndpoint(t *testing.T)
 	endpoint := think["endpoint"].(map[string]interface{})
 	headers := endpoint["headers"].(map[string]interface{})
 	require.Equal(t, "open_ai", provider["type"])
-	require.Equal(t, "deepseek-v4-flash", provider["model"])
-	require.Equal(t, "https://api.deepseek.com/chat/completions", endpoint["url"])
-	require.Equal(t, "Bearer deepseek-key", headers["authorization"])
+	require.Equal(t, "voice-test-model", provider["model"])
+	require.Equal(t, "https://voice-llm.example.test/chat/completions", endpoint["url"])
+	require.Equal(t, "Bearer voice-llm-key", headers["authorization"])
 	require.Contains(t, think["prompt"], "biz-123")
 }
 

@@ -310,7 +310,7 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			mcpGroup.Use(middleware.Auth(cfg.Cognito, log))
 			{
 				mcpGroup.GET("/tools/list", h.MCP.ListTools)
-				mcpGroup.POST("/tools/call", h.MCP.CallTool)
+				mcpGroup.POST("/tools/call", middleware.RequireRole("admin"), h.MCP.CallTool)
 				mcpGroup.GET("/health", h.MCP.HealthCheck)
 			}
 		}
@@ -424,14 +424,14 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 			products := protected.Group("/products")
 			{
-				products.GET("", h.Product.List)
-				products.GET("/:id", h.Product.Get)
-				products.POST("", wafUserWriteRL, h.Product.Create)
-				products.PUT("/:id", wafUserWriteRL, h.Product.Update)
-				products.DELETE("/:id", wafUserWriteRL, h.Product.Delete)
-				products.POST("/:id/clone", wafUserWriteRL, h.Product.Clone)
-				products.POST("/:id/image", h.Product.UploadImage)
-				products.POST("/:id/stock", wafUserWriteRL, h.Product.AdjustStock)
+				products.GET("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsView), h.Product.List)
+				products.GET("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsView), h.Product.Get)
+				products.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), wafUserWriteRL, h.Product.Create)
+				products.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), wafUserWriteRL, h.Product.Update)
+				products.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), wafUserWriteRL, h.Product.Delete)
+				products.POST("/:id/clone", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), wafUserWriteRL, h.Product.Clone)
+				products.POST("/:id/image", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), h.Product.UploadImage)
+				products.POST("/:id/stock", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), wafUserWriteRL, h.Product.AdjustStock)
 			}
 
 			projects := protected.Group("/projects")
@@ -444,14 +444,14 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 			reports := protected.Group("/reports")
 			{
-				reports.GET("/catalog", h.Report.Catalog)
-				reports.GET("/dashboard", h.Report.Dashboard)
-				reports.GET("/shares/history", h.Report.ShareHistory)
-				reports.GET("/preferences/:key", h.Report.GetPreference)
-				reports.PUT("/preferences/:key", h.Report.SavePreference)
-				reports.POST("/:key/query", wafUserReportRL, h.Report.Query)
-				reports.POST("/:key/export", wafUserReportRL, h.Report.Export)
-				reports.POST("/:key/share", wafUserHeavyRL, h.Report.CreateShare)
+				reports.GET("/catalog", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Report.Catalog)
+				reports.GET("/dashboard", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Report.Dashboard)
+				reports.GET("/shares/history", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsShare), h.Report.ShareHistory)
+				reports.GET("/preferences/:key", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Report.GetPreference)
+				reports.PUT("/preferences/:key", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Report.SavePreference)
+				reports.POST("/:key/query", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), wafUserReportRL, h.Report.Query)
+				reports.POST("/:key/export", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsExport), wafUserReportRL, h.Report.Export)
+				reports.POST("/:key/share", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsShare), wafUserHeavyRL, h.Report.CreateShare)
 			}
 
 			warehouses := protected.Group("/warehouses")
@@ -538,13 +538,13 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 			payments := protected.Group("/payments")
 			{
-				payments.GET("", h.Payment.List)
-				payments.POST("/razorpay/order", middleware.RazorpayCreateOrderRateLimit(), wafUserHeavyRL, h.RazorpayPayment.CreateOrder)
-				payments.POST("/razorpay/verify", middleware.RazorpayVerifyRateLimit(), wafUserHeavyRL, h.RazorpayPayment.VerifyPayment)
-				payments.GET("/:id", h.Payment.Get)
-				payments.POST("", wafUserWriteRL, h.Payment.Create)
-				payments.PUT("/:id", wafUserWriteRL, h.Payment.Update)
-				payments.DELETE("/:id", wafUserWriteRL, h.Payment.Delete)
+				payments.GET("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsView), h.Payment.List)
+				payments.POST("/razorpay/order", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), middleware.RazorpayCreateOrderRateLimit(), wafUserHeavyRL, h.RazorpayPayment.CreateOrder)
+				payments.POST("/razorpay/verify", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), middleware.RazorpayVerifyRateLimit(), wafUserHeavyRL, h.RazorpayPayment.VerifyPayment)
+				payments.GET("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsView), h.Payment.Get)
+				payments.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), wafUserWriteRL, h.Payment.Create)
+				payments.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), wafUserWriteRL, h.Payment.Update)
+				payments.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), wafUserWriteRL, h.Payment.Delete)
 			}
 
 			documents := protected.Group("/documents")
@@ -694,27 +694,27 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 			teams := protected.Group("/teams")
 			{
-				teams.GET("", h.Team.List)
-				teams.GET("/:id", h.Team.Get)
-				teams.POST("", h.Team.Create)
-				teams.PUT("/:id", h.Team.Update)
-				teams.DELETE("/:id", h.Team.Delete)
+				teams.GET("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionTeamsView), h.Team.List)
+				teams.GET("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionTeamsView), h.Team.Get)
+				teams.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionTeamsManage), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRolesManage), h.Team.Create)
+				teams.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionTeamsManage), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRolesManage), h.Team.Update)
+				teams.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionTeamsManage), h.Team.Delete)
 			}
 
 			webhooks := protected.Group("/webhooks")
 			{
-				webhooks.GET("", h.Webhook.List)
-				webhooks.GET("/:id", h.Webhook.Get)
-				webhooks.POST("", h.Webhook.Create)
-				webhooks.PUT("/:id", h.Webhook.Update)
-				webhooks.DELETE("/:id", h.Webhook.Delete)
+				webhooks.GET("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.Webhook.List)
+				webhooks.GET("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.Webhook.Get)
+				webhooks.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.Webhook.Create)
+				webhooks.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.Webhook.Update)
+				webhooks.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.Webhook.Delete)
 			}
 
 			subscriptions := protected.Group("/subscriptions")
 			{
-				subscriptions.GET("", h.Subscription.Get)
-				subscriptions.POST("", h.Subscription.Create)
-				subscriptions.PUT("", h.Subscription.Update)
+				subscriptions.GET("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionSubscriptionsView), h.Subscription.Get)
+				subscriptions.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionSubscriptionsManage), h.Subscription.Create)
+				subscriptions.PUT("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionSubscriptionsManage), h.Subscription.Update)
 				subscriptions.GET("/entitlements", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionSubscriptionsView), h.Commerce.ListEntitlements)
 				subscriptions.POST("/entitlements/sync", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionSubscriptionsManage), h.Commerce.SyncEntitlements)
 			}
@@ -723,8 +723,8 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			{
 				branches.GET("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionBranchesView), h.Commerce.ListBranches)
 				branches.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionBranchesManage), h.Commerce.CreateBranch)
-				branches.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionBranchesManage), h.Commerce.UpdateBranch)
-				branches.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionBranchesManage), h.Commerce.DeleteBranch)
+				branches.PUT("/:branch_id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionBranchesManage), h.Commerce.UpdateBranch)
+				branches.DELETE("/:branch_id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionBranchesManage), h.Commerce.DeleteBranch)
 			}
 
 			roles := protected.Group("/roles")
@@ -823,20 +823,20 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 				config := agents.Group("/config")
 				{
-					config.POST("", h.AgentConfig.CreateAgentConfig)
-					config.GET("", h.AgentConfig.GetAllAgentConfigs)
-					config.GET("/:agent_id", h.AgentConfig.GetAgentConfig)
-					config.PUT("/:agent_id", h.AgentConfig.UpdateAgentConfig)
-					config.DELETE("/:agent_id", h.AgentConfig.DeleteAgentConfig)
-					config.POST("/default", h.AgentConfig.CreateDefaultConfig)
+					config.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAgentsManage), h.AgentConfig.CreateAgentConfig)
+					config.GET("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAgentsView), h.AgentConfig.GetAllAgentConfigs)
+					config.GET("/:agent_id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAgentsView), h.AgentConfig.GetAgentConfig)
+					config.PUT("/:agent_id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAgentsManage), h.AgentConfig.UpdateAgentConfig)
+					config.DELETE("/:agent_id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAgentsManage), h.AgentConfig.DeleteAgentConfig)
+					config.POST("/default", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAgentsManage), h.AgentConfig.CreateDefaultConfig)
 
 					mentee := config.Group("/mentee")
 					{
-						mentee.GET("/recommendation/:negotiation_id", h.AgentConfig.GetMenteeRecommendation)
-						mentee.GET("/learning/:agent_id", h.AgentConfig.GetMenteeLearningData)
-						mentee.DELETE("/learning/:agent_id", h.AgentConfig.ResetMenteeLearning)
-						mentee.GET("/export", h.AgentConfig.ExportMenteeData)
-						mentee.POST("/import", h.AgentConfig.ImportMenteeData)
+						mentee.GET("/recommendation/:negotiation_id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAgentsView), h.AgentConfig.GetMenteeRecommendation)
+						mentee.GET("/learning/:agent_id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAgentsView), h.AgentConfig.GetMenteeLearningData)
+						mentee.DELETE("/learning/:agent_id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAgentsManage), h.AgentConfig.ResetMenteeLearning)
+						mentee.GET("/export", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAgentsManage), h.AgentConfig.ExportMenteeData)
+						mentee.POST("/import", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAgentsManage), h.AgentConfig.ImportMenteeData)
 					}
 				}
 			}
@@ -934,14 +934,14 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			ws.GET("", wafWSRL, h.WebSocket.HandleConnection)
 
 			// WebSocket management endpoints
-			ws.GET("/stats", h.WebSocket.GetStats)
-			ws.GET("/status/:userID", h.WebSocket.GetConnectionStatus)
-			ws.GET("/users", h.WebSocket.GetConnectedUsers)
+			ws.GET("/stats", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.WebSocket.GetStats)
+			ws.GET("/status/:userID", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.WebSocket.GetConnectionStatus)
+			ws.GET("/users", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.WebSocket.GetConnectedUsers)
 			ws.GET("/health", h.WebSocket.HealthCheck)
 
 			// Notification endpoints (for sending notifications via REST)
-			ws.POST("/notify/:userID", h.WebSocket.SendNotification)
-			ws.POST("/notify-all", h.WebSocket.SendNotificationToAll)
+			ws.POST("/notify/:userID", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.WebSocket.SendNotification)
+			ws.POST("/notify-all", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.WebSocket.SendNotificationToAll)
 		}
 
 		// Bargaining endpoints
@@ -1036,14 +1036,12 @@ func registerSwaggerRoutes(router *gin.Engine, cfg *config.Config) {
 func resolveSwaggerEndpoint(cfg *config.Config) ([]string, string, string) {
 	baseURL := cfg.Server.ResolveBaseURL()
 	if baseURL == "" {
-		// Default to localhost for local development
-		return []string{"http"}, "localhost:8080", docs.SwaggerInfo.BasePath
+		return nil, "", docs.SwaggerInfo.BasePath
 	}
 
 	parsed, err := url.Parse(baseURL)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		// Fall back to localhost for local development
-		return []string{"http"}, "localhost:8080", docs.SwaggerInfo.BasePath
+		return nil, "", docs.SwaggerInfo.BasePath
 	}
 
 	basePath := strings.TrimRight(parsed.Path, "/") + docs.SwaggerInfo.BasePath

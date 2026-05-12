@@ -146,6 +146,27 @@ func TestReportServiceQueryAppliesSavedColumnsAndBuildsClipboard(t *testing.T) {
 	}
 }
 
+func TestEncodeCSVNeutralizesSpreadsheetFormulas(t *testing.T) {
+	csv, err := encodeCSV(&reporting.Result{
+		Columns: []reporting.Column{{Key: "party_name", Label: "=Label"}},
+		Rows: []map[string]interface{}{
+			{"party_name": "=HYPERLINK(\"https://attacker.example\")"},
+			{"party_name": "+SUM(1,2)"},
+			{"party_name": "-10"},
+			{"party_name": "@cmd"},
+			{"party_name": "\t=1+1"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"'=Label", "'=HYPERLINK", "\"'+SUM(1,2)\"", "'-10", "'@cmd", "'\t=1+1"} {
+		if !strings.Contains(csv, want) {
+			t.Fatalf("expected CSV to contain neutralized cell %q, got %q", want, csv)
+		}
+	}
+}
+
 func TestReportServiceCreateSnapshotShareCreatesRunAndHashesSecrets(t *testing.T) {
 	repo := &reportingRepoStub{
 		queryResult: &reporting.Result{
@@ -161,7 +182,7 @@ func TestReportServiceCreateSnapshotShareCreatesRunAndHashesSecrets(t *testing.T
 			},
 		},
 	}
-	cfg := &config.Config{Server: config.ServerConfig{BaseURL: "api.example.com"}}
+	cfg := &config.Config{Server: config.ServerConfig{BaseURL: "https://api.example.com"}}
 	svc := NewReportService(cfg, repo, logger.New())
 
 	resp, err := svc.CreateShare(context.Background(), "biz-1", "user-1", "sales_register", ReportShareInput{

@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/base64"
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -33,6 +34,9 @@ func validate(cfg *Config) error {
 			return fmt.Errorf("wildcard origins (\"*\") are not allowed when AllowCredentials is enabled; got %q", origin)
 		}
 	}
+	if len(cfg.AllowedOrigins) == 0 {
+		return fmt.Errorf("ALLOWED_ORIGINS is required")
+	}
 
 	if cfg.AWS.Region == "" {
 		return fmt.Errorf("AWS_REGION is required")
@@ -60,6 +64,19 @@ func validate(cfg *Config) error {
 	}
 	if cfg.SQS.PaymentQueue == "" {
 		return fmt.Errorf("SQS_PAYMENT_QUEUE is required")
+	}
+	if strings.TrimSpace(cfg.LLM.APIKey) == "" {
+		return fmt.Errorf("LLM_API_KEY is required")
+	}
+	if strings.TrimSpace(cfg.LLM.APIURL) == "" {
+		return fmt.Errorf("LLM_API_URL is required")
+	}
+	parsedLLMURL, err := url.Parse(cfg.LLM.APIURL)
+	if err != nil || parsedLLMURL.Scheme != "https" || parsedLLMURL.Host == "" {
+		return fmt.Errorf("LLM_API_URL must be an absolute https URL")
+	}
+	if strings.TrimSpace(cfg.LLM.Model) == "" {
+		return fmt.Errorf("LLM_MODEL is required")
 	}
 	if cfg.Credentials.EncryptionKey == "" {
 		return fmt.Errorf("CREDENTIAL_ENCRYPTION_KEY is required")
@@ -92,6 +109,21 @@ func validate(cfg *Config) error {
 	}
 
 	if isProductionEnv(cfg.Environment) {
+		if strings.TrimSpace(cfg.Server.BaseURL) == "" {
+			return fmt.Errorf("SERVER_BASE_URL is required in production")
+		}
+		if strings.TrimSpace(cfg.Cognito.UserPoolID) == "" {
+			return fmt.Errorf("COGNITO_USER_POOL_ID is required in production")
+		}
+		if strings.TrimSpace(cfg.Cognito.ClientID) == "" {
+			return fmt.Errorf("COGNITO_CLIENT_ID is required in production")
+		}
+		if strings.TrimSpace(cfg.Cognito.Region) == "" {
+			return fmt.Errorf("COGNITO_REGION is required in production")
+		}
+		if strings.TrimSpace(cfg.Cognito.Domain) == "" {
+			return fmt.Errorf("COGNITO_DOMAIN is required in production")
+		}
 		if strings.TrimSpace(cfg.Razorpay.KeyID) == "" {
 			return fmt.Errorf("RAZORPAY_KEY_ID is required in production")
 		}
@@ -100,6 +132,18 @@ func validate(cfg *Config) error {
 		}
 		if strings.TrimSpace(cfg.Razorpay.WebhookSecret) == "" {
 			return fmt.Errorf("RAZORPAY_WEBHOOK_SECRET is required in production")
+		}
+		if cfg.MCP.ServerURL != "" {
+			parsedMCPURL, err := url.Parse(cfg.MCP.ServerURL)
+			if err != nil {
+				return fmt.Errorf("MCP_SERVER_URL is invalid: %w", err)
+			}
+			if parsedMCPURL.Scheme != "https" {
+				return fmt.Errorf("MCP_SERVER_URL must use https in production")
+			}
+		}
+		if cfg.MCP.InsecureSkipVerify {
+			return fmt.Errorf("MCP_INSECURE_SKIP_VERIFY cannot be enabled in production")
 		}
 	}
 

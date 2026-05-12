@@ -8,20 +8,6 @@ import (
 	"github.com/spf13/viper"
 )
 
-const (
-	defaultLLMAPIURL = "https://api.deepseek.com/chat/completions"
-	defaultLLMModel  = "deepseek-v4-flash"
-)
-
-var defaultDevelopmentAllowedOrigins = []string{
-	"http://localhost:3000",
-	"http://127.0.0.1:3000",
-	"http://localhost:8081",
-	"http://127.0.0.1:8081",
-	"http://localhost:19006",
-	"http://127.0.0.1:19006",
-}
-
 type Config struct {
 	Environment    string              `mapstructure:"ENVIRONMENT"`
 	Logging        LoggingConfig       `mapstructure:"LOGGING"`
@@ -483,30 +469,8 @@ func setDefaults(cfg *Config) {
 	if cfg.Cognito.JWKSRefreshRate == 0 {
 		cfg.Cognito.JWKSRefreshRate = 10 * time.Minute
 	}
-	if cfg.Cognito.Region == "" {
-		cfg.Cognito.Region = "us-east-1"
-	}
-	if cfg.Cognito.Domain == "" {
-		cfg.Cognito.Domain = fmt.Sprintf("invoice-backend-app.auth.%s.amazoncognito.com", cfg.Cognito.Region)
-	}
-	if cfg.Cognito.Phone.Region == "" && cfg.Cognito.Phone.UserPoolID != "" {
-		cfg.Cognito.Phone.Region = "ap-south-1"
-	}
-	if len(cfg.AllowedOrigins) == 0 {
-		if isProductionEnv(cfg.Environment) {
-			cfg.AllowedOrigins = []string{"*"}
-		} else {
-			cfg.AllowedOrigins = append([]string(nil), defaultDevelopmentAllowedOrigins...)
-		}
-	}
 	if cfg.LLM.Timeout == 0 {
 		cfg.LLM.Timeout = 60
-	}
-	if cfg.LLM.APIURL == "" {
-		cfg.LLM.APIURL = defaultLLMAPIURL
-	}
-	if cfg.LLM.Model == "" {
-		cfg.LLM.Model = defaultLLMModel
 	}
 	cfg.VoiceRealtime = cfg.VoiceRealtime.WithDefaults(cfg.Deepgram)
 	if cfg.S3.BucketDrive == "" {
@@ -560,11 +524,6 @@ func setDefaults(cfg *Config) {
 	if cfg.AWS.WAF.BlockedResponse == "" {
 		cfg.AWS.WAF.BlockedResponse = "rate limit exceeded"
 	}
-	// WAF disabled by default - enable via WAF_ENABLED=true environment variable only in non-production
-	// In production, WAF must be explicitly enabled via WAF_ENABLED=true
-	if isProductionEnv(cfg.Environment) {
-		cfg.AWS.WAF.Enabled = false
-	}
 }
 
 func parseAllowedOrigins(raw string) []string {
@@ -593,13 +552,10 @@ func (s ServerConfig) ResolveBaseURL() string {
 	}
 
 	baseURL = strings.TrimRight(baseURL, "/")
-	if strings.HasPrefix(baseURL, "http://") || strings.HasPrefix(baseURL, "https://") {
-		return baseURL
+	if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
+		return ""
 	}
-	if strings.HasPrefix(baseURL, "localhost") || strings.HasPrefix(baseURL, "127.0.0.1") {
-		return "http://" + baseURL
-	}
-	return "https://" + baseURL
+	return baseURL
 }
 
 func (s ServerConfig) A2AMessageEndpoint() string {

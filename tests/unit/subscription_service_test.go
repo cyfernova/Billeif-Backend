@@ -54,7 +54,7 @@ func TestSubscriptionService_Create_Success(t *testing.T) {
 	ctx := context.Background()
 	input := services.CreateSubscriptionInput{
 		BusinessID: "business-123",
-		Plan:       "starter",
+		Plan:       "free",
 	}
 
 	mockRepo.On("GetByBusinessID", ctx, "business-123").Return(nil, nil)
@@ -82,7 +82,7 @@ func TestSubscriptionService_Create_AlreadyExists(t *testing.T) {
 	ctx := context.Background()
 	input := services.CreateSubscriptionInput{
 		BusinessID: "business-123",
-		Plan:       "professional",
+		Plan:       "free",
 	}
 
 	existing := &models.Subscription{
@@ -102,15 +102,15 @@ func TestSubscriptionService_Create_AlreadyExists(t *testing.T) {
 	mockRepo.AssertExpectations(t)
 }
 
-// TestCreateSubscription_AllPlans tests creating subscriptions with each plan
-func TestSubscriptionService_Create_AllPlans(t *testing.T) {
+// TestCreateSubscription_RejectsPaidPlans tests that direct subscription creation cannot activate paid plans.
+func TestSubscriptionService_Create_RejectsPaidPlans(t *testing.T) {
 	mockRepo := new(MockSubscriptionRepository)
 	log := logger.New()
 
 	svc := services.NewSubscriptionService(mockRepo, log)
 
 	ctx := context.Background()
-	plans := []string{"free", "starter", "professional", "enterprise"}
+	plans := []string{"starter", "professional", "enterprise"}
 
 	for _, plan := range plans {
 		input := services.CreateSubscriptionInput{
@@ -118,16 +118,10 @@ func TestSubscriptionService_Create_AllPlans(t *testing.T) {
 			Plan:       plan,
 		}
 
-		mockRepo.On("GetByBusinessID", ctx, input.BusinessID).Return(nil, nil).Once()
-		mockRepo.On("Create", ctx, mock.MatchedBy(func(s *models.Subscription) bool {
-			return s.Plan == plan
-		})).Return(nil).Once()
-
 		subscription, err := svc.Create(ctx, input)
 
-		assert.NoError(t, err)
-		assert.NotNil(t, subscription)
-		assert.Equal(t, plan, subscription.Plan)
+		assert.ErrorIs(t, err, services.ErrSubscriptionPlanChangeRequiresPayment)
+		assert.Nil(t, subscription)
 	}
 
 	mockRepo.AssertExpectations(t)
@@ -143,7 +137,7 @@ func TestSubscriptionService_Create_RepositoryError(t *testing.T) {
 	ctx := context.Background()
 	input := services.CreateSubscriptionInput{
 		BusinessID: "business-123",
-		Plan:       "starter",
+		Plan:       "free",
 	}
 
 	mockRepo.On("GetByBusinessID", ctx, "business-123").Return(nil, nil)
@@ -223,7 +217,7 @@ func TestSubscriptionService_GetByBusinessID_RepositoryError(t *testing.T) {
 	mockRepo.AssertExpectations(t)
 }
 
-// TestUpdate_Success tests successful subscription update
+// TestUpdate_Success tests successful subscription status update
 func TestSubscriptionService_Update_Success(t *testing.T) {
 	mockRepo := new(MockSubscriptionRepository)
 	log := logger.New()
@@ -242,18 +236,19 @@ func TestSubscriptionService_Update_Success(t *testing.T) {
 
 	mockRepo.On("GetByBusinessID", ctx, businessID).Return(existing, nil)
 	mockRepo.On("Update", ctx, mock.MatchedBy(func(s *models.Subscription) bool {
-		return s.Plan == "professional"
+		return s.Plan == "starter" && s.Status == "expired"
 	})).Return(nil)
 
 	input := services.UpdateSubscriptionInput{
-		Plan: "professional",
+		Status: "expired",
 	}
 
 	subscription, err := svc.Update(ctx, businessID, input)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, subscription)
-	assert.Equal(t, "professional", subscription.Plan)
+	assert.Equal(t, "starter", subscription.Plan)
+	assert.Equal(t, "expired", subscription.Status)
 	mockRepo.AssertExpectations(t)
 }
 
@@ -310,9 +305,6 @@ func TestSubscriptionService_Update_BothPlanAndStatus(t *testing.T) {
 	}
 
 	mockRepo.On("GetByBusinessID", ctx, businessID).Return(existing, nil)
-	mockRepo.On("Update", ctx, mock.MatchedBy(func(s *models.Subscription) bool {
-		return s.Plan == "enterprise" && s.Status == "active"
-	})).Return(nil)
 
 	input := services.UpdateSubscriptionInput{
 		Plan:   "enterprise",
@@ -321,10 +313,8 @@ func TestSubscriptionService_Update_BothPlanAndStatus(t *testing.T) {
 
 	subscription, err := svc.Update(ctx, businessID, input)
 
-	assert.NoError(t, err)
-	assert.NotNil(t, subscription)
-	assert.Equal(t, "enterprise", subscription.Plan)
-	assert.Equal(t, "active", subscription.Status)
+	assert.ErrorIs(t, err, services.ErrSubscriptionPlanChangeRequiresPayment)
+	assert.Nil(t, subscription)
 	mockRepo.AssertExpectations(t)
 }
 
@@ -395,7 +385,7 @@ func TestSubscriptionService_Update_UpdateRepositoryError(t *testing.T) {
 	mockRepo.On("Update", ctx, mock.AnythingOfType("*models.Subscription")).Return(errors.New("database error"))
 
 	input := services.UpdateSubscriptionInput{
-		Plan: "professional",
+		Status: "canceled",
 	}
 
 	subscription, err := svc.Update(ctx, businessID, input)
@@ -454,9 +444,6 @@ func TestSubscriptionService_Update_PlanChange(t *testing.T) {
 	}
 
 	mockRepo.On("GetByBusinessID", ctx, businessID).Return(existing, nil)
-	mockRepo.On("Update", ctx, mock.MatchedBy(func(s *models.Subscription) bool {
-		return s.Plan == "professional"
-	})).Return(nil)
 
 	input := services.UpdateSubscriptionInput{
 		Plan: "professional",
@@ -464,9 +451,8 @@ func TestSubscriptionService_Update_PlanChange(t *testing.T) {
 
 	subscription, err := svc.Update(ctx, businessID, input)
 
-	assert.NoError(t, err)
-	assert.NotNil(t, subscription)
-	assert.Equal(t, "professional", subscription.Plan)
+	assert.ErrorIs(t, err, services.ErrSubscriptionPlanChangeRequiresPayment)
+	assert.Nil(t, subscription)
 	mockRepo.AssertExpectations(t)
 }
 
@@ -515,7 +501,7 @@ func TestSubscriptionService_Create_GetByBusinessIDError(t *testing.T) {
 	ctx := context.Background()
 	input := services.CreateSubscriptionInput{
 		BusinessID: "business-123",
-		Plan:       "starter",
+		Plan:       "free",
 	}
 
 	// Service ignores error from GetByBusinessID, so it proceeds to Create

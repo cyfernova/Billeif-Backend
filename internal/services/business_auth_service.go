@@ -95,24 +95,44 @@ func (s *BusinessAuthService) UserHasBranchAccess(ctx context.Context, userID, b
 	if branchID == "" {
 		return true
 	}
-	if userID == "" || businessID == "" {
+	allBranches, branchIDs, ok := s.UserBranchScope(ctx, userID, businessID)
+	if !ok {
 		return false
+	}
+	return branchScopeAllows(allBranches, branchIDs, branchID)
+}
+
+func (s *BusinessAuthService) UserBranchScope(ctx context.Context, userID, businessID string) (bool, []string, bool) {
+	if userID == "" || businessID == "" {
+		return false, nil, false
 	}
 	business, err := s.businessRepo.GetByID(ctx, businessID)
 	if err == nil && business.OwnerID == userID {
-		return true
+		return true, nil, true
 	}
 
 	member, err := s.lookupActiveMembership(ctx, userID, businessID)
 	if err != nil || member == nil {
-		return false
+		return false, nil, false
 	}
 	scopes := branchScopes(member.BranchScopeJSON)
 	if len(scopes) == 0 {
-		return true
+		return true, nil, true
 	}
 	for _, scope := range scopes {
-		if scope == "*" || scope == branchID {
+		if scope == "*" {
+			return true, nil, true
+		}
+	}
+	return false, scopes, true
+}
+
+func branchScopeAllows(allBranches bool, branchIDs []string, branchID string) bool {
+	if branchID == "" || allBranches {
+		return true
+	}
+	for _, scope := range branchIDs {
+		if scope == branchID {
 			return true
 		}
 	}
@@ -176,7 +196,14 @@ func branchScopes(raw string) []string {
 	if err := json.Unmarshal([]byte(raw), &scopes); err != nil {
 		return nil
 	}
-	return scopes
+	filtered := scopes[:0]
+	for _, scope := range scopes {
+		scope = strings.TrimSpace(scope)
+		if scope != "" {
+			filtered = append(filtered, scope)
+		}
+	}
+	return filtered
 }
 
 func legacyRolePermissions(role string) []string {
@@ -187,6 +214,10 @@ func legacyRolePermissions(role string) []string {
 		return []string{
 			PermissionDocumentsManage,
 			PermissionDocumentsExport,
+			PermissionProductsManage,
+			PermissionProductsView,
+			PermissionPaymentsManage,
+			PermissionPaymentsView,
 			PermissionStorefrontManage,
 			PermissionStorefrontView,
 			PermissionOrdersManage,
@@ -197,15 +228,22 @@ func legacyRolePermissions(role string) []string {
 			PermissionDriveView,
 			PermissionNotificationsManage,
 			PermissionSubscriptionsView,
+			PermissionReportsExport,
+			PermissionReportsShare,
+			PermissionReportsView,
+			PermissionAgentsView,
 		}
 	case "viewer":
 		return []string{
+			PermissionProductsView,
+			PermissionPaymentsView,
 			PermissionStorefrontView,
 			PermissionOrdersView,
 			PermissionTeamsView,
 			PermissionBranchesView,
 			PermissionDriveView,
 			PermissionSubscriptionsView,
+			PermissionAgentsView,
 		}
 	default:
 		return nil

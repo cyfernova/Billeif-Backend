@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -22,6 +23,8 @@ type WebhookService struct {
 	log        *logger.Logger
 	httpClient *http.Client
 }
+
+var webhookSecretReader io.Reader = rand.Reader
 
 func NewWebhookService(repo interfaces.WebhookRepository, log *logger.Logger) *WebhookService {
 	return &WebhookService{
@@ -48,7 +51,11 @@ func (s *WebhookService) Create(ctx context.Context, input CreateWebhookInput) (
 
 	secret := input.Secret
 	if secret == "" {
-		secret = generateWebhookSecret()
+		generated, err := generateWebhookSecret()
+		if err != nil {
+			return nil, fmt.Errorf("generate webhook secret: %w", err)
+		}
+		secret = generated
 	}
 	webhook := &models.Webhook{
 		BusinessID: input.BusinessID,
@@ -184,6 +191,10 @@ func (s *WebhookService) EmitEvent(ctx context.Context, businessID, event string
 		if webhook == nil || !webhook.IsActive || !webhookSubscribedToEvent(webhook.Events, event) {
 			continue
 		}
+		if err := validateWebhookURL(ctx, webhook.URL); err != nil {
+			s.log.Warn("unsafe stored webhook URL rejected", "webhook_id", webhook.ID, "event", event, "error", err)
+			continue
+		}
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhook.URL, strings.NewReader(string(body)))
 		if err != nil {
@@ -237,10 +248,10 @@ func signWebhookPayload(secret string, payload []byte) string {
 	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
 
-func generateWebhookSecret() string {
+func generateWebhookSecret() (string, error) {
 	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return fmt.Sprintf("wh_%d", time.Now().UnixNano())
+	if _, err := io.ReadFull(webhookSecretReader, b); err != nil {
+		return "", err
 	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(b), nil
 }

@@ -30,7 +30,8 @@ func NewWellKnownHandlerTestable(cfg *config.Config, log *logger.Logger) *WellKn
 func (h *WellKnownHandlerTestable) GetAgentCard(c *gin.Context) {
 	baseURL := h.config.Server.ResolveBaseURL()
 	if baseURL == "" {
-		baseURL = fmt.Sprintf("http://localhost:%d", h.config.Server.Port)
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "server base URL is not configured"})
+		return
 	}
 
 	a2aBaseURL := baseURL + "/api/v1/a2a"
@@ -209,7 +210,7 @@ func TestGetAgentCard_SuccessWithBaseURL(t *testing.T) {
 	}
 }
 
-func TestGetAgentCard_SuccessWithoutBaseURLFallsBackToLocalhost(t *testing.T) {
+func TestGetAgentCard_RequiresConfiguredBaseURL(t *testing.T) {
 	cfg := &config.Config{
 		Server:  config.ServerConfig{Port: 8080},
 		Cognito: config.CognitoConfig{Region: "us-east-1", UserPoolID: "pool-123"},
@@ -220,27 +221,8 @@ func TestGetAgentCard_SuccessWithoutBaseURLFallsBackToLocalhost(t *testing.T) {
 	res := httptest.NewRecorder()
 	router.ServeHTTP(res, req)
 
-	if res.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", res.Code)
-	}
-
-	var card a2a.AgentCard
-	if err := json.Unmarshal(res.Body.Bytes(), &card); err != nil {
-		t.Fatalf("decode agent card: %v", err)
-	}
-
-	if card.Provider == nil {
-		t.Fatal("expected provider to be set")
-	}
-	if card.Provider.URL != "http://localhost:8080" {
-		t.Fatalf("expected provider URL 'http://localhost:8080', got %q", card.Provider.URL)
-	}
-	if len(card.SupportedInterfaces) == 0 {
-		t.Fatal("expected supported interfaces to be set")
-	}
-	expectedA2AURL := "http://localhost:8080/api/v1/a2a"
-	if card.SupportedInterfaces[0].URL != expectedA2AURL {
-		t.Fatalf("expected A2A URL %q, got %q", expectedA2AURL, card.SupportedInterfaces[0].URL)
+	if res.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", res.Code)
 	}
 }
 

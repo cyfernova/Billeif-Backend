@@ -114,7 +114,7 @@ func TestWellKnownAgentCardLatestFields(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	cfg := &config.Config{
-		Server:  config.ServerConfig{BaseURL: "api.example.com"},
+		Server:  config.ServerConfig{BaseURL: "https://api.example.com"},
 		Cognito: config.CognitoConfig{Region: "us-east-1", UserPoolID: "pool-123"},
 	}
 	handler := NewWellKnownHandler(cfg, logger.New())
@@ -208,7 +208,7 @@ func TestA2AHandlerMessageLifecycleAndPushConfigCRUD(t *testing.T) {
 	pushBody, err := json.Marshal(a2a.TaskPushNotificationConfig{
 		PushNotificationConfig: a2a.PushNotificationConfig{
 			ID:    "cfg-1",
-			URL:   "https://example.com/webhook",
+			URL:   "https://93.184.216.34/webhook",
 			Token: "notify-token",
 		},
 	})

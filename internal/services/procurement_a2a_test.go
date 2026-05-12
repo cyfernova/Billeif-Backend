@@ -147,6 +147,46 @@ func TestResolveProcurementSellerInterfaceRefreshesFromWellKnownAgentCard(t *tes
 	}
 }
 
+func TestResolveProcurementSellerInterfaceRejectsUnsafeWellKnownRefresh(t *testing.T) {
+	card, err := buildA2AAgentCardFromRegistration(&RegisterAgentRequest{
+		Name:        "Seller",
+		Description: "Test seller",
+		A2AEndpoint: "https://fresh.example/api/v1/a2a",
+		AgentType:   "merchant",
+	})
+	if err != nil {
+		t.Fatalf("build a2a card: %v", err)
+	}
+	cardPayload, err := json.Marshal(card)
+	if err != nil {
+		t.Fatalf("marshal card: %v", err)
+	}
+
+	registry := &models.AgentRegistry{
+		AgentID:      uuid.New(),
+		AgentType:    "merchant",
+		IsActive:     true,
+		IsVerified:   true,
+		WellKnownURI: stringPtr("http://127.0.0.1:8080/.well-known/agent-card.json"),
+		AgentCard:    datatypes.JSON(cardPayload),
+	}
+
+	service := &ProcurementService{log: logger.New()}
+	resolvedCard, endpoint, err := service.resolveProcurementSellerInterface(context.Background(), registry)
+	if err != nil {
+		t.Fatalf("resolve procurement seller interface: %v", err)
+	}
+	if resolvedCard == nil {
+		t.Fatal("expected resolved card")
+	}
+	if endpoint != "https://fresh.example/api/v1/a2a" {
+		t.Fatalf("expected persisted safe endpoint, got %q", endpoint)
+	}
+	if !cardSupportsProcurement(resolvedCard) {
+		t.Fatal("expected persisted card to support procurement")
+	}
+}
+
 func TestBuildA2AAgentCardFromRegistrationRejectsLocalEndpoint(t *testing.T) {
 	_, err := buildA2AAgentCardFromRegistration(&RegisterAgentRequest{
 		Name:        "Seller",

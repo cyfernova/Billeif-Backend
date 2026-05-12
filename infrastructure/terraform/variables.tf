@@ -56,7 +56,22 @@ variable "availability_zones" {
 variable "db_allowed_cidr" {
   description = "CIDR block allowed to access public RDS instance"
   type        = string
-  default     = "0.0.0.0/0"
+
+  validation {
+    condition     = var.db_allowed_cidr != "0.0.0.0/0" && var.db_allowed_cidr != "::/0"
+    error_message = "db_allowed_cidr must be an explicit trusted CIDR, not an internet-wide range."
+  }
+}
+
+variable "db_publicly_accessible" {
+  description = "Whether the RDS instance receives a public endpoint. Public RDS is not allowed."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = var.db_publicly_accessible == false
+    error_message = "db_publicly_accessible must be false."
+  }
 }
 
 # RDS Configuration
@@ -89,10 +104,9 @@ variable "db_password" {
   description = "Database master password (fetched from SSM at runtime)"
   type        = string
   sensitive   = true
-  default     = "changeme"
 
   validation {
-    condition     = can(regex("^[\\x21-\\x7E]+$", var.db_password)) && length(regexall("[/@\"]", var.db_password)) == 0
+    condition     = can(regex("^[\\x21-\\x7E]+$", var.db_password)) && length(var.db_password) >= 20 && length(regexall("[/@\"]", var.db_password)) == 0 && !contains(["changeme", "password", "password123"], lower(var.db_password))
     error_message = "db_password must use printable ASCII without spaces and cannot contain '/', '@', or '\"'."
   }
 }
@@ -101,7 +115,11 @@ variable "credential_encryption_key" {
   description = "Base64-encoded 32-byte key used for application credential encryption"
   type        = string
   sensitive   = true
-  default     = "TPRzhZvL3pvBBvNXN26Sa+yfrLZogwLpyD5rCDmB140="
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9+/]{43}=$", var.credential_encryption_key))
+    error_message = "credential_encryption_key must be a base64-encoded 32-byte key."
+  }
 }
 
 variable "razorpay_key_id" {
@@ -162,7 +180,11 @@ variable "jwt_secret" {
   description = "JWT secret for compatibility with legacy integrations"
   type        = string
   sensitive   = true
-  default     = "change-me-in-production-with-secure-secret"
+
+  validation {
+    condition     = length(var.jwt_secret) >= 32 && !can(regex("(?i)^(change[-_ ]?me|changeme|secret)$", var.jwt_secret))
+    error_message = "jwt_secret must be explicitly provided and at least 32 characters."
+  }
 }
 
 # Cognito/OIDC
@@ -193,15 +215,31 @@ variable "cognito_domain_prefix" {
 }
 
 variable "cognito_additional_callback_urls" {
-  description = "Additional Cognito callback URLs to allow, such as the current Expo Go exp://... redirect URI."
+  description = "Explicit Cognito callback URLs to allow in addition to Swagger OAuth redirect."
   type        = list(string)
   default     = []
+
+  validation {
+    condition = alltrue([
+      for callback_url in var.cognito_additional_callback_urls :
+      !can(regex("^(http://localhost|http://127\\.0\\.0\\.1|exp://|https://auth\\.expo\\.io/)", lower(callback_url)))
+    ])
+    error_message = "Cognito callback URLs cannot include localhost or Expo development redirects."
+  }
 }
 
 variable "cognito_additional_logout_urls" {
-  description = "Additional Cognito logout URLs to allow, such as the current Expo Go exp://... redirect URI."
+  description = "Explicit Cognito logout URLs to allow."
   type        = list(string)
   default     = []
+
+  validation {
+    condition = alltrue([
+      for logout_url in var.cognito_additional_logout_urls :
+      !can(regex("^(http://localhost|http://127\\.0\\.0\\.1|exp://|https://auth\\.expo\\.io/)", lower(logout_url)))
+    ])
+    error_message = "Cognito logout URLs cannot include localhost or Expo development redirects."
+  }
 }
 
 variable "india_sms_sender_id" {
@@ -281,24 +319,32 @@ variable "apns_certificate" {
   default     = ""
 }
 
-# LLM Configuration (DeepSeek)
+# LLM Configuration
 variable "llm_api_key" {
-  description = "DeepSeek API key for LLM"
+  description = "API key for the configured LLM provider"
   type        = string
   sensitive   = true
   default     = ""
 }
 
 variable "llm_api_url" {
-  description = "DeepSeek chat completions API URL"
+  description = "Chat completions API URL for the configured LLM provider"
   type        = string
-  default     = "https://api.deepseek.com/chat/completions"
+
+  validation {
+    condition     = can(regex("^https://", var.llm_api_url))
+    error_message = "llm_api_url must be an absolute https URL."
+  }
 }
 
 variable "llm_model" {
-  description = "DeepSeek LLM model name"
+  description = "Model name for the configured LLM provider"
   type        = string
-  default     = "deepseek-v4-flash"
+
+  validation {
+    condition     = length(trimspace(var.llm_model)) > 0
+    error_message = "llm_model is required."
+  }
 }
 
 variable "gst_lookup_api_key" {
@@ -375,15 +421,23 @@ variable "deepseek_api_key" {
 }
 
 variable "deepseek_base_url" {
-  description = "DeepSeek OpenAI-compatible base URL"
+  description = "OpenAI-compatible base URL for realtime voice LLM calls"
   type        = string
-  default     = "https://api.deepseek.com/v1"
+
+  validation {
+    condition     = can(regex("^https://", var.deepseek_base_url))
+    error_message = "deepseek_base_url must be an absolute https URL."
+  }
 }
 
 variable "deepseek_model" {
-  description = "DeepSeek OpenAI-compatible model for realtime voice"
+  description = "OpenAI-compatible model for realtime voice"
   type        = string
-  default     = "deepseek-chat"
+
+  validation {
+    condition     = length(trimspace(var.deepseek_model)) > 0
+    error_message = "deepseek_model is required."
+  }
 }
 
 variable "voice_ws_max_session_seconds" {

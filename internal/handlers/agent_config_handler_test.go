@@ -219,7 +219,7 @@ func newAgentConfigTestHandler(t *testing.T, agents map[string]*models.Agent) (*
 	configService := services.NewAgentConfigService(t.TempDir(), log)
 	repo := &agentConfigAP2Repo{agents: agents}
 
-	return NewAgentConfigHandler(configService, repo, nil, nil, log), configService
+	return NewAgentConfigHandler(configService, repo, nil, nil, nil, log), configService
 }
 
 func invokeAgentConfigHandler(

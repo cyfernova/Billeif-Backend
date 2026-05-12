@@ -15,6 +15,7 @@ import (
 type AgentConfigHandler struct {
 	configService *services.AgentConfigService
 	ap2Repo       interfaces.AP2Repository
+	agentService  *services.AgentService
 	bargaining    *services.BargainingService
 	mentee        *services.MenteeService
 	log           *logger.Logger
@@ -23,6 +24,7 @@ type AgentConfigHandler struct {
 func NewAgentConfigHandler(
 	configService *services.AgentConfigService,
 	ap2Repo interfaces.AP2Repository,
+	agentService *services.AgentService,
 	bargaining *services.BargainingService,
 	mentee *services.MenteeService,
 	log *logger.Logger,
@@ -30,6 +32,7 @@ func NewAgentConfigHandler(
 	return &AgentConfigHandler{
 		configService: configService,
 		ap2Repo:       ap2Repo,
+		agentService:  agentService,
 		bargaining:    bargaining,
 		mentee:        mentee,
 		log:           log,
@@ -407,6 +410,14 @@ func (h *AgentConfigHandler) GetMenteeRecommendation(c *gin.Context) {
 		return
 	}
 
+	scopedAgentID := negotiation.BuyerAgentID
+	if agentType == "seller" {
+		scopedAgentID = negotiation.SellerAgentID
+	}
+	if _, ok := h.requireAgentAccess(c, scopedAgentID); !ok {
+		return
+	}
+
 	decision, err := h.bargaining.GetMenteeRecommendation(negotiation, agentType)
 	if err != nil {
 		h.log.Error("failed to get mentee recommendation", "error", err, "negotiation_id", negotiationID)
@@ -430,6 +441,10 @@ func (h *AgentConfigHandler) GetMenteeRecommendation(c *gin.Context) {
 func (h *AgentConfigHandler) GetMenteeLearningData(c *gin.Context) {
 	agentID := c.Param("agent_id")
 
+	if _, ok := h.requireAgentAccess(c, agentID); !ok {
+		return
+	}
+
 	data, err := h.mentee.GetAgentLearningData(c.Request.Context(), agentID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get learning data"})
@@ -451,6 +466,10 @@ func (h *AgentConfigHandler) GetMenteeLearningData(c *gin.Context) {
 func (h *AgentConfigHandler) ResetMenteeLearning(c *gin.Context) {
 	agentID := c.Param("agent_id")
 
+	if _, ok := h.requireAgentAccess(c, agentID); !ok {
+		return
+	}
+
 	err := h.mentee.ResetAgentLearning(c.Request.Context(), agentID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to reset learning data"})
@@ -469,7 +488,16 @@ func (h *AgentConfigHandler) ResetMenteeLearning(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /agents/config/mentee/export [get]
 func (h *AgentConfigHandler) ExportMenteeData(c *gin.Context) {
-	data, err := h.mentee.ExportLearningData(c.Request.Context())
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	agentIDs, ok := h.agentIDsForBusiness(c, businessID)
+	if !ok {
+		return
+	}
+
+	data, err := h.mentee.ExportLearningDataForAgents(c.Request.Context(), agentIDs)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to export learning data"})
 		return
@@ -490,17 +518,67 @@ func (h *AgentConfigHandler) ExportMenteeData(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /agents/config/mentee/import [post]
 func (h *AgentConfigHandler) ImportMenteeData(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	agentIDs, ok := h.agentIDsForBusiness(c, businessID)
+	if !ok {
+		return
+	}
+
 	data, err := c.GetRawData()
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read request body"})
 		return
 	}
 
-	if err := h.mentee.ImportLearningData(c.Request.Context(), data); err != nil {
+	if err := h.mentee.ImportLearningDataForAgents(c.Request.Context(), data, agentIDs); err != nil {
 		h.log.Error("failed to import learning data", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to import learning data"})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "learning data imported successfully"})
+}
+
+func (h *AgentConfigHandler) requireAgentAccess(c *gin.Context, agentID string) (*models.Agent, bool) {
+	if h.agentService == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "agent service unavailable"})
+		return nil, false
+	}
+	agent, err := h.agentService.GetAgentByID(c.Request.Context(), agentID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+		return nil, false
+	}
+	if _, ok := requireEffectiveBusinessScope(c, agent.BusinessID); !ok {
+		return nil, false
+	}
+	return agent, true
+}
+
+func (h *AgentConfigHandler) agentIDsForBusiness(c *gin.Context, businessID string) ([]string, bool) {
+	if h.agentService == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "agent service unavailable"})
+		return nil, false
+	}
+	const pageSize = 500
+	ids := make([]string, 0)
+	for page := 1; ; page++ {
+		agents, total, err := h.agentService.GetAgentsByBusiness(c.Request.Context(), businessID, page, pageSize)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list business agents"})
+			return nil, false
+		}
+		for _, agent := range agents {
+			if agent != nil {
+				ids = append(ids, agent.ID)
+			}
+		}
+		if len(ids) >= int(total) || len(agents) < pageSize {
+			break
+		}
+	}
+	return ids, true
 }

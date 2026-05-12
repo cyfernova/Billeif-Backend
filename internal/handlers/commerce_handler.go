@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"strconv"
 
+	"invoice-backend/internal/middleware"
+	"invoice-backend/internal/models"
 	"invoice-backend/internal/services"
 	"invoice-backend/pkg/logger"
 
@@ -201,7 +203,12 @@ func (h *CommerceHandler) ListBranches(c *gin.Context) {
 	if !ok {
 		return
 	}
-	branches, err := h.svc.ListBranches(c.Request.Context(), businessID)
+	branchIDs, restricted := branchScopeFilter(c)
+	if restricted && len(branchIDs) == 0 {
+		c.JSON(http.StatusOK, []*models.Branch{})
+		return
+	}
+	branches, err := h.svc.ListBranches(c.Request.Context(), businessID, branchIDs...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -266,7 +273,7 @@ func (h *CommerceHandler) UpdateBranch(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	branch, err := h.svc.UpdateBranch(c.Request.Context(), businessID, c.Param("id"), input)
+	branch, err := h.svc.UpdateBranch(c.Request.Context(), businessID, branchRouteID(c), input)
 	if err != nil {
 		status := http.StatusBadRequest
 		if isNotFoundErr(err) {
@@ -295,7 +302,7 @@ func (h *CommerceHandler) DeleteBranch(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.svc.DeleteBranch(c.Request.Context(), businessID, c.Param("id")); err != nil {
+	if err := h.svc.DeleteBranch(c.Request.Context(), businessID, branchRouteID(c)); err != nil {
 		status := http.StatusBadRequest
 		if isNotFoundErr(err) {
 			status = http.StatusNotFound
@@ -924,6 +931,8 @@ func (h *CommerceHandler) PublicCatalog(c *gin.Context) {
 		status := http.StatusInternalServerError
 		if isNotFoundErr(err) {
 			status = http.StatusNotFound
+		} else if err.Error() == "storefront is not accepting orders" {
+			status = http.StatusNotFound
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
 		return
@@ -946,6 +955,8 @@ func (h *CommerceHandler) PublicCategories(c *gin.Context) {
 	if err != nil {
 		status := http.StatusInternalServerError
 		if isNotFoundErr(err) {
+			status = http.StatusNotFound
+		} else if err.Error() == "storefront is not accepting orders" {
 			status = http.StatusNotFound
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
@@ -976,6 +987,8 @@ func (h *CommerceHandler) PublicValidateCoupon(c *gin.Context) {
 	if err != nil {
 		status := http.StatusInternalServerError
 		if isNotFoundErr(err) {
+			status = http.StatusNotFound
+		} else if err.Error() == "storefront is not accepting orders" {
 			status = http.StatusNotFound
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
@@ -1040,4 +1053,19 @@ func (h *CommerceHandler) PublicOrder(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, order)
+}
+
+func branchRouteID(c *gin.Context) string {
+	if id := c.Param("branch_id"); id != "" {
+		return id
+	}
+	return c.Param("id")
+}
+
+func branchScopeFilter(c *gin.Context) ([]string, bool) {
+	allBranches, branchIDs, ok := middleware.GetValidatedBranchScope(c)
+	if !ok || allBranches {
+		return nil, false
+	}
+	return branchIDs, true
 }

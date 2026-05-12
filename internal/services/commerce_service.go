@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -158,6 +159,26 @@ type CreateDriveAssetInput struct {
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 }
 
+const maxDriveAssetUploadBytes = int64(25 * 1024 * 1024)
+
+var allowedDriveAssetContentTypes = map[string]struct{}{
+	"image/jpeg":      {},
+	"image/png":       {},
+	"image/webp":      {},
+	"application/pdf": {},
+}
+
+func validateDriveAssetUpload(input CreateDriveAssetInput) (string, error) {
+	contentType := strings.ToLower(strings.TrimSpace(input.ContentType))
+	if _, ok := allowedDriveAssetContentTypes[contentType]; !ok {
+		return "", fmt.Errorf("unsupported drive asset content type")
+	}
+	if input.SizeBytes <= 0 || input.SizeBytes > maxDriveAssetUploadBytes {
+		return "", fmt.Errorf("drive asset size must be between 1 byte and %d bytes", maxDriveAssetUploadBytes)
+	}
+	return contentType, nil
+}
+
 type UpdateDriveAssetInput struct {
 	Name       string                 `json:"name,omitempty"`
 	FolderPath string                 `json:"folder_path,omitempty"`
@@ -216,6 +237,51 @@ type StorefrontCatalogResponse struct {
 	Storefront *models.Storefront           `json:"storefront"`
 	Categories []*models.StorefrontCategory `json:"categories"`
 	Products   []*StorefrontCatalogItem     `json:"products"`
+}
+
+type PublicStorefront struct {
+	Name               string  `json:"name"`
+	Slug               string  `json:"slug"`
+	Currency           string  `json:"currency"`
+	AllowCOD           bool    `json:"allow_cod"`
+	AllowOnlinePayment bool    `json:"allow_online_payment"`
+	MinimumOrderValue  float64 `json:"minimum_order_value"`
+}
+
+type PublicStorefrontProduct struct {
+	ID             string                 `json:"id"`
+	ProductID      string                 `json:"product_id"`
+	CategoryID     *string                `json:"category_id,omitempty"`
+	Name           string                 `json:"name"`
+	SKU            string                 `json:"sku,omitempty"`
+	Description    string                 `json:"description,omitempty"`
+	Price          float64                `json:"price"`
+	MRP            float64                `json:"mrp,omitempty"`
+	DisplayPrice   float64                `json:"display_price"`
+	CompareAtPrice float64                `json:"compare_at_price,omitempty"`
+	Currency       string                 `json:"currency"`
+	Unit           string                 `json:"unit"`
+	ImageURL       string                 `json:"image_url,omitempty"`
+	IsService      bool                   `json:"is_service"`
+	Badge          string                 `json:"badge,omitempty"`
+	SortOrder      int                    `json:"sort_order"`
+	SEO            map[string]interface{} `json:"seo,omitempty"`
+	Metadata       map[string]interface{} `json:"metadata,omitempty"`
+}
+
+type PublicStorefrontCategory struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Slug        string `json:"slug"`
+	Description string `json:"description,omitempty"`
+	ImageURL    string `json:"image_url,omitempty"`
+	SortOrder   int    `json:"sort_order"`
+}
+
+type PublicStorefrontCatalogResponse struct {
+	Storefront *PublicStorefront           `json:"storefront"`
+	Categories []*PublicStorefrontCategory `json:"categories"`
+	Products   []*PublicStorefrontProduct  `json:"products"`
 }
 
 func NewCommerceService(
@@ -462,12 +528,15 @@ func (s *CommerceService) DeleteRole(ctx context.Context, businessID, roleID str
 	return s.db.WithContext(ctx).Delete(role).Error
 }
 
-func (s *CommerceService) ListBranches(ctx context.Context, businessID string) ([]*models.Branch, error) {
+func (s *CommerceService) ListBranches(ctx context.Context, businessID string, branchIDs ...string) ([]*models.Branch, error) {
 	var branches []*models.Branch
-	if err := s.db.WithContext(ctx).
+	query := s.db.WithContext(ctx).
 		Where("business_id = ? AND deleted_at IS NULL", businessID).
-		Order("is_default DESC, name ASC").
-		Find(&branches).Error; err != nil {
+		Order("is_default DESC, name ASC")
+	if len(branchIDs) > 0 {
+		query = query.Where("id IN ?", branchIDs)
+	}
+	if err := query.Find(&branches).Error; err != nil {
 		return nil, err
 	}
 	return branches, nil
@@ -902,9 +971,12 @@ func (s *CommerceService) CancelStoreOrder(ctx context.Context, businessID, stor
 	return order, nil
 }
 
-func (s *CommerceService) GetCatalog(ctx context.Context, slug string) (*StorefrontCatalogResponse, error) {
+func (s *CommerceService) GetCatalog(ctx context.Context, slug string) (*PublicStorefrontCatalogResponse, error) {
 	storefront, err := s.findStorefrontBySlug(ctx, slug)
 	if err != nil {
+		return nil, err
+	}
+	if err := ensurePublishedStorefront(storefront); err != nil {
 		return nil, err
 	}
 	var categories []*models.StorefrontCategory
@@ -929,16 +1001,15 @@ func (s *CommerceService) GetCatalog(ctx context.Context, slug string) (*Storefr
 		}
 		items = append(items, &StorefrontCatalogItem{StorefrontProduct: storefrontProduct, Product: product})
 	}
-	return &StorefrontCatalogResponse{
-		Storefront: storefront,
-		Categories: categories,
-		Products:   items,
-	}, nil
+	return publicStorefrontCatalogResponse(storefront, categories, items), nil
 }
 
 func (s *CommerceService) ValidateCoupon(ctx context.Context, slug string, input ValidateCouponInput) (*CouponValidationResult, error) {
 	storefront, err := s.findStorefrontBySlug(ctx, slug)
 	if err != nil {
+		return nil, err
+	}
+	if err := ensurePublishedStorefront(storefront); err != nil {
 		return nil, err
 	}
 	_, discount, err := s.resolveCoupon(ctx, storefront, strings.ToUpper(strings.TrimSpace(input.Code)), "", input.CustomerEmail, input.Subtotal)
@@ -956,8 +1027,8 @@ func (s *CommerceService) Checkout(ctx context.Context, slug, idempotencyKey str
 	if err != nil {
 		return nil, err
 	}
-	if storefront.Status != models.StorefrontStatusPublished && storefront.Status != models.StorefrontStatusDraft {
-		return nil, fmt.Errorf("storefront is not accepting orders")
+	if err := ensurePublishedStorefront(storefront); err != nil {
+		return nil, err
 	}
 	if idempotencyKey != "" {
 		var existing models.StoreOrder
@@ -966,16 +1037,26 @@ func (s *CommerceService) Checkout(ctx context.Context, slug, idempotencyKey str
 			Where("storefront_id = ? AND idempotency_key = ? AND deleted_at IS NULL", storefront.ID, idempotencyKey).
 			First(&existing).Error
 		if err == nil {
+			if !checkoutInputMatchesOrder(&existing, input) {
+				return nil, fmt.Errorf("idempotency key already used for a different checkout request")
+			}
 			return &CheckoutResult{Order: &existing, GatewayOrderID: existing.GatewayOrderID}, nil
 		}
 		if err != nil && err != gorm.ErrRecordNotFound {
 			return nil, err
 		}
 	}
-	if strings.EqualFold(input.PaymentMethod, "online") && !storefront.AllowOnlinePayment {
+	paymentMethod := normalizePublicPaymentMethod(input.PaymentMethod)
+	if paymentMethod == "" {
+		return nil, fmt.Errorf("unsupported payment method")
+	}
+	if input.ShippingTotal < 0 {
+		return nil, fmt.Errorf("shipping total must be non-negative")
+	}
+	if paymentMethod == "online" && !storefront.AllowOnlinePayment {
 		return nil, fmt.Errorf("online payments are not enabled for this storefront")
 	}
-	if (input.PaymentMethod == "" || strings.EqualFold(input.PaymentMethod, "cod")) && !storefront.AllowCOD {
+	if paymentMethod == "cod" && !storefront.AllowCOD {
 		return nil, fmt.Errorf("cash on delivery is not enabled for this storefront")
 	}
 	business, err := s.businessRepo.GetByID(ctx, storefront.BusinessID)
@@ -997,7 +1078,7 @@ func (s *CommerceService) Checkout(ctx context.Context, slug, idempotencyKey str
 		OrderNumber:     s.nextStoreOrderNumber(),
 		Status:          models.StoreOrderStatusPending,
 		PaymentStatus:   models.StoreOrderPaymentStatusPending,
-		PaymentMethod:   strings.ToLower(strings.TrimSpace(firstNonEmpty(input.PaymentMethod, "cod"))),
+		PaymentMethod:   paymentMethod,
 		Currency:        orderCurrency,
 		ExchangeRate:    1,
 		BillingAddress:  mustMarshalMap(firstAvailableMap(input.BillingAddress, input.Customer.Billing)),
@@ -1064,8 +1145,9 @@ func (s *CommerceService) Checkout(ctx context.Context, slug, idempotencyKey str
 		return nil, fmt.Errorf("minimum order value is %.2f", storefront.MinimumOrderValue)
 	}
 	order.Snapshot = mustMarshalMap(map[string]interface{}{
-		"customer": input.Customer,
-		"items":    input.Items,
+		"checkout_fingerprint": checkoutInputFingerprint(input),
+		"customer":             input.Customer,
+		"items":                input.Items,
 	})
 
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -1115,6 +1197,19 @@ func (s *CommerceService) Checkout(ctx context.Context, slug, idempotencyKey str
 	}, nil
 }
 
+func normalizePublicPaymentMethod(method string) string {
+	normalized := strings.ToLower(strings.TrimSpace(method))
+	if normalized == "" {
+		return "cod"
+	}
+	switch normalized {
+	case "cod", "online":
+		return normalized
+	default:
+		return ""
+	}
+}
+
 func (s *CommerceService) GetPublicOrder(ctx context.Context, slug, token string) (*models.StoreOrder, error) {
 	storefront, err := s.findStorefrontBySlug(ctx, slug)
 	if err != nil {
@@ -1154,6 +1249,10 @@ func (s *CommerceService) CreateDriveUpload(ctx context.Context, businessID, use
 	if err := s.ensureFeatureEnabled(ctx, businessID, FeatureDriveStorageMB); err != nil {
 		return nil, err
 	}
+	contentType, err := validateDriveAssetUpload(input)
+	if err != nil {
+		return nil, err
+	}
 	usage, limit, err := s.driveUsageAndLimit(ctx, businessID)
 	if err != nil {
 		return nil, err
@@ -1168,7 +1267,7 @@ func (s *CommerceService) CreateDriveUpload(ctx context.Context, businessID, use
 		FolderPath:  normalizeDriveFolderPath(input.FolderPath),
 		Bucket:      s.cfg.S3.BucketDrive,
 		ObjectKey:   fmt.Sprintf("%s/%s/%s", businessID, time.Now().UTC().Format("20060102"), uuid.NewString()),
-		ContentType: input.ContentType,
+		ContentType: contentType,
 		SizeBytes:   input.SizeBytes,
 		Category:    input.Category,
 		Metadata:    mustMarshalMap(input.Metadata),
@@ -1176,7 +1275,7 @@ func (s *CommerceService) CreateDriveUpload(ctx context.Context, businessID, use
 	if err := s.db.WithContext(ctx).Create(asset).Error; err != nil {
 		return nil, err
 	}
-	uploadURL, err := s.s3.GeneratePresignedUploadURL(ctx, asset.Bucket, asset.ObjectKey, input.ContentType, 900)
+	uploadURL, err := s.s3.GeneratePresignedUploadURL(ctx, asset.Bucket, asset.ObjectKey, contentType, 900)
 	if err != nil {
 		return nil, err
 	}
@@ -1485,6 +1584,111 @@ func (s *CommerceService) findStorefrontBySlug(ctx context.Context, slug string)
 		return nil, err
 	}
 	return &storefront, nil
+}
+
+func ensurePublishedStorefront(storefront *models.Storefront) error {
+	if storefront == nil || storefront.Status != models.StorefrontStatusPublished {
+		return fmt.Errorf("storefront is not accepting orders")
+	}
+	return nil
+}
+
+func publicStorefrontCatalogResponse(storefront *models.Storefront, categories []*models.StorefrontCategory, items []*StorefrontCatalogItem) *PublicStorefrontCatalogResponse {
+	response := &PublicStorefrontCatalogResponse{
+		Storefront: &PublicStorefront{
+			Name:               storefront.Name,
+			Slug:               storefront.Slug,
+			Currency:           storefront.Currency,
+			AllowCOD:           storefront.AllowCOD,
+			AllowOnlinePayment: storefront.AllowOnlinePayment,
+			MinimumOrderValue:  storefront.MinimumOrderValue,
+		},
+		Categories: make([]*PublicStorefrontCategory, 0, len(categories)),
+		Products:   make([]*PublicStorefrontProduct, 0, len(items)),
+	}
+	for _, category := range categories {
+		if category == nil {
+			continue
+		}
+		response.Categories = append(response.Categories, &PublicStorefrontCategory{
+			ID:          category.ID,
+			Name:        category.Name,
+			Slug:        category.Slug,
+			Description: category.Description,
+			ImageURL:    category.ImageURL,
+			SortOrder:   category.SortOrder,
+		})
+	}
+	for _, item := range items {
+		if item == nil || item.StorefrontProduct == nil || item.Product == nil {
+			continue
+		}
+		storefrontProduct := item.StorefrontProduct
+		product := item.Product
+		response.Products = append(response.Products, &PublicStorefrontProduct{
+			ID:             storefrontProduct.ID,
+			ProductID:      product.ID,
+			CategoryID:     storefrontProduct.CategoryID,
+			Name:           product.Name,
+			SKU:            product.SKU,
+			Description:    product.Description,
+			Price:          product.Price,
+			MRP:            product.MRP,
+			DisplayPrice:   storefrontProduct.DisplayPrice,
+			CompareAtPrice: storefrontProduct.CompareAtPrice,
+			Currency:       product.Currency,
+			Unit:           product.Unit,
+			ImageURL:       product.ImageURL,
+			IsService:      product.IsService,
+			Badge:          storefrontProduct.Badge,
+			SortOrder:      storefrontProduct.SortOrder,
+			SEO:            unmarshalJSONMap(storefrontProduct.SEO),
+			Metadata:       unmarshalJSONMap(storefrontProduct.Metadata),
+		})
+	}
+	return response
+}
+
+func checkoutInputMatchesOrder(order *models.StoreOrder, input StorefrontCheckoutInput) bool {
+	if order == nil {
+		return false
+	}
+	snapshot := unmarshalJSONMap(order.Snapshot)
+	if existing, ok := snapshot["checkout_fingerprint"].(string); ok && existing != "" {
+		return existing == checkoutInputFingerprint(input)
+	}
+
+	customerBody, _ := json.Marshal(snapshot["customer"])
+	itemsBody, _ := json.Marshal(snapshot["items"])
+	currentCustomer, _ := json.Marshal(input.Customer)
+	currentItems, _ := json.Marshal(input.Items)
+	return bytes.Equal(customerBody, currentCustomer) && bytes.Equal(itemsBody, currentItems)
+}
+
+func checkoutInputFingerprint(input StorefrontCheckoutInput) string {
+	body, _ := json.Marshal(struct {
+		BranchID        string                 `json:"branch_id,omitempty"`
+		Currency        string                 `json:"currency,omitempty"`
+		PaymentMethod   string                 `json:"payment_method,omitempty"`
+		CouponCode      string                 `json:"coupon_code,omitempty"`
+		ShippingTotal   float64                `json:"shipping_total"`
+		BillingAddress  map[string]interface{} `json:"billing_address,omitempty"`
+		ShippingAddress map[string]interface{} `json:"shipping_address,omitempty"`
+		Customer        CheckoutCustomerInput  `json:"customer"`
+		Items           []CheckoutItemInput    `json:"items"`
+	}{
+		BranchID:        strings.TrimSpace(input.BranchID),
+		Currency:        strings.TrimSpace(input.Currency),
+		PaymentMethod:   strings.ToLower(strings.TrimSpace(input.PaymentMethod)),
+		CouponCode:      strings.ToUpper(strings.TrimSpace(input.CouponCode)),
+		ShippingTotal:   input.ShippingTotal,
+		BillingAddress:  input.BillingAddress,
+		ShippingAddress: input.ShippingAddress,
+		Customer:        input.Customer,
+		Items:           input.Items,
+	})
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])
 }
 
 func (s *CommerceService) resolveCheckoutCustomer(ctx context.Context, businessID string, input CheckoutCustomerInput, billing, shipping map[string]interface{}) (*models.Customer, error) {

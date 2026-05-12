@@ -4,13 +4,16 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
 
 	_ "github.com/lib/pq"
 )
 
 func main() {
-	// Try with wrong password
-	connStr := "host=127.0.0.1 port=5432 user=invoice_user password=WRONG_PASSWORD dbname=invoice_db sslmode=disable"
+	connStr := os.Getenv("DATABASE_URL")
+	if connStr == "" {
+		log.Fatal("DATABASE_URL is required")
+	}
 
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
@@ -20,9 +23,9 @@ func main() {
 
 	err = db.Ping()
 	if err != nil {
-		fmt.Println("Expected error with wrong password:", err)
+		fmt.Println("Connection failed:", err)
 		return
 	}
 
-	fmt.Println("Unexpectedly connected to PostgreSQL with wrong password!")
+	fmt.Println("Successfully connected to PostgreSQL!")
 }

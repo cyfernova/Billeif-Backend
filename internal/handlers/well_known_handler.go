@@ -34,7 +34,8 @@ func NewWellKnownHandler(cfg *config.Config, log *logger.Logger) *WellKnownHandl
 func (h *WellKnownHandler) GetAgentCard(c *gin.Context) {
 	baseURL := h.config.Server.ResolveBaseURL()
 	if baseURL == "" {
-		baseURL = fmt.Sprintf("http://localhost:%d", h.config.Server.Port)
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "server base URL is not configured"})
+		return
 	}
 
 	a2aBaseURL := baseURL + "/api/v1/a2a"

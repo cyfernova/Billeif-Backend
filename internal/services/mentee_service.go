@@ -420,6 +420,25 @@ func (m *MenteeService) ExportLearningData(ctx context.Context) ([]byte, error) 
 	return json.MarshalIndent(exportData, "", "  ")
 }
 
+func (m *MenteeService) ExportLearningDataForAgents(ctx context.Context, agentIDs []string) ([]byte, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	allowed := make(map[string]struct{}, len(agentIDs))
+	for _, agentID := range agentIDs {
+		allowed[agentID] = struct{}{}
+	}
+
+	exportData := make(map[string]*AgentLearningData)
+	for k, v := range m.learningData {
+		if _, ok := allowed[k]; ok {
+			exportData[k] = v
+		}
+	}
+
+	return json.MarshalIndent(exportData, "", "  ")
+}
+
 func (m *MenteeService) ImportLearningData(ctx context.Context, data []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -435,6 +454,33 @@ func (m *MenteeService) ImportLearningData(ctx context.Context, data []byte) err
 
 	m.log.Info("imported learning data", "agents", len(importData))
 
+	return nil
+}
+
+func (m *MenteeService) ImportLearningDataForAgents(ctx context.Context, data []byte, agentIDs []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	allowed := make(map[string]struct{}, len(agentIDs))
+	for _, agentID := range agentIDs {
+		allowed[agentID] = struct{}{}
+	}
+
+	var importData map[string]*AgentLearningData
+	if err := json.Unmarshal(data, &importData); err != nil {
+		return fmt.Errorf("failed to unmarshal learning data: %w", err)
+	}
+
+	for k := range importData {
+		if _, ok := allowed[k]; !ok {
+			return fmt.Errorf("learning data contains unauthorized agent")
+		}
+	}
+	for k, v := range importData {
+		m.learningData[k] = v
+	}
+
+	m.log.Info("imported scoped learning data", "agents", len(importData))
 	return nil
 }
 

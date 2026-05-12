@@ -364,12 +364,9 @@ func (s *POSService) Checkout(ctx context.Context, businessID, sessionID, idempo
 	}
 
 	cart := s.readCart(session)
-	if len(cart.Items) == 0 && len(input.Lines) > 0 {
-		cart.Items = input.Lines
-		recalculatePOSCart(&cart)
-	}
-	if len(cart.Items) == 0 {
-		return nil, fmt.Errorf("pos cart is empty")
+	cart, err = resolveTrustedPOSCheckoutCart(cart, input)
+	if err != nil {
+		return nil, err
 	}
 
 	lines := make([]CreateDocumentLineInput, 0, len(cart.Items))
@@ -557,6 +554,17 @@ func (s *POSService) readCart(session *models.POSSession) POSSessionCart {
 		cart.Items = []POSSessionCartLine{}
 	}
 	return cart
+}
+
+func resolveTrustedPOSCheckoutCart(cart POSSessionCart, input CheckoutPOSCartInput) (POSSessionCart, error) {
+	if len(cart.Items) == 0 && len(input.Lines) > 0 {
+		return POSSessionCart{}, fmt.Errorf("pos checkout requires server-side cart items")
+	}
+	if len(cart.Items) == 0 {
+		return POSSessionCart{}, fmt.Errorf("pos cart is empty")
+	}
+	recalculatePOSCart(&cart)
+	return cart, nil
 }
 
 func (s *POSService) productVisibleInWarehouse(ctx context.Context, businessID, productID, warehouseID string) bool {

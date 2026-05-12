@@ -2,12 +2,28 @@ package services
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 )
+
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) {
+	return 0, errors.New("entropy unavailable")
+}
+
+func TestGenerateWebhookSecretFailsClosedWhenEntropyUnavailable(t *testing.T) {
+	original := webhookSecretReader
+	webhookSecretReader = failingReader{}
+	t.Cleanup(func() { webhookSecretReader = original })
+
+	if secret, err := generateWebhookSecret(); err == nil || secret != "" {
+		t.Fatalf("expected entropy failure to return no secret, got secret=%q err=%v", secret, err)
+	}
+}
 
 func TestResolveAllowedWebhookIPs_BlocksPrivateDNSResolution(t *testing.T) {
 	lookup := func(ctx context.Context, host string) ([]net.IPAddr, error) {
@@ -45,28 +61,9 @@ func TestDialWebhookAddress_UsesResolvedPublicAddress(t *testing.T) {
 }
 
 func TestWebhookDeliveryClient_DoesNotFollowRedirects(t *testing.T) {
-	requestCount := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestCount++
-		w.Header().Set("Location", "https://127.0.0.1/private")
-		w.WriteHeader(http.StatusFound)
-	}))
-	defer srv.Close()
-
 	client := newWebhookDeliveryHTTPClient(2 * time.Second)
-	// Keep redirect behavior, but use default transport so this test can use httptest loopback.
-	client.Transport = http.DefaultTransport
-
-	resp, err := client.Get(srv.URL)
-	if err != nil {
-		t.Fatalf("expected redirect response, got error: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusFound {
-		t.Fatalf("expected 302 response, got %d", resp.StatusCode)
-	}
-	if requestCount != 1 {
-		t.Fatalf("expected a single request without redirect follow, got %d", requestCount)
+	err := client.CheckRedirect(&http.Request{}, []*http.Request{{}})
+	if err != http.ErrUseLastResponse {
+		t.Fatalf("expected redirect policy to stop redirects, got %v", err)
 	}
 }

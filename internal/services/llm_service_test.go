@@ -11,10 +11,10 @@ import (
 	"invoice-backend/pkg/logger"
 )
 
-func TestLLMServiceChatSendsDeepSeekOpenAIRequest(t *testing.T) {
+func TestLLMServiceChatSendsOpenAICompatibleRequest(t *testing.T) {
 	t.Parallel()
 
-	const apiKey = "test-deepseek-key"
+	const apiKey = "test-llm-key"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got, want := r.Header.Get("Authorization"), "Bearer "+apiKey; got != want {
 			t.Fatalf("Authorization header = %q, want %q", got, want)
@@ -30,22 +30,22 @@ func TestLLMServiceChatSendsDeepSeekOpenAIRequest(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		if req.Model != "deepseek-v4-flash" {
-			t.Fatalf("model = %q, want deepseek-v4-flash", req.Model)
+		if req.Model != "test-llm-model" {
+			t.Fatalf("model = %q, want test-llm-model", req.Model)
 		}
 		if len(req.Messages) != 1 || req.Messages[0].Role != "user" || req.Messages[0].Content != "hello" {
 			t.Fatalf("messages = %#v, want one OpenAI user message", req.Messages)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}],"model":"deepseek-v4-flash"}`))
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}],"model":"test-llm-model"}`))
 	}))
 	defer server.Close()
 
 	svc := NewLLMService(config.LLMConfig{
 		APIKey:  apiKey,
 		APIURL:  server.URL,
-		Model:   "deepseek-v4-flash",
+		Model:   "test-llm-model",
 		Timeout: 5,
 	}, logger.NewWithEnv("test"))
 

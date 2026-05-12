@@ -94,9 +94,6 @@ func applyStandardHeaders(req *http.Request, contentType string) {
 	req.Header.Set("Accept", ContentTypeA2AJSON)
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set(HeaderVersion, SupportedVersion)
-	if authHeader, ok := AuthorizationHeaderFromContext(req.Context()); ok {
-		req.Header.Set("Authorization", authHeader)
-	}
 }
 
 func normalizeA2ABaseURL(endpoint string) string {

@@ -17,6 +17,7 @@ import (
 )
 
 type mockUserRepo struct {
+	getByID          func(ctx context.Context, id string) (*models.User, error)
 	getByEmail       func(ctx context.Context, email string) (*models.User, error)
 	getByPhoneNumber func(ctx context.Context, phone string) (*models.User, error)
 	getByCognitoID   func(ctx context.Context, cognitoID string) (*models.User, error)
@@ -32,6 +33,9 @@ func (m *mockUserRepo) Create(ctx context.Context, user *models.User) error {
 }
 
 func (m *mockUserRepo) GetByID(ctx context.Context, id string) (*models.User, error) {
+	if m.getByID != nil {
+		return m.getByID(ctx, id)
+	}
 	return nil, errors.New("user not found")
 }
 
@@ -180,15 +184,10 @@ func TestNormalizeIndianPhoneNumber(t *testing.T) {
 	}
 }
 
-func TestPhoneRegisterRejectsExistingEmail(t *testing.T) {
+func TestPhoneRegisterRejectsEmailPrebinding(t *testing.T) {
 	t.Parallel()
 
-	repo := &mockUserRepo{
-		getByEmail: func(ctx context.Context, email string) (*models.User, error) {
-			return &models.User{ID: "existing-user"}, nil
-		},
-	}
-
+	repo := &mockUserRepo{}
 	svc := newPhoneAuthService(t, repo, &mockCognitoClient{})
 	result, err := svc.PhoneRegister(context.Background(), PhoneRegisterInput{
 		PhoneNumber: "9876543210",
@@ -198,7 +197,7 @@ func TestPhoneRegisterRejectsExistingEmail(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), phoneAuthEmailConflict)
+	assert.Contains(t, err.Error(), phoneAuthEmailUnsupported)
 }
 
 func TestPhoneRegisterRejectsExistingPhone(t *testing.T) {
@@ -250,6 +249,75 @@ func TestPhoneRegisterUsesNormalizedPhoneAsUsername(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	assert.Equal(t, "+919876543210", result.PhoneNumber)
+}
+
+func TestPhoneRegisterDoesNotPersistUnverifiedEmail(t *testing.T) {
+	t.Parallel()
+
+	phoneClient := &mockCognitoClient{
+		signUp: func(ctx context.Context, params *cognitoidentityprovider.SignUpInput) (*cognitoidentityprovider.SignUpOutput, error) {
+			return &cognitoidentityprovider.SignUpOutput{UserSub: aws.String("phone-sub-1")}, nil
+		},
+	}
+	repo := &mockUserRepo{
+		create: func(ctx context.Context, user *models.User) error {
+			require.Empty(t, user.Email)
+			return nil
+		},
+	}
+
+	svc := newPhoneAuthService(t, repo, phoneClient)
+	_, err := svc.PhoneRegister(context.Background(), PhoneRegisterInput{
+		PhoneNumber: "9876543210",
+		Name:        "Phone User",
+	})
+	require.NoError(t, err)
+}
+
+func TestSyncGoogleUserRejectsPhonePreboundEmailRelink(t *testing.T) {
+	t.Parallel()
+
+	repo := &mockUserRepo{
+		getByEmail: func(ctx context.Context, email string) (*models.User, error) {
+			return &models.User{
+				ID:        "phone-user",
+				Email:     email,
+				CognitoID: "ap-south-1_phonepool:phone-sub-1",
+				Name:      "Phone User",
+			}, nil
+		},
+	}
+	svc := newPhoneAuthService(t, repo, &mockCognitoClient{})
+
+	user, err := svc.SyncGoogleUser(context.Background(), SyncGoogleUserInput{
+		Email:     "victim@example.com",
+		CognitoID: "google-sub-1",
+		Name:      "Victim",
+	})
+
+	require.Error(t, err)
+	assert.Nil(t, user)
+	assert.Contains(t, err.Error(), "cannot relink user across identity providers")
+}
+
+func TestUpdateUserCognitoIDRejectsCrossProviderRelink(t *testing.T) {
+	t.Parallel()
+
+	repo := &mockUserRepo{
+		getByID: func(ctx context.Context, id string) (*models.User, error) {
+			return &models.User{ID: id, CognitoID: "ap-south-1_phonepool:phone-sub-1"}, nil
+		},
+		update: func(ctx context.Context, user *models.User) error {
+			t.Fatal("Update should not be called for cross-provider relink")
+			return nil
+		},
+	}
+	svc := newPhoneAuthService(t, repo, &mockCognitoClient{})
+
+	err := svc.UpdateUserCognitoID(context.Background(), "phone-user", "email-sub-1")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot relink user across identity providers")
 }
 
 func TestPhoneLoginUsesUserAuthSMSOTP(t *testing.T) {

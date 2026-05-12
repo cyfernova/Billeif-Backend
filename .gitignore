@@ -66,6 +66,7 @@ docs/swagger.yaml
 # Logs
 *.log
 logs.txt
+logs_*.txt
 
 
 
