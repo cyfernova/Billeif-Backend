@@ -41,6 +41,7 @@ locals {
     RAZORPAY_KEY_ID_SSM_PARAM                 = local.razorpay_key_id_ssm_parameter_name
     RAZORPAY_KEY_SECRET_SSM_PARAM             = local.razorpay_key_secret_ssm_parameter_name
     RAZORPAY_WEBHOOK_SECRET_SSM_PARAM         = local.razorpay_webhook_secret_ssm_parameter_name
+    ALLOWED_ORIGINS                           = local.rest_api_invoke_url
     CREDENTIAL_ENCRYPTION_KEY                 = var.credential_encryption_key
     S3_BUCKET_LOGOS                           = aws_s3_bucket.business_logos.id
     S3_BUCKET_INVOICES                        = aws_s3_bucket.invoices_pdf.id
