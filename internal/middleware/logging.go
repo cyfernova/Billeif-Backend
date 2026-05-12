@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"strings"
 	"time"
 
 	"invoice-backend/pkg/logger"
@@ -36,7 +37,12 @@ func Logger(log *logger.Logger) gin.HandlerFunc {
 			"method", c.Request.Method,
 			"route", route,
 			"path", c.Request.URL.Path,
-			"ip", c.ClientIP(),
+			"client_ip", c.ClientIP(),
+			"forwarded_for", c.GetHeader("X-Forwarded-For"),
+			"path_length", len(c.Request.URL.Path),
+			"raw_query_present", c.Request.URL.RawQuery != "",
+			"query_key_count", queryKeyCount(c.Request.URL.RawQuery),
+			"content_length", c.Request.ContentLength,
 			"duration_ms", latency.Milliseconds(),
 			"user_agent", c.Request.UserAgent(),
 		}
@@ -49,6 +55,15 @@ func Logger(log *logger.Logger) gin.HandlerFunc {
 		}
 		if role, exists := c.Get("role"); exists && role != "" {
 			fields = append(fields, "role", role)
+		}
+		if detected, exists := c.Get(securityDetectionKey); exists && detected == true {
+			fields = append(fields, "security_detection", true)
+			if categories, exists := c.Get(securityDetectionCategoriesKey); exists {
+				fields = append(fields, "security_detection_categories", categories)
+			}
+			if severity, exists := c.Get(securityDetectionSeverityKey); exists {
+				fields = append(fields, "security_detection_severity", severity)
+			}
 		}
 
 		if len(c.Errors) > 0 {
@@ -64,4 +79,11 @@ func Logger(log *logger.Logger) gin.HandlerFunc {
 			requestLog.Info("request completed", fields...)
 		}
 	}
+}
+
+func queryKeyCount(rawQuery string) int {
+	if rawQuery == "" {
+		return 0
+	}
+	return strings.Count(rawQuery, "&") + 1
 }

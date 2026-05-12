@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -65,6 +66,87 @@ func TestRequestLoggerInjectedAndCompletionLogged(t *testing.T) {
 	}
 	if _, ok := fields["request_id"]; !ok {
 		t.Fatalf("expected request completed entry to contain request_id")
+	}
+	if fields["client_ip"] == "" {
+		t.Fatalf("expected request completed entry to contain client_ip")
+	}
+	if fields["path_length"] != int64(len("/ping")) {
+		t.Fatalf("expected path_length %d, got %v", len("/ping"), fields["path_length"])
+	}
+	if fields["query_key_count"] != int64(0) {
+		t.Fatalf("expected query_key_count 0, got %v", fields["query_key_count"])
+	}
+}
+
+func TestThreatDetectionLogsAndAnnotatesRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	core, observed := observer.New(zapcore.DebugLevel)
+	log := logger.FromZap(zap.New(core))
+
+	router := gin.New()
+	router.Use(RequestID())
+	router.Use(Logger(log))
+	router.Use(ThreatDetection())
+	router.GET("/.env", func(c *gin.Context) {
+		c.String(http.StatusOK, "ok")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/.env?next=http%3A%2F%2F169.254.169.254%2Flatest%2Fmeta-data%2Fiam%2Fsecurity-credentials", nil)
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", resp.Code)
+	}
+
+	detectionEntry := findEntry(observed.AllUntimed(), "security detection matched")
+	if detectionEntry == nil {
+		t.Fatalf("expected security detection log")
+	}
+	detectionFields := detectionEntry.ContextMap()
+	if detectionFields["security_detection"] != true {
+		t.Fatalf("expected security_detection=true, got %v", detectionFields["security_detection"])
+	}
+	if detectionFields["security_detection_severity"] != "high" {
+		t.Fatalf("expected high severity, got %v", detectionFields["security_detection_severity"])
+	}
+	if detectionFields["query_key_count"] != int64(1) {
+		t.Fatalf("expected query_key_count 1, got %v", detectionFields["query_key_count"])
+	}
+	if !containsLoggedCategory(detectionFields["security_detection_categories"], "secret_discovery_probe") {
+		t.Fatalf("expected secret discovery category, got %v", detectionFields["security_detection_categories"])
+	}
+	if !containsLoggedCategory(detectionFields["security_detection_categories"], "ssrf_metadata_probe") {
+		t.Fatalf("expected SSRF metadata category, got %v", detectionFields["security_detection_categories"])
+	}
+
+	completionEntry := findEntry(observed.AllUntimed(), "request completed")
+	if completionEntry == nil {
+		t.Fatalf("expected request completed log")
+	}
+	completionFields := completionEntry.ContextMap()
+	if completionFields["security_detection"] != true {
+		t.Fatalf("expected completion log security_detection=true, got %v", completionFields["security_detection"])
+	}
+}
+
+func TestThreatDetectionIgnoresNormalRequests(t *testing.T) {
+	categories, severity := detectRequestThreats(http.MethodGet, "/api/v1/vendors", "page=1", "invoiceappv2/1 CFNetwork/3860.500.112 Darwin/25.5.0")
+	if len(categories) != 0 {
+		t.Fatalf("expected no categories, got %v", categories)
+	}
+	if severity != "" {
+		t.Fatalf("expected empty severity, got %q", severity)
+	}
+}
+
+func TestThreatDetectionFlagsUnusualMethods(t *testing.T) {
+	categories, severity := detectRequestThreats(http.MethodTrace, "/api/v1/a2a/tasks", "", "curl/8.0")
+	if severity != "high" {
+		t.Fatalf("expected high severity, got %q", severity)
+	}
+	if !containsLoggedCategory(categories, "unusual_http_method") {
+		t.Fatalf("expected unusual method category, got %v", categories)
 	}
 }
 
@@ -189,4 +271,24 @@ func findEntry(entries []observer.LoggedEntry, msg string) *observer.LoggedEntry
 		}
 	}
 	return nil
+}
+
+func containsLoggedCategory(value interface{}, want string) bool {
+	switch categories := value.(type) {
+	case []string:
+		for _, category := range categories {
+			if category == want {
+				return true
+			}
+		}
+	case []interface{}:
+		for _, category := range categories {
+			if category == want {
+				return true
+			}
+		}
+	case string:
+		return strings.Contains(categories, want)
+	}
+	return false
 }

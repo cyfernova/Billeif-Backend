@@ -279,6 +279,7 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 	router.Use(middleware.SecurityHeaders())
 	router.Use(middleware.RequestID())
 	router.Use(middleware.Logger(log))
+	router.Use(middleware.ThreatDetection())
 
 	isProd := logger.IsProductionEnvironment(cfg.Environment)
 
