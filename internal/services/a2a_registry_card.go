@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
+	"time"
 
 	"invoice-backend/internal/models"
 	"invoice-backend/pkg/a2a"
@@ -30,19 +33,22 @@ var merchantProcurementSkills = []string{
 	taskTypeMerchantProcessCart,
 }
 
+var a2aAgentCardHTTPClient = newWebhookDeliveryHTTPClient(15 * time.Second)
+
 func buildA2AAgentCardFromRegistration(req *RegisterAgentRequest) (*a2a.AgentCard, error) {
-	if strings.TrimSpace(req.A2AEndpoint) == "" {
-		return nil, fmt.Errorf("a2a endpoint is required")
+	a2aEndpoint, err := validateA2ARegistryURL(req.A2AEndpoint, "a2a endpoint")
+	if err != nil {
+		return nil, err
 	}
 
 	card := a2a.NewAgentCard(req.Name, req.Description, registryAgentCardVersion)
 	card.Provider = &a2a.AgentProvider{
 		Organization: req.Name,
-		URL:          strings.TrimSpace(req.A2AEndpoint),
+		URL:          a2aEndpoint,
 	}
 	card.SupportedInterfaces = []a2a.AgentInterface{
 		{
-			URL:             strings.TrimSpace(req.A2AEndpoint),
+			URL:             a2aEndpoint,
 			ProtocolBinding: a2a.ProtocolBindingHTTPJSON,
 			ProtocolVersion: a2a.SupportedVersion,
 		},
@@ -162,7 +168,15 @@ func normalizeParsedAgentCard(card *a2a.AgentCard, registry *models.AgentRegistr
 
 	clone := *card
 	if len(card.SupportedInterfaces) > 0 {
-		clone.SupportedInterfaces = append([]a2a.AgentInterface(nil), card.SupportedInterfaces...)
+		clone.SupportedInterfaces = make([]a2a.AgentInterface, 0, len(card.SupportedInterfaces))
+		for _, iface := range card.SupportedInterfaces {
+			endpoint, err := validateA2ARegistryURL(iface.URL, "a2a endpoint")
+			if err != nil {
+				continue
+			}
+			iface.URL = endpoint
+			clone.SupportedInterfaces = append(clone.SupportedInterfaces, iface)
+		}
 	}
 	if len(card.DefaultInputModes) == 0 {
 		clone.DefaultInputModes = []string{"text/plain", "application/json"}
@@ -174,12 +188,12 @@ func normalizeParsedAgentCard(card *a2a.AgentCard, registry *models.AgentRegistr
 		clone.Skills = buildAgentSkills(registry.AgentType, registry.Capabilities)
 	}
 	if len(clone.SupportedInterfaces) == 0 && registry != nil && registry.A2AEndpoint != nil && strings.TrimSpace(*registry.A2AEndpoint) != "" {
-		clone.SupportedInterfaces = []a2a.AgentInterface{
-			{
-				URL:             strings.TrimSpace(*registry.A2AEndpoint),
+		if endpoint, err := validateA2ARegistryURL(*registry.A2AEndpoint, "a2a endpoint"); err == nil {
+			clone.SupportedInterfaces = []a2a.AgentInterface{{
+				URL:             endpoint,
 				ProtocolBinding: a2a.ProtocolBindingHTTPJSON,
 				ProtocolVersion: a2a.SupportedVersion,
-			},
+			}}
 		}
 	}
 	if strings.TrimSpace(clone.Version) == "" {
@@ -245,12 +259,16 @@ func resolveRegistryA2AEndpoint(card *a2a.AgentCard, registry *models.AgentRegis
 				continue
 			}
 			if iface.ProtocolBinding == "" || iface.ProtocolBinding == a2a.ProtocolBindingHTTPJSON || iface.ProtocolBinding == a2a.ProtocolBindingJSONRPC {
-				return strings.TrimSpace(iface.URL)
+				if endpoint, err := validateA2ARegistryURL(iface.URL, "a2a endpoint"); err == nil {
+					return endpoint
+				}
 			}
 		}
 	}
 	if registry != nil && registry.A2AEndpoint != nil {
-		return strings.TrimSpace(*registry.A2AEndpoint)
+		if endpoint, err := validateA2ARegistryURL(*registry.A2AEndpoint, "a2a endpoint"); err == nil {
+			return endpoint
+		}
 	}
 	return ""
 }
@@ -277,12 +295,17 @@ func cardSupportsProcurement(card *a2a.AgentCard) bool {
 }
 
 func fetchA2AAgentCard(ctx context.Context, wellKnownURI string) (*a2a.AgentCard, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSpace(wellKnownURI), nil)
+	cardURL, err := validateA2ARegistryURL(wellKnownURI, "agent card well-known URL")
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cardURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build agent card request: %w", err)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := a2aAgentCardHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch agent card: %w", err)
 	}
@@ -298,4 +321,35 @@ func fetchA2AAgentCard(ctx context.Context, wellKnownURI string) (*a2a.AgentCard
 	}
 
 	return nil, fmt.Errorf("decode agent card: unsupported format")
+}
+
+func validateA2ARegistryURL(rawURL, fieldName string) (string, error) {
+	trimmed := strings.TrimSpace(rawURL)
+	if trimmed == "" {
+		return "", fmt.Errorf("%s is required", fieldName)
+	}
+
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("invalid %s: %w", fieldName, err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", fmt.Errorf("%s must use http or https", fieldName)
+	}
+	if parsed.Host == "" || parsed.Hostname() == "" {
+		return "", fmt.Errorf("%s host is required", fieldName)
+	}
+	if parsed.User != nil {
+		return "", fmt.Errorf("%s must not include userinfo", fieldName)
+	}
+
+	host := normalizeWebhookHost(parsed.Hostname())
+	if err := validateWebhookHost(host); err != nil {
+		return "", fmt.Errorf("invalid %s: %w", fieldName, err)
+	}
+	if ip := net.ParseIP(host); ip != nil && isDeniedIP(ip) {
+		return "", fmt.Errorf("%s private or local IP addresses are not allowed", fieldName)
+	}
+
+	return trimmed, nil
 }

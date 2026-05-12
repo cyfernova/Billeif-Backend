@@ -3,8 +3,9 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
-	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -103,19 +104,30 @@ func TestResolveProcurementSellerInterfaceRefreshesFromWellKnownAgentCard(t *tes
 		t.Fatalf("build a2a card: %v", err)
 	}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewEncoder(w).Encode(card); err != nil {
+	oldClient := a2aAgentCardHTTPClient
+	a2aAgentCardHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.String() != "https://seller.example/.well-known/agent-card.json" {
+			t.Fatalf("unexpected agent card URL %q", req.URL.String())
+		}
+		body, err := json.Marshal(card)
+		if err != nil {
 			t.Fatalf("encode card: %v", err)
 		}
-	}))
-	defer server.Close()
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(string(body))),
+			Request:    req,
+		}, nil
+	})}
+	defer func() { a2aAgentCardHTTPClient = oldClient }()
 
 	registry := &models.AgentRegistry{
 		AgentID:      uuid.New(),
 		AgentType:    "merchant",
 		IsActive:     true,
 		IsVerified:   true,
-		WellKnownURI: stringPtr(server.URL),
+		WellKnownURI: stringPtr("https://seller.example/.well-known/agent-card.json"),
 		AgentCard:    datatypes.JSON([]byte(`{"name":"stale"}`)),
 	}
 
@@ -132,6 +144,45 @@ func TestResolveProcurementSellerInterfaceRefreshesFromWellKnownAgentCard(t *tes
 	}
 	if !cardSupportsProcurement(resolvedCard) {
 		t.Fatal("expected refreshed card to support procurement")
+	}
+}
+
+func TestBuildA2AAgentCardFromRegistrationRejectsLocalEndpoint(t *testing.T) {
+	_, err := buildA2AAgentCardFromRegistration(&RegisterAgentRequest{
+		Name:        "Seller",
+		Description: "Test seller",
+		A2AEndpoint: "http://127.0.0.1:8080/api/v1/a2a",
+		AgentType:   "merchant",
+	})
+	if err == nil {
+		t.Fatal("expected local A2A endpoint to be rejected")
+	}
+}
+
+func TestResolveRegistryA2AEndpointRejectsPrivateCardEndpoint(t *testing.T) {
+	card := a2a.NewAgentCard("Seller", "private endpoint", registryAgentCardVersion)
+	card.SupportedInterfaces = []a2a.AgentInterface{{
+		URL:             "https://10.0.0.2/api/v1/a2a",
+		ProtocolBinding: a2a.ProtocolBindingHTTPJSON,
+		ProtocolVersion: a2a.SupportedVersion,
+	}}
+
+	if endpoint := resolveRegistryA2AEndpoint(card, nil); endpoint != "" {
+		t.Fatalf("expected private endpoint to be filtered, got %q", endpoint)
+	}
+}
+
+func TestFetchA2AAgentCardRejectsPrivateWellKnownURLWithoutRequest(t *testing.T) {
+	oldClient := a2aAgentCardHTTPClient
+	a2aAgentCardHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		t.Fatalf("HTTP client should not be called for private well-known URL %q", req.URL.String())
+		return nil, nil
+	})}
+	defer func() { a2aAgentCardHTTPClient = oldClient }()
+
+	_, err := fetchA2AAgentCard(context.Background(), "https://169.254.169.254/.well-known/agent-card.json")
+	if err == nil {
+		t.Fatal("expected private well-known URL to be rejected")
 	}
 }
 
@@ -325,6 +376,12 @@ func mustJSON(t *testing.T, value interface{}) datatypes.JSON {
 		t.Fatalf("marshal json: %v", err)
 	}
 	return datatypes.JSON(data)
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
 
 func artifactPayload(t *testing.T, artifact *a2a.Artifact) map[string]interface{} {
