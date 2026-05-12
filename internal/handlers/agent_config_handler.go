@@ -3,7 +3,9 @@ package handlers
 import (
 	"net/http"
 
+	"invoice-backend/internal/middleware"
 	"invoice-backend/internal/models"
+	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/internal/services"
 	"invoice-backend/pkg/logger"
 
@@ -12,7 +14,7 @@ import (
 
 type AgentConfigHandler struct {
 	configService *services.AgentConfigService
-	agentService  *services.AgentService
+	ap2Repo       interfaces.AP2Repository
 	bargaining    *services.BargainingService
 	mentee        *services.MenteeService
 	log           *logger.Logger
@@ -20,18 +22,40 @@ type AgentConfigHandler struct {
 
 func NewAgentConfigHandler(
 	configService *services.AgentConfigService,
-	agentService *services.AgentService,
+	ap2Repo interfaces.AP2Repository,
 	bargaining *services.BargainingService,
 	mentee *services.MenteeService,
 	log *logger.Logger,
 ) *AgentConfigHandler {
 	return &AgentConfigHandler{
 		configService: configService,
-		agentService:  agentService,
+		ap2Repo:       ap2Repo,
 		bargaining:    bargaining,
 		mentee:        mentee,
 		log:           log,
 	}
+}
+
+func (h *AgentConfigHandler) requireOwnedAgent(c *gin.Context, agentID string) (*models.Agent, bool) {
+	if h.ap2Repo == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "agent repository unavailable"})
+		return nil, false
+	}
+	return requireOwnedAgent(c, h.ap2Repo, agentID)
+}
+
+func (h *AgentConfigHandler) agentConfigVisible(c *gin.Context, config *models.WellKnownAgentConfig, userID, businessID string) bool {
+	if config == nil || config.AgentID == "" {
+		return false
+	}
+
+	agent, err := h.ap2Repo.GetAgentByID(c.Request.Context(), config.AgentID)
+	if err != nil {
+		h.log.Warn("skipping agent config for unavailable agent", "error", err, "agent_id", config.AgentID)
+		return false
+	}
+
+	return agent.OwnerID == userID || (businessID != "" && agent.BusinessID == businessID)
 }
 
 type CreateAgentConfigRequest struct {
@@ -65,9 +89,8 @@ func (h *AgentConfigHandler) CreateAgentConfig(c *gin.Context) {
 		return
 	}
 
-	agent, err := h.agentService.GetAgentByID(c.Request.Context(), req.AgentID)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+	agent, ok := h.requireOwnedAgent(c, req.AgentID)
+	if !ok {
 		return
 	}
 
@@ -94,6 +117,10 @@ func (h *AgentConfigHandler) CreateAgentConfig(c *gin.Context) {
 // @Router /agents/config/{agent_id} [get]
 func (h *AgentConfigHandler) GetAgentConfig(c *gin.Context) {
 	agentID := c.Param("agent_id")
+
+	if _, ok := h.requireOwnedAgent(c, agentID); !ok {
+		return
+	}
 
 	config, err := h.configService.GetAgentConfig(c.Request.Context(), agentID)
 	if err != nil {
@@ -125,6 +152,11 @@ func (h *AgentConfigHandler) GetAgentConfig(c *gin.Context) {
 func (h *AgentConfigHandler) UpdateAgentConfig(c *gin.Context) {
 	agentID := c.Param("agent_id")
 
+	agent, ok := h.requireOwnedAgent(c, agentID)
+	if !ok {
+		return
+	}
+
 	var req UpdateAgentConfigRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -134,12 +166,6 @@ func (h *AgentConfigHandler) UpdateAgentConfig(c *gin.Context) {
 	config, err := h.configService.GetAgentConfig(c.Request.Context(), agentID)
 	if err != nil {
 		if err == services.ErrAgentConfigNotFound {
-			agent, agentErr := h.agentService.GetAgentByID(c.Request.Context(), agentID)
-			if agentErr != nil {
-				c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
-				return
-			}
-
 			defaultConfig, defaultErr := h.configService.CreateDefaultConfigForAgentType(agent.Type)
 			if defaultErr != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": defaultErr.Error()})
@@ -233,12 +259,6 @@ func (h *AgentConfigHandler) UpdateAgentConfig(c *gin.Context) {
 		config.Config.Volatility = *req.Volatility
 	}
 
-	agent, err := h.agentService.GetAgentByID(c.Request.Context(), agentID)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
-		return
-	}
-
 	config, err = h.configService.SaveAgentConfig(c.Request.Context(), agent, config.Config)
 	if err != nil {
 		h.log.Error("failed to update agent config", "error", err, "agent_id", agentID)
@@ -259,6 +279,10 @@ func (h *AgentConfigHandler) UpdateAgentConfig(c *gin.Context) {
 // @Router /agents/config/{agent_id} [delete]
 func (h *AgentConfigHandler) DeleteAgentConfig(c *gin.Context) {
 	agentID := c.Param("agent_id")
+
+	if _, ok := h.requireOwnedAgent(c, agentID); !ok {
+		return
+	}
 
 	err := h.configService.DeleteAgentConfig(c.Request.Context(), agentID)
 	if err != nil {
@@ -283,13 +307,30 @@ func (h *AgentConfigHandler) DeleteAgentConfig(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /agents/config [get]
 func (h *AgentConfigHandler) GetAllAgentConfigs(c *gin.Context) {
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
+	if h.ap2Repo == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "agent repository unavailable"})
+		return
+	}
+
 	configs, err := h.configService.GetAllAgentConfigs(c.Request.Context())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get agent configs"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"configs": configs})
+	businessID := middleware.GetEffectiveBusinessID(c)
+	visibleConfigs := make([]*models.WellKnownAgentConfig, 0, len(configs))
+	for _, config := range configs {
+		if h.agentConfigVisible(c, config, userID, businessID) {
+			visibleConfigs = append(visibleConfigs, config)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"configs": visibleConfigs})
 }
 
 type CreateDefaultConfigRequest struct {
@@ -317,9 +358,8 @@ func (h *AgentConfigHandler) CreateDefaultConfig(c *gin.Context) {
 		return
 	}
 
-	agent, err := h.agentService.GetAgentByID(c.Request.Context(), req.AgentID)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+	agent, ok := h.requireOwnedAgent(c, req.AgentID)
+	if !ok {
 		return
 	}
 
