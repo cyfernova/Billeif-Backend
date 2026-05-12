@@ -218,7 +218,7 @@ func (r *reportingRepository) GetDashboard(ctx context.Context, query reporting.
 	baseArgs := []interface{}{query.BusinessID}
 	docWhere := []string{"d.business_id = ?", "d.deleted_at IS NULL"}
 	paymentWhere := []string{"p.business_id = ?", "p.deleted_at IS NULL"}
-	stockWhere := []string{"ib.business_id = ?", "ib.deleted_at IS NULL"}
+	stockWhere := []string{"sm.business_id = ?", "sm.deleted_at IS NULL"}
 	stockArgs := []interface{}{query.BusinessID}
 
 	if query.Filters.DateFrom != nil {
@@ -239,7 +239,7 @@ func (r *reportingRepository) GetDashboard(ctx context.Context, query reporting.
 		stockArgs = append(stockArgs, query.Filters.ProjectID)
 	}
 	if query.Filters.WarehouseID != "" {
-		stockWhere = append(stockWhere, "ib.warehouse_id = ?")
+		stockWhere = append(stockWhere, "sm.warehouse_id = ?")
 		stockArgs = append(stockArgs, query.Filters.WarehouseID)
 	}
 
@@ -390,7 +390,6 @@ func (r *reportingRepository) GetDashboard(ctx context.Context, query reporting.
 		FROM stock_moves sm
 		LEFT JOIN warehouses w ON w.id = sm.warehouse_id AND w.deleted_at IS NULL
 		WHERE %s
-		  AND sm.deleted_at IS NULL
 		GROUP BY COALESCE(w.name, 'Unassigned')
 		ORDER BY movement_count DESC
 		LIMIT 5

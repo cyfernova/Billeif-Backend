@@ -85,13 +85,13 @@ func (h *PaymentHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, payment)
 }
 
-// List retrieves all payments for an invoice
+// List retrieves payments for the active business, optionally filtered by invoice.
 // @Summary List payments
-// @Description Returns a list of payments recorded for a specific invoice.
+// @Description Returns a paginated list of payments recorded for the active business. Provide invoice_id to limit results to one invoice.
 // @Tags Payments
 // @Produce json
 // @Security BearerAuth
-// @Param invoice_id query string true "Invoice ID"
+// @Param invoice_id query string false "Invoice ID"
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Page size" default(10)
 // @Success 200 {object} map[string]interface{}
@@ -104,16 +104,19 @@ func (h *PaymentHandler) List(c *gin.Context) {
 	if !ok {
 		return
 	}
-	invoiceID := c.Query("invoice_id")
-	if invoiceID == "" {
-		log.Warn("missing invoice_id query param")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invoice_id is required"})
-		return
-	}
-
 	page, limit := utils.ParsePagination(c)
 
-	payments, total, err := h.svc.ListByInvoiceAndBusiness(c.Request.Context(), businessID, invoiceID, page, limit)
+	invoiceID := c.Query("invoice_id")
+	var (
+		payments []*models.Payment
+		total    int64
+		err      error
+	)
+	if invoiceID == "" {
+		payments, total, err = h.svc.ListByBusiness(c.Request.Context(), businessID, page, limit)
+	} else {
+		payments, total, err = h.svc.ListByInvoiceAndBusiness(c.Request.Context(), businessID, invoiceID, page, limit)
+	}
 	if err != nil {
 		log.Error("failed to list payments", "error", err, "invoice_id", invoiceID)
 		if isNotFoundErr(err) {

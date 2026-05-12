@@ -69,6 +69,7 @@ type InvoiceRepository interface {
 type PaymentRepository interface {
 	Create(ctx context.Context, payment *models.Payment) error
 	GetByID(ctx context.Context, id, businessID string) (*models.Payment, error)
+	GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.Payment, int64, error)
 	GetByInvoiceID(ctx context.Context, invoiceID string, page, limit int) ([]*models.Payment, int64, error)
 	Update(ctx context.Context, payment *models.Payment) error
 	Delete(ctx context.Context, id string) error

@@ -128,6 +128,10 @@ func (s *PaymentService) ListByInvoice(ctx context.Context, invoiceID string, pa
 	return s.repo.GetByInvoiceID(ctx, invoiceID, page, limit)
 }
 
+func (s *PaymentService) ListByBusiness(ctx context.Context, businessID string, page, limit int) ([]*models.Payment, int64, error) {
+	return s.repo.GetByBusinessID(ctx, businessID, page, limit)
+}
+
 func (s *PaymentService) ListByInvoiceAndBusiness(ctx context.Context, businessID, invoiceID string, page, limit int) ([]*models.Payment, int64, error) {
 	_, err := s.invoiceRepo.GetByID(ctx, invoiceID, businessID)
 	if err != nil {
@@ -313,6 +317,7 @@ type PaymentInvoiceRepositoryTestable interface {
 type PaymentRepositoryTestable interface {
 	Create(ctx context.Context, payment *models.Payment) error
 	GetByID(ctx context.Context, id, businessID string) (*models.Payment, error)
+	GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.Payment, int64, error)
 	GetByInvoiceID(ctx context.Context, invoiceID string, page, limit int) ([]*models.Payment, int64, error)
 	Update(ctx context.Context, payment *models.Payment) error
 	Delete(ctx context.Context, id string) error
@@ -387,6 +392,11 @@ func (s *PaymentServiceTestable) GetByBusiness(ctx context.Context, businessID, 
 // ListByInvoice retrieves payments for an invoice with pagination
 func (s *PaymentServiceTestable) ListByInvoice(ctx context.Context, invoiceID string, page, limit int) ([]*models.Payment, int64, error) {
 	return s.repo.GetByInvoiceID(ctx, invoiceID, page, limit)
+}
+
+// ListByBusiness retrieves payments for a business with pagination.
+func (s *PaymentServiceTestable) ListByBusiness(ctx context.Context, businessID string, page, limit int) ([]*models.Payment, int64, error) {
+	return s.repo.GetByBusinessID(ctx, businessID, page, limit)
 }
 
 // ListByInvoiceAndBusiness retrieves payments for an invoice scoped to business

@@ -31,6 +31,11 @@ func (m *MockPaymentRepository) GetByID(ctx context.Context, id, businessID stri
 	return args.Get(0).(*models.Payment), args.Error(1)
 }
 
+func (m *MockPaymentRepository) GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.Payment, int64, error) {
+	args := m.Called(ctx, businessID, page, limit)
+	return args.Get(0).([]*models.Payment), args.Get(1).(int64), args.Error(2)
+}
+
 func (m *MockPaymentRepository) GetByInvoiceID(ctx context.Context, invoiceID string, page, limit int) ([]*models.Payment, int64, error) {
 	args := m.Called(ctx, invoiceID, page, limit)
 	return args.Get(0).([]*models.Payment), args.Get(1).(int64), args.Error(2)
@@ -485,6 +490,32 @@ func TestPaymentService_ListByInvoice_EmptyResult(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, payments, 0)
 	assert.Equal(t, int64(0), total)
+	mockRepo.AssertExpectations(t)
+}
+
+// TestListByBusiness_Success tests listing all payments for a business.
+func TestPaymentService_ListByBusiness_Success(t *testing.T) {
+	mockRepo := new(MockPaymentRepository)
+	mockInvoiceRepo := new(MockInvoiceRepositoryPayment)
+	log := logger.New()
+
+	svc := services.NewPaymentServiceForTesting(mockRepo, mockInvoiceRepo, log)
+
+	ctx := context.Background()
+	businessID := "business-123"
+
+	expectedPayments := []*models.Payment{
+		{ID: "p1", BusinessID: businessID, InvoiceID: "invoice-1", Amount: 100.00},
+		{ID: "p2", BusinessID: businessID, InvoiceID: "invoice-2", Amount: 200.00},
+	}
+
+	mockRepo.On("GetByBusinessID", ctx, businessID, 1, 20).Return(expectedPayments, int64(2), nil)
+
+	payments, total, err := svc.ListByBusiness(ctx, businessID, 1, 20)
+
+	assert.NoError(t, err)
+	assert.Len(t, payments, 2)
+	assert.Equal(t, int64(2), total)
 	mockRepo.AssertExpectations(t)
 }
 
