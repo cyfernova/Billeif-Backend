@@ -103,6 +103,44 @@ resource "aws_cloudwatch_metric_alarm" "lambda_gst_errors" {
   }
 }
 
+locals {
+  threat_detection_log_groups = {
+    api_http   = aws_cloudwatch_log_group.lambda_api_http.name
+    a2a_stream = aws_cloudwatch_log_group.lambda_a2a_stream.name
+    websocket  = aws_cloudwatch_log_group.lambda_ws_handler.name
+  }
+}
+
+resource "aws_cloudwatch_log_metric_filter" "threat_detection" {
+  for_each       = local.threat_detection_log_groups
+  name           = "${var.project_name}-${each.key}-threat-detection"
+  log_group_name = each.value
+  pattern        = "{ $.security_detection = true }"
+
+  metric_transformation {
+    name      = "ThreatDetectionCount"
+    namespace = "${var.project_name}/Security"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "threat_detection" {
+  alarm_name          = "${var.project_name}-threat-detection"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "ThreatDetectionCount"
+  namespace           = "${var.project_name}/Security"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 1
+  alarm_description   = "High-signal exploit or scanner probe detected in backend request logs"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  depends_on = [aws_cloudwatch_log_metric_filter.threat_detection]
+}
+
 resource "aws_cloudwatch_metric_alarm" "rds_cpu_high" {
   alarm_name          = "${var.project_name}-rds-cpu-high"
   comparison_operator = "GreaterThanThreshold"
