@@ -102,6 +102,7 @@ type UpdatePriceListInput struct {
 
 type PriceListDetail struct {
 	PriceList   *models.PriceList             `json:"price_list"`
+	Items       []*models.PriceListItem       `json:"items,omitempty"`
 	Assignments []*models.PriceListAssignment `json:"assignments,omitempty"`
 }
 
@@ -220,7 +221,7 @@ func (s *BillingOpsService) GetPriceList(ctx context.Context, businessID, id str
 	for i := range assignments {
 		result = append(result, &assignments[i])
 	}
-	return &PriceListDetail{PriceList: &priceList, Assignments: result}, nil
+	return &PriceListDetail{PriceList: &priceList, Items: priceList.Items, Assignments: result}, nil
 }
 
 func (s *BillingOpsService) ListPriceLists(ctx context.Context, businessID string, page, limit int) ([]*models.PriceList, int64, error) {
