@@ -21,7 +21,7 @@ type A2AClient struct {
 
 func NewA2AClient(_ *ap2.SignatureService, log *logger.Logger) *A2AClient {
 	return &A2AClient{
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: newSafeA2AHTTPClient(30 * time.Second),
 		log:        log,
 	}
 }
@@ -31,7 +31,10 @@ func (c *A2AClient) SendMessage(ctx context.Context, receiverEndpoint string, re
 		return nil, err
 	}
 
-	endpoint := normalizeA2ABaseURL(receiverEndpoint) + "/message:send"
+	endpoint, err := safeA2AMessageURL(receiverEndpoint)
+	if err != nil {
+		return nil, err
+	}
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal send message request: %w", err)
