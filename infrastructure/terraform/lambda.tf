@@ -149,6 +149,11 @@ resource "aws_lambda_function" "api_http" {
     })
   }
 
+  vpc_config {
+    subnet_ids         = aws_subnet.private[*].id
+    security_group_ids = [aws_security_group.lambda.id]
+  }
+
   lifecycle {
     precondition {
       condition     = fileexists(local.lambda_artifacts.api_http)
@@ -177,6 +182,11 @@ resource "aws_lambda_function" "a2a_stream" {
       WEBSOCKET_API_ENDPOINT = local.websocket_api_invoke_url
       SERVER_BASE_URL        = local.rest_api_invoke_url
     })
+  }
+
+  vpc_config {
+    subnet_ids         = aws_subnet.private[*].id
+    security_group_ids = [aws_security_group.lambda.id]
   }
 
   lifecycle {
@@ -208,6 +218,11 @@ resource "aws_lambda_function" "sqs_invoice" {
     })
   }
 
+  vpc_config {
+    subnet_ids         = aws_subnet.private[*].id
+    security_group_ids = [aws_security_group.lambda.id]
+  }
+
   lifecycle {
     precondition {
       condition     = fileexists(local.lambda_artifacts.sqs_invoice)
@@ -237,6 +252,11 @@ resource "aws_lambda_function" "sqs_payment" {
     })
   }
 
+  vpc_config {
+    subnet_ids         = aws_subnet.private[*].id
+    security_group_ids = [aws_security_group.lambda.id]
+  }
+
   lifecycle {
     precondition {
       condition     = fileexists(local.lambda_artifacts.sqs_payment)
@@ -264,6 +284,11 @@ resource "aws_lambda_function" "sqs_gst" {
     variables = merge(local.common_lambda_env, {
       WEBSOCKET_API_ENDPOINT = local.websocket_api_invoke_url
     })
+  }
+
+  vpc_config {
+    subnet_ids         = aws_subnet.private[*].id
+    security_group_ids = [aws_security_group.lambda.id]
   }
 
   lifecycle {
@@ -302,6 +327,11 @@ resource "aws_lambda_function" "sqs_bargaining" {
     })
   }
 
+  vpc_config {
+    subnet_ids         = aws_subnet.private[*].id
+    security_group_ids = [aws_security_group.lambda.id]
+  }
+
   lifecycle {
     precondition {
       condition     = fileexists(local.lambda_artifacts.sqs_bargaining)
@@ -333,6 +363,11 @@ resource "aws_lambda_function" "ws_handler" {
     })
   }
 
+  vpc_config {
+    subnet_ids         = aws_subnet.private[*].id
+    security_group_ids = [aws_security_group.lambda.id]
+  }
+
   lifecycle {
     precondition {
       condition     = fileexists(local.lambda_artifacts.ws_handler)
@@ -361,6 +396,11 @@ resource "aws_lambda_function" "voice_session" {
       AWS_ENDPOINT           = ""
       WEBSOCKET_API_ENDPOINT = local.websocket_management_api_endpoint
     })
+  }
+
+  vpc_config {
+    subnet_ids         = aws_subnet.private[*].id
+    security_group_ids = [aws_security_group.lambda.id]
   }
 
   lifecycle {
