@@ -23,6 +23,10 @@ env:
   TERRAFORM_DIR: infrastructure/terraform
   AWS_REGION: ${{ vars.AWS_REGION != '' && vars.AWS_REGION || 'us-east-1' }}
   TF_BACKEND_KEY: ${{ vars.TF_STATE_KEY != '' && vars.TF_STATE_KEY || 'terraform.tfstate' }}
+  TF_VAR_db_allowed_cidr: ${{ secrets.TF_VAR_DB_ALLOWED_CIDR }}
+  TF_VAR_db_password: ${{ secrets.TF_VAR_DB_PASSWORD }}
+  TF_VAR_credential_encryption_key: ${{ secrets.TF_VAR_CREDENTIAL_ENCRYPTION_KEY }}
+  TF_VAR_jwt_secret: ${{ secrets.TF_VAR_JWT_SECRET }}
   TF_VAR_google_client_id: ${{ secrets.TF_VAR_GOOGLE_CLIENT_ID }}
   TF_VAR_google_client_secret: ${{ secrets.TF_VAR_GOOGLE_CLIENT_SECRET }}
   TF_VAR_india_sms_sender_id: ${{ secrets.TF_VAR_INDIA_SMS_SENDER_ID }}
