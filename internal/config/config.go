@@ -399,6 +399,8 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
+	applyFlatEnvFileFallbacks(&cfg)
+
 	if rawAllowedOrigins := viper.GetString("ALLOWED_ORIGINS"); rawAllowedOrigins != "" {
 		cfg.AllowedOrigins = parseAllowedOrigins(rawAllowedOrigins)
 	}
@@ -414,6 +416,97 @@ func Load() (*Config, error) {
 	setDefaults(&cfg)
 
 	return &cfg, nil
+}
+
+func applyFlatEnvFileFallbacks(cfg *Config) {
+	if cfg == nil {
+		return
+	}
+
+	setIfEmpty(&cfg.Environment, "ENVIRONMENT")
+	setIfZeroInt(&cfg.Server.Port, "SERVER_PORT")
+	setIfEmpty(&cfg.Server.BaseURL, "SERVER_BASE_URL")
+
+	setIfEmpty(&cfg.Database.Host, "DATABASE_HOST")
+	setIfZeroInt(&cfg.Database.Port, "DATABASE_PORT")
+	setIfEmpty(&cfg.Database.User, "DATABASE_USER")
+	setIfEmpty(&cfg.Database.Password, "DATABASE_PASSWORD")
+	setIfEmpty(&cfg.Database.Name, "DATABASE_NAME")
+	setIfEmpty(&cfg.Database.SSLMode, "DATABASE_SSL_MODE")
+
+	setIfEmpty(&cfg.AWS.Region, "AWS_REGION")
+	setIfEmpty(&cfg.AWS.AccessKey, "AWS_ACCESS_KEY_ID")
+	setIfEmpty(&cfg.AWS.SecretKey, "AWS_SECRET_ACCESS_KEY")
+	setIfEmpty(&cfg.AWS.SessionToken, "AWS_SESSION_TOKEN")
+	setIfEmpty(&cfg.AWS.Endpoint, "AWS_ENDPOINT")
+
+	setIfEmpty(&cfg.SSM.DatabaseHostParam, "DATABASE_HOST_SSM_PARAM")
+	setIfEmpty(&cfg.SSM.DatabaseUserParam, "DATABASE_USER_SSM_PARAM")
+	setIfEmpty(&cfg.SSM.DatabasePasswordParam, "DATABASE_PASSWORD_SSM_PARAM")
+	setIfEmpty(&cfg.SSM.CredentialEncryptionKeyParam, "CREDENTIAL_ENCRYPTION_KEY_SSM_PARAM")
+	setIfEmpty(&cfg.SSM.RazorpayKeyIDParam, "RAZORPAY_KEY_ID_SSM_PARAM")
+	setIfEmpty(&cfg.SSM.RazorpayKeySecretParam, "RAZORPAY_KEY_SECRET_SSM_PARAM")
+	setIfEmpty(&cfg.SSM.RazorpayWebhookSecretParam, "RAZORPAY_WEBHOOK_SECRET_SSM_PARAM")
+
+	setIfEmpty(&cfg.Cognito.UserPoolID, "COGNITO_USER_POOL_ID")
+	setIfEmpty(&cfg.Cognito.ClientID, "COGNITO_CLIENT_ID")
+	setIfEmpty(&cfg.Cognito.Domain, "COGNITO_DOMAIN")
+	setIfEmpty(&cfg.Cognito.Region, "COGNITO_REGION")
+	setIfZeroDuration(&cfg.Cognito.JWKSRefreshRate, "COGNITO_JWKS_REFRESH_RATE")
+	setIfEmpty(&cfg.Cognito.Phone.UserPoolID, "COGNITO_PHONE_USER_POOL_ID")
+	setIfEmpty(&cfg.Cognito.Phone.ClientID, "COGNITO_PHONE_CLIENT_ID")
+	setIfEmpty(&cfg.Cognito.Phone.Region, "COGNITO_PHONE_REGION")
+	setIfEmpty(&cfg.Cognito.Phone.OTPCooldownTable, "COGNITO_PHONE_OTP_COOLDOWN_TABLE")
+
+	setIfZeroDuration(&cfg.JWT.AccessTokenExpiry, "JWT_ACCESS_TOKEN_EXPIRY")
+	setIfZeroDuration(&cfg.JWT.RefreshTokenExpiry, "JWT_REFRESH_TOKEN_EXPIRY")
+
+	setIfEmpty(&cfg.S3.BucketLogos, "S3_BUCKET_LOGOS")
+	setIfEmpty(&cfg.S3.BucketInvoices, "S3_BUCKET_INVOICES")
+	setIfEmpty(&cfg.S3.BucketProducts, "S3_BUCKET_PRODUCTS")
+	setIfEmpty(&cfg.S3.BucketEmailSink, "S3_BUCKET_EMAIL_SINK")
+	setIfEmpty(&cfg.S3.BucketDrive, "S3_BUCKET_DRIVE")
+
+	setIfEmpty(&cfg.Razorpay.KeyID, "RAZORPAY_KEY_ID")
+	setIfEmpty(&cfg.Razorpay.KeySecret, "RAZORPAY_KEY_SECRET")
+	setIfEmpty(&cfg.Razorpay.WebhookSecret, "RAZORPAY_WEBHOOK_SECRET")
+	setIfEmpty(&cfg.Razorpay.BaseURL, "RAZORPAY_BASE_URL")
+	setIfZeroInt(&cfg.Razorpay.Timeout, "RAZORPAY_TIMEOUT")
+
+	setIfEmpty(&cfg.SQS.InvoiceQueue, "SQS_INVOICE_QUEUE")
+	setIfEmpty(&cfg.SQS.PaymentQueue, "SQS_PAYMENT_QUEUE")
+	setIfEmpty(&cfg.SQS.GSTQueue, "SQS_GST_QUEUE")
+	setIfEmpty(&cfg.SQS.BargainingQueue, "SQS_BARGAINING_QUEUE")
+
+	setIfEmpty(&cfg.LLM.APIKey, "LLM_API_KEY")
+	setIfEmpty(&cfg.LLM.APIURL, "LLM_API_URL")
+	setIfEmpty(&cfg.LLM.Model, "LLM_MODEL")
+	setIfZeroInt(&cfg.LLM.Timeout, "LLM_TIMEOUT")
+
+	setIfEmpty(&cfg.Credentials.EncryptionKey, "CREDENTIAL_ENCRYPTION_KEY")
+}
+
+func setIfEmpty(target *string, key string) {
+	if target == nil || strings.TrimSpace(*target) != "" {
+		return
+	}
+	if value := strings.TrimSpace(viper.GetString(key)); value != "" {
+		*target = value
+	}
+}
+
+func setIfZeroInt(target *int, key string) {
+	if target == nil || *target != 0 || !viper.IsSet(key) {
+		return
+	}
+	*target = viper.GetInt(key)
+}
+
+func setIfZeroDuration(target *time.Duration, key string) {
+	if target == nil || *target != 0 || !viper.IsSet(key) {
+		return
+	}
+	*target = viper.GetDuration(key)
 }
 
 func setDefaults(cfg *Config) {
