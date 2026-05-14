@@ -3,6 +3,7 @@ package logger
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -61,21 +62,21 @@ func (g *GORMLogger) Info(ctx context.Context, msg string, args ...interface{}) 
 	if g.level < gormlogger.Info {
 		return
 	}
-	g.withContext(ctx).Info("gorm info", "message", msg, "args", args)
+	g.withContext(ctx).Info("gorm info", "message", msg, "args", sanitizeArgs(args))
 }
 
 func (g *GORMLogger) Warn(ctx context.Context, msg string, args ...interface{}) {
 	if g.level < gormlogger.Warn {
 		return
 	}
-	g.withContext(ctx).Warn("gorm warning", "message", msg, "args", args)
+	g.withContext(ctx).Warn("gorm warning", "message", msg, "args", sanitizeArgs(args))
 }
 
 func (g *GORMLogger) Error(ctx context.Context, msg string, args ...interface{}) {
 	if g.level < gormlogger.Error {
 		return
 	}
-	g.withContext(ctx).Error("gorm error", "message", msg, "args", args)
+	g.withContext(ctx).Error("gorm error", "message", msg, "args", sanitizeArgs(args))
 }
 
 func (g *GORMLogger) Trace(ctx context.Context, begin time.Time, fc func() (string, int64), err error) {
@@ -147,4 +148,23 @@ func parseGORMLevel(level string) gormlogger.LogLevel {
 	default:
 		return gormlogger.Warn
 	}
+}
+
+func sanitizeArgs(args []interface{}) []interface{} {
+	sanitized := make([]interface{}, 0, len(args))
+	for _, arg := range args {
+		if arg == nil {
+			sanitized = append(sanitized, arg)
+			continue
+		}
+		switch v := arg.(type) {
+		case string, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, bool, time.Time:
+			sanitized = append(sanitized, v)
+		case []byte:
+			sanitized = append(sanitized, string(v))
+		default:
+			sanitized = append(sanitized, fmt.Sprintf("[unserializable:%T]", v))
+		}
+	}
+	return sanitized
 }
