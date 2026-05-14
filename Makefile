@@ -1,8 +1,9 @@
 # Load .env file if it exists
 -include .env
+-include .env.local
 export
 
-.PHONY: help infra-backend-init infra-init infra-validate infra-apply infra-plan infra-destroy infra-output build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-payment build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-voice-session build-lambda-custom-sms-sender package-lambda run-local test test-integration migrate-up migrate-down migrate-rds-up migrate-rds-down migrate-create fmt lint clean deps test-coverage swagger
+.PHONY: help infra-backend-init infra-init infra-validate infra-apply infra-plan infra-destroy infra-output build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-payment build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-voice-session build-lambda-custom-sms-sender package-lambda rds-tunnel run-local test test-integration migrate-up migrate-down migrate-rds-up migrate-rds-down migrate-create fmt lint clean deps test-coverage swagger
 
 LAMBDA_BUILD_DIR := .build/lambda
 TERRAFORM_DIR := infrastructure/terraform
@@ -10,6 +11,7 @@ TF_BACKEND_BUCKET ?= invoice-backend-tfstate-830283279729
 TF_BACKEND_REGION ?= us-east-1
 TF_BACKEND_LOCK_TABLE ?= terraform-state-lock
 TF_BACKEND_KEY ?= terraform.tfstate
+RDS_LOCAL_PORT ?= 15432
 TF_VAR_credential_encryption_key ?= $(CREDENTIAL_ENCRYPTION_KEY)
 TF_VAR_india_sms_sender_id ?= $(INDIA_SMS_SENDER_ID)
 TF_VAR_india_dlt_entity_id ?= $(INDIA_DLT_ENTITY_ID)
@@ -141,8 +143,36 @@ package-lambda: build-lambda build-lambda-custom-sms-sender ## Package Lambda ar
 	cd $(LAMBDA_BUILD_DIR)/voice-session && zip -q -r ../voice-session.zip bootstrap
 	cd $(LAMBDA_BUILD_DIR)/custom-sms-sender && zip -q -r ../custom-sms-sender.zip .
 
+rds-tunnel: ## Forward localhost:RDS_LOCAL_PORT to private RDS through SSM
+	@set -euo pipefail; \
+	command -v aws >/dev/null || (echo "aws CLI is required" >&2; exit 1); \
+	command -v session-manager-plugin >/dev/null || (echo "session-manager-plugin is required" >&2; exit 1); \
+	cd $(TERRAFORM_DIR); \
+	RDS_HOST=$$(terraform output -raw rds_address); \
+	RDS_PORT=$$(terraform output -raw rds_port); \
+	TARGET_ID="$(RDS_TUNNEL_TARGET_ID)"; \
+	if [ -z "$$TARGET_ID" ]; then \
+		TARGET_ID=$$(terraform output -raw rds_tunnel_instance_id); \
+	fi; \
+	if [ -z "$$TARGET_ID" ]; then \
+		echo "RDS tunnel target not found. Apply Terraform or set RDS_TUNNEL_TARGET_ID." >&2; \
+		exit 1; \
+	fi; \
+	echo "Forwarding 127.0.0.1:$(RDS_LOCAL_PORT) -> $$RDS_HOST:$$RDS_PORT via $$TARGET_ID"; \
+	aws ssm start-session \
+		--region $(TF_BACKEND_REGION) \
+		--target "$$TARGET_ID" \
+		--document-name AWS-StartPortForwardingSessionToRemoteHost \
+		--parameters "{\"host\":[\"$$RDS_HOST\"],\"portNumber\":[\"$$RDS_PORT\"],\"localPortNumber\":[\"$(RDS_LOCAL_PORT)\"]}"
+
 run-local: ## Run the HTTP server locally
-	go run ./cmd/server
+	@set -euo pipefail; \
+	if [ -n "$(strip $(DATABASE_HOST_SSM_PARAM))" ] && [ -z "$(strip $(DATABASE_HOST))" ]; then \
+		echo "DATABASE_HOST is unset; using SSM tunnel endpoint 127.0.0.1:$(RDS_LOCAL_PORT). Start it in another terminal with: make rds-tunnel"; \
+		DATABASE_HOST=127.0.0.1 DATABASE_PORT=$(RDS_LOCAL_PORT) go run ./cmd/server; \
+	else \
+		go run ./cmd/server; \
+	fi
 
 # Test targets
 test: ## Run unit tests

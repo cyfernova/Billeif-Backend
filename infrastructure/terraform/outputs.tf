@@ -28,6 +28,11 @@ output "rds_database_name" {
   value       = aws_db_instance.main.db_name
 }
 
+output "rds_tunnel_instance_id" {
+  description = "SSM-managed EC2 instance ID for local RDS port forwarding"
+  value       = try(aws_instance.rds_tunnel[0].id, "")
+}
+
 output "rest_api_url" {
   description = "REST API invoke URL"
   value       = aws_api_gateway_stage.main.invoke_url

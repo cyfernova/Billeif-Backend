@@ -74,6 +74,12 @@ variable "db_publicly_accessible" {
   }
 }
 
+variable "enable_rds_tunnel" {
+  description = "Create a private SSM-managed EC2 instance for local RDS port forwarding in non-production environments."
+  type        = bool
+  default     = true
+}
+
 # RDS Configuration
 variable "db_instance_class" {
   description = "RDS instance class"
@@ -91,6 +97,12 @@ variable "db_port" {
   description = "Database port"
   type        = number
   default     = 5432
+}
+
+variable "rds_tunnel_instance_type" {
+  description = "EC2 instance type for the SSM RDS tunnel host."
+  type        = string
+  default     = "t3.micro"
 }
 
 variable "db_username" {
