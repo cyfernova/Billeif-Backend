@@ -4,6 +4,9 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/spf13/viper"
 )
 
 func TestSetDefaultsDoesNotInstallDevelopmentAllowedOrigins(t *testing.T) {
@@ -123,6 +126,32 @@ func TestParseAllowedOriginsTrimsCommaSeparatedValues(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("expected origin %d to be %q, got %q", i, want[i], got[i])
 		}
+	}
+}
+
+func TestApplyFlatEnvFileFallbacksCopiesFlatKeys(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	viper.Set("DATABASE_HOST_SSM_PARAM", "/invoice-backend/dev/db/host")
+	viper.Set("AWS_REGION", "us-east-1")
+	viper.Set("JWT_ACCESS_TOKEN_EXPIRY", "1h")
+	viper.Set("S3_BUCKET_LOGOS", "logos")
+
+	cfg := &Config{}
+	applyFlatEnvFileFallbacks(cfg)
+
+	if cfg.SSM.DatabaseHostParam != "/invoice-backend/dev/db/host" {
+		t.Fatalf("expected flat DATABASE_HOST_SSM_PARAM to populate SSM config, got %q", cfg.SSM.DatabaseHostParam)
+	}
+	if cfg.AWS.Region != "us-east-1" {
+		t.Fatalf("expected flat AWS_REGION to populate AWS config, got %q", cfg.AWS.Region)
+	}
+	if cfg.JWT.AccessTokenExpiry != time.Hour {
+		t.Fatalf("expected flat JWT_ACCESS_TOKEN_EXPIRY to populate JWT config, got %s", cfg.JWT.AccessTokenExpiry)
+	}
+	if cfg.S3.BucketLogos != "logos" {
+		t.Fatalf("expected flat S3_BUCKET_LOGOS to populate S3 config, got %q", cfg.S3.BucketLogos)
 	}
 }
 
