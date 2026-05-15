@@ -5,10 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"invoice-backend/internal/models"
@@ -386,7 +386,9 @@ func TestListPriceLists_Success(t *testing.T) {
 	}
 
 	var response map[string]interface{}
-	json.Unmarshal(res.Body.Bytes(), &response)
+	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
 
 	if response["data"] == nil {
 		t.Error("expected data field in response")
@@ -1917,8 +1919,8 @@ func (h *BillingOpsHandlerTestable) ListInvoiceSubscriptionRuns(c *gin.Context) 
 func parsePaginationTest(c *gin.Context) (page, limit int) {
 	pageStr := c.DefaultQuery("page", "1")
 	limitStr := c.DefaultQuery("limit", "10")
-	fmt.Sscanf(pageStr, "%d", &page)
-	fmt.Sscanf(limitStr, "%d", &limit)
+	page, _ = strconv.Atoi(pageStr)
+	limit, _ = strconv.Atoi(limitStr)
 	if page < 1 {
 		page = 1
 	}

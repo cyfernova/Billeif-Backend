@@ -126,7 +126,9 @@ func TestChat_Success(t *testing.T) {
 	}
 
 	var resp map[string]interface{}
-	json.Unmarshal(res.Body.Bytes(), &resp)
+	if err := json.Unmarshal(res.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
 	if resp["response"] != expectedResponse {
 		t.Fatalf("expected response '%s', got '%s'", expectedResponse, resp["response"])
 	}
@@ -284,7 +286,9 @@ func TestAgentAssist_Success(t *testing.T) {
 	}
 
 	var resp map[string]interface{}
-	json.Unmarshal(res.Body.Bytes(), &resp)
+	if err := json.Unmarshal(res.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
 	if resp["response"] != expectedResponse {
 		t.Fatalf("expected response '%s', got '%s'", expectedResponse, resp["response"])
 	}

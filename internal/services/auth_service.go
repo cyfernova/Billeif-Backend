@@ -189,11 +189,7 @@ func shouldIgnoreVerificationResendError(err error) bool {
 	}
 
 	var limitExceeded *types.LimitExceededException
-	if errors.As(err, &limitExceeded) {
-		return true
-	}
-
-	return false
+	return errors.As(err, &limitExceeded)
 }
 
 func isAlreadyConfirmedResendError(err error) bool {
@@ -366,23 +362,35 @@ func (s *AuthService) UpdateUserCognitoID(ctx context.Context, userID string, co
 }
 
 type UpdateProfileInput struct {
-	Name              string `json:"name" binding:"required,min=2"`
-	Email             string `json:"email,omitempty" binding:"omitempty,email,max=255"`
-	PhoneNumber       string `json:"phone_number,omitempty" binding:"omitempty,max=20"`
-	ProfilePictureURL string `json:"profile_picture_url,omitempty"`
+	Name              *string `json:"name,omitempty" binding:"omitempty,min=2"`
+	Email             *string `json:"email,omitempty" binding:"omitempty,email,max=255"`
+	PhoneNumber       *string `json:"phone_number,omitempty" binding:"omitempty,max=20"`
+	ProfilePictureURL *string `json:"profile_picture_url,omitempty"`
+}
+
+func (i UpdateProfileInput) HasChanges() bool {
+	return i.Name != nil || i.Email != nil || i.PhoneNumber != nil || i.ProfilePictureURL != nil
 }
 
 func (s *AuthService) UpdateProfile(ctx context.Context, userID string, input UpdateProfileInput) (*models.User, error) {
+	if !input.HasChanges() {
+		return nil, fmt.Errorf("at least one profile field is required")
+	}
+
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
 
-	if input.Name != "" {
-		user.Name = strings.TrimSpace(input.Name)
+	if input.Name != nil {
+		name := strings.TrimSpace(*input.Name)
+		if len(name) < 2 {
+			return nil, fmt.Errorf("name must be at least 2 characters")
+		}
+		user.Name = name
 	}
-	if input.Email != "" {
-		email := normalizeOptionalEmail(input.Email)
+	if input.Email != nil {
+		email := normalizeOptionalEmail(*input.Email)
 		if email != "" && email != user.Email {
 			existing, err := s.userRepo.GetByEmail(ctx, email)
 			if err == nil && existing != nil && existing.ID != user.ID {
@@ -394,15 +402,15 @@ func (s *AuthService) UpdateProfile(ctx context.Context, userID string, input Up
 			user.Email = email
 		}
 	}
-	if input.PhoneNumber != "" {
-		normalizedPhone, err := normalizeIndianPhoneNumber(input.PhoneNumber)
+	if input.PhoneNumber != nil {
+		normalizedPhone, err := normalizeIndianPhoneNumber(*input.PhoneNumber)
 		if err != nil {
 			return nil, err
 		}
 		if normalizedPhone != user.PhoneNumber {
 			existing, err := s.userRepo.GetByPhoneNumber(ctx, normalizedPhone)
 			if err == nil && existing != nil && existing.ID != user.ID {
-				return nil, fmt.Errorf(phoneAuthConflictMessage)
+				return nil, errors.New(phoneAuthConflictMessage)
 			}
 			if err != nil && !isUserNotFoundError(err) {
 				return nil, err
@@ -410,8 +418,8 @@ func (s *AuthService) UpdateProfile(ctx context.Context, userID string, input Up
 			user.PhoneNumber = normalizedPhone
 		}
 	}
-	if input.ProfilePictureURL != "" {
-		user.ProfilePictureURL = strings.TrimSpace(input.ProfilePictureURL)
+	if input.ProfilePictureURL != nil {
+		user.ProfilePictureURL = strings.TrimSpace(*input.ProfilePictureURL)
 	}
 	user.UpdatedAt = time.Now()
 
@@ -438,9 +446,8 @@ func (s *AuthService) UploadProfilePicture(ctx context.Context, userID string, d
 		return nil, fmt.Errorf("failed to upload profile picture: %w", err)
 	}
 
-	return s.UpdateProfile(ctx, userID, UpdateProfileInput{
-		ProfilePictureURL: s.s3.GetObjectURL(bucket, key),
-	})
+	profilePictureURL := s.s3.GetObjectURL(bucket, key)
+	return s.UpdateProfile(ctx, userID, UpdateProfileInput{ProfilePictureURL: &profilePictureURL})
 }
 
 func (s *AuthService) profilePictureKey(userID, contentType string) string {
@@ -626,10 +633,10 @@ func (s *AuthService) PhoneRegister(ctx context.Context, input PhoneRegisterInpu
 	}
 
 	if strings.TrimSpace(input.Email) != "" {
-		return nil, fmt.Errorf(phoneAuthEmailUnsupported)
+		return nil, errors.New(phoneAuthEmailUnsupported)
 	}
 	if _, err := s.userRepo.GetByPhoneNumber(ctx, normalizedPhone); err == nil {
-		return nil, fmt.Errorf(phoneAuthConflictMessage)
+		return nil, errors.New(phoneAuthConflictMessage)
 	}
 
 	if err := s.enforcePhoneOTPCooldown(ctx, phoneSignupCooldownPurpose, normalizedPhone); err != nil {
@@ -766,7 +773,7 @@ func (s *AuthService) PhoneLogin(ctx context.Context, input PhoneLoginInput) (*P
 			return nil, fmt.Errorf("phone number not registered")
 		}
 		s.log.Error("phone login precheck failed", "phone_number", maskPhoneNumber(normalizedPhone), "error", err)
-		return nil, fmt.Errorf(phoneAuthGenericFailure)
+		return nil, errors.New(phoneAuthGenericFailure)
 	}
 
 	if err := s.enforcePhoneOTPCooldown(ctx, phoneLoginCooldownPurpose, normalizedPhone); err != nil {
@@ -866,7 +873,7 @@ func (s *AuthService) PhoneLogout(ctx context.Context, accessToken string) error
 
 func (s *AuthService) ensurePhoneAuthConfigured() error {
 	if s.cognitoPhone == nil || s.cfg == nil || s.cfg.Cognito.Phone.UserPoolID == "" || s.cfg.Cognito.Phone.ClientID == "" {
-		return fmt.Errorf(phoneAuthDisabledMessage)
+		return errors.New(phoneAuthDisabledMessage)
 	}
 	return nil
 }
@@ -913,7 +920,7 @@ func (s *AuthService) enforcePhoneOTPCooldown(ctx context.Context, purpose, phon
 
 	var conditionalErr *dynamodbtypes.ConditionalCheckFailedException
 	if errors.As(err, &conditionalErr) {
-		return fmt.Errorf(phoneAuthRateLimitMessage)
+		return errors.New(phoneAuthRateLimitMessage)
 	}
 
 	s.log.Error("failed to enforce phone OTP cooldown", "phone_number", maskPhoneNumber(phoneNumber), "purpose", purpose, "error", err)
@@ -1000,19 +1007,15 @@ func phonePoolIssuer(region, userPoolID string) string {
 	return fmt.Sprintf("https://cognito-idp.%s.amazonaws.com/%s", region, userPoolID)
 }
 
-func generatePhonePoolUsername() string {
-	return "phone-" + uuid.NewString()
-}
-
 func classifyPhoneAuthError(err error) error {
 	var tooManyRequests *types.TooManyRequestsException
 	if errors.As(err, &tooManyRequests) {
-		return fmt.Errorf(phoneAuthRateLimitMessage)
+		return errors.New(phoneAuthRateLimitMessage)
 	}
 
 	var limitExceeded *types.LimitExceededException
 	if errors.As(err, &limitExceeded) {
-		return fmt.Errorf(phoneAuthRateLimitMessage)
+		return errors.New(phoneAuthRateLimitMessage)
 	}
 
 	var codeDeliveryFailure *types.CodeDeliveryFailureException
@@ -1055,7 +1058,7 @@ func classifyPhoneAuthError(err error) error {
 		return fmt.Errorf("verification session expired or code is invalid")
 	}
 
-	return fmt.Errorf(phoneAuthGenericFailure)
+	return errors.New(phoneAuthGenericFailure)
 }
 
 func classifyEmailAuthError(err error) error {
@@ -1084,7 +1087,7 @@ func classifyEmailAuthError(err error) error {
 		return fmt.Errorf("incorrect email or password")
 	}
 
-	return fmt.Errorf(phoneAuthGenericFailure)
+	return errors.New(phoneAuthGenericFailure)
 }
 
 func maskPhoneNumber(phoneNumber string) string {

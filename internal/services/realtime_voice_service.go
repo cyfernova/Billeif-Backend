@@ -239,7 +239,9 @@ func (s *RealtimeVoiceService) unregister(session *RealtimeVoiceSession) {
 func (s *RealtimeVoiceService) waitForDeepgramWelcome(session *RealtimeVoiceSession, dg *DeepgramVoiceAgentClient) error {
 	if session.DeepgramConn != nil {
 		_ = session.DeepgramConn.SetReadDeadline(time.Now().Add(10 * time.Second))
-		defer session.DeepgramConn.SetReadDeadline(time.Time{})
+		defer func() {
+			_ = session.DeepgramConn.SetReadDeadline(time.Time{})
+		}()
 	}
 	messageType, payload, err := dg.ReadMessage()
 	if err != nil {

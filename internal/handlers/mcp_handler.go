@@ -21,6 +21,8 @@ type MCPHandler struct {
 	log         *logger.Logger
 }
 
+type requestIDContextKey struct{}
+
 // NewMCPHandlerFromConfig creates a new MCP handler from config.
 func NewMCPHandlerFromConfig(cfg *config.Config, log *logger.Logger) *MCPHandler {
 	serverURL := cfg.MCP.ServerURL
@@ -156,11 +158,11 @@ func (h *MCPHandler) CallTool(c *gin.Context) {
 // @Failure 500 {object} map[string]string
 // @Router /mcp/tools/list [get]
 func (h *MCPHandler) ListTools(c *gin.Context) {
-	h.log.Info("ListTools called", "h", fmt.Sprintf("%v", h), "client", fmt.Sprintf("%v", h != nil && h.client != nil))
 	if h == nil || h.client == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "MCP handler not configured"})
 		return
 	}
+	h.log.Info("ListTools called", "h", fmt.Sprintf("%v", h), "client", fmt.Sprintf("%v", h.client != nil))
 
 	ctx := contextWithRequestID(c.Request.Context(), uuid.NewString())
 
@@ -203,5 +205,5 @@ func (h *MCPHandler) HealthCheck(c *gin.Context) {
 
 // contextWithRequestID adds a request ID to context.
 func contextWithRequestID(ctx context.Context, requestID string) context.Context {
-	return context.WithValue(ctx, "X-Request-ID", requestID)
+	return context.WithValue(ctx, requestIDContextKey{}, requestID)
 }

@@ -16,6 +16,10 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
+func testStringPtr(value string) *string {
+	return &value
+}
+
 // MockUserRepository mocks the UserRepository interface
 type MockUserRepository struct {
 	mock.Mock
@@ -680,9 +684,9 @@ func TestAuthService_UpdateProfile(t *testing.T) {
 	}
 
 	input := services.UpdateProfileInput{
-		Name:        "New Name",
-		Email:       "new@example.com",
-		PhoneNumber: "9876543210",
+		Name:        testStringPtr("New Name"),
+		Email:       testStringPtr("new@example.com"),
+		PhoneNumber: testStringPtr("9876543210"),
 	}
 
 	mockUserRepo.On("GetByID", ctx, userID).Return(existingUser, nil)
@@ -716,8 +720,8 @@ func TestAuthService_UpdateProfileRejectsInvalidPhone(t *testing.T) {
 	}
 
 	input := services.UpdateProfileInput{
-		Name:        "New Name",
-		PhoneNumber: "12345",
+		Name:        testStringPtr("New Name"),
+		PhoneNumber: testStringPtr("12345"),
 	}
 
 	mockUserRepo.On("GetByID", ctx, userID).Return(existingUser, nil)
@@ -729,6 +733,52 @@ func TestAuthService_UpdateProfileRejectsInvalidPhone(t *testing.T) {
 	assert.Contains(t, err.Error(), "phone_number must be a valid Indian mobile number")
 	mockUserRepo.AssertExpectations(t)
 	mockUserRepo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything)
+}
+
+func TestAuthService_UpdateProfileAllowsPartialPhoneOnly(t *testing.T) {
+	mockCognito := new(MockCognitoIdentityProviderAPI)
+	mockUserRepo := new(MockUserRepository)
+	log := logger.New()
+
+	svc := services.NewAuthServiceWithMocks(&services.TestAuthConfig{}, mockUserRepo, mockCognito, nil, nil, log)
+
+	ctx := context.Background()
+	userID := "user-123"
+	existingUser := &models.User{
+		ID:          userID,
+		Email:       "test@example.com",
+		PhoneNumber: "+919999999999",
+		Name:        "Existing Name",
+		Role:        "viewer",
+	}
+
+	mockUserRepo.On("GetByID", ctx, userID).Return(existingUser, nil)
+	mockUserRepo.On("GetByPhoneNumber", ctx, "+919876543210").Return(nil, errors.New("user not found"))
+	mockUserRepo.On("Update", ctx, mock.AnythingOfType("*models.User")).Return(nil)
+
+	user, err := svc.UpdateProfile(ctx, userID, services.UpdateProfileInput{
+		PhoneNumber: testStringPtr("9876543210"),
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, "Existing Name", user.Name)
+	assert.Equal(t, "+919876543210", user.PhoneNumber)
+	mockUserRepo.AssertExpectations(t)
+}
+
+func TestAuthService_UpdateProfileRejectsNoopPayload(t *testing.T) {
+	mockCognito := new(MockCognitoIdentityProviderAPI)
+	mockUserRepo := new(MockUserRepository)
+	log := logger.New()
+
+	svc := services.NewAuthServiceWithMocks(&services.TestAuthConfig{}, mockUserRepo, mockCognito, nil, nil, log)
+
+	user, err := svc.UpdateProfile(context.Background(), "user-123", services.UpdateProfileInput{})
+
+	assert.Nil(t, user)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "at least one profile field")
+	mockUserRepo.AssertNotCalled(t, "GetByID", mock.Anything, mock.Anything)
 }
 
 // TestAuthService_ChangePassword tests the ChangePassword method

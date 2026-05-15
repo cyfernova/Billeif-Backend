@@ -81,10 +81,6 @@ func normalizeUQCCode(code string) string {
 	return gst.NormalizeReportUQC(code)
 }
 
-func isValidHSNCode(code string) bool {
-	return gst.IsValidHSNCode(code)
-}
-
 func almostEqualFloat(a, b float64) bool {
 	return math.Abs(a-b) < 0.01
 }

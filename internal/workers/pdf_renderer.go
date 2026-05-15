@@ -22,6 +22,8 @@ import (
 
 	"github.com/phpdave11/gofpdf"
 	"github.com/skip2/go-qrcode"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 //go:embed fonts/*.ttf
@@ -1060,7 +1062,7 @@ func documentTitle(labels *localeLabels, documentType string) string {
 	if title, ok := labels.documentTitles[documentType]; ok && title != "" {
 		return title
 	}
-	return strings.ReplaceAll(strings.Title(strings.ReplaceAll(documentType, "_", " ")), " ", " ")
+	return strings.ReplaceAll(cases.Title(language.English).String(strings.ReplaceAll(documentType, "_", " ")), " ", " ")
 }
 
 func stripHTML(value string) string {

@@ -493,6 +493,55 @@ func (h *WorkflowHandler) RunWorkflow(c *gin.Context) {
 	})
 }
 
+// DuplicateWorkflow handles POST /workflows/:id/duplicate
+// @Summary Duplicate workflow
+// @Description Creates a disabled copy of a workflow owned by the authenticated user
+// @Tags Workflows
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Workflow ID"
+// @Success 201 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Failure 403 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /workflows/{id}/duplicate [post]
+func (h *WorkflowHandler) DuplicateWorkflow(c *gin.Context) {
+	workflowID := c.Param("id")
+	if workflowID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Workflow ID is required",
+		})
+		return
+	}
+
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "User authentication required",
+		})
+		return
+	}
+
+	workflow, err := h.workflowService.DuplicateWorkflow(c.Request.Context(), workflowID, userID.(string))
+	if err != nil {
+		status := http.StatusInternalServerError
+		switch err.Error() {
+		case "workflow not found":
+			status = http.StatusNotFound
+		case "access denied":
+			status = http.StatusForbidden
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"workflow": workflow,
+		"message":  "Workflow duplicated successfully",
+	})
+}
+
 // GetWorkflowRuns handles GET /workflows/:id/runs
 // Returns run history for a workflow
 func (h *WorkflowHandler) GetWorkflowRuns(c *gin.Context) {

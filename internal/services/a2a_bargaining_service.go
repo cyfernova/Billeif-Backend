@@ -648,7 +648,10 @@ func (s *A2ABargainingService) recordLearning(negotiation *models.BargainingNego
 		Strategy:  action,
 	}
 
-	s.mentee.RecordNegotiationOutcome(context.Background(), &outcome)
+	if err := s.mentee.RecordNegotiationOutcome(context.Background(), &outcome); err != nil {
+		s.log.Warn("failed to record negotiation outcome", "negotiation_id", negotiation.ID, "error", err)
+		return
+	}
 
 	s.log.Info("learning recorded",
 		"negotiation_id", negotiation.ID,

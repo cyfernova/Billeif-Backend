@@ -286,9 +286,7 @@ func cardSupportsProcurement(card *a2a.AgentCard) bool {
 	}
 
 	for _, skill := range card.Skills {
-		if _, ok := required[strings.TrimSpace(skill.ID)]; ok {
-			delete(required, strings.TrimSpace(skill.ID))
-		}
+		delete(required, strings.TrimSpace(skill.ID))
 	}
 
 	return len(required) == 0

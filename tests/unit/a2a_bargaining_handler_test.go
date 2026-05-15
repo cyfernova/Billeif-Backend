@@ -660,7 +660,9 @@ func TestStartNegotiation_BuyerAgentWrongType(t *testing.T) {
 	}
 
 	var response map[string]string
-	json.Unmarshal(res.Body.Bytes(), &response)
+	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
 	if response["error"] != "buyer agent must be of type 'shopping'" {
 		t.Errorf("unexpected error message: %s", response["error"])
 	}
@@ -697,7 +699,9 @@ func TestStartNegotiation_SellerAgentWrongType(t *testing.T) {
 	}
 
 	var response map[string]string
-	json.Unmarshal(res.Body.Bytes(), &response)
+	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
 	if response["error"] != "seller agent must be of type 'merchant'" {
 		t.Errorf("unexpected error message: %s", response["error"])
 	}

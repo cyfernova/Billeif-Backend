@@ -392,6 +392,11 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			protected.POST("/auth/profile-picture", h.Auth.UploadProfilePicture)
 			protected.PUT("/auth/profile-picture", h.Auth.UpdateProfilePicture)
 
+			dashboard := protected.Group("/dashboard")
+			{
+				dashboard.GET("/summary", h.Dashboard.Summary)
+			}
+
 			businesses := protected.Group("/business-profiles")
 			{
 				businesses.GET("", h.Business.List)
@@ -913,6 +918,8 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			workflows.POST("/:id/pause", h.Workflow.PauseWorkflow)
 			workflows.POST("/:id/resume", h.Workflow.ResumeWorkflow)
 			workflows.POST("/:id/run", h.Workflow.RunWorkflow)
+			workflows.POST("/:id/duplicate", h.Workflow.DuplicateWorkflow)
+			workflows.GET("/:id/runs", h.Workflow.GetWorkflowRuns)
 		}
 
 		// Intent Processing endpoints

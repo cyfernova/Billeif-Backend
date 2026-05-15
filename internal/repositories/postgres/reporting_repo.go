@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1633,8 +1634,7 @@ func toFloat64(value interface{}) float64 {
 		v, _ := typed.Float64()
 		return v
 	case string:
-		var parsed float64
-		fmt.Sscanf(typed, "%f", &parsed)
+		parsed, _ := strconv.ParseFloat(strings.TrimSpace(typed), 64)
 		return parsed
 	default:
 		return 0
