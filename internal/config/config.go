@@ -46,10 +46,13 @@ type LoggingConfig struct {
 }
 
 type LLMConfig struct {
-	APIKey  string `mapstructure:"API_KEY"`
-	APIURL  string `mapstructure:"API_URL"`
-	Model   string `mapstructure:"MODEL"`
-	Timeout int    `mapstructure:"TIMEOUT"`
+	APIKey     string `mapstructure:"API_KEY"`
+	APIURL     string `mapstructure:"API_URL"`
+	Model      string `mapstructure:"MODEL"`
+	Timeout    int    `mapstructure:"TIMEOUT"`
+	ExaAPIKey  string `mapstructure:"EXA_API_KEY"`
+	ExaBaseURL string `mapstructure:"EXA_BASE_URL"`
+	ExaTimeout int    `mapstructure:"EXA_TIMEOUT"`
 }
 
 type DeepgramConfig struct {
@@ -369,6 +372,9 @@ func Load() (*Config, error) {
 	_ = viper.BindEnv("LLM.API_URL", "LLM_API_URL")
 	_ = viper.BindEnv("LLM.MODEL", "LLM_MODEL")
 	_ = viper.BindEnv("LLM.TIMEOUT", "LLM_TIMEOUT")
+	_ = viper.BindEnv("LLM.EXA_API_KEY", "EXA_API_KEY")
+	_ = viper.BindEnv("LLM.EXA_BASE_URL", "EXA_BASE_URL")
+	_ = viper.BindEnv("LLM.EXA_TIMEOUT", "EXA_TIMEOUT")
 	_ = viper.BindEnv("DEEPGRAM.API_KEY", "DEEPGRAM_API_KEY")
 	_ = viper.BindEnv("VOICE_REALTIME.DEEPGRAM_API_KEY", "DEEPGRAM_API_KEY")
 	_ = viper.BindEnv("VOICE_REALTIME.DEEPGRAM_VOICE_AGENT_URL", "DEEPGRAM_VOICE_AGENT_URL")
@@ -482,6 +488,9 @@ func applyFlatEnvFileFallbacks(cfg *Config) {
 	setIfEmpty(&cfg.LLM.APIURL, "LLM_API_URL")
 	setIfEmpty(&cfg.LLM.Model, "LLM_MODEL")
 	setIfZeroInt(&cfg.LLM.Timeout, "LLM_TIMEOUT")
+	setIfEmpty(&cfg.LLM.ExaAPIKey, "EXA_API_KEY")
+	setIfEmpty(&cfg.LLM.ExaBaseURL, "EXA_BASE_URL")
+	setIfZeroInt(&cfg.LLM.ExaTimeout, "EXA_TIMEOUT")
 
 	setIfEmpty(&cfg.Credentials.EncryptionKey, "CREDENTIAL_ENCRYPTION_KEY")
 }
@@ -564,6 +573,12 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.LLM.Timeout == 0 {
 		cfg.LLM.Timeout = 60
+	}
+	if cfg.LLM.ExaBaseURL == "" {
+		cfg.LLM.ExaBaseURL = "https://api.exa.ai/search"
+	}
+	if cfg.LLM.ExaTimeout == 0 {
+		cfg.LLM.ExaTimeout = 12
 	}
 	cfg.VoiceRealtime = cfg.VoiceRealtime.WithDefaults(cfg.Deepgram)
 	if cfg.S3.BucketDrive == "" {

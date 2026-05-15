@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"invoice-backend/internal/config"
@@ -55,5 +56,89 @@ func TestLLMServiceChatSendsOpenAICompatibleRequest(t *testing.T) {
 	}
 	if got != "ok" {
 		t.Fatalf("Chat response = %q, want ok", got)
+	}
+}
+
+func TestLLMServiceChatWithWebSearchUsesExaContext(t *testing.T) {
+	t.Parallel()
+
+	const exaKey = "test-exa-key"
+	exaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, want := r.Header.Get("x-api-key"), exaKey; got != want {
+			t.Fatalf("x-api-key header = %q, want %q", got, want)
+		}
+		var req exaSearchRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode Exa request: %v", err)
+		}
+		if req.Query != "What is the latest GST e-invoice update today?" {
+			t.Fatalf("Exa query = %q", req.Query)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[{"title":"GST update","url":"https://example.test/gst","publishedDate":"2026-05-15","author":"Example","highlights":["Latest GST e-invoice update for testing."]}]}`))
+	}))
+	defer exaServer.Close()
+
+	llmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req OpenAIChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode LLM request: %v", err)
+		}
+		if len(req.Messages) < 3 {
+			t.Fatalf("messages = %#v, want system prompt, Exa context, user message", req.Messages)
+		}
+		foundSearchContext := false
+		for _, msg := range req.Messages {
+			if msg.Role == "system" && strings.Contains(msg.Content, "Exa web search") && strings.Contains(msg.Content, "https://example.test/gst") {
+				foundSearchContext = true
+				break
+			}
+		}
+		if !foundSearchContext {
+			t.Fatalf("LLM request did not include Exa search context: %#v", req.Messages)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"Use the cited GST update."}}],"model":"test-llm-model"}`))
+	}))
+	defer llmServer.Close()
+
+	svc := NewLLMService(config.LLMConfig{
+		APIKey:     "test-llm-key",
+		APIURL:     llmServer.URL,
+		Model:      "test-llm-model",
+		Timeout:    5,
+		ExaAPIKey:  exaKey,
+		ExaBaseURL: exaServer.URL,
+		ExaTimeout: 5,
+	}, logger.NewWithEnv("test"))
+
+	got, err := svc.ChatWithWebSearch(context.Background(), []ChatMessage{
+		{Role: "system", Content: "system prompt"},
+		{Role: "user", Content: "What is the latest GST e-invoice update today?"},
+	})
+	if err != nil {
+		t.Fatalf("ChatWithWebSearch returned error: %v", err)
+	}
+	if got.Response != "Use the cited GST update." {
+		t.Fatalf("response = %q", got.Response)
+	}
+	if got.WebSearch == nil || !got.WebSearch.Used || got.WebSearch.Query == "" || len(got.WebSearch.Results) != 1 {
+		t.Fatalf("web search metadata = %#v", got.WebSearch)
+	}
+}
+
+func TestLLMServiceChatWithWebSearchRequiresExaKey(t *testing.T) {
+	t.Parallel()
+
+	svc := NewLLMService(config.LLMConfig{
+		APIKey:  "test-llm-key",
+		APIURL:  "https://llm.example.test/chat/completions",
+		Model:   "test-llm-model",
+		Timeout: 5,
+	}, logger.NewWithEnv("test"))
+
+	_, err := svc.ChatWithWebSearch(context.Background(), []ChatMessage{{Role: "user", Content: "latest GST update today"}})
+	if err == nil || !strings.Contains(err.Error(), "EXA_API_KEY") {
+		t.Fatalf("error = %v, want missing EXA_API_KEY error", err)
 	}
 }

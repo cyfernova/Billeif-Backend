@@ -53,14 +53,14 @@ func (h *LLMHandler) Chat(c *gin.Context) {
 		return
 	}
 
-	response, err := h.llm.Chat(c.Request.Context(), req.Messages)
+	response, err := h.llm.ChatWithWebSearch(c.Request.Context(), req.Messages)
 	if err != nil {
 		h.log.Error("failed to process chat request", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "raw_response": "check server logs for MINMAX RAW RESPONSE"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"response": response})
+	c.JSON(http.StatusOK, response)
 }
 
 // AgentAssist handles agent-specific assistance

@@ -65,6 +65,9 @@ locals {
     LLM_API_KEY                               = var.llm_api_key
     LLM_API_URL                               = var.llm_api_url
     LLM_MODEL                                 = var.llm_model
+    EXA_API_KEY                               = var.exa_api_key
+    EXA_BASE_URL                              = var.exa_base_url
+    EXA_TIMEOUT                               = tostring(var.exa_timeout)
     GST_LOOKUP_BASE_URL                       = var.gst_lookup_base_url
     GST_LOOKUP_API_KEY                        = var.gst_lookup_api_key
     GST_LOOKUP_TIMEOUT                        = tostring(var.gst_lookup_timeout)
