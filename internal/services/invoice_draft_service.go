@@ -205,10 +205,15 @@ func (s *InvoiceService) UpdateDraftByBusiness(ctx context.Context, businessID, 
 			"balance_due":            paiseToRupees(maxInt64(0, calculated.totalPaise-rupeesToPaise(invoice.PaidAmount))),
 			"updated_at":             time.Now(),
 		}
-		if err := tx.Model(&models.Invoice{}).Where("id = ? AND business_id = ?", id, businessID).Updates(updates).Error; err != nil {
-			return err
+		result := tx.Model(&models.Invoice{}).
+			Where("id = ? AND business_id = ? AND version = ?", id, businessID, currentVersion).
+			Updates(updates)
+		if result.Error != nil {
+			return result.Error
 		}
-
+		if result.RowsAffected == 0 {
+			return fmt.Errorf("invoice version conflict")
+		}
 		if err := tx.Where("invoice_id = ?", id).Delete(&models.InvoiceItem{}).Error; err != nil {
 			return err
 		}
@@ -390,21 +395,56 @@ func invoiceAuditSnapshot(invoice *models.Invoice) map[string]interface{} {
 	if invoice == nil {
 		return map[string]interface{}{}
 	}
+	items := make([]map[string]interface{}, 0, len(invoice.Items))
+	for _, item := range invoice.Items {
+		if item == nil {
+			continue
+		}
+		items = append(items, map[string]interface{}{
+			"id":                item.ID,
+			"product_id":        item.ProductID,
+			"variant_id":        item.VariantID,
+			"warehouse_id":      item.WarehouseID,
+			"description":       item.Description,
+			"hsn_sac_code":      item.HSNSACCode,
+			"unit":              item.Unit,
+			"quantity":          item.Quantity,
+			"free_quantity":     item.FreeQuantity,
+			"unit_price":        item.UnitPrice,
+			"discount":          item.Discount,
+			"tax_rate":          item.TaxRate,
+			"cess_rate":         item.CessRate,
+			"cess_amount":       item.CessAmount,
+			"total":             item.Total,
+			"custom_fields":     item.CustomFields,
+			"batch_allocations": item.BatchAllocations,
+			"serial_ids":        item.SerialIDs,
+		})
+	}
 	return map[string]interface{}{
-		"id":            invoice.ID,
-		"version":       invoice.Version,
-		"customer_id":   invoice.CustomerID,
-		"invoice_no":    invoice.InvoiceNo,
-		"status":        invoice.Status,
-		"invoice_date":  invoice.InvoiceDate,
-		"due_date":      invoice.DueDate,
-		"subtotal":      invoice.Subtotal,
-		"tax":           invoice.Tax,
-		"discount":      invoice.Discount,
-		"total":         invoice.Total,
-		"balance_due":   invoice.BalanceDue,
-		"items_count":   len(invoice.Items),
-		"custom_fields": invoice.CustomFields,
+		"id":                     invoice.ID,
+		"version":                invoice.Version,
+		"customer_id":            invoice.CustomerID,
+		"invoice_no":             invoice.InvoiceNo,
+		"status":                 invoice.Status,
+		"invoice_date":           invoice.InvoiceDate,
+		"due_date":               invoice.DueDate,
+		"subtotal":               invoice.Subtotal,
+		"tax":                    invoice.Tax,
+		"discount":               invoice.Discount,
+		"total":                  invoice.Total,
+		"balance_due":            invoice.BalanceDue,
+		"notes":                  invoice.Notes,
+		"customer_snapshot":      invoice.CustomerSnapshot,
+		"document_json":          invoice.DocumentJSON,
+		"template_override":      invoice.TemplateOverride,
+		"payment_display":        invoice.PaymentDisplay,
+		"terms_json":             invoice.TermsJSON,
+		"eway_details_json":      invoice.EWayDetailsJSON,
+		"einvoice_settings_json": invoice.EInvoiceSettingsJSON,
+		"tax_profile":            invoice.TaxProfile,
+		"custom_fields":          invoice.CustomFields,
+		"items":                  items,
 	}
 }
 

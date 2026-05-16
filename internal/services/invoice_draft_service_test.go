@@ -129,6 +129,24 @@ func createInvoiceDraftTestSchema(t *testing.T, db *gorm.DB) {
 			created_at DATETIME,
 			updated_at DATETIME
 		)`,
+		`CREATE TABLE activity_logs (
+			id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+			business_id TEXT NOT NULL,
+			actor_id TEXT NOT NULL,
+			actor_role TEXT,
+			request_id TEXT,
+			ip_address TEXT,
+			entity_type TEXT NOT NULL,
+			entity_id TEXT NOT NULL,
+			action TEXT NOT NULL,
+			reason TEXT,
+			snapshot TEXT DEFAULT '{}',
+			diff TEXT DEFAULT '{}',
+			metadata TEXT DEFAULT '{}',
+			created_at DATETIME,
+			updated_at DATETIME,
+			deleted_at DATETIME
+		)`,
 	}
 	for _, statement := range statements {
 		if err := db.Exec(statement).Error; err != nil {
@@ -180,8 +198,14 @@ func seedDraftInvoice(t *testing.T, db *gorm.DB, businessID, customerID string, 
 func TestInvoiceService_UpdateDraftByBusiness_PersistsCustomerItemsAndRecalculates(t *testing.T) {
 	svc, db, businessID, oldCustomerID, newCustomerID := newInvoiceDraftTestService(t)
 	invoiceID := seedDraftInvoice(t, db, businessID, oldCustomerID, 1, "draft")
+	ctx := ContextWithActor(context.Background(), ActorContext{
+		UserID:    uuid.NewString(),
+		Role:      "accountant",
+		RequestID: "req-draft-update",
+		IPAddress: "127.0.0.1",
+	})
 
-	updated, err := svc.UpdateDraftByBusiness(context.Background(), businessID, invoiceID, UpdateInvoiceDraftInput{
+	updated, err := svc.UpdateDraftByBusiness(ctx, businessID, invoiceID, UpdateInvoiceDraftInput{
 		Version:    1,
 		CustomerID: &newCustomerID,
 		CustomerSnapshot: map[string]interface{}{
@@ -243,6 +267,16 @@ func TestInvoiceService_UpdateDraftByBusiness_PersistsCustomerItemsAndRecalculat
 	}
 	if updated.PaymentDisplay["upi_id"] != "merchant@upi" {
 		t.Fatalf("payment display not hydrated: %#v", updated.PaymentDisplay)
+	}
+
+	var logCount int64
+	if err := db.Table("activity_logs").
+		Where("business_id = ? AND entity_type = ? AND entity_id = ? AND action = ?", businessID, "invoice", invoiceID, "draft_updated").
+		Count(&logCount).Error; err != nil {
+		t.Fatalf("count activity logs: %v", err)
+	}
+	if logCount != 1 {
+		t.Fatalf("activity log count = %d, want 1", logCount)
 	}
 }
 
