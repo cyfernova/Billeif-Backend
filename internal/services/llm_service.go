@@ -38,11 +38,14 @@ type LLMWebSearchState struct {
 }
 
 type LLMSearchResult struct {
-	Title         string `json:"title,omitempty"`
-	URL           string `json:"url,omitempty"`
-	PublishedDate string `json:"published_date,omitempty"`
-	Author        string `json:"author,omitempty"`
-	Excerpt       string `json:"excerpt,omitempty"`
+	Title         string   `json:"title,omitempty"`
+	URL           string   `json:"url,omitempty"`
+	PublishedDate string   `json:"published_date,omitempty"`
+	Author        string   `json:"author,omitempty"`
+	Excerpt       string   `json:"excerpt,omitempty"`
+	ImageURL      string   `json:"image_url,omitempty"`
+	FaviconURL    string   `json:"favicon_url,omitempty"`
+	ImageURLs     []string `json:"image_urls,omitempty"`
 }
 
 type exaSearchRequest struct {
@@ -64,6 +67,11 @@ type exaSearchResult struct {
 	Text          string   `json:"text"`
 	Summary       string   `json:"summary"`
 	Highlights    []string `json:"highlights"`
+	Image         string   `json:"image"`
+	Favicon       string   `json:"favicon"`
+	Extras        struct {
+		ImageLinks []string `json:"imageLinks"`
+	} `json:"extras"`
 }
 
 // NewLLMService creates a new LLM service
@@ -347,6 +355,9 @@ func (s *LLMService) searchExa(ctx context.Context, query string) ([]LLMSearchRe
 		Contents: map[string]interface{}{
 			"highlights": true,
 			"text":       true,
+			"extras": map[string]interface{}{
+				"imageLinks": 3,
+			},
 		},
 	}
 	jsonBody, err := json.Marshal(payload)
@@ -391,6 +402,9 @@ func (s *LLMService) searchExa(ctx context.Context, query string) ([]LLMSearchRe
 			PublishedDate: strings.TrimSpace(result.PublishedDate),
 			Author:        strings.TrimSpace(result.Author),
 			Excerpt:       truncateRunes(strings.TrimSpace(excerpt), 900),
+			ImageURL:      strings.TrimSpace(result.Image),
+			FaviconURL:    strings.TrimSpace(result.Favicon),
+			ImageURLs:     cleanStringSlice(result.Extras.ImageLinks, 5),
 		})
 	}
 	if len(results) == 0 {
@@ -484,6 +498,26 @@ func firstNonEmptyText(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func cleanStringSlice(values []string, limit int) []string {
+	cleaned := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		cleaned = append(cleaned, trimmed)
+		if limit > 0 && len(cleaned) >= limit {
+			break
+		}
+	}
+	return cleaned
 }
 
 func truncateRunes(value string, limit int) string {

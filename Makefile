@@ -172,7 +172,11 @@ run-local: ## Run the HTTP server locally
 	@set -euo pipefail; \
 	if [ -n "$(strip $(DATABASE_HOST_SSM_PARAM))" ] && [ -z "$(strip $(DATABASE_HOST))" ]; then \
 		echo "DATABASE_HOST is unset; using SSM tunnel endpoint 127.0.0.1:$(RDS_LOCAL_PORT). Start it in another terminal with: make rds-tunnel"; \
-		DATABASE_HOST=127.0.0.1 DATABASE_PORT=$(RDS_LOCAL_PORT) go run ./cmd/server; \
+		if ! nc -z 127.0.0.1 "$(RDS_LOCAL_PORT)" >/dev/null 2>&1; then \
+			echo "RDS tunnel is not listening on 127.0.0.1:$(RDS_LOCAL_PORT). Start it with: make rds-tunnel"; \
+			exit 1; \
+		fi; \
+		DATABASE_HOST=127.0.0.1 DATABASE_PORT="$(RDS_LOCAL_PORT)" go run ./cmd/server; \
 	else \
 		go run ./cmd/server; \
 	fi

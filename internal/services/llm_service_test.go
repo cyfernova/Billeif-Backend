@@ -75,7 +75,7 @@ func TestLLMServiceChatWithWebSearchUsesExaContext(t *testing.T) {
 			t.Fatalf("Exa query = %q", req.Query)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"results":[{"title":"GST update","url":"https://example.test/gst","publishedDate":"2026-05-15","author":"Example","highlights":["Latest GST e-invoice update for testing."]}]}`))
+		_, _ = w.Write([]byte(`{"results":[{"title":"GST update","url":"https://example.test/gst","publishedDate":"2026-05-15","author":"Example","highlights":["Latest GST e-invoice update for testing."],"image":"https://example.test/gst.png","favicon":"https://example.test/favicon.ico","extras":{"imageLinks":["https://example.test/gst-extra.png"]}}]}`))
 	}))
 	defer exaServer.Close()
 
@@ -124,6 +124,10 @@ func TestLLMServiceChatWithWebSearchUsesExaContext(t *testing.T) {
 	}
 	if got.WebSearch == nil || !got.WebSearch.Used || got.WebSearch.Query == "" || len(got.WebSearch.Results) != 1 {
 		t.Fatalf("web search metadata = %#v", got.WebSearch)
+	}
+	result := got.WebSearch.Results[0]
+	if result.ImageURL != "https://example.test/gst.png" || result.FaviconURL != "https://example.test/favicon.ico" || len(result.ImageURLs) != 1 {
+		t.Fatalf("web search image metadata = %#v", result)
 	}
 }
 

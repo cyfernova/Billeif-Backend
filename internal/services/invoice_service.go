@@ -85,8 +85,12 @@ type CreateInvoiceInput struct {
 	ProjectID            string                   `json:"project_id,omitempty" binding:"omitempty,uuid"`
 	PriceListID          string                   `json:"price_list_id,omitempty"`
 	RenderProfileID      string                   `json:"render_profile_id,omitempty" binding:"omitempty,uuid"`
+	InvoiceDate          time.Time                `json:"invoice_date"`
 	DueDate              time.Time                `json:"due_date" binding:"required"`
 	Notes                string                   `json:"notes"`
+	TermsAndConditions   string                   `json:"terms_and_conditions"`
+	PONumber             string                   `json:"po_number"`
+	TemplateOverride     map[string]interface{}   `json:"template_override,omitempty"`
 	CustomFields         map[string]interface{}   `json:"custom_fields,omitempty"`
 	AdditionalCharges    []map[string]interface{} `json:"additional_charges,omitempty"`
 	OriginSubscriptionID string                   `json:"origin_subscription_id,omitempty"`
@@ -133,6 +137,7 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 	}
 	projectID := syncProjectIDFromTags(input.ProjectID, input.TaxProfile.ReportTags)
 	input.TaxProfile.ReportTags = mergeProjectIntoTags(input.TaxProfile.ReportTags, projectID)
+	customFields := mergeInvoiceEditorCustomFields(input.CustomFields, input.TermsAndConditions, input.PONumber, input.TemplateOverride)
 
 	var subtotal, taxTotal float64
 	var cessTotal float64
@@ -210,6 +215,10 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 		}
 	}
 
+	invoiceDate := input.InvoiceDate
+	if invoiceDate.IsZero() {
+		invoiceDate = time.Now()
+	}
 	invoice := &models.Invoice{
 		BusinessID:        input.BusinessID,
 		CustomerID:        input.CustomerID,
@@ -218,14 +227,14 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 		RenderProfileID:   stringPointer(input.RenderProfileID),
 		InvoiceNo:         invoiceNo,
 		Status:            "draft",
-		InvoiceDate:       time.Now(),
+		InvoiceDate:       invoiceDate,
 		DueDate:           input.DueDate,
 		Subtotal:          subtotal,
 		Tax:               taxTotal + cessTotal,
 		Total:             subtotal + taxTotal + cessTotal,
 		BalanceDue:        subtotal + taxTotal + cessTotal,
 		Notes:             input.Notes,
-		CustomFields:      mustMarshalMap(input.CustomFields),
+		CustomFields:      mustMarshalMap(customFields),
 		AdditionalCharges: mustMarshalAny(input.AdditionalCharges, "[]"),
 		TaxProfile:        mustMarshalMap(taxProfileToMap(input.TaxProfile)),
 		Currency:          "USD",
@@ -241,6 +250,7 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 	if err := s.repo.Create(ctx, invoice); err != nil {
 		return nil, fmt.Errorf("failed to create invoice: %w", err)
 	}
+	hydrateInvoiceEditorFields(invoice)
 	if s.documents != nil {
 		if err := s.documents.MirrorLegacyInvoice(ctx, invoice); err != nil {
 			s.log.Error("failed to mirror invoice into documents", "invoice_id", invoice.ID, "error", err)
@@ -286,28 +296,49 @@ func (s *InvoiceService) queuePDFGeneration(invoiceID string) {
 }
 
 func (s *InvoiceService) GetByBusiness(ctx context.Context, businessID, id string) (*models.Invoice, error) {
-	return s.repo.GetByID(ctx, id, businessID)
+	invoice, err := s.repo.GetByID(ctx, id, businessID)
+	if err != nil {
+		return nil, err
+	}
+	hydrateInvoiceEditorFields(invoice)
+	return invoice, nil
 }
 
 // GetForWorker fetches an invoice without tenant scoping. Only for trusted internal callers (workers).
 func (s *InvoiceService) GetForWorker(ctx context.Context, id string) (*models.Invoice, error) {
-	return s.repo.GetByIDInternal(ctx, id)
+	invoice, err := s.repo.GetByIDInternal(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	hydrateInvoiceEditorFields(invoice)
+	return invoice, nil
 }
 
 func (s *InvoiceService) List(ctx context.Context, businessID string, page, limit int) ([]*models.Invoice, int64, error) {
-	return s.repo.GetByBusinessID(ctx, businessID, page, limit)
+	invoices, total, err := s.repo.GetByBusinessID(ctx, businessID, page, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	for _, invoice := range invoices {
+		hydrateInvoiceEditorFields(invoice)
+	}
+	return invoices, total, nil
 }
 
 type UpdateInvoiceInput struct {
-	DueDate           time.Time                `json:"due_date"`
-	Notes             string                   `json:"notes"`
-	ProjectID         *string                  `json:"project_id,omitempty"`
-	PriceListID       *string                  `json:"price_list_id,omitempty"`
-	RenderProfileID   *string                  `json:"render_profile_id,omitempty" binding:"omitempty,uuid"`
-	CustomFields      map[string]interface{}   `json:"custom_fields,omitempty"`
-	AdditionalCharges []map[string]interface{} `json:"additional_charges,omitempty"`
-	EditReason        string                   `json:"edit_reason,omitempty"`
-	TaxProfile        *TaxProfileInput         `json:"tax_profile,omitempty"`
+	DueDate            time.Time                `json:"due_date"`
+	Notes              string                   `json:"notes"`
+	ProjectID          *string                  `json:"project_id,omitempty"`
+	PriceListID        *string                  `json:"price_list_id,omitempty"`
+	RenderProfileID    *string                  `json:"render_profile_id,omitempty" binding:"omitempty,uuid"`
+	InvoiceDate        time.Time                `json:"invoice_date"`
+	TermsAndConditions string                   `json:"terms_and_conditions"`
+	PONumber           string                   `json:"po_number"`
+	TemplateOverride   map[string]interface{}   `json:"template_override,omitempty"`
+	CustomFields       map[string]interface{}   `json:"custom_fields,omitempty"`
+	AdditionalCharges  []map[string]interface{} `json:"additional_charges,omitempty"`
+	EditReason         string                   `json:"edit_reason,omitempty"`
+	TaxProfile         *TaxProfileInput         `json:"tax_profile,omitempty"`
 }
 
 func (s *InvoiceService) UpdateByBusiness(ctx context.Context, businessID, id string, input UpdateInvoiceInput) (*models.Invoice, error) {
@@ -323,13 +354,17 @@ func (s *InvoiceService) UpdateByBusiness(ctx context.Context, businessID, id st
 		return nil, fmt.Errorf("cannot update invoice with status: %s", invoice.Status)
 	}
 
-	if !input.DueDate.IsZero() {
+	financialsLocked := !isInvoiceFinancialEditableStatus(invoice.Status)
+	if !financialsLocked && !input.InvoiceDate.IsZero() {
+		invoice.InvoiceDate = input.InvoiceDate
+	}
+	if !financialsLocked && !input.DueDate.IsZero() {
 		invoice.DueDate = input.DueDate
 	}
 	if input.Notes != "" {
 		invoice.Notes = input.Notes
 	}
-	if input.PriceListID != nil {
+	if !financialsLocked && input.PriceListID != nil {
 		invoice.PriceListID = input.PriceListID
 	}
 	if input.RenderProfileID != nil {
@@ -349,13 +384,16 @@ func (s *InvoiceService) UpdateByBusiness(ctx context.Context, businessID, id st
 			invoice.RenderProfileID = &normalized
 		}
 	}
-	if input.CustomFields != nil {
-		invoice.CustomFields = mustMarshalMap(input.CustomFields)
+	customFields := unmarshalJSONMap(invoice.CustomFields)
+	for key, value := range input.CustomFields {
+		customFields[key] = value
 	}
+	customFields = mergeInvoiceEditorCustomFields(customFields, input.TermsAndConditions, input.PONumber, input.TemplateOverride)
+	invoice.CustomFields = mustMarshalMap(customFields)
 	if input.AdditionalCharges != nil {
 		invoice.AdditionalCharges = mustMarshalAny(input.AdditionalCharges, "[]")
 	}
-	if input.TaxProfile != nil {
+	if !financialsLocked && input.TaxProfile != nil {
 		projectID := ""
 		if invoice.ProjectID != nil {
 			projectID = *invoice.ProjectID
@@ -367,12 +405,13 @@ func (s *InvoiceService) UpdateByBusiness(ctx context.Context, businessID, id st
 		input.TaxProfile.ReportTags = mergeProjectIntoTags(input.TaxProfile.ReportTags, projectID)
 		invoice.TaxProfile = mustMarshalMap(taxProfileToMap(*input.TaxProfile))
 		invoice.ProjectID = projectIDPointer(projectID)
-	} else if input.ProjectID != nil {
+	} else if !financialsLocked && input.ProjectID != nil {
 		profile := unmarshalJSONMap(invoice.TaxProfile)
 		profile["report_tags"] = mergeProjectIntoTags(nestedMap(profile, "report_tags"), normalizeProjectID(*input.ProjectID))
 		invoice.TaxProfile = mustMarshalMap(profile)
 		invoice.ProjectID = projectIDPointer(*input.ProjectID)
 	}
+	hydrateInvoiceEditorFields(invoice)
 
 	if err := s.repo.Update(ctx, invoice); err != nil {
 		return nil, err
@@ -388,10 +427,51 @@ func (s *InvoiceService) UpdateByBusiness(ctx context.Context, businessID, id st
 
 func isInvoiceEditableStatus(status string) bool {
 	switch status {
-	case "draft", "sent", "overdue":
+	case "draft", "pending", "sent", "viewed", "overdue", "partially_paid", "paid":
 		return true
 	default:
 		return false
+	}
+}
+
+func isInvoiceFinancialEditableStatus(status string) bool {
+	switch status {
+	case "draft", "pending":
+		return true
+	default:
+		return false
+	}
+}
+
+func mergeInvoiceEditorCustomFields(base map[string]interface{}, terms, poNumber string, templateOverride map[string]interface{}) map[string]interface{} {
+	if base == nil {
+		base = map[string]interface{}{}
+	}
+	if terms != "" {
+		base["terms_and_conditions"] = terms
+	}
+	if poNumber != "" {
+		base["po_number"] = poNumber
+	}
+	if templateOverride != nil {
+		base["template_override"] = templateOverride
+	}
+	return base
+}
+
+func hydrateInvoiceEditorFields(invoice *models.Invoice) {
+	if invoice == nil {
+		return
+	}
+	customFields := unmarshalJSONMap(invoice.CustomFields)
+	if terms, ok := customFields["terms_and_conditions"].(string); ok {
+		invoice.TermsAndConditions = terms
+	}
+	if poNumber, ok := customFields["po_number"].(string); ok {
+		invoice.PONumber = poNumber
+	}
+	if templateOverride, ok := customFields["template_override"].(map[string]interface{}); ok {
+		invoice.TemplateOverride = templateOverride
 	}
 }
 
