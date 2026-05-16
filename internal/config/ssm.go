@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -26,8 +27,8 @@ func resolveSSMParameters(cfg *Config) error {
 	}
 
 	hasParams := false
-	for name := range paramTargets {
-		if name != "" {
+	for name, target := range paramTargets {
+		if name != "" && (target == nil || strings.TrimSpace(*target) == "") {
 			hasParams = true
 			break
 		}
@@ -55,6 +56,9 @@ func resolveSSMParameters(cfg *Config) error {
 	client := ssm.NewFromConfig(awsCfg)
 	for paramName, target := range paramTargets {
 		if paramName == "" {
+			continue
+		}
+		if target != nil && strings.TrimSpace(*target) != "" {
 			continue
 		}
 

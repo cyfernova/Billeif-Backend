@@ -63,7 +63,12 @@
       "PowerShell(aws logs get-log-events *)",
       "PowerShell(aws logs get-log-events --log-group-name \"/aws/lambda/invoice-backend-api-http\" --log-stream-name \"2026/05/09/[$LATEST]de197639fc12499585387d9c8607e422\" --output text 2>&1 | Select-Object -Last 100)",
       "PowerShell(aws logs get-log-events --log-group-name \"/aws/lambda/invoice-backend-api-http\" --log-stream-name \"2026/05/09/[$LATEST]b8b4c2a0271f42ffa4c66c2f019c8a45\" --output text 2>&1)",
-      "Bash(gofmt -w internal/services/bargaining_service.go)"
+      "Bash(gofmt -w internal/services/bargaining_service.go)",
+      "Bash(Select-String -Pattern \"^\\\\+\")",
+      "Bash(Select-Object -First 10)",
+      "Bash(make run-local *)",
+      "Bash(Select-String -Pattern \"ssm|db_username\")",
+      "Bash(openssl rand *)"
     ]
   }
 }

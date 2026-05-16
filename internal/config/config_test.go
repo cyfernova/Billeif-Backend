@@ -155,6 +155,30 @@ func TestApplyFlatEnvFileFallbacksCopiesFlatKeys(t *testing.T) {
 	}
 }
 
+func TestSSMResolutionCanBeSkippedWhenExplicitDBValuesExist(t *testing.T) {
+	cfg := validConfigForTest()
+	cfg.SSM.DatabaseHostParam = "/invoice-backend/dev/db/host"
+	cfg.SSM.DatabaseUserParam = "/invoice-backend/dev/db/username"
+	cfg.SSM.DatabasePasswordParam = "/invoice-backend/dev/db/password"
+	cfg.Database.Host = "127.0.0.1"
+	cfg.Database.User = "invoice_user"
+	cfg.Database.Password = "local-placeholder"
+
+	if err := resolveSSMParameters(cfg); err != nil {
+		t.Fatalf("expected explicit DB values to skip SSM lookups, got %v", err)
+	}
+
+	if cfg.Database.Host != "127.0.0.1" {
+		t.Fatalf("expected explicit DATABASE_HOST to be preserved, got %q", cfg.Database.Host)
+	}
+	if cfg.Database.User != "invoice_user" {
+		t.Fatalf("expected explicit DATABASE_USER to be preserved, got %q", cfg.Database.User)
+	}
+	if cfg.Database.Password != "local-placeholder" {
+		t.Fatal("expected explicit DATABASE_PASSWORD to be preserved")
+	}
+}
+
 func validConfigForTest() *Config {
 	return &Config{
 		Environment: "dev",
