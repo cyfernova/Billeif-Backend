@@ -463,6 +463,33 @@ func hydrateInvoiceEditorFields(invoice *models.Invoice) {
 	if invoice == nil {
 		return
 	}
+	if invoice.Version <= 0 {
+		invoice.Version = 1
+	}
+	for _, item := range invoice.Items {
+		hydrateInvoiceItemEditorFields(item)
+	}
+	if customerSnapshot := unmarshalJSONMap(invoice.CustomerSnapshotRaw); len(customerSnapshot) > 0 {
+		invoice.CustomerSnapshot = customerSnapshot
+	}
+	if documentJSON := unmarshalJSONMap(invoice.DocumentJSONRaw); len(documentJSON) > 0 {
+		invoice.DocumentJSON = documentJSON
+	}
+	if templateOverride := unmarshalJSONMap(invoice.TemplateOverrideRaw); len(templateOverride) > 0 {
+		invoice.TemplateOverride = templateOverride
+	}
+	if paymentDisplay := unmarshalJSONMap(invoice.PaymentDisplayRaw); len(paymentDisplay) > 0 {
+		invoice.PaymentDisplay = paymentDisplay
+	}
+	if termsJSON := unmarshalJSONMap(invoice.TermsJSONRaw); len(termsJSON) > 0 {
+		invoice.TermsJSON = termsJSON
+	}
+	if ewayDetails := unmarshalJSONMap(invoice.EWayDetailsJSONRaw); len(ewayDetails) > 0 {
+		invoice.EWayDetailsJSON = ewayDetails
+	}
+	if einvoiceSettings := unmarshalJSONMap(invoice.EInvoiceSettingsRaw); len(einvoiceSettings) > 0 {
+		invoice.EInvoiceSettingsJSON = einvoiceSettings
+	}
 	customFields := unmarshalJSONMap(invoice.CustomFields)
 	if terms, ok := customFields["terms_and_conditions"].(string); ok {
 		invoice.TermsAndConditions = terms
@@ -470,8 +497,14 @@ func hydrateInvoiceEditorFields(invoice *models.Invoice) {
 	if poNumber, ok := customFields["po_number"].(string); ok {
 		invoice.PONumber = poNumber
 	}
-	if templateOverride, ok := customFields["template_override"].(map[string]interface{}); ok {
+	if templateOverride, ok := customFields["template_override"].(map[string]interface{}); ok && len(invoice.TemplateOverride) == 0 {
 		invoice.TemplateOverride = templateOverride
+	}
+	if customerSnapshot, ok := customFields["customer_snapshot"].(map[string]interface{}); ok && len(invoice.CustomerSnapshot) == 0 {
+		invoice.CustomerSnapshot = customerSnapshot
+	}
+	if paymentDisplay, ok := customFields["payment_display"].(map[string]interface{}); ok && len(invoice.PaymentDisplay) == 0 {
+		invoice.PaymentDisplay = paymentDisplay
 	}
 }
 

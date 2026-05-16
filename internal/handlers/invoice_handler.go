@@ -169,6 +169,58 @@ func (h *InvoiceHandler) Update(c *gin.Context) {
 	c.JSON(http.StatusOK, invoice)
 }
 
+// UpdateDraft updates the mutable canonical state for a draft invoice.
+// @Summary Update draft invoice
+// @Description Replaces draft customer snapshot, items, details, template, payment display, and compliance draft JSON transactionally.
+// @Tags Invoices
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Invoice ID"
+// @Param input body services.UpdateInvoiceDraftInput true "Draft invoice updates"
+// @Success 200 {object} models.Invoice
+// @Failure 400 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /invoices/{id}/draft [patch]
+func (h *InvoiceHandler) UpdateDraft(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("invoice_handler").With("operation", "update_draft")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	id := c.Param("id")
+	var input services.UpdateInvoiceDraftInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		log.Warn("invalid update draft invoice payload", "error", err, "invoice_id", id)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	requestContextWithActor(c)
+
+	invoice, err := h.svc.UpdateDraftByBusiness(c.Request.Context(), businessID, id, input)
+	if err != nil {
+		log.Error("failed to update draft invoice", "error", err, "invoice_id", id)
+		if isNotFoundErr(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "invoice not found"})
+			return
+		}
+		if err.Error() == "invoice version conflict" {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return
+		}
+		if err.Error() == "only draft invoices can be updated through draft endpoint" || err.Error() == "signed invoices are immutable" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	log.Info("draft invoice updated", "invoice_id", invoice.ID, "version", invoice.Version)
+
+	c.JSON(http.StatusOK, invoice)
+}
+
 // Delete deletes an invoice
 // @Summary Delete invoice
 // @Description Remove a specific invoice.
