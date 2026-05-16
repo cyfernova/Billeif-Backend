@@ -41,9 +41,7 @@ func newInvoiceDraftTestService(t *testing.T) (*InvoiceService, *gorm.DB, string
 	if err != nil {
 		t.Fatalf("open sqlite db: %v", err)
 	}
-	if err := db.AutoMigrate(&models.Invoice{}, &models.InvoiceItem{}); err != nil {
-		t.Fatalf("migrate sqlite invoice schema: %v", err)
-	}
+	createInvoiceDraftTestSchema(t, db)
 	businessID := uuid.NewString()
 	oldCustomerID := uuid.NewString()
 	newCustomerID := uuid.NewString()
@@ -58,6 +56,85 @@ func newInvoiceDraftTestService(t *testing.T) (*InvoiceService, *gorm.DB, string
 		log:          logger.New(),
 	}
 	return svc, db, businessID, oldCustomerID, newCustomerID
+}
+
+func createInvoiceDraftTestSchema(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	statements := []string{
+		`CREATE TABLE invoices (
+			id TEXT PRIMARY KEY,
+			business_id TEXT NOT NULL,
+			customer_id TEXT NOT NULL,
+			version INTEGER NOT NULL DEFAULT 1,
+			project_id TEXT,
+			price_list_id TEXT,
+			render_profile_id TEXT,
+			invoice_no TEXT NOT NULL,
+			invoice_date DATETIME NOT NULL,
+			due_date DATETIME,
+			status TEXT NOT NULL DEFAULT 'draft',
+			currency TEXT NOT NULL DEFAULT 'INR',
+			subtotal REAL DEFAULT 0,
+			tax REAL DEFAULT 0,
+			discount REAL DEFAULT 0,
+			total REAL NOT NULL DEFAULT 0,
+			paid_amount REAL DEFAULT 0,
+			balance_due REAL DEFAULT 0,
+			notes TEXT,
+			customer_snapshot TEXT DEFAULT '{}',
+			document_json TEXT DEFAULT '{}',
+			template_override TEXT DEFAULT '{}',
+			payment_display TEXT DEFAULT '{}',
+			terms_json TEXT DEFAULT '{}',
+			eway_details_json TEXT DEFAULT '{}',
+			einvoice_settings_json TEXT DEFAULT '{}',
+			custom_fields TEXT DEFAULT '{}',
+			additional_charges TEXT DEFAULT '[]',
+			origin_subscription_id TEXT,
+			origin_run_id TEXT,
+			signed_at DATETIME,
+			signed_by_profile_id TEXT,
+			sign_metadata TEXT DEFAULT '{}',
+			pdf_url TEXT,
+			pdf_filename TEXT,
+			tax_profile TEXT DEFAULT '{}',
+			sent_at DATETIME,
+			paid_at DATETIME,
+			created_at DATETIME,
+			updated_at DATETIME,
+			deleted_at DATETIME
+		)`,
+		`CREATE TABLE invoice_items (
+			id TEXT PRIMARY KEY,
+			invoice_id TEXT NOT NULL,
+			product_id TEXT,
+			variant_id TEXT,
+			warehouse_id TEXT,
+			description TEXT NOT NULL,
+			hsn_sac_code TEXT,
+			unit TEXT,
+			quantity REAL NOT NULL,
+			free_quantity REAL DEFAULT 0,
+			unit_price REAL NOT NULL,
+			mrp REAL DEFAULT 0,
+			discount REAL DEFAULT 0,
+			tax_rate REAL DEFAULT 0,
+			cess_rate REAL DEFAULT 0,
+			cess_amount REAL DEFAULT 0,
+			custom_fields TEXT DEFAULT '{}',
+			charge_snapshot TEXT DEFAULT '[]',
+			batch_allocations TEXT DEFAULT '[]',
+			serial_ids TEXT DEFAULT '[]',
+			total REAL NOT NULL,
+			created_at DATETIME,
+			updated_at DATETIME
+		)`,
+	}
+	for _, statement := range statements {
+		if err := db.Exec(statement).Error; err != nil {
+			t.Fatalf("create invoice draft test schema: %v", err)
+		}
+	}
 }
 
 func seedDraftInvoice(t *testing.T, db *gorm.DB, businessID, customerID string, version int, status string) string {
