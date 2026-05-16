@@ -33,20 +33,6 @@ func makeAWSConfig() *awsclients.Config {
 	return &awsclients.Config{}
 }
 
-func makeRequestWithUserID(method, path string, userID string, remoteAddr string) (*http.Request, *httptest.ResponseRecorder) {
-	req := httptest.NewRequest(method, path, nil)
-	if remoteAddr != "" {
-		req.RemoteAddr = remoteAddr
-	}
-	res := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(res)
-	c.Request = req
-	if userID != "" {
-		c.Set("user_id", userID)
-	}
-	return req, res
-}
-
 // -----------------------------------------------------------------------------
 // WAFRateLimit tests
 // -----------------------------------------------------------------------------

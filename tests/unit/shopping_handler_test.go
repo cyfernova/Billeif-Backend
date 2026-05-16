@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -153,8 +154,8 @@ func NewShoppingHandlerTestable(svc *MockShoppingService, log *logger.Logger) *S
 func parsePagination(c *gin.Context) (page, limit int) {
 	pageStr := c.DefaultQuery("page", "1")
 	limitStr := c.DefaultQuery("limit", "10")
-	json.Unmarshal([]byte(pageStr), &page)
-	json.Unmarshal([]byte(limitStr), &limit)
+	page, _ = strconv.Atoi(pageStr)
+	limit, _ = strconv.Atoi(limitStr)
 	if page < 1 {
 		page = 1
 	}

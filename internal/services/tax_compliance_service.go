@@ -949,13 +949,6 @@ func round2(value float64) float64 {
 	return mathRound(value*100) / 100
 }
 
-func boolBucket(value bool) string {
-	if value {
-		return "b2b"
-	}
-	return "b2c"
-}
-
 func mathAbs(value float64) float64 {
 	if value < 0 {
 		return -value

@@ -8,9 +8,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"invoice-backend/internal/models"
@@ -426,7 +426,9 @@ func TestListAgents_ByUser_Success(t *testing.T) {
 	}
 
 	var response map[string]interface{}
-	json.Unmarshal(res.Body.Bytes(), &response)
+	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
 
 	if response["data"] == nil {
 		t.Error("expected data field")
@@ -1030,7 +1032,9 @@ func TestValidateAgentPermissions_AgentExists(t *testing.T) {
 	}
 
 	var response map[string]bool
-	json.Unmarshal(res.Body.Bytes(), &response)
+	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
 
 	if !response["has_permission"] {
 		t.Error("expected has_permission to be true")
@@ -1061,7 +1065,9 @@ func TestValidateAgentPermissions_AgentNotFound(t *testing.T) {
 	}
 
 	var response map[string]bool
-	json.Unmarshal(res.Body.Bytes(), &response)
+	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
 
 	if response["has_permission"] {
 		t.Error("expected has_permission to be false")
@@ -2066,8 +2072,8 @@ func normalizeAgentType(agentType string) string {
 func parsePaginationTestAgent(c *gin.Context) (Page, limit int) {
 	pageStr := c.DefaultQuery("page", "1")
 	limitStr := c.DefaultQuery("limit", "10")
-	fmt.Sscanf(pageStr, "%d", &Page)
-	fmt.Sscanf(limitStr, "%d", &limit)
+	Page, _ = strconv.Atoi(pageStr)
+	limit, _ = strconv.Atoi(limitStr)
 	if Page < 1 {
 		Page = 1
 	}

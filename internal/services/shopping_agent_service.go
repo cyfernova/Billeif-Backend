@@ -326,21 +326,6 @@ func (s *ShoppingAgentService) createIntentMandate(ctx context.Context, req *Sho
 	return intentMandate, nil
 }
 
-func (s *ShoppingAgentService) signCartMandate(intentMandate *models.IntentMandate, items []ap2.CartItem) string {
-	signData := map[string]interface{}{
-		"intent_mandate_id": intentMandate.ID,
-		"items":             items,
-		"timestamp":         intentMandate.ExpiresAt,
-	}
-	signature, _ := s.signer.SignData([]byte(fmt.Sprintf("%v", signData)))
-	return signature
-}
-
-func (s *ShoppingAgentService) generateSignature(items []ap2.CartItem) string {
-	signature, _ := s.signer.SignData([]byte(fmt.Sprintf("%v", items)))
-	return signature
-}
-
 func (s *ShoppingAgentService) generatePaymentSignature(req *CheckoutRequest) string {
 	signature, _ := s.signer.SignData([]byte(fmt.Sprintf("%v", req)))
 	return signature

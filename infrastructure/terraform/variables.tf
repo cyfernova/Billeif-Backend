@@ -359,6 +359,30 @@ variable "llm_model" {
   }
 }
 
+variable "exa_api_key" {
+  description = "Exa API key for LLM web search"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "exa_base_url" {
+  description = "Exa search API URL"
+  type        = string
+  default     = "https://api.exa.ai/search"
+
+  validation {
+    condition     = can(regex("^https://", var.exa_base_url))
+    error_message = "exa_base_url must be an absolute https URL."
+  }
+}
+
+variable "exa_timeout" {
+  description = "Timeout in seconds for Exa search requests"
+  type        = number
+  default     = 12
+}
+
 variable "gst_lookup_api_key" {
   description = "GSTINCheck API key for GSTIN lookup"
   type        = string

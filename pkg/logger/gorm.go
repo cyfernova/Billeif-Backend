@@ -3,7 +3,6 @@ package logger
 import (
 	"context"
 	"errors"
-	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -62,21 +61,21 @@ func (g *GORMLogger) Info(ctx context.Context, msg string, args ...interface{}) 
 	if g.level < gormlogger.Info {
 		return
 	}
-	g.withContext(ctx).Info("gorm info", "message", msg, "args", sanitizeArgs(args))
+	g.withContext(ctx).Info("gorm info", "message", msg, "args", args)
 }
 
 func (g *GORMLogger) Warn(ctx context.Context, msg string, args ...interface{}) {
 	if g.level < gormlogger.Warn {
 		return
 	}
-	g.withContext(ctx).Warn("gorm warning", "message", msg, "args", sanitizeArgs(args))
+	g.withContext(ctx).Warn("gorm warning", "message", msg, "args", args)
 }
 
 func (g *GORMLogger) Error(ctx context.Context, msg string, args ...interface{}) {
 	if g.level < gormlogger.Error {
 		return
 	}
-	g.withContext(ctx).Error("gorm error", "message", msg, "args", sanitizeArgs(args))
+	g.withContext(ctx).Error("gorm error", "message", msg, "args", args)
 }
 
 func (g *GORMLogger) Trace(ctx context.Context, begin time.Time, fc func() (string, int64), err error) {
@@ -133,6 +132,32 @@ func (g *GORMLogger) formatSQL(sql string) string {
 		return redacted[:512]
 	}
 	return redacted
+}
+
+func formatGORMMessage(msg string, args ...interface{}) string {
+	if len(args) == 0 {
+		return msg
+	}
+
+	safeArgs := make([]interface{}, len(args))
+	for i, arg := range args {
+		safeArgs[i] = printableGORMArg(arg)
+	}
+	return fmt.Sprintf(msg, safeArgs...)
+}
+
+func printableGORMArg(arg interface{}) interface{} {
+	if arg == nil {
+		return nil
+	}
+
+	value := reflect.ValueOf(arg)
+	switch value.Kind() {
+	case reflect.Func, reflect.Chan, reflect.UnsafePointer:
+		return fmt.Sprintf("<%s>", value.Type())
+	default:
+		return arg
+	}
 }
 
 func parseGORMLevel(level string) gormlogger.LogLevel {

@@ -416,25 +416,6 @@ func (s *BargainingService) calculateFallbackCounterOffer(negotiation *models.Ba
 	return math.Round(suggestedAmount*100) / 100
 }
 
-func (s *BargainingService) getAgentVolatility(agent *models.Agent) float64 {
-	if agent.Config == "" {
-		return 0.5
-	}
-
-	var config map[string]interface{}
-	if err := json.Unmarshal([]byte(agent.Config), &config); err != nil {
-		return 0.5
-	}
-
-	if volatility, ok := config["volatility"].(float64); ok {
-		if volatility >= 0 && volatility <= 1 {
-			return volatility
-		}
-	}
-
-	return 0.5
-}
-
 func (s *BargainingService) isValidCounterOffer(negotiation *models.BargainingNegotiation, agentType string, proposedAmount float64) bool {
 	if proposedAmount <= 0 {
 		return false
@@ -1080,16 +1061,14 @@ func (s *BargainingServiceTestable) SubmitCounterOffer(ctx context.Context, nego
 
 	buyerAgent := negotiation.BuyerAgent
 	if buyerAgent == nil || buyerAgent.ID == "" {
-		buyerAgent, err = s.agentService.GetAgentByID(ctx, negotiation.BuyerAgentID)
-		if err != nil {
+		if _, err := s.agentService.GetAgentByID(ctx, negotiation.BuyerAgentID); err != nil {
 			return nil, nil, fmt.Errorf("buyer agent not found: %w", err)
 		}
 	}
 
 	sellerAgent := negotiation.SellerAgent
 	if sellerAgent == nil || sellerAgent.ID == "" {
-		sellerAgent, err = s.agentService.GetAgentByID(ctx, negotiation.SellerAgentID)
-		if err != nil {
+		if _, err := s.agentService.GetAgentByID(ctx, negotiation.SellerAgentID); err != nil {
 			return nil, nil, fmt.Errorf("seller agent not found: %w", err)
 		}
 	}

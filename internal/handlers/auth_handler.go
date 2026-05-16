@@ -401,6 +401,10 @@ func (h *AuthHandler) UpdateProfile(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if !input.HasChanges() {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "at least one profile field is required"})
+		return
+	}
 
 	user, err := h.svc.UpdateProfile(c.Request.Context(), userID, input)
 	if err != nil {
@@ -639,10 +643,7 @@ func (h *AuthHandler) UpdateProfilePicture(c *gin.Context) {
 		return
 	}
 
-	user, err := h.svc.UpdateProfile(c.Request.Context(), userID, services.UpdateProfileInput{
-		Name:              "", // Only update profile picture
-		ProfilePictureURL: input.ProfilePictureURL,
-	})
+	user, err := h.svc.UpdateProfile(c.Request.Context(), userID, services.UpdateProfileInput{ProfilePictureURL: &input.ProfilePictureURL})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

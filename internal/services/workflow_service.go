@@ -322,6 +322,47 @@ func (s *WorkflowService) GetWorkflowsByUser(ctx context.Context, userID string,
 	return workflows, total, nil
 }
 
+// DuplicateWorkflow creates a disabled copy owned by the same user with run state reset.
+func (s *WorkflowService) DuplicateWorkflow(ctx context.Context, workflowID, userID string) (*Workflow, error) {
+	original, err := s.GetWorkflow(ctx, workflowID)
+	if err != nil {
+		return nil, err
+	}
+	if original.UserID != userID {
+		return nil, fmt.Errorf("access denied")
+	}
+
+	duplicate := &Workflow{
+		ID:                   uuid.NewString(),
+		Name:                 "Copy of " + original.Name,
+		Description:          original.Description,
+		UserID:               original.UserID,
+		AgentID:              original.AgentID,
+		Trigger:              original.Trigger,
+		Action:               original.Action,
+		Status:               WorkflowStatusPaused,
+		IsEnabled:            false,
+		RunCount:             0,
+		SuccessCount:         0,
+		FailureCount:         0,
+		NotificationSettings: append(json.RawMessage(nil), original.NotificationSettings...),
+	}
+	if len(duplicate.NotificationSettings) == 0 {
+		duplicate.NotificationSettings = json.RawMessage(`{}`)
+	}
+
+	if err := s.db.WithContext(ctx).Select("*").Create(duplicate).Error; err != nil {
+		return nil, fmt.Errorf("failed to duplicate workflow: %w", err)
+	}
+	if err := s.db.WithContext(ctx).Model(&Workflow{}).Where("id = ?", duplicate.ID).Update("is_enabled", false).Error; err != nil {
+		return nil, fmt.Errorf("failed to disable duplicated workflow: %w", err)
+	}
+	duplicate.IsEnabled = false
+
+	s.log.Info("workflow duplicated", "workflow_id", original.ID, "duplicate_id", duplicate.ID, "user_id", userID)
+	return duplicate, nil
+}
+
 // UpdateWorkflow updates a workflow
 func (s *WorkflowService) UpdateWorkflow(ctx context.Context, workflow *Workflow) error {
 	if err := s.db.WithContext(ctx).Save(workflow).Error; err != nil {

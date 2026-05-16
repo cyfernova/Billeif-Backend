@@ -22,6 +22,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/skip2/go-qrcode"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 	"gorm.io/gorm"
 )
 
@@ -981,7 +983,7 @@ func (s *TaxComplianceService) buildEWayBillPayload(ctx context.Context, documen
 		"document_type":   document.DocumentType,
 		"serial_number":   document.SerialNumber,
 		"issue_date":      document.IssueDate.Format("2006-01-02"),
-		"supply_type":     strings.Title(coalesceString(document.Direction, models.DocumentDirectionOutward)),
+		"supply_type":     cases.Title(language.English).String(coalesceString(document.Direction, models.DocumentDirectionOutward)),
 		"dispatch_from":   dispatchFrom,
 		"dispatch_to":     dispatchTo,
 		"distance_km":     distanceKM,

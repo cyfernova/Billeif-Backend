@@ -312,7 +312,7 @@ func (s *AgentDiscoveryService) DiscoverSellersByCategory(ctx context.Context, c
 		ExcludeDeleted: true,
 	}
 
-	agents, total, err := s.ap2Repo.SearchAgents(ctx, filter, 1, 1000)
+	agents, _, err := s.ap2Repo.SearchAgents(ctx, filter, 1, 1000)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to search agents: %w", err)
 	}
@@ -342,8 +342,7 @@ func (s *AgentDiscoveryService) DiscoverSellersByCategory(ctx context.Context, c
 		}
 	}
 
-	// Update total
-	total = int64(len(matchingAgents))
+	total := int64(len(matchingAgents))
 
 	// Apply pagination
 	start := (page - 1) * limit
@@ -385,7 +384,7 @@ func (s *AgentDiscoveryService) DiscoverAgentsByProductCategories(ctx context.Co
 	}
 
 	// Search for potential agents
-	agents, total, err := s.ap2Repo.SearchAgents(ctx, filter, 1, 1000) // Get more agents initially for filtering
+	agents, _, err := s.ap2Repo.SearchAgents(ctx, filter, 1, 1000) // Get more agents initially for filtering
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to search agents: %w", err)
 	}
@@ -408,8 +407,7 @@ func (s *AgentDiscoveryService) DiscoverAgentsByProductCategories(ctx context.Co
 		}
 	}
 
-	// Apply pagination
-	total = int64(len(matchingAgents))
+	total := int64(len(matchingAgents))
 	start := (page - 1) * limit
 	end := start + limit
 	if start >= len(matchingAgents) {
@@ -553,7 +551,7 @@ func (s *AgentDiscoveryService) DiscoverAgentsByBudget(ctx context.Context, budg
 // It filters based on product categories and product names, not agent categories.
 func (s *AgentDiscoveryService) DiscoverAgentsByCategoriesAndBudget(ctx context.Context, categories []string, budget float64, page, limit int) ([]*models.Agent, int64, error) {
 	// First get agents within budget (search by budget, not agent categories)
-	agents, total, err := s.ap2Repo.SearchAgentsByBudget(ctx, budget, 1, 1000) // Get more to filter
+	agents, _, err := s.ap2Repo.SearchAgentsByBudget(ctx, budget, 1, 1000) // Get more to filter
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to search agents by budget: %w", err)
 	}
@@ -574,8 +572,7 @@ func (s *AgentDiscoveryService) DiscoverAgentsByCategoriesAndBudget(ctx context.
 		}
 	}
 
-	// Apply pagination to filtered results
-	total = int64(len(filtered))
+	total := int64(len(filtered))
 	start := (page - 1) * limit
 	end := start + limit
 	if start >= len(filtered) {

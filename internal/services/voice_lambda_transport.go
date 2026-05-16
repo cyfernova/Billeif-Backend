@@ -572,7 +572,11 @@ func (r *VoiceLambdaSessionRunner) Run(ctx context.Context, sessionID string) er
 
 	sessionCtx, cancel := context.WithTimeout(ctx, time.Duration(r.cfg.MaxSessionSeconds)*time.Second)
 	defer cancel()
-	defer r.store.CompleteSession(context.Background(), sessionID, VoiceSessionStatusClosed)
+	defer func() {
+		if err := r.store.CompleteSession(context.Background(), sessionID, VoiceSessionStatusClosed); err != nil {
+			r.log.Warn("failed to complete voice session on close", "session_id", sessionID, "error", err)
+		}
+	}()
 
 	log := r.log.With("session_id", sessionID, "connection_id", session.ConnectionID, "user_id", session.UserID, "business_id", session.BusinessID)
 	dg := r.deepgram(r.cfg, log)

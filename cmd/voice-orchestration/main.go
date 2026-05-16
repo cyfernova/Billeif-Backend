@@ -61,7 +61,7 @@ type ErrorResponse struct {
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 // transcribeSTT sends the .wav file to the Deepgram STT service and extracts the transcript.
@@ -205,7 +205,7 @@ func voiceTranscribeHandler(w http.ResponseWriter, r *http.Request) {
 		errResp := ErrorResponse{Error: "method not allowed", Details: "only POST is accepted"}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(w).Encode(errResp)
+		_ = json.NewEncoder(w).Encode(errResp)
 		return
 	}
 
@@ -214,7 +214,7 @@ func voiceTranscribeHandler(w http.ResponseWriter, r *http.Request) {
 		errResp := ErrorResponse{Error: "failed to parse multipart form", Details: err.Error()}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(errResp)
+		_ = json.NewEncoder(w).Encode(errResp)
 		return
 	}
 
@@ -223,7 +223,7 @@ func voiceTranscribeHandler(w http.ResponseWriter, r *http.Request) {
 		errResp := ErrorResponse{Error: "missing or invalid 'file' form field", Details: err.Error()}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(errResp)
+		_ = json.NewEncoder(w).Encode(errResp)
 		return
 	}
 	defer file.Close()
@@ -234,7 +234,7 @@ func voiceTranscribeHandler(w http.ResponseWriter, r *http.Request) {
 		errResp := ErrorResponse{Error: "invalid file type", Details: "only .wav files are accepted"}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(errResp)
+		_ = json.NewEncoder(w).Encode(errResp)
 		return
 	}
 
@@ -243,7 +243,7 @@ func voiceTranscribeHandler(w http.ResponseWriter, r *http.Request) {
 		errResp := ErrorResponse{Error: "failed to read uploaded file", Details: err.Error()}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(errResp)
+		_ = json.NewEncoder(w).Encode(errResp)
 		return
 	}
 
@@ -254,7 +254,7 @@ func voiceTranscribeHandler(w http.ResponseWriter, r *http.Request) {
 		errResp := ErrorResponse{Error: "STT transcription failed", Details: err.Error()}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(errResp)
+		_ = json.NewEncoder(w).Encode(errResp)
 		return
 	}
 
@@ -265,7 +265,7 @@ func voiceTranscribeHandler(w http.ResponseWriter, r *http.Request) {
 		errResp := ErrorResponse{Error: "MIN MAX LLM query failed", Details: err.Error()}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(w).Encode(errResp)
+		_ = json.NewEncoder(w).Encode(errResp)
 		return
 	}
 
@@ -277,7 +277,7 @@ func voiceTranscribeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func main() {

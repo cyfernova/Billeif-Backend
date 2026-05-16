@@ -28,6 +28,7 @@ type Container struct {
 	Payment             *PaymentService
 	RazorpayPayment     *RazorpayPaymentService
 	Ledger              *LedgerService
+	Dashboard           *DashboardService
 	Report              *ReportService
 	TaxCompliance       *TaxComplianceService
 	Team                *TeamService
@@ -159,6 +160,7 @@ func NewContainer(
 		Payment:             NewPaymentService(db, paymentRepo, invoiceRepo, documentSvc, journalSvc, log),
 		RazorpayPayment:     razorpayPaymentSvc,
 		Ledger:              NewLedgerService(ledgerRepo, log),
+		Dashboard:           NewDashboardService(db, log),
 		Report:              reportSvc,
 		TaxCompliance:       taxComplianceSvc,
 		Team:                NewTeamService(teamRepo, log).WithDB(db),

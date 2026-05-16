@@ -20,6 +20,9 @@ TF_VAR_india_auth_template_id ?= $(INDIA_AUTH_TEMPLATE_ID)
 TF_VAR_llm_api_key ?= $(LLM_API_KEY)
 TF_VAR_llm_api_url ?= $(LLM_API_URL)
 TF_VAR_llm_model ?= $(LLM_MODEL)
+TF_VAR_exa_api_key ?= $(EXA_API_KEY)
+TF_VAR_exa_base_url ?= $(EXA_BASE_URL)
+TF_VAR_exa_timeout ?= $(EXA_TIMEOUT)
 TF_VAR_gst_lookup_api_key ?= $(GST_LOOKUP_API_KEY)
 TF_VAR_gst_lookup_base_url ?= $(GST_LOOKUP_BASE_URL)
 TF_VAR_gst_lookup_timeout ?= $(GST_LOOKUP_TIMEOUT)
@@ -168,7 +171,7 @@ rds-tunnel: ## Forward localhost:RDS_LOCAL_PORT to private RDS through SSM
 run-local: ## Run the HTTP server locally
 	@set -euo pipefail; \
 	if [ -n "$(strip $(DATABASE_HOST_SSM_PARAM))" ] && [ -z "$(strip $(DATABASE_HOST))" ]; then \
-		echo "DATABASE_HOST is unset; using SSM tunnel..."; \
+		echo "DATABASE_HOST is unset; using SSM tunnel endpoint 127.0.0.1:$(RDS_LOCAL_PORT). Start it in another terminal with: make rds-tunnel"; \
 		DATABASE_HOST=127.0.0.1 DATABASE_PORT=$(RDS_LOCAL_PORT) go run ./cmd/server; \
 	else \
 		go run ./cmd/server; \

@@ -13,7 +13,6 @@ import (
 	"invoice-backend/pkg/awsclients"
 	"invoice-backend/pkg/logger"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/wafv2"
 	"github.com/gin-gonic/gin"
 )
@@ -26,7 +25,6 @@ type WAFRateLimiter struct {
 	ipSetID     string
 	headerKey   string
 	blockedMsg  string
-	mu          sync.RWMutex
 	lastRefresh time.Time
 	refreshTTL  time.Duration
 }
@@ -313,40 +311,3 @@ func ParseRateLimitHeader(value string) (remaining int, resetAt time.Time, err e
 
 // wafSDKRateLimit provides a direct WAF SDK rate limit check without IP set management.
 // This can be used with WAF's GetRateBasedStatement to check if an IP is rate limited.
-type wafSDKRateLimit struct {
-	client    *wafv2.Client
-	webACLArn string
-	scope     string
-}
-
-// newWAFSDKRateLimit creates a WAF SDK-based rate limiter.
-func newWAFSDKRateLimit(client *wafv2.Client, webACLArn string) *wafSDKRateLimit {
-	return &wafSDKRateLimit{
-		client:    client,
-		webACLArn: webACLArn,
-		scope:     "REGIONAL", // Use REGIONAL for API Gateway
-	}
-}
-
-// checkRateLimit checks if the given IP is currently blocked by WAF rules.
-// Returns true if blocked, false otherwise.
-func (w *wafSDKRateLimit) checkRateLimit(ctx context.Context, ip string) (bool, error) {
-	if w.client == nil || w.webACLArn == "" {
-		return false, nil
-	}
-
-	// Get Web ACL to check rules
-	acl, err := w.client.GetWebACL(ctx, &wafv2.GetWebACLInput{
-		ARN: aws.String(w.webACLArn),
-	})
-	if err != nil {
-		return false, fmt.Errorf("get web acl: %w", err)
-	}
-
-	// Check if IP matches any blocked rule
-	// Note: In production, WAF's built-in rate limiting handles this automatically
-	// This is for custom rule evaluation if needed
-	_ = acl
-
-	return false, nil
-}

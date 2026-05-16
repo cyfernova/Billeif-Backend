@@ -40,6 +40,7 @@ type Handler struct {
 	Payment         *PaymentHandler
 	RazorpayPayment *RazorpayPaymentHandler
 	Ledger          *LedgerHandler
+	Dashboard       *DashboardHandler
 	Report          *ReportHandler
 	Tax             *TaxHandler
 	Team            *TeamHandler
@@ -107,6 +108,7 @@ func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log 
 		Payment:         NewPaymentHandler(svcs.Payment, log),
 		RazorpayPayment: NewRazorpayPaymentHandler(svcs.RazorpayPayment, log),
 		Ledger:          NewLedgerHandler(svcs.Ledger, log),
+		Dashboard:       NewDashboardHandler(svcs.Dashboard, log),
 		Report:          NewReportHandler(svcs.Report, log),
 		Tax:             NewTaxHandler(svcs.TaxCompliance, log),
 		Team:            NewTeamHandler(svcs.Team, log),

@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"invoice-backend/internal/models"
@@ -149,13 +148,6 @@ func (h *TestableCommercePublicHandler) PublicRazorpayWebhook(c *gin.Context) {
 // Helper Functions
 // =============================================================================
 
-func isNotFoundErrPublic(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(strings.ToLower(err.Error()), "not found")
-}
-
 // =============================================================================
 // PublicCatalog Tests
 // =============================================================================
@@ -238,7 +230,9 @@ func TestPublicCatalog_WithProducts(t *testing.T) {
 	}
 
 	var response services.StorefrontCatalogResponse
-	json.Unmarshal(res.Body.Bytes(), &response)
+	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
 	if len(response.Products) != 1 {
 		t.Fatalf("expected 1 product, got %d", len(response.Products))
 	}
@@ -277,7 +271,9 @@ func TestPublicCategories_Success(t *testing.T) {
 	}
 
 	var categories []*models.StorefrontCategory
-	json.Unmarshal(res.Body.Bytes(), &categories)
+	if err := json.Unmarshal(res.Body.Bytes(), &categories); err != nil {
+		t.Fatalf("decode categories: %v", err)
+	}
 	if len(categories) != 2 {
 		t.Fatalf("expected 2 categories, got %d", len(categories))
 	}
@@ -330,7 +326,9 @@ func TestPublicCategories_EmptyCategories(t *testing.T) {
 	}
 
 	var categories []*models.StorefrontCategory
-	json.Unmarshal(res.Body.Bytes(), &categories)
+	if err := json.Unmarshal(res.Body.Bytes(), &categories); err != nil {
+		t.Fatalf("decode categories: %v", err)
+	}
 	if len(categories) != 0 {
 		t.Fatalf("expected 0 categories, got %d", len(categories))
 	}
@@ -447,7 +445,9 @@ func TestPublicValidateCoupon_InvalidCoupon(t *testing.T) {
 	}
 
 	var response services.CouponValidationResult
-	json.Unmarshal(res.Body.Bytes(), &response)
+	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
 	if response.Valid != false {
 		t.Fatalf("expected Valid=false, got %v", response.Valid)
 	}
@@ -717,7 +717,9 @@ func TestPublicOrder_CompletedStatus(t *testing.T) {
 	}
 
 	var response models.StoreOrder
-	json.Unmarshal(res.Body.Bytes(), &response)
+	if err := json.Unmarshal(res.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
 	if response.Status != "completed" {
 		t.Fatalf("expected status=completed, got %s", response.Status)
 	}
