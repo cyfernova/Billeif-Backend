@@ -10,6 +10,7 @@ type Invoice struct {
 	ID                   string                 `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
 	BusinessID           string                 `gorm:"not null;index" json:"business_id" validate:"required,uuid"`
 	CustomerID           string                 `gorm:"not null;index" json:"customer_id" validate:"required,uuid"`
+	Version              int                    `gorm:"not null;default:1" json:"version"`
 	ProjectID            *string                `gorm:"index" json:"project_id,omitempty" validate:"omitempty,uuid"`
 	PriceListID          *string                `gorm:"index" json:"price_list_id,omitempty" validate:"omitempty,uuid"`
 	RenderProfileID      *string                `gorm:"index" json:"render_profile_id,omitempty" validate:"omitempty,uuid"`
@@ -25,9 +26,22 @@ type Invoice struct {
 	PaidAmount           float64                `gorm:"type:decimal(15,2);default:0" json:"paid_amount" validate:"gte=0"`
 	BalanceDue           float64                `gorm:"type:decimal(15,2);default:0" json:"balance_due" validate:"gte=0"`
 	Notes                string                 `gorm:"type:text" json:"notes,omitempty"`
+	CustomerSnapshotRaw  string                 `gorm:"column:customer_snapshot;type:jsonb;default:'{}'" json:"-"`
+	DocumentJSONRaw      string                 `gorm:"column:document_json;type:jsonb;default:'{}'" json:"-"`
+	TemplateOverrideRaw  string                 `gorm:"column:template_override;type:jsonb;default:'{}'" json:"-"`
+	PaymentDisplayRaw    string                 `gorm:"column:payment_display;type:jsonb;default:'{}'" json:"-"`
+	TermsJSONRaw         string                 `gorm:"column:terms_json;type:jsonb;default:'{}'" json:"-"`
+	EWayDetailsJSONRaw   string                 `gorm:"column:eway_details_json;type:jsonb;default:'{}'" json:"-"`
+	EInvoiceSettingsRaw  string                 `gorm:"column:einvoice_settings_json;type:jsonb;default:'{}'" json:"-"`
 	CustomFields         string                 `gorm:"type:jsonb;default:'{}'" json:"custom_fields,omitempty"`
 	TermsAndConditions   string                 `gorm:"-" json:"terms_and_conditions,omitempty"`
 	TemplateOverride     map[string]interface{} `gorm:"-" json:"template_override,omitempty"`
+	CustomerSnapshot     map[string]interface{} `gorm:"-" json:"customer_snapshot,omitempty"`
+	DocumentJSON         map[string]interface{} `gorm:"-" json:"document_json,omitempty"`
+	PaymentDisplay       map[string]interface{} `gorm:"-" json:"payment_display,omitempty"`
+	TermsJSON            map[string]interface{} `gorm:"-" json:"terms_json,omitempty"`
+	EWayDetailsJSON      map[string]interface{} `gorm:"-" json:"eway_details_json,omitempty"`
+	EInvoiceSettingsJSON map[string]interface{} `gorm:"-" json:"einvoice_settings_json,omitempty"`
 	PONumber             string                 `gorm:"-" json:"po_number,omitempty"`
 	AdditionalCharges    string                 `gorm:"type:jsonb;default:'[]'" json:"additional_charges,omitempty"`
 	OriginSubscriptionID *string                `gorm:"index" json:"origin_subscription_id,omitempty" validate:"omitempty,uuid"`
@@ -65,6 +79,10 @@ type InvoiceItem struct {
 	CessRate         float64   `gorm:"type:decimal(7,3);default:0" json:"cess_rate"`
 	CessAmount       float64   `gorm:"type:decimal(15,2);default:0" json:"cess_amount"`
 	CustomFields     string    `gorm:"type:jsonb;default:'{}'" json:"custom_fields,omitempty"`
+	SKU              string    `gorm:"-" json:"sku,omitempty"`
+	Batch            string    `gorm:"-" json:"batch,omitempty"`
+	ItemType         string    `gorm:"-" json:"item_type,omitempty"`
+	Amount           float64   `gorm:"-" json:"amount,omitempty"`
 	ChargeSnapshot   string    `gorm:"type:jsonb;default:'[]'" json:"charge_snapshot,omitempty"`
 	BatchAllocations string    `gorm:"type:jsonb;default:'[]'" json:"batch_allocations,omitempty"`
 	SerialIDs        string    `gorm:"type:jsonb;default:'[]'" json:"serial_ids,omitempty"`

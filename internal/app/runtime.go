@@ -532,6 +532,7 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 				invoices.GET("", h.Invoice.List)
 				invoices.GET("/:id", h.Invoice.Get)
 				invoices.POST("", wafUserWriteRL, h.Invoice.Create)
+				invoices.PATCH("/:id/draft", wafUserWriteRL, h.Invoice.UpdateDraft)
 				invoices.PUT("/:id", wafUserWriteRL, h.Invoice.Update)
 				invoices.DELETE("/:id", wafUserWriteRL, h.Invoice.Delete)
 				invoices.POST("/:id/send", wafUserWriteRL, h.Invoice.Send)
