@@ -24,9 +24,9 @@ func TestEntitlementService_ResolveByBusinessDefaultsToFree(t *testing.T) {
 
 	entitlements, err := service.ResolveByBusiness(context.Background(), "missing-business")
 	require.NoError(t, err)
-	require.False(t, entitlements.EInvoiceEnabled)
-	require.False(t, entitlements.EWayBillEnabled)
-	require.False(t, entitlements.POSEnabled)
+	require.True(t, entitlements.EInvoiceEnabled)
+	require.True(t, entitlements.EWayBillEnabled)
+	require.True(t, entitlements.POSEnabled)
 }
 
 func TestEntitlementService_EnsureFeatureAppliesMonthlyLimit(t *testing.T) {

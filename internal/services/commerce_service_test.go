@@ -8,42 +8,71 @@ import (
 	"invoice-backend/internal/models"
 )
 
-func TestDefaultEntitlementSeedsForSubscription(t *testing.T) {
-	t.Run("pro plan enables storefront but not custom roles", func(t *testing.T) {
-		seeds := defaultEntitlementSeedsForSubscription(&models.Subscription{
-			Plan:         "starter",
-			PlanCode:     "pro",
-			MaxUsers:     2,
-			MaxStorageMB: 256,
-		})
-
-		if !seedEnabled(seeds, FeatureOnlineStore) {
-			t.Fatalf("expected online store to be enabled for pro")
-		}
-		if seedEnabled(seeds, FeatureCustomRoles) {
-			t.Fatalf("expected custom roles to be disabled for pro")
-		}
-		if limit := seedLimit(seeds, FeatureDriveStorageMB); limit == nil || *limit < 512 {
-			t.Fatalf("expected drive storage limit to be at least 512MB for pro")
-		}
+func TestDefaultEntitlementSeedsForSubscriptionMakesFeaturesAvailable(t *testing.T) {
+	seeds := defaultEntitlementSeedsForSubscription(&models.Subscription{
+		Plan:         "starter",
+		PlanCode:     "pro",
+		MaxUsers:     2,
+		MaxStorageMB: 256,
 	})
 
-	t.Run("biz plan grants unlimited multi user access", func(t *testing.T) {
-		seeds := defaultEntitlementSeedsForSubscription(&models.Subscription{
-			Plan:         "enterprise",
-			PlanCode:     "biz",
-			MaxUsers:     20,
-			MaxStorageMB: 2048,
-		})
-
-		if !seedEnabled(seeds, FeatureMultiBusiness) {
-			t.Fatalf("expected multi business to be enabled for biz")
+	for _, featureKey := range []string{
+		FeatureOnlineStore,
+		FeatureMultiCurrency,
+		FeatureExportDocuments,
+		FeatureSEZDocuments,
+		FeatureDeemedExportDocuments,
+		FeatureMultiUser,
+		FeatureCustomRoles,
+		FeatureMultiBusiness,
+		FeatureBranches,
+		FeaturePrioritySupport,
+		FeatureDriveStorageMB,
+		FeatureWhatsAppNotifications,
+	} {
+		if !seedEnabled(seeds, featureKey) {
+			t.Fatalf("expected %s to be enabled", featureKey)
 		}
-		limit := seedLimit(seeds, FeatureMultiUser)
+	}
+
+	for _, featureKey := range []string{FeatureMultiUser, FeatureBranches, FeatureDriveStorageMB} {
+		limit := seedLimit(seeds, featureKey)
 		if limit == nil || *limit != -1 {
-			t.Fatalf("expected biz multi user limit to be unlimited, got %v", limit)
+			t.Fatalf("expected %s limit to be unlimited, got %v", featureKey, limit)
 		}
-	})
+	}
+}
+
+func TestFeatureEntitlementsNeedSyncDetectsDisabledRows(t *testing.T) {
+	seeds := defaultEntitlementSeedsForSubscription(nil)
+	entitlements := make([]*models.FeatureEntitlement, 0, len(seeds))
+	for _, seed := range seeds {
+		entitlements = append(entitlements, &models.FeatureEntitlement{
+			FeatureKey: seed.FeatureKey,
+			Enabled:    seed.Enabled,
+			LimitValue: seed.LimitValue,
+		})
+	}
+
+	if featureEntitlementsNeedSync(entitlements) {
+		t.Fatal("expected complete enabled entitlement set to be current")
+	}
+
+	entitlements[0].Enabled = false
+	if !featureEntitlementsNeedSync(entitlements) {
+		t.Fatal("expected disabled entitlement to require sync")
+	}
+
+	entitlements[0].Enabled = true
+	for _, entitlement := range entitlements {
+		if entitlement.FeatureKey == FeatureBranches {
+			entitlement.LimitValue = int64Pointer(1)
+			break
+		}
+	}
+	if !featureEntitlementsNeedSync(entitlements) {
+		t.Fatal("expected stale entitlement limit to require sync")
+	}
 }
 
 func TestPermissionOverrideValue(t *testing.T) {
