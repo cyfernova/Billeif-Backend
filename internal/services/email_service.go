@@ -120,12 +120,20 @@ func (s *EmailService) UpsertAccount(ctx context.Context, businessID, accountID 
 			return nil, fmt.Errorf("email account not found")
 		}
 	} else {
-		account = models.EmailAccount{
-			BusinessID:      businessID,
-			Provider:        models.EmailProviderSES,
-			AccountType:     firstNonEmpty(input.AccountType, "transactional"),
-			Status:          models.EmailAccountStatusPendingVerification,
-			TrackDeliveries: boolValueOrDefault(input.TrackDeliveries, true),
+		err := s.db.WithContext(ctx).
+			Where("business_id = ? AND LOWER(email) = ? AND deleted_at IS NULL", businessID, normalizedEmail).
+			First(&account).Error
+		if err != nil && err != gorm.ErrRecordNotFound {
+			return nil, err
+		}
+		if err == gorm.ErrRecordNotFound {
+			account = models.EmailAccount{
+				BusinessID:      businessID,
+				Provider:        models.EmailProviderSES,
+				AccountType:     firstNonEmpty(input.AccountType, "transactional"),
+				Status:          models.EmailAccountStatusPendingVerification,
+				TrackDeliveries: boolValueOrDefault(input.TrackDeliveries, true),
+			}
 		}
 	}
 

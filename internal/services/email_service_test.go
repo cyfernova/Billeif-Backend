@@ -47,6 +47,45 @@ func TestEmailServiceCreateAccountDoesNotLookupEmptyUUID(t *testing.T) {
 	}
 }
 
+func TestEmailServiceCreateAccountReusesExistingBusinessEmail(t *testing.T) {
+	db := newEmailServiceTestDB(t, gormlogger.Discard)
+	svc := &EmailService{db: db, log: logger.New()}
+
+	first, err := svc.UpsertAccount(context.Background(), "biz-1", "", UpsertEmailAccountInput{
+		Name:  "Acme Notifications",
+		Email: "owner@example.com",
+	})
+	if err != nil {
+		t.Fatalf("create first email account: %v", err)
+	}
+
+	second, err := svc.UpsertAccount(context.Background(), "biz-1", "", UpsertEmailAccountInput{
+		Name:  "Acme Alerts",
+		Email: "OWNER@example.com",
+	})
+	if err != nil {
+		t.Fatalf("create duplicate email account: %v", err)
+	}
+
+	if second.ID != first.ID {
+		t.Fatalf("expected duplicate create to reuse account %q, got %q", first.ID, second.ID)
+	}
+	if second.Name != "Acme Alerts" {
+		t.Fatalf("expected duplicate create to update account name, got %q", second.Name)
+	}
+	if second.Email != "owner@example.com" {
+		t.Fatalf("expected normalized email, got %q", second.Email)
+	}
+
+	var count int64
+	if err := db.Table("email_accounts").Where("business_id = ? AND deleted_at IS NULL", "biz-1").Count(&count).Error; err != nil {
+		t.Fatalf("count email accounts: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected one email account row, got %d", count)
+	}
+}
+
 type emailSQLRecorder struct {
 	gormlogger.Interface
 	statements []string
@@ -99,6 +138,9 @@ func newEmailServiceTestDB(t *testing.T, log gormlogger.Interface) *gorm.DB {
 			created_at DATETIME,
 			deleted_at DATETIME
 		)`,
+		`CREATE UNIQUE INDEX idx_email_accounts_business_email
+			ON email_accounts (business_id, LOWER(email))
+			WHERE deleted_at IS NULL`,
 	}
 	for _, stmt := range statements {
 		if err := db.Exec(stmt).Error; err != nil {
