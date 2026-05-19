@@ -109,16 +109,17 @@ func (s *EmailService) UpsertAccount(ctx context.Context, businessID, accountID 
 	}
 
 	var account models.EmailAccount
-	err := s.db.WithContext(ctx).
-		Where("id = ? AND business_id = ? AND deleted_at IS NULL", accountID, businessID).
-		First(&account).Error
-
-	switch {
-	case accountID != "" && err != nil && err != gorm.ErrRecordNotFound:
-		return nil, err
-	case accountID != "" && err == gorm.ErrRecordNotFound:
-		return nil, fmt.Errorf("email account not found")
-	case accountID == "":
+	if accountID != "" {
+		err := s.db.WithContext(ctx).
+			Where("id = ? AND business_id = ? AND deleted_at IS NULL", accountID, businessID).
+			First(&account).Error
+		if err != nil && err != gorm.ErrRecordNotFound {
+			return nil, err
+		}
+		if err == gorm.ErrRecordNotFound {
+			return nil, fmt.Errorf("email account not found")
+		}
+	} else {
 		account = models.EmailAccount{
 			BusinessID:      businessID,
 			Provider:        models.EmailProviderSES,

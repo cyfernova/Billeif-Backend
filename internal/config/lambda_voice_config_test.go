@@ -5,6 +5,7 @@ import (
 )
 
 func TestLoadLambdaVoiceConfigRequiresVoiceEnv(t *testing.T) {
+	clearLambdaVoiceEnv(t)
 	t.Setenv("ENVIRONMENT", "dev")
 	t.Setenv("LOG_LEVEL", "info")
 	t.Setenv("LOG_FORMAT", "json")
@@ -64,5 +65,35 @@ func TestLoadLambdaVoiceConfigAcceptsExplicitVoiceEnv(t *testing.T) {
 	}
 	if cfg.SessionWorkerFunctionName != "voice-worker" {
 		t.Fatalf("unexpected worker function name: %s", cfg.SessionWorkerFunctionName)
+	}
+}
+
+func clearLambdaVoiceEnv(t *testing.T) {
+	t.Helper()
+
+	for _, key := range []string{
+		"VOICE_SESSION_WORKER_FUNCTION_NAME",
+		"DEEPGRAM_API_KEY",
+		"DEEPGRAM_VOICE_AGENT_URL",
+		"DEEPGRAM_VOICE_INPUT_ENCODING",
+		"DEEPGRAM_VOICE_INPUT_SAMPLE_RATE",
+		"DEEPGRAM_VOICE_OUTPUT_ENCODING",
+		"DEEPGRAM_VOICE_OUTPUT_SAMPLE_RATE",
+		"DEEPGRAM_VOICE_LISTEN_MODEL",
+		"DEEPGRAM_VOICE_SPEAK_MODEL",
+		"DEEPSEEK_API_KEY",
+		"DEEPSEEK_BASE_URL",
+		"DEEPSEEK_MODEL",
+		"VOICE_WS_MAX_SESSION_SECONDS",
+		"VOICE_WS_PING_INTERVAL_SECONDS",
+		"VOICE_WS_WRITE_TIMEOUT_SECONDS",
+		"VOICE_WS_MAX_FRAME_BYTES",
+		"VOICE_WS_MAX_CONCURRENT_SESSIONS_PER_USER",
+		"VOICE_WS_EVENT_POLL_INTERVAL_MS",
+		"VOICE_WS_EVENT_TTL_SECONDS",
+		"VOICE_WS_MAX_OUTBOUND_CHUNK_BYTES",
+		"VOICE_WS_PROVIDER_READY_TIMEOUT_SECONDS",
+	} {
+		t.Setenv(key, "")
 	}
 }
