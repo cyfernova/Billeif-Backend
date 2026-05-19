@@ -179,9 +179,12 @@ func (s *EmailService) UpsertAccount(ctx context.Context, businessID, accountID 
 
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if account.IsDefault {
-			if err := tx.Model(&models.EmailAccount{}).
-				Where("business_id = ? AND id <> ? AND deleted_at IS NULL", businessID, account.ID).
-				Update("is_default", false).Error; err != nil {
+			query := tx.Model(&models.EmailAccount{}).
+				Where("business_id = ? AND deleted_at IS NULL", businessID)
+			if account.ID != "" {
+				query = query.Where("id <> ?", account.ID)
+			}
+			if err := query.Update("is_default", false).Error; err != nil {
 				return err
 			}
 		}

@@ -40,7 +40,8 @@ func TestEmailServiceCreateAccountDoesNotLookupEmptyUUID(t *testing.T) {
 	}
 
 	for _, statement := range sqlRecorder.statements {
-		if strings.Contains(statement, "email_accounts") && strings.Contains(statement, "id = \"\"") {
+		if strings.Contains(statement, "email_accounts") &&
+			(strings.Contains(statement, "id = \"\"") || strings.Contains(statement, "id <> \"\"")) {
 			t.Fatalf("create account performed empty id lookup: %s", statement)
 		}
 	}
