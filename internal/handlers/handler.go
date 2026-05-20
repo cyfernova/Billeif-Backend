@@ -126,7 +126,7 @@ func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log 
 		AgentDiscovery:  NewAgentDiscoveryHandler(svcs.AgentDiscovery, log),
 		Intent:          NewIntentHandler(svcs.IntentProcessing, log),
 		WebSocket:       NewWebSocketHandler(wsHub, svcs.WebSocketConnection, log),
-		LLM:             NewLLMHandler(svcs.LLM, log),
+		LLM:             NewLLMHandler(svcs.LLM, svcs.LLMChatHistory, log),
 		Voice:           NewVoiceHandler(log),
 		RealtimeVoice:   NewRealtimeVoiceHandler(svcs.RealtimeVoice, cfg.AllowedOrigins, log),
 		WellKnown:       NewWellKnownHandler(cfg, log),

@@ -49,6 +49,7 @@ type Container struct {
 	IntentProcessing    *IntentProcessingService
 	AgentDiscovery      *AgentDiscoveryService
 	LLM                 *LLMService
+	LLMChatHistory      *LLMChatHistoryService
 	RealtimeVoice       *RealtimeVoiceService
 	A2ATask             *A2ATaskService
 	A2APush             *A2APushService
@@ -104,6 +105,7 @@ func NewContainer(
 	productMatchingSvc := NewProductMatchingService(marketplaceSvc, log)
 	intentProcessingSvc, _ := NewIntentProcessingService(productMatchingSvc, marketplaceSvc, log)
 	llmSvc := NewLLMService(cfg.LLM, log)
+	llmChatHistorySvc := NewLLMChatHistoryService(db, log)
 	realtimeVoiceSvc := NewRealtimeVoiceService(cfg.VoiceRealtime, log)
 
 	agentSvc := NewAgentService(ap2Repo, productRepo, ap2Signer, log)
@@ -181,6 +183,7 @@ func NewContainer(
 		IntentProcessing:    intentProcessingSvc,
 		AgentDiscovery:      NewAgentDiscoveryService(ap2Repo, productRepo, llmSvc, log),
 		LLM:                 llmSvc,
+		LLMChatHistory:      llmChatHistorySvc,
 		RealtimeVoice:       realtimeVoiceSvc,
 		A2ATask:             a2aTaskSvc,
 		A2APush:             a2aPushSvc,

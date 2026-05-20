@@ -897,6 +897,8 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 		// LLM endpoints
 		llm := protected.Group("/llm")
 		{
+			llm.GET("/chat/conversations", h.LLM.ListChatConversations)
+			llm.GET("/chat/conversations/:id/messages", h.LLM.ListChatMessages)
 			llm.POST("/chat", wafLLMRL, h.LLM.Chat)
 			llm.POST("/agent-assist", wafLLMRL, h.LLM.AgentAssist)
 		}

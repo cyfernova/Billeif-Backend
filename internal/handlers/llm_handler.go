@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"strconv"
 
 	"invoice-backend/internal/services"
 	"invoice-backend/pkg/logger"
@@ -11,21 +12,24 @@ import (
 
 // LLMHandler handles LLM interactions
 type LLMHandler struct {
-	llm *services.LLMService
-	log *logger.Logger
+	llm     *services.LLMService
+	history *services.LLMChatHistoryService
+	log     *logger.Logger
 }
 
 // NewLLMHandler creates a new LLM handler
-func NewLLMHandler(llm *services.LLMService, log *logger.Logger) *LLMHandler {
+func NewLLMHandler(llm *services.LLMService, history *services.LLMChatHistoryService, log *logger.Logger) *LLMHandler {
 	return &LLMHandler{
-		llm: llm,
-		log: log,
+		llm:     llm,
+		history: history,
+		log:     log,
 	}
 }
 
 // APIRequest represents the request body for the chat API
 type APIRequest struct {
-	Messages []services.ChatMessage `json:"messages" binding:"required"`
+	Messages       []services.ChatMessage `json:"messages" binding:"required"`
+	ConversationID string                 `json:"conversation_id,omitempty"`
 }
 
 // AgentAssistRequest represents the request body for agent assist
@@ -52,6 +56,14 @@ func (h *LLMHandler) Chat(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
 
 	response, err := h.llm.ChatWithWebSearch(c.Request.Context(), req.Messages)
 	if err != nil {
@@ -59,8 +71,56 @@ func (h *LLMHandler) Chat(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "raw_response": "check server logs for MINMAX RAW RESPONSE"})
 		return
 	}
+	if _, _, err := h.history.SaveExchange(c.Request.Context(), services.SaveLLMChatExchangeInput{
+		BusinessID:     businessID,
+		UserID:         userID,
+		ConversationID: req.ConversationID,
+		Messages:       req.Messages,
+		Result:         response,
+	}); err != nil {
+		h.log.Error("failed to persist chat history", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 
 	c.JSON(http.StatusOK, response)
+}
+
+func (h *LLMHandler) ListChatConversations(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	conversations, err := h.history.ListConversations(c.Request.Context(), businessID, userID, limit)
+	if err != nil {
+		h.log.Error("failed to list chat conversations", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": conversations})
+}
+
+func (h *LLMHandler) ListChatMessages(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
+	messages, err := h.history.ListMessages(c.Request.Context(), businessID, userID, c.Param("id"))
+	if err != nil {
+		h.log.Error("failed to list chat messages", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": messages})
 }
 
 // AgentAssist handles agent-specific assistance

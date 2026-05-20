@@ -27,8 +27,9 @@ type LLMChatOptions struct {
 }
 
 type LLMChatResult struct {
-	Response  string             `json:"response"`
-	WebSearch *LLMWebSearchState `json:"web_search,omitempty"`
+	Response       string             `json:"response"`
+	ConversationID string             `json:"conversation_id,omitempty"`
+	WebSearch      *LLMWebSearchState `json:"web_search,omitempty"`
 }
 
 type LLMWebSearchState struct {

@@ -107,3 +107,25 @@ resource "null_resource" "add_session_id_to_bargaining_negotiations" {
     EOT
   }
 }
+
+resource "null_resource" "add_llm_chat_history" {
+  depends_on = [null_resource.add_session_id_to_bargaining_negotiations]
+
+  triggers = {
+    migration_version = md5(templatefile("${path.module}/migrations/add_llm_chat_history.sql", {}))
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      echo "Running migration: Adding LLM chat history tables..."
+      PGPASSWORD="${var.db_password}" psql \
+        -h "${aws_db_instance.main.address}" \
+        -U "${var.db_username}" \
+        -d "${var.db_name}" \
+        -p "${var.db_port}" \
+        -v ON_ERROR_STOP=1 \
+        -f "${path.module}/migrations/add_llm_chat_history.sql"
+      echo "Migration completed successfully."
+    EOT
+  }
+}
