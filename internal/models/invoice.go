@@ -68,7 +68,7 @@ type InvoiceItem struct {
 	VariantID        *string   `gorm:"index" json:"variant_id,omitempty" validate:"omitempty,uuid"`
 	WarehouseID      *string   `gorm:"index" json:"warehouse_id,omitempty" validate:"omitempty,uuid"`
 	Description      string    `gorm:"not null" json:"description" validate:"required"`
-	HSNSACCode       string    `gorm:"size:40" json:"hsn_sac_code,omitempty"`
+	HSNSACCode       string    `gorm:"column:hsn_sac_code;size:40" json:"hsn_sac_code,omitempty"`
 	Unit             string    `gorm:"size:20;default:'OTH'" json:"unit,omitempty"`
 	Quantity         float64   `gorm:"not null;type:decimal(15,3)" json:"quantity" validate:"required,gt=0"`
 	FreeQuantity     float64   `gorm:"type:decimal(15,3);default:0" json:"free_quantity"`

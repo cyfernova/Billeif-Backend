@@ -427,7 +427,7 @@ func (s *InvoiceService) UpdateByBusiness(ctx context.Context, businessID, id st
 
 func isInvoiceEditableStatus(status string) bool {
 	switch status {
-	case "draft", "pending", "sent", "viewed", "overdue", "partially_paid", "paid":
+	case "draft", "pending", "sent", "viewed", "overdue", "partially_paid":
 		return true
 	default:
 		return false
