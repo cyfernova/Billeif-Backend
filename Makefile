@@ -133,7 +133,7 @@ build-lambda-custom-sms-sender: ## Build the Node.js custom SMS sender Lambda pa
 	rm -rf $(LAMBDA_BUILD_DIR)/custom-sms-sender
 	mkdir -p $(LAMBDA_BUILD_DIR)/custom-sms-sender
 	cp -R infrastructure/lambda/custom-sms-sender/. $(LAMBDA_BUILD_DIR)/custom-sms-sender/
-	cd $(LAMBDA_BUILD_DIR)/custom-sms-sender && npm install --omit=dev --no-audit --no-fund
+	cd $(LAMBDA_BUILD_DIR)/custom-sms-sender && pnpm install --prod --frozen-lockfile
 
 package-lambda: build-lambda build-lambda-custom-sms-sender ## Package Lambda artifacts into zip files
 	cd $(LAMBDA_BUILD_DIR)/http && zip -q -r ../http.zip bootstrap

@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "dependencies": {
-    "@aws-crypto/client-node": "^4.2.1",
-    "@aws-sdk/client-sns": "^3.922.0"
+    "@aws-crypto/client-node": "^5.0.0",
+    "@aws-sdk/client-sns": "^3.1057.0"
   }
 }

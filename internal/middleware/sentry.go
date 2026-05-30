@@ -72,9 +72,11 @@ func capturePanicToSentry(c *gin.Context, err interface{}, requestID string, sta
 			scope.SetTag("client_ip", c.ClientIP())
 
 			// Add request details
-			scope.SetExtra("stack_trace", stackTrace)
-			scope.SetExtra("request_headers", getRequestHeaders(c))
-			scope.SetExtra("query_params", c.Request.URL.Query())
+			pkgsentry.SetExtras(scope, map[string]interface{}{
+				"stack_trace":     stackTrace,
+				"request_headers": getRequestHeaders(c),
+				"query_params":    c.Request.URL.Query(),
+			})
 
 			// Set request context
 			scope.SetRequest(c.Request)
@@ -120,9 +122,7 @@ func SentryErrorHandler(c *gin.Context, err error, tags map[string]string, extra
 			}
 
 			// Add extra context
-			for key, value := range extras {
-				scope.SetExtra(key, value)
-			}
+			pkgsentry.SetExtras(scope, extras)
 
 			// Set request context
 			scope.SetRequest(c.Request)
