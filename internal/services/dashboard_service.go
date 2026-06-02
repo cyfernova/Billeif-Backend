@@ -4,9 +4,34 @@ import (
 	"context"
 	"time"
 
+	"invoice-backend/internal/models"
+	"invoice-backend/pkg/a2a"
 	"invoice-backend/pkg/logger"
 
 	"gorm.io/gorm"
+)
+
+var (
+	dashboardA2ATerminalStates = []string{
+		string(a2a.TaskStateCompleted),
+		string(a2a.TaskStateFailed),
+		string(a2a.TaskStateCancelled),
+		string(a2a.TaskStateRejected),
+		"completed",
+		"failed",
+		"cancelled",
+		"canceled",
+		"rejected",
+	}
+
+	dashboardRunningProcurementStatuses = []string{
+		"pending",
+		"matching",
+		"negotiating",
+		"winner_selected",
+		"running",
+		"in_progress",
+	}
 )
 
 type DashboardInvoiceRecord struct {
@@ -147,6 +172,19 @@ func (s *DashboardService) financeSummary(ctx context.Context, businessID string
 	if err != nil {
 		return DashboardFinanceSummary{}, err
 	}
+	totalPayable, err := s.sum(
+		ctx,
+		"documents",
+		"balance_due",
+		"business_id = ? AND deleted_at IS NULL AND party_type = ? AND document_type IN ? AND status NOT IN ? AND balance_due > 0",
+		businessID,
+		models.DocumentPartyTypeVendor,
+		[]string{models.DocumentTypePurchaseInvoice, models.DocumentTypeExpense},
+		[]string{models.DocumentStatusDraft, models.DocumentStatusCancelled},
+	)
+	if err != nil {
+		return DashboardFinanceSummary{}, err
+	}
 	totalCollected, err := s.sum(ctx, "payments", "amount", "business_id = ? AND deleted_at IS NULL", businessID)
 	if err != nil {
 		return DashboardFinanceSummary{}, err
@@ -187,7 +225,7 @@ func (s *DashboardService) financeSummary(ctx context.Context, businessID string
 		InventoryAlertCount:     lowStockProducts,
 		UnreadInventoryAlerts:   lowStockProducts,
 		TotalReceivable:         totalReceivable,
-		TotalPayable:            0,
+		TotalPayable:            totalPayable,
 		TotalCollected:          totalCollected,
 		TodaysCollections:       todaysCollections,
 		OverdueInvoices:         overdueInvoices,
@@ -266,9 +304,9 @@ func (s *DashboardService) aiSummary(ctx context.Context, businessID, userID str
 		WorkflowRunCount:   s.countOptional(ctx, "workflow_runs", "workflow_id IN (SELECT id FROM workflows WHERE user_id = ? AND deleted_at IS NULL AND agent_id IN (SELECT id FROM agents WHERE business_id = ? AND deleted_at IS NULL))", userID, businessID),
 		NegotiationCount:   s.countOptional(ctx, "bargaining_negotiations", negotiationWhere, userID, businessID, businessID),
 		ActiveNegotiations: s.countOptional(ctx, "bargaining_negotiations", negotiationWhere+" AND status IN ?", userID, businessID, businessID, []string{"initiated", "in_progress", "countered", "active"}),
-		A2ARunning:         s.countOptional(ctx, "a2a_tasks", "business_id = ? AND state NOT IN ?", businessID, []string{"completed", "failed", "cancelled", "canceled"}),
+		A2ARunning:         s.countOptional(ctx, "a2a_tasks", "business_id = ? AND state NOT IN ?", businessID, dashboardA2ATerminalStates),
 		ProcurementRuns:    s.countOptional(ctx, "procurement_runs", procurementWhere, userID, businessID),
-		RunningProcurement: s.countOptional(ctx, "procurement_runs", procurementWhere+" AND status IN ?", userID, businessID, []string{"pending", "running", "in_progress"}),
+		RunningProcurement: s.countOptional(ctx, "procurement_runs", procurementWhere+" AND status IN ?", userID, businessID, dashboardRunningProcurementStatuses),
 	}
 }
 

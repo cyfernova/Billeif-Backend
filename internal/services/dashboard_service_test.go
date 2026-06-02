@@ -23,6 +23,14 @@ func TestDashboardServiceSummaryScopesByBusiness(t *testing.T) {
 	execDashboardSQL(t, db, `INSERT INTO invoices (id, business_id, customer_id, invoice_no, status, total, paid_amount, balance_due, invoice_date, due_date, created_at, deleted_at) VALUES
 		('inv-1', 'biz-1', 'cust-1', 'INV-1', 'sent', 300, 50, 250, ?, ?, ?, NULL),
 		('inv-2', 'biz-2', 'cust-2', 'INV-2', 'sent', 900, 0, 900, ?, ?, ?, NULL)`, now, now.AddDate(0, 0, 2), now, now, now.AddDate(0, 0, 2), now)
+	execDashboardSQL(t, db, `INSERT INTO documents (id, business_id, document_type, party_type, status, balance_due, deleted_at) VALUES
+		('doc-payable-1', 'biz-1', 'purchase_invoice', 'vendor', 'issued', 225, NULL),
+		('doc-payable-2', 'biz-1', 'expense', 'vendor', 'issued', 100, NULL),
+		('doc-receivable-1', 'biz-1', 'sales_invoice', 'customer', 'issued', 800, NULL),
+		('doc-draft', 'biz-1', 'purchase_invoice', 'vendor', 'draft', 500, NULL),
+		('doc-cancelled', 'biz-1', 'expense', 'vendor', 'cancelled', 600, NULL),
+		('doc-other-business', 'biz-2', 'purchase_invoice', 'vendor', 'issued', 900, NULL),
+		('doc-deleted', 'biz-1', 'purchase_invoice', 'vendor', 'issued', 50, ?)`, now)
 	execDashboardSQL(t, db, `INSERT INTO payments (id, business_id, amount, payment_date, deleted_at) VALUES ('pay-1', 'biz-1', 50, ?, NULL), ('pay-2', 'biz-2', 900, ?, NULL)`, now, now)
 	execDashboardSQL(t, db, `INSERT INTO products (id, business_id, is_active, stock_level, low_stock_threshold, deleted_at) VALUES ('prod-1', 'biz-1', 1, 2, 5, NULL), ('prod-2', 'biz-2', 1, 20, 5, NULL)`)
 	execDashboardSQL(t, db, `INSERT INTO product_categories (id, business_id, name, is_active, sort_order, deleted_at) VALUES ('cat-1', 'biz-1', 'Hardware', 1, 1, NULL)`)
@@ -32,8 +40,14 @@ func TestDashboardServiceSummaryScopesByBusiness(t *testing.T) {
 	execDashboardSQL(t, db, `INSERT INTO workflows (id, user_id, agent_id, is_enabled, status, deleted_at) VALUES ('workflow-1', 'user-1', 'agent-1', 1, 'active', NULL), ('workflow-2', 'user-1', 'agent-2', 1, 'active', NULL)`)
 	execDashboardSQL(t, db, `INSERT INTO workflow_runs (id, workflow_id) VALUES ('run-1', 'workflow-1'), ('run-2', 'workflow-2')`)
 	execDashboardSQL(t, db, `INSERT INTO bargaining_negotiations (id, user_id, buyer_agent_id, seller_agent_id, status) VALUES ('neg-1', 'user-1', 'agent-1', 'agent-2', 'in_progress'), ('neg-2', 'user-1', 'agent-2', 'agent-2', 'in_progress')`)
-	execDashboardSQL(t, db, `INSERT INTO a2a_tasks (id, business_id, state) VALUES ('task-1', 'biz-1', 'working'), ('task-2', 'biz-2', 'working')`)
-	execDashboardSQL(t, db, `INSERT INTO procurement_runs (id, user_id, shopping_agent_id, status, deleted_at) VALUES ('proc-1', 'user-1', 'agent-1', 'running', NULL), ('proc-2', 'user-1', 'agent-2', 'running', NULL)`)
+	execDashboardSQL(t, db, `INSERT INTO a2a_tasks (id, business_id, state) VALUES
+		('task-1', 'biz-1', 'TASK_STATE_WORKING'),
+		('task-2', 'biz-2', 'TASK_STATE_WORKING'),
+		('task-3', 'biz-1', 'TASK_STATE_COMPLETED')`)
+	execDashboardSQL(t, db, `INSERT INTO procurement_runs (id, user_id, shopping_agent_id, status, deleted_at) VALUES
+		('proc-1', 'user-1', 'agent-1', 'negotiating', NULL),
+		('proc-2', 'user-1', 'agent-2', 'negotiating', NULL),
+		('proc-3', 'user-1', 'agent-1', 'completed', NULL)`)
 
 	summary, err := svc.Summary(context.Background(), "biz-1", "user-1")
 	if err != nil {
@@ -42,6 +56,9 @@ func TestDashboardServiceSummaryScopesByBusiness(t *testing.T) {
 
 	if summary.Finance.CustomerCount != 1 || summary.Finance.InvoiceCount != 1 || summary.Finance.TotalReceivable != 250 {
 		t.Fatalf("finance summary was not scoped correctly: %+v", summary.Finance)
+	}
+	if summary.Finance.TotalPayable != 325 {
+		t.Fatalf("expected payables from purchase and expense documents, got %+v", summary.Finance)
 	}
 	if summary.Inventory.ProductCount != 1 || summary.Inventory.LowStockProducts != 1 || len(summary.Inventory.Categories) != 1 {
 		t.Fatalf("inventory summary was not scoped correctly: %+v", summary.Inventory)
@@ -67,6 +84,7 @@ func newDashboardTestDB(t *testing.T) *gorm.DB {
 		`CREATE TABLE customers (id TEXT PRIMARY KEY, business_id TEXT, name TEXT, deleted_at DATETIME)`,
 		`CREATE TABLE vendors (id TEXT PRIMARY KEY, business_id TEXT, name TEXT, deleted_at DATETIME)`,
 		`CREATE TABLE invoices (id TEXT PRIMARY KEY, business_id TEXT, customer_id TEXT, invoice_no TEXT, status TEXT, total REAL, paid_amount REAL, balance_due REAL, invoice_date DATETIME, due_date DATETIME, created_at DATETIME, deleted_at DATETIME)`,
+		`CREATE TABLE documents (id TEXT PRIMARY KEY, business_id TEXT, document_type TEXT, party_type TEXT, status TEXT, balance_due REAL, deleted_at DATETIME)`,
 		`CREATE TABLE payments (id TEXT PRIMARY KEY, business_id TEXT, amount REAL, payment_date DATETIME, deleted_at DATETIME)`,
 		`CREATE TABLE products (id TEXT PRIMARY KEY, business_id TEXT, is_active BOOLEAN, stock_level INTEGER, low_stock_threshold INTEGER, deleted_at DATETIME)`,
 		`CREATE TABLE product_categories (id TEXT PRIMARY KEY, business_id TEXT, name TEXT, is_active BOOLEAN, sort_order INTEGER, deleted_at DATETIME)`,
