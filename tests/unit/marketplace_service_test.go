@@ -1192,8 +1192,6 @@ func TestMarketplaceService_GetMarketplaceStats_Success(t *testing.T) {
 
 	products := []*models.MarketplaceProduct{
 		{ID: "prod-1"},
-		{ID: "prod-2"},
-		{ID: "prod-3"},
 	}
 	shoppingAgents := []*models.Agent{
 		{ID: "shop-1"},
@@ -1211,7 +1209,7 @@ func TestMarketplaceService_GetMarketplaceStats_Success(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.NotNil(t, stats)
-	assert.Equal(t, 3, stats["available_products"])
+	assert.Equal(t, int64(3), stats["available_products"])
 	assert.Equal(t, 1, stats["shopping_agents"])
 	assert.Equal(t, 2, stats["merchant_agents"])
 	mockAP2.AssertExpectations(t)

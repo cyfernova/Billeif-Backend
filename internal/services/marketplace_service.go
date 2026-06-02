@@ -94,7 +94,7 @@ func (s *MarketplaceService) GetOrdersByStatus(ctx context.Context, userID, stat
 }
 
 func (s *MarketplaceService) GetMarketplaceStats(ctx context.Context) (map[string]interface{}, error) {
-	availableProducts, _, err := s.ap2Repo.GetAvailableProducts(ctx, 1, 1)
+	_, availableProducts, err := s.ap2Repo.GetAvailableProducts(ctx, 1, 1)
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +110,7 @@ func (s *MarketplaceService) GetMarketplaceStats(ctx context.Context) (map[strin
 	}
 
 	stats := map[string]interface{}{
-		"available_products": len(availableProducts),
+		"available_products": availableProducts,
 		"shopping_agents":    len(shoppingAgents),
 		"merchant_agents":    len(merchantAgents),
 	}
