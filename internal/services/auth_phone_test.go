@@ -300,6 +300,29 @@ func TestSyncGoogleUserRejectsPhonePreboundEmailRelink(t *testing.T) {
 	assert.Contains(t, err.Error(), "cannot relink user across identity providers")
 }
 
+func TestSyncGoogleUserUsesEmailLocalPartWhenGoogleNameMissing(t *testing.T) {
+	t.Parallel()
+
+	repo := &mockUserRepo{
+		create: func(ctx context.Context, user *models.User) error {
+			require.Equal(t, "new.google@example.com", user.Email)
+			require.Equal(t, "google-sub-1", user.CognitoID)
+			require.Equal(t, "new google", user.Name)
+			return nil
+		},
+	}
+	svc := newPhoneAuthService(t, repo, &mockCognitoClient{})
+
+	user, err := svc.SyncGoogleUser(context.Background(), SyncGoogleUserInput{
+		Email:     "new.google@example.com",
+		CognitoID: "google-sub-1",
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, user)
+	assert.Equal(t, "new google", user.Name)
+}
+
 func TestUpdateUserCognitoIDRejectsCrossProviderRelink(t *testing.T) {
 	t.Parallel()
 
