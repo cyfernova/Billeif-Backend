@@ -63,21 +63,21 @@ func (g *GORMLogger) Info(ctx context.Context, msg string, args ...interface{}) 
 	if g.level < gormlogger.Info {
 		return
 	}
-	g.withContext(ctx).Info("gorm info", "message", msg, "args", args)
+	g.withContext(ctx).Info("gorm info", "message", formatGORMMessage(msg, args...), "args", sanitizeArgs(args))
 }
 
 func (g *GORMLogger) Warn(ctx context.Context, msg string, args ...interface{}) {
 	if g.level < gormlogger.Warn {
 		return
 	}
-	g.withContext(ctx).Warn("gorm warning", "message", msg, "args", args)
+	g.withContext(ctx).Warn("gorm warning", "message", formatGORMMessage(msg, args...), "args", sanitizeArgs(args))
 }
 
 func (g *GORMLogger) Error(ctx context.Context, msg string, args ...interface{}) {
 	if g.level < gormlogger.Error {
 		return
 	}
-	g.withContext(ctx).Error("gorm error", "message", msg, "args", args)
+	g.withContext(ctx).Error("gorm error", "message", formatGORMMessage(msg, args...), "args", sanitizeArgs(args))
 }
 
 func (g *GORMLogger) Trace(ctx context.Context, begin time.Time, fc func() (string, int64), err error) {
