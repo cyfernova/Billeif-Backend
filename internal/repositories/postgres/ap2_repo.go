@@ -630,7 +630,7 @@ func (r *ap2Repository) SearchMarketplaceProducts(ctx context.Context, query str
 
 	offset := (page - 1) * limit
 	dbQuery := r.db.WithContext(ctx).Model(&models.MarketplaceProduct{}).
-		Where("is_available = ? AND deleted_at IS NULL", true)
+		Where("is_available = ?", true)
 
 	if query != "" {
 		dbQuery = dbQuery.Where("name ILIKE ? OR description ILIKE ?", "%"+query+"%", "%"+query+"%")

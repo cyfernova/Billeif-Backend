@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"invoice-backend/internal/config"
 	"invoice-backend/internal/models"
@@ -508,10 +509,15 @@ type SyncGoogleUserInput struct {
 }
 
 func (s *AuthService) SyncGoogleUser(ctx context.Context, input SyncGoogleUserInput) (*models.User, error) {
-	user, err := s.userRepo.GetByCognitoID(ctx, input.CognitoID)
+	email := normalizeOptionalEmail(input.Email)
+	name := googleDisplayName(input.Name, email)
+	profilePictureURL := strings.TrimSpace(input.ProfilePictureURL)
+	cognitoID := strings.TrimSpace(input.CognitoID)
+
+	user, err := s.userRepo.GetByCognitoID(ctx, cognitoID)
 	if err == nil {
-		if input.ProfilePictureURL != "" && strings.TrimSpace(user.ProfilePictureURL) == "" {
-			user.ProfilePictureURL = strings.TrimSpace(input.ProfilePictureURL)
+		if profilePictureURL != "" && strings.TrimSpace(user.ProfilePictureURL) == "" {
+			user.ProfilePictureURL = profilePictureURL
 			user.UpdatedAt = time.Now()
 			if err := s.userRepo.Update(ctx, user); err != nil {
 				s.log.Warn("failed to update profile picture", "error", err)
@@ -520,17 +526,17 @@ func (s *AuthService) SyncGoogleUser(ctx context.Context, input SyncGoogleUserIn
 		return user, nil
 	}
 
-	user, err = s.userRepo.GetByEmail(ctx, input.Email)
+	user, err = s.userRepo.GetByEmail(ctx, email)
 	if err == nil {
-		if err := s.ensureCognitoRelinkAllowed(user, input.CognitoID); err != nil {
+		if err := s.ensureCognitoRelinkAllowed(user, cognitoID); err != nil {
 			return nil, err
 		}
-		user.CognitoID = input.CognitoID
-		if input.Name != "" {
-			user.Name = input.Name
+		user.CognitoID = cognitoID
+		if strings.TrimSpace(input.Name) != "" {
+			user.Name = name
 		}
-		if input.ProfilePictureURL != "" && strings.TrimSpace(user.ProfilePictureURL) == "" {
-			user.ProfilePictureURL = strings.TrimSpace(input.ProfilePictureURL)
+		if profilePictureURL != "" && strings.TrimSpace(user.ProfilePictureURL) == "" {
+			user.ProfilePictureURL = profilePictureURL
 		}
 		user.UpdatedAt = time.Now()
 		if err := s.userRepo.Update(ctx, user); err != nil {
@@ -540,10 +546,10 @@ func (s *AuthService) SyncGoogleUser(ctx context.Context, input SyncGoogleUserIn
 	}
 
 	newUser := &models.User{
-		Email:             input.Email,
-		CognitoID:         input.CognitoID,
-		Name:              input.Name,
-		ProfilePictureURL: input.ProfilePictureURL,
+		Email:             email,
+		CognitoID:         cognitoID,
+		Name:              name,
+		ProfilePictureURL: profilePictureURL,
 		Role:              "viewer",
 	}
 
@@ -552,6 +558,25 @@ func (s *AuthService) SyncGoogleUser(ctx context.Context, input SyncGoogleUserIn
 	}
 
 	return newUser, nil
+}
+
+func googleDisplayName(name, email string) string {
+	trimmedName := strings.Join(strings.Fields(strings.TrimSpace(name)), " ")
+	if utf8.RuneCountInString(trimmedName) >= 2 {
+		return trimmedName
+	}
+
+	localPart := strings.TrimSpace(email)
+	if at := strings.Index(localPart, "@"); at >= 0 {
+		localPart = localPart[:at]
+	}
+	localPart = strings.NewReplacer(".", " ", "_", " ", "-", " ", "+", " ").Replace(localPart)
+	localPart = strings.Join(strings.Fields(localPart), " ")
+	if utf8.RuneCountInString(localPart) >= 2 {
+		return localPart
+	}
+
+	return "Google User"
 }
 
 // ensureUserFromCognito fetches user attributes from Cognito using the access token,

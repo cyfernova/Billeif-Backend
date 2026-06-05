@@ -68,7 +68,9 @@
       "Bash(Select-Object -First 10)",
       "Bash(make run-local *)",
       "Bash(Select-String -Pattern \"ssm|db_username\")",
-      "Bash(openssl rand *)"
+      "Bash(openssl rand *)",
+      "Bash(Get-ChildItem -Path . -Depth 3)",
+      "Bash(Select-Object FullName)"
     ]
   }
 }

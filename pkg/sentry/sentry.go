@@ -85,10 +85,8 @@ func CaptureError(err error, tags map[string]string, extras map[string]interface
 			scope.SetTag(key, value)
 		}
 
-		// Add extra context for debugging
-		for key, value := range extras {
-			scope.SetExtra(key, value)
-		}
+		// Add extra context for debugging.
+		SetExtras(scope, extras)
 
 		sentry.CaptureException(err)
 	})
@@ -103,9 +101,7 @@ func CaptureMessage(message string, level sentry.Level, tags map[string]string, 
 			scope.SetTag(key, value)
 		}
 
-		for key, value := range extras {
-			scope.SetExtra(key, value)
-		}
+		SetExtras(scope, extras)
 
 		sentry.CaptureMessage(message)
 	})
@@ -127,7 +123,9 @@ func CapturePanic(r interface{}, requestID string, path string, method string) {
 		// Get stack trace
 		stackBuf := make([]byte, 4096)
 		stackSize := runtime.Stack(stackBuf, false)
-		scope.SetExtra("stack_trace", string(stackBuf[:stackSize]))
+		SetExtras(scope, map[string]interface{}{
+			"stack_trace": string(stackBuf[:stackSize]),
+		})
 
 		// Capture as either error or message
 		if err, ok := r.(error); ok {
@@ -167,6 +165,15 @@ func AddBreadcrumb(category, message string, level sentry.Level, data map[string
 	})
 }
 
+// SetExtras attaches arbitrary debug data to error events using Sentry contexts.
+func SetExtras(scope *sentry.Scope, extras map[string]interface{}) {
+	if scope == nil || len(extras) == 0 {
+		return
+	}
+
+	scope.SetContext("extra", sentry.Context(extras))
+}
+
 // StartSpan starts a new span for performance monitoring
 // Note: When using the Gin middleware, spans are automatically created
 // Use this for manual span creation in non-HTTP contexts
@@ -179,6 +186,10 @@ func StartSpan(parentSpan *sentry.Span, operation, description string) *sentry.S
 
 // enrichEvent adds additional context to the event
 func enrichEvent(event *sentry.Event) {
+	if event.Contexts == nil {
+		event.Contexts = make(map[string]sentry.Context)
+	}
+
 	// Add Go version
 	event.Contexts["runtime"] = sentry.Context{
 		"name":    "Go",
@@ -193,14 +204,14 @@ func enrichEvent(event *sentry.Event) {
 		"arch": runtime.GOARCH,
 	}
 
-	// Add goroutine count for debugging concurrency issues
-	event.Extra["goroutine_count"] = runtime.NumGoroutine()
-
 	// Add memory stats
 	var memStats runtime.MemStats
 	runtime.ReadMemStats(&memStats)
-	event.Extra["heap_alloc_mb"] = memStats.HeapAlloc / 1024 / 1024
-	event.Extra["heap_objects"] = memStats.HeapObjects
+	event.Contexts["runtime_stats"] = sentry.Context{
+		"goroutine_count": runtime.NumGoroutine(),
+		"heap_alloc_mb":   memStats.HeapAlloc / 1024 / 1024,
+		"heap_objects":    memStats.HeapObjects,
+	}
 }
 
 // getServerName returns a unique server identifier

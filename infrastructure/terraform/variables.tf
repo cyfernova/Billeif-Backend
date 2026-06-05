@@ -19,25 +19,25 @@ variable "environment" {
 variable "user_pool_name" {
   description = "Cognito User Pool name"
   type        = string
-  default     = "invoice-platform-pool"
+  default     = "Billeif-pool"
 }
 
 variable "client_name" {
   description = "Cognito App Client name"
   type        = string
-  default     = "invoice-platform-client"
+  default     = "Billeif-client"
 }
 
 variable "phone_user_pool_name" {
   description = "Cognito User Pool name for India phone auth"
   type        = string
-  default     = "invoice-platform-phone-pool"
+  default     = "Billeif-phone-pool"
 }
 
 variable "phone_client_name" {
   description = "Cognito App Client name for India phone auth"
   type        = string
-  default     = "invoice-platform-phone-client"
+  default     = "Billeif-phone-client"
 }
 
 # VPC Configuration
@@ -223,7 +223,7 @@ variable "google_client_secret" {
 variable "cognito_domain_prefix" {
   description = "Prefix for the Cognito User Pool Domain"
   type        = string
-  default     = "invoice-backend-app"
+  default     = "billeif-app"
 }
 
 variable "cognito_additional_callback_urls" {

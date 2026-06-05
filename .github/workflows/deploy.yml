@@ -90,6 +90,11 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.29.3
+
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v4
         with:
@@ -151,6 +156,11 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: "20"
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.29.3
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v4
