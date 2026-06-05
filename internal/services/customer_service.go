@@ -24,10 +24,12 @@ type CreateCustomerInput struct {
 	Email                   string                 `json:"email" binding:"required,email"`
 	Phone                   string                 `json:"phone"`
 	Address                 string                 `json:"address"`
+	BillingAddress          string                 `json:"billing_address"`
 	City                    string                 `json:"city"`
 	State                   string                 `json:"state"`
 	Country                 string                 `json:"country"`
 	ZipCode                 string                 `json:"zip_code"`
+	Pincode                 string                 `json:"pincode"`
 	TaxID                   string                 `json:"tax_id"`
 	GSTIN                   string                 `json:"gstin"`
 	PAN                     string                 `json:"pan"`
@@ -41,16 +43,18 @@ type CreateCustomerInput struct {
 }
 
 func (s *CustomerService) Create(ctx context.Context, input CreateCustomerInput) (*models.Customer, error) {
+	address := firstNonEmpty(input.Address, input.BillingAddress)
+	postalCode := firstNonEmpty(input.ZipCode, input.Pincode)
 	customer := &models.Customer{
 		BusinessID:              input.BusinessID,
 		Name:                    input.Name,
 		Email:                   input.Email,
 		Phone:                   input.Phone,
-		Address:                 input.Address,
+		Address:                 address,
 		City:                    input.City,
 		State:                   input.State,
 		Country:                 input.Country,
-		PostalCode:              input.ZipCode,
+		PostalCode:              postalCode,
 		TaxID:                   input.TaxID,
 		GSTIN:                   input.GSTIN,
 		PAN:                     input.PAN,
@@ -82,10 +86,12 @@ type UpdateCustomerInput struct {
 	Email                   string                 `json:"email"`
 	Phone                   string                 `json:"phone"`
 	Address                 string                 `json:"address"`
+	BillingAddress          string                 `json:"billing_address"`
 	City                    string                 `json:"city"`
 	State                   string                 `json:"state"`
 	Country                 string                 `json:"country"`
 	ZipCode                 string                 `json:"zip_code"`
+	Pincode                 string                 `json:"pincode"`
 	TaxID                   string                 `json:"tax_id"`
 	GSTIN                   string                 `json:"gstin"`
 	PAN                     string                 `json:"pan"`
@@ -113,8 +119,8 @@ func (s *CustomerService) UpdateByBusiness(ctx context.Context, businessID, id s
 	if input.Phone != "" {
 		customer.Phone = input.Phone
 	}
-	if input.Address != "" {
-		customer.Address = input.Address
+	if address := firstNonEmpty(input.Address, input.BillingAddress); address != "" {
+		customer.Address = address
 	}
 	if input.City != "" {
 		customer.City = input.City
@@ -125,8 +131,8 @@ func (s *CustomerService) UpdateByBusiness(ctx context.Context, businessID, id s
 	if input.Country != "" {
 		customer.Country = input.Country
 	}
-	if input.ZipCode != "" {
-		customer.PostalCode = input.ZipCode
+	if postalCode := firstNonEmpty(input.ZipCode, input.Pincode); postalCode != "" {
+		customer.PostalCode = postalCode
 	}
 	if input.TaxID != "" {
 		customer.TaxID = input.TaxID

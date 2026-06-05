@@ -146,3 +146,93 @@ func TestLLMServiceChatWithWebSearchRequiresExaKey(t *testing.T) {
 		t.Fatalf("error = %v, want missing EXA_API_KEY error", err)
 	}
 }
+
+func TestLLMServiceChatWithWebSearchUsesExaForExternalQuestion(t *testing.T) {
+	t.Parallel()
+
+	const exaKey = "test-exa-key"
+	exaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req exaSearchRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode Exa request: %v", err)
+		}
+		if req.Query != "Who is Mira Murati?" {
+			t.Fatalf("Exa query = %q", req.Query)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[{"title":"Mira Murati profile","url":"https://example.test/mira","highlights":["Mira Murati is a technology executive."]}]}`))
+	}))
+	defer exaServer.Close()
+
+	llmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req OpenAIChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode LLM request: %v", err)
+		}
+		foundSearchContext := false
+		for _, msg := range req.Messages {
+			if msg.Role == "system" && strings.Contains(msg.Content, "Exa web search") && strings.Contains(msg.Content, "https://example.test/mira") {
+				foundSearchContext = true
+				break
+			}
+		}
+		if !foundSearchContext {
+			t.Fatalf("LLM request did not include autonomous Exa search context: %#v", req.Messages)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"Answered with web context."}}],"model":"test-llm-model"}`))
+	}))
+	defer llmServer.Close()
+
+	svc := NewLLMService(config.LLMConfig{
+		APIKey:     "test-llm-key",
+		APIURL:     llmServer.URL,
+		Model:      "test-llm-model",
+		Timeout:    5,
+		ExaAPIKey:  exaKey,
+		ExaBaseURL: exaServer.URL,
+		ExaTimeout: 5,
+	}, logger.NewWithEnv("test"))
+
+	got, err := svc.ChatWithWebSearch(context.Background(), []ChatMessage{{Role: "user", Content: "Who is Mira Murati?"}})
+	if err != nil {
+		t.Fatalf("ChatWithWebSearch returned error: %v", err)
+	}
+	if got.WebSearch == nil || !got.WebSearch.Used {
+		t.Fatalf("web search metadata = %#v, want used", got.WebSearch)
+	}
+}
+
+func TestLLMServiceChatWithWebSearchDoesNotRequireExaForAppWorkflow(t *testing.T) {
+	t.Parallel()
+
+	llmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req OpenAIChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode LLM request: %v", err)
+		}
+		for _, msg := range req.Messages {
+			if msg.Role == "system" && strings.Contains(msg.Content, "Exa web search") {
+				t.Fatalf("unexpected Exa context for local workflow query: %#v", req.Messages)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"Create an invoice from the New Invoice screen."}}],"model":"test-llm-model"}`))
+	}))
+	defer llmServer.Close()
+
+	svc := NewLLMService(config.LLMConfig{
+		APIKey:  "test-llm-key",
+		APIURL:  llmServer.URL,
+		Model:   "test-llm-model",
+		Timeout: 5,
+	}, logger.NewWithEnv("test"))
+
+	got, err := svc.ChatWithWebSearch(context.Background(), []ChatMessage{{Role: "user", Content: "How do I create an invoice?"}})
+	if err != nil {
+		t.Fatalf("ChatWithWebSearch returned error: %v", err)
+	}
+	if got.WebSearch == nil || got.WebSearch.Used {
+		t.Fatalf("web search metadata = %#v, want not used", got.WebSearch)
+	}
+}

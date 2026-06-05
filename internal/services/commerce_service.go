@@ -323,7 +323,7 @@ func (s *CommerceService) ListFeatureEntitlements(ctx context.Context, businessI
 		Find(&entitlements).Error; err != nil {
 		return nil, err
 	}
-	if len(entitlements) == 0 {
+	if featureEntitlementsNeedSync(entitlements) {
 		return s.SyncFeatureEntitlements(ctx, businessID)
 	}
 	return entitlements, nil
@@ -2134,70 +2134,49 @@ type entitlementSeed struct {
 	Metadata   map[string]interface{}
 }
 
-func defaultEntitlementSeedsForSubscription(subscription *models.Subscription) []entitlementSeed {
+func defaultEntitlementSeedsForSubscription(_ *models.Subscription) []entitlementSeed {
 	unlimited := int64(-1)
-	switch normalizePlanCode(subscription.Plan, subscription.PlanCode) {
-	case "biz":
-		return []entitlementSeed{
-			{FeatureKey: FeatureOnlineStore, Enabled: true},
-			{FeatureKey: FeatureMultiCurrency, Enabled: true},
-			{FeatureKey: FeatureExportDocuments, Enabled: true},
-			{FeatureKey: FeatureSEZDocuments, Enabled: true},
-			{FeatureKey: FeatureDeemedExportDocuments, Enabled: true},
-			{FeatureKey: FeatureMultiUser, Enabled: true, LimitValue: &unlimited},
-			{FeatureKey: FeatureCustomRoles, Enabled: true},
-			{FeatureKey: FeatureMultiBusiness, Enabled: true},
-			{FeatureKey: FeatureBranches, Enabled: true, LimitValue: int64Pointer(50)},
-			{FeatureKey: FeaturePrioritySupport, Enabled: true},
-			{FeatureKey: FeatureDriveStorageMB, Enabled: true, LimitValue: int64Pointer(maxInt64(subscription.MaxStorageMB, 10240))},
-			{FeatureKey: FeatureWhatsAppNotifications, Enabled: true},
-		}
-	case "rise":
-		return []entitlementSeed{
-			{FeatureKey: FeatureOnlineStore, Enabled: true},
-			{FeatureKey: FeatureMultiCurrency, Enabled: true},
-			{FeatureKey: FeatureExportDocuments, Enabled: true},
-			{FeatureKey: FeatureSEZDocuments, Enabled: true},
-			{FeatureKey: FeatureDeemedExportDocuments, Enabled: true},
-			{FeatureKey: FeatureMultiUser, Enabled: true, LimitValue: int64Pointer(maxInt64(subscription.MaxUsers, 10))},
-			{FeatureKey: FeatureCustomRoles, Enabled: true},
-			{FeatureKey: FeatureMultiBusiness, Enabled: false},
-			{FeatureKey: FeatureBranches, Enabled: true, LimitValue: int64Pointer(10)},
-			{FeatureKey: FeaturePrioritySupport, Enabled: false},
-			{FeatureKey: FeatureDriveStorageMB, Enabled: true, LimitValue: int64Pointer(maxInt64(subscription.MaxStorageMB, 2048))},
-			{FeatureKey: FeatureWhatsAppNotifications, Enabled: true},
-		}
-	case "pro":
-		return []entitlementSeed{
-			{FeatureKey: FeatureOnlineStore, Enabled: true},
-			{FeatureKey: FeatureMultiCurrency, Enabled: false},
-			{FeatureKey: FeatureExportDocuments, Enabled: true},
-			{FeatureKey: FeatureSEZDocuments, Enabled: false},
-			{FeatureKey: FeatureDeemedExportDocuments, Enabled: false},
-			{FeatureKey: FeatureMultiUser, Enabled: true, LimitValue: int64Pointer(maxInt64(subscription.MaxUsers, 3))},
-			{FeatureKey: FeatureCustomRoles, Enabled: false},
-			{FeatureKey: FeatureMultiBusiness, Enabled: false},
-			{FeatureKey: FeatureBranches, Enabled: false},
-			{FeatureKey: FeaturePrioritySupport, Enabled: false},
-			{FeatureKey: FeatureDriveStorageMB, Enabled: true, LimitValue: int64Pointer(maxInt64(subscription.MaxStorageMB, 512))},
-			{FeatureKey: FeatureWhatsAppNotifications, Enabled: false},
-		}
-	default:
-		return []entitlementSeed{
-			{FeatureKey: FeatureOnlineStore, Enabled: false},
-			{FeatureKey: FeatureMultiCurrency, Enabled: false},
-			{FeatureKey: FeatureExportDocuments, Enabled: false},
-			{FeatureKey: FeatureSEZDocuments, Enabled: false},
-			{FeatureKey: FeatureDeemedExportDocuments, Enabled: false},
-			{FeatureKey: FeatureMultiUser, Enabled: false, LimitValue: int64Pointer(maxInt64(subscription.MaxUsers, 1))},
-			{FeatureKey: FeatureCustomRoles, Enabled: false},
-			{FeatureKey: FeatureMultiBusiness, Enabled: false},
-			{FeatureKey: FeatureBranches, Enabled: false},
-			{FeatureKey: FeaturePrioritySupport, Enabled: false},
-			{FeatureKey: FeatureDriveStorageMB, Enabled: true, LimitValue: int64Pointer(maxInt64(subscription.MaxStorageMB, 100))},
-			{FeatureKey: FeatureWhatsAppNotifications, Enabled: false},
+
+	return []entitlementSeed{
+		{FeatureKey: FeatureOnlineStore, Enabled: true},
+		{FeatureKey: FeatureMultiCurrency, Enabled: true},
+		{FeatureKey: FeatureExportDocuments, Enabled: true},
+		{FeatureKey: FeatureSEZDocuments, Enabled: true},
+		{FeatureKey: FeatureDeemedExportDocuments, Enabled: true},
+		{FeatureKey: FeatureMultiUser, Enabled: true, LimitValue: &unlimited},
+		{FeatureKey: FeatureCustomRoles, Enabled: true},
+		{FeatureKey: FeatureMultiBusiness, Enabled: true},
+		{FeatureKey: FeatureBranches, Enabled: true, LimitValue: &unlimited},
+		{FeatureKey: FeaturePrioritySupport, Enabled: true},
+		{FeatureKey: FeatureDriveStorageMB, Enabled: true, LimitValue: &unlimited},
+		{FeatureKey: FeatureWhatsAppNotifications, Enabled: true},
+	}
+}
+
+func featureEntitlementsNeedSync(entitlements []*models.FeatureEntitlement) bool {
+	required := defaultEntitlementSeedsForSubscription(nil)
+	if len(entitlements) < len(required) {
+		return true
+	}
+
+	byFeatureKey := make(map[string]*models.FeatureEntitlement, len(entitlements))
+	for _, entitlement := range entitlements {
+		if entitlement != nil {
+			byFeatureKey[entitlement.FeatureKey] = entitlement
 		}
 	}
+
+	for _, seed := range required {
+		entitlement, ok := byFeatureKey[seed.FeatureKey]
+		if !ok || !entitlement.Enabled {
+			return true
+		}
+		if seed.LimitValue != nil && (entitlement.LimitValue == nil || *entitlement.LimitValue != *seed.LimitValue) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func normalizeLookupKey(value string) string {

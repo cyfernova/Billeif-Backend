@@ -136,46 +136,13 @@ func (s *EntitlementService) ensureMonthlyLimit(ctx context.Context, businessID 
 }
 
 func defaultEntitlementsForPlan(plan string) PlanEntitlements {
-	switch strings.ToLower(strings.TrimSpace(plan)) {
-	case "enterprise":
-		return PlanEntitlements{
-			EInvoiceEnabled: true,
-			EInvoiceLimit:   -1,
-			EWayBillEnabled: true,
-			EWayBillLimit:   -1,
-			BulkGSTEnabled:  true,
-			GSTAPIEnabled:   true,
-			POSEnabled:      true,
-		}
-	case "professional":
-		return PlanEntitlements{
-			EInvoiceEnabled: true,
-			EInvoiceLimit:   -1,
-			EWayBillEnabled: true,
-			EWayBillLimit:   -1,
-			BulkGSTEnabled:  true,
-			GSTAPIEnabled:   true,
-			POSEnabled:      true,
-		}
-	case "starter":
-		return PlanEntitlements{
-			EInvoiceEnabled: true,
-			EInvoiceLimit:   100,
-			EWayBillEnabled: true,
-			EWayBillLimit:   100,
-			BulkGSTEnabled:  false,
-			GSTAPIEnabled:   false,
-			POSEnabled:      false,
-		}
-	default:
-		return PlanEntitlements{
-			EInvoiceEnabled: false,
-			EInvoiceLimit:   0,
-			EWayBillEnabled: false,
-			EWayBillLimit:   0,
-			BulkGSTEnabled:  false,
-			GSTAPIEnabled:   false,
-			POSEnabled:      false,
-		}
+	return PlanEntitlements{
+		EInvoiceEnabled: true,
+		EInvoiceLimit:   -1,
+		EWayBillEnabled: true,
+		EWayBillLimit:   -1,
+		BulkGSTEnabled:  true,
+		GSTAPIEnabled:   true,
+		POSEnabled:      true,
 	}
 }

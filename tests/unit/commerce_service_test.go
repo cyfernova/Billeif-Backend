@@ -34,10 +34,9 @@ func TestEntitlementService_ResolveByBusiness_NilSubscriptionRepo_ReturnsFreeDef
 
 	require.NoError(t, err)
 	require.NotNil(t, entitlements)
-	// free plan should have all features disabled
-	require.False(t, entitlements.EInvoiceEnabled)
-	require.False(t, entitlements.EWayBillEnabled)
-	require.False(t, entitlements.BulkGSTEnabled)
-	require.False(t, entitlements.GSTAPIEnabled)
-	require.False(t, entitlements.POSEnabled)
+	require.True(t, entitlements.EInvoiceEnabled)
+	require.True(t, entitlements.EWayBillEnabled)
+	require.True(t, entitlements.BulkGSTEnabled)
+	require.True(t, entitlements.GSTAPIEnabled)
+	require.True(t, entitlements.POSEnabled)
 }

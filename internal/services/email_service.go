@@ -109,22 +109,31 @@ func (s *EmailService) UpsertAccount(ctx context.Context, businessID, accountID 
 	}
 
 	var account models.EmailAccount
-	err := s.db.WithContext(ctx).
-		Where("id = ? AND business_id = ? AND deleted_at IS NULL", accountID, businessID).
-		First(&account).Error
-
-	switch {
-	case accountID != "" && err != nil && err != gorm.ErrRecordNotFound:
-		return nil, err
-	case accountID != "" && err == gorm.ErrRecordNotFound:
-		return nil, fmt.Errorf("email account not found")
-	case accountID == "":
-		account = models.EmailAccount{
-			BusinessID:      businessID,
-			Provider:        models.EmailProviderSES,
-			AccountType:     firstNonEmpty(input.AccountType, "transactional"),
-			Status:          models.EmailAccountStatusPendingVerification,
-			TrackDeliveries: boolValueOrDefault(input.TrackDeliveries, true),
+	if accountID != "" {
+		err := s.db.WithContext(ctx).
+			Where("id = ? AND business_id = ? AND deleted_at IS NULL", accountID, businessID).
+			First(&account).Error
+		if err != nil && err != gorm.ErrRecordNotFound {
+			return nil, err
+		}
+		if err == gorm.ErrRecordNotFound {
+			return nil, fmt.Errorf("email account not found")
+		}
+	} else {
+		err := s.db.WithContext(ctx).
+			Where("business_id = ? AND LOWER(email) = ? AND deleted_at IS NULL", businessID, normalizedEmail).
+			First(&account).Error
+		if err != nil && err != gorm.ErrRecordNotFound {
+			return nil, err
+		}
+		if err == gorm.ErrRecordNotFound {
+			account = models.EmailAccount{
+				BusinessID:      businessID,
+				Provider:        models.EmailProviderSES,
+				AccountType:     firstNonEmpty(input.AccountType, "transactional"),
+				Status:          models.EmailAccountStatusPendingVerification,
+				TrackDeliveries: boolValueOrDefault(input.TrackDeliveries, true),
+			}
 		}
 	}
 
@@ -178,9 +187,12 @@ func (s *EmailService) UpsertAccount(ctx context.Context, businessID, accountID 
 
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if account.IsDefault {
-			if err := tx.Model(&models.EmailAccount{}).
-				Where("business_id = ? AND id <> ? AND deleted_at IS NULL", businessID, account.ID).
-				Update("is_default", false).Error; err != nil {
+			query := tx.Model(&models.EmailAccount{}).
+				Where("business_id = ? AND deleted_at IS NULL", businessID)
+			if account.ID != "" {
+				query = query.Where("id <> ?", account.ID)
+			}
+			if err := query.Update("is_default", false).Error; err != nil {
 				return err
 			}
 		}
