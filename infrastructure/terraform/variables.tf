@@ -223,7 +223,7 @@ variable "google_client_secret" {
 variable "cognito_domain_prefix" {
   description = "Prefix for the Cognito User Pool Domain"
   type        = string
-  default     = "billeif-app"
+  default     = "invoice-backend-app"
 }
 
 variable "cognito_additional_callback_urls" {
