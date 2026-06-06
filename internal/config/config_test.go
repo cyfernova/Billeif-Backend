@@ -64,6 +64,21 @@ func TestValidateRequiresExplicitLLMConfig(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsPlaceholderLLMConfig(t *testing.T) {
+	cfg := validConfigForTest()
+	cfg.LLM.APIURL = "https://test.com"
+
+	if err := validate(cfg); err == nil || !strings.Contains(err.Error(), "LLM_API_URL cannot use placeholder host") {
+		t.Fatalf("expected placeholder LLM_API_URL to fail validation, got %v", err)
+	}
+
+	cfg = validConfigForTest()
+	cfg.LLM.Model = "test"
+	if err := validate(cfg); err == nil || !strings.Contains(err.Error(), "LLM_MODEL cannot be a placeholder value") {
+		t.Fatalf("expected placeholder LLM_MODEL to fail validation, got %v", err)
+	}
+}
+
 func TestValidateRejectsInsecureProductionMCP(t *testing.T) {
 	cfg := validConfigForTest()
 	cfg.Environment = "production"

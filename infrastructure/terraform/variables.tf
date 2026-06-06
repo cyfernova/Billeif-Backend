@@ -347,6 +347,11 @@ variable "llm_api_url" {
     condition     = can(regex("^https://", var.llm_api_url))
     error_message = "llm_api_url must be an absolute https URL."
   }
+
+  validation {
+    condition     = !can(regex("^https://(www\\.)?(test\\.com|example\\.com|placeholder\\.com)([:/]|$)", lower(trimspace(var.llm_api_url))))
+    error_message = "llm_api_url cannot use a placeholder host."
+  }
 }
 
 variable "llm_model" {
@@ -356,6 +361,11 @@ variable "llm_model" {
   validation {
     condition     = length(trimspace(var.llm_model)) > 0
     error_message = "llm_model is required."
+  }
+
+  validation {
+    condition     = !contains(["test", "placeholder", "dummy", "changeme", "change-me"], lower(trimspace(var.llm_model))) && !startswith(lower(trimspace(var.llm_model)), "your-")
+    error_message = "llm_model cannot be a placeholder value."
   }
 }
 
@@ -464,6 +474,11 @@ variable "deepseek_base_url" {
     condition     = can(regex("^https://", var.deepseek_base_url))
     error_message = "deepseek_base_url must be an absolute https URL."
   }
+
+  validation {
+    condition     = !can(regex("^https://(www\\.)?(test\\.com|example\\.com|placeholder\\.com)([:/]|$)", lower(trimspace(var.deepseek_base_url))))
+    error_message = "deepseek_base_url cannot use a placeholder host."
+  }
 }
 
 variable "deepseek_model" {
@@ -473,6 +488,11 @@ variable "deepseek_model" {
   validation {
     condition     = length(trimspace(var.deepseek_model)) > 0
     error_message = "deepseek_model is required."
+  }
+
+  validation {
+    condition     = !contains(["test", "placeholder", "dummy", "changeme", "change-me"], lower(trimspace(var.deepseek_model))) && !startswith(lower(trimspace(var.deepseek_model)), "your-")
+    error_message = "deepseek_model cannot be a placeholder value."
   }
 }
 

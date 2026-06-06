@@ -75,8 +75,14 @@ func validate(cfg *Config) error {
 	if err != nil || parsedLLMURL.Scheme != "https" || parsedLLMURL.Host == "" {
 		return fmt.Errorf("LLM_API_URL must be an absolute https URL")
 	}
+	if isPlaceholderLLMHost(parsedLLMURL.Hostname()) {
+		return fmt.Errorf("LLM_API_URL cannot use placeholder host %q", parsedLLMURL.Hostname())
+	}
 	if strings.TrimSpace(cfg.LLM.Model) == "" {
 		return fmt.Errorf("LLM_MODEL is required")
+	}
+	if isPlaceholderLLMValue(cfg.LLM.Model) {
+		return fmt.Errorf("LLM_MODEL cannot be a placeholder value")
 	}
 	if cfg.Credentials.EncryptionKey == "" {
 		return fmt.Errorf("CREDENTIAL_ENCRYPTION_KEY is required")
@@ -148,6 +154,28 @@ func validate(cfg *Config) error {
 	}
 
 	return nil
+}
+
+func isPlaceholderLLMHost(host string) bool {
+	switch strings.ToLower(strings.TrimSpace(host)) {
+	case "test.com", "www.test.com", "example.com", "www.example.com", "placeholder.com", "www.placeholder.com":
+		return true
+	default:
+		return false
+	}
+}
+
+func isPlaceholderLLMValue(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return false
+	}
+	switch normalized {
+	case "test", "placeholder", "dummy", "changeme", "change-me":
+		return true
+	default:
+		return strings.HasPrefix(normalized, "your-")
+	}
 }
 
 func validateLogging(logging LoggingConfig) error {
