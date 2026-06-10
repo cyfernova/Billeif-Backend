@@ -58,13 +58,16 @@ type RealtimeAppEvent struct {
 }
 
 type DeepgramFunctionCallRequest struct {
-	Type      string `json:"type"`
-	Functions []struct {
-		ID         string          `json:"id"`
-		Name       string          `json:"name"`
-		Arguments  json.RawMessage `json:"arguments"`
-		ClientSide bool            `json:"client_side"`
-	} `json:"functions"`
+	Type      string                 `json:"type"`
+	Functions []DeepgramFunctionCall `json:"functions"`
+}
+
+type DeepgramFunctionCall struct {
+	ID               string          `json:"id"`
+	Name             string          `json:"name"`
+	Arguments        json.RawMessage `json:"arguments"`
+	ClientSide       bool            `json:"client_side"`
+	ThoughtSignature string          `json:"thought_signature,omitempty"`
 }
 
 func ParseRealtimeVoiceControl(payload []byte) (RealtimeVoiceControlEvent, error) {
@@ -193,13 +196,14 @@ func MapDeepgramJSONEvent(payload []byte) (RealtimeAppEvent, bool, error) {
 }
 
 type DeepgramVoiceAgentSettingsOptions struct {
-	SessionID      string
-	UserID         string
-	BusinessID     string
-	ConversationID string
-	Language       string
-	Voice          string
-	History        []RealtimeHistoryItem
+	SessionID       string
+	UserID          string
+	BusinessID      string
+	ConversationID  string
+	Language        string
+	Voice           string
+	History         []RealtimeHistoryItem
+	MCPToolsEnabled bool
 }
 
 func BuildDeepgramVoiceAgentSettings(cfg config.VoiceRealtimeConfig, opts DeepgramVoiceAgentSettingsOptions) map[string]interface{} {
@@ -241,6 +245,10 @@ func BuildDeepgramVoiceAgentSettings(cfg config.VoiceRealtimeConfig, opts Deepgr
 				"model": speakModel,
 			},
 		},
+	}
+	if opts.MCPToolsEnabled {
+		think := agent["think"].(map[string]interface{})
+		think["functions"] = BuildVoiceMCPFunctionDefinitions()
 	}
 
 	if len(opts.History) > 0 {
@@ -290,6 +298,9 @@ func buildRealtimeVoicePrompt(opts DeepgramVoiceAgentSettingsOptions) string {
 	}
 	if opts.ConversationID != "" {
 		prompt += "\nContinue the voice conversation identified by conversation_id " + opts.ConversationID + "."
+	}
+	if opts.MCPToolsEnabled {
+		prompt += "\nWhen the user asks you to list, create, update, send, or record business finance data, use the available function to run an allowlisted Billeif action. Ask a brief confirmation before sending an invoice or changing payments, stock, invoices, customers, vendors, or products unless the user's instruction is already explicit. Never call delete, auth, admin, credential, or unrelated tools."
 	}
 	prompt += "\nCurrent session started at " + time.Now().UTC().Format(time.RFC3339) + "."
 	return prompt

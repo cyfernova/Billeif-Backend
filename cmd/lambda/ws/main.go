@@ -257,6 +257,15 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+func stripBearerPrefix(token string) string {
+	trimmed := strings.TrimSpace(token)
+	parts := strings.SplitN(trimmed, " ", 2)
+	if len(parts) == 2 && strings.EqualFold(parts[0], "bearer") {
+		return strings.TrimSpace(parts[1])
+	}
+	return trimmed
+}
+
 func handleVoiceStart(ctx context.Context, connectionID string, req events.APIGatewayWebsocketProxyRequest) (events.APIGatewayProxyResponse, error) {
 	connection, err := wsSvc.GetConnection(ctx, connectionID)
 	if err != nil {
@@ -278,6 +287,14 @@ func handleVoiceStart(ctx context.Context, connectionID string, req events.APIGa
 	if connection.BusinessID == "" || start.BusinessID != connection.BusinessID {
 		return events.APIGatewayProxyResponse{StatusCode: 403, Body: "business_id does not match authenticated scope"}, nil
 	}
+	workerAccessToken := firstNonEmpty(start.AccessToken, extractAuthToken(req))
+	if workerAccessToken != "" {
+		workerClaims, err := parseClaims(workerAccessToken)
+		if err != nil || workerClaims.Subject != connection.UserID {
+			wsLog.Warn("voice start worker token rejected", "connection_id", connectionID, "user_id", connection.UserID)
+			return events.APIGatewayProxyResponse{StatusCode: 401, Body: "invalid voice access token"}, nil
+		}
+	}
 
 	if active, err := activeVoiceSessionForStart(ctx, connectionID, start.BusinessID); err != nil {
 		wsLog.Error("failed to check active voice session", "connection_id", connectionID, "error", err)
@@ -295,7 +312,10 @@ func handleVoiceStart(ctx context.Context, connectionID string, req events.APIGa
 		return events.APIGatewayProxyResponse{StatusCode: 409, Body: "voice session could not be started"}, nil
 	}
 
-	payload, _ := json.Marshal(services.VoiceSessionWorkerRequest{SessionID: session.SessionID})
+	payload, _ := json.Marshal(services.VoiceSessionWorkerRequest{
+		SessionID:   session.SessionID,
+		AccessToken: stripBearerPrefix(workerAccessToken),
+	})
 	_, err = voiceLambda.Invoke(ctx, &awslambda.InvokeInput{
 		FunctionName:   aws.String(voiceCfg.SessionWorkerFunctionName),
 		InvocationType: lambdatypes.InvocationTypeEvent,

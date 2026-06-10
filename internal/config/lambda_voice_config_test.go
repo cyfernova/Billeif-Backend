@@ -58,6 +58,8 @@ func TestLoadLambdaVoiceConfigAcceptsExplicitVoiceEnv(t *testing.T) {
 	t.Setenv("VOICE_WS_EVENT_TTL_SECONDS", "900")
 	t.Setenv("VOICE_WS_MAX_OUTBOUND_CHUNK_BYTES", "12000")
 	t.Setenv("VOICE_WS_PROVIDER_READY_TIMEOUT_SECONDS", "10")
+	t.Setenv("MCP_SERVER_URL", "https://mcp.example.test")
+	t.Setenv("MCP_TIMEOUT", "2s")
 
 	cfg, err := LoadLambdaVoiceConfig(true)
 	if err != nil {
@@ -71,6 +73,12 @@ func TestLoadLambdaVoiceConfigAcceptsExplicitVoiceEnv(t *testing.T) {
 	}
 	if cfg.AWS.SessionToken != "session-token" {
 		t.Fatalf("unexpected AWS session token: %s", cfg.AWS.SessionToken)
+	}
+	if cfg.MCP.ServerURL != "https://mcp.example.test" {
+		t.Fatalf("unexpected MCP server URL: %s", cfg.MCP.ServerURL)
+	}
+	if cfg.MCP.Timeout.String() != "2s" {
+		t.Fatalf("unexpected MCP timeout: %s", cfg.MCP.Timeout)
 	}
 }
 
@@ -102,6 +110,12 @@ func clearLambdaVoiceEnv(t *testing.T) {
 		"VOICE_WS_EVENT_TTL_SECONDS",
 		"VOICE_WS_MAX_OUTBOUND_CHUNK_BYTES",
 		"VOICE_WS_PROVIDER_READY_TIMEOUT_SECONDS",
+		"MCP_SERVER_URL",
+		"MCP_TIMEOUT",
+		"MCP_INSECURE_SKIP_VERIFY",
+		"MCP_TLS_CERT_FILE",
+		"MCP_TLS_KEY_FILE",
+		"MCP_TLS_CA_FILE",
 	} {
 		t.Setenv(key, "")
 	}

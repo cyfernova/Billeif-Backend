@@ -22,6 +22,7 @@ type RealtimeVoiceSession struct {
 	UserID         string
 	BusinessID     string
 	ConversationID string
+	AccessToken    string
 
 	AppConn      *websocket.Conn
 	DeepgramConn *websocket.Conn
@@ -47,6 +48,7 @@ type RealtimeVoiceSessionRequest struct {
 	UserID         string
 	BusinessID     string
 	ConversationID string
+	AccessToken    string
 	Voice          string
 	Language       string
 }
@@ -59,6 +61,7 @@ type RealtimeVoiceService struct {
 	sessions     map[string]*RealtimeVoiceSession
 	userSessions map[string]int
 	metrics      *realtimeVoiceMetrics
+	mcpBridge    *VoiceMCPBridge
 }
 
 type realtimeVoiceMetrics struct {
@@ -67,13 +70,14 @@ type realtimeVoiceMetrics struct {
 	errorCount     atomic.Int64
 }
 
-func NewRealtimeVoiceService(cfg config.VoiceRealtimeConfig, log *logger.Logger) *RealtimeVoiceService {
+func NewRealtimeVoiceService(cfg config.VoiceRealtimeConfig, log *logger.Logger, mcpBridge ...*VoiceMCPBridge) *RealtimeVoiceService {
 	return &RealtimeVoiceService{
 		cfg:          cfg,
 		log:          log.Named("realtime_voice"),
 		sessions:     make(map[string]*RealtimeVoiceSession),
 		userSessions: make(map[string]int),
 		metrics:      &realtimeVoiceMetrics{},
+		mcpBridge:    firstVoiceMCPBridge(mcpBridge),
 	}
 }
 
@@ -96,6 +100,7 @@ func (s *RealtimeVoiceService) Serve(ctx context.Context, appConn *websocket.Con
 		UserID:         strings.TrimSpace(req.UserID),
 		BusinessID:     strings.TrimSpace(req.BusinessID),
 		ConversationID: strings.TrimSpace(req.ConversationID),
+		AccessToken:    strings.TrimSpace(req.AccessToken),
 		AppConn:        appConn,
 		Ctx:            sessionCtx,
 		Cancel:         cancel,
@@ -163,12 +168,13 @@ func (s *RealtimeVoiceService) Serve(ctx context.Context, appConn *websocket.Con
 	}
 
 	settings := BuildDeepgramVoiceAgentSettings(s.cfg, DeepgramVoiceAgentSettingsOptions{
-		SessionID:      session.ID,
-		UserID:         session.UserID,
-		BusinessID:     session.BusinessID,
-		ConversationID: session.ConversationID,
-		Language:       req.Language,
-		Voice:          req.Voice,
+		SessionID:       session.ID,
+		UserID:          session.UserID,
+		BusinessID:      session.BusinessID,
+		ConversationID:  session.ConversationID,
+		Language:        req.Language,
+		Voice:           req.Voice,
+		MCPToolsEnabled: s.mcpBridge.Enabled(),
 	})
 
 	var wg sync.WaitGroup
@@ -437,14 +443,23 @@ func (s *RealtimeVoiceService) handleFunctionCallRequest(session *RealtimeVoiceS
 		return
 	}
 	for _, fn := range req.Functions {
-		session.log.Warn("unsupported Deepgram function call requested", "function", fn.Name, "client_side", fn.ClientSide)
-		s.sendDeepgram(session, NewDeepgramJSONMessage(map[string]interface{}{
+		content := voiceMCPErrorContent("unsupported_function", "This voice function is not available.")
+		if fn.Name == voiceMCPFunctionName {
+			content = s.mcpBridge.HandleFunctionCall(session.Ctx, fn, session.BusinessID, session.AccessToken)
+		} else {
+			session.log.Warn("unsupported Deepgram function call requested", "function", fn.Name, "client_side", fn.ClientSide)
+		}
+		response := map[string]interface{}{
 			"type":        "FunctionCallResponse",
 			"id":          fn.ID,
 			"name":        fn.Name,
-			"content":     `{"error":"unsupported_function"}`,
+			"content":     content,
 			"client_side": false,
-		}))
+		}
+		if strings.TrimSpace(fn.ThoughtSignature) != "" {
+			response["thought_signature"] = fn.ThoughtSignature
+		}
+		s.sendDeepgram(session, NewDeepgramJSONMessage(response))
 	}
 }
 

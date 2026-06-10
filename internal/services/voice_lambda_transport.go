@@ -48,6 +48,7 @@ type VoiceStartRequest struct {
 	ConversationID  string                `json:"conversation_id,omitempty"`
 	Language        string                `json:"language,omitempty"`
 	Voice           string                `json:"voice,omitempty"`
+	AccessToken     string                `json:"access_token,omitempty"`
 	VisibleMessages []RealtimeHistoryItem `json:"visible_messages,omitempty"`
 }
 
@@ -71,7 +72,8 @@ type VoiceControlRequest struct {
 }
 
 type VoiceSessionWorkerRequest struct {
-	SessionID string `json:"session_id"`
+	SessionID   string `json:"session_id"`
+	AccessToken string `json:"access_token,omitempty"`
 }
 
 type VoiceLambdaSession struct {
@@ -539,10 +541,11 @@ type VoiceLambdaSessionRunner struct {
 	pollInterval         time.Duration
 	providerReadyTimeout time.Duration
 	deepgram             VoiceDeepgramFactory
+	mcpBridge            *VoiceMCPBridge
 	log                  *logger.Logger
 }
 
-func NewVoiceLambdaSessionRunner(cfg config.VoiceRealtimeConfig, store *VoiceLambdaStore, poster VoicePoster, pollInterval time.Duration, providerReadyTimeout time.Duration, deepgram VoiceDeepgramFactory, log *logger.Logger) (*VoiceLambdaSessionRunner, error) {
+func NewVoiceLambdaSessionRunner(cfg config.VoiceRealtimeConfig, store *VoiceLambdaStore, poster VoicePoster, pollInterval time.Duration, providerReadyTimeout time.Duration, deepgram VoiceDeepgramFactory, log *logger.Logger, mcpBridge ...*VoiceMCPBridge) (*VoiceLambdaSessionRunner, error) {
 	if err := cfg.ValidateForRuntime(); err != nil {
 		return nil, err
 	}
@@ -573,11 +576,12 @@ func NewVoiceLambdaSessionRunner(cfg config.VoiceRealtimeConfig, store *VoiceLam
 		pollInterval:         pollInterval,
 		providerReadyTimeout: providerReadyTimeout,
 		deepgram:             deepgram,
+		mcpBridge:            firstVoiceMCPBridge(mcpBridge),
 		log:                  log.Named("voice_lambda_session"),
 	}, nil
 }
 
-func (r *VoiceLambdaSessionRunner) Run(ctx context.Context, sessionID string) error {
+func (r *VoiceLambdaSessionRunner) Run(ctx context.Context, sessionID string, accessToken ...string) error {
 	session, err := r.store.GetSession(ctx, sessionID)
 	if err != nil {
 		return err
@@ -610,13 +614,14 @@ func (r *VoiceLambdaSessionRunner) Run(ctx context.Context, sessionID string) er
 	}
 
 	settings := BuildDeepgramVoiceAgentSettings(r.cfg, DeepgramVoiceAgentSettingsOptions{
-		SessionID:      session.SessionID,
-		UserID:         session.UserID,
-		BusinessID:     session.BusinessID,
-		ConversationID: session.ConversationID,
-		Language:       session.Language,
-		Voice:          session.Voice,
-		History:        session.History,
+		SessionID:       session.SessionID,
+		UserID:          session.UserID,
+		BusinessID:      session.BusinessID,
+		ConversationID:  session.ConversationID,
+		Language:        session.Language,
+		Voice:           session.Voice,
+		History:         session.History,
+		MCPToolsEnabled: r.mcpBridge.Enabled(),
 	})
 	if err := dg.SendSettings(sessionCtx, settings); err != nil {
 		_ = r.poster.PostEvent(ctx, session.ConnectionID, RealtimeAppEvent{Type: AppEventError, Code: "deepgram_settings_failed", Message: "Could not configure realtime voice agent"})
@@ -661,7 +666,7 @@ func (r *VoiceLambdaSessionRunner) Run(ctx context.Context, sessionID string) er
 		case err := <-deepgramErrors:
 			return err
 		case message := <-deepgramMessages:
-			if err := r.handleDeepgramMessage(sessionCtx, session, dg, message); err != nil {
+			if err := r.handleDeepgramMessage(sessionCtx, session, dg, message, firstString(accessToken)); err != nil {
 				return err
 			}
 		case <-keepAliveTicker.C:
@@ -720,7 +725,7 @@ func (r *VoiceLambdaSessionRunner) handleAppEvent(ctx context.Context, session *
 	}
 }
 
-func (r *VoiceLambdaSessionRunner) handleDeepgramMessage(ctx context.Context, session *VoiceLambdaSession, dg VoiceDeepgramClient, message RealtimeDeepgramOutbound) error {
+func (r *VoiceLambdaSessionRunner) handleDeepgramMessage(ctx context.Context, session *VoiceLambdaSession, dg VoiceDeepgramClient, message RealtimeDeepgramOutbound, accessToken string) error {
 	switch message.MessageType {
 	case websocket.BinaryMessage:
 		return r.poster.PostAudio(ctx, session.ConnectionID, message.Payload)
@@ -735,12 +740,12 @@ func (r *VoiceLambdaSessionRunner) handleDeepgramMessage(ctx context.Context, se
 			}
 			_ = json.Unmarshal(message.Payload, &envelope)
 			if envelope.Type == "FunctionCallRequest" {
-				return r.respondUnsupportedFunctionCall(ctx, dg, message.Payload)
+				return r.respondFunctionCall(ctx, session, dg, message.Payload, accessToken)
 			}
 			return nil
 		}
 		if event.Type == "function_call_request" {
-			return r.respondUnsupportedFunctionCall(ctx, dg, message.Payload)
+			return r.respondFunctionCall(ctx, session, dg, message.Payload, accessToken)
 		}
 		return r.poster.PostEvent(ctx, session.ConnectionID, event)
 	default:
@@ -748,23 +753,45 @@ func (r *VoiceLambdaSessionRunner) handleDeepgramMessage(ctx context.Context, se
 	}
 }
 
-func (r *VoiceLambdaSessionRunner) respondUnsupportedFunctionCall(ctx context.Context, dg VoiceDeepgramClient, payload []byte) error {
+func (r *VoiceLambdaSessionRunner) respondFunctionCall(ctx context.Context, session *VoiceLambdaSession, dg VoiceDeepgramClient, payload []byte, accessToken string) error {
 	var req DeepgramFunctionCallRequest
 	if err := json.Unmarshal(payload, &req); err != nil {
 		return err
 	}
 	for _, fn := range req.Functions {
-		if err := dg.SendRaw(websocket.TextMessage, mustMarshal(map[string]interface{}{
+		content := voiceMCPErrorContent("unsupported_function", "This voice function is not available.")
+		if fn.Name == voiceMCPFunctionName {
+			content = r.mcpBridge.HandleFunctionCall(ctx, fn, session.BusinessID, accessToken)
+		}
+		response := map[string]interface{}{
 			"type":        "FunctionCallResponse",
 			"id":          fn.ID,
 			"name":        fn.Name,
-			"content":     `{"error":"unsupported_function"}`,
+			"content":     content,
 			"client_side": false,
-		})); err != nil {
+		}
+		if strings.TrimSpace(fn.ThoughtSignature) != "" {
+			response["thought_signature"] = fn.ThoughtSignature
+		}
+		if err := dg.SendRaw(websocket.TextMessage, mustMarshal(response)); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func firstVoiceMCPBridge(bridges []*VoiceMCPBridge) *VoiceMCPBridge {
+	if len(bridges) == 0 {
+		return nil
+	}
+	return bridges[0]
+}
+
+func firstString(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(values[0])
 }
 
 func waitForLambdaDeepgramWelcome(ctx context.Context, dg VoiceDeepgramClient, timeout time.Duration) error {

@@ -51,6 +51,36 @@ func TestBuildDeepgramVoiceAgentSettingsUsesConfiguredLLMEndpoint(t *testing.T) 
 	require.Equal(t, "https://voice-llm.example.test/chat/completions", endpoint["url"])
 	require.Equal(t, "Bearer voice-llm-key", headers["authorization"])
 	require.Contains(t, think["prompt"], "biz-123")
+	require.NotContains(t, think, "functions")
+}
+
+func TestBuildDeepgramVoiceAgentSettingsEnablesMCPFunctionCalling(t *testing.T) {
+	cfg := config.VoiceRealtimeConfig{
+		DeepgramAPIKey:        "dg",
+		DeepgramVoiceAgentURL: "wss://agent.deepgram.test/v1/agent/converse",
+		InputEncoding:         "linear16",
+		InputSampleRate:       24000,
+		OutputEncoding:        "linear16",
+		OutputSampleRate:      24000,
+		ListenModel:           "nova-3",
+		SpeakModel:            "aura-2-thalia-en",
+		DeepSeekAPIKey:        "voice-llm-key",
+		DeepSeekBaseURL:       "https://voice-llm.example.test",
+		DeepSeekModel:         "voice-test-model",
+	}
+
+	settings := BuildDeepgramVoiceAgentSettings(cfg, DeepgramVoiceAgentSettingsOptions{
+		BusinessID:      "biz-123",
+		MCPToolsEnabled: true,
+	})
+
+	agent := settings["agent"].(map[string]interface{})
+	think := agent["think"].(map[string]interface{})
+	functions := think["functions"].([]map[string]interface{})
+	require.Len(t, functions, 1)
+	require.Equal(t, voiceMCPFunctionName, functions[0]["name"])
+	require.Contains(t, think["prompt"], "use the available function")
+	require.Contains(t, think["prompt"], "Never call delete")
 }
 
 func TestParseRealtimeVoiceControl(t *testing.T) {

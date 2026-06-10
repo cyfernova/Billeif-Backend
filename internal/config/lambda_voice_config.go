@@ -16,6 +16,7 @@ type LambdaVoiceConfig struct {
 	Cognito                     CognitoConfig
 	WebSocket                   WebSocketConfig
 	VoiceRealtime               VoiceRealtimeConfig
+	MCP                         MCPConfig
 	VoiceSessionsTable          string
 	SessionWorkerFunctionName   string
 	EventPollIntervalMS         int
@@ -69,6 +70,14 @@ func LoadLambdaVoiceConfig(requireWorkerFunction bool) (*LambdaVoiceConfig, erro
 			MaxFrameBytes:                requirePositiveIntEnv("VOICE_WS_MAX_FRAME_BYTES"),
 			MaxConcurrentSessionsPerUser: requirePositiveIntEnv("VOICE_WS_MAX_CONCURRENT_SESSIONS_PER_USER"),
 		},
+		MCP: MCPConfig{
+			ServerURL:          strings.TrimSpace(os.Getenv("MCP_SERVER_URL")),
+			Timeout:            durationEnv("MCP_TIMEOUT", DefaultMCPConfig().Timeout),
+			InsecureSkipVerify: boolEnv("MCP_INSECURE_SKIP_VERIFY"),
+			TLSCertFile:        strings.TrimSpace(os.Getenv("MCP_TLS_CERT_FILE")),
+			TLSKeyFile:         strings.TrimSpace(os.Getenv("MCP_TLS_KEY_FILE")),
+			TLSCACertFile:      strings.TrimSpace(os.Getenv("MCP_TLS_CA_FILE")),
+		},
 		VoiceSessionsTable:          requireEnv("VOICE_SESSIONS_TABLE"),
 		EventPollIntervalMS:         requirePositiveIntEnv("VOICE_WS_EVENT_POLL_INTERVAL_MS"),
 		EventTTLSeconds:             requirePositiveIntEnv("VOICE_WS_EVENT_TTL_SECONDS"),
@@ -112,6 +121,9 @@ func (c *LambdaVoiceConfig) Validate() error {
 	if err := c.VoiceRealtime.ValidateForRuntime(); err != nil {
 		return err
 	}
+	if strings.TrimSpace(c.MCP.ServerURL) != "" && c.MCP.Timeout <= 0 {
+		return fmt.Errorf("MCP_TIMEOUT must be positive")
+	}
 	if c.EventPollIntervalMS <= 0 {
 		return fmt.Errorf("VOICE_WS_EVENT_POLL_INTERVAL_MS must be positive")
 	}
@@ -138,4 +150,21 @@ func requirePositiveIntEnv(key string) int {
 		return 0
 	}
 	return parsed
+}
+
+func durationEnv(key string, fallback time.Duration) time.Duration {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil || parsed <= 0 {
+		return 0
+	}
+	return parsed
+}
+
+func boolEnv(key string) bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	return value == "1" || value == "true" || value == "yes"
 }

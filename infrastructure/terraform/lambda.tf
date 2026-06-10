@@ -82,6 +82,7 @@ locals {
     DEEPSEEK_API_KEY                          = var.deepseek_api_key
     DEEPSEEK_BASE_URL                         = var.deepseek_base_url
     DEEPSEEK_MODEL                            = var.deepseek_model
+    MCP_SERVER_URL                            = var.mcp_server_url
     VOICE_WS_MAX_SESSION_SECONDS              = tostring(var.voice_ws_max_session_seconds)
     VOICE_WS_PING_INTERVAL_SECONDS            = tostring(var.voice_ws_ping_interval_seconds)
     VOICE_WS_WRITE_TIMEOUT_SECONDS            = tostring(var.voice_ws_write_timeout_seconds)

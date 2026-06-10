@@ -496,6 +496,17 @@ variable "deepseek_model" {
   }
 }
 
+variable "mcp_server_url" {
+  description = "Base URL for the deployed MCP server used by API and realtime voice tool calls"
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = trimspace(var.mcp_server_url) == "" || can(regex("^https://", var.mcp_server_url))
+    error_message = "mcp_server_url must be empty or an absolute https URL."
+  }
+}
+
 variable "voice_ws_max_session_seconds" {
   description = "Maximum realtime voice session duration"
   type        = number

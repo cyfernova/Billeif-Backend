@@ -50,6 +50,11 @@ func initRuntime() {
 		initErr = fmt.Errorf("initialize voice websocket poster: %w", err)
 		return
 	}
+	mcpBridge, err := services.NewVoiceMCPBridgeFromConfig(cfg.MCP, log)
+	if err != nil {
+		initErr = fmt.Errorf("initialize voice MCP bridge: %w", err)
+		return
+	}
 	runner, err = services.NewVoiceLambdaSessionRunner(
 		cfg.VoiceRealtime,
 		store,
@@ -58,6 +63,7 @@ func initRuntime() {
 		time.Duration(cfg.ProviderReadyTimeoutSeconds)*time.Second,
 		nil,
 		log,
+		mcpBridge,
 	)
 	if err != nil {
 		initErr = fmt.Errorf("initialize voice session runner: %w", err)
@@ -78,7 +84,7 @@ func handle(ctx context.Context, raw json.RawMessage) error {
 	if req.SessionID == "" {
 		return fmt.Errorf("session_id is required")
 	}
-	return runner.Run(ctx, req.SessionID)
+	return runner.Run(ctx, req.SessionID, req.AccessToken)
 }
 
 func main() {

@@ -58,6 +58,18 @@ func TestFirstNonEmptyTrimsValues(t *testing.T) {
 	}
 }
 
+func TestStripBearerPrefix(t *testing.T) {
+	if got := stripBearerPrefix("Bearer access-token"); got != "access-token" {
+		t.Fatalf("unexpected stripped bearer token: %q", got)
+	}
+	if got := stripBearerPrefix("  bearer   spaced-token  "); got != "spaced-token" {
+		t.Fatalf("unexpected stripped lowercase bearer token: %q", got)
+	}
+	if got := stripBearerPrefix("raw-token"); got != "raw-token" {
+		t.Fatalf("unexpected raw token: %q", got)
+	}
+}
+
 func TestExtractAuthTokenAcceptsAuthorizationQuery(t *testing.T) {
 	token := "Bearer query-token"
 	got := extractAuthToken(events.APIGatewayWebsocketProxyRequest{

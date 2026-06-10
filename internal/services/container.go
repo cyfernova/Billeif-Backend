@@ -106,7 +106,11 @@ func NewContainer(
 	intentProcessingSvc, _ := NewIntentProcessingService(productMatchingSvc, marketplaceSvc, log)
 	llmSvc := NewLLMService(cfg.LLM, log)
 	llmChatHistorySvc := NewLLMChatHistoryService(db, log)
-	realtimeVoiceSvc := NewRealtimeVoiceService(cfg.VoiceRealtime, log)
+	voiceMCPBridge, err := NewVoiceMCPBridgeFromConfig(cfg.MCP, log)
+	if err != nil {
+		log.Warn("failed to initialize voice MCP bridge", "error", err)
+	}
+	realtimeVoiceSvc := NewRealtimeVoiceService(cfg.VoiceRealtime, log, voiceMCPBridge)
 
 	agentSvc := NewAgentService(ap2Repo, productRepo, ap2Signer, log)
 	menteeSvc := NewMenteeService(log)
