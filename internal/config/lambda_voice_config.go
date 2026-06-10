@@ -30,10 +30,11 @@ func LoadLambdaVoiceConfig(requireWorkerFunction bool) (*LambdaVoiceConfig, erro
 		LogLevel:    requireEnv("LOG_LEVEL"),
 		LogFormat:   requireEnv("LOG_FORMAT"),
 		AWS: AWSConfig{
-			Region:    requireEnv("AWS_REGION"),
-			AccessKey: strings.TrimSpace(os.Getenv("AWS_ACCESS_KEY_ID")),
-			SecretKey: strings.TrimSpace(os.Getenv("AWS_SECRET_ACCESS_KEY")),
-			Endpoint:  strings.TrimSpace(os.Getenv("AWS_ENDPOINT")),
+			Region:       requireEnv("AWS_REGION"),
+			AccessKey:    strings.TrimSpace(os.Getenv("AWS_ACCESS_KEY_ID")),
+			SecretKey:    strings.TrimSpace(os.Getenv("AWS_SECRET_ACCESS_KEY")),
+			SessionToken: strings.TrimSpace(os.Getenv("AWS_SESSION_TOKEN")),
+			Endpoint:     strings.TrimSpace(os.Getenv("AWS_ENDPOINT")),
 		},
 		Cognito: CognitoConfig{
 			UserPoolID:      requireEnv("COGNITO_USER_POOL_ID"),

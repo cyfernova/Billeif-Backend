@@ -28,6 +28,9 @@ func TestLoadLambdaVoiceConfigAcceptsExplicitVoiceEnv(t *testing.T) {
 	t.Setenv("LOG_LEVEL", "info")
 	t.Setenv("LOG_FORMAT", "json")
 	t.Setenv("AWS_REGION", "us-east-1")
+	t.Setenv("AWS_ACCESS_KEY_ID", "access-key")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "secret-key")
+	t.Setenv("AWS_SESSION_TOKEN", "session-token")
 	t.Setenv("COGNITO_USER_POOL_ID", "pool")
 	t.Setenv("COGNITO_CLIENT_ID", "client")
 	t.Setenv("COGNITO_REGION", "us-east-1")
@@ -66,6 +69,9 @@ func TestLoadLambdaVoiceConfigAcceptsExplicitVoiceEnv(t *testing.T) {
 	if cfg.SessionWorkerFunctionName != "voice-worker" {
 		t.Fatalf("unexpected worker function name: %s", cfg.SessionWorkerFunctionName)
 	}
+	if cfg.AWS.SessionToken != "session-token" {
+		t.Fatalf("unexpected AWS session token: %s", cfg.AWS.SessionToken)
+	}
 }
 
 func clearLambdaVoiceEnv(t *testing.T) {
@@ -73,6 +79,9 @@ func clearLambdaVoiceEnv(t *testing.T) {
 
 	for _, key := range []string{
 		"VOICE_SESSION_WORKER_FUNCTION_NAME",
+		"AWS_ACCESS_KEY_ID",
+		"AWS_SECRET_ACCESS_KEY",
+		"AWS_SESSION_TOKEN",
 		"DEEPGRAM_API_KEY",
 		"DEEPGRAM_VOICE_AGENT_URL",
 		"DEEPGRAM_VOICE_INPUT_ENCODING",
