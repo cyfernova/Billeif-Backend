@@ -38,6 +38,8 @@ func TestBuildDeepgramVoiceAgentSettingsUsesConfiguredLLMEndpoint(t *testing.T) 
 	require.Equal(t, 24000, input["sample_rate"])
 	require.Equal(t, "linear16", output["encoding"])
 	require.Equal(t, "none", output["container"])
+	require.NotContains(t, output, "bitrate")
+	require.NotContains(t, output, "bit_rate")
 
 	agent := settings["agent"].(map[string]interface{})
 	think := agent["think"].(map[string]interface{})

@@ -272,7 +272,6 @@ func BuildDeepgramVoiceAgentSettings(cfg config.VoiceRealtimeConfig, opts Deepgr
 			"output": map[string]interface{}{
 				"encoding":    cfg.OutputEncoding,
 				"sample_rate": cfg.OutputSampleRate,
-				"bitrate":     cfg.OutputSampleRate * 16,
 				"container":   "none",
 			},
 		},
