@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"invoice-backend/internal/middleware"
+	"invoice-backend/internal/services"
 	"invoice-backend/pkg/logger"
 
 	"github.com/aws/aws-lambda-go/events"
@@ -138,6 +139,33 @@ func TestAuthorizeWebSocketBusinessScopeRejectsDeniedBusinessAccess(t *testing.T
 	}
 	if checker.calls != 1 || checker.businessID != "biz-header" {
 		t.Fatalf("unexpected access check: calls=%d business=%q", checker.calls, checker.businessID)
+	}
+}
+
+func TestCanReuseVoiceSessionForStart(t *testing.T) {
+	session := &services.VoiceLambdaSession{
+		ConnectionID: "conn-1",
+		BusinessID:   "biz-1",
+		Status:       services.VoiceSessionStatusRunning,
+	}
+	if !canReuseVoiceSessionForStart(session, " conn-1 ", " biz-1 ") {
+		t.Fatal("expected running session on same connection and business to be reusable")
+	}
+
+	session.Status = services.VoiceSessionStatusStarting
+	if !canReuseVoiceSessionForStart(session, "conn-1", "biz-1") {
+		t.Fatal("expected starting session on same connection and business to be reusable")
+	}
+
+	session.Status = services.VoiceSessionStatusStopping
+	if canReuseVoiceSessionForStart(session, "conn-1", "biz-1") {
+		t.Fatal("expected stopping session not to be reused for start")
+	}
+
+	session.Status = services.VoiceSessionStatusRunning
+	session.BusinessID = "biz-2"
+	if canReuseVoiceSessionForStart(session, "conn-1", "biz-1") {
+		t.Fatal("expected business mismatch not to be reused")
 	}
 }
 

@@ -279,8 +279,18 @@ func handleVoiceStart(ctx context.Context, connectionID string, req events.APIGa
 		return events.APIGatewayProxyResponse{StatusCode: 403, Body: "business_id does not match authenticated scope"}, nil
 	}
 
+	if active, err := activeVoiceSessionForStart(ctx, connectionID, start.BusinessID); err != nil {
+		wsLog.Error("failed to check active voice session", "connection_id", connectionID, "error", err)
+		return events.APIGatewayProxyResponse{StatusCode: 500, Body: "failed to check active voice session"}, nil
+	} else if active != nil {
+		return respondToActiveVoiceSessionStart(ctx, connectionID, active), nil
+	}
+
 	session := services.NewVoiceLambdaSession(start, connectionID, connection.UserID, voiceCfg.VoiceRealtime.MaxSessionSeconds)
 	if err := voiceStore.CreateSession(ctx, session, voiceCfg.VoiceRealtime.MaxConcurrentSessionsPerUser); err != nil {
+		if active, activeErr := activeVoiceSessionForStart(ctx, connectionID, start.BusinessID); activeErr == nil && active != nil {
+			return respondToActiveVoiceSessionStart(ctx, connectionID, active), nil
+		}
 		_ = postVoiceError(ctx, connectionID, "voice_session_limit", err.Error())
 		return events.APIGatewayProxyResponse{StatusCode: 409, Body: "voice session could not be started"}, nil
 	}
@@ -303,6 +313,53 @@ func handleVoiceStart(ctx context.Context, connectionID string, req events.APIGa
 		Data: map[string]string{"session_id": session.SessionID},
 	})
 	return events.APIGatewayProxyResponse{StatusCode: 200, Body: "voice session starting"}, nil
+}
+
+func activeVoiceSessionForStart(ctx context.Context, connectionID, businessID string) (*services.VoiceLambdaSession, error) {
+	session, err := voiceStore.FindActiveSessionByConnection(ctx, connectionID)
+	if err != nil || session == nil {
+		return nil, err
+	}
+	if session.ConnectionID != strings.TrimSpace(connectionID) || session.BusinessID != strings.TrimSpace(businessID) {
+		return nil, nil
+	}
+	if session.Status == services.VoiceSessionStatusClosed || session.Status == services.VoiceSessionStatusError {
+		_ = voiceStore.CompleteSession(ctx, session.SessionID, session.Status)
+		return nil, nil
+	}
+	return session, nil
+}
+
+func respondToActiveVoiceSessionStart(ctx context.Context, connectionID string, session *services.VoiceLambdaSession) events.APIGatewayProxyResponse {
+	if canReuseVoiceSessionForStart(session, connectionID, session.BusinessID) {
+		acknowledgeVoiceSessionStart(ctx, connectionID, session)
+		return events.APIGatewayProxyResponse{StatusCode: 200, Body: "voice session already active"}
+	}
+	if session.Status == services.VoiceSessionStatusStopping {
+		_ = postVoiceEvent(ctx, connectionID, services.RealtimeAppEvent{Type: services.VoiceOutboundSessionClosed})
+		return events.APIGatewayProxyResponse{StatusCode: 200, Body: "voice session stopping"}
+	}
+	return events.APIGatewayProxyResponse{StatusCode: 409, Body: "voice session is not reusable"}
+}
+
+func canReuseVoiceSessionForStart(session *services.VoiceLambdaSession, connectionID, businessID string) bool {
+	if session == nil {
+		return false
+	}
+	if session.ConnectionID != strings.TrimSpace(connectionID) || session.BusinessID != strings.TrimSpace(businessID) {
+		return false
+	}
+	return session.Status == services.VoiceSessionStatusStarting || session.Status == services.VoiceSessionStatusRunning
+}
+
+func acknowledgeVoiceSessionStart(ctx context.Context, connectionID string, session *services.VoiceLambdaSession) {
+	_ = postVoiceEvent(ctx, connectionID, services.RealtimeAppEvent{
+		Type: services.VoiceOutboundSessionStarted,
+		Data: map[string]string{"session_id": session.SessionID},
+	})
+	if session.Status == services.VoiceSessionStatusRunning {
+		_ = postVoiceEvent(ctx, connectionID, services.RealtimeAppEvent{Type: services.AppEventReady})
+	}
 }
 
 func handleVoiceAudio(ctx context.Context, connectionID string, req events.APIGatewayWebsocketProxyRequest) (events.APIGatewayProxyResponse, error) {

@@ -283,6 +283,7 @@ func (s *VoiceLambdaStore) CompleteSession(ctx context.Context, sessionID, statu
 		return err
 	}
 	if session.Status == VoiceSessionStatusClosed || session.Status == VoiceSessionStatusError {
+		s.cleanupSessionReferences(ctx, session)
 		return nil
 	}
 
@@ -310,13 +311,29 @@ func (s *VoiceLambdaStore) CompleteSession(ctx context.Context, sessionID, statu
 		return fmt.Errorf("complete voice session: %w", err)
 	}
 
-	_, _ = s.db.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+	s.cleanupSessionReferences(ctx, session)
+	return nil
+}
+
+func (s *VoiceLambdaStore) cleanupSessionReferences(ctx context.Context, session *VoiceLambdaSession) {
+	_, err := s.db.DeleteItem(ctx, &dynamodb.DeleteItemInput{
 		TableName: aws.String(s.table),
 		Key: map[string]dynamotypes.AttributeValue{
 			"pk": &dynamotypes.AttributeValueMemberS{Value: connectionPK(session.ConnectionID)},
 			"sk": &dynamotypes.AttributeValueMemberS{Value: "ACTIVE"},
 		},
+		ConditionExpression: aws.String("session_id = :session_id"),
+		ExpressionAttributeValues: map[string]dynamotypes.AttributeValue{
+			":session_id": &dynamotypes.AttributeValueMemberS{Value: session.SessionID},
+		},
 	})
+	if err != nil {
+		var conditional *dynamotypes.ConditionalCheckFailedException
+		if errors.As(err, &conditional) {
+			return
+		}
+		return
+	}
 
 	_, _ = s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 		TableName: aws.String(s.table),
@@ -331,7 +348,6 @@ func (s *VoiceLambdaStore) CompleteSession(ctx context.Context, sessionID, statu
 			":zero":  &dynamotypes.AttributeValueMemberN{Value: "0"},
 		},
 	})
-	return nil
 }
 
 func (s *VoiceLambdaStore) EnqueueAudio(ctx context.Context, sessionID string, sequence int64, audioB64 string, sampleRate int, maxFrameBytes int, eventTTLSeconds int) error {
