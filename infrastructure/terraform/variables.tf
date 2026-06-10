@@ -582,7 +582,7 @@ variable "voice_session_lambda_memory_size" {
 variable "voice_session_lambda_timeout_seconds" {
   description = "Timeout for realtime voice session worker Lambda"
   type        = number
-  default     = 60
+  default     = 900
 }
 
 variable "voice_session_reserved_concurrency" {
