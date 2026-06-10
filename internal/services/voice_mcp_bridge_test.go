@@ -49,7 +49,10 @@ func TestBuildVoiceMCPFunctionDefinitionsExposeOnlyAllowlistedFinanceTools(t *te
 	tools := toolProperty["enum"].([]string)
 
 	require.Contains(t, tools, "get_customers")
-	require.Contains(t, tools, "post_invoices_by_id_send")
+	require.Contains(t, tools, "get_invoices")
+	require.Contains(t, tools, "get_products")
+	require.NotContains(t, tools, "post_customers")
+	require.NotContains(t, tools, "post_invoices_by_id_send")
 	require.NotContains(t, tools, "delete_customers_by_id")
 	require.NotContains(t, tools, "delete_business_profiles_by_id")
 	require.NotContains(t, tools, "post_auth_login")
@@ -80,7 +83,7 @@ func TestVoiceMCPBridgeInjectsBusinessIDIntoQueryScopedTool(t *testing.T) {
 	require.Equal(t, "get_customers", result["tool"])
 }
 
-func TestVoiceMCPBridgeInjectsBusinessIDIntoBodyScopedTool(t *testing.T) {
+func TestVoiceMCPBridgeRejectsMutatingTools(t *testing.T) {
 	caller := &fakeVoiceMCPCaller{}
 	bridge := NewVoiceMCPBridge(caller, nil)
 	content := bridge.HandleFunctionCall(context.Background(), DeepgramFunctionCall{
@@ -88,15 +91,9 @@ func TestVoiceMCPBridgeInjectsBusinessIDIntoBodyScopedTool(t *testing.T) {
 		Arguments: json.RawMessage(`{"tool":"post_products","args":{"body":{"name":"Widget"}}}`),
 	}, "biz-123", "access-token")
 
-	require.Equal(t, 1, caller.calls)
-
-	var args struct {
-		Body map[string]interface{} `json:"body"`
-	}
-	require.NoError(t, json.Unmarshal(caller.args, &args))
-	require.Equal(t, "Widget", args.Body["name"])
-	require.Equal(t, "biz-123", args.Body["business_id"])
-	require.Contains(t, content, `"ok":true`)
+	require.Zero(t, caller.calls)
+	require.Contains(t, content, `"ok":false`)
+	require.Contains(t, content, `"tool_not_allowed"`)
 }
 
 func TestVoiceMCPBridgeParsesDeepgramStringArguments(t *testing.T) {

@@ -79,8 +79,8 @@ func TestBuildDeepgramVoiceAgentSettingsEnablesMCPFunctionCalling(t *testing.T) 
 	functions := think["functions"].([]map[string]interface{})
 	require.Len(t, functions, 1)
 	require.Equal(t, voiceMCPFunctionName, functions[0]["name"])
-	require.Contains(t, think["prompt"], "use the available function")
-	require.Contains(t, think["prompt"], "Never call delete")
+	require.Contains(t, think["prompt"], "use the available read-only function")
+	require.Contains(t, think["prompt"], "write actions need to be completed in the app")
 }
 
 func TestParseRealtimeVoiceControl(t *testing.T) {

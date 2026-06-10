@@ -30,29 +30,12 @@ type voiceMCPToolRule struct {
 }
 
 var voiceMCPToolAllowlist = map[string]voiceMCPToolRule{
-	"get_customers":             {Description: "List customers for the current business.", Scope: voiceMCPQueryScope},
-	"get_customers_by_id":       {Description: "Get one customer by id.", Scope: voiceMCPNoScope},
-	"post_customers":            {Description: "Create a customer in the current business.", Scope: voiceMCPBodyScope},
-	"put_customers_by_id":       {Description: "Update a customer by id.", Scope: voiceMCPBodyScope},
-	"get_invoices":              {Description: "List invoices for the current business.", Scope: voiceMCPQueryScope},
-	"get_invoices_by_id":        {Description: "Get one invoice by id.", Scope: voiceMCPNoScope},
-	"get_invoices_next_number":  {Description: "Get the next invoice number for the current business.", Scope: voiceMCPQueryScope},
-	"post_invoices":             {Description: "Create an invoice in the current business.", Scope: voiceMCPBodyScope},
-	"post_invoices_by_id_send":  {Description: "Send an invoice by id after explicit user instruction.", Scope: voiceMCPNoScope},
-	"put_invoices_by_id":        {Description: "Update an invoice by id.", Scope: voiceMCPBodyScope},
-	"get_payments":              {Description: "List payments for the current business.", Scope: voiceMCPQueryScope},
-	"get_payments_by_id":        {Description: "Get one payment by id.", Scope: voiceMCPNoScope},
-	"post_payments":             {Description: "Create or record a payment in the current business.", Scope: voiceMCPBodyScope},
-	"put_payments_by_id":        {Description: "Update a payment by id.", Scope: voiceMCPBodyScope},
-	"get_products":              {Description: "List products for the current business.", Scope: voiceMCPQueryScope},
-	"get_products_by_id":        {Description: "Get one product by id.", Scope: voiceMCPNoScope},
-	"post_products":             {Description: "Create a product in the current business.", Scope: voiceMCPBodyScope},
-	"post_products_by_id_stock": {Description: "Adjust stock for a product by id after explicit user instruction.", Scope: voiceMCPBodyScope},
-	"put_products_by_id":        {Description: "Update a product by id.", Scope: voiceMCPBodyScope},
-	"get_vendors":               {Description: "List vendors for the current business.", Scope: voiceMCPQueryScope},
-	"get_vendors_by_id":         {Description: "Get one vendor by id.", Scope: voiceMCPNoScope},
-	"post_vendors":              {Description: "Create a vendor in the current business.", Scope: voiceMCPBodyScope},
-	"put_vendors_by_id":         {Description: "Update a vendor by id.", Scope: voiceMCPBodyScope},
+	"get_customers":            {Description: "List customers for the current business.", Scope: voiceMCPQueryScope},
+	"get_invoices":             {Description: "List invoices for the current business.", Scope: voiceMCPQueryScope},
+	"get_invoices_next_number": {Description: "Get the next invoice number for the current business.", Scope: voiceMCPQueryScope},
+	"get_payments":             {Description: "List payments for the current business.", Scope: voiceMCPQueryScope},
+	"get_products":             {Description: "List products for the current business.", Scope: voiceMCPQueryScope},
+	"get_vendors":              {Description: "List vendors for the current business.", Scope: voiceMCPQueryScope},
 }
 
 type VoiceMCPToolCaller interface {
@@ -101,7 +84,7 @@ func BuildVoiceMCPFunctionDefinitions() []map[string]interface{} {
 	return []map[string]interface{}{
 		{
 			"name":        voiceMCPFunctionName,
-			"description": "Run one allowlisted Billeif finance action through the MCP server. Use only for the current authenticated business. The args field must match the selected MCP tool's input shape, usually {\"query\": {...}}, {\"path\": {...}}, or {\"body\": {...}}.",
+			"description": "Run one read-only Billeif finance lookup through the MCP server. Use only for the current authenticated business. Do not use this function for creating, updating, sending, recording, deleting, or otherwise changing data. The args field must match {\"query\": {...}}.",
 			"parameters": map[string]interface{}{
 				"type":                 "object",
 				"additionalProperties": false,
@@ -113,7 +96,7 @@ func BuildVoiceMCPFunctionDefinitions() []map[string]interface{} {
 					},
 					"args": map[string]interface{}{
 						"type":                 "object",
-						"description":          "Arguments for the selected MCP tool. Examples: {\"query\":{\"limit\":5}} to list current-business records, {\"path\":{\"id\":\"...\"}} to fetch by id, or {\"body\":{...}} to create/update.",
+						"description":          "Arguments for the selected read-only MCP tool. Example: {\"query\":{\"limit\":5}} to list current-business records.",
 						"additionalProperties": true,
 					},
 				},
