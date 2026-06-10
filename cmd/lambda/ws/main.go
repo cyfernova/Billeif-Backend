@@ -11,6 +11,7 @@ import (
 
 	"invoice-backend/internal/config"
 	"invoice-backend/internal/middleware"
+	postgresrepo "invoice-backend/internal/repositories/postgres"
 	"invoice-backend/internal/services"
 	"invoice-backend/pkg/awsclients"
 	"invoice-backend/pkg/logger"
@@ -20,12 +21,15 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awslambda "github.com/aws/aws-sdk-go-v2/service/lambda"
 	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 var (
 	wsInitOnce  sync.Once
 	wsCfg       *config.Config
 	wsSvc       *services.WebSocketConnectionService
+	wsAuthSvc   businessAccessChecker
 	voiceCfg    *config.LambdaVoiceConfig
 	voiceStore  *services.VoiceLambdaStore
 	voicePoster services.VoicePoster
@@ -33,6 +37,10 @@ var (
 	wsLog       *logger.Logger
 	wsInitErr   error
 )
+
+type businessAccessChecker interface {
+	UserHasBusinessAccess(ctx context.Context, userID, businessID string) bool
+}
 
 func initWSRuntime() {
 	lambdaVoiceCfg, err := config.LoadLambdaVoiceConfig(true)
@@ -47,6 +55,17 @@ func initWSRuntime() {
 		Level:       cfg.Logging.Level,
 		Format:      cfg.Logging.Format,
 	}).Named("ws_lambda")
+
+	appCfg, err := config.Load()
+	if err != nil {
+		wsInitErr = fmt.Errorf("load app config for websocket auth: %w", err)
+		return
+	}
+	authSvc, err := initWebSocketBusinessAuth(appCfg, log)
+	if err != nil {
+		wsInitErr = fmt.Errorf("initialize websocket business auth: %w", err)
+		return
+	}
 
 	awsCfg, err := awsclients.New(context.Background(), cfg.AWS, log)
 	if err != nil {
@@ -73,6 +92,7 @@ func initWSRuntime() {
 
 	wsCfg = cfg
 	wsSvc = svc
+	wsAuthSvc = authSvc
 	voiceCfg = lambdaVoiceCfg
 	voiceStore = store
 	voicePoster = poster
@@ -100,17 +120,12 @@ func handleWebSocket(ctx context.Context, req events.APIGatewayWebsocketProxyReq
 			return events.APIGatewayProxyResponse{StatusCode: 401, Body: "invalid auth token"}, nil
 		}
 
-		requestedBusinessID := firstNonEmpty(req.QueryStringParameters["business_id"], req.Headers["business_id"], req.Headers["x-business-id"], claims.BusinessID)
-		if claims.BusinessID == "" {
-			wsLog.Warn("websocket connect missing business scope", "connection_id", connectionID, "user_id", claims.Subject)
-			return events.APIGatewayProxyResponse{StatusCode: 403, Body: "business scope required"}, nil
-		}
-		if requestedBusinessID != "" && requestedBusinessID != claims.BusinessID {
-			wsLog.Warn("websocket connect business mismatch", "connection_id", connectionID, "user_id", claims.Subject)
-			return events.APIGatewayProxyResponse{StatusCode: 403, Body: "business_id does not match authenticated scope"}, nil
+		businessID, response, ok := authorizeWebSocketBusinessScope(ctx, req, claims, connectionID)
+		if !ok {
+			return response, nil
 		}
 
-		if err := wsSvc.RegisterConnectionWithBusiness(ctx, connectionID, claims.Subject, claims.BusinessID); err != nil {
+		if err := wsSvc.RegisterConnectionWithBusiness(ctx, connectionID, claims.Subject, businessID); err != nil {
 			wsLog.Error("failed to register websocket connection", "connection_id", connectionID, "error", err)
 			return events.APIGatewayProxyResponse{StatusCode: 500, Body: "failed to register connection"}, nil
 		}
@@ -149,6 +164,69 @@ func parseClaims(token string) (*middleware.CognitoClaims, error) {
 		return middleware.ValidateCognitoAuthorization(wsCfg.Cognito, token)
 	}
 	return middleware.ValidateCognitoToken(wsCfg.Cognito, token)
+}
+
+func initWebSocketBusinessAuth(cfg *config.Config, log *logger.Logger) (*services.BusinessAuthService, error) {
+	gormLevel := "warn"
+	if strings.EqualFold(cfg.Logging.Level, "debug") || strings.EqualFold(cfg.Logging.Level, "info") {
+		gormLevel = cfg.Logging.Level
+	}
+
+	db, err := gorm.Open(postgres.New(postgres.Config{
+		DSN: fmt.Sprintf(
+			"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+			cfg.Database.Host,
+			cfg.Database.Port,
+			cfg.Database.User,
+			cfg.Database.Password,
+			cfg.Database.Name,
+			cfg.Database.SSLMode,
+		),
+		PreferSimpleProtocol: true,
+	}), &gorm.Config{
+		Logger: logger.NewGORMLogger(log, logger.GORMOptions{
+			Environment:               cfg.Environment,
+			SlowThreshold:             200 * time.Millisecond,
+			Level:                     gormLevel,
+			IgnoreRecordNotFoundError: true,
+			IncludeQuery:              !logger.IsProductionEnvironment(cfg.Environment),
+		}),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("connect database: %w", err)
+	}
+
+	return services.NewBusinessAuthService(
+		db,
+		postgresrepo.NewBusinessRepository(db),
+		postgresrepo.NewTeamMemberRepository(db),
+		log,
+	), nil
+}
+
+func authorizeWebSocketBusinessScope(ctx context.Context, req events.APIGatewayWebsocketProxyRequest, claims *middleware.CognitoClaims, connectionID string) (string, events.APIGatewayProxyResponse, bool) {
+	if claims == nil {
+		return "", events.APIGatewayProxyResponse{StatusCode: 401, Body: "invalid auth token"}, false
+	}
+
+	requestedBusinessID := firstNonEmpty(req.QueryStringParameters["business_id"], req.Headers["business_id"], req.Headers["x-business-id"], claims.BusinessID)
+	if requestedBusinessID == "" {
+		wsLog.Warn("websocket connect missing business scope", "connection_id", connectionID, "user_id", claims.Subject)
+		return "", events.APIGatewayProxyResponse{StatusCode: 403, Body: "business scope required"}, false
+	}
+	if claims.BusinessID != "" && requestedBusinessID != claims.BusinessID {
+		wsLog.Warn("websocket connect business mismatch", "connection_id", connectionID, "user_id", claims.Subject)
+		return "", events.APIGatewayProxyResponse{StatusCode: 403, Body: "business_id does not match authenticated scope"}, false
+	}
+	if wsAuthSvc == nil {
+		wsLog.Error("websocket business auth is not configured", "connection_id", connectionID, "user_id", claims.Subject)
+		return "", events.APIGatewayProxyResponse{StatusCode: 500, Body: "business authorization is not configured"}, false
+	}
+	if !wsAuthSvc.UserHasBusinessAccess(ctx, claims.Subject, requestedBusinessID) {
+		wsLog.Warn("websocket connect business access denied", "connection_id", connectionID, "user_id", claims.Subject, "business_id", requestedBusinessID)
+		return "", events.APIGatewayProxyResponse{StatusCode: 403, Body: "access denied to this business"}, false
+	}
+	return requestedBusinessID, events.APIGatewayProxyResponse{}, true
 }
 
 func extractAuthToken(req events.APIGatewayWebsocketProxyRequest) string {
