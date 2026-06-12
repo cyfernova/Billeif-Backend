@@ -300,7 +300,7 @@ func buildRealtimeVoicePrompt(opts DeepgramVoiceAgentSettingsOptions) string {
 		prompt += "\nContinue the voice conversation identified by conversation_id " + opts.ConversationID + "."
 	}
 	if opts.MCPToolsEnabled {
-		prompt += "\nWhen the user asks you to list, view, check, or summarize business finance data, use the available read-only function to run an allowlisted Billeif lookup. Do not call functions to create, update, send, record, delete, or otherwise change data; say that write actions need to be completed in the app for now. Never call auth, admin, credential, or unrelated tools."
+		prompt += "\nWhen the user asks you to list, view, check, summarize, create, update, record, or adjust ordinary business finance data, use the available function to run an allowlisted Billeif MCP action. Only call write actions when the user clearly asks for the change and provides the required details. Do not delete data, authenticate users, administer accounts, send invoices, or call auth, credential, admin, destructive, or unrelated tools."
 	}
 	prompt += "\nCurrent session started at " + time.Now().UTC().Format(time.RFC3339) + "."
 	return prompt

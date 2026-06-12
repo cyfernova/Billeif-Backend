@@ -51,7 +51,11 @@ func TestBuildVoiceMCPFunctionDefinitionsExposeOnlyAllowlistedFinanceTools(t *te
 	require.Contains(t, tools, "get_customers")
 	require.Contains(t, tools, "get_invoices")
 	require.Contains(t, tools, "get_products")
-	require.NotContains(t, tools, "post_customers")
+	require.Contains(t, tools, "post_customers")
+	require.Contains(t, tools, "post_invoices")
+	require.Contains(t, tools, "post_payments")
+	require.Contains(t, tools, "post_products")
+	require.Contains(t, tools, "put_invoices_by_id")
 	require.NotContains(t, tools, "post_invoices_by_id_send")
 	require.NotContains(t, tools, "delete_customers_by_id")
 	require.NotContains(t, tools, "delete_business_profiles_by_id")
@@ -83,12 +87,54 @@ func TestVoiceMCPBridgeInjectsBusinessIDIntoQueryScopedTool(t *testing.T) {
 	require.Equal(t, "get_customers", result["tool"])
 }
 
-func TestVoiceMCPBridgeRejectsMutatingTools(t *testing.T) {
+func TestVoiceMCPBridgeInjectsBusinessIDIntoBodyScopedTool(t *testing.T) {
 	caller := &fakeVoiceMCPCaller{}
 	bridge := NewVoiceMCPBridge(caller, nil)
 	content := bridge.HandleFunctionCall(context.Background(), DeepgramFunctionCall{
 		Name:      voiceMCPFunctionName,
-		Arguments: json.RawMessage(`{"tool":"post_products","args":{"body":{"name":"Widget"}}}`),
+		Arguments: json.RawMessage(`{"tool":"post_products","args":{"body":{"name":"Widget","price":99,"currency":"INR","unit":"pcs"}}}`),
+	}, "biz-123", "access-token")
+
+	require.Equal(t, 1, caller.calls)
+	require.Equal(t, "post_products", caller.tool)
+
+	var args struct {
+		Body map[string]interface{} `json:"body"`
+	}
+	require.NoError(t, json.Unmarshal(caller.args, &args))
+	require.Equal(t, "Widget", args.Body["name"])
+	require.Equal(t, "biz-123", args.Body["business_id"])
+	require.Contains(t, content, `"ok":true`)
+}
+
+func TestVoiceMCPBridgeAllowsPathScopedFinanceMutationWithoutInjectingBodyBusinessID(t *testing.T) {
+	caller := &fakeVoiceMCPCaller{}
+	bridge := NewVoiceMCPBridge(caller, nil)
+	content := bridge.HandleFunctionCall(context.Background(), DeepgramFunctionCall{
+		Name:      voiceMCPFunctionName,
+		Arguments: json.RawMessage(`{"tool":"put_invoices_by_id","args":{"path":{"id":"inv-123"},"body":{"notes":"Paid in cash"}}}`),
+	}, "biz-123", "access-token")
+
+	require.Equal(t, 1, caller.calls)
+	require.Equal(t, "put_invoices_by_id", caller.tool)
+
+	var args struct {
+		Path map[string]interface{} `json:"path"`
+		Body map[string]interface{} `json:"body"`
+	}
+	require.NoError(t, json.Unmarshal(caller.args, &args))
+	require.Equal(t, "inv-123", args.Path["id"])
+	require.Equal(t, "Paid in cash", args.Body["notes"])
+	require.NotContains(t, args.Body, "business_id")
+	require.Contains(t, content, `"ok":true`)
+}
+
+func TestVoiceMCPBridgeRejectsBlockedTools(t *testing.T) {
+	caller := &fakeVoiceMCPCaller{}
+	bridge := NewVoiceMCPBridge(caller, nil)
+	content := bridge.HandleFunctionCall(context.Background(), DeepgramFunctionCall{
+		Name:      voiceMCPFunctionName,
+		Arguments: json.RawMessage(`{"tool":"delete_products_by_id","args":{"path":{"id":"prod-1"}}}`),
 	}, "biz-123", "access-token")
 
 	require.Zero(t, caller.calls)

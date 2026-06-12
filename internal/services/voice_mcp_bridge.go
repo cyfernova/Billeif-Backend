@@ -30,12 +30,28 @@ type voiceMCPToolRule struct {
 }
 
 var voiceMCPToolAllowlist = map[string]voiceMCPToolRule{
-	"get_customers":            {Description: "List customers for the current business.", Scope: voiceMCPQueryScope},
-	"get_invoices":             {Description: "List invoices for the current business.", Scope: voiceMCPQueryScope},
-	"get_invoices_next_number": {Description: "Get the next invoice number for the current business.", Scope: voiceMCPQueryScope},
-	"get_payments":             {Description: "List payments for the current business.", Scope: voiceMCPQueryScope},
-	"get_products":             {Description: "List products for the current business.", Scope: voiceMCPQueryScope},
-	"get_vendors":              {Description: "List vendors for the current business.", Scope: voiceMCPQueryScope},
+	"get_customers":             {Description: "List customers for the current business.", Scope: voiceMCPQueryScope},
+	"get_customers_by_id":       {Description: "Get one customer for the current business.", Scope: voiceMCPNoScope},
+	"get_invoices":              {Description: "List invoices for the current business.", Scope: voiceMCPQueryScope},
+	"get_invoices_by_id":        {Description: "Get one invoice for the current business.", Scope: voiceMCPNoScope},
+	"get_invoices_next_number":  {Description: "Get the next invoice number for the current business.", Scope: voiceMCPQueryScope},
+	"get_payments":              {Description: "List payments for the current business.", Scope: voiceMCPQueryScope},
+	"get_payments_by_id":        {Description: "Get one payment for the current business.", Scope: voiceMCPNoScope},
+	"get_products":              {Description: "List products for the current business.", Scope: voiceMCPQueryScope},
+	"get_products_by_id":        {Description: "Get one product for the current business.", Scope: voiceMCPNoScope},
+	"get_vendors":               {Description: "List vendors for the current business.", Scope: voiceMCPQueryScope},
+	"get_vendors_by_id":         {Description: "Get one vendor for the current business.", Scope: voiceMCPNoScope},
+	"post_customers":            {Description: "Create a customer for the current business.", Scope: voiceMCPBodyScope},
+	"post_invoices":             {Description: "Create an invoice for the current business.", Scope: voiceMCPBodyScope},
+	"post_payments":             {Description: "Record a payment for the current business.", Scope: voiceMCPNoScope},
+	"post_products":             {Description: "Create a product for the current business.", Scope: voiceMCPBodyScope},
+	"post_products_by_id_stock": {Description: "Adjust product stock for the current business.", Scope: voiceMCPNoScope},
+	"post_vendors":              {Description: "Create a vendor for the current business.", Scope: voiceMCPBodyScope},
+	"put_customers_by_id":       {Description: "Update a customer for the current business.", Scope: voiceMCPNoScope},
+	"put_invoices_by_id":        {Description: "Update an invoice for the current business.", Scope: voiceMCPNoScope},
+	"put_payments_by_id":        {Description: "Update a payment for the current business.", Scope: voiceMCPNoScope},
+	"put_products_by_id":        {Description: "Update a product for the current business.", Scope: voiceMCPNoScope},
+	"put_vendors_by_id":         {Description: "Update a vendor for the current business.", Scope: voiceMCPNoScope},
 }
 
 type VoiceMCPToolCaller interface {
@@ -84,7 +100,7 @@ func BuildVoiceMCPFunctionDefinitions() []map[string]interface{} {
 	return []map[string]interface{}{
 		{
 			"name":        voiceMCPFunctionName,
-			"description": "Run one read-only Billeif finance lookup through the MCP server. Use only for the current authenticated business. Do not use this function for creating, updating, sending, recording, deleting, or otherwise changing data. The args field must match {\"query\": {...}}.",
+			"description": "Run one allowlisted Billeif finance action through the MCP server for the current authenticated business. Use only when the user clearly asks to list, view, create, update, record, or adjust ordinary finance records. Do not delete data, authenticate users, administer accounts, send invoices, or call unrelated tools.",
 			"parameters": map[string]interface{}{
 				"type":                 "object",
 				"additionalProperties": false,
@@ -96,7 +112,7 @@ func BuildVoiceMCPFunctionDefinitions() []map[string]interface{} {
 					},
 					"args": map[string]interface{}{
 						"type":                 "object",
-						"description":          "Arguments for the selected read-only MCP tool. Example: {\"query\":{\"limit\":5}} to list current-business records.",
+						"description":          "Arguments for the selected MCP tool. Use {\"query\":{...}} for list tools, {\"body\":{...}} for create/update tools, and {\"path\":{...}} for tools that require an ID.",
 						"additionalProperties": true,
 					},
 				},
