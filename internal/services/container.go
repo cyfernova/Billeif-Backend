@@ -135,7 +135,7 @@ func NewContainer(
 	billingOpsSvc := NewBillingOpsService(cfg, db, customerRepo, vendorRepo, productRepo, invoiceSvc, documentSvc, s3Svc, log)
 	documentSvc.AttachTaxComplianceService(taxComplianceSvc)
 	taxComplianceSvc.AttachDocumentService(documentSvc)
-	posSvc := NewPOSService(db, documentSvc, barcodeSvc, taxComplianceSvc.entitlements, log)
+	posSvc := NewPOSService(db, documentSvc, barcodeSvc, inventorySvc, taxComplianceSvc.entitlements, log)
 	commerceSvc := NewCommerceService(cfg, db, businessRepo, customerRepo, productRepo, subscriptionRepo, inventorySvc, documentSvc, s3Svc, log)
 	razorpayPaymentSvc := NewRazorpayPaymentService(cfg, db, log)
 

@@ -26,12 +26,21 @@ type LambdaVoiceConfig struct {
 }
 
 func LoadLambdaVoiceConfig(requireWorkerFunction bool) (*LambdaVoiceConfig, error) {
+	region := requireEnv("AWS_REGION")
+	deepgramAPIKey, err := secretEnvOrSSM("DEEPGRAM_API_KEY", "DEEPGRAM_API_KEY_SSM_PARAM", region)
+	if err != nil {
+		return nil, err
+	}
+	deepSeekAPIKey, err := secretEnvOrSSM("DEEPSEEK_API_KEY", "DEEPSEEK_API_KEY_SSM_PARAM", region)
+	if err != nil {
+		return nil, err
+	}
 	cfg := &LambdaVoiceConfig{
 		Environment: requireEnv("ENVIRONMENT"),
 		LogLevel:    requireEnv("LOG_LEVEL"),
 		LogFormat:   requireEnv("LOG_FORMAT"),
 		AWS: AWSConfig{
-			Region:       requireEnv("AWS_REGION"),
+			Region:       region,
 			AccessKey:    strings.TrimSpace(os.Getenv("AWS_ACCESS_KEY_ID")),
 			SecretKey:    strings.TrimSpace(os.Getenv("AWS_SECRET_ACCESS_KEY")),
 			SessionToken: strings.TrimSpace(os.Getenv("AWS_SESSION_TOKEN")),
@@ -53,7 +62,7 @@ func LoadLambdaVoiceConfig(requireWorkerFunction bool) (*LambdaVoiceConfig, erro
 			ConnectionsTable: requireEnv("WEBSOCKET_CONNECTIONS_TABLE"),
 		},
 		VoiceRealtime: VoiceRealtimeConfig{
-			DeepgramAPIKey:               requireEnv("DEEPGRAM_API_KEY"),
+			DeepgramAPIKey:               deepgramAPIKey,
 			DeepgramVoiceAgentURL:        requireEnv("DEEPGRAM_VOICE_AGENT_URL"),
 			InputEncoding:                requireEnv("DEEPGRAM_VOICE_INPUT_ENCODING"),
 			InputSampleRate:              requirePositiveIntEnv("DEEPGRAM_VOICE_INPUT_SAMPLE_RATE"),
@@ -61,7 +70,7 @@ func LoadLambdaVoiceConfig(requireWorkerFunction bool) (*LambdaVoiceConfig, erro
 			OutputSampleRate:             requirePositiveIntEnv("DEEPGRAM_VOICE_OUTPUT_SAMPLE_RATE"),
 			ListenModel:                  requireEnv("DEEPGRAM_VOICE_LISTEN_MODEL"),
 			SpeakModel:                   requireEnv("DEEPGRAM_VOICE_SPEAK_MODEL"),
-			DeepSeekAPIKey:               requireEnv("DEEPSEEK_API_KEY"),
+			DeepSeekAPIKey:               deepSeekAPIKey,
 			DeepSeekBaseURL:              requireEnv("DEEPSEEK_BASE_URL"),
 			DeepSeekModel:                requireEnv("DEEPSEEK_MODEL"),
 			MaxSessionSeconds:            requirePositiveIntEnv("VOICE_WS_MAX_SESSION_SECONDS"),
@@ -95,6 +104,21 @@ func LoadLambdaVoiceConfig(requireWorkerFunction bool) (*LambdaVoiceConfig, erro
 		return nil, err
 	}
 	return cfg, nil
+}
+
+func secretEnvOrSSM(valueEnv, parameterEnv, region string) (string, error) {
+	if value := strings.TrimSpace(os.Getenv(valueEnv)); value != "" {
+		return value, nil
+	}
+	paramName := strings.TrimSpace(os.Getenv(parameterEnv))
+	if paramName == "" {
+		return "", fmt.Errorf("%s or %s is required", valueEnv, parameterEnv)
+	}
+	value, err := resolveSingleSSMParameter(region, paramName)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s: %w", valueEnv, err)
+	}
+	return value, nil
 }
 
 func (c *LambdaVoiceConfig) Validate() error {

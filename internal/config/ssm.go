@@ -24,6 +24,11 @@ func resolveSSMParameters(cfg *Config) error {
 		cfg.SSM.RazorpayKeyIDParam:           &cfg.Razorpay.KeyID,
 		cfg.SSM.RazorpayKeySecretParam:       &cfg.Razorpay.KeySecret,
 		cfg.SSM.RazorpayWebhookSecretParam:   &cfg.Razorpay.WebhookSecret,
+		cfg.SSM.LLMAPIKeyParam:               &cfg.LLM.APIKey,
+		cfg.SSM.ExaAPIKeyParam:               &cfg.LLM.ExaAPIKey,
+		cfg.SSM.GSTLookupAPIKeyParam:         &cfg.GSTLookup.APIKey,
+		cfg.SSM.DeepgramAPIKeyParam:          &cfg.Deepgram.APIKey,
+		cfg.SSM.DeepSeekAPIKeyParam:          &cfg.VoiceRealtime.DeepSeekAPIKey,
 	}
 
 	hasParams := false
@@ -75,4 +80,25 @@ func resolveSSMParameters(cfg *Config) error {
 	}
 
 	return nil
+}
+
+func resolveSingleSSMParameter(region, paramName string) (string, error) {
+	if strings.TrimSpace(paramName) == "" {
+		return "", fmt.Errorf("SSM parameter name is required")
+	}
+	awsCfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(region))
+	if err != nil {
+		return "", fmt.Errorf("load aws config for ssm: %w", err)
+	}
+	out, err := ssm.NewFromConfig(awsCfg).GetParameter(context.Background(), &ssm.GetParameterInput{
+		Name:           &paramName,
+		WithDecryption: aws.Bool(true),
+	})
+	if err != nil {
+		return "", fmt.Errorf("get SSM parameter %s: %w", paramName, err)
+	}
+	if out.Parameter == nil || out.Parameter.Value == nil || strings.TrimSpace(*out.Parameter.Value) == "" {
+		return "", fmt.Errorf("SSM parameter %s is empty", paramName)
+	}
+	return strings.TrimSpace(*out.Parameter.Value), nil
 }

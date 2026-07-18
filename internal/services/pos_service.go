@@ -113,15 +113,17 @@ type POSService struct {
 	db           *gorm.DB
 	documents    *DocumentService
 	barcode      *BarcodeService
+	inventory    *InventoryService
 	entitlements *EntitlementService
 	log          *logger.Logger
 }
 
-func NewPOSService(db *gorm.DB, documents *DocumentService, barcode *BarcodeService, entitlements *EntitlementService, log *logger.Logger) *POSService {
+func NewPOSService(db *gorm.DB, documents *DocumentService, barcode *BarcodeService, inventory *InventoryService, entitlements *EntitlementService, log *logger.Logger) *POSService {
 	return &POSService{
 		db:           db,
 		documents:    documents,
 		barcode:      barcode,
+		inventory:    inventory,
 		entitlements: entitlements,
 		log:          log,
 	}
@@ -164,6 +166,10 @@ func (s *POSService) CreateSession(ctx context.Context, businessID, userID strin
 			}
 		}
 	}
+	warehouseID := posStringValue(session.WarehouseID)
+	if err := s.authorizeWarehouse(ctx, userID, businessID, warehouseID, warehousePermissionMoveStock); err != nil {
+		return nil, err
+	}
 
 	if err := s.db.WithContext(ctx).Create(session).Error; err != nil {
 		return nil, err
@@ -171,7 +177,7 @@ func (s *POSService) CreateSession(ctx context.Context, businessID, userID strin
 	return session, nil
 }
 
-func (s *POSService) ListSessions(ctx context.Context, businessID string, page, limit int, status string) ([]models.POSSession, int64, error) {
+func (s *POSService) ListSessions(ctx context.Context, businessID, userID string, page, limit int, status string) ([]models.POSSession, int64, error) {
 	if err := s.entitlements.EnsureFeature(ctx, businessID, FeaturePOS); err != nil {
 		return nil, 0, err
 	}
@@ -195,7 +201,7 @@ func (s *POSService) ListSessions(ctx context.Context, businessID string, page, 
 
 	baseQuery := s.db.WithContext(ctx).
 		Model(&models.POSSession{}).
-		Where("business_id = ? AND deleted_at IS NULL", businessID)
+		Where("business_id = ? AND user_id = ? AND deleted_at IS NULL", businessID, userID)
 	if normalizedStatus != "" {
 		baseQuery = baseQuery.Where("status = ?", normalizedStatus)
 	}
@@ -217,8 +223,11 @@ func (s *POSService) ListSessions(ctx context.Context, businessID string, page, 
 	return sessions, total, nil
 }
 
-func (s *POSService) SearchCatalog(ctx context.Context, businessID, query, warehouseID string, limit int) ([]POSCatalogSearchResult, error) {
+func (s *POSService) SearchCatalog(ctx context.Context, businessID, userID, query, warehouseID string, limit int) ([]POSCatalogSearchResult, error) {
 	if err := s.entitlements.EnsureFeature(ctx, businessID, FeaturePOS); err != nil {
+		return nil, err
+	}
+	if err := s.authorizeWarehouse(ctx, userID, businessID, warehouseID, warehousePermissionViewCatalog); err != nil {
 		return nil, err
 	}
 	if limit <= 0 || limit > 50 {
@@ -304,12 +313,15 @@ func (s *POSService) SearchCatalog(ctx context.Context, businessID, query, wareh
 	return results, nil
 }
 
-func (s *POSService) ScanItem(ctx context.Context, businessID, sessionID string, input ScanPOSItemInput) (*models.POSSession, POSSessionCart, error) {
+func (s *POSService) ScanItem(ctx context.Context, businessID, userID, sessionID string, input ScanPOSItemInput) (*models.POSSession, POSSessionCart, error) {
 	if err := s.entitlements.EnsureFeature(ctx, businessID, FeaturePOS); err != nil {
 		return nil, POSSessionCart{}, err
 	}
-	session, err := s.getSession(ctx, businessID, sessionID)
+	session, err := s.getSession(ctx, businessID, userID, sessionID)
 	if err != nil {
+		return nil, POSSessionCart{}, err
+	}
+	if err := s.authorizeWarehouse(ctx, userID, businessID, posStringValue(session.WarehouseID), warehousePermissionMoveStock); err != nil {
 		return nil, POSSessionCart{}, err
 	}
 	lookup, err := s.barcode.Lookup(ctx, businessID, input.Code)
@@ -348,12 +360,15 @@ func (s *POSService) ScanItem(ctx context.Context, businessID, sessionID string,
 	return session, cart, nil
 }
 
-func (s *POSService) Checkout(ctx context.Context, businessID, sessionID, idempotencyKey string, input CheckoutPOSCartInput) (*models.Document, error) {
+func (s *POSService) Checkout(ctx context.Context, businessID, userID, sessionID, idempotencyKey string, input CheckoutPOSCartInput) (*models.Document, error) {
 	if err := s.entitlements.EnsureFeature(ctx, businessID, FeaturePOS); err != nil {
 		return nil, err
 	}
-	session, err := s.getSession(ctx, businessID, sessionID)
+	session, err := s.getSession(ctx, businessID, userID, sessionID)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.authorizeWarehouse(ctx, userID, businessID, posStringValue(session.WarehouseID), warehousePermissionMoveStock); err != nil {
 		return nil, err
 	}
 	if session.LastCheckedOutDocumentID != nil && idempotencyKey != "" {
@@ -440,14 +455,17 @@ func (s *POSService) Checkout(ctx context.Context, businessID, sessionID, idempo
 	return document, nil
 }
 
-func (s *POSService) CloseSession(ctx context.Context, businessID, sessionID string) (*models.POSSession, error) {
+func (s *POSService) CloseSession(ctx context.Context, businessID, userID, sessionID string) (*models.POSSession, error) {
 	if err := s.entitlements.EnsureFeature(ctx, businessID, FeaturePOS); err != nil {
 		return nil, err
 	}
 	var session models.POSSession
 	if err := s.db.WithContext(ctx).
-		Where("id = ? AND business_id = ? AND deleted_at IS NULL", sessionID, businessID).
+		Where("id = ? AND business_id = ? AND user_id = ? AND deleted_at IS NULL", sessionID, businessID, userID).
 		First(&session).Error; err != nil {
+		return nil, err
+	}
+	if err := s.authorizeWarehouse(ctx, userID, businessID, posStringValue(session.WarehouseID), warehousePermissionMoveStock); err != nil {
 		return nil, err
 	}
 	if session.Status != posSessionStatusClosed {
@@ -498,10 +516,10 @@ func (s *POSService) GetThermalReceipt(ctx context.Context, businessID, document
 	}, nil
 }
 
-func (s *POSService) getSession(ctx context.Context, businessID, sessionID string) (*models.POSSession, error) {
+func (s *POSService) getSession(ctx context.Context, businessID, userID, sessionID string) (*models.POSSession, error) {
 	var session models.POSSession
 	if err := s.db.WithContext(ctx).
-		Where("id = ? AND business_id = ? AND deleted_at IS NULL", sessionID, businessID).
+		Where("id = ? AND business_id = ? AND user_id = ? AND deleted_at IS NULL", sessionID, businessID, userID).
 		First(&session).Error; err != nil {
 		return nil, err
 	}
@@ -509,6 +527,16 @@ func (s *POSService) getSession(ctx context.Context, businessID, sessionID strin
 		return nil, fmt.Errorf("pos session is closed")
 	}
 	return &session, nil
+}
+
+func (s *POSService) authorizeWarehouse(ctx context.Context, userID, businessID, warehouseID, permission string) error {
+	if strings.TrimSpace(warehouseID) == "" {
+		return fmt.Errorf("POS warehouse is required")
+	}
+	if s.inventory == nil || !s.inventory.UserHasWarehouseAccess(ctx, userID, businessID, warehouseID, permission) {
+		return fmt.Errorf("access denied to POS warehouse")
+	}
+	return nil
 }
 
 func (s *POSService) lookupToCartLine(_ context.Context, _ string, lookup map[string]interface{}) (POSSessionCartLine, error) {

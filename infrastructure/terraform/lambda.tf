@@ -41,8 +41,13 @@ locals {
     RAZORPAY_KEY_ID_SSM_PARAM                 = local.razorpay_key_id_ssm_parameter_name
     RAZORPAY_KEY_SECRET_SSM_PARAM             = local.razorpay_key_secret_ssm_parameter_name
     RAZORPAY_WEBHOOK_SECRET_SSM_PARAM         = local.razorpay_webhook_secret_ssm_parameter_name
+    CREDENTIAL_ENCRYPTION_KEY_SSM_PARAM       = local.credential_encryption_key_ssm_parameter_name
+    LLM_API_KEY_SSM_PARAM                     = local.llm_api_key_ssm_parameter_name
+    EXA_API_KEY_SSM_PARAM                     = local.exa_api_key_ssm_parameter_name
+    GST_LOOKUP_API_KEY_SSM_PARAM              = local.gst_lookup_api_key_ssm_parameter_name
+    DEEPGRAM_API_KEY_SSM_PARAM                = local.deepgram_api_key_ssm_parameter_name
+    DEEPSEEK_API_KEY_SSM_PARAM                = local.deepseek_api_key_ssm_parameter_name
     ALLOWED_ORIGINS                           = local.rest_api_invoke_url
-    CREDENTIAL_ENCRYPTION_KEY                 = var.credential_encryption_key
     S3_BUCKET_LOGOS                           = aws_s3_bucket.business_logos.id
     S3_BUCKET_INVOICES                        = aws_s3_bucket.invoices_pdf.id
     S3_BUCKET_PRODUCTS                        = aws_s3_bucket.product_images.id
@@ -62,16 +67,12 @@ locals {
     JWT_ACCESS_TOKEN_EXPIRY                   = "1h"
     JWT_REFRESH_TOKEN_EXPIRY                  = "720h"
     WEBSOCKET_CONNECTIONS_TABLE               = aws_dynamodb_table.ws_connections.name
-    LLM_API_KEY                               = var.llm_api_key
     LLM_API_URL                               = var.llm_api_url
     LLM_MODEL                                 = var.llm_model
-    EXA_API_KEY                               = var.exa_api_key
     EXA_BASE_URL                              = var.exa_base_url
     EXA_TIMEOUT                               = tostring(var.exa_timeout)
     GST_LOOKUP_BASE_URL                       = var.gst_lookup_base_url
-    GST_LOOKUP_API_KEY                        = var.gst_lookup_api_key
     GST_LOOKUP_TIMEOUT                        = tostring(var.gst_lookup_timeout)
-    DEEPGRAM_API_KEY                          = var.deepgram_api_key
     DEEPGRAM_VOICE_AGENT_URL                  = var.deepgram_voice_agent_url
     DEEPGRAM_VOICE_LISTEN_MODEL               = var.deepgram_voice_listen_model
     DEEPGRAM_VOICE_SPEAK_MODEL                = var.deepgram_voice_speak_model
@@ -79,7 +80,6 @@ locals {
     DEEPGRAM_VOICE_INPUT_SAMPLE_RATE          = tostring(var.deepgram_voice_input_sample_rate)
     DEEPGRAM_VOICE_OUTPUT_ENCODING            = var.deepgram_voice_output_encoding
     DEEPGRAM_VOICE_OUTPUT_SAMPLE_RATE         = tostring(var.deepgram_voice_output_sample_rate)
-    DEEPSEEK_API_KEY                          = var.deepseek_api_key
     DEEPSEEK_BASE_URL                         = var.deepseek_base_url
     DEEPSEEK_MODEL                            = var.deepseek_model
     MCP_SERVER_URL                            = var.mcp_server_url
@@ -205,7 +205,7 @@ resource "aws_lambda_function" "a2a_stream" {
 
 resource "aws_lambda_function" "sqs_invoice" {
   function_name    = "${var.project_name}-sqs-invoice"
-  role             = aws_iam_role.lambda_exec.arn
+  role             = aws_iam_role.lambda_worker_exec.arn
   runtime          = "provided.al2023"
   handler          = "bootstrap"
   architectures    = ["arm64"]
@@ -239,7 +239,7 @@ resource "aws_lambda_function" "sqs_invoice" {
 
 resource "aws_lambda_function" "sqs_payment" {
   function_name    = "${var.project_name}-sqs-payment"
-  role             = aws_iam_role.lambda_exec.arn
+  role             = aws_iam_role.lambda_worker_exec.arn
   runtime          = "provided.al2023"
   handler          = "bootstrap"
   architectures    = ["arm64"]
@@ -273,7 +273,7 @@ resource "aws_lambda_function" "sqs_payment" {
 
 resource "aws_lambda_function" "sqs_gst" {
   function_name    = "${var.project_name}-sqs-gst"
-  role             = aws_iam_role.lambda_exec.arn
+  role             = aws_iam_role.lambda_worker_exec.arn
   runtime          = "provided.al2023"
   handler          = "bootstrap"
   architectures    = ["arm64"]
@@ -312,7 +312,7 @@ resource "aws_cloudwatch_log_group" "lambda_sqs_bargaining" {
 
 resource "aws_lambda_function" "sqs_bargaining" {
   function_name     = "${var.project_name}-sqs-bargaining"
-  role              = aws_iam_role.lambda_exec.arn
+  role              = aws_iam_role.lambda_worker_exec.arn
   runtime           = "provided.al2023"
   handler           = "bootstrap"
   architectures     = ["arm64"]
@@ -348,7 +348,7 @@ resource "aws_lambda_function" "sqs_bargaining" {
 
 resource "aws_lambda_function" "ws_handler" {
   function_name    = "${var.project_name}-ws-handler"
-  role             = aws_iam_role.lambda_exec.arn
+  role             = aws_iam_role.lambda_websocket_exec.arn
   runtime          = "provided.al2023"
   handler          = "bootstrap"
   architectures    = ["arm64"]
@@ -384,7 +384,7 @@ resource "aws_lambda_function" "ws_handler" {
 
 resource "aws_lambda_function" "voice_session" {
   function_name    = var.voice_session_lambda_function_name
-  role             = aws_iam_role.lambda_exec.arn
+  role             = aws_iam_role.lambda_voice_exec.arn
   runtime          = "provided.al2023"
   handler          = "bootstrap"
   architectures    = ["arm64"]

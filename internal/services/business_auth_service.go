@@ -231,6 +231,7 @@ func legacyRolePermissions(role string) []string {
 			PermissionReportsExport,
 			PermissionReportsShare,
 			PermissionReportsView,
+			PermissionPOSOperate,
 			PermissionAgentsView,
 		}
 	case "viewer":

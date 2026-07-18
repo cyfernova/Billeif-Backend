@@ -20,16 +20,20 @@ type Definition struct {
 }
 
 type Filters struct {
-	DateFrom         *time.Time `json:"date_from,omitempty"`
-	DateTo           *time.Time `json:"date_to,omitempty"`
-	ProjectID        string     `json:"project_id,omitempty"`
-	WarehouseID      string     `json:"warehouse_id,omitempty"`
-	PartyID          string     `json:"party_id,omitempty"`
-	ProductID        string     `json:"product_id,omitempty"`
-	VariantID        string     `json:"variant_id,omitempty"`
-	CategoryID       string     `json:"category_id,omitempty"`
-	Search           string     `json:"search,omitempty"`
-	IncludeCancelled bool       `json:"include_cancelled,omitempty"`
+	DateFrom                 *time.Time `json:"date_from,omitempty"`
+	DateTo                   *time.Time `json:"date_to,omitempty"`
+	ProjectID                string     `json:"project_id,omitempty"`
+	WarehouseID              string     `json:"warehouse_id,omitempty"`
+	PartyID                  string     `json:"party_id,omitempty"`
+	ProductID                string     `json:"product_id,omitempty"`
+	VariantID                string     `json:"variant_id,omitempty"`
+	CategoryID               string     `json:"category_id,omitempty"`
+	Search                   string     `json:"search,omitempty"`
+	IncludeCancelled         bool       `json:"include_cancelled,omitempty"`
+	AllowedBranchIDs         []string   `json:"-"`
+	AllowedWarehouseIDs      []string   `json:"-"`
+	BranchScopeRestricted    bool       `json:"-"`
+	WarehouseScopeRestricted bool       `json:"-"`
 }
 
 type Query struct {

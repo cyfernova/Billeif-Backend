@@ -72,8 +72,12 @@ func (h *POSHandler) ListSessions(c *gin.Context) {
 	if !ok {
 		return
 	}
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
 	page, limit := utils.ParsePagination(c)
-	sessions, total, err := h.svc.ListSessions(c.Request.Context(), businessID, page, limit, c.Query("status"))
+	sessions, total, err := h.svc.ListSessions(c.Request.Context(), businessID, userID, page, limit, c.Query("status"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -106,7 +110,11 @@ func (h *POSHandler) CloseSession(c *gin.Context) {
 	if !ok {
 		return
 	}
-	session, err := h.svc.CloseSession(c.Request.Context(), businessID, c.Param("id"))
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
+	session, err := h.svc.CloseSession(c.Request.Context(), businessID, userID, c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -132,8 +140,12 @@ func (h *POSHandler) SearchCatalog(c *gin.Context) {
 	if !ok {
 		return
 	}
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
-	results, err := h.svc.SearchCatalog(c.Request.Context(), businessID, c.Query("q"), c.Query("warehouse_id"), limit)
+	results, err := h.svc.SearchCatalog(c.Request.Context(), businessID, userID, c.Query("q"), c.Query("warehouse_id"), limit)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -159,12 +171,16 @@ func (h *POSHandler) ScanItem(c *gin.Context) {
 	if !ok {
 		return
 	}
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
 	var input services.ScanPOSItemInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	session, cart, err := h.svc.ScanItem(c.Request.Context(), businessID, c.Param("id"), input)
+	session, cart, err := h.svc.ScanItem(c.Request.Context(), businessID, userID, c.Param("id"), input)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -190,6 +206,10 @@ func (h *POSHandler) Checkout(c *gin.Context) {
 	if !ok {
 		return
 	}
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
 	idempotencyKey, ok := requireIdempotencyKey(c)
 	if !ok {
 		return
@@ -199,7 +219,7 @@ func (h *POSHandler) Checkout(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	document, err := h.svc.Checkout(c.Request.Context(), businessID, c.Param("id"), idempotencyKey, input)
+	document, err := h.svc.Checkout(c.Request.Context(), businessID, userID, c.Param("id"), idempotencyKey, input)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

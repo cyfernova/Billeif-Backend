@@ -118,6 +118,11 @@ type SSMConfig struct {
 	RazorpayKeyIDParam           string `mapstructure:"RAZORPAY_KEY_ID_PARAM"`
 	RazorpayKeySecretParam       string `mapstructure:"RAZORPAY_KEY_SECRET_PARAM"`
 	RazorpayWebhookSecretParam   string `mapstructure:"RAZORPAY_WEBHOOK_SECRET_PARAM"`
+	LLMAPIKeyParam               string `mapstructure:"LLM_API_KEY_PARAM"`
+	ExaAPIKeyParam               string `mapstructure:"EXA_API_KEY_PARAM"`
+	GSTLookupAPIKeyParam         string `mapstructure:"GST_LOOKUP_API_KEY_PARAM"`
+	DeepgramAPIKeyParam          string `mapstructure:"DEEPGRAM_API_KEY_PARAM"`
+	DeepSeekAPIKeyParam          string `mapstructure:"DEEPSEEK_API_KEY_PARAM"`
 }
 
 type WebSocketConfig struct {
@@ -296,6 +301,11 @@ func Load() (*Config, error) {
 	_ = viper.BindEnv("SSM.RAZORPAY_KEY_ID_PARAM", "RAZORPAY_KEY_ID_SSM_PARAM")
 	_ = viper.BindEnv("SSM.RAZORPAY_KEY_SECRET_PARAM", "RAZORPAY_KEY_SECRET_SSM_PARAM")
 	_ = viper.BindEnv("SSM.RAZORPAY_WEBHOOK_SECRET_PARAM", "RAZORPAY_WEBHOOK_SECRET_SSM_PARAM")
+	_ = viper.BindEnv("SSM.LLM_API_KEY_PARAM", "LLM_API_KEY_SSM_PARAM")
+	_ = viper.BindEnv("SSM.EXA_API_KEY_PARAM", "EXA_API_KEY_SSM_PARAM")
+	_ = viper.BindEnv("SSM.GST_LOOKUP_API_KEY_PARAM", "GST_LOOKUP_API_KEY_SSM_PARAM")
+	_ = viper.BindEnv("SSM.DEEPGRAM_API_KEY_PARAM", "DEEPGRAM_API_KEY_SSM_PARAM")
+	_ = viper.BindEnv("SSM.DEEPSEEK_API_KEY_PARAM", "DEEPSEEK_API_KEY_SSM_PARAM")
 	_ = viper.BindEnv("WEBSOCKET.API_ENDPOINT", "WEBSOCKET_API_ENDPOINT")
 	_ = viper.BindEnv("WEBSOCKET.CONNECTIONS_TABLE", "WEBSOCKET_CONNECTIONS_TABLE")
 	_ = viper.BindEnv("COGNITO.USER_POOL_ID", "COGNITO_USER_POOL_ID")
@@ -453,6 +463,11 @@ func applyFlatEnvFileFallbacks(cfg *Config) {
 	setIfEmpty(&cfg.SSM.RazorpayKeyIDParam, "RAZORPAY_KEY_ID_SSM_PARAM")
 	setIfEmpty(&cfg.SSM.RazorpayKeySecretParam, "RAZORPAY_KEY_SECRET_SSM_PARAM")
 	setIfEmpty(&cfg.SSM.RazorpayWebhookSecretParam, "RAZORPAY_WEBHOOK_SECRET_SSM_PARAM")
+	setIfEmpty(&cfg.SSM.LLMAPIKeyParam, "LLM_API_KEY_SSM_PARAM")
+	setIfEmpty(&cfg.SSM.ExaAPIKeyParam, "EXA_API_KEY_SSM_PARAM")
+	setIfEmpty(&cfg.SSM.GSTLookupAPIKeyParam, "GST_LOOKUP_API_KEY_SSM_PARAM")
+	setIfEmpty(&cfg.SSM.DeepgramAPIKeyParam, "DEEPGRAM_API_KEY_SSM_PARAM")
+	setIfEmpty(&cfg.SSM.DeepSeekAPIKeyParam, "DEEPSEEK_API_KEY_SSM_PARAM")
 
 	setIfEmpty(&cfg.Cognito.UserPoolID, "COGNITO_USER_POOL_ID")
 	setIfEmpty(&cfg.Cognito.ClientID, "COGNITO_CLIENT_ID")

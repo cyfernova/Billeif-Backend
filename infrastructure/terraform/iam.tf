@@ -57,6 +57,41 @@ resource "aws_iam_role_policy_attachment" "lambda_vpc_access" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
 }
 
+resource "aws_iam_role" "lambda_worker_exec" {
+  name               = "${var.project_name}-lambda-worker-exec-role"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_worker_basic" {
+  role       = aws_iam_role.lambda_worker_exec.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_worker_vpc_access" {
+  role       = aws_iam_role.lambda_worker_exec.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+}
+
+resource "aws_iam_role" "lambda_websocket_exec" {
+  name               = "${var.project_name}-lambda-websocket-exec-role"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_websocket_basic" {
+  role       = aws_iam_role.lambda_websocket_exec.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role" "lambda_voice_exec" {
+  name               = "${var.project_name}-lambda-voice-exec-role"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_voice_basic" {
+  role       = aws_iam_role.lambda_voice_exec.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
 data "aws_iam_policy_document" "lambda_app" {
   statement {
     sid    = "S3Access"
@@ -111,7 +146,14 @@ data "aws_iam_policy_document" "lambda_app" {
       "ses:SendRawEmail",
       "sns:Publish"
     ]
-    resources = ["*"]
+    resources = [
+      aws_ses_email_identity.main.arn,
+      aws_sns_topic.alerts.arn,
+      aws_sns_topic.low_stock_alerts.arn,
+      aws_sns_topic.payment_notifications.arn,
+      aws_sns_topic.workflow_notifications.arn,
+      aws_sns_topic.ses_events.arn
+    ]
   }
 
   statement {
@@ -181,7 +223,13 @@ data "aws_iam_policy_document" "lambda_app" {
       local.db_host_ssm_parameter_arn,
       local.razorpay_key_id_ssm_parameter_arn,
       local.razorpay_key_secret_ssm_parameter_arn,
-      local.razorpay_webhook_secret_ssm_parameter_arn
+      local.razorpay_webhook_secret_ssm_parameter_arn,
+      local.credential_encryption_key_ssm_parameter_arn,
+      local.llm_api_key_ssm_parameter_arn,
+      local.exa_api_key_ssm_parameter_arn,
+      local.gst_lookup_api_key_ssm_parameter_arn,
+      local.deepgram_api_key_ssm_parameter_arn,
+      local.deepseek_api_key_ssm_parameter_arn
     ]
   }
 
@@ -191,7 +239,7 @@ data "aws_iam_policy_document" "lambda_app" {
     actions = [
       "execute-api:ManageConnections"
     ]
-    resources = ["*"]
+    resources = ["${aws_apigatewayv2_api.websocket.execution_arn}/${var.environment}/POST/@connections/*"]
   }
 
   statement {
@@ -210,4 +258,158 @@ resource "aws_iam_role_policy" "lambda_app" {
   name   = "${var.project_name}-lambda-app-policy"
   role   = aws_iam_role.lambda_exec.id
   policy = data.aws_iam_policy_document.lambda_app.json
+}
+
+data "aws_iam_policy_document" "lambda_worker_app" {
+  statement {
+    sid    = "WorkerQueues"
+    effect = "Allow"
+    actions = [
+      "sqs:ReceiveMessage",
+      "sqs:DeleteMessage",
+      "sqs:GetQueueAttributes",
+      "sqs:ChangeMessageVisibility",
+      "sqs:SendMessage"
+    ]
+    resources = [
+      aws_sqs_queue.invoice_processing.arn,
+      aws_sqs_queue.payment_processing.arn,
+      aws_sqs_queue.gst_processing.arn,
+      aws_sqs_queue.bargaining_negotiation.arn,
+      aws_sqs_queue.workflow_runs.arn,
+      aws_sqs_queue.invoice_processing_dlq.arn,
+      aws_sqs_queue.payment_processing_dlq.arn,
+      aws_sqs_queue.gst_processing_dlq.arn,
+      aws_sqs_queue.bargaining_negotiation_dlq.arn,
+      aws_sqs_queue.workflow_runs_dlq.arn
+    ]
+  }
+
+  statement {
+    sid    = "WorkerDocuments"
+    effect = "Allow"
+    actions = [
+      "s3:GetObject",
+      "s3:PutObject",
+      "s3:DeleteObject"
+    ]
+    resources = [
+      "${aws_s3_bucket.invoices_pdf.arn}/*",
+      "${aws_s3_bucket.email_sink.arn}/*"
+    ]
+  }
+
+  statement {
+    sid    = "WorkerParameters"
+    effect = "Allow"
+    actions = [
+      "ssm:GetParameter",
+      "ssm:GetParameters"
+    ]
+    resources = [
+      local.db_username_ssm_parameter_arn,
+      local.db_password_ssm_parameter_arn,
+      local.db_host_ssm_parameter_arn,
+      local.razorpay_key_id_ssm_parameter_arn,
+      local.razorpay_key_secret_ssm_parameter_arn,
+      local.razorpay_webhook_secret_ssm_parameter_arn,
+      local.credential_encryption_key_ssm_parameter_arn,
+      local.llm_api_key_ssm_parameter_arn,
+      local.exa_api_key_ssm_parameter_arn,
+      local.gst_lookup_api_key_ssm_parameter_arn,
+      local.deepgram_api_key_ssm_parameter_arn,
+      local.deepseek_api_key_ssm_parameter_arn
+    ]
+  }
+
+  statement {
+    sid       = "WorkerEmail"
+    effect    = "Allow"
+    actions   = ["ses:SendEmail", "ses:SendRawEmail"]
+    resources = [aws_ses_email_identity.main.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "lambda_worker_app" {
+  name   = "${var.project_name}-lambda-worker-policy"
+  role   = aws_iam_role.lambda_worker_exec.id
+  policy = data.aws_iam_policy_document.lambda_worker_app.json
+}
+
+data "aws_iam_policy_document" "lambda_websocket_app" {
+  statement {
+    sid    = "WebSocketTables"
+    effect = "Allow"
+    actions = [
+      "dynamodb:GetItem",
+      "dynamodb:PutItem",
+      "dynamodb:DeleteItem",
+      "dynamodb:UpdateItem",
+      "dynamodb:Query"
+    ]
+    resources = [
+      aws_dynamodb_table.ws_connections.arn,
+      "${aws_dynamodb_table.ws_connections.arn}/index/*",
+      aws_dynamodb_table.voice_sessions.arn,
+      "${aws_dynamodb_table.voice_sessions.arn}/index/*"
+    ]
+  }
+
+  statement {
+    sid       = "WebSocketManageConnections"
+    effect    = "Allow"
+    actions   = ["execute-api:ManageConnections"]
+    resources = ["${aws_apigatewayv2_api.websocket.execution_arn}/${var.environment}/POST/@connections/*"]
+  }
+
+  statement {
+    sid       = "InvokeVoiceSessionWorker"
+    effect    = "Allow"
+    actions   = ["lambda:InvokeFunction"]
+    resources = [aws_lambda_function.voice_session.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "lambda_websocket_app" {
+  name   = "${var.project_name}-lambda-websocket-policy"
+  role   = aws_iam_role.lambda_websocket_exec.id
+  policy = data.aws_iam_policy_document.lambda_websocket_app.json
+}
+
+data "aws_iam_policy_document" "lambda_voice_app" {
+  statement {
+    sid       = "VoiceProviderParameters"
+    effect    = "Allow"
+    actions   = ["ssm:GetParameter"]
+    resources = [local.deepgram_api_key_ssm_parameter_arn, local.deepseek_api_key_ssm_parameter_arn]
+  }
+
+  statement {
+    sid    = "VoiceSessions"
+    effect = "Allow"
+    actions = [
+      "dynamodb:GetItem",
+      "dynamodb:PutItem",
+      "dynamodb:DeleteItem",
+      "dynamodb:UpdateItem",
+      "dynamodb:Query"
+    ]
+    resources = [
+      aws_dynamodb_table.voice_sessions.arn,
+      "${aws_dynamodb_table.voice_sessions.arn}/index/*"
+    ]
+  }
+
+  statement {
+    sid       = "VoiceManageConnections"
+    effect    = "Allow"
+    actions   = ["execute-api:ManageConnections"]
+    resources = ["${aws_apigatewayv2_api.websocket.execution_arn}/${var.environment}/POST/@connections/*"]
+  }
+}
+
+resource "aws_iam_role_policy" "lambda_voice_app" {
+  name   = "${var.project_name}-lambda-voice-policy"
+  role   = aws_iam_role.lambda_voice_exec.id
+  policy = data.aws_iam_policy_document.lambda_voice_app.json
 }

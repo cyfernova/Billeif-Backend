@@ -88,3 +88,14 @@ func RequirePermission(authSvc *services.BusinessAuthService, permission string)
 		c.Next()
 	}
 }
+
+func RequireAllBranches() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		allBranches, _, ok := GetValidatedBranchScope(c)
+		if !ok || !allBranches {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "business-wide branch access required"})
+			return
+		}
+		c.Next()
+	}
+}

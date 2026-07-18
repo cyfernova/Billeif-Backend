@@ -109,7 +109,7 @@ func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log 
 		RazorpayPayment: NewRazorpayPaymentHandler(svcs.RazorpayPayment, log),
 		Ledger:          NewLedgerHandler(svcs.Ledger, log),
 		Dashboard:       NewDashboardHandler(svcs.Dashboard, log),
-		Report:          NewReportHandler(svcs.Report, log),
+		Report:          NewReportHandler(svcs.Report, svcs.Inventory, log),
 		Tax:             NewTaxHandler(svcs.TaxCompliance, log),
 		Team:            NewTeamHandler(svcs.Team, log),
 		Webhook:         NewWebhookHandler(svcs.Webhook, log),

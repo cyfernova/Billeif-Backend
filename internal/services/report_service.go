@@ -9,6 +9,7 @@ import (
 	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -27,6 +28,8 @@ type ReportService struct {
 	repo interfaces.ReportingRepository
 	log  *logger.Logger
 }
+
+var ErrReportScopeUnsupported = errors.New("report cannot be safely limited to the caller's branch or warehouse scope")
 
 type ReportQueryInput struct {
 	Page    int               `json:"page,omitempty"`
@@ -138,6 +141,9 @@ func (s *ReportService) Query(ctx context.Context, businessID, userID, reportKey
 	if !ok {
 		return nil, fmt.Errorf("report not found")
 	}
+	if err := validateReportScope(def, input.Filters); err != nil {
+		return nil, err
+	}
 	columns, err := s.resolveColumns(ctx, businessID, userID, def, input.Columns, true)
 	if err != nil {
 		return nil, err
@@ -155,6 +161,9 @@ func (s *ReportService) Export(ctx context.Context, businessID, userID, reportKe
 	def, ok := reporting.Lookup(reportKey)
 	if !ok {
 		return nil, fmt.Errorf("report not found")
+	}
+	if err := validateReportScope(def, input.Filters); err != nil {
+		return nil, err
 	}
 	columns, err := s.resolveColumns(ctx, businessID, userID, def, input.Columns, true)
 	if err != nil {
@@ -221,6 +230,9 @@ func (s *ReportService) Export(ctx context.Context, businessID, userID, reportKe
 }
 
 func (s *ReportService) Dashboard(ctx context.Context, businessID string, input ReportQueryInput) (map[string]interface{}, error) {
+	if input.Filters.BranchScopeRestricted || input.Filters.WarehouseScopeRestricted {
+		return nil, ErrReportScopeUnsupported
+	}
 	return s.repo.GetDashboard(ctx, reporting.Query{
 		BusinessID: businessID,
 		Page:       input.Page,
@@ -355,12 +367,18 @@ func (s *ReportService) CreateShare(ctx context.Context, businessID, userID, rep
 	if !ok {
 		return nil, fmt.Errorf("report not found")
 	}
+	if err := validateReportScope(def, input.Filters); err != nil {
+		return nil, err
+	}
 	mode := strings.ToLower(strings.TrimSpace(input.Mode))
 	if mode == "" {
 		mode = models.ReportShareModeSnapshot
 	}
 	if mode != models.ReportShareModeSnapshot && mode != models.ReportShareModeLive {
 		return nil, fmt.Errorf("unsupported share mode")
+	}
+	if mode == models.ReportShareModeLive && (input.Filters.BranchScopeRestricted || input.Filters.WarehouseScopeRestricted) {
+		return nil, fmt.Errorf("%w: scoped users may create snapshot shares only", ErrReportScopeUnsupported)
 	}
 	if input.ExpiresAt != nil && input.ExpiresAt.Before(time.Now()) {
 		return nil, fmt.Errorf("expires_at must be in the future")
@@ -440,6 +458,21 @@ func (s *ReportService) CreateShare(ctx context.Context, businessID, userID, rep
 		MetadataURL: metadataURL,
 		AccessURL:   accessURL,
 	}, nil
+}
+
+func validateReportScope(def reporting.Definition, filters reporting.Filters) error {
+	if !filters.BranchScopeRestricted && !filters.WarehouseScopeRestricted {
+		return nil
+	}
+	switch def.Family {
+	case "document_register", "daily_documents", "line_summary", "line_profit", "gst_hsn_summary",
+		"profit_and_loss", "receivables", "payables", "aging_receivables", "aging_payables":
+		return nil
+	case "inventory_balances", "low_stock", "stock_movement", "batch_expiry", "serial_tracking", "warehouse_transfers":
+		return nil
+	default:
+		return ErrReportScopeUnsupported
+	}
 }
 
 func (s *ReportService) ListShares(ctx context.Context, businessID string, page, limit int) ([]ReportShareHistoryItem, int64, error) {
