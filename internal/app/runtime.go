@@ -18,6 +18,7 @@ import (
 	postgresrepo "invoice-backend/internal/repositories/postgres"
 	"invoice-backend/internal/services"
 	"invoice-backend/internal/workers"
+	dbmigrations "invoice-backend/migrations"
 	"invoice-backend/pkg/awsclients"
 	"invoice-backend/pkg/logger"
 	pkgsentry "invoice-backend/pkg/sentry"
@@ -103,6 +104,16 @@ func Initialize(ctx context.Context, opts InitializeOptions) (*Runtime, error) {
 	if err != nil {
 		log.Sync()
 		return nil, fmt.Errorf("connect database: %w", err)
+	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Sync()
+		return nil, fmt.Errorf("access database connection: %w", err)
+	}
+	if err := dbmigrations.Up(ctx, sqlDB); err != nil {
+		log.Sync()
+		return nil, fmt.Errorf("run database migrations: %w", err)
 	}
 
 	awsClients, err := awsclients.New(ctx, cfg.AWS, log.Named("awsclients"))
