@@ -201,13 +201,11 @@ jobs:
           TF_STATE_LOCK_TABLE: ${{ secrets.TF_STATE_LOCK_TABLE }}
         run: |
           missing=0
-          configured=0
 
           require() {
             if [ -z "$2" ]; then
               echo "::warning::$1 (deploy will be skipped)"
-            else
-              configured=1
+              missing=1
             fi
           }
 
@@ -216,8 +214,7 @@ jobs:
 
           if [ -z "${AWS_DEPLOY_ROLE_ARN}" ] && { [ -z "${AWS_ACCESS_KEY_ID}" ] || [ -z "${AWS_SECRET_ACCESS_KEY}" ]; }; then
             echo "::warning::AWS credentials not configured (deploy will be skipped)"
-          else
-            configured=1
+            missing=1
           fi
 
           # Set output for conditional AWS credentials
@@ -227,7 +224,7 @@ jobs:
             echo "USE_OIDC=false" >> "$GITHUB_OUTPUT"
           fi
 
-          if [ "${configured}" = "1" ]; then
+          if [ "${missing}" = "0" ]; then
             echo "DEPLOY_ENABLED=true" >> "$GITHUB_OUTPUT"
             echo "All required secrets are configured, deploy will proceed."
           else
