@@ -1,12 +1,14 @@
 locals {
-  google_oauth_secret_name   = var.google_oauth_secret_name != "" ? var.google_oauth_secret_name : "/${var.project_name}/${var.environment}/cognito/google-auth"
-  swagger_oauth_redirect_url = "${local.rest_api_invoke_url}/swagger/oauth2-redirect.html"
-  cognito_callback_urls      = distinct(concat([local.swagger_oauth_redirect_url], var.cognito_additional_callback_urls))
-  cognito_logout_urls        = distinct(var.cognito_additional_logout_urls)
+  google_oauth_secret_name          = trimspace(var.google_oauth_secret_name)
+  google_direct_credentials_enabled = trimspace(var.google_client_id) != "" && trimspace(var.google_client_secret) != ""
+  google_identity_provider_enabled  = local.google_direct_credentials_enabled || local.google_oauth_secret_name != ""
+  swagger_oauth_redirect_url        = "${local.rest_api_invoke_url}/swagger/oauth2-redirect.html"
+  cognito_callback_urls             = distinct(concat([local.swagger_oauth_redirect_url], var.cognito_additional_callback_urls))
+  cognito_logout_urls               = distinct(var.cognito_additional_logout_urls)
 }
 
 data "aws_secretsmanager_secret" "google_oauth" {
-  count = var.google_client_id == "" && var.google_client_secret == "" ? 1 : 0
+  count = local.google_identity_provider_enabled && !local.google_direct_credentials_enabled ? 1 : 0
   name  = local.google_oauth_secret_name
 }
 
@@ -82,7 +84,7 @@ resource "aws_cognito_user_pool_client" "main" {
   enable_token_revocation       = true
 
   # OAuth configuration for Google Sign-In
-  supported_identity_providers         = ["COGNITO", "Google"]
+  supported_identity_providers         = concat(["COGNITO"], local.google_identity_provider_enabled ? ["Google"] : [])
   callback_urls                        = local.cognito_callback_urls
   logout_urls                          = local.cognito_logout_urls
   allowed_oauth_flows_user_pool_client = true
@@ -97,10 +99,12 @@ resource "aws_cognito_user_pool_client" "main" {
 
   lifecycle {
     precondition {
-      condition     = local.google_client_id_resolved != "" && local.google_client_secret_resolved != ""
-      error_message = "Google OAuth credentials are required. Store JSON with client_id and client_secret in AWS Secrets Manager secret ${local.google_oauth_secret_name} or provide the legacy google_client_id/google_client_secret variables."
+      condition     = !local.google_identity_provider_enabled || (local.google_client_id_resolved != "" && local.google_client_secret_resolved != "")
+      error_message = "When Google OAuth is enabled, store JSON with client_id and client_secret in AWS Secrets Manager secret ${local.google_oauth_secret_name} or provide both google_client_id and google_client_secret."
     }
   }
+
+  depends_on = [aws_cognito_identity_provider.google]
 }
 
 resource "aws_cognito_user_group" "admin" {
@@ -132,7 +136,7 @@ resource "aws_cognito_user_pool_domain" "main" {
 
 # Google Identity Provider
 resource "aws_cognito_identity_provider" "google" {
-  count = 1
+  count = local.google_identity_provider_enabled ? 1 : 0
 
   user_pool_id  = aws_cognito_user_pool.main.id
   provider_name = "Google"
@@ -160,7 +164,7 @@ resource "aws_cognito_identity_provider" "google" {
   lifecycle {
     precondition {
       condition     = local.google_client_id_resolved != "" && local.google_client_secret_resolved != ""
-      error_message = "Google OAuth credentials are required. Store JSON with client_id and client_secret in AWS Secrets Manager secret ${local.google_oauth_secret_name} or provide the legacy google_client_id/google_client_secret variables."
+      error_message = "When Google OAuth is enabled, store JSON with client_id and client_secret in AWS Secrets Manager secret ${local.google_oauth_secret_name} or provide both google_client_id and google_client_secret."
     }
   }
 }

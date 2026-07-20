@@ -177,6 +177,24 @@ func TestTerraformUsesBilleifResourceNames(t *testing.T) {
 	}
 }
 
+func TestTerraformAllowsCognitoWithoutGoogleOAuthCredentials(t *testing.T) {
+	cognito, err := os.ReadFile("../../infrastructure/terraform/cognito.tf")
+	if err != nil {
+		t.Fatalf("read terraform cognito config: %v", err)
+	}
+
+	config := string(cognito)
+	for _, required := range []string{
+		"google_identity_provider_enabled",
+		`concat(["COGNITO"], local.google_identity_provider_enabled ? ["Google"] : [])`,
+		"count = local.google_identity_provider_enabled ? 1 : 0",
+	} {
+		if !strings.Contains(config, required) {
+			t.Fatalf("terraform Cognito config is not optional without Google OAuth credentials: missing %q", required)
+		}
+	}
+}
+
 func TestParseAllowedOriginsTrimsCommaSeparatedValues(t *testing.T) {
 	got := parseAllowedOrigins(" http://localhost:3000, http://localhost:8081 ,,http://127.0.0.1:8081 ")
 	want := []string{"http://localhost:3000", "http://localhost:8081", "http://127.0.0.1:8081"}
