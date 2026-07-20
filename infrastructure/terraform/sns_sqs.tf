@@ -1,17 +1,17 @@
 resource "aws_sns_topic" "low_stock_alerts" {
-  name = "low-stock-alerts"
+  name = "${local.resource_name_prefix}-low-stock-alerts"
 }
 
 resource "aws_sns_topic" "payment_notifications" {
-  name = "payment-notifications"
+  name = "${local.resource_name_prefix}-payment-notifications"
 }
 
 # Workflow Notifications Topic
 resource "aws_sns_topic" "workflow_notifications" {
-  name = "workflow-notifications"
+  name = "${local.resource_name_prefix}-workflow-notifications"
 
   tags = {
-    Name = "workflow-notifications"
+    Name = "${local.resource_name_prefix}-workflow-notifications"
   }
 }
 
@@ -20,7 +20,7 @@ resource "aws_sns_topic" "workflow_notifications" {
 resource "aws_sns_platform_application" "fcm" {
   count = var.fcm_api_key != "" ? 1 : 0
 
-  name                = "invoice-backend-fcm"
+  name                = "${local.resource_name_prefix}-fcm"
   platform            = "GCM"
   platform_credential = var.fcm_api_key
 
@@ -34,7 +34,7 @@ resource "aws_sns_platform_application" "fcm" {
 resource "aws_sns_platform_application" "apns" {
   count = var.apns_private_key != "" && var.apns_certificate != "" ? 1 : 0
 
-  name                = "invoice-backend-apns"
+  name                = "${local.resource_name_prefix}-apns"
   platform            = var.apns_sandbox ? "APNS_SANDBOX" : "APNS"
   platform_credential = var.apns_private_key
   platform_principal  = var.apns_certificate
@@ -46,7 +46,7 @@ resource "aws_sns_platform_application" "apns" {
 
 # IAM Role for SNS Feedback Logging
 resource "aws_iam_role" "sns_feedback" {
-  name = "invoice-backend-sns-feedback"
+  name = "${local.resource_name_prefix}-sns-feedback"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -63,7 +63,7 @@ resource "aws_iam_role" "sns_feedback" {
 }
 
 resource "aws_iam_role_policy" "sns_feedback" {
-  name = "sns-feedback-policy"
+  name = "${local.resource_name_prefix}-sns-feedback-policy"
   role = aws_iam_role.sns_feedback.id
 
   policy = jsonencode({
@@ -85,39 +85,39 @@ resource "aws_iam_role_policy" "sns_feedback" {
 }
 
 resource "aws_sqs_queue" "invoice_processing" {
-  name                       = "invoice-processing-queue"
+  name                       = "${local.resource_name_prefix}-invoice-processing-queue"
   message_retention_seconds  = 86400
   visibility_timeout_seconds = var.worker_queue_visibility_timeout_seconds
 }
 
 resource "aws_sqs_queue" "payment_processing" {
-  name                       = "payment-processing-queue"
+  name                       = "${local.resource_name_prefix}-payment-processing-queue"
   message_retention_seconds  = 86400
   visibility_timeout_seconds = var.worker_queue_visibility_timeout_seconds
 }
 
 resource "aws_sqs_queue" "gst_processing" {
-  name                       = "gst-processing-queue"
+  name                       = "${local.resource_name_prefix}-gst-processing-queue"
   message_retention_seconds  = 86400
   visibility_timeout_seconds = var.worker_queue_visibility_timeout_seconds
 }
 
 # Workflow Run Queue
 resource "aws_sqs_queue" "workflow_runs" {
-  name                       = "workflow-runs-queue"
+  name                       = "${local.resource_name_prefix}-workflow-runs-queue"
   message_retention_seconds  = 86400
   visibility_timeout_seconds = 60
 }
 
 # Autonomous Bargaining Negotiation Queue
 resource "aws_sqs_queue" "bargaining_negotiation" {
-  name                       = "bargaining-negotiation-queue"
+  name                       = "${local.resource_name_prefix}-bargaining-negotiation-queue"
   message_retention_seconds  = 86400
   visibility_timeout_seconds = 390
 }
 
 resource "aws_sqs_queue" "bargaining_negotiation_dlq" {
-  name = "bargaining-negotiation-dlq"
+  name = "${local.resource_name_prefix}-bargaining-negotiation-dlq"
 }
 
 resource "aws_sqs_queue_redrive_allow_policy" "bargaining_negotiation_dlq" {
@@ -137,19 +137,19 @@ resource "aws_sqs_queue_redrive_policy" "bargaining_negotiation" {
 }
 
 resource "aws_sqs_queue" "invoice_processing_dlq" {
-  name = "invoice-processing-dlq"
+  name = "${local.resource_name_prefix}-invoice-processing-dlq"
 }
 
 resource "aws_sqs_queue" "payment_processing_dlq" {
-  name = "payment-processing-dlq"
+  name = "${local.resource_name_prefix}-payment-processing-dlq"
 }
 
 resource "aws_sqs_queue" "gst_processing_dlq" {
-  name = "gst-processing-dlq"
+  name = "${local.resource_name_prefix}-gst-processing-dlq"
 }
 
 resource "aws_sqs_queue" "workflow_runs_dlq" {
-  name = "workflow-runs-dlq"
+  name = "${local.resource_name_prefix}-workflow-runs-dlq"
 }
 
 resource "aws_sqs_queue_redrive_allow_policy" "invoice_processing_dlq" {

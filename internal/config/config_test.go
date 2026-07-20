@@ -130,6 +130,53 @@ func TestTerraformDoesNotShipRuntimeSecretDefaults(t *testing.T) {
 	}
 }
 
+func TestTerraformUsesBilleifResourceNames(t *testing.T) {
+	files := []string{
+		"../../infrastructure/terraform/variables.tf",
+		"../../infrastructure/terraform/cognito.tf",
+		"../../infrastructure/terraform/dynamodb.tf",
+		"../../infrastructure/terraform/sns_sqs.tf",
+		"../../infrastructure/terraform/ses.tf",
+	}
+
+	var terraform strings.Builder
+	for _, file := range files {
+		contents, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		terraform.Write(contents)
+	}
+
+	required := []string{
+		`default     = "billeif"`,
+		`default     = "billeif-user-pool"`,
+		`default     = "billeif-user-pool-client"`,
+		`domain       = local.cognito_domain_prefix`,
+		`name         = "${local.resource_name_prefix}-users-sessions"`,
+		`name                       = "${local.resource_name_prefix}-invoice-processing-queue"`,
+		`name = "${local.resource_name_prefix}-ses-events"`,
+	}
+	for _, expected := range required {
+		if !strings.Contains(terraform.String(), expected) {
+			t.Errorf("Terraform must include Billeif naming expression %q", expected)
+		}
+	}
+
+	forbidden := []string{
+		`default     = "invoice-backend"`,
+		`name         = "users_sessions"`,
+		`name                       = "invoice-processing-queue"`,
+		`name = "invoice-platform-config"`,
+		`default     = "cyfernova"`,
+	}
+	for _, legacy := range forbidden {
+		if strings.Contains(terraform.String(), legacy) {
+			t.Errorf("Terraform still contains legacy AWS resource name %q", legacy)
+		}
+	}
+}
+
 func TestParseAllowedOriginsTrimsCommaSeparatedValues(t *testing.T) {
 	got := parseAllowedOrigins(" http://localhost:3000, http://localhost:8081 ,,http://127.0.0.1:8081 ")
 	want := []string{"http://localhost:3000", "http://localhost:8081", "http://127.0.0.1:8081"}

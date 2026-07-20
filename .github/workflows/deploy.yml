@@ -9,6 +9,7 @@ on:
     branches:
       - main
       - master
+      - billeif-aws-migration
   workflow_dispatch:
 
 permissions:
@@ -72,6 +73,119 @@ env:
   TF_VAR_phone_client_name_override: ${{ vars.TF_PHONE_CLIENT_NAME }}
 
 jobs:
+  inventory-source:
+    name: Inventory Source AWS Account
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/billeif-aws-migration'
+
+    steps:
+      - name: Configure source AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+
+      - name: Collect non-sensitive service inventory
+        run: |
+          set -euo pipefail
+
+          {
+            echo "AWS identity"
+            aws sts get-caller-identity --query '{Account:Account,Arn:Arn}' --output table
+
+            echo
+            echo "Cognito user pools"
+            aws cognito-idp list-user-pools \
+              --max-results 60 \
+              --query 'UserPools[].{Id:Id,Name:Name}' \
+              --output table
+
+            while read -r pool_id; do
+              aws cognito-idp describe-user-pool \
+                --user-pool-id "${pool_id}" \
+                --query 'UserPool.{Id:Id,Name:Name,EstimatedUsers:EstimatedNumberOfUsers,Status:Status}' \
+                --output table
+            done < <(
+              aws cognito-idp list-user-pools \
+                --max-results 60 \
+                --query 'UserPools[].Id' \
+                --output json | jq -r '.[]'
+            )
+
+            echo
+            echo "S3 buckets"
+            aws s3api list-buckets --query 'Buckets[].Name' --output table
+
+            echo
+            echo "DynamoDB tables"
+            while read -r table_name; do
+              aws dynamodb describe-table \
+                --table-name "${table_name}" \
+                --query 'Table.{Name:TableName,Status:TableStatus,Items:ItemCount,Bytes:TableSizeBytes}' \
+                --output table
+            done < <(
+              aws dynamodb list-tables \
+                --query 'TableNames[]' \
+                --output json | jq -r '.[]'
+            )
+
+            echo
+            echo "Lambda functions"
+            aws lambda list-functions \
+              --query 'Functions[].{Name:FunctionName,Runtime:Runtime,State:State}' \
+              --output table
+
+            echo
+            echo "RDS databases"
+            aws rds describe-db-instances \
+              --query 'DBInstances[].{Id:DBInstanceIdentifier,Engine:Engine,Status:DBInstanceStatus,Class:DBInstanceClass,StorageGiB:AllocatedStorage}' \
+              --output table
+
+            echo
+            echo "SQS queues"
+            aws sqs list-queues --query 'QueueUrls[]' --output table
+
+            echo
+            echo "SNS topics"
+            aws sns list-topics --query 'Topics[].TopicArn' --output table
+
+            echo
+            echo "REST APIs"
+            aws apigateway get-rest-apis \
+              --query 'items[].{Id:id,Name:name}' \
+              --output table
+
+            echo
+            echo "API Gateway v2 APIs"
+            aws apigatewayv2 get-apis \
+              --query 'Items[].{Id:ApiId,Name:Name,Protocol:ProtocolType}' \
+              --output table
+
+            echo
+            echo "Secrets Manager names"
+            aws secretsmanager list-secrets \
+              --query 'SecretList[].Name' \
+              --output table
+
+            echo
+            echo "Billeif backend SSM parameter names"
+            aws ssm get-parameters-by-path \
+              --path /invoice-backend \
+              --recursive \
+              --query 'Parameters[].Name' \
+              --output table
+          } | tee source-aws-inventory.txt
+
+      - name: Upload inventory
+        uses: actions/upload-artifact@v7
+        with:
+          name: source-aws-inventory
+          path: source-aws-inventory.txt
+          if-no-files-found: error
+          retention-days: 7
+
   verify:
     name: Verify Build And Terraform
     runs-on: ubuntu-latest
@@ -141,7 +255,9 @@ jobs:
     name: Apply Terraform
     runs-on: ubuntu-latest
     needs: verify
-    if: github.event_name != 'pull_request'
+    if: >-
+      github.event_name != 'pull_request' &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
 
     steps:
       - name: Checkout code

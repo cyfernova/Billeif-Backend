@@ -126,7 +126,7 @@ resource "aws_cognito_user_group" "viewer" {
 
 # Cognito Domain for Hosted UI
 resource "aws_cognito_user_pool_domain" "main" {
-  domain       = var.cognito_domain_prefix
+  domain       = local.cognito_domain_prefix
   user_pool_id = aws_cognito_user_pool.main.id
 }
 

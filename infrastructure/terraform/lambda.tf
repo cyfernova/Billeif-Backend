@@ -127,7 +127,7 @@ resource "aws_cloudwatch_log_group" "lambda_ws_handler" {
 }
 
 resource "aws_cloudwatch_log_group" "lambda_voice_session" {
-  name              = "/aws/lambda/${var.voice_session_lambda_function_name}"
+  name              = "/aws/lambda/${local.voice_session_lambda_function_name}"
   retention_in_days = var.log_retention_days
 }
 
@@ -383,7 +383,7 @@ resource "aws_lambda_function" "ws_handler" {
 }
 
 resource "aws_lambda_function" "voice_session" {
-  function_name    = var.voice_session_lambda_function_name
+  function_name    = local.voice_session_lambda_function_name
   role             = aws_iam_role.lambda_voice_exec.arn
   runtime          = "provided.al2023"
   handler          = "bootstrap"

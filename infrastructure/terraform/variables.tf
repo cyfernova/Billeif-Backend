@@ -7,7 +7,7 @@ variable "aws_region" {
 variable "project_name" {
   description = "Project name for resource naming"
   type        = string
-  default     = "invoice-backend"
+  default     = "billeif"
 }
 
 variable "environment" {
@@ -19,25 +19,25 @@ variable "environment" {
 variable "user_pool_name" {
   description = "Cognito User Pool name"
   type        = string
-  default     = "Billeif-pool"
+  default     = "billeif-user-pool"
 }
 
 variable "client_name" {
   description = "Cognito App Client name"
   type        = string
-  default     = "Billeif-client"
+  default     = "billeif-user-pool-client"
 }
 
 variable "phone_user_pool_name" {
   description = "Cognito User Pool name for India phone auth"
   type        = string
-  default     = "Billeif-phone-pool"
+  default     = "billeif-phone-user-pool"
 }
 
 variable "phone_client_name" {
   description = "Cognito App Client name for India phone auth"
   type        = string
-  default     = "Billeif-phone-client"
+  default     = "billeif-phone-user-pool-client"
 }
 
 # VPC Configuration
@@ -90,7 +90,7 @@ variable "db_instance_class" {
 variable "db_name" {
   description = "Database name"
   type        = string
-  default     = "invoice_db"
+  default     = "billeif_db"
 }
 
 variable "db_port" {
@@ -108,7 +108,7 @@ variable "rds_tunnel_instance_type" {
 variable "db_username" {
   description = "Database master username"
   type        = string
-  default     = "invoice_user"
+  default     = "billeif_user"
   sensitive   = true
 }
 
@@ -221,9 +221,9 @@ variable "google_client_secret" {
 }
 
 variable "cognito_domain_prefix" {
-  description = "Prefix for the Cognito User Pool Domain"
+  description = "Optional Cognito User Pool Domain prefix. Defaults to a unique project, environment, and account prefix."
   type        = string
-  default     = "invoice-backend-app"
+  default     = ""
 }
 
 variable "cognito_additional_callback_urls" {
@@ -281,26 +281,26 @@ variable "india_auth_template_id" {
 variable "india_signup_message_template" {
   description = "Exact DLT-approved signup or verification SMS template. Use {####} where the OTP should appear."
   type        = string
-  default     = "Your Invoice Backend verification code is {####}."
+  default     = "Your Billeif verification code is {####}."
 }
 
 variable "india_auth_message_template" {
   description = "Exact DLT-approved authentication SMS template. Use {####} where the OTP should appear."
   type        = string
-  default     = "Your Invoice Backend login code is {####}."
+  default     = "Your Billeif login code is {####}."
 }
 
 variable "phone_auth_cooldown_table_name" {
-  description = "DynamoDB table used to throttle per-phone OTP requests"
+  description = "Optional DynamoDB table name used to throttle per-phone OTP requests"
   type        = string
-  default     = "phone_auth_cooldowns"
+  default     = ""
 }
 
 # DynamoDB tables
 variable "websocket_connections_table" {
-  description = "DynamoDB table name for websocket connections"
+  description = "Optional DynamoDB table name for websocket connections"
   type        = string
-  default     = "invoice-backend-ws-connections"
+  default     = ""
 }
 
 # Mobile Push Notification Configuration
@@ -562,15 +562,15 @@ variable "voice_ws_provider_ready_timeout_seconds" {
 }
 
 variable "voice_sessions_table_name" {
-  description = "DynamoDB table name for realtime voice session state"
+  description = "Optional DynamoDB table name for realtime voice session state"
   type        = string
-  default     = "voice_sessions"
+  default     = ""
 }
 
 variable "voice_session_lambda_function_name" {
-  description = "Lambda function name for realtime voice session worker"
+  description = "Optional Lambda function name for realtime voice session worker"
   type        = string
-  default     = "invoice-backend-voice-session"
+  default     = ""
 }
 
 variable "voice_session_lambda_memory_size" {

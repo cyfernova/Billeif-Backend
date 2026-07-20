@@ -1,17 +1,17 @@
 resource "aws_ses_email_identity" "main" {
-  email = "noreply@invoice-platform.local"
+  email = "noreply@billeif.local"
 }
 
 resource "aws_ses_configuration_set" "main" {
-  name = "invoice-platform-config"
+  name = "${local.resource_name_prefix}-email"
 }
 
 resource "aws_sns_topic" "ses_events" {
-  name = "ses-email-events"
+  name = "${local.resource_name_prefix}-ses-events"
 }
 
 resource "aws_ses_event_destination" "to_sns" {
-  name                   = "SendToSNS"
+  name                   = "${local.resource_name_prefix}-send-to-sns"
   configuration_set_name = aws_ses_configuration_set.main.name
   enabled                = true
   matching_types         = ["send", "bounce", "complaint", "delivery"]
