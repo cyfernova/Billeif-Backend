@@ -20,13 +20,14 @@ const (
 )
 
 const (
-	InvoiceStatusDraft    = "draft"
-	InvoiceStatusIssued   = "issued"
-	InvoiceStatusSent     = "sent"
-	InvoiceStatusPaid     = "paid"
-	InvoiceStatusOverdue  = "overdue"
-	InvoiceStatusVoid     = "void"
-	InvoiceStatusCanceled = "canceled"
+	InvoiceStatusDraft         = "draft"
+	InvoiceStatusIssued        = "issued"
+	InvoiceStatusSent          = "sent"
+	InvoiceStatusPartiallyPaid = "partially_paid"
+	InvoiceStatusPaid          = "paid"
+	InvoiceStatusOverdue       = "overdue"
+	InvoiceStatusVoid          = "void"
+	InvoiceStatusCanceled      = "canceled"
 )
 
 var (
@@ -80,7 +81,7 @@ type Invoice struct {
 	BuyerSnapshot        PartySnapshot          `gorm:"serializer:json;type:jsonb;not null;default:'{}'" json:"buyer_snapshot"`
 	InvoiceDate          time.Time              `gorm:"not null;index" json:"invoice_date" validate:"required"`
 	DueDate              time.Time              `json:"due_date,omitempty" validate:"omitempty"`
-	Status               string                 `gorm:"not null;size:50;default:'draft';index" json:"status" validate:"required,oneof=draft issued sent paid overdue void canceled"`
+	Status               string                 `gorm:"not null;size:50;default:'draft';index" json:"status" validate:"required,oneof=draft issued sent partially_paid paid overdue void canceled"`
 	Currency             string                 `gorm:"not null;size:3;default:'USD'" json:"currency" validate:"required,len=3"`
 	Subtotal             float64                `gorm:"type:decimal(15,2);default:0" json:"subtotal" validate:"gte=0"`
 	Tax                  float64                `gorm:"type:decimal(15,2);default:0" json:"tax" validate:"gte=0"`
@@ -184,7 +185,7 @@ func (i Invoice) ValidateState() error {
 		return invalidInvoiceState(ErrInvalidInvoiceLifecycle)
 	}
 	switch i.Status {
-	case InvoiceStatusDraft, InvoiceStatusIssued, InvoiceStatusSent, InvoiceStatusPaid,
+	case InvoiceStatusDraft, InvoiceStatusIssued, InvoiceStatusSent, InvoiceStatusPartiallyPaid, InvoiceStatusPaid,
 		InvoiceStatusOverdue, InvoiceStatusVoid, InvoiceStatusCanceled:
 	default:
 		return invalidInvoiceState(ErrInvalidInvoiceLifecycle)

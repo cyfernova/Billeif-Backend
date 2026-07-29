@@ -88,7 +88,7 @@ func (s *PaymentService) Create(ctx context.Context, businessID string, input Cr
 			now := time.Now()
 			invoice.PaidAt = &now
 		} else {
-			invoice.Status = "partial"
+			invoice.Status = models.InvoiceStatusPartiallyPaid
 		}
 
 		if err := tx.Save(invoice).Error; err != nil {
@@ -201,7 +201,7 @@ func (s *PaymentService) UpdateByBusiness(ctx context.Context, businessID, id st
 		case invoice.PaidAmount >= invoice.Total:
 			invoice.Status = "paid"
 		case invoice.PaidAmount > 0:
-			invoice.Status = "partial"
+			invoice.Status = models.InvoiceStatusPartiallyPaid
 		default:
 			invoice.Status = "sent"
 		}
@@ -374,7 +374,7 @@ func (s *PaymentServiceTestable) Create(ctx context.Context, businessID string, 
 		now := time.Now()
 		invoice.PaidAt = &now
 	} else {
-		invoice.Status = "partial"
+		invoice.Status = models.InvoiceStatusPartiallyPaid
 	}
 
 	if err := s.invoiceRepo.Update(ctx, invoice); err != nil {

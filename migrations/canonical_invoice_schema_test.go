@@ -92,6 +92,67 @@ func TestCanonicalInvoiceDownMigrationOnlyReversesNewSlice(t *testing.T) {
 	}
 }
 
+func TestCanonicalInvoiceMigrationReconcilesActivePaymentLifecycleBeforeConstraint(t *testing.T) {
+	body := migrationSQL(t, "000044_canonical_invoice_foundations.up.sql")
+	reconcile := strings.Index(body, "status = 'partially_paid'")
+	constraint := strings.Index(body, "ADD CONSTRAINT invoices_status_check")
+	if reconcile < 0 {
+		t.Fatal("up migration must reconcile legacy partial invoice status")
+	}
+	if constraint < 0 || reconcile > constraint {
+		t.Fatal("partial status reconciliation must run before the invoice status constraint")
+	}
+	requireSQLFragments(t, body, "'partially_paid'")
+}
+
+func TestCanonicalInvoiceMigrationBackfillsBuyerGSTIN(t *testing.T) {
+	body := migrationSQL(t, "000044_canonical_invoice_foundations.up.sql")
+	buyerStart := strings.Index(body, "SET buyer_snapshot")
+	buyerEnd := strings.Index(body[buyerStart:], "FROM customers")
+	if buyerStart < 0 || buyerEnd < 0 {
+		t.Fatal("buyer snapshot backfill not found")
+	}
+	buyerBackfill := body[buyerStart : buyerStart+buyerEnd]
+	requireSQLFragments(t, buyerBackfill, "'gstin'", "customer.gstin")
+}
+
+func TestCanonicalInvoiceMigrationRequiresDeterministicIdempotencyStates(t *testing.T) {
+	body := migrationSQL(t, "000044_canonical_invoice_foundations.up.sql")
+	requireSQLFragments(t, body,
+		"status = 'in_progress' AND result_type IS NULL AND result_id IS NULL AND completed_at IS NULL",
+		"status = 'completed' AND result_type IS NOT NULL AND result_id IS NOT NULL AND completed_at IS NOT NULL",
+	)
+}
+
+func TestCanonicalInvoiceMigrationKeepsOneFinalRenderForever(t *testing.T) {
+	body := migrationSQL(t, "000044_canonical_invoice_foundations.up.sql")
+	start := strings.Index(body, "CREATE UNIQUE INDEX idx_document_render_jobs_final_invoice_version")
+	if start < 0 {
+		t.Fatal("final render unique index not found")
+	}
+	indexSQL := body[start:]
+	end := strings.Index(indexSQL, ";")
+	if end < 0 {
+		t.Fatal("final render unique index is not terminated")
+	}
+	indexSQL = indexSQL[:end]
+	if strings.Contains(strings.ToUpper(indexSQL), "DELETED_AT") {
+		t.Fatal("final render uniqueness must not be weakened by soft deletion")
+	}
+}
+
+func TestCanonicalInvoiceDownMigrationDeletesInvoiceOnlyRenderJobsBeforeRestoringDocumentRequirement(t *testing.T) {
+	body := migrationSQL(t, "000044_canonical_invoice_foundations.down.sql")
+	deleteInvoiceOnly := strings.Index(body, "DELETE FROM document_render_jobs")
+	restoreDocument := strings.Index(body, "ALTER COLUMN document_id SET NOT NULL")
+	if deleteInvoiceOnly < 0 {
+		t.Fatal("down migration must define a rollback policy for invoice-only render jobs")
+	}
+	if restoreDocument < 0 || deleteInvoiceOnly > restoreDocument {
+		t.Fatal("invoice-only render jobs must be handled before document_id is restored to NOT NULL")
+	}
+}
+
 func migrationSQL(t *testing.T, name string) string {
 	t.Helper()
 	body, err := fs.ReadFile(Embedded, name)

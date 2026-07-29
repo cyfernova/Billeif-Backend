@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"path"
 	"strings"
@@ -15,11 +14,13 @@ import (
 	"invoice-backend/pkg/awsclients"
 	"invoice-backend/pkg/logger"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
+
+type InvoiceEmailSender interface {
+	SendEmail(ctx context.Context, to, subject, body string) error
+}
 
 type InvoiceService struct {
 	db           *gorm.DB
@@ -28,9 +29,8 @@ type InvoiceService struct {
 	productRepo  interfaces.ProductRepository
 	customerRepo interfaces.CustomerRepository
 	documents    *DocumentService
-	sqs          *sqs.Client
 	s3           *S3Service
-	email        *EmailService
+	email        InvoiceEmailSender
 	log          *logger.Logger
 }
 
@@ -43,7 +43,7 @@ func NewInvoiceService(
 	documents *DocumentService,
 	aws *awsclients.Config,
 	s3 *S3Service,
-	email *EmailService,
+	email InvoiceEmailSender,
 	log *logger.Logger,
 ) *InvoiceService {
 	return &InvoiceService{
@@ -53,7 +53,6 @@ func NewInvoiceService(
 		productRepo:  productRepo,
 		customerRepo: customerRepo,
 		documents:    documents,
-		sqs:          aws.SQS,
 		s3:           s3,
 		email:        email,
 		log:          log,
@@ -131,13 +130,13 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 		return nil, err
 	}
 
-	invoiceNo, err := s.generateInvoiceNumber(ctx, input.BusinessID)
-	if err != nil {
-		return nil, err
-	}
 	projectID := syncProjectIDFromTags(input.ProjectID, input.TaxProfile.ReportTags)
 	input.TaxProfile.ReportTags = mergeProjectIntoTags(input.TaxProfile.ReportTags, projectID)
 	customFields := mergeInvoiceEditorCustomFields(input.CustomFields, input.TermsAndConditions, input.PONumber, input.TemplateOverride)
+	origin := models.InvoiceOriginManual
+	if strings.TrimSpace(input.OriginSubscriptionID) != "" || strings.TrimSpace(input.OriginRunID) != "" {
+		origin = models.InvoiceOriginSubscription
+	}
 
 	var subtotal, taxTotal float64
 	var cessTotal float64
@@ -225,8 +224,9 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 		ProjectID:         projectIDPointer(projectID),
 		PriceListID:       priceListID,
 		RenderProfileID:   stringPointer(input.RenderProfileID),
-		InvoiceNo:         models.StringPointer(invoiceNo),
-		Status:            "draft",
+		Status:            models.InvoiceStatusDraft,
+		Origin:            origin,
+		Version:           1,
 		InvoiceDate:       invoiceDate,
 		DueDate:           input.DueDate,
 		Subtotal:          subtotal,
@@ -258,8 +258,6 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 	}
 	_ = recordActivityLog(ctx, s.db, invoice.BusinessID, "invoice", invoice.ID, "created", "", invoice, nil, nil)
 
-	go s.queuePDFGeneration(invoice.ID)
-
 	return invoice, nil
 }
 
@@ -272,27 +270,6 @@ func (s *InvoiceService) generateInvoiceNumber(ctx context.Context, businessID s
 	year := time.Now().Year()
 	prefix := fmt.Sprintf("INV-%d-", year)
 	return prefix + fmt.Sprintf("%06d", time.Now().UnixNano()%1000000), nil
-}
-
-func (s *InvoiceService) queuePDFGeneration(invoiceID string) {
-	ctx := context.Background()
-	message := map[string]string{
-		"type":       "generate_pdf",
-		"invoice_id": invoiceID,
-	}
-	body, err := json.Marshal(message)
-	if err != nil {
-		s.log.Error("failed to marshal PDF generation message", "invoice_id", invoiceID, "error", err)
-		return
-	}
-
-	_, err = s.sqs.SendMessage(ctx, &sqs.SendMessageInput{
-		QueueUrl:    aws.String(s.cfg.SQS.InvoiceQueue),
-		MessageBody: aws.String(string(body)),
-	})
-	if err != nil {
-		s.log.Error("failed to queue PDF generation", "invoice_id", invoiceID, "error", err)
-	}
 }
 
 func (s *InvoiceService) GetByBusiness(ctx context.Context, businessID, id string) (*models.Invoice, error) {
@@ -588,6 +565,9 @@ func (s *InvoiceService) SendByBusiness(ctx context.Context, businessID, id stri
 		return err
 	}
 
+	if invoice.Status == models.InvoiceStatusDraft || invoice.InvoiceNo == nil || invoice.IssuedAt == nil {
+		return models.ErrInvalidInvoiceLifecycle
+	}
 	if invoice.CustomerID == nil {
 		return models.ErrInvoiceCustomerRequired
 	}
@@ -644,257 +624,3 @@ func (s *InvoiceService) UpdatePDFUrl(ctx context.Context, invoiceID, pdfURL str
 }
 
 type Invoice = models.Invoice
-
-// InvoiceServiceTestable is a test-friendly version of InvoiceService
-type InvoiceServiceTestable struct {
-	cfg          *config.Config
-	repo         InvoiceRepositoryTestable
-	productRepo  interfaces.ProductRepository
-	customerRepo CustomerRepositoryTestable
-	sqs          SQSServiceTestable
-	s3           *S3Service
-	email        EmailServiceTestable
-	log          *logger.Logger
-}
-
-// InvoiceRepositoryTestable is the testable interface for InvoiceRepository
-type InvoiceRepositoryTestable interface {
-	Create(ctx context.Context, invoice *models.Invoice) error
-	GetByID(ctx context.Context, id, businessID string) (*models.Invoice, error)
-	GetByIDInternal(ctx context.Context, id string) (*models.Invoice, error)
-	GetByInvoiceNo(ctx context.Context, businessID, invoiceNo string) (*models.Invoice, error)
-	GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.Invoice, int64, error)
-	GetItems(ctx context.Context, invoiceID string) ([]*models.InvoiceItem, error)
-	Update(ctx context.Context, invoice *models.Invoice) error
-	UpdateStatus(ctx context.Context, invoiceID string, status string) error
-	UpdatePDFURL(ctx context.Context, invoiceID, pdfURL string) error
-	Delete(ctx context.Context, id string) error
-}
-
-// CustomerRepositoryTestable is the testable interface for CustomerRepository
-type CustomerRepositoryTestable interface {
-	Create(ctx context.Context, customer *models.Customer) error
-	GetByID(ctx context.Context, id, businessID string) (*models.Customer, error)
-	GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.Customer, int64, error)
-	Update(ctx context.Context, customer *models.Customer) error
-	Delete(ctx context.Context, id string) error
-}
-
-// SQSServiceTestable is the testable interface for SQS operations
-type SQSServiceTestable interface {
-	SendMessage(ctx context.Context, queueUrl string, message interface{}) error
-}
-
-// EmailServiceTestable is the testable interface for EmailService
-type EmailServiceTestable interface {
-	SendEmail(ctx context.Context, to, subject, body string) error
-}
-
-// NewInvoiceServiceForTesting creates an InvoiceServiceTestable for unit testing
-func NewInvoiceServiceForTesting(
-	repo InvoiceRepositoryTestable,
-	productRepo interfaces.ProductRepository,
-	customerRepo CustomerRepositoryTestable,
-	sqs SQSServiceTestable,
-	s3 *S3Service,
-	email EmailServiceTestable,
-	log *logger.Logger,
-) *InvoiceServiceTestable {
-	return &InvoiceServiceTestable{
-		cfg:          nil,
-		repo:         repo,
-		productRepo:  productRepo,
-		customerRepo: customerRepo,
-		sqs:          sqs,
-		s3:           s3,
-		email:        email,
-		log:          log,
-	}
-}
-
-// Create creates an invoice (testable version)
-func (s *InvoiceServiceTestable) Create(ctx context.Context, input CreateInvoiceInput) (*models.Invoice, error) {
-	if input.RenderProfileID != "" {
-		normalized, err := normalizeRenderProfileID(input.RenderProfileID)
-		if err != nil {
-			return nil, err
-		}
-		input.RenderProfileID = normalized
-	}
-	_, err := s.customerRepo.GetByID(ctx, input.CustomerID, input.BusinessID)
-	if err != nil {
-		return nil, fmt.Errorf("customer not found: %w", err)
-	}
-
-	invoiceNo, err := s.generateInvoiceNumber(ctx, input.BusinessID)
-	if err != nil {
-		return nil, err
-	}
-
-	var subtotal, taxTotal float64
-	items := make([]*models.InvoiceItem, len(input.Items))
-
-	for i, item := range input.Items {
-		itemSubtotal := item.Quantity * item.UnitPrice
-		itemTax := itemSubtotal * (item.TaxRate / 100)
-		subtotal += itemSubtotal
-		taxTotal += itemTax
-
-		var productID *string
-		if item.ProductID != "" {
-			productID = &item.ProductID
-		}
-
-		items[i] = &models.InvoiceItem{
-			ProductID:   productID,
-			Description: item.Description,
-			HSNSACCode:  item.HSNSACCode,
-			Unit:        gst.CanonicalSnapshotUQC(item.Unit, ""),
-			Quantity:    item.Quantity,
-			UnitPrice:   item.UnitPrice,
-			TaxRate:     item.TaxRate,
-			Total:       itemSubtotal + itemTax,
-		}
-	}
-
-	invoice := &models.Invoice{
-		BusinessID:      input.BusinessID,
-		CustomerID:      models.StringPointer(input.CustomerID),
-		RenderProfileID: stringPointer(input.RenderProfileID),
-		InvoiceNo:       models.StringPointer(invoiceNo),
-		Status:          "draft",
-		InvoiceDate:     time.Now(),
-		DueDate:         input.DueDate,
-		Subtotal:        subtotal,
-		Tax:             taxTotal,
-		Total:           subtotal + taxTotal,
-		BalanceDue:      subtotal + taxTotal,
-		Notes:           input.Notes,
-		Currency:        "USD",
-		Items:           items,
-	}
-
-	if err := s.repo.Create(ctx, invoice); err != nil {
-		return nil, fmt.Errorf("failed to create invoice: %w", err)
-	}
-
-	if s.sqs != nil {
-		_ = s.queuePDFGeneration(ctx, invoice.ID)
-	}
-
-	return invoice, nil
-}
-
-// GetByBusiness retrieves an invoice by business ID and invoice ID
-func (s *InvoiceServiceTestable) GetByBusiness(ctx context.Context, businessID, id string) (*models.Invoice, error) {
-	return s.repo.GetByID(ctx, id, businessID)
-}
-
-// List retrieves invoices for a business with pagination
-func (s *InvoiceServiceTestable) List(ctx context.Context, businessID string, page, limit int) ([]*models.Invoice, int64, error) {
-	return s.repo.GetByBusinessID(ctx, businessID, page, limit)
-}
-
-// UpdateByBusiness updates an invoice (testable version)
-func (s *InvoiceServiceTestable) UpdateByBusiness(ctx context.Context, businessID, id string, input UpdateInvoiceInput) (*models.Invoice, error) {
-	invoice, err := s.GetByBusiness(ctx, businessID, id)
-	if err != nil {
-		return nil, err
-	}
-
-	if !isInvoiceEditableStatus(invoice.Status) {
-		return nil, fmt.Errorf("cannot update invoice with status: %s", invoice.Status)
-	}
-
-	if !input.DueDate.IsZero() {
-		invoice.DueDate = input.DueDate
-	}
-	if input.Notes != "" {
-		invoice.Notes = input.Notes
-	}
-	if input.RenderProfileID != nil {
-		if strings.TrimSpace(*input.RenderProfileID) == "" {
-			invoice.RenderProfileID = nil
-		} else {
-			value, err := normalizeRenderProfileID(*input.RenderProfileID)
-			if err != nil {
-				return nil, err
-			}
-			invoice.RenderProfileID = &value
-		}
-	}
-
-	if err := s.repo.Update(ctx, invoice); err != nil {
-		return nil, err
-	}
-	return invoice, nil
-}
-
-// DeleteByBusiness deletes an invoice (testable version)
-func (s *InvoiceServiceTestable) DeleteByBusiness(ctx context.Context, businessID, id string) error {
-	invoice, err := s.GetByBusiness(ctx, businessID, id)
-	if err != nil {
-		return err
-	}
-	if invoice.Status != "draft" {
-		return fmt.Errorf("cannot delete invoice with status: %s", invoice.Status)
-	}
-	return s.repo.Delete(ctx, invoice.ID)
-}
-
-// SendByBusiness sends an invoice email (testable version)
-func (s *InvoiceServiceTestable) SendByBusiness(ctx context.Context, businessID, id string) error {
-	invoice, err := s.GetByBusiness(ctx, businessID, id)
-	if err != nil {
-		return err
-	}
-
-	if invoice.CustomerID == nil {
-		return models.ErrInvoiceCustomerRequired
-	}
-	customer, err := s.customerRepo.GetByID(ctx, *invoice.CustomerID, businessID)
-	if err != nil {
-		return err
-	}
-
-	if err := s.repo.UpdateStatus(ctx, id, "sent"); err != nil {
-		return err
-	}
-
-	subject := fmt.Sprintf("Invoice %s", models.StringValue(invoice.InvoiceNo))
-	body := fmt.Sprintf("Please find attached invoice %s for amount %s%.2f", models.StringValue(invoice.InvoiceNo), invoice.Currency, invoice.Total)
-	return s.email.SendEmail(ctx, customer.Email, subject, body)
-}
-
-// GetPDFURLByBusiness gets the PDF URL for an invoice
-func (s *InvoiceServiceTestable) GetPDFURLByBusiness(ctx context.Context, businessID, invoiceID string) (string, error) {
-	invoice, err := s.GetByBusiness(ctx, businessID, invoiceID)
-	if err != nil {
-		return "", err
-	}
-	if invoice.PDFURL != "" {
-		return invoice.PDFURL, nil
-	}
-	return "", fmt.Errorf("PDF not yet generated")
-}
-
-// GetNextNumber generates the next invoice number
-func (s *InvoiceServiceTestable) GetNextNumber(ctx context.Context, businessID string) (string, error) {
-	return s.generateInvoiceNumber(ctx, businessID)
-}
-
-// queuePDFGeneration queues PDF generation (testable version)
-func (s *InvoiceServiceTestable) queuePDFGeneration(ctx context.Context, invoiceID string) error {
-	message := map[string]string{
-		"type":       "generate_pdf",
-		"invoice_id": invoiceID,
-	}
-	return s.sqs.SendMessage(ctx, "invoice-queue", message)
-}
-
-// generateInvoiceNumber generates a unique invoice number
-func (s *InvoiceServiceTestable) generateInvoiceNumber(ctx context.Context, businessID string) (string, error) {
-	year := time.Now().Year()
-	prefix := fmt.Sprintf("INV-%d-", year)
-	return prefix + fmt.Sprintf("%06d", time.Now().UnixNano()%1000000), nil
-}

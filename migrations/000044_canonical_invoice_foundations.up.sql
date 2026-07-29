@@ -36,7 +36,8 @@ SET buyer_snapshot = jsonb_build_object(
         'state', COALESCE(customer.state, ''),
         'country', COALESCE(customer.country, ''),
         'postal_code', COALESCE(customer.postal_code, ''),
-        'tax_id', COALESCE(customer.tax_id, '')
+        'tax_id', COALESCE(customer.tax_id, ''),
+        'gstin', COALESCE(customer.gstin, '')
     )
 FROM customers AS customer
 WHERE customer.id = invoice.customer_id;
@@ -46,9 +47,13 @@ SET
     status = CASE WHEN status = 'draft' THEN 'issued' ELSE status END,
     issued_at = COALESCE(sent_at, invoice_date, created_at);
 
+UPDATE invoices
+SET status = 'partially_paid'
+WHERE status = 'partial';
+
 ALTER TABLE invoices
     ADD CONSTRAINT invoices_status_check
-        CHECK (status IN ('draft', 'issued', 'sent', 'paid', 'overdue', 'void', 'canceled')),
+        CHECK (status IN ('draft', 'issued', 'sent', 'partially_paid', 'paid', 'overdue', 'void', 'canceled')),
     ADD CONSTRAINT invoices_origin_check
         CHECK (origin IN ('manual', 'pos', 'storefront', 'subscription', 'conversion')),
     ADD CONSTRAINT invoices_version_check
@@ -136,7 +141,7 @@ CREATE TABLE api_idempotency_keys (
         CHECK (request_hash ~ '^[0-9a-f]{64}$'),
     CONSTRAINT api_idempotency_keys_result_check
         CHECK (
-            (status = 'in_progress' AND completed_at IS NULL)
+            (status = 'in_progress' AND result_type IS NULL AND result_id IS NULL AND completed_at IS NULL)
             OR
             (status = 'completed' AND result_type IS NOT NULL AND result_id IS NOT NULL AND completed_at IS NOT NULL)
         ),
@@ -205,7 +210,7 @@ ALTER TABLE document_render_jobs
 
 CREATE UNIQUE INDEX idx_document_render_jobs_final_invoice_version
     ON document_render_jobs (invoice_id, source_invoice_version)
-    WHERE kind = 'final' AND deleted_at IS NULL;
+    WHERE kind = 'final';
 
 CREATE INDEX idx_document_render_jobs_invoice_created
     ON document_render_jobs (invoice_id, created_at DESC)

@@ -226,7 +226,7 @@ func TestPaymentService_Create_PartialPayment(t *testing.T) {
 		PaidAmount: 300.00,
 		BalanceDue: 700.00,
 		Currency:   "USD",
-		Status:     "partial",
+		Status:     models.InvoiceStatusPartiallyPaid,
 	}
 
 	input := services.CreatePaymentInput{
@@ -238,7 +238,7 @@ func TestPaymentService_Create_PartialPayment(t *testing.T) {
 	mockInvoiceRepo.On("GetByID", ctx, invoiceID, businessID).Return(invoice, nil)
 	mockRepo.On("Create", ctx, mock.AnythingOfType("*models.Payment")).Return(nil)
 	mockInvoiceRepo.On("Update", ctx, mock.MatchedBy(func(i *models.Invoice) bool {
-		return i.Status == "partial" && i.PaidAmount == 500.00 && i.BalanceDue == 500.00
+		return i.Status == models.InvoiceStatusPartiallyPaid && i.PaidAmount == 500.00 && i.BalanceDue == 500.00
 	})).Return(nil)
 
 	payment, err := svc.Create(ctx, businessID, input)

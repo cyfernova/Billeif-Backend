@@ -13,6 +13,8 @@ ALTER TABLE email_deliveries
 
 DROP INDEX IF EXISTS idx_document_render_jobs_invoice_created;
 DROP INDEX IF EXISTS idx_document_render_jobs_final_invoice_version;
+DELETE FROM document_render_jobs
+WHERE document_id IS NULL;
 ALTER TABLE document_render_jobs
     DROP CONSTRAINT IF EXISTS document_render_jobs_lease_check,
     DROP CONSTRAINT IF EXISTS document_render_jobs_final_source_check,
@@ -40,7 +42,11 @@ DROP FUNCTION IF EXISTS prevent_issued_invoice_identity_mutation();
 
 UPDATE invoices
 SET
-    status = CASE WHEN status = 'issued' THEN 'draft' ELSE status END,
+    status = CASE
+        WHEN status = 'issued' THEN 'draft'
+        WHEN status = 'partially_paid' THEN 'sent'
+        ELSE status
+    END,
     invoice_no = COALESCE(invoice_no, 'ROLLBACK-' || REPLACE(id::text, '-', ''));
 
 ALTER TABLE invoices
