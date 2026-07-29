@@ -2,8 +2,11 @@ package services
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
+	"invoice-backend/internal/idempotency"
 	"invoice-backend/internal/models"
 	"invoice-backend/pkg/logger"
 
@@ -146,5 +149,91 @@ func TestPOSCheckoutMapsActivePayloadToCanonicalUnnumberedDraft(t *testing.T) {
 		document.SerialNumber != "" {
 		t.Fatalf("POS canonical lifecycle = status %q state %q number %q, want unnumbered draft",
 			document.Status, document.DraftState, document.SerialNumber)
+	}
+}
+
+func TestCanonicalPOSCheckoutInputReplaysSameSessionAndKey(t *testing.T) {
+	service, repo, template, ctx := newAtomicInvoiceServiceFixture(t)
+	session := &models.POSSession{ID: uuid.NewString(), Currency: "INR"}
+	idempotencyKey := uuid.NewString()
+	checkout := CheckoutPOSCartInput{
+		PartyType: models.DocumentPartyTypeManual,
+		TaxMode:   models.DocumentTaxModeNonGST,
+	}
+	items := []CreateInvoiceItemInput{{
+		Description: "Stable counter item",
+		Quantity:    1,
+		UnitPrice:   100,
+	}}
+
+	firstInput, err := canonicalPOSCheckoutInput(session, idempotencyKey, checkout, items)
+	if err != nil {
+		t.Fatalf("map first POS checkout: %v", err)
+	}
+	first, err := service.CreateByBusiness(ctx, template.BusinessID, firstInput)
+	if err != nil {
+		t.Fatalf("create first POS checkout: %v", err)
+	}
+
+	time.Sleep(time.Millisecond)
+	retryInput, err := canonicalPOSCheckoutInput(session, idempotencyKey, checkout, items)
+	if err != nil {
+		t.Fatalf("map retry POS checkout: %v", err)
+	}
+	replay, err := service.CreateByBusiness(ctx, template.BusinessID, retryInput)
+	if err != nil {
+		t.Fatalf("replay same POS checkout: %v", err)
+	}
+	if replay.ID != first.ID {
+		t.Fatalf("replay invoice ID = %s, want %s", replay.ID, first.ID)
+	}
+	if repo.executions != 1 {
+		t.Fatalf("atomic executions = %d, want 1", repo.executions)
+	}
+}
+
+func TestCanonicalPOSCheckoutInputValidatesPartyTypeAndIDPairing(t *testing.T) {
+	session := &models.POSSession{ID: uuid.NewString(), Currency: "INR"}
+	customerID := uuid.NewString()
+	fixtures := []struct {
+		name      string
+		partyType string
+		partyID   string
+		wantError bool
+	}{
+		{name: "anonymous manual", partyType: models.DocumentPartyTypeManual},
+		{name: "anonymous default", partyType: ""},
+		{name: "identified customer", partyType: models.DocumentPartyTypeCustomer, partyID: customerID},
+		{name: "customer without ID", partyType: models.DocumentPartyTypeCustomer, wantError: true},
+		{name: "manual with ID", partyType: models.DocumentPartyTypeManual, partyID: customerID, wantError: true},
+		{name: "default manual with ID", partyType: "", partyID: customerID, wantError: true},
+	}
+
+	for _, fixture := range fixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			input, err := canonicalPOSCheckoutInput(session, uuid.NewString(), CheckoutPOSCartInput{
+				PartyType: fixture.partyType,
+				PartyID:   fixture.partyID,
+				TaxMode:   models.DocumentTaxModeNonGST,
+			}, []CreateInvoiceItemInput{{Description: "Counter item", Quantity: 1, UnitPrice: 100}})
+
+			if fixture.wantError {
+				var invalid *idempotency.InvalidPayloadError
+				if !errors.As(err, &invalid) {
+					t.Fatalf("error = %T %v, want invalid payload", err, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("map valid party pairing: %v", err)
+			}
+			if fixture.partyType == models.DocumentPartyTypeCustomer {
+				if input.CustomerID != customerID || !input.BuyerSnapshot.IsEmpty() {
+					t.Fatalf("identified customer mapping = %#v", input)
+				}
+			} else if input.CustomerID != "" || input.BuyerSnapshot.Name != "Counter sale" {
+				t.Fatalf("anonymous manual mapping = %#v", input)
+			}
+		})
 	}
 }

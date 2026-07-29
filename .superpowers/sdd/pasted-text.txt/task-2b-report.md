@@ -280,3 +280,55 @@ git diff --check
 
 - The POS regression uses an isolated in-memory SQLite session table and no external or persistent database.
 - No migration, issue transition, AWS, deployment, dispatcher, mobile, cloud, secret, Terraform/state, or non-disposable database operation was performed.
+
+## Review fix round 3
+
+### Status and architecture
+
+- The production POS checkout handler now copies the authenticated user, role, request ID, and client IP into the service request context before invoking checkout.
+- The canonical invoice actor requirement remains unchanged and fail-closed.
+- `POSHandler` now depends on an internal service interface, allowing the production handler context boundary to be tested without copying handler behavior.
+- POS mapping leaves `InvoiceDate` zero. Canonical creation hashes the stable command first and then applies its existing current-time default, so identical retry and concurrent commands retain the same hash.
+- Party mapping now enforces exactly two supported combinations:
+  - manual or omitted party type with no party ID produces an anonymous `Counter sale` snapshot;
+  - customer party type with a party ID resolves the identified customer.
+- Customer without an ID, manual with an ID, and omitted/default-manual type with an ID are rejected as invalid canonical payloads.
+
+### TDD evidence
+
+Focused RED:
+
+```text
+go test ./internal/services -run 'TestCanonicalPOSCheckoutInputReplaysSameSessionAndKey|TestCanonicalPOSCheckoutInputValidatesPartyTypeAndIDPairing' -count=1
+```
+
+The retry conflicted with a changed request hash, and all three invalid party pairings were accepted.
+
+After introducing the minimal handler test seam, the production handler regression failed behaviorally with:
+
+```text
+checkout status = 400, want 201: {"error":"invoice create actor is required"}
+```
+
+Focused GREEN:
+
+```text
+go test ./internal/handlers -run TestPOSCheckoutPropagatesAuthenticatedActorToServiceContext -count=1
+go test ./internal/services -run 'TestCanonicalPOSCheckoutInputReplaysSameSessionAndKey|TestCanonicalPOSCheckoutInputValidatesPartyTypeAndIDPairing' -count=1
+go test ./internal/handlers ./internal/services -count=1
+go test -race ./internal/idempotency ./internal/services ./internal/repositories/postgres ./internal/handlers -count=1
+```
+
+Full verification completed with exit code 0:
+
+```text
+make fmt
+make lint
+go test ./... -count=1
+make test
+```
+
+### Concerns
+
+- No canonical actor or idempotency requirement was weakened.
+- No external database, migration, issue transition, AWS, deployment, dispatcher, mobile, cloud, secret, or Terraform/state operation was performed.

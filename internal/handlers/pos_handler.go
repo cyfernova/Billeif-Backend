@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
+	"invoice-backend/internal/models"
 	"invoice-backend/internal/services"
 	"invoice-backend/internal/utils"
 	"invoice-backend/pkg/logger"
@@ -11,12 +13,22 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+type posService interface {
+	CreateSession(ctx context.Context, businessID, userID string, input services.CreatePOSSessionInput) (*models.POSSession, error)
+	ListSessions(ctx context.Context, businessID, userID string, page, limit int, status string) ([]models.POSSession, int64, error)
+	CloseSession(ctx context.Context, businessID, userID, sessionID string) (*models.POSSession, error)
+	SearchCatalog(ctx context.Context, businessID, userID, query, warehouseID string, limit int) ([]services.POSCatalogSearchResult, error)
+	ScanItem(ctx context.Context, businessID, userID, sessionID string, input services.ScanPOSItemInput) (*models.POSSession, services.POSSessionCart, error)
+	Checkout(ctx context.Context, businessID, userID, sessionID, idempotencyKey string, input services.CheckoutPOSCartInput) (*models.Document, error)
+	GetThermalReceipt(ctx context.Context, businessID, documentID, format, width string) (*services.POSReceiptResponse, error)
+}
+
 type POSHandler struct {
-	svc *services.POSService
+	svc posService
 	log *logger.Logger
 }
 
-func NewPOSHandler(svc *services.POSService, log *logger.Logger) *POSHandler {
+func NewPOSHandler(svc posService, log *logger.Logger) *POSHandler {
 	return &POSHandler{svc: svc, log: log}
 }
 
@@ -219,6 +231,7 @@ func (h *POSHandler) Checkout(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	requestContextWithActor(c)
 	document, err := h.svc.Checkout(c.Request.Context(), businessID, userID, c.Param("id"), idempotencyKey, input)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

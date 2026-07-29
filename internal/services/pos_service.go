@@ -434,6 +434,10 @@ func canonicalPOSCheckoutInput(session *models.POSSession, idempotencyKey string
 	if partyType != models.DocumentPartyTypeManual && partyType != models.DocumentPartyTypeCustomer {
 		return CreateInvoiceInput{}, &idempotency.InvalidPayloadError{}
 	}
+	hasPartyID := strings.TrimSpace(input.PartyID) != ""
+	if (partyType == models.DocumentPartyTypeCustomer) != hasPartyID {
+		return CreateInvoiceInput{}, &idempotency.InvalidPayloadError{}
+	}
 	status := firstNonEmpty(input.Status, models.DocumentStatusIssued)
 	if status != models.DocumentStatusIssued && status != models.DocumentStatusDraft {
 		return CreateInvoiceInput{}, &idempotency.InvalidPayloadError{}
@@ -461,7 +465,6 @@ func canonicalPOSCheckoutInput(session *models.POSSession, idempotencyKey string
 		CustomerID:     input.PartyID,
 		BuyerSnapshot:  buyerSnapshot,
 		Currency:       firstNonEmpty(session.Currency, "INR"),
-		InvoiceDate:    time.Now().UTC(),
 		Notes:          coalesceString(input.Notes, fmt.Sprintf("POS checkout from session %s", session.ID)),
 		TaxProfile: TaxProfileInput{
 			GSTTreatment:          gstTreatment,
