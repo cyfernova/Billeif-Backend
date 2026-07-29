@@ -259,7 +259,9 @@ run "secret_metadata_rds_lambda_iam_and_output" {
         "GST_LOOKUP_SECRET_ARN",
         "GST_PROVIDER_SECRET_ARN",
         "LLM_SECRET_ARN",
-        "RAZORPAY_SECRET_ARN"
+        "RAZORPAY_SECRET_ARN",
+        "DEEPGRAM_SECRET_ARN",
+        "DEEPSEEK_SECRET_ARN"
       ]) &&
       !contains(keys(aws_lambda_function.api_http.environment[0].variables), "DATABASE_PASSWORD") &&
       !contains(keys(aws_lambda_function.api_http.environment[0].variables), "RAZORPAY_KEY_SECRET")
@@ -275,7 +277,7 @@ run "secret_metadata_rds_lambda_iam_and_output" {
       contains(statement.actions, "secretsmanager:DescribeSecret") &&
       contains(statement.resources, aws_secretsmanager_secret.razorpay.arn) &&
       contains(statement.resources, aws_secretsmanager_secret.gst_provider.arn) &&
-      length(statement.resources) == 7 &&
+      length(statement.resources) == 9 &&
       !contains(statement.resources, "*")
     ]) == 1
     error_message = "Lambda IAM must scope secret reads to exact managed ARNs."
@@ -298,7 +300,7 @@ run "secret_metadata_rds_lambda_iam_and_output" {
         for condition in statement.condition : condition
         if condition.variable == "kms:EncryptionContext:SecretARN" &&
         condition.test == "StringEquals" &&
-        length(condition.values) == 7
+        length(condition.values) == 9
       ]) == 1
     ]) == 1
     error_message = "Lambda IAM must scope KMS decrypt to the dedicated key ARN."

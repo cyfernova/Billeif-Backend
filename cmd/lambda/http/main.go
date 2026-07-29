@@ -16,7 +16,6 @@ import (
 var (
 	initOnce sync.Once
 	adapter  *ginadapter.GinLambda
-	runtime  *app.Runtime
 	initErr  error
 )
 
@@ -24,13 +23,12 @@ func initRuntime() {
 	ctx := context.Background()
 	rt, err := app.Initialize(ctx, app.InitializeOptions{
 		EnableWorker: false,
-		SecretKinds:  config.SecretKindsForEntrypoint("http"),
+		Profile:      config.ProfileHTTP,
 	})
 	if err != nil {
 		initErr = fmt.Errorf("initialize runtime: %w", err)
 		return
 	}
-	runtime = rt
 	adapter = ginadapter.New(rt.Router)
 }
 
@@ -39,10 +37,6 @@ func handle(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIG
 	if initErr != nil {
 		return events.APIGatewayProxyResponse{StatusCode: 500, Body: initErr.Error()}, nil
 	}
-	if err := runtime.RefreshCredentials(ctx); err != nil {
-		return events.APIGatewayProxyResponse{StatusCode: 500, Body: "runtime credential refresh failed"}, nil
-	}
-	adapter = ginadapter.New(runtime.Router)
 	return adapter.ProxyWithContext(ctx, req)
 }
 

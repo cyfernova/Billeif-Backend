@@ -296,7 +296,7 @@ var streamRuntime appRuntime
 func (r *appRuntime) initialize() {
 	r.rt, r.err = app.Initialize(context.Background(), app.InitializeOptions{
 		EnableWorker: false,
-		SecretKinds:  config.SecretKindsForEntrypoint("a2a-stream"),
+		Profile:      config.ProfileA2A,
 	})
 }
 
@@ -371,12 +371,6 @@ func runLambdaRuntime(ctx context.Context, runtimeAPI string) error {
 		}
 
 		invocationCtx, cancel := invocationContext(inv.DeadlineMS)
-		if refreshErr := rt.RefreshCredentials(invocationCtx); refreshErr != nil {
-			cancel()
-			rt.Log.Error("failed to refresh runtime credentials", "request_id", inv.RequestID, "error", refreshErr)
-			client.postInvocationError(context.Background(), inv.RequestID, refreshErr)
-			continue
-		}
 		err = handleInvocation(invocationCtx, rt.Router, client, inv)
 		cancel()
 

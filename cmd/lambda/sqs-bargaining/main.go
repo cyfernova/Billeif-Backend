@@ -25,7 +25,7 @@ func initBargainingRuntime() {
 	ctx := context.Background()
 	bargainingRT, bargainingInitErr = app.Initialize(ctx, app.InitializeOptions{
 		EnableWorker: false,
-		SecretKinds:  config.SecretKindsForEntrypoint("sqs-bargaining"),
+		Profile:      config.ProfileBargaining,
 	})
 	if bargainingInitErr != nil {
 		bargainingInitErr = fmt.Errorf("initialize bargaining worker runtime: %w", bargainingInitErr)
@@ -44,10 +44,6 @@ func handleSQSEvent(ctx context.Context, event events.SQSEvent) (events.SQSEvent
 	if bargainingInitErr != nil {
 		return events.SQSEventResponse{}, bargainingInitErr
 	}
-	if err := bargainingRT.RefreshCredentials(ctx); err != nil {
-		return events.SQSEventResponse{}, err
-	}
-
 	failures := make([]events.SQSBatchItemFailure, 0)
 	for _, record := range event.Records {
 		if err := processBargainingMessage(ctx, bargainingRT.Config, bargainingRT.Svcs, bargainingRT.Log, record.Body); err != nil {

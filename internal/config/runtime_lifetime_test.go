@@ -3,14 +3,18 @@ package config
 import (
 	"context"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 )
 
 func TestSecretKindsForEntrypointAreExact(t *testing.T) {
 	tests := map[string][]SecretKind{
-		"http":           {SecretCredentialEncryption, SecretRazorpay, SecretLLM, SecretExa, SecretGSTLookup, SecretGSTProvider},
-		"a2a-stream":     {SecretCredentialEncryption, SecretRazorpay, SecretLLM, SecretExa, SecretGSTLookup, SecretGSTProvider},
+		"http":           {SecretCredentialEncryption, SecretRazorpay, SecretLLM, SecretExa, SecretGSTLookup, SecretGSTProvider, SecretDeepgram, SecretDeepSeek},
+		"a2a-stream":     {SecretCredentialEncryption, SecretRazorpay, SecretLLM, SecretExa, SecretGSTLookup, SecretGSTProvider, SecretDeepgram, SecretDeepSeek},
 		"sqs-invoice":    {SecretCredentialEncryption},
 		"sqs-payment":    nil,
 		"sqs-gst":        {SecretCredentialEncryption, SecretGSTProvider},
@@ -105,5 +109,83 @@ func TestRuntimeResolverGSTProviderScopeMapsEveryCredentialField(t *testing.T) {
 	}
 	if got := secrets.calls.Load(); got != 1 {
 		t.Fatalf("expected only GST provider secret to be fetched, got %d calls", got)
+	}
+}
+
+type routedSecretsClient struct {
+	mu     sync.Mutex
+	values map[string][]string
+	calls  map[string]int
+}
+
+func (f *routedSecretsClient) GetSecretValue(_ context.Context, input *secretsmanager.GetSecretValueInput, _ ...func(*secretsmanager.Options)) (*secretsmanager.GetSecretValueOutput, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	identifier := aws.ToString(input.SecretId)
+	f.calls[identifier]++
+	values := f.values[identifier]
+	value := values[0]
+	if len(values) > 1 {
+		f.values[identifier] = values[1:]
+	}
+	return &secretsmanager.GetSecretValueOutput{SecretString: aws.String(value)}, nil
+}
+
+func TestRuntimeResolverResolvesOneProviderLazilyAndRefreshesItAfterTTL(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	client := &routedSecretsClient{
+		values: map[string][]string{
+			"llm-secret": {`{"api_key":"llm-v1"}`, `{"api_key":"llm-v2"}`},
+			"exa-secret": {`{"api_key":"exa-key"}`},
+		},
+		calls: map[string]int{},
+	}
+	resolver, err := NewRuntimeResolver(RuntimeResolverOptions{
+		Clients:           RuntimeResolvers{Secrets: client},
+		SecretIdentifiers: []string{"llm-secret", "exa-secret"},
+		TTL:               time.Minute,
+		Now:               func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("new runtime resolver: %v", err)
+	}
+	cfg := &Config{
+		Environment: "production",
+		Secrets: SecretIdentifiers{
+			LLM: "llm-secret",
+			Exa: "exa-secret",
+		},
+	}
+	if len(client.calls) != 0 {
+		t.Fatalf("resolver construction fetched providers: %#v", client.calls)
+	}
+
+	first, err := resolver.ResolveProvider(context.Background(), cfg, SecretLLM)
+	if err != nil {
+		t.Fatalf("first LLM use: %v", err)
+	}
+	if first.LLM.APIKey != "llm-v1" {
+		t.Fatalf("first LLM key = %q", first.LLM.APIKey)
+	}
+	if cfg.LLM.APIKey != "" {
+		t.Fatal("provider resolution mutated shared bootstrap config")
+	}
+	if _, err := resolver.ResolveProvider(context.Background(), cfg, SecretLLM); err != nil {
+		t.Fatalf("warm LLM reuse: %v", err)
+	}
+	if client.calls["llm-secret"] != 1 || client.calls["exa-secret"] != 0 {
+		t.Fatalf("warm or unrelated provider fetch count = %#v", client.calls)
+	}
+
+	now = now.Add(61 * time.Second)
+	refreshed, err := resolver.ResolveProvider(context.Background(), cfg, SecretLLM)
+	if err != nil {
+		t.Fatalf("LLM use after TTL: %v", err)
+	}
+	if refreshed.LLM.APIKey != "llm-v2" {
+		t.Fatalf("refreshed LLM key = %q", refreshed.LLM.APIKey)
+	}
+	if client.calls["llm-secret"] != 2 || client.calls["exa-secret"] != 0 {
+		t.Fatalf("TTL or unrelated provider fetch count = %#v", client.calls)
 	}
 }

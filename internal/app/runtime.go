@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 	_ "time/tzdata"
 
@@ -54,7 +53,7 @@ import (
 
 type InitializeOptions struct {
 	EnableWorker bool
-	SecretKinds  []config.SecretKind
+	Profile      config.Profile
 }
 
 type Runtime struct {
@@ -70,15 +69,12 @@ type Runtime struct {
 	Worker  *workers.Worker
 	WAF     *middleware.WAFRateLimiter
 	Secrets *config.RuntimeResolver
-
-	secretKinds []config.SecretKind
-	refreshMu   sync.Mutex
 }
 
 func Initialize(ctx context.Context, opts InitializeOptions) (*Runtime, error) {
 	bootstrapLog := logger.New().Named("bootstrap")
 
-	cfg, err := config.Load()
+	cfg, err := config.LoadForProfile(opts.Profile)
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
@@ -127,15 +123,6 @@ func Initialize(ctx context.Context, opts InitializeOptions) (*Runtime, error) {
 		log.Sync()
 		return nil, fmt.Errorf("initialize runtime resolver: %w", err)
 	}
-	kinds := opts.SecretKinds
-	if kinds == nil {
-		kinds = config.ApplicationSecretKinds
-	}
-	if err := resolver.Resolve(ctx, cfg, kinds); err != nil {
-		log.Sync()
-		return nil, fmt.Errorf("resolve provider config: %w", err)
-	}
-
 	db, err := initDatabase(cfg, resolver, log)
 	if err != nil {
 		log.Sync()
@@ -143,21 +130,20 @@ func Initialize(ctx context.Context, opts InitializeOptions) (*Runtime, error) {
 	}
 
 	repos := initRepositories(db)
-	svcs := initServices(cfg, db, repos, awsClients, log)
+	svcs := initServices(cfg, db, repos, awsClients, resolver, log)
 	h := handlers.New(svcs, &handlers.Repositories{AP2: repos.AP2}, cfg, log)
 	router := setupRouter(cfg, svcs, h, log)
 
 	rt := &Runtime{
-		Config:      cfg,
-		Log:         log,
-		DB:          db,
-		AWS:         awsClients,
-		Repos:       repos,
-		Svcs:        svcs,
-		H:           h,
-		Router:      router,
-		Secrets:     resolver,
-		secretKinds: append([]config.SecretKind(nil), kinds...),
+		Config:  cfg,
+		Log:     log,
+		DB:      db,
+		AWS:     awsClients,
+		Repos:   repos,
+		Svcs:    svcs,
+		H:       h,
+		Router:  router,
+		Secrets: resolver,
 	}
 
 	// Initialize WAF rate limiter if enabled
@@ -174,24 +160,12 @@ func Initialize(ctx context.Context, opts InitializeOptions) (*Runtime, error) {
 	return rt, nil
 }
 
-// RefreshCredentials is the provider use boundary for warm processes. It asks
-// the retained resolver for current values and rebuilds the service graph that
-// captures provider credentials.
-func (r *Runtime) RefreshCredentials(ctx context.Context) error {
-	r.refreshMu.Lock()
-	defer r.refreshMu.Unlock()
-	if err := r.Secrets.Resolve(ctx, r.Config, r.secretKinds); err != nil {
-		return fmt.Errorf("refresh provider credentials: %w", err)
-	}
-	r.Svcs = initServices(r.Config, r.DB, r.Repos, r.AWS, r.Log)
-	r.H = handlers.New(r.Svcs, &handlers.Repositories{AP2: r.Repos.AP2}, r.Config, r.Log)
-	r.Router = setupRouter(r.Config, r.Svcs, r.H, r.Log)
-	return nil
-}
-
 func (r *Runtime) Close() {
 	if r.Worker != nil {
 		r.Worker.Stop()
+	}
+	if r.Svcs != nil && r.Svcs.Workflow != nil {
+		r.Svcs.Workflow.Stop()
 	}
 	pkgsentry.Flush(2 * time.Second)
 	if r.Log != nil {
@@ -323,8 +297,8 @@ func initRepositories(db *gorm.DB) *Repositories {
 	}
 }
 
-func initServices(cfg *config.Config, db *gorm.DB, repos *Repositories, aws *awsclients.Config, log *logger.Logger) *services.Container {
-	return services.NewContainer(cfg, db, repos.User, repos.Business, repos.Customer, repos.Vendor,
+func initServices(cfg *config.Config, db *gorm.DB, repos *Repositories, aws *awsclients.Config, resolver services.ProviderConfigResolver, log *logger.Logger) *services.Container {
+	return services.NewContainer(cfg, resolver, db, repos.User, repos.Business, repos.Customer, repos.Vendor,
 		repos.Product, repos.Document, repos.Journal, repos.Inventory, repos.Shipping, repos.Invoice, repos.Payment, repos.Ledger, repos.Reporting, repos.Team,
 		repos.Webhook, repos.Subscription, repos.AP2, aws, log)
 }

@@ -23,7 +23,7 @@ func initInvoiceRuntime() {
 	ctx := context.Background()
 	invoiceRT, invoiceInitErr = app.Initialize(ctx, app.InitializeOptions{
 		EnableWorker: false,
-		SecretKinds:  config.SecretKindsForEntrypoint("sqs-invoice"),
+		Profile:      config.ProfileInvoice,
 	})
 	if invoiceInitErr != nil {
 		invoiceInitErr = fmt.Errorf("initialize invoice worker runtime: %w", invoiceInitErr)
@@ -35,10 +35,6 @@ func handleSQSEvent(ctx context.Context, event events.SQSEvent) (events.SQSEvent
 	if invoiceInitErr != nil {
 		return events.SQSEventResponse{}, invoiceInitErr
 	}
-	if err := invoiceRT.RefreshCredentials(ctx); err != nil {
-		return events.SQSEventResponse{}, err
-	}
-
 	failures := make([]events.SQSBatchItemFailure, 0)
 	for _, record := range event.Records {
 		if err := workers.ProcessInvoiceQueueMessage(ctx, invoiceRT.Config, invoiceRT.Svcs, invoiceRT.Log, record.Body); err != nil {

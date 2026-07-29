@@ -95,6 +95,8 @@ locals {
     EXA_SECRET_ARN                   = aws_secretsmanager_secret.exa.arn
     GST_LOOKUP_SECRET_ARN            = aws_secretsmanager_secret.gst_lookup.arn
     GST_PROVIDER_SECRET_ARN          = aws_secretsmanager_secret.gst_provider.arn
+    DEEPGRAM_SECRET_ARN              = aws_secretsmanager_secret.deepgram.arn
+    DEEPSEEK_SECRET_ARN              = aws_secretsmanager_secret.deepseek.arn
   })
 
   worker_secret_env = {

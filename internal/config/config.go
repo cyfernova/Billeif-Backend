@@ -238,6 +238,10 @@ type EntitlementsConfig struct {
 }
 
 func Load() (*Config, error) {
+	return LoadForProfile(ProfileHTTP)
+}
+
+func LoadForProfile(profile Profile) (*Config, error) {
 	viper.SetConfigType("env")
 	viper.AddConfigPath(".")
 	viper.AddConfigPath("..")
@@ -429,7 +433,7 @@ func Load() (*Config, error) {
 		cfg.AllowedOrigins = parseAllowedOrigins(rawAllowedOrigins)
 	}
 
-	if err := validate(&cfg); err != nil {
+	if err := ValidateForProfile(&cfg, profile); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
 	}
 

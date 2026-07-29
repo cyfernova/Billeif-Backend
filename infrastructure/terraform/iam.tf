@@ -10,7 +10,9 @@ locals {
     aws_secretsmanager_secret.llm.arn,
     aws_secretsmanager_secret.exa.arn,
     aws_secretsmanager_secret.gst_lookup.arn,
-    aws_secretsmanager_secret.gst_provider.arn
+    aws_secretsmanager_secret.gst_provider.arn,
+    aws_secretsmanager_secret.deepgram.arn,
+    aws_secretsmanager_secret.deepseek.arn
   ]
   worker_runtime_secret_arns = {
     invoice = [

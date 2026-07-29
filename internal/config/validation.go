@@ -7,6 +7,164 @@ import (
 	"strings"
 )
 
+type Profile string
+
+const (
+	ProfileHTTP       Profile = "http"
+	ProfileA2A        Profile = "a2a-stream"
+	ProfileInvoice    Profile = "sqs-invoice"
+	ProfileGST        Profile = "sqs-gst"
+	ProfileBargaining Profile = "sqs-bargaining"
+	ProfilePayment    Profile = "sqs-payment"
+	ProfileWebSocket  Profile = "websocket"
+)
+
+func ValidateForProfile(cfg *Config, profile Profile) error {
+	switch profile {
+	case "", ProfileHTTP, ProfileA2A:
+		if err := validate(cfg); err != nil {
+			return err
+		}
+		if isProductionEnv(cfg.Environment) {
+			if err := requireProviderIdentifier(cfg.Secrets.Exa, cfg.LLM.ExaAPIKey, "EXA_SECRET_ARN"); err != nil {
+				return err
+			}
+			if err := requireProviderIdentifier(cfg.Secrets.GSTLookup, cfg.GSTLookup.APIKey, "GST_LOOKUP_SECRET_ARN"); err != nil {
+				return err
+			}
+			if err := requireGSTProvider(cfg); err != nil {
+				return err
+			}
+			if err := requireProviderIdentifier(cfg.Secrets.Deepgram, firstConfigured(cfg.Deepgram.APIKey, cfg.VoiceRealtime.DeepgramAPIKey), "DEEPGRAM_SECRET_ARN"); err != nil {
+				return err
+			}
+			if err := requireProviderIdentifier(cfg.Secrets.DeepSeek, cfg.VoiceRealtime.DeepSeekAPIKey, "DEEPSEEK_SECRET_ARN"); err != nil {
+				return err
+			}
+		}
+		return nil
+	case ProfilePayment:
+		return validateProfileBase(cfg)
+	case ProfileInvoice, ProfileGST, ProfileBargaining, ProfileWebSocket:
+		if err := validateProfileBase(cfg); err != nil {
+			return err
+		}
+		if err := validateProfileDatabase(cfg); err != nil {
+			return err
+		}
+		if profile == ProfileWebSocket {
+			return nil
+		}
+		if err := requireProviderIdentifier(cfg.Secrets.CredentialEncryption, cfg.Credentials.EncryptionKey, "CREDENTIAL_ENCRYPTION_SECRET_ARN"); err != nil {
+			return err
+		}
+		if cfg.Credentials.EncryptionKey != "" {
+			if err := validateCredentialEncryptionKey(cfg.Credentials.EncryptionKey); err != nil {
+				return err
+			}
+		}
+		if profile == ProfileGST {
+			return requireGSTProvider(cfg)
+		}
+		if profile == ProfileBargaining {
+			if err := requireProviderIdentifier(cfg.Secrets.LLM, cfg.LLM.APIKey, "LLM_SECRET_ARN"); err != nil {
+				return err
+			}
+			if err := requireProviderIdentifier(cfg.Secrets.Exa, cfg.LLM.ExaAPIKey, "EXA_SECRET_ARN"); err != nil {
+				return err
+			}
+			return validateLLMEndpoint(cfg.LLM)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unknown configuration profile %q", profile)
+	}
+}
+
+func validateProfileBase(cfg *Config) error {
+	if cfg == nil {
+		return fmt.Errorf("config is required")
+	}
+	if strings.TrimSpace(cfg.Environment) == "" {
+		return fmt.Errorf("ENVIRONMENT is required")
+	}
+	if err := validateLogging(cfg.Logging); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateProfileDatabase(cfg *Config) error {
+	if strings.TrimSpace(cfg.AWS.Region) == "" {
+		return fmt.Errorf("AWS_REGION is required")
+	}
+	if cfg.Database.Host == "" && cfg.SSM.DatabaseHostParam == "" {
+		return fmt.Errorf("DATABASE_HOST is required")
+	}
+	if cfg.Database.User == "" && cfg.Secrets.Database == "" {
+		return fmt.Errorf("DATABASE_SECRET_ARN is required")
+	}
+	if cfg.Database.Password == "" && cfg.Secrets.Database == "" {
+		return fmt.Errorf("DATABASE_SECRET_ARN is required")
+	}
+	if cfg.Database.Name == "" {
+		return fmt.Errorf("DATABASE_NAME is required")
+	}
+	return nil
+}
+
+func requireProviderIdentifier(identifier, explicit, envName string) error {
+	if strings.TrimSpace(identifier) == "" && strings.TrimSpace(explicit) == "" {
+		return fmt.Errorf("%s is required", envName)
+	}
+	return nil
+}
+
+func requireGSTProvider(cfg *Config) error {
+	explicit := firstConfigured(cfg.GST.APIToken, cfg.GST.ClientID, cfg.GST.ClientSecret, cfg.GST.Username, cfg.GST.Password)
+	return requireProviderIdentifier(cfg.Secrets.GSTProvider, explicit, "GST_PROVIDER_SECRET_ARN")
+}
+
+func firstConfigured(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func validateCredentialEncryptionKey(value string) error {
+	key, err := base64.StdEncoding.DecodeString(value)
+	if err != nil {
+		return fmt.Errorf("CREDENTIAL_ENCRYPTION_KEY must be base64 encoded: %w", err)
+	}
+	if len(key) != 32 {
+		return fmt.Errorf("CREDENTIAL_ENCRYPTION_KEY must decode to exactly 32 bytes")
+	}
+	return nil
+}
+
+func validateLLMEndpoint(cfg LLMConfig) error {
+	if strings.TrimSpace(cfg.APIURL) == "" {
+		return fmt.Errorf("LLM_API_URL is required")
+	}
+	parsedLLMURL, err := url.Parse(cfg.APIURL)
+	if err != nil || parsedLLMURL.Scheme != "https" || parsedLLMURL.Host == "" {
+		return fmt.Errorf("LLM_API_URL must be an absolute https URL")
+	}
+	if isPlaceholderLLMHost(parsedLLMURL.Hostname()) {
+		return fmt.Errorf("LLM_API_URL cannot use placeholder host %q", parsedLLMURL.Hostname())
+	}
+	if strings.TrimSpace(cfg.Model) == "" {
+		return fmt.Errorf("LLM_MODEL is required")
+	}
+	if isPlaceholderLLMValue(cfg.Model) {
+		return fmt.Errorf("LLM_MODEL cannot be a placeholder value")
+	}
+	return nil
+}
+
 func validate(cfg *Config) error {
 	if cfg.Environment == "" {
 		return fmt.Errorf("ENVIRONMENT is required")
@@ -68,32 +226,15 @@ func validate(cfg *Config) error {
 	if strings.TrimSpace(cfg.LLM.APIKey) == "" && strings.TrimSpace(cfg.Secrets.LLM) == "" {
 		return fmt.Errorf("LLM_API_KEY is required")
 	}
-	if strings.TrimSpace(cfg.LLM.APIURL) == "" {
-		return fmt.Errorf("LLM_API_URL is required")
-	}
-	parsedLLMURL, err := url.Parse(cfg.LLM.APIURL)
-	if err != nil || parsedLLMURL.Scheme != "https" || parsedLLMURL.Host == "" {
-		return fmt.Errorf("LLM_API_URL must be an absolute https URL")
-	}
-	if isPlaceholderLLMHost(parsedLLMURL.Hostname()) {
-		return fmt.Errorf("LLM_API_URL cannot use placeholder host %q", parsedLLMURL.Hostname())
-	}
-	if strings.TrimSpace(cfg.LLM.Model) == "" {
-		return fmt.Errorf("LLM_MODEL is required")
-	}
-	if isPlaceholderLLMValue(cfg.LLM.Model) {
-		return fmt.Errorf("LLM_MODEL cannot be a placeholder value")
+	if err := validateLLMEndpoint(cfg.LLM); err != nil {
+		return err
 	}
 	if cfg.Credentials.EncryptionKey == "" && cfg.Secrets.CredentialEncryption == "" {
 		return fmt.Errorf("CREDENTIAL_ENCRYPTION_KEY is required")
 	}
 	if cfg.Credentials.EncryptionKey != "" {
-		key, err := base64.StdEncoding.DecodeString(cfg.Credentials.EncryptionKey)
-		if err != nil {
-			return fmt.Errorf("CREDENTIAL_ENCRYPTION_KEY must be base64 encoded: %w", err)
-		}
-		if len(key) != 32 {
-			return fmt.Errorf("CREDENTIAL_ENCRYPTION_KEY must decode to exactly 32 bytes")
+		if err := validateCredentialEncryptionKey(cfg.Credentials.EncryptionKey); err != nil {
+			return err
 		}
 	}
 

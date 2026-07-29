@@ -56,7 +56,7 @@ func initWSRuntime() {
 		Format:      cfg.Logging.Format,
 	}).Named("ws_lambda")
 
-	appCfg, err := config.Load()
+	appCfg, err := config.LoadForProfile(config.ProfileWebSocket)
 	if err != nil {
 		wsInitErr = fmt.Errorf("load app config for websocket auth: %w", err)
 		return

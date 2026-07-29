@@ -65,6 +65,7 @@ type Container struct {
 
 func NewContainer(
 	cfg *config.Config,
+	resolver ProviderConfigResolver,
 	db *gorm.DB,
 	userRepo interfaces.UserRepository,
 	businessRepo interfaces.BusinessRepository,
@@ -104,13 +105,13 @@ func NewContainer(
 	marketplaceSvc := NewMarketplaceService(ap2Repo, log)
 	productMatchingSvc := NewProductMatchingService(marketplaceSvc, log)
 	intentProcessingSvc, _ := NewIntentProcessingService(productMatchingSvc, marketplaceSvc, log)
-	llmSvc := NewLLMService(cfg.LLM, log)
+	llmSvc := NewLLMServiceWithResolver(cfg, resolver, log)
 	llmChatHistorySvc := NewLLMChatHistoryService(db, log)
 	voiceMCPBridge, err := NewVoiceMCPBridgeFromConfig(cfg.MCP, log)
 	if err != nil {
 		log.Warn("failed to initialize voice MCP bridge", "error", err)
 	}
-	realtimeVoiceSvc := NewRealtimeVoiceService(cfg.VoiceRealtime, log, voiceMCPBridge)
+	realtimeVoiceSvc := NewRealtimeVoiceServiceWithResolver(cfg, resolver, log, voiceMCPBridge)
 
 	agentSvc := NewAgentService(ap2Repo, productRepo, ap2Signer, log)
 	menteeSvc := NewMenteeService(log)
@@ -124,20 +125,17 @@ func NewContainer(
 	sellerNegotiationSvc := NewSellerNegotiationService(ap2Repo, agentConfigSvc, log)
 	a2aBargainingSvc := NewA2ABargainingService(a2aClient, bargainingSvc, menteeSvc, ap2Repo, aws.SQS, cfg, log)
 	websocketConnectionSvc := NewWebSocketConnectionService(cfg, aws, log)
-	credentialProviderSvc, err := NewCredentialProviderService(ap2Repo, cfg.Credentials.EncryptionKey, log)
-	if err != nil {
-		log.Fatal("failed to initialize credential provider service", "error", err)
-	}
+	credentialProviderSvc := NewCredentialProviderServiceWithResolver(ap2Repo, cfg, resolver, log)
 
 	webhookSvc := NewWebhookService(webhookRepo, log)
-	taxComplianceSvc := NewTaxComplianceService(cfg, db, businessRepo, customerRepo, vendorRepo, subscriptionRepo, aws, s3Svc, webhookSvc, log)
+	taxComplianceSvc := NewTaxComplianceService(cfg, db, businessRepo, customerRepo, vendorRepo, subscriptionRepo, aws, s3Svc, webhookSvc, log, resolver)
 	invoiceSvc := NewInvoiceService(db, cfg, invoiceRepo, productRepo, customerRepo, documentSvc, aws, s3Svc, emailSvc, log)
 	billingOpsSvc := NewBillingOpsService(cfg, db, customerRepo, vendorRepo, productRepo, invoiceSvc, documentSvc, s3Svc, log)
 	documentSvc.AttachTaxComplianceService(taxComplianceSvc)
 	taxComplianceSvc.AttachDocumentService(documentSvc)
 	posSvc := NewPOSService(db, documentSvc, barcodeSvc, inventorySvc, taxComplianceSvc.entitlements, log)
 	commerceSvc := NewCommerceService(cfg, db, businessRepo, customerRepo, productRepo, subscriptionRepo, inventorySvc, documentSvc, s3Svc, log)
-	razorpayPaymentSvc := NewRazorpayPaymentService(cfg, db, log)
+	razorpayPaymentSvc := NewRazorpayPaymentService(cfg, db, log, resolver)
 
 	log.Info("service container initialized",
 		"components", 34,

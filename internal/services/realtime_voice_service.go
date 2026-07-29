@@ -35,6 +35,7 @@ type RealtimeVoiceSession struct {
 
 	StartedAt time.Time
 
+	cfg config.VoiceRealtimeConfig
 	log *logger.Logger
 
 	firstAppAudioLogged       atomic.Bool
@@ -54,8 +55,10 @@ type RealtimeVoiceSessionRequest struct {
 }
 
 type RealtimeVoiceService struct {
-	cfg config.VoiceRealtimeConfig
-	log *logger.Logger
+	cfg      config.VoiceRealtimeConfig
+	appCfg   *config.Config
+	resolver ProviderConfigResolver
+	log      *logger.Logger
 
 	mu           sync.Mutex
 	sessions     map[string]*RealtimeVoiceSession
@@ -81,8 +84,40 @@ func NewRealtimeVoiceService(cfg config.VoiceRealtimeConfig, log *logger.Logger,
 	}
 }
 
+func NewRealtimeVoiceServiceWithResolver(cfg *config.Config, resolver ProviderConfigResolver, log *logger.Logger, mcpBridge ...*VoiceMCPBridge) *RealtimeVoiceService {
+	service := NewRealtimeVoiceService(cfg.VoiceRealtime, log, mcpBridge...)
+	service.appCfg = cfg
+	service.resolver = resolver
+	return service
+}
+
 func (s *RealtimeVoiceService) ConfigError() error {
-	return s.cfg.ValidateForRuntime()
+	cfg := s.cfg
+	if s.appCfg != nil {
+		if strings.TrimSpace(cfg.DeepgramAPIKey) == "" && strings.TrimSpace(s.appCfg.Secrets.Deepgram) != "" {
+			cfg.DeepgramAPIKey = "configured-by-secret-identifier"
+		}
+		if strings.TrimSpace(cfg.DeepSeekAPIKey) == "" && strings.TrimSpace(s.appCfg.Secrets.DeepSeek) != "" {
+			cfg.DeepSeekAPIKey = "configured-by-secret-identifier"
+		}
+	}
+	return cfg.ValidateForRuntime()
+}
+
+func (s *RealtimeVoiceService) runtimeConfig(ctx context.Context) (config.VoiceRealtimeConfig, error) {
+	if s.resolver == nil {
+		return s.cfg, s.cfg.ValidateForRuntime()
+	}
+	resolved, err := s.resolver.ResolveProvider(ctx, s.appCfg, config.SecretDeepgram)
+	if err != nil {
+		return config.VoiceRealtimeConfig{}, err
+	}
+	resolved, err = s.resolver.ResolveProvider(ctx, resolved, config.SecretDeepSeek)
+	if err != nil {
+		return config.VoiceRealtimeConfig{}, err
+	}
+	voice := resolved.VoiceRealtime.WithDefaults(resolved.Deepgram)
+	return voice, voice.ValidateForRuntime()
 }
 
 func (s *RealtimeVoiceService) ActiveSessions() int64 {
@@ -90,9 +125,16 @@ func (s *RealtimeVoiceService) ActiveSessions() int64 {
 }
 
 func (s *RealtimeVoiceService) Serve(ctx context.Context, appConn *websocket.Conn, req RealtimeVoiceSessionRequest) {
+	voiceCfg, err := s.runtimeConfig(ctx)
+	if err != nil {
+		s.log.Error("realtime voice configuration resolution failed", "error", err)
+		_ = appConn.WriteJSON(NewAppError("voice_configuration_failed", "Realtime voice is unavailable"))
+		_ = appConn.Close()
+		return
+	}
 	sessionCtx, cancel := context.WithCancel(ctx)
-	if s.cfg.MaxSessionSeconds > 0 {
-		sessionCtx, cancel = context.WithTimeout(ctx, time.Duration(s.cfg.MaxSessionSeconds)*time.Second)
+	if voiceCfg.MaxSessionSeconds > 0 {
+		sessionCtx, cancel = context.WithTimeout(ctx, time.Duration(voiceCfg.MaxSessionSeconds)*time.Second)
 	}
 
 	session := &RealtimeVoiceSession{
@@ -107,6 +149,7 @@ func (s *RealtimeVoiceService) Serve(ctx context.Context, appConn *websocket.Con
 		AppWrite:       make(chan RealtimeAppOutbound, 128),
 		DeepgramWrite:  make(chan RealtimeDeepgramOutbound, 128),
 		StartedAt:      time.Now(),
+		cfg:            voiceCfg,
 	}
 	session.log = s.log.With(
 		"session_id", session.ID,
@@ -142,14 +185,14 @@ func (s *RealtimeVoiceService) Serve(ctx context.Context, appConn *websocket.Con
 		)
 	}()
 
-	session.AppConn.SetReadLimit(int64(s.cfg.MaxFrameBytes))
+	session.AppConn.SetReadLimit(int64(session.cfg.MaxFrameBytes))
 	session.AppConn.SetCloseHandler(func(code int, text string) error {
 		session.log.Info("app websocket closed", "code", code, "reason", safeCloseReason(text))
 		session.Cancel()
 		return nil
 	})
 
-	dg := NewDeepgramVoiceAgentClient(s.cfg, session.log)
+	dg := NewDeepgramVoiceAgentClient(session.cfg, session.log)
 	connectStart := time.Now()
 	if err := dg.Connect(session.Ctx); err != nil {
 		s.metrics.errorCount.Add(1)
@@ -167,7 +210,7 @@ func (s *RealtimeVoiceService) Serve(ctx context.Context, appConn *websocket.Con
 		return
 	}
 
-	settings := BuildDeepgramVoiceAgentSettings(s.cfg, DeepgramVoiceAgentSettingsOptions{
+	settings := BuildDeepgramVoiceAgentSettings(session.cfg, DeepgramVoiceAgentSettingsOptions{
 		SessionID:       session.ID,
 		UserID:          session.UserID,
 		BusinessID:      session.BusinessID,
@@ -285,8 +328,8 @@ func (s *RealtimeVoiceService) readFromAppLoop(session *RealtimeVoiceSession) {
 
 		switch messageType {
 		case websocket.BinaryMessage:
-			if len(payload) > s.cfg.MaxFrameBytes {
-				session.log.Warn("oversized app audio frame rejected", "size", len(payload), "max_frame_bytes", s.cfg.MaxFrameBytes)
+			if len(payload) > session.cfg.MaxFrameBytes {
+				session.log.Warn("oversized app audio frame rejected", "size", len(payload), "max_frame_bytes", session.cfg.MaxFrameBytes)
 				s.sendApp(session, NewAppError("audio_frame_too_large", "Audio frame exceeds maximum size"))
 				session.Cancel()
 				return
@@ -346,7 +389,7 @@ func (s *RealtimeVoiceService) handleAppControl(session *RealtimeVoiceSession, e
 }
 
 func (s *RealtimeVoiceService) writeToAppLoop(session *RealtimeVoiceSession) {
-	timeout := time.Duration(s.cfg.WriteTimeoutSeconds) * time.Second
+	timeout := time.Duration(session.cfg.WriteTimeoutSeconds) * time.Second
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
@@ -492,7 +535,7 @@ func (s *RealtimeVoiceService) writeToDeepgramLoop(session *RealtimeVoiceSession
 }
 
 func (s *RealtimeVoiceService) keepAliveLoop(session *RealtimeVoiceSession) {
-	interval := time.Duration(s.cfg.PingIntervalSeconds) * time.Second
+	interval := time.Duration(session.cfg.PingIntervalSeconds) * time.Second
 	if interval <= 0 {
 		interval = 20 * time.Second
 	}

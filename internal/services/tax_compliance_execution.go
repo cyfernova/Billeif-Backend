@@ -144,7 +144,7 @@ func (s *TaxComplianceService) UpsertIntegrationAccount(ctx context.Context, bus
 	if account.Provider == "" {
 		account.Provider = "simulated"
 	}
-	encrypted, hint, err := s.encryptIntegrationCredentials(input.Credentials)
+	encrypted, hint, err := s.encryptIntegrationCredentials(ctx, input.Credentials)
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +185,7 @@ func (s *TaxComplianceService) ValidateIntegrationAccount(ctx context.Context, b
 		First(&account).Error; err != nil {
 		return nil, err
 	}
-	credentials, err := s.decryptIntegrationCredentials(account.EncryptedCredentials)
+	credentials, err := s.decryptIntegrationCredentials(ctx, account.EncryptedCredentials)
 	if err != nil {
 		return nil, err
 	}
@@ -1023,7 +1023,7 @@ func (s *TaxComplianceService) resolveIntegrationAccount(ctx context.Context, bu
 		Order("updated_at DESC").
 		First(&account).Error
 	if err == nil {
-		credentials, decErr := s.decryptIntegrationCredentials(account.EncryptedCredentials)
+		credentials, decErr := s.decryptIntegrationCredentials(ctx, account.EncryptedCredentials)
 		if decErr != nil {
 			return nil, GSTIntegrationAccountCredentials{}, decErr
 		}
@@ -1033,17 +1033,25 @@ func (s *TaxComplianceService) resolveIntegrationAccount(ctx context.Context, bu
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, GSTIntegrationAccountCredentials{}, err
 	}
+	runtimeCfg := s.cfg
+	if s.resolver != nil && s.cfg != nil && strings.TrimSpace(s.cfg.GST.BaseURL) != "" {
+		resolved, resolveErr := s.resolver.ResolveProvider(ctx, s.cfg, config.SecretGSTProvider)
+		if resolveErr != nil {
+			return nil, GSTIntegrationAccountCredentials{}, resolveErr
+		}
+		runtimeCfg = resolved
+	}
 	fallback := GSTIntegrationAccountCredentials{
-		PortalUsername: gstConfigValue(s.cfg, func(cfg *config.Config) string { return cfg.GST.Username }),
-		PortalPassword: gstConfigValue(s.cfg, func(cfg *config.Config) string { return cfg.GST.Password }),
-		APIKey:         gstConfigValue(s.cfg, func(cfg *config.Config) string { return cfg.GST.ClientID }),
-		APISecret:      gstConfigValue(s.cfg, func(cfg *config.Config) string { return cfg.GST.ClientSecret }),
+		PortalUsername: gstConfigValue(runtimeCfg, func(cfg *config.Config) string { return cfg.GST.Username }),
+		PortalPassword: gstConfigValue(runtimeCfg, func(cfg *config.Config) string { return cfg.GST.Password }),
+		APIKey:         gstConfigValue(runtimeCfg, func(cfg *config.Config) string { return cfg.GST.ClientID }),
+		APISecret:      gstConfigValue(runtimeCfg, func(cfg *config.Config) string { return cfg.GST.ClientSecret }),
 	}
 	return nil, fallback, nil
 }
 
-func (s *TaxComplianceService) encryptIntegrationCredentials(credentials GSTIntegrationAccountCredentials) (string, string, error) {
-	key, err := s.encryptionKey()
+func (s *TaxComplianceService) encryptIntegrationCredentials(ctx context.Context, credentials GSTIntegrationAccountCredentials) (string, string, error) {
+	key, err := s.encryptionKey(ctx)
 	if err != nil {
 		return "", "", err
 	}
@@ -1068,11 +1076,11 @@ func (s *TaxComplianceService) encryptIntegrationCredentials(credentials GSTInte
 	return base64.StdEncoding.EncodeToString(ciphertext), hint, nil
 }
 
-func (s *TaxComplianceService) decryptIntegrationCredentials(value string) (GSTIntegrationAccountCredentials, error) {
+func (s *TaxComplianceService) decryptIntegrationCredentials(ctx context.Context, value string) (GSTIntegrationAccountCredentials, error) {
 	if strings.TrimSpace(value) == "" {
 		return GSTIntegrationAccountCredentials{}, nil
 	}
-	key, err := s.encryptionKey()
+	key, err := s.encryptionKey(ctx)
 	if err != nil {
 		return GSTIntegrationAccountCredentials{}, err
 	}
@@ -1104,11 +1112,19 @@ func (s *TaxComplianceService) decryptIntegrationCredentials(value string) (GSTI
 	return credentials, nil
 }
 
-func (s *TaxComplianceService) encryptionKey() ([]byte, error) {
+func (s *TaxComplianceService) encryptionKey(ctx context.Context) ([]byte, error) {
 	if s.cfg == nil {
 		return nil, fmt.Errorf("config is required for credential encryption")
 	}
-	key, err := base64.StdEncoding.DecodeString(s.cfg.Credentials.EncryptionKey)
+	runtimeCfg := s.cfg
+	if s.resolver != nil {
+		resolved, err := s.resolver.ResolveProvider(ctx, s.cfg, config.SecretCredentialEncryption)
+		if err != nil {
+			return nil, err
+		}
+		runtimeCfg = resolved
+	}
+	key, err := base64.StdEncoding.DecodeString(runtimeCfg.Credentials.EncryptionKey)
 	if err != nil {
 		return nil, err
 	}

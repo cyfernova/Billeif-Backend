@@ -13,6 +13,7 @@ import (
 	"io"
 	"time"
 
+	"invoice-backend/internal/config"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/logger"
@@ -27,6 +28,8 @@ var (
 type CredentialProviderService struct {
 	ap2Repo       interfaces.AP2Repository
 	encryptionKey []byte
+	cfg           *config.Config
+	resolver      ProviderConfigResolver
 	log           *logger.Logger
 }
 
@@ -45,6 +48,15 @@ func NewCredentialProviderService(ap2Repo interfaces.AP2Repository, encryptionKe
 	}, nil
 }
 
+func NewCredentialProviderServiceWithResolver(ap2Repo interfaces.AP2Repository, cfg *config.Config, resolver ProviderConfigResolver, log *logger.Logger) *CredentialProviderService {
+	return &CredentialProviderService{
+		ap2Repo:  ap2Repo,
+		cfg:      cfg,
+		resolver: resolver,
+		log:      log,
+	}
+}
+
 type AddPaymentMethodRequest struct {
 	UserID             string
 	CredentialType     string
@@ -56,7 +68,7 @@ type AddPaymentMethodRequest struct {
 }
 
 func (s *CredentialProviderService) AddPaymentMethod(ctx context.Context, req *AddPaymentMethodRequest) (*models.PaymentCredential, error) {
-	encryptedData, err := s.encryptCredential(req.CardToken)
+	encryptedData, err := s.encryptCredential(ctx, req.CardToken)
 	if err != nil {
 		s.log.Error("failed to encrypt credential", "error", err, "user_id", req.UserID)
 		return nil, fmt.Errorf("%w: %v", ErrEncryptionFailed, err)
@@ -222,8 +234,19 @@ func (s *CredentialProviderService) UseToken(ctx context.Context, tokenID string
 	return nil
 }
 
-func (s *CredentialProviderService) encryptCredential(plaintext string) (string, error) {
-	block, err := aes.NewCipher(s.encryptionKey)
+func (s *CredentialProviderService) encryptCredential(ctx context.Context, plaintext string) (string, error) {
+	key := s.encryptionKey
+	if s.resolver != nil {
+		resolved, err := s.resolver.ResolveProvider(ctx, s.cfg, config.SecretCredentialEncryption)
+		if err != nil {
+			return "", err
+		}
+		key, err = base64.StdEncoding.DecodeString(resolved.Credentials.EncryptionKey)
+		if err != nil || len(key) != 32 {
+			return "", errors.New("credential encryption key is invalid")
+		}
+	}
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", err
 	}

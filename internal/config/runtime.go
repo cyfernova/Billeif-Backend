@@ -49,6 +49,7 @@ func SecretKindsForEntrypoint(entrypoint string) []SecretKind {
 		kinds = []SecretKind{
 			SecretCredentialEncryption, SecretRazorpay, SecretLLM,
 			SecretExa, SecretGSTLookup, SecretGSTProvider,
+			SecretDeepgram, SecretDeepSeek,
 		}
 	case "sqs-invoice":
 		kinds = []SecretKind{SecretCredentialEncryption}
@@ -186,6 +187,20 @@ func (r *RuntimeResolver) Resolve(ctx context.Context, cfg *Config, kinds []Secr
 	}
 	cfg.VoiceRealtime = cfg.VoiceRealtime.WithDefaults(cfg.Deepgram)
 	return nil
+}
+
+// ResolveProvider returns a request-scoped configuration copy containing only
+// the requested provider credential. The shared bootstrap config remains
+// immutable and unrelated provider identifiers are not accessed.
+func (r *RuntimeResolver) ResolveProvider(ctx context.Context, cfg *Config, kind SecretKind) (*Config, error) {
+	if cfg == nil {
+		return nil, &ConfigurationError{Resource: "application config", Reason: "config is required"}
+	}
+	resolved := *cfg
+	if err := r.Resolve(ctx, &resolved, []SecretKind{kind}); err != nil {
+		return nil, err
+	}
+	return &resolved, nil
 }
 
 // ResolveRuntime remains as a compatibility boundary for local/server callers.

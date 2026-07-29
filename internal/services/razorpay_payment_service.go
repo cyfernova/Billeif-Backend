@@ -18,13 +18,14 @@ import (
 )
 
 type RazorpayPaymentService struct {
-	cfg    *config.Config
-	db     *gorm.DB
-	client *razorpay.Client
-	log    *logger.Logger
+	cfg      *config.Config
+	db       *gorm.DB
+	client   *razorpay.Client
+	resolver ProviderConfigResolver
+	log      *logger.Logger
 }
 
-func NewRazorpayPaymentService(cfg *config.Config, db *gorm.DB, log *logger.Logger) *RazorpayPaymentService {
+func NewRazorpayPaymentService(cfg *config.Config, db *gorm.DB, log *logger.Logger, resolvers ...ProviderConfigResolver) *RazorpayPaymentService {
 	if log == nil {
 		log = logger.Global()
 	}
@@ -38,7 +39,36 @@ func NewRazorpayPaymentService(cfg *config.Config, db *gorm.DB, log *logger.Logg
 			Timeout:       time.Duration(cfg.Razorpay.Timeout) * time.Second,
 		}, log.Named("razorpay"))
 	}
-	return &RazorpayPaymentService{cfg: cfg, db: db, client: client, log: log.Named("razorpay_payments")}
+	var resolver ProviderConfigResolver
+	if len(resolvers) > 0 {
+		resolver = resolvers[0]
+	}
+	return &RazorpayPaymentService{cfg: cfg, db: db, client: client, resolver: resolver, log: log.Named("razorpay_payments")}
+}
+
+func (s *RazorpayPaymentService) clientFor(ctx context.Context) (*razorpay.Client, error) {
+	if s == nil || s.cfg == nil {
+		return nil, fmt.Errorf("razorpay is not configured")
+	}
+	if s.resolver == nil {
+		if s.client == nil || !s.client.Configured() {
+			return nil, fmt.Errorf("razorpay is not configured")
+		}
+		return s.client, nil
+	}
+	resolved, err := s.resolver.ResolveProvider(ctx, s.cfg, config.SecretRazorpay)
+	if err != nil {
+		return nil, err
+	}
+	client := razorpay.NewClient(razorpay.Config{
+		KeyID: resolved.Razorpay.KeyID, KeySecret: resolved.Razorpay.KeySecret,
+		WebhookSecret: resolved.Razorpay.WebhookSecret, BaseURL: resolved.Razorpay.BaseURL,
+		Timeout: time.Duration(resolved.Razorpay.Timeout) * time.Second,
+	}, s.log)
+	if !client.Configured() {
+		return nil, fmt.Errorf("razorpay is not configured")
+	}
+	return client, nil
 }
 
 type RazorpayCreateOrderInput struct {
@@ -98,8 +128,9 @@ func (s *RazorpayPaymentService) CreateOrder(ctx context.Context, businessID, us
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("payment service is not configured")
 	}
-	if s.client == nil || !s.client.Configured() {
-		return nil, fmt.Errorf("razorpay is not configured")
+	client, err := s.clientFor(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	target, amountPaise, currency, err := s.resolvePaymentTarget(ctx, businessID, input)
@@ -146,7 +177,7 @@ func (s *RazorpayPaymentService) CreateOrder(ctx context.Context, businessID, us
 			return err
 		}
 
-		order, err := s.client.CreateOrder(ctx, razorpay.OrderParams{
+		order, err := client.CreateOrder(ctx, razorpay.OrderParams{
 			Amount:   amountPaise,
 			Currency: currency,
 			Receipt:  truncateReceipt(attempt.ID),
@@ -176,7 +207,7 @@ func (s *RazorpayPaymentService) CreateOrder(ctx context.Context, businessID, us
 	s.log.Info("Razorpay payment order ready", "payment_attempt_id", attempt.ID, "business_id", businessID, "target_type", attempt.TargetType, "razorpay_order_id", attempt.RazorpayOrderID)
 	return &RazorpayCreateOrderResponse{
 		PaymentAttemptID: attempt.ID,
-		RazorpayKeyID:    s.client.KeyID(),
+		RazorpayKeyID:    client.KeyID(),
 		RazorpayOrderID:  attempt.RazorpayOrderID,
 		Amount:           attempt.AmountPaise,
 		Currency:         attempt.Currency,
@@ -231,12 +262,13 @@ func (s *RazorpayPaymentService) VerifyPayment(ctx context.Context, businessID, 
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("payment service is not configured")
 	}
-	if s.client == nil || !s.client.Configured() {
-		return nil, fmt.Errorf("razorpay is not configured")
+	client, err := s.clientFor(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	var resultStatus = "pending"
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		attempt, err := s.loadAttemptForUpdate(ctx, tx, strings.TrimSpace(input.PaymentAttemptID))
 		if err != nil {
 			return err
@@ -254,12 +286,12 @@ func (s *RazorpayPaymentService) VerifyPayment(ctx context.Context, businessID, 
 		if strings.TrimSpace(input.RazorpayOrderID) != "" && strings.TrimSpace(input.RazorpayOrderID) != attempt.RazorpayOrderID {
 			return fmt.Errorf("payment order mismatch")
 		}
-		if !razorpay.VerifyRazorpayPaymentSignature(attempt.RazorpayOrderID, input.RazorpayPaymentID, input.RazorpaySignature, s.client.KeySecret()) {
+		if !razorpay.VerifyRazorpayPaymentSignature(attempt.RazorpayOrderID, input.RazorpayPaymentID, input.RazorpaySignature, client.KeySecret()) {
 			s.log.Warn("Razorpay signature verification failed", "payment_attempt_id", attempt.ID, "business_id", businessID)
 			return fmt.Errorf("invalid payment signature")
 		}
 
-		trusted, err := s.fetchTrustedPaymentStatus(ctx, attempt, strings.TrimSpace(input.RazorpayPaymentID))
+		trusted, err := s.fetchTrustedPaymentStatus(ctx, client, attempt, strings.TrimSpace(input.RazorpayPaymentID))
 		if err != nil {
 			return err
 		}
@@ -285,8 +317,8 @@ func (s *RazorpayPaymentService) VerifyPayment(ctx context.Context, businessID, 
 	return &RazorpayVerifyPaymentResponse{Status: resultStatus}, nil
 }
 
-func (s *RazorpayPaymentService) fetchTrustedPaymentStatus(ctx context.Context, attempt *models.PaymentAttempt, paymentID string) (bool, error) {
-	payment, err := s.client.FetchPayment(ctx, paymentID)
+func (s *RazorpayPaymentService) fetchTrustedPaymentStatus(ctx context.Context, client *razorpay.Client, attempt *models.PaymentAttempt, paymentID string) (bool, error) {
+	payment, err := client.FetchPayment(ctx, paymentID)
 	if err != nil {
 		return false, err
 	}
@@ -300,7 +332,7 @@ func (s *RazorpayPaymentService) fetchTrustedPaymentStatus(ctx context.Context, 
 		return true, nil
 	}
 
-	order, err := s.client.FetchOrder(ctx, attempt.RazorpayOrderID)
+	order, err := client.FetchOrder(ctx, attempt.RazorpayOrderID)
 	if err != nil {
 		return false, err
 	}
@@ -314,14 +346,15 @@ func (s *RazorpayPaymentService) HandleWebhook(ctx context.Context, signature, e
 	if s == nil || s.db == nil {
 		return false, fmt.Errorf("payment service is not configured")
 	}
-	if s.client == nil || strings.TrimSpace(s.client.WebhookSecret()) == "" {
+	client, err := s.clientFor(ctx)
+	if err != nil || strings.TrimSpace(client.WebhookSecret()) == "" {
 		return false, fmt.Errorf("razorpay webhook secret is not configured")
 	}
 	eventID = strings.TrimSpace(eventID)
 	if eventID == "" {
 		return false, fmt.Errorf("missing x-razorpay-event-id")
 	}
-	if !razorpay.VerifyRazorpayWebhook(rawBody, signature, s.client.WebhookSecret()) {
+	if !razorpay.VerifyRazorpayWebhook(rawBody, signature, client.WebhookSecret()) {
 		return false, fmt.Errorf("invalid webhook signature")
 	}
 

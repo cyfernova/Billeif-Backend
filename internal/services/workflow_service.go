@@ -196,14 +196,15 @@ type NotificationSettings struct {
 
 // WorkflowService handles workflow operations
 type WorkflowService struct {
-	db            *gorm.DB
-	log           *logger.Logger
-	scheduler     *gocron.Scheduler
-	emailService  EmailSender
-	pushService   *A2APushService
-	scheduledJobs map[string]*gocron.Job
-	jobMutex      sync.RWMutex
-	priceMonitor  *PriceMonitor
+	db              *gorm.DB
+	log             *logger.Logger
+	scheduler       *gocron.Scheduler
+	emailService    EmailSender
+	pushService     *A2APushService
+	scheduledJobs   map[string]*gocron.Job
+	jobMutex        sync.RWMutex
+	priceMonitor    *PriceMonitor
+	schedulerStarts int
 }
 
 // EmailSender interface for sending emails
@@ -226,12 +227,13 @@ func NewWorkflowService(db *gorm.DB, log *logger.Logger, emailService EmailSende
 	scheduler.StartAsync()
 
 	service := &WorkflowService{
-		db:            db,
-		log:           log,
-		scheduler:     scheduler,
-		emailService:  emailService,
-		pushService:   pushService,
-		scheduledJobs: make(map[string]*gocron.Job),
+		db:              db,
+		log:             log,
+		scheduler:       scheduler,
+		emailService:    emailService,
+		pushService:     pushService,
+		scheduledJobs:   make(map[string]*gocron.Job),
+		schedulerStarts: 1,
 	}
 
 	// Initialize price monitor
@@ -242,6 +244,13 @@ func NewWorkflowService(db *gorm.DB, log *logger.Logger, emailService EmailSende
 	}
 
 	return service
+}
+
+func (s *WorkflowService) SchedulerStartCount() int {
+	if s == nil {
+		return 0
+	}
+	return s.schedulerStarts
 }
 
 // Start starts the workflow service and loads existing workflows

@@ -40,6 +40,7 @@ type TaxComplianceService struct {
 	documents        *DocumentService
 	entitlements     *EntitlementService
 	provider         GSTProvider
+	resolver         ProviderConfigResolver
 	log              *logger.Logger
 }
 
@@ -105,6 +106,7 @@ func NewTaxComplianceService(
 	s3 *S3Service,
 	webhooks *WebhookService,
 	log *logger.Logger,
+	resolvers ...ProviderConfigResolver,
 ) *TaxComplianceService {
 	timeout := 15 * time.Second
 	if cfg != nil && cfg.GSTLookup.Timeout > 0 {
@@ -113,6 +115,10 @@ func NewTaxComplianceService(
 	var sqsClient *sqs.Client
 	if awsCfg != nil {
 		sqsClient = awsCfg.SQS
+	}
+	var resolver ProviderConfigResolver
+	if len(resolvers) > 0 {
+		resolver = resolvers[0]
 	}
 	svc := &TaxComplianceService{
 		cfg:              cfg,
@@ -125,10 +131,11 @@ func NewTaxComplianceService(
 		sqs:              sqsClient,
 		s3:               s3,
 		webhooks:         webhooks,
+		resolver:         resolver,
 		log:              log,
 	}
 	svc.entitlements = NewEntitlementService(cfg, db, subscriptionRepo, log)
-	svc.provider = NewConfiguredGSTProvider(cfg, log)
+	svc.provider = NewLazyConfiguredGSTProvider(cfg, resolver, log)
 	return svc
 }
 
@@ -152,7 +159,16 @@ func (s *TaxComplianceService) FetchGSTIN(ctx context.Context, gstin string) (*G
 		return result, nil
 	}
 
-	requestURL, apiKeyInURL, ok := s.buildGSTINLookupURL(result.GSTIN)
+	runtimeCfg := s.cfg
+	if s.resolver != nil {
+		resolved, err := s.resolver.ResolveProvider(ctx, s.cfg, config.SecretGSTLookup)
+		if err != nil {
+			result.ProviderMessage = "GSTIN lookup provider is unavailable"
+			return result, nil
+		}
+		runtimeCfg = resolved
+	}
+	requestURL, apiKeyInURL, ok := s.buildGSTINLookupURL(runtimeCfg, result.GSTIN)
 	if !ok {
 		result.ProviderMessage = "GSTIN lookup provider is not configured"
 		return result, nil
@@ -162,7 +178,7 @@ func (s *TaxComplianceService) FetchGSTIN(ctx context.Context, gstin string) (*G
 	if err != nil {
 		return result, nil
 	}
-	if apiKey := strings.TrimSpace(s.cfg.GSTLookup.APIKey); apiKey != "" && !apiKeyInURL {
+	if apiKey := strings.TrimSpace(runtimeCfg.GSTLookup.APIKey); apiKey != "" && !apiKeyInURL {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
@@ -213,15 +229,15 @@ func (s *TaxComplianceService) FetchGSTIN(ctx context.Context, gstin string) (*G
 	return result, nil
 }
 
-func (s *TaxComplianceService) buildGSTINLookupURL(gstin string) (string, bool, bool) {
-	if s == nil || s.cfg == nil {
+func (s *TaxComplianceService) buildGSTINLookupURL(cfg *config.Config, gstin string) (string, bool, bool) {
+	if s == nil || cfg == nil {
 		return "", false, false
 	}
-	requestURL := strings.TrimSpace(s.cfg.GSTLookup.BaseURL)
+	requestURL := strings.TrimSpace(cfg.GSTLookup.BaseURL)
 	if requestURL == "" {
 		return "", false, false
 	}
-	apiKey := strings.TrimSpace(s.cfg.GSTLookup.APIKey)
+	apiKey := strings.TrimSpace(cfg.GSTLookup.APIKey)
 	apiKeyInURL := strings.Contains(requestURL, "{api_key}") || strings.Contains(requestURL, "{apiKey}")
 	if apiKeyInURL {
 		if apiKey == "" {
