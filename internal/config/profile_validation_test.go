@@ -43,10 +43,6 @@ func TestProductionValidationProfilesRequireOnlyEntrypointConfiguration(t *testi
 			},
 		},
 		{
-			name:    "payment",
-			profile: ProfilePayment,
-		},
-		{
 			name:    "websocket",
 			profile: ProfileWebSocket,
 			mutate: func(cfg *Config) {
@@ -68,10 +64,8 @@ func TestProductionValidationProfilesRequireOnlyEntrypointConfiguration(t *testi
 				AWS:         AWSConfig{Region: "ap-south-1"},
 				Database:    DatabaseConfig{Port: 5432, Name: "invoice", SSLMode: "require"},
 			}
-			if tc.profile != ProfilePayment {
-				cfg.Secrets.Database = "database-secret"
-				cfg.SSM.DatabaseHostParam = "/app/database/host"
-			}
+			cfg.Secrets.Database = "database-secret"
+			cfg.SSM.DatabaseHostParam = "/app/database/host"
 			if tc.mutate != nil {
 				tc.mutate(cfg)
 			}

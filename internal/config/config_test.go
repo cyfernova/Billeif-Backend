@@ -214,7 +214,6 @@ func TestLoadWithExplicitLocalDatabaseCredentialsDoesNotRequireAWS(t *testing.T)
 	t.Setenv("S3_BUCKET_INVOICES", "local-invoices")
 	t.Setenv("S3_BUCKET_PRODUCTS", "local-products")
 	t.Setenv("SQS_INVOICE_QUEUE", "local-invoice-queue")
-	t.Setenv("SQS_PAYMENT_QUEUE", "local-payment-queue")
 	t.Setenv("LLM_API_KEY", "local-llm-key")
 	t.Setenv("LLM_API_URL", "https://llm.example.test/chat/completions")
 	t.Setenv("LLM_MODEL", "local-model")
@@ -270,7 +269,6 @@ func validConfigForTest() *Config {
 		},
 		SQS: SQSConfig{
 			InvoiceQueue: "invoice-queue",
-			PaymentQueue: "payment-queue",
 		},
 		Razorpay: RazorpayConfig{
 			KeyID:         "rzp_test_key",

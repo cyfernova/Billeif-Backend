@@ -9,7 +9,6 @@ locals {
     api_http          = "${var.lambda_artifact_dir}/http.zip"
     a2a_stream        = "${var.lambda_artifact_dir}/a2a-stream.zip"
     sqs_invoice       = "${var.lambda_artifact_dir}/sqs-invoice.zip"
-    sqs_payment       = "${var.lambda_artifact_dir}/sqs-payment.zip"
     sqs_gst           = "${var.lambda_artifact_dir}/sqs-gst.zip"
     sqs_bargaining    = "${var.lambda_artifact_dir}/sqs-bargaining.zip"
     ws_handler        = "${var.lambda_artifact_dir}/ws.zip"
@@ -41,7 +40,6 @@ locals {
     S3_BUCKET_PRODUCTS                        = aws_s3_bucket.product_images.id
     S3_BUCKET_EMAIL_SINK                      = aws_s3_bucket.email_sink.id
     SQS_INVOICE_QUEUE                         = aws_sqs_queue.invoice_processing.url
-    SQS_PAYMENT_QUEUE                         = aws_sqs_queue.payment_processing.url
     SQS_GST_QUEUE                             = aws_sqs_queue.gst_processing.url
     SQS_BARGAINING_QUEUE                      = aws_sqs_queue.bargaining_negotiation.url
     COGNITO_USER_POOL_ID                      = aws_cognito_user_pool.main.id
@@ -103,7 +101,6 @@ locals {
     invoice = merge(local.database_runtime_env, {
       CREDENTIAL_ENCRYPTION_SECRET_ARN = aws_secretsmanager_secret.credential_encryption.arn
     })
-    payment = {}
     gst = merge(local.database_runtime_env, {
       CREDENTIAL_ENCRYPTION_SECRET_ARN = aws_secretsmanager_secret.credential_encryption.arn
       GST_PROVIDER_SECRET_ARN          = aws_secretsmanager_secret.gst_provider.arn
@@ -133,11 +130,6 @@ resource "aws_cloudwatch_log_group" "lambda_a2a_stream" {
 
 resource "aws_cloudwatch_log_group" "lambda_sqs_invoice" {
   name              = "/aws/lambda/${local.resource_prefix}-sqs-invoice"
-  retention_in_days = var.log_retention_days
-}
-
-resource "aws_cloudwatch_log_group" "lambda_sqs_payment" {
-  name              = "/aws/lambda/${local.resource_prefix}-sqs-payment"
   retention_in_days = var.log_retention_days
 }
 
@@ -272,44 +264,6 @@ resource "aws_lambda_function" "sqs_invoice" {
   }
 
   depends_on = [aws_cloudwatch_log_group.lambda_sqs_invoice]
-}
-
-resource "aws_lambda_function" "sqs_payment" {
-  function_name    = "${local.resource_prefix}-sqs-payment"
-  role             = aws_iam_role.lambda_worker_exec["payment"].arn
-  runtime          = "provided.al2023"
-  handler          = "bootstrap"
-  architectures    = ["arm64"]
-  filename         = local.lambda_artifacts.sqs_payment
-  source_code_hash = local.lambda_artifact_hashes.sqs_payment
-  memory_size      = 512
-  timeout          = 60
-
-  reserved_concurrent_executions = var.enable_application ? (var.enable_lambda_reserved_concurrency ? 2 : null) : 0
-
-  tags = {
-    MigrationChecksum = local.application_migration_checksum
-  }
-
-  environment {
-    variables = merge(local.common_lambda_env, local.worker_secret_env.payment, {
-      WEBSOCKET_API_ENDPOINT = local.websocket_api_invoke_url
-    })
-  }
-
-  vpc_config {
-    subnet_ids         = aws_subnet.private[*].id
-    security_group_ids = [aws_security_group.lambda.id]
-  }
-
-  lifecycle {
-    precondition {
-      condition     = fileexists(local.lambda_artifacts.sqs_payment)
-      error_message = "Missing Lambda artifact ${local.lambda_artifacts.sqs_payment}. Run make package-lambda from the repository root before running Terraform."
-    }
-  }
-
-  depends_on = [aws_cloudwatch_log_group.lambda_sqs_payment]
 }
 
 resource "aws_lambda_function" "sqs_gst" {
@@ -479,16 +433,6 @@ resource "aws_lambda_event_source_mapping" "invoice_queue" {
 
   event_source_arn                   = aws_sqs_queue.invoice_processing.arn
   function_name                      = aws_lambda_function.sqs_invoice.arn
-  batch_size                         = 10
-  function_response_types            = ["ReportBatchItemFailures"]
-  maximum_batching_window_in_seconds = 5
-}
-
-resource "aws_lambda_event_source_mapping" "payment_queue" {
-  count = var.enable_application ? 1 : 0
-
-  event_source_arn                   = aws_sqs_queue.payment_processing.arn
-  function_name                      = aws_lambda_function.sqs_payment.arn
   batch_size                         = 10
   function_response_types            = ["ReportBatchItemFailures"]
   maximum_batching_window_in_seconds = 5

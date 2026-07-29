@@ -169,7 +169,6 @@ cmd/
     http/                API Gateway HTTP Lambda entrypoint
     a2a-stream/          Streaming Lambda runtime entrypoint
     sqs-invoice/         Invoice queue processor
-    sqs-payment/         Payment queue processor
     ws/                  WebSocket Lambda handler
 internal/
   handlers/              HTTP handlers

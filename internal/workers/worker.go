@@ -40,9 +40,8 @@ func New(cfg *config.Config, svc *services.Container, aws *awsclients.Config, lo
 func (w *Worker) Start(ctx context.Context) {
 	w.log.Info("starting background workers")
 
-	w.wg.Add(3)
+	w.wg.Add(2)
 	go w.processInvoiceQueue(ctx)
-	go w.processPaymentQueue(ctx)
 	go w.processGSTQueue(ctx)
 }
 
@@ -56,11 +55,6 @@ func (w *Worker) Stop() {
 func (w *Worker) processInvoiceQueue(ctx context.Context) {
 	defer w.wg.Done()
 	w.processQueue(ctx, w.cfg.SQS.InvoiceQueue, w.handleInvoiceMessage)
-}
-
-func (w *Worker) processPaymentQueue(ctx context.Context) {
-	defer w.wg.Done()
-	w.processQueue(ctx, w.cfg.SQS.PaymentQueue, w.handlePaymentMessage)
 }
 
 func (w *Worker) processGSTQueue(ctx context.Context) {
@@ -319,31 +313,6 @@ func ProcessGSTQueueMessage(ctx context.Context, svc *services.Container, log *l
 
 	log.Info("processing gst message", "job_id", msg.JobID)
 	return svc.TaxCompliance.ProcessJobByID(ctx, msg.JobID)
-}
-
-type PaymentMessage struct {
-	Type      string `json:"type"`
-	PaymentID string `json:"payment_id"`
-}
-
-func (w *Worker) handlePaymentMessage(ctx context.Context, body string) error {
-	return ProcessPaymentQueueMessage(ctx, w.log, body)
-}
-
-// ProcessPaymentQueueMessage handles one payment queue message in a transport-agnostic way.
-func ProcessPaymentQueueMessage(ctx context.Context, log *logger.Logger, body string) error {
-	_ = ctx
-	if log == nil {
-		return fmt.Errorf("invalid dependencies for payment queue processing")
-	}
-
-	var msg PaymentMessage
-	if err := json.Unmarshal([]byte(body), &msg); err != nil {
-		return err
-	}
-
-	log.Info("processing payment message", "type", msg.Type, "payment_id", msg.PaymentID)
-	return nil
 }
 
 func (w *Worker) SendToQueue(ctx context.Context, queueURL string, message interface{}) error {

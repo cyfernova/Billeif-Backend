@@ -19,7 +19,6 @@ locals {
       aws_db_instance.main.master_user_secret[0].secret_arn,
       aws_secretsmanager_secret.credential_encryption.arn
     ]
-    payment = []
     gst = [
       aws_db_instance.main.master_user_secret[0].secret_arn,
       aws_secretsmanager_secret.credential_encryption.arn,
@@ -164,14 +163,10 @@ data "aws_iam_policy_document" "lambda_app" {
     ]
     resources = [
       aws_sqs_queue.invoice_processing.arn,
-      aws_sqs_queue.payment_processing.arn,
       aws_sqs_queue.gst_processing.arn,
       aws_sqs_queue.bargaining_negotiation.arn,
-      aws_sqs_queue.workflow_runs.arn,
       aws_sqs_queue.invoice_processing_dlq.arn,
-      aws_sqs_queue.payment_processing_dlq.arn,
       aws_sqs_queue.gst_processing_dlq.arn,
-      aws_sqs_queue.workflow_runs_dlq.arn,
       aws_sqs_queue.bargaining_negotiation_dlq.arn
     ]
   }
@@ -188,8 +183,6 @@ data "aws_iam_policy_document" "lambda_app" {
       local.ses_verified_identity_arn,
       aws_sns_topic.alerts.arn,
       aws_sns_topic.low_stock_alerts.arn,
-      aws_sns_topic.payment_notifications.arn,
-      aws_sns_topic.workflow_notifications.arn,
       aws_sns_topic.ses_events.arn
     ]
   }
@@ -242,7 +235,6 @@ data "aws_iam_policy_document" "lambda_app" {
       aws_dynamodb_table.vendors_cache.arn,
       aws_dynamodb_table.products_cache.arn,
       aws_dynamodb_table.invoices_cache.arn,
-      aws_dynamodb_table.invoice_sequences.arn,
       aws_dynamodb_table.ledger_cache.arn,
       aws_dynamodb_table.payments_cache.arn
     ]
@@ -347,15 +339,11 @@ data "aws_iam_policy_document" "lambda_worker_app" {
     ]
     resources = [
       aws_sqs_queue.invoice_processing.arn,
-      aws_sqs_queue.payment_processing.arn,
       aws_sqs_queue.gst_processing.arn,
       aws_sqs_queue.bargaining_negotiation.arn,
-      aws_sqs_queue.workflow_runs.arn,
       aws_sqs_queue.invoice_processing_dlq.arn,
-      aws_sqs_queue.payment_processing_dlq.arn,
       aws_sqs_queue.gst_processing_dlq.arn,
       aws_sqs_queue.bargaining_negotiation_dlq.arn,
-      aws_sqs_queue.workflow_runs_dlq.arn
     ]
   }
 

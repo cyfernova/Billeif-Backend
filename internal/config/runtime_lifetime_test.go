@@ -16,7 +16,6 @@ func TestSecretKindsForEntrypointAreExact(t *testing.T) {
 		"http":           {SecretCredentialEncryption, SecretRazorpay, SecretLLM, SecretExa, SecretGSTLookup, SecretGSTProvider, SecretDeepgram, SecretDeepSeek},
 		"a2a-stream":     {SecretCredentialEncryption, SecretRazorpay, SecretLLM, SecretExa, SecretGSTLookup, SecretGSTProvider, SecretDeepgram, SecretDeepSeek},
 		"sqs-invoice":    {SecretCredentialEncryption},
-		"sqs-payment":    nil,
 		"sqs-gst":        {SecretCredentialEncryption, SecretGSTProvider},
 		"sqs-bargaining": {SecretCredentialEncryption, SecretLLM, SecretExa},
 		"ws":             nil,

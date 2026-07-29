@@ -15,7 +15,6 @@ const (
 	ProfileInvoice    Profile = "sqs-invoice"
 	ProfileGST        Profile = "sqs-gst"
 	ProfileBargaining Profile = "sqs-bargaining"
-	ProfilePayment    Profile = "sqs-payment"
 	ProfileWebSocket  Profile = "websocket"
 	ProfileMigration  Profile = "migration"
 )
@@ -44,8 +43,6 @@ func ValidateForProfile(cfg *Config, profile Profile) error {
 			}
 		}
 		return nil
-	case ProfilePayment:
-		return validateProfileBase(cfg)
 	case ProfileMigration:
 		if err := validateProfileBase(cfg); err != nil {
 			return err
@@ -242,9 +239,6 @@ func validate(cfg *Config) error {
 
 	if cfg.SQS.InvoiceQueue == "" {
 		return fmt.Errorf("SQS_INVOICE_QUEUE is required")
-	}
-	if cfg.SQS.PaymentQueue == "" {
-		return fmt.Errorf("SQS_PAYMENT_QUEUE is required")
 	}
 	if strings.TrimSpace(cfg.LLM.APIKey) == "" && strings.TrimSpace(cfg.Secrets.LLM) == "" {
 		return fmt.Errorf("LLM_API_KEY is required")

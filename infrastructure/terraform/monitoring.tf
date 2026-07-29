@@ -67,24 +67,6 @@ resource "aws_cloudwatch_metric_alarm" "lambda_invoice_errors" {
   }
 }
 
-resource "aws_cloudwatch_metric_alarm" "lambda_payment_errors" {
-  alarm_name          = "${local.resource_prefix}-lambda-payment-errors"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 1
-  metric_name         = "Errors"
-  namespace           = "AWS/Lambda"
-  period              = 300
-  statistic           = "Sum"
-  threshold           = 3
-  alarm_description   = "Payment worker Lambda error count is high"
-  alarm_actions       = [aws_sns_topic.alerts.arn]
-  ok_actions          = [aws_sns_topic.alerts.arn]
-
-  dimensions = {
-    FunctionName = aws_lambda_function.sqs_payment.function_name
-  }
-}
-
 resource "aws_cloudwatch_metric_alarm" "lambda_gst_errors" {
   alarm_name          = "${local.resource_prefix}-lambda-gst-errors"
   comparison_operator = "GreaterThanThreshold"
@@ -194,7 +176,6 @@ resource "aws_cloudwatch_dashboard" "main" {
           metrics = [
             ["AWS/Lambda", "Invocations", "FunctionName", aws_lambda_function.api_http.function_name],
             [".", "Invocations", "FunctionName", aws_lambda_function.sqs_invoice.function_name],
-            [".", "Invocations", "FunctionName", aws_lambda_function.sqs_payment.function_name],
             [".", "Invocations", "FunctionName", aws_lambda_function.sqs_gst.function_name],
             [".", "Invocations", "FunctionName", aws_lambda_function.ws_handler.function_name]
           ]
@@ -214,7 +195,6 @@ resource "aws_cloudwatch_dashboard" "main" {
           metrics = [
             ["AWS/Lambda", "Errors", "FunctionName", aws_lambda_function.api_http.function_name],
             [".", "Errors", "FunctionName", aws_lambda_function.sqs_invoice.function_name],
-            [".", "Errors", "FunctionName", aws_lambda_function.sqs_payment.function_name],
             [".", "Errors", "FunctionName", aws_lambda_function.sqs_gst.function_name],
             [".", "Errors", "FunctionName", aws_lambda_function.ws_handler.function_name]
           ]

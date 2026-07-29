@@ -328,10 +328,6 @@ run "secret_metadata_rds_lambda_iam_and_output" {
         for key in keys(aws_lambda_function.sqs_invoice.environment[0].variables) : key
         if endswith(key, "_SECRET_ARN")
       ]) == toset(["CREDENTIAL_ENCRYPTION_SECRET_ARN", "DATABASE_SECRET_ARN"]),
-      length([
-        for key in keys(aws_lambda_function.sqs_payment.environment[0].variables) : key
-        if endswith(key, "_SECRET_ARN")
-      ]) == 0,
       toset([
         for key in keys(aws_lambda_function.sqs_gst.environment[0].variables) : key
         if endswith(key, "_SECRET_ARN")
@@ -354,10 +350,6 @@ run "secret_metadata_rds_lambda_iam_and_output" {
 
   assert {
     condition = alltrue([
-      length([
-        for statement in data.aws_iam_policy_document.lambda_worker_app["payment"].statement : statement
-        if contains(["WorkerSecrets", "WorkerSecretsKMS", "WorkerParameters"], statement.sid)
-      ]) == 0,
       length([
         for statement in data.aws_iam_policy_document.lambda_worker_app["invoice"].statement : statement
         if statement.sid == "WorkerSecrets" && length(statement.resources) == 2

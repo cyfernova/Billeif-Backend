@@ -506,7 +506,28 @@ func TestTerraformBrandingPreservesPublicInterfaceNames(t *testing.T) {
 
 func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 	wantResources := manifestLines(preTaskResourceManifest)
-	wantResources = removeManifestEntry(wantResources, "aws_ses_email_identity.main")
+	for _, removed := range []string{
+		"aws_cloudwatch_log_group.lambda_sqs_payment",
+		"aws_cloudwatch_metric_alarm.lambda_payment_errors",
+		"aws_dynamodb_table.invoice_sequences",
+		"aws_lambda_event_source_mapping.payment_queue",
+		"aws_lambda_function.sqs_payment",
+		"aws_ses_email_identity.main",
+		"aws_sns_topic.payment_notifications",
+		"aws_sns_topic.workflow_notifications",
+		"aws_sns_topic_subscription.workflow_to_sqs",
+		"aws_sqs_queue.payment_processing",
+		"aws_sqs_queue.payment_processing_dlq",
+		"aws_sqs_queue.workflow_runs",
+		"aws_sqs_queue.workflow_runs_dlq",
+		"aws_sqs_queue_policy.workflow_runs",
+		"aws_sqs_queue_redrive_allow_policy.payment_processing_dlq",
+		"aws_sqs_queue_redrive_allow_policy.workflow_runs_dlq",
+		"aws_sqs_queue_redrive_policy.payment_processing",
+		"aws_sqs_queue_redrive_policy.workflow_runs",
+	} {
+		wantResources = removeManifestEntry(wantResources, removed)
+	}
 	wantResources = append(wantResources,
 		"aws_cognito_resource_server.main",
 		"aws_cloudwatch_log_group.database_migrator",
@@ -517,8 +538,13 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_security_group.database_migrator",
 	)
 	assertExactManifest(t, "Terraform resource labels", terraformResourceLabels(t), wantResources)
-	assertExactManifest(t, "Terraform output keys", terraformOutputKeys(t), manifestLines(preTaskOutputManifest))
-	assertExactManifest(t, "Terraform environment keys", terraformEnvironmentKeys(t), manifestLines(preTaskEnvironmentManifest))
+	wantOutputs := manifestLines(preTaskOutputManifest)
+	for _, removed := range []string{"lambda_sqs_payment_arn", "payment_processing_queue_url", "workflow_runs_queue_url"} {
+		wantOutputs = removeManifestEntry(wantOutputs, removed)
+	}
+	assertExactManifest(t, "Terraform output keys", terraformOutputKeys(t), wantOutputs)
+	wantEnvironment := removeManifestEntry(manifestLines(preTaskEnvironmentManifest), "SQS_PAYMENT_QUEUE")
+	assertExactManifest(t, "Terraform environment keys", terraformEnvironmentKeys(t), wantEnvironment)
 
 	providers := readTerraformFile(t, "providers.tf")
 	if !strings.Contains(providers, `required_version = ">= 1.13.0, < 2.0.0"`) {

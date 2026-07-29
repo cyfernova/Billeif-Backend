@@ -187,7 +187,6 @@ type WhatsAppConfig struct {
 
 type SQSConfig struct {
 	InvoiceQueue    string `mapstructure:"INVOICE_QUEUE"`
-	PaymentQueue    string `mapstructure:"PAYMENT_QUEUE"`
 	GSTQueue        string `mapstructure:"GST_QUEUE"`
 	BargainingQueue string `mapstructure:"BARGAINING_QUEUE"`
 }
@@ -348,7 +347,6 @@ func LoadForProfile(profile Profile) (*Config, error) {
 	_ = viper.BindEnv("WHATSAPP.BASE_URL", "WHATSAPP_BASE_URL")
 	_ = viper.BindEnv("WHATSAPP.TIMEOUT", "WHATSAPP_TIMEOUT")
 	_ = viper.BindEnv("SQS.INVOICE_QUEUE", "SQS_INVOICE_QUEUE")
-	_ = viper.BindEnv("SQS.PAYMENT_QUEUE", "SQS_PAYMENT_QUEUE")
 	_ = viper.BindEnv("SQS.GST_QUEUE", "SQS_GST_QUEUE")
 	_ = viper.BindEnv("SQS.BARGAINING_QUEUE", "SQS_BARGAINING_QUEUE")
 	_ = viper.BindEnv("SENTRY.DSN", "SENTRY_DSN")
@@ -505,7 +503,6 @@ func applyFlatEnvFileFallbacks(cfg *Config) {
 	setIfZeroInt(&cfg.Razorpay.Timeout, "RAZORPAY_TIMEOUT")
 
 	setIfEmpty(&cfg.SQS.InvoiceQueue, "SQS_INVOICE_QUEUE")
-	setIfEmpty(&cfg.SQS.PaymentQueue, "SQS_PAYMENT_QUEUE")
 	setIfEmpty(&cfg.SQS.GSTQueue, "SQS_GST_QUEUE")
 	setIfEmpty(&cfg.SQS.BargainingQueue, "SQS_BARGAINING_QUEUE")
 

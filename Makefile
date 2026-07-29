@@ -3,7 +3,7 @@
 -include .env.local
 export
 
-.PHONY: help infra-backend-init infra-init infra-validate infra-apply infra-plan infra-destroy infra-output build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-payment build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-voice-session build-lambda-migrator build-lambda-custom-sms-sender package-lambda package-lambda-migrator migration-manifest migration-manifest-verify rds-tunnel run-local test test-integration migrate-up migrate-down migrate-rds-up migrate-rds-down migrate-create fmt lint clean deps test-coverage swagger
+.PHONY: help infra-backend-init infra-init infra-validate infra-apply infra-plan infra-destroy infra-output build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-voice-session build-lambda-migrator build-lambda-custom-sms-sender package-lambda package-lambda-migrator migration-manifest migration-manifest-verify rds-tunnel run-local test test-integration migrate-up migrate-down migrate-rds-up migrate-rds-down migrate-create fmt lint clean deps test-coverage swagger
 
 LAMBDA_BUILD_DIR := .build/lambda
 TERRAFORM_DIR := infrastructure/terraform
@@ -90,7 +90,7 @@ infra-output: ## Save Terraform output to file
 	@echo "Terraform output saved to infrastructure/terraform/terraform_output.txt"
 
 # Build targets
-build-lambda: build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-payment build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-voice-session build-lambda-migrator ## Build all Lambda binaries
+build-lambda: build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-voice-session build-lambda-migrator ## Build all Lambda binaries
 
 build-lambda-http: ## Build HTTP API Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/http
@@ -103,10 +103,6 @@ build-lambda-a2a-stream: ## Build A2A stream Lambda bootstrap binary
 build-lambda-sqs-invoice: ## Build invoice SQS Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/sqs-invoice
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(LAMBDA_BUILD_DIR)/sqs-invoice/bootstrap ./cmd/lambda/sqs-invoice
-
-build-lambda-sqs-payment: ## Build payment SQS Lambda bootstrap binary
-	mkdir -p $(LAMBDA_BUILD_DIR)/sqs-payment
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(LAMBDA_BUILD_DIR)/sqs-payment/bootstrap ./cmd/lambda/sqs-payment
 
 build-lambda-sqs-gst: ## Build GST SQS Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/sqs-gst
@@ -138,7 +134,6 @@ package-lambda: build-lambda build-lambda-custom-sms-sender package-lambda-migra
 	cd $(LAMBDA_BUILD_DIR)/http && zip -q -r ../http.zip bootstrap
 	cd $(LAMBDA_BUILD_DIR)/a2a-stream && zip -q -r ../a2a-stream.zip bootstrap
 	cd $(LAMBDA_BUILD_DIR)/sqs-invoice && zip -q -r ../sqs-invoice.zip bootstrap
-	cd $(LAMBDA_BUILD_DIR)/sqs-payment && zip -q -r ../sqs-payment.zip bootstrap
 	cd $(LAMBDA_BUILD_DIR)/sqs-gst && zip -q -r ../sqs-gst.zip bootstrap
 	cd $(LAMBDA_BUILD_DIR)/sqs-bargaining && zip -q -r ../sqs-bargaining.zip bootstrap
 	cd $(LAMBDA_BUILD_DIR)/ws && zip -q -r ../ws.zip bootstrap

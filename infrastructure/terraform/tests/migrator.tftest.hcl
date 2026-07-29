@@ -159,7 +159,6 @@ run "foundation_migrates_while_application_is_fail_closed" {
       aws_lambda_function.api_http.reserved_concurrent_executions == 0 &&
       aws_lambda_function.a2a_stream.reserved_concurrent_executions == 0 &&
       aws_lambda_function.sqs_invoice.reserved_concurrent_executions == 0 &&
-      aws_lambda_function.sqs_payment.reserved_concurrent_executions == 0 &&
       aws_lambda_function.sqs_gst.reserved_concurrent_executions == 0 &&
       aws_lambda_function.sqs_bargaining.reserved_concurrent_executions == 0 &&
       aws_lambda_function.ws_handler.reserved_concurrent_executions == 0 &&
@@ -172,7 +171,6 @@ run "foundation_migrates_while_application_is_fail_closed" {
   assert {
     condition = (
       length(aws_lambda_event_source_mapping.invoice_queue) == 0 &&
-      length(aws_lambda_event_source_mapping.payment_queue) == 0 &&
       length(aws_lambda_event_source_mapping.gst_queue) == 0 &&
       length(aws_lambda_event_source_mapping.bargaining_queue) == 0 &&
       length(aws_lambda_permission.allow_rest_api_http) == 0 &&
@@ -181,6 +179,16 @@ run "foundation_migrates_while_application_is_fail_closed" {
       length(aws_lambda_permission.cognito_phone_custom_sms) == 0
     )
     error_message = "API, WebSocket, Cognito, and SQS invocation paths must be absent while disabled."
+  }
+
+  assert {
+    condition = (
+      !contains(keys(local.lambda_artifacts), "sqs_payment") &&
+      !contains(keys(local.common_lambda_env), "SQS_PAYMENT_QUEUE") &&
+      !contains(keys(local.worker_secret_env), "payment") &&
+      toset(keys(aws_iam_role.lambda_worker_exec)) == toset(["invoice", "gst", "bargaining"])
+    )
+    error_message = "The fail-closed plan must not contain the removed payment worker artifact, environment, or IAM instance."
   }
 }
 
@@ -282,7 +290,6 @@ run "reviewed_enablement_activates_stable_application_resources_after_migration"
       aws_lambda_function.api_http.reserved_concurrent_executions == 10 &&
       aws_lambda_function.a2a_stream.reserved_concurrent_executions == 5 &&
       aws_lambda_function.sqs_invoice.reserved_concurrent_executions == 2 &&
-      aws_lambda_function.sqs_payment.reserved_concurrent_executions == 2 &&
       aws_lambda_function.sqs_gst.reserved_concurrent_executions == 2 &&
       aws_lambda_function.sqs_bargaining.reserved_concurrent_executions == 5 &&
       aws_lambda_function.ws_handler.reserved_concurrent_executions == 5
@@ -293,7 +300,6 @@ run "reviewed_enablement_activates_stable_application_resources_after_migration"
   assert {
     condition = (
       length(aws_lambda_event_source_mapping.invoice_queue) == 1 &&
-      length(aws_lambda_event_source_mapping.payment_queue) == 1 &&
       length(aws_lambda_event_source_mapping.gst_queue) == 1 &&
       length(aws_lambda_event_source_mapping.bargaining_queue) == 1 &&
       length(aws_lambda_permission.allow_rest_api_http) == 1 &&
@@ -309,7 +315,6 @@ run "reviewed_enablement_activates_stable_application_resources_after_migration"
       aws_lambda_function.api_http.tags.MigrationChecksum == local.application_migration_checksum,
       aws_lambda_function.a2a_stream.tags.MigrationChecksum == local.application_migration_checksum,
       aws_lambda_function.sqs_invoice.tags.MigrationChecksum == local.application_migration_checksum,
-      aws_lambda_function.sqs_payment.tags.MigrationChecksum == local.application_migration_checksum,
       aws_lambda_function.sqs_gst.tags.MigrationChecksum == local.application_migration_checksum,
       aws_lambda_function.sqs_bargaining.tags.MigrationChecksum == local.application_migration_checksum,
       aws_lambda_function.ws_handler.tags.MigrationChecksum == local.application_migration_checksum,
@@ -317,5 +322,15 @@ run "reviewed_enablement_activates_stable_application_resources_after_migration"
       aws_lambda_function.custom_sms_sender.tags.MigrationChecksum == local.application_migration_checksum,
     ])
     error_message = "Every stable application Lambda update must consume the successful migration invocation checksum."
+  }
+
+  assert {
+    condition = (
+      !contains(keys(local.lambda_artifacts), "sqs_payment") &&
+      !contains(keys(local.common_lambda_env), "SQS_PAYMENT_QUEUE") &&
+      !contains(keys(local.worker_secret_env), "payment") &&
+      toset(keys(aws_iam_role.lambda_worker_exec)) == toset(["invoice", "gst", "bargaining"])
+    )
+    error_message = "The enabled plan must not recreate the removed payment worker artifact, environment, or IAM instance."
   }
 }

@@ -218,23 +218,6 @@ resource "aws_dynamodb_table" "invoices_cache" {
   }
 }
 
-resource "aws_dynamodb_table" "invoice_sequences" {
-  name         = "${local.resource_prefix}-invoice-sequences"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "business_id"
-  range_key    = "invoice_type"
-
-  attribute {
-    name = "business_id"
-    type = "S"
-  }
-
-  attribute {
-    name = "invoice_type"
-    type = "S"
-  }
-}
-
 resource "aws_dynamodb_table" "ledger_cache" {
   name         = "${local.resource_prefix}-ledger-cache"
   billing_mode = "PAY_PER_REQUEST"

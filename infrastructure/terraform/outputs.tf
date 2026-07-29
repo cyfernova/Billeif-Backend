@@ -63,11 +63,6 @@ output "lambda_sqs_invoice_arn" {
   value       = aws_lambda_function.sqs_invoice.arn
 }
 
-output "lambda_sqs_payment_arn" {
-  description = "Lambda ARN for payment SQS worker"
-  value       = aws_lambda_function.sqs_payment.arn
-}
-
 output "lambda_sqs_gst_arn" {
   description = "Lambda ARN for GST SQS worker"
   value       = aws_lambda_function.sqs_gst.arn
@@ -88,19 +83,9 @@ output "invoice_processing_queue_url" {
   value       = aws_sqs_queue.invoice_processing.url
 }
 
-output "payment_processing_queue_url" {
-  description = "Payment processing SQS queue URL"
-  value       = aws_sqs_queue.payment_processing.url
-}
-
 output "gst_processing_queue_url" {
   description = "GST processing SQS queue URL"
   value       = aws_sqs_queue.gst_processing.url
-}
-
-output "workflow_runs_queue_url" {
-  description = "Workflow runs SQS queue URL"
-  value       = aws_sqs_queue.workflow_runs.url
 }
 
 output "s3_bucket_logos" {
