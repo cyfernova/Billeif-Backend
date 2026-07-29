@@ -566,6 +566,102 @@ func TestTerraformEnvironmentKeyScannerIncludesEveryTerraformSource(t *testing.T
 	}
 }
 
+func TestTerraformEnvironmentKeyScannerIgnoresUnrelatedUppercaseMapKeys(t *testing.T) {
+	keys := terraformEnvironmentKeysFromSources([]string{`
+locals {
+  unrelated_metadata = {
+    NOT_A_RUNTIME_ENV_KEY = "value"
+  }
+}
+
+resource "aws_lambda_function" "http" {
+  environment {
+    variables = {
+      REAL_ENV_KEY = "value"
+    }
+  }
+}`})
+	if containsString(keys, "NOT_A_RUNTIME_ENV_KEY") {
+		t.Fatal("uppercase keys outside Lambda environment.variables must not enter the runtime environment manifest")
+	}
+	if !containsString(keys, "REAL_ENV_KEY") {
+		t.Fatal("a Lambda environment.variables key must enter the runtime environment manifest")
+	}
+}
+
+func TestTerraformStableNameLocalValidationRejectsConditionalBadBranch(t *testing.T) {
+	failures := stableNameLocalDefinitionFailures(
+		[]terraformAWSNameAttribute{{resourceType: "aws_cognito_user_pool_client", name: "name", expression: "local.cognito_web_client_name"}},
+		map[string]string{
+			"cognito_web_client_name": `var.client_name != "" ? var.client_name : "legacy-client"`,
+		},
+	)
+	if len(failures) == 0 {
+		t.Fatal("an unbranded conditional output branch must be rejected")
+	}
+}
+
+func TestTerraformStableNameLocalValidationRejectsCoalesceBadBranch(t *testing.T) {
+	failures := stableNameLocalDefinitionFailures(
+		[]terraformAWSNameAttribute{{resourceType: "aws_cognito_resource_server", name: "name", expression: "local.cognito_resource_server_name"}},
+		map[string]string{
+			"cognito_resource_server_name": `coalesce(local.resource_prefix, "legacy-resource-server")`,
+			"resource_prefix":              `"${var.project_name}-${var.environment}"`,
+		},
+	)
+	if len(failures) == 0 {
+		t.Fatal("an unbranded coalesce fallback branch must be rejected")
+	}
+}
+
+func TestTerraformStableNameLocalValidationRejectsListAndMapBadBranches(t *testing.T) {
+	for name, definition := range map[string]string{
+		"list": `[local.resource_prefix, "legacy-resource-server"]`,
+		"map":  `{safe = local.resource_prefix, unsafe = "legacy-resource-server"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			failures := stableNameLocalDefinitionFailures(
+				[]terraformAWSNameAttribute{{resourceType: "aws_cognito_resource_server", name: "name", expression: "local.cognito_resource_server_name"}},
+				map[string]string{
+					"cognito_resource_server_name": definition,
+					"resource_prefix":              `"${var.project_name}-${var.environment}"`,
+				},
+			)
+			if len(failures) == 0 {
+				t.Fatal("an unbranded list or map output branch must be rejected")
+			}
+		})
+	}
+}
+
+func TestTerraformStableNameLocalValidationRejectsNestedBadBranch(t *testing.T) {
+	failures := stableNameLocalDefinitionFailures(
+		[]terraformAWSNameAttribute{{resourceType: "aws_cognito_resource_server", name: "identifier", expression: "local.cognito_resource_server_id"}},
+		map[string]string{
+			"cognito_resource_server_id": `local.nested_name`,
+			"nested_name":                `var.use_safe_name ? local.resource_prefix : "legacy-api"`,
+			"resource_prefix":            `"${var.project_name}-${var.environment}"`,
+		},
+	)
+	if len(failures) == 0 {
+		t.Fatal("an unbranded branch in a nested local must be rejected")
+	}
+}
+
+func TestTerraformStableNameLocalValidationReportsCyclesDeterministically(t *testing.T) {
+	attributes := []terraformAWSNameAttribute{{resourceType: "aws_cognito_resource_server", name: "identifier", expression: "local.cognito_resource_server_id"}}
+	definitions := map[string]string{
+		"cognito_resource_server_id": `local.first_name`,
+		"first_name":                 `local.second_name`,
+		"second_name":                `local.first_name`,
+	}
+	first := stableNameLocalDefinitionFailures(attributes, definitions)
+	second := stableNameLocalDefinitionFailures(attributes, definitions)
+	if len(first) == 0 || strings.Join(first, "\n") != strings.Join(second, "\n") {
+		t.Fatalf("cyclic local definitions must fail deterministically, got %q then %q", first, second)
+	}
+}
+
 // Every top-level Terraform field that identifies a stable AWS resource has an
 // explicit expression allowlist. The exceptions preserve stable API stage and
 // Cognito group interfaces, while all other entries are Billeif project and
@@ -622,11 +718,20 @@ type terraformAWSNameAttribute struct {
 
 var terraformResourceDeclaration = regexp.MustCompile(`(?m)^resource\s+"([^"]+)"\s+"([^"]+)"\s*\{`)
 var terraformOutputDeclaration = regexp.MustCompile(`(?m)^output\s+"([^"]+)"\s*\{`)
-var terraformNameAttributeDeclaration = regexp.MustCompile(`^\s*(name|bucket|identifier|function_name|log_group_name|alarm_name|dashboard_name|domain|stage_name)\s*=\s*(.+?)\s*$`)
-var terraformEnvironmentKeyDeclaration = regexp.MustCompile(`^\s*([A-Z][A-Z0-9_]+)\s*=`)
+var terraformLambdaResourceDeclaration = regexp.MustCompile(`(?m)^resource\s+"aws_lambda_function"\s+"[^"]+"\s*\{`)
 var terraformLocalReference = regexp.MustCompile(`\blocal\.([A-Za-z0-9_]+)\b`)
-var terraformLocalsBlockDeclaration = regexp.MustCompile(`^\s*locals\s*\{`)
-var terraformLocalDefinitionDeclaration = regexp.MustCompile(`^\s*([a-z][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$`)
+
+var terraformStableNameAttributes = []string{
+	"name",
+	"bucket",
+	"identifier",
+	"function_name",
+	"log_group_name",
+	"alarm_name",
+	"dashboard_name",
+	"domain",
+	"stage_name",
+}
 
 func terraformResourceLabels(t *testing.T) []string {
 	t.Helper()
@@ -657,10 +762,15 @@ func terraformEnvironmentKeys(t *testing.T) []string {
 
 func terraformEnvironmentKeysFromSources(sources []string) []string {
 	var keys []string
+	localDefinitions := terraformLocalDefinitionsFromSources(sources)
 	for _, source := range sources {
-		for _, line := range strings.Split(source, "\n") {
-			if match := terraformEnvironmentKeyDeclaration.FindStringSubmatch(line); match != nil {
-				keys = append(keys, match[1])
+		for _, resourceBody := range terraformLambdaResourceBodies(source) {
+			for _, environmentBody := range terraformTopLevelBlocks(resourceBody, "environment") {
+				variables, exists := terraformTopLevelAssignments(environmentBody)["variables"]
+				if !exists {
+					continue
+				}
+				keys = append(keys, terraformEnvironmentMapKeys(variables, localDefinitions, make(map[string]bool))...)
 			}
 		}
 	}
@@ -675,92 +785,341 @@ func terraformLocalDefinitions(t *testing.T) map[string]string {
 func terraformLocalDefinitionsFromSources(sources []string) map[string]string {
 	definitions := make(map[string]string)
 	for _, source := range sources {
-		inLocalsBlock := false
-		depth := 0
-		for _, line := range strings.Split(source, "\n") {
-			if !inLocalsBlock {
-				if terraformLocalsBlockDeclaration.MatchString(line) {
-					inLocalsBlock = true
-					depth = terraformBraceDelta(line)
-				}
-				continue
-			}
-
-			if depth == 1 {
-				if match := terraformLocalDefinitionDeclaration.FindStringSubmatch(line); match != nil {
-					definitions[match[1]] = match[2]
-				}
-			}
-			depth += terraformBraceDelta(line)
-			if depth == 0 {
-				inLocalsBlock = false
+		for _, localsBody := range terraformTopLevelBlocks(source, "locals") {
+			for name, expression := range terraformTopLevelAssignments(localsBody) {
+				definitions[name] = expression
 			}
 		}
 	}
 	return definitions
 }
 
+func terraformLambdaResourceBodies(source string) []string {
+	var bodies []string
+	for _, match := range terraformLambdaResourceDeclaration.FindAllStringIndex(source, -1) {
+		openingBrace := strings.LastIndex(source[match[0]:match[1]], "{") + match[0]
+		closingBrace := terraformMatchingDelimiter(source, openingBrace, '{', '}')
+		if closingBrace != -1 {
+			bodies = append(bodies, source[openingBrace+1:closingBrace])
+		}
+	}
+	return bodies
+}
+
+func terraformEnvironmentMapKeys(expression string, localDefinitions map[string]string, visiting map[string]bool) []string {
+	expression = terraformTrimOuterParentheses(strings.TrimSpace(expression))
+	if name, arguments, isCall := terraformFunctionArguments(expression); isCall && (name == "merge" || name == "coalesce" || name == "try") {
+		var keys []string
+		for _, argument := range arguments {
+			keys = append(keys, terraformEnvironmentMapKeys(argument, localDefinitions, visiting)...)
+		}
+		return sortedUnique(keys)
+	}
+	if terraformIsDelimited(expression, '{', '}') {
+		keys := make([]string, 0)
+		for key := range terraformTopLevelAssignments(expression[1 : len(expression)-1]) {
+			keys = append(keys, key)
+		}
+		return sortedUnique(keys)
+	}
+
+	path := terraformLocalReferencePath(expression)
+	if len(path) == 0 || visiting[strings.Join(path, ".")] {
+		return nil
+	}
+	definition, exists := localDefinitions[path[0]]
+	if !exists {
+		return nil
+	}
+	visitingKey := strings.Join(path, ".")
+	visiting[visitingKey] = true
+	defer delete(visiting, visitingKey)
+	for _, field := range path[1:] {
+		if !terraformIsDelimited(definition, '{', '}') {
+			return nil
+		}
+		value, exists := terraformTopLevelAssignments(definition[1 : len(definition)-1])[field]
+		if !exists {
+			return nil
+		}
+		definition = value
+	}
+	return terraformEnvironmentMapKeys(definition, localDefinitions, visiting)
+}
+
+func terraformLocalReferencePath(expression string) []string {
+	expression = strings.TrimSpace(expression)
+	if !strings.HasPrefix(expression, "local.") {
+		return nil
+	}
+	path := strings.Split(strings.TrimPrefix(expression, "local."), ".")
+	for _, segment := range path {
+		if segment == "" || !regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`).MatchString(segment) {
+			return nil
+		}
+	}
+	return path
+}
+
+func terraformTopLevelBlocks(source, name string) []string {
+	var bodies []string
+	depth := 0
+	for index := 0; index < len(source); {
+		if next, skipped := terraformSkipQuotedOrComment(source, index); skipped {
+			index = next
+			continue
+		}
+		switch source[index] {
+		case '{', '(', '[':
+			depth++
+			index++
+			continue
+		case '}', ')', ']':
+			if depth > 0 {
+				depth--
+			}
+			index++
+			continue
+		}
+		if depth == 0 && terraformIdentifierStart(source[index]) {
+			start, end := index, terraformIdentifierEnd(source, index)
+			if source[start:end] == name {
+				next := terraformSkipWhitespace(source, end)
+				if next < len(source) && source[next] == '{' {
+					closing := terraformMatchingDelimiter(source, next, '{', '}')
+					if closing != -1 {
+						bodies = append(bodies, source[next+1:closing])
+						index = closing + 1
+						continue
+					}
+				}
+			}
+			index = end
+			continue
+		}
+		index++
+	}
+	return bodies
+}
+
+func terraformTopLevelAssignments(body string) map[string]string {
+	type topLevelEntry struct {
+		name       string
+		valueStart int
+		start      int
+		assignment bool
+	}
+	var entries []topLevelEntry
+	depth := 0
+	for index := 0; index < len(body); {
+		if next, skipped := terraformSkipQuotedOrComment(body, index); skipped {
+			index = next
+			continue
+		}
+		switch body[index] {
+		case '{', '(', '[':
+			depth++
+			index++
+			continue
+		case '}', ')', ']':
+			if depth > 0 {
+				depth--
+			}
+			index++
+			continue
+		}
+		if depth == 0 && terraformIdentifierStart(body[index]) {
+			start, end := index, terraformIdentifierEnd(body, index)
+			next := terraformSkipWhitespace(body, end)
+			if next < len(body) && body[next] == '=' && (next+1 == len(body) || body[next+1] != '=') {
+				entries = append(entries, topLevelEntry{name: body[start:end], valueStart: next + 1, start: start, assignment: true})
+			} else if next < len(body) && body[next] == '{' {
+				entries = append(entries, topLevelEntry{start: start})
+			}
+			index = end
+			continue
+		}
+		index++
+	}
+	assignments := make(map[string]string)
+	for index, entry := range entries {
+		if !entry.assignment {
+			continue
+		}
+		end := len(body)
+		if index+1 < len(entries) {
+			end = entries[index+1].start
+		}
+		assignments[entry.name] = strings.TrimRight(strings.TrimSpace(body[entry.valueStart:end]), ",")
+	}
+	return assignments
+}
+
+func terraformMatchingDelimiter(source string, opening int, open, close byte) int {
+	depth := 0
+	for index := opening; index < len(source); {
+		if next, skipped := terraformSkipQuotedOrComment(source, index); skipped {
+			index = next
+			continue
+		}
+		if source[index] == open {
+			depth++
+		} else if source[index] == close {
+			depth--
+			if depth == 0 {
+				return index
+			}
+		}
+		index++
+	}
+	return -1
+}
+
+func terraformSkipQuotedOrComment(source string, index int) (int, bool) {
+	if source[index] == '"' {
+		index++
+		for index < len(source) {
+			if source[index] == '\\' {
+				index += 2
+				continue
+			}
+			if source[index] == '"' {
+				return index + 1, true
+			}
+			index++
+		}
+		return index, true
+	}
+	if source[index] == '#' || (source[index] == '/' && index+1 < len(source) && source[index+1] == '/') {
+		for index < len(source) && source[index] != '\n' {
+			index++
+		}
+		return index, true
+	}
+	if source[index] == '/' && index+1 < len(source) && source[index+1] == '*' {
+		index += 2
+		for index+1 < len(source) && !(source[index] == '*' && source[index+1] == '/') {
+			index++
+		}
+		if index+1 < len(source) {
+			return index + 2, true
+		}
+		return len(source), true
+	}
+	return index, false
+}
+
+func terraformSkipWhitespace(source string, index int) int {
+	for index < len(source) && (source[index] == ' ' || source[index] == '\t' || source[index] == '\r' || source[index] == '\n') {
+		index++
+	}
+	return index
+}
+
+func terraformIdentifierStart(character byte) bool {
+	return character >= 'A' && character <= 'Z' || character >= 'a' && character <= 'z' || character == '_'
+}
+
+func terraformIdentifierEnd(source string, index int) int {
+	for index < len(source) && (terraformIdentifierStart(source[index]) || source[index] >= '0' && source[index] <= '9' || source[index] == '-') {
+		index++
+	}
+	return index
+}
+
+func terraformTrimOuterParentheses(expression string) string {
+	for terraformIsDelimited(expression, '(', ')') {
+		expression = strings.TrimSpace(expression[1 : len(expression)-1])
+	}
+	return expression
+}
+
+func terraformIsDelimited(expression string, open, close byte) bool {
+	expression = strings.TrimSpace(expression)
+	return len(expression) >= 2 && expression[0] == open && terraformMatchingDelimiter(expression, 0, open, close) == len(expression)-1
+}
+
+func terraformFunctionArguments(expression string) (string, []string, bool) {
+	expression = strings.TrimSpace(expression)
+	if expression == "" || !terraformIdentifierStart(expression[0]) {
+		return "", nil, false
+	}
+	end := terraformIdentifierEnd(expression, 0)
+	opening := terraformSkipWhitespace(expression, end)
+	if opening >= len(expression) || expression[opening] != '(' || terraformMatchingDelimiter(expression, opening, '(', ')') != len(expression)-1 {
+		return "", nil, false
+	}
+	return expression[:end], terraformSplitTopLevel(expression[opening+1:len(expression)-1], ','), true
+}
+
+func terraformSplitTopLevel(source string, delimiter byte) []string {
+	var values []string
+	start, depth := 0, 0
+	for index := 0; index < len(source); {
+		if next, skipped := terraformSkipQuotedOrComment(source, index); skipped {
+			index = next
+			continue
+		}
+		switch source[index] {
+		case '{', '(', '[':
+			depth++
+		case '}', ')', ']':
+			if depth > 0 {
+				depth--
+			}
+		case delimiter:
+			if depth == 0 {
+				values = append(values, strings.TrimSpace(source[start:index]))
+				start = index + 1
+			}
+		}
+		index++
+	}
+	if value := strings.TrimSpace(source[start:]); value != "" {
+		values = append(values, value)
+	}
+	return values
+}
+
 type stableNameLocalDefinitionContract struct {
-	approvedTokens []string
-	requiredTokens []string
+	explicitValidatedOverrides []string
+	derivedTokenSets           [][]string
 }
 
 var stableNameLocalDefinitionContracts = map[string]stableNameLocalDefinitionContract{
 	"resource_prefix": {
-		approvedTokens: []string{"var.project_name", "var.environment"},
-		requiredTokens: []string{"var.project_name", "var.environment"},
-	},
-	"bucket_prefix": {
-		approvedTokens: []string{"local.resource_prefix"},
-		requiredTokens: []string{"local.resource_prefix"},
+		derivedTokenSets: [][]string{{"var.project_name", "var.environment"}},
 	},
 	"cognito_web_user_pool_name": {
-		approvedTokens: []string{"var.user_pool_name", "local.resource_prefix"},
-		requiredTokens: []string{"local.resource_prefix"},
+		explicitValidatedOverrides: []string{"var.user_pool_name"},
 	},
 	"cognito_web_client_name": {
-		approvedTokens: []string{"var.client_name", "local.resource_prefix"},
-		requiredTokens: []string{"local.resource_prefix"},
+		explicitValidatedOverrides: []string{"var.client_name"},
 	},
 	"cognito_native_user_pool_name": {
-		approvedTokens: []string{"var.phone_user_pool_name", "local.resource_prefix"},
-		requiredTokens: []string{"local.resource_prefix"},
+		explicitValidatedOverrides: []string{"var.phone_user_pool_name"},
 	},
 	"cognito_native_client_name": {
-		approvedTokens: []string{"var.phone_client_name", "local.resource_prefix"},
-		requiredTokens: []string{"local.resource_prefix"},
-	},
-	"cognito_resource_server_id": {
-		approvedTokens: []string{"local.resource_prefix"},
-		requiredTokens: []string{"local.resource_prefix"},
-	},
-	"cognito_resource_server_name": {
-		approvedTokens: []string{"local.resource_prefix"},
-		requiredTokens: []string{"local.resource_prefix"},
+		explicitValidatedOverrides: []string{"var.phone_client_name"},
 	},
 	"cognito_hosted_ui_domain_prefix": {
-		approvedTokens: []string{"var.cognito_domain_prefix", "var.environment", `"billeif-`},
-		requiredTokens: []string{"var.environment", `"billeif-`},
+		explicitValidatedOverrides: []string{"var.cognito_domain_prefix"},
+		derivedTokenSets:           [][]string{{`"billeif-`, "var.environment"}},
 	},
 	"phone_auth_cooldown_table_name": {
-		approvedTokens: []string{"var.phone_auth_cooldown_table_name", "local.resource_prefix"},
-		requiredTokens: []string{"local.resource_prefix"},
+		explicitValidatedOverrides: []string{"var.phone_auth_cooldown_table_name"},
 	},
 	"websocket_connections_table": {
-		approvedTokens: []string{"var.websocket_connections_table", "local.resource_prefix"},
-		requiredTokens: []string{"local.resource_prefix"},
+		explicitValidatedOverrides: []string{"var.websocket_connections_table"},
 	},
 	"voice_sessions_table_name": {
-		approvedTokens: []string{"var.voice_sessions_table_name", "local.resource_prefix"},
-		requiredTokens: []string{"local.resource_prefix"},
+		explicitValidatedOverrides: []string{"var.voice_sessions_table_name"},
 	},
 	"voice_session_lambda_name": {
-		approvedTokens: []string{"var.voice_session_lambda_function_name", "local.resource_prefix"},
-		requiredTokens: []string{"local.resource_prefix"},
+		explicitValidatedOverrides: []string{"var.voice_session_lambda_function_name"},
 	},
 	"db_host_ssm_parameter_name": {
-		approvedTokens: []string{"var.project_name", "var.environment"},
-		requiredTokens: []string{"var.project_name", "var.environment"},
+		derivedTokenSets: [][]string{{"var.project_name", "var.environment"}},
 	},
 }
 
@@ -771,7 +1130,7 @@ func stableNameLocalDefinitionFailures(attributes []terraformAWSNameAttribute, d
 		for _, match := range terraformLocalReference.FindAllStringSubmatch(attribute.expression, -1) {
 			name := match[1]
 			if _, alreadyValidated := validated[name]; !alreadyValidated {
-				validated[name] = validateStableNameLocalDefinition(name, definitions, make(map[string]bool))
+				validated[name] = validateStableNameLocalDefinition(name, definitions, stableNameLocalDefinitionContracts[name], nil)
 			}
 			if err := validated[name]; err != nil {
 				failures = append(failures, fmt.Sprintf("%s.%s references local.%s: %v", attribute.resourceType, attribute.name, name, err))
@@ -781,82 +1140,139 @@ func stableNameLocalDefinitionFailures(attributes []terraformAWSNameAttribute, d
 	return sortedUnique(failures)
 }
 
-func validateStableNameLocalDefinition(name string, definitions map[string]string, visiting map[string]bool) error {
-	if visiting[name] {
-		return fmt.Errorf("cyclic local definition")
+func validateStableNameLocalDefinition(name string, definitions map[string]string, inheritedContract stableNameLocalDefinitionContract, path []string) error {
+	for index, ancestor := range path {
+		if ancestor == name {
+			return fmt.Errorf("cyclic local definition: %s", strings.Join(append(path[index:], name), " -> "))
+		}
 	}
 	definition, exists := definitions[name]
 	if !exists {
 		return fmt.Errorf("definition is missing")
 	}
-	contract, allowed := stableNameLocalDefinitionContracts[name]
-	if !allowed {
-		return fmt.Errorf("definition %q is not explicitly classified", definition)
+	contract := inheritedContract
+	if declaredContract, declared := stableNameLocalDefinitionContracts[name]; declared {
+		contract = declaredContract
 	}
-	for _, required := range contract.requiredTokens {
-		if !strings.Contains(definition, required) {
-			return fmt.Errorf("definition %q is missing required Billeif-derived token %q", definition, required)
-		}
-	}
-
-	visiting[name] = true
-	defer delete(visiting, name)
-	for _, match := range terraformLocalReference.FindAllStringSubmatch(definition, -1) {
-		dependency := match[1]
-		if err := validateStableNameLocalDefinition(dependency, definitions, visiting); err != nil {
-			return fmt.Errorf("dependency local.%s: %w", dependency, err)
-		}
-	}
-
-	for _, token := range terraformVariableAndLiteralTokens(definition) {
-		if !containsOne(token, contract.approvedTokens) {
-			return fmt.Errorf("definition %q contains unapproved token %q", definition, token)
-		}
-	}
-	return nil
+	return validateStableNameExpression(definition, definitions, contract, append(path, name))
 }
 
-var terraformVariableOrLiteralToken = regexp.MustCompile(`\bvar\.[A-Za-z0-9_]+\b|"billeif-`)
-
-func terraformVariableAndLiteralTokens(definition string) []string {
-	var tokens []string
-	for _, match := range terraformVariableOrLiteralToken.FindAllString(definition, -1) {
-		tokens = append(tokens, match)
+func validateStableNameExpression(expression string, definitions map[string]string, contract stableNameLocalDefinitionContract, path []string) error {
+	expression = terraformTrimOuterParentheses(strings.TrimSpace(expression))
+	if trueBranch, falseBranch, conditional := terraformConditionalBranches(expression); conditional {
+		if err := validateStableNameExpression(trueBranch, definitions, contract, path); err != nil {
+			return fmt.Errorf("conditional true branch: %w", err)
+		}
+		if err := validateStableNameExpression(falseBranch, definitions, contract, path); err != nil {
+			return fmt.Errorf("conditional false branch: %w", err)
+		}
+		return nil
 	}
-	return sortedUnique(tokens)
+	if function, arguments, isCall := terraformFunctionArguments(expression); isCall && (function == "coalesce" || function == "try") {
+		for index, argument := range arguments {
+			if err := validateStableNameExpression(argument, definitions, contract, path); err != nil {
+				return fmt.Errorf("%s branch %d: %w", function, index+1, err)
+			}
+		}
+		return nil
+	}
+	if terraformIsDelimited(expression, '[', ']') {
+		for index, item := range terraformSplitTopLevel(expression[1:len(expression)-1], ',') {
+			if err := validateStableNameExpression(item, definitions, contract, path); err != nil {
+				return fmt.Errorf("list branch %d: %w", index+1, err)
+			}
+		}
+		return nil
+	}
+	if terraformIsDelimited(expression, '{', '}') {
+		assignments := terraformTopLevelAssignments(expression[1 : len(expression)-1])
+		keys := make([]string, 0, len(assignments))
+		for key := range assignments {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			if err := validateStableNameExpression(assignments[key], definitions, contract, path); err != nil {
+				return fmt.Errorf("map branch %s: %w", key, err)
+			}
+		}
+		return nil
+	}
+
+	for _, match := range terraformLocalReference.FindAllStringSubmatch(expression, -1) {
+		if err := validateStableNameLocalDefinition(match[1], definitions, contract, path); err != nil {
+			return fmt.Errorf("dependency local.%s: %w", match[1], err)
+		}
+	}
+	if terraformLocalReference.FindString(expression) != "" {
+		return nil
+	}
+	if containsString(contract.explicitValidatedOverrides, expression) {
+		return nil
+	}
+	for _, derivedTokens := range contract.derivedTokenSets {
+		if containsAll(expression, derivedTokens) {
+			return nil
+		}
+	}
+	return fmt.Errorf("unbranded output expression %q", expression)
+}
+
+func terraformConditionalBranches(expression string) (string, string, bool) {
+	questionIndex, nestedQuestions, depth := -1, 0, 0
+	for index := 0; index < len(expression); {
+		if next, skipped := terraformSkipQuotedOrComment(expression, index); skipped {
+			index = next
+			continue
+		}
+		switch expression[index] {
+		case '{', '(', '[':
+			depth++
+		case '}', ')', ']':
+			if depth > 0 {
+				depth--
+			}
+		case '?':
+			if depth == 0 {
+				if questionIndex == -1 {
+					questionIndex = index
+				} else {
+					nestedQuestions++
+				}
+			}
+		case ':':
+			if depth == 0 && questionIndex != -1 {
+				if nestedQuestions == 0 {
+					return strings.TrimSpace(expression[questionIndex+1 : index]), strings.TrimSpace(expression[index+1:]), true
+				}
+				nestedQuestions--
+			}
+		}
+		index++
+	}
+	return "", "", false
 }
 
 func terraformAWSNameAttributes(t *testing.T) []terraformAWSNameAttribute {
 	t.Helper()
 	var attributes []terraformAWSNameAttribute
 	for _, source := range terraformSourceFiles(t) {
-		resourceType := ""
-		depth := 0
-		for _, line := range strings.Split(source, "\n") {
-			if resourceType == "" {
-				if match := terraformResourceDeclaration.FindStringSubmatch(line); match != nil {
-					resourceType = match[1]
-					depth = terraformBraceDelta(line)
-				}
+		for _, match := range terraformResourceDeclaration.FindAllStringSubmatchIndex(source, -1) {
+			resourceType := source[match[2]:match[3]]
+			openingBrace := strings.LastIndex(source[match[0]:match[1]], "{") + match[0]
+			closingBrace := terraformMatchingDelimiter(source, openingBrace, '{', '}')
+			if closingBrace == -1 {
 				continue
 			}
-
-			if depth == 1 {
-				if match := terraformNameAttributeDeclaration.FindStringSubmatch(line); match != nil {
-					attributes = append(attributes, terraformAWSNameAttribute{resourceType: resourceType, name: match[1], expression: match[2]})
+			assignments := terraformTopLevelAssignments(source[openingBrace+1 : closingBrace])
+			for _, name := range terraformStableNameAttributes {
+				if expression, exists := assignments[name]; exists {
+					attributes = append(attributes, terraformAWSNameAttribute{resourceType: resourceType, name: name, expression: expression})
 				}
-			}
-			depth += terraformBraceDelta(line)
-			if depth == 0 {
-				resourceType = ""
 			}
 		}
 	}
 	return attributes
-}
-
-func terraformBraceDelta(line string) int {
-	return strings.Count(line, "{") - strings.Count(line, "}")
 }
 
 func terraformSourceFiles(t *testing.T) []string {
@@ -928,6 +1344,15 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func containsAll(expression string, required []string) bool {
+	for _, token := range required {
+		if !strings.Contains(expression, token) {
+			return false
+		}
+	}
+	return true
 }
 
 func readTerraformSources(t *testing.T) string {
