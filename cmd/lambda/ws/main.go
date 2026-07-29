@@ -48,6 +48,10 @@ func initWSRuntime() {
 		wsInitErr = fmt.Errorf("load lambda voice config: %w", err)
 		return
 	}
+	if err := config.ResolveLambdaVoiceRuntime(context.Background(), lambdaVoiceCfg, nil); err != nil {
+		wsInitErr = fmt.Errorf("resolve lambda voice config: %w", err)
+		return
+	}
 	cfg := loadWSConfig(lambdaVoiceCfg)
 
 	log := logger.NewWithConfig(logger.Config{
@@ -59,6 +63,10 @@ func initWSRuntime() {
 	appCfg, err := config.Load()
 	if err != nil {
 		wsInitErr = fmt.Errorf("load app config for websocket auth: %w", err)
+		return
+	}
+	if err := config.ResolveRuntime(context.Background(), appCfg, config.RuntimeResolvers{}); err != nil {
+		wsInitErr = fmt.Errorf("resolve app config for websocket auth: %w", err)
 		return
 	}
 	authSvc, err := initWebSocketBusinessAuth(appCfg, log)

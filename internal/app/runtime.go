@@ -72,6 +72,9 @@ func Initialize(ctx context.Context, opts InitializeOptions) (*Runtime, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
+	if err := config.ResolveRuntime(ctx, cfg, config.RuntimeResolvers{}); err != nil {
+		return nil, fmt.Errorf("resolve runtime config: %w", err)
+	}
 
 	log := logger.NewWithConfig(logger.Config{
 		Environment:        cfg.Environment,

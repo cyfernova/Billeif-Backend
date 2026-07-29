@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -173,13 +174,11 @@ func TestApplyFlatEnvFileFallbacksCopiesFlatKeys(t *testing.T) {
 func TestSSMResolutionCanBeSkippedWhenExplicitDBValuesExist(t *testing.T) {
 	cfg := validConfigForTest()
 	cfg.SSM.DatabaseHostParam = "/invoice-backend/dev/db/host"
-	cfg.SSM.DatabaseUserParam = "/invoice-backend/dev/db/username"
-	cfg.SSM.DatabasePasswordParam = "/invoice-backend/dev/db/password"
 	cfg.Database.Host = "127.0.0.1"
 	cfg.Database.User = "invoice_user"
 	cfg.Database.Password = "local-placeholder"
 
-	if err := resolveSSMParameters(cfg); err != nil {
+	if err := ResolveRuntime(context.Background(), cfg, RuntimeResolvers{}); err != nil {
 		t.Fatalf("expected explicit DB values to skip SSM lookups, got %v", err)
 	}
 
@@ -191,6 +190,61 @@ func TestSSMResolutionCanBeSkippedWhenExplicitDBValuesExist(t *testing.T) {
 	}
 	if cfg.Database.Password != "local-placeholder" {
 		t.Fatal("expected explicit DATABASE_PASSWORD to be preserved")
+	}
+}
+
+func TestLoadWithExplicitLocalDatabaseCredentialsDoesNotRequireAWS(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	t.Setenv("ENVIRONMENT", "dev")
+	t.Setenv("DATABASE_HOST", "127.0.0.1")
+	t.Setenv("DATABASE_PORT", "5432")
+	t.Setenv("DATABASE_USER", "invoice_local")
+	t.Setenv("DATABASE_PASSWORD", "local-only-password")
+	t.Setenv("DATABASE_NAME", "invoice_local")
+	t.Setenv("DATABASE_SSL_MODE", "disable")
+	t.Setenv("DATABASE_SECRET_ARN", "")
+	t.Setenv("AWS_REGION", "ap-south-1")
+	t.Setenv("JWT_ACCESS_TOKEN_EXPIRY", "1h")
+	t.Setenv("JWT_REFRESH_TOKEN_EXPIRY", "720h")
+	t.Setenv("S3_BUCKET_LOGOS", "local-logos")
+	t.Setenv("S3_BUCKET_INVOICES", "local-invoices")
+	t.Setenv("S3_BUCKET_PRODUCTS", "local-products")
+	t.Setenv("SQS_INVOICE_QUEUE", "local-invoice-queue")
+	t.Setenv("SQS_PAYMENT_QUEUE", "local-payment-queue")
+	t.Setenv("LLM_API_KEY", "local-llm-key")
+	t.Setenv("LLM_API_URL", "https://llm.example.test/chat/completions")
+	t.Setenv("LLM_MODEL", "local-model")
+	t.Setenv("CREDENTIAL_ENCRYPTION_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
+	t.Setenv("ALLOWED_ORIGINS", "http://127.0.0.1:3000")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("explicit local config unexpectedly required AWS: %v", err)
+	}
+	if cfg.Database.Host != "127.0.0.1" || cfg.Database.User != "invoice_local" || cfg.Database.Password != "local-only-password" {
+		t.Fatal("explicit local database credentials were not preserved")
+	}
+}
+
+func TestResolveRuntimeExtractsRDSManagedCredentialFields(t *testing.T) {
+	cfg := validConfigForTest()
+	cfg.Database.User = ""
+	cfg.Database.Password = ""
+	cfg.Secrets.Database = "rds-managed-secret"
+	client := &fakeSecretsManager{values: []string{`{"username":"managed_user","password":"` + sentinelSecret + `"}`}}
+
+	if err := ResolveRuntime(context.Background(), cfg, RuntimeResolvers{Secrets: client}); err != nil {
+		t.Fatalf("resolve runtime: %v", err)
+	}
+	if cfg.Database.User != "managed_user" {
+		t.Fatalf("expected managed username, got %q", cfg.Database.User)
+	}
+	if cfg.Database.Password != sentinelSecret {
+		t.Fatal("expected managed password field to be installed")
 	}
 }
 

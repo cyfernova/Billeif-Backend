@@ -27,6 +27,10 @@ func initRuntime() {
 		initErr = fmt.Errorf("load lambda voice config: %w", err)
 		return
 	}
+	if err := config.ResolveLambdaVoiceRuntime(context.Background(), cfg, nil); err != nil {
+		initErr = fmt.Errorf("resolve lambda voice config: %w", err)
+		return
+	}
 
 	log := logger.NewWithConfig(logger.Config{
 		Environment: cfg.Environment,

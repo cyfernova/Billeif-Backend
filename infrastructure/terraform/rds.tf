@@ -20,10 +20,11 @@ resource "aws_db_instance" "main" {
   storage_type          = "gp2"
   storage_encrypted     = true
 
-  db_name  = var.db_name
-  username = var.db_username
-  password = var.db_password
-  port     = var.db_port
+  db_name                       = var.db_name
+  username                      = var.db_username
+  manage_master_user_password   = true
+  master_user_secret_kms_key_id = aws_kms_key.application_secrets.arn
+  port                          = var.db_port
 
   db_subnet_group_name   = aws_db_subnet_group.public.name
   vpc_security_group_ids = [aws_security_group.rds.id]

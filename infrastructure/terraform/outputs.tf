@@ -150,12 +150,12 @@ output "cognito_logout_urls" {
 
 output "google_oauth_secret_name" {
   description = "AWS Secrets Manager secret name for Google OAuth credentials"
-  value       = local.google_oauth_secret_name
+  value       = aws_secretsmanager_secret.google_oauth.name
 }
 
 output "google_oauth_secret_arn" {
   description = "AWS Secrets Manager secret ARN for Google OAuth credentials"
-  value       = try(data.aws_secretsmanager_secret.google_oauth[0].arn, null)
+  value       = aws_secretsmanager_secret.google_oauth.arn
 }
 
 output "phone_user_pool_id" {
@@ -173,14 +173,9 @@ output "phone_auth_cooldown_table" {
   value       = aws_dynamodb_table.phone_auth_cooldowns.name
 }
 
-output "db_username_ssm_parameter" {
-  description = "SSM parameter name for DB username"
-  value       = aws_ssm_parameter.db_username.name
-}
-
-output "db_password_ssm_parameter" {
-  description = "SSM parameter name for DB password"
-  value       = aws_ssm_parameter.db_password.name
+output "rds_master_user_secret_arn" {
+  description = "RDS-managed master user secret ARN"
+  value       = aws_db_instance.main.master_user_secret[0].secret_arn
 }
 
 output "db_host_ssm_parameter" {
@@ -188,19 +183,9 @@ output "db_host_ssm_parameter" {
   value       = aws_ssm_parameter.db_host.name
 }
 
-output "razorpay_key_id_ssm_parameter" {
-  description = "SSM parameter name for the Razorpay key ID"
-  value       = aws_ssm_parameter.razorpay_key_id.name
-}
-
-output "razorpay_key_secret_ssm_parameter" {
-  description = "SSM parameter name for the Razorpay key secret"
-  value       = aws_ssm_parameter.razorpay_key_secret.name
-}
-
-output "razorpay_webhook_secret_ssm_parameter" {
-  description = "SSM parameter name for the Razorpay webhook secret"
-  value       = aws_ssm_parameter.razorpay_webhook_secret.name
+output "razorpay_secret_arn" {
+  description = "Razorpay credential secret container ARN"
+  value       = aws_secretsmanager_secret.razorpay.arn
 }
 
 output "razorpay_webhook_url" {

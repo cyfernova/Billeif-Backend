@@ -44,6 +44,8 @@ github.com/aws/aws-sdk-go-v2/service/lambda v1.90.3 h1:6W7ioomB49eiBJLHRK4mg9Vsq
 github.com/aws/aws-sdk-go-v2/service/lambda v1.90.3/go.mod h1:LSQ3Y3dkCd0hDGFtb00WUXeMzSOZLGCidlmhwo0DDxo=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.102.2 h1:ie4ElCmUKS26pzrZcIk/lmt4yWjAqLLcawstyQCh298=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.102.2/go.mod h1:zjsomFeX5duj+4PlMB+o4JoWTIx+G0XMyzjYrUbQkN0=
+github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.41.9 h1:2zXcs+s7xDyX+BJ3Fi+V8wl65HvxI/7BPy88MjzomiY=
+github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.41.9/go.mod h1:yZdllS5x966VdYlVsJ3ylucbPILrdhy+pgGbw8Lc9W8=
 github.com/aws/aws-sdk-go-v2/service/ses v1.34.26 h1:WaD/2iAcUU0zzuZ5jsK0ix+U26QncmNUYyuxei8Qqms=
 github.com/aws/aws-sdk-go-v2/service/ses v1.34.26/go.mod h1:VbIJwldMvQppijevATWIxbXYKRQ2ScV/ulHTEXR+LkM=
 github.com/aws/aws-sdk-go-v2/service/signin v1.1.1 h1:1VwbP3qMNfxUDEXWki4rCE5iA+44VA1lokTz9HasGzw=

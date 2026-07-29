@@ -1,11 +1,15 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 )
 
 type LambdaVoiceConfig struct {
@@ -23,18 +27,12 @@ type LambdaVoiceConfig struct {
 	EventTTLSeconds             int
 	MaxOutboundChunkBytes       int
 	ProviderReadyTimeoutSeconds int
+	DeepgramSecretIdentifier    string
+	DeepSeekSecretIdentifier    string
 }
 
 func LoadLambdaVoiceConfig(requireWorkerFunction bool) (*LambdaVoiceConfig, error) {
 	region := requireEnv("AWS_REGION")
-	deepgramAPIKey, err := secretEnvOrSSM("DEEPGRAM_API_KEY", "DEEPGRAM_API_KEY_SSM_PARAM", region)
-	if err != nil {
-		return nil, err
-	}
-	deepSeekAPIKey, err := secretEnvOrSSM("DEEPSEEK_API_KEY", "DEEPSEEK_API_KEY_SSM_PARAM", region)
-	if err != nil {
-		return nil, err
-	}
 	cfg := &LambdaVoiceConfig{
 		Environment: requireEnv("ENVIRONMENT"),
 		LogLevel:    requireEnv("LOG_LEVEL"),
@@ -62,7 +60,7 @@ func LoadLambdaVoiceConfig(requireWorkerFunction bool) (*LambdaVoiceConfig, erro
 			ConnectionsTable: requireEnv("WEBSOCKET_CONNECTIONS_TABLE"),
 		},
 		VoiceRealtime: VoiceRealtimeConfig{
-			DeepgramAPIKey:               deepgramAPIKey,
+			DeepgramAPIKey:               strings.TrimSpace(os.Getenv("DEEPGRAM_API_KEY")),
 			DeepgramVoiceAgentURL:        requireEnv("DEEPGRAM_VOICE_AGENT_URL"),
 			InputEncoding:                requireEnv("DEEPGRAM_VOICE_INPUT_ENCODING"),
 			InputSampleRate:              requirePositiveIntEnv("DEEPGRAM_VOICE_INPUT_SAMPLE_RATE"),
@@ -70,7 +68,7 @@ func LoadLambdaVoiceConfig(requireWorkerFunction bool) (*LambdaVoiceConfig, erro
 			OutputSampleRate:             requirePositiveIntEnv("DEEPGRAM_VOICE_OUTPUT_SAMPLE_RATE"),
 			ListenModel:                  requireEnv("DEEPGRAM_VOICE_LISTEN_MODEL"),
 			SpeakModel:                   requireEnv("DEEPGRAM_VOICE_SPEAK_MODEL"),
-			DeepSeekAPIKey:               deepSeekAPIKey,
+			DeepSeekAPIKey:               strings.TrimSpace(os.Getenv("DEEPSEEK_API_KEY")),
 			DeepSeekBaseURL:              requireEnv("DEEPSEEK_BASE_URL"),
 			DeepSeekModel:                requireEnv("DEEPSEEK_MODEL"),
 			MaxSessionSeconds:            requirePositiveIntEnv("VOICE_WS_MAX_SESSION_SECONDS"),
@@ -92,6 +90,8 @@ func LoadLambdaVoiceConfig(requireWorkerFunction bool) (*LambdaVoiceConfig, erro
 		EventTTLSeconds:             requirePositiveIntEnv("VOICE_WS_EVENT_TTL_SECONDS"),
 		MaxOutboundChunkBytes:       requirePositiveIntEnv("VOICE_WS_MAX_OUTBOUND_CHUNK_BYTES"),
 		ProviderReadyTimeoutSeconds: requirePositiveIntEnv("VOICE_WS_PROVIDER_READY_TIMEOUT_SECONDS"),
+		DeepgramSecretIdentifier:    strings.TrimSpace(os.Getenv("DEEPGRAM_SECRET_ARN")),
+		DeepSeekSecretIdentifier:    strings.TrimSpace(os.Getenv("DEEPSEEK_SECRET_ARN")),
 	}
 
 	if requireWorkerFunction {
@@ -106,19 +106,40 @@ func LoadLambdaVoiceConfig(requireWorkerFunction bool) (*LambdaVoiceConfig, erro
 	return cfg, nil
 }
 
-func secretEnvOrSSM(valueEnv, parameterEnv, region string) (string, error) {
-	if value := strings.TrimSpace(os.Getenv(valueEnv)); value != "" {
-		return value, nil
+func ResolveLambdaVoiceRuntime(ctx context.Context, cfg *LambdaVoiceConfig, client SecretsManagerAPI) error {
+	if cfg == nil {
+		return &ConfigurationError{Resource: "lambda voice config", Reason: "config is required"}
 	}
-	paramName := strings.TrimSpace(os.Getenv(parameterEnv))
-	if paramName == "" {
-		return "", fmt.Errorf("%s or %s is required", valueEnv, parameterEnv)
+	needsDeepgram := strings.TrimSpace(cfg.VoiceRealtime.DeepgramAPIKey) == ""
+	needsDeepSeek := strings.TrimSpace(cfg.VoiceRealtime.DeepSeekAPIKey) == ""
+	if !needsDeepgram && !needsDeepSeek {
+		return cfg.Validate()
 	}
-	value, err := resolveSingleSSMParameter(region, paramName)
+	identifiers := []string{cfg.DeepgramSecretIdentifier, cfg.DeepSeekSecretIdentifier}
+	if client == nil {
+		awsCfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.AWS.Region))
+		if err != nil {
+			return &ResolutionError{Resource: "AWS SDK configuration"}
+		}
+		client = secretsmanager.NewFromConfig(awsCfg)
+	}
+	resolver, err := NewSecretResolver(client, identifiers, 5*time.Minute, time.Now)
 	if err != nil {
-		return "", fmt.Errorf("resolve %s: %w", valueEnv, err)
+		return err
 	}
-	return value, nil
+	if needsDeepgram {
+		cfg.VoiceRealtime.DeepgramAPIKey, err = resolver.JSONField(ctx, cfg.DeepgramSecretIdentifier, "api_key")
+		if err != nil {
+			return err
+		}
+	}
+	if needsDeepSeek {
+		cfg.VoiceRealtime.DeepSeekAPIKey, err = resolver.JSONField(ctx, cfg.DeepSeekSecretIdentifier, "api_key")
+		if err != nil {
+			return err
+		}
+	}
+	return cfg.Validate()
 }
 
 func (c *LambdaVoiceConfig) Validate() error {
@@ -142,7 +163,14 @@ func (c *LambdaVoiceConfig) Validate() error {
 			return fmt.Errorf("%s is required for lambda realtime voice", key)
 		}
 	}
-	if err := c.VoiceRealtime.ValidateForRuntime(); err != nil {
+	voice := c.VoiceRealtime
+	if strings.TrimSpace(voice.DeepgramAPIKey) == "" && strings.TrimSpace(c.DeepgramSecretIdentifier) != "" {
+		voice.DeepgramAPIKey = "configured-by-secret-identifier"
+	}
+	if strings.TrimSpace(voice.DeepSeekAPIKey) == "" && strings.TrimSpace(c.DeepSeekSecretIdentifier) != "" {
+		voice.DeepSeekAPIKey = "configured-by-secret-identifier"
+	}
+	if err := voice.ValidateForRuntime(); err != nil {
 		return err
 	}
 	if strings.TrimSpace(c.MCP.ServerURL) != "" && c.MCP.Timeout <= 0 {

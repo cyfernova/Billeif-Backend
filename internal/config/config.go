@@ -16,6 +16,7 @@ type Config struct {
 	Redis          RedisConfig         `mapstructure:"REDIS"`
 	AWS            AWSConfig           `mapstructure:"AWS"`
 	SSM            SSMConfig           `mapstructure:"SSM"`
+	Secrets        SecretIdentifiers   `mapstructure:"SECRETS"`
 	WebSocket      WebSocketConfig     `mapstructure:"WEBSOCKET"`
 	Cognito        CognitoConfig       `mapstructure:"COGNITO"`
 	JWT            JWTConfig           `mapstructure:"JWT"`
@@ -111,18 +112,23 @@ type WAFConfig struct {
 }
 
 type SSMConfig struct {
-	DatabaseHostParam            string `mapstructure:"DATABASE_HOST_PARAM"`
-	DatabaseUserParam            string `mapstructure:"DATABASE_USER_PARAM"`
-	DatabasePasswordParam        string `mapstructure:"DATABASE_PASSWORD_PARAM"`
-	CredentialEncryptionKeyParam string `mapstructure:"CREDENTIAL_ENCRYPTION_KEY_PARAM"`
-	RazorpayKeyIDParam           string `mapstructure:"RAZORPAY_KEY_ID_PARAM"`
-	RazorpayKeySecretParam       string `mapstructure:"RAZORPAY_KEY_SECRET_PARAM"`
-	RazorpayWebhookSecretParam   string `mapstructure:"RAZORPAY_WEBHOOK_SECRET_PARAM"`
-	LLMAPIKeyParam               string `mapstructure:"LLM_API_KEY_PARAM"`
-	ExaAPIKeyParam               string `mapstructure:"EXA_API_KEY_PARAM"`
-	GSTLookupAPIKeyParam         string `mapstructure:"GST_LOOKUP_API_KEY_PARAM"`
-	DeepgramAPIKeyParam          string `mapstructure:"DEEPGRAM_API_KEY_PARAM"`
-	DeepSeekAPIKeyParam          string `mapstructure:"DEEPSEEK_API_KEY_PARAM"`
+	DatabaseHostParam string `mapstructure:"DATABASE_HOST_PARAM"`
+}
+
+type SecretIdentifiers struct {
+	Database             string `mapstructure:"DATABASE"`
+	CredentialEncryption string `mapstructure:"CREDENTIAL_ENCRYPTION"`
+	Razorpay             string `mapstructure:"RAZORPAY"`
+	LegacyJWT            string `mapstructure:"LEGACY_JWT"`
+	GoogleOAuth          string `mapstructure:"GOOGLE_OAUTH"`
+	FCM                  string `mapstructure:"FCM"`
+	APNS                 string `mapstructure:"APNS"`
+	LLM                  string `mapstructure:"LLM"`
+	Exa                  string `mapstructure:"EXA"`
+	GSTLookup            string `mapstructure:"GST_LOOKUP"`
+	GSTProvider          string `mapstructure:"GST_PROVIDER"`
+	Deepgram             string `mapstructure:"DEEPGRAM"`
+	DeepSeek             string `mapstructure:"DEEPSEEK"`
 }
 
 type WebSocketConfig struct {
@@ -295,17 +301,19 @@ func Load() (*Config, error) {
 	_ = viper.BindEnv("AWS.WAF.BLOCKED_RESPONSE", "WAF_BLOCKED_RESPONSE")
 	_ = viper.BindEnv("AWS.WAF.HEADER_MATCH_COUNT", "WAF_HEADER_MATCH_COUNT")
 	_ = viper.BindEnv("SSM.DATABASE_HOST_PARAM", "DATABASE_HOST_SSM_PARAM")
-	_ = viper.BindEnv("SSM.DATABASE_USER_PARAM", "DATABASE_USER_SSM_PARAM")
-	_ = viper.BindEnv("SSM.DATABASE_PASSWORD_PARAM", "DATABASE_PASSWORD_SSM_PARAM")
-	_ = viper.BindEnv("SSM.CREDENTIAL_ENCRYPTION_KEY_PARAM", "CREDENTIAL_ENCRYPTION_KEY_SSM_PARAM")
-	_ = viper.BindEnv("SSM.RAZORPAY_KEY_ID_PARAM", "RAZORPAY_KEY_ID_SSM_PARAM")
-	_ = viper.BindEnv("SSM.RAZORPAY_KEY_SECRET_PARAM", "RAZORPAY_KEY_SECRET_SSM_PARAM")
-	_ = viper.BindEnv("SSM.RAZORPAY_WEBHOOK_SECRET_PARAM", "RAZORPAY_WEBHOOK_SECRET_SSM_PARAM")
-	_ = viper.BindEnv("SSM.LLM_API_KEY_PARAM", "LLM_API_KEY_SSM_PARAM")
-	_ = viper.BindEnv("SSM.EXA_API_KEY_PARAM", "EXA_API_KEY_SSM_PARAM")
-	_ = viper.BindEnv("SSM.GST_LOOKUP_API_KEY_PARAM", "GST_LOOKUP_API_KEY_SSM_PARAM")
-	_ = viper.BindEnv("SSM.DEEPGRAM_API_KEY_PARAM", "DEEPGRAM_API_KEY_SSM_PARAM")
-	_ = viper.BindEnv("SSM.DEEPSEEK_API_KEY_PARAM", "DEEPSEEK_API_KEY_SSM_PARAM")
+	_ = viper.BindEnv("SECRETS.DATABASE", "DATABASE_SECRET_ARN")
+	_ = viper.BindEnv("SECRETS.CREDENTIAL_ENCRYPTION", "CREDENTIAL_ENCRYPTION_SECRET_ARN")
+	_ = viper.BindEnv("SECRETS.RAZORPAY", "RAZORPAY_SECRET_ARN")
+	_ = viper.BindEnv("SECRETS.LEGACY_JWT", "LEGACY_JWT_SECRET_ARN")
+	_ = viper.BindEnv("SECRETS.GOOGLE_OAUTH", "GOOGLE_OAUTH_SECRET_ARN")
+	_ = viper.BindEnv("SECRETS.FCM", "FCM_SECRET_ARN")
+	_ = viper.BindEnv("SECRETS.APNS", "APNS_SECRET_ARN")
+	_ = viper.BindEnv("SECRETS.LLM", "LLM_SECRET_ARN")
+	_ = viper.BindEnv("SECRETS.EXA", "EXA_SECRET_ARN")
+	_ = viper.BindEnv("SECRETS.GST_LOOKUP", "GST_LOOKUP_SECRET_ARN")
+	_ = viper.BindEnv("SECRETS.GST_PROVIDER", "GST_PROVIDER_SECRET_ARN")
+	_ = viper.BindEnv("SECRETS.DEEPGRAM", "DEEPGRAM_SECRET_ARN")
+	_ = viper.BindEnv("SECRETS.DEEPSEEK", "DEEPSEEK_SECRET_ARN")
 	_ = viper.BindEnv("WEBSOCKET.API_ENDPOINT", "WEBSOCKET_API_ENDPOINT")
 	_ = viper.BindEnv("WEBSOCKET.CONNECTIONS_TABLE", "WEBSOCKET_CONNECTIONS_TABLE")
 	_ = viper.BindEnv("COGNITO.USER_POOL_ID", "COGNITO_USER_POOL_ID")
@@ -421,10 +429,6 @@ func Load() (*Config, error) {
 		cfg.AllowedOrigins = parseAllowedOrigins(rawAllowedOrigins)
 	}
 
-	if err := resolveSSMParameters(&cfg); err != nil {
-		return nil, fmt.Errorf("failed to resolve SSM parameters: %w", err)
-	}
-
 	if err := validate(&cfg); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
 	}
@@ -457,17 +461,19 @@ func applyFlatEnvFileFallbacks(cfg *Config) {
 	setIfEmpty(&cfg.AWS.Endpoint, "AWS_ENDPOINT")
 
 	setIfEmpty(&cfg.SSM.DatabaseHostParam, "DATABASE_HOST_SSM_PARAM")
-	setIfEmpty(&cfg.SSM.DatabaseUserParam, "DATABASE_USER_SSM_PARAM")
-	setIfEmpty(&cfg.SSM.DatabasePasswordParam, "DATABASE_PASSWORD_SSM_PARAM")
-	setIfEmpty(&cfg.SSM.CredentialEncryptionKeyParam, "CREDENTIAL_ENCRYPTION_KEY_SSM_PARAM")
-	setIfEmpty(&cfg.SSM.RazorpayKeyIDParam, "RAZORPAY_KEY_ID_SSM_PARAM")
-	setIfEmpty(&cfg.SSM.RazorpayKeySecretParam, "RAZORPAY_KEY_SECRET_SSM_PARAM")
-	setIfEmpty(&cfg.SSM.RazorpayWebhookSecretParam, "RAZORPAY_WEBHOOK_SECRET_SSM_PARAM")
-	setIfEmpty(&cfg.SSM.LLMAPIKeyParam, "LLM_API_KEY_SSM_PARAM")
-	setIfEmpty(&cfg.SSM.ExaAPIKeyParam, "EXA_API_KEY_SSM_PARAM")
-	setIfEmpty(&cfg.SSM.GSTLookupAPIKeyParam, "GST_LOOKUP_API_KEY_SSM_PARAM")
-	setIfEmpty(&cfg.SSM.DeepgramAPIKeyParam, "DEEPGRAM_API_KEY_SSM_PARAM")
-	setIfEmpty(&cfg.SSM.DeepSeekAPIKeyParam, "DEEPSEEK_API_KEY_SSM_PARAM")
+	setIfEmpty(&cfg.Secrets.Database, "DATABASE_SECRET_ARN")
+	setIfEmpty(&cfg.Secrets.CredentialEncryption, "CREDENTIAL_ENCRYPTION_SECRET_ARN")
+	setIfEmpty(&cfg.Secrets.Razorpay, "RAZORPAY_SECRET_ARN")
+	setIfEmpty(&cfg.Secrets.LegacyJWT, "LEGACY_JWT_SECRET_ARN")
+	setIfEmpty(&cfg.Secrets.GoogleOAuth, "GOOGLE_OAUTH_SECRET_ARN")
+	setIfEmpty(&cfg.Secrets.FCM, "FCM_SECRET_ARN")
+	setIfEmpty(&cfg.Secrets.APNS, "APNS_SECRET_ARN")
+	setIfEmpty(&cfg.Secrets.LLM, "LLM_SECRET_ARN")
+	setIfEmpty(&cfg.Secrets.Exa, "EXA_SECRET_ARN")
+	setIfEmpty(&cfg.Secrets.GSTLookup, "GST_LOOKUP_SECRET_ARN")
+	setIfEmpty(&cfg.Secrets.GSTProvider, "GST_PROVIDER_SECRET_ARN")
+	setIfEmpty(&cfg.Secrets.Deepgram, "DEEPGRAM_SECRET_ARN")
+	setIfEmpty(&cfg.Secrets.DeepSeek, "DEEPSEEK_SECRET_ARN")
 
 	setIfEmpty(&cfg.Cognito.UserPoolID, "COGNITO_USER_POOL_ID")
 	setIfEmpty(&cfg.Cognito.ClientID, "COGNITO_CLIENT_ID")

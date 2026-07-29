@@ -2,6 +2,19 @@ data "aws_caller_identity" "current" {}
 
 data "aws_partition" "current" {}
 
+locals {
+  application_runtime_secret_arns = [
+    aws_db_instance.main.master_user_secret[0].secret_arn,
+    aws_secretsmanager_secret.credential_encryption.arn,
+    aws_secretsmanager_secret.razorpay.arn,
+    aws_secretsmanager_secret.llm.arn,
+    aws_secretsmanager_secret.exa.arn,
+    aws_secretsmanager_secret.gst_lookup.arn,
+    aws_secretsmanager_secret.deepgram.arn,
+    aws_secretsmanager_secret.deepseek.arn
+  ]
+}
+
 data "aws_iam_policy_document" "lambda_assume_role" {
   statement {
     effect  = "Allow"
@@ -211,26 +224,48 @@ data "aws_iam_policy_document" "lambda_app" {
   }
 
   statement {
-    sid    = "SSMAccess"
+    sid       = "SSMAccess"
+    effect    = "Allow"
+    actions   = ["ssm:GetParameters"]
+    resources = [local.db_host_ssm_parameter_arn]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["true"]
+    }
+  }
+
+  statement {
+    sid    = "SecretsManagerAccess"
     effect = "Allow"
     actions = [
-      "ssm:GetParameter",
-      "ssm:GetParameters"
+      "secretsmanager:DescribeSecret",
+      "secretsmanager:GetSecretValue"
     ]
-    resources = [
-      local.db_username_ssm_parameter_arn,
-      local.db_password_ssm_parameter_arn,
-      local.db_host_ssm_parameter_arn,
-      local.razorpay_key_id_ssm_parameter_arn,
-      local.razorpay_key_secret_ssm_parameter_arn,
-      local.razorpay_webhook_secret_ssm_parameter_arn,
-      local.credential_encryption_key_ssm_parameter_arn,
-      local.llm_api_key_ssm_parameter_arn,
-      local.exa_api_key_ssm_parameter_arn,
-      local.gst_lookup_api_key_ssm_parameter_arn,
-      local.deepgram_api_key_ssm_parameter_arn,
-      local.deepseek_api_key_ssm_parameter_arn
+    resources = local.application_runtime_secret_arns
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["true"]
+    }
+  }
+
+  statement {
+    sid    = "ApplicationSecretsKMSDecrypt"
+    effect = "Allow"
+    actions = [
+      "kms:Decrypt",
+      "kms:DescribeKey"
     ]
+    resources = [aws_kms_key.application_secrets.arn]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["true"]
+    }
   }
 
   statement {
@@ -300,26 +335,48 @@ data "aws_iam_policy_document" "lambda_worker_app" {
   }
 
   statement {
-    sid    = "WorkerParameters"
+    sid       = "WorkerParameters"
+    effect    = "Allow"
+    actions   = ["ssm:GetParameters"]
+    resources = [local.db_host_ssm_parameter_arn]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["true"]
+    }
+  }
+
+  statement {
+    sid    = "WorkerSecrets"
     effect = "Allow"
     actions = [
-      "ssm:GetParameter",
-      "ssm:GetParameters"
+      "secretsmanager:DescribeSecret",
+      "secretsmanager:GetSecretValue"
     ]
-    resources = [
-      local.db_username_ssm_parameter_arn,
-      local.db_password_ssm_parameter_arn,
-      local.db_host_ssm_parameter_arn,
-      local.razorpay_key_id_ssm_parameter_arn,
-      local.razorpay_key_secret_ssm_parameter_arn,
-      local.razorpay_webhook_secret_ssm_parameter_arn,
-      local.credential_encryption_key_ssm_parameter_arn,
-      local.llm_api_key_ssm_parameter_arn,
-      local.exa_api_key_ssm_parameter_arn,
-      local.gst_lookup_api_key_ssm_parameter_arn,
-      local.deepgram_api_key_ssm_parameter_arn,
-      local.deepseek_api_key_ssm_parameter_arn
+    resources = local.application_runtime_secret_arns
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["true"]
+    }
+  }
+
+  statement {
+    sid    = "WorkerSecretsKMS"
+    effect = "Allow"
+    actions = [
+      "kms:Decrypt",
+      "kms:DescribeKey"
     ]
+    resources = [aws_kms_key.application_secrets.arn]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["true"]
+    }
   }
 
   statement {
@@ -337,6 +394,51 @@ resource "aws_iam_role_policy" "lambda_worker_app" {
 }
 
 data "aws_iam_policy_document" "lambda_websocket_app" {
+  statement {
+    sid       = "WebSocketParameters"
+    effect    = "Allow"
+    actions   = ["ssm:GetParameters"]
+    resources = [local.db_host_ssm_parameter_arn]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["true"]
+    }
+  }
+
+  statement {
+    sid    = "WebSocketSecrets"
+    effect = "Allow"
+    actions = [
+      "secretsmanager:DescribeSecret",
+      "secretsmanager:GetSecretValue"
+    ]
+    resources = local.application_runtime_secret_arns
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["true"]
+    }
+  }
+
+  statement {
+    sid    = "WebSocketSecretsKMS"
+    effect = "Allow"
+    actions = [
+      "kms:Decrypt",
+      "kms:DescribeKey"
+    ]
+    resources = [aws_kms_key.application_secrets.arn]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["true"]
+    }
+  }
+
   statement {
     sid    = "WebSocketTables"
     effect = "Allow"
@@ -378,10 +480,38 @@ resource "aws_iam_role_policy" "lambda_websocket_app" {
 
 data "aws_iam_policy_document" "lambda_voice_app" {
   statement {
-    sid       = "VoiceProviderParameters"
-    effect    = "Allow"
-    actions   = ["ssm:GetParameter"]
-    resources = [local.deepgram_api_key_ssm_parameter_arn, local.deepseek_api_key_ssm_parameter_arn]
+    sid    = "VoiceProviderSecrets"
+    effect = "Allow"
+    actions = [
+      "secretsmanager:DescribeSecret",
+      "secretsmanager:GetSecretValue"
+    ]
+    resources = [
+      aws_secretsmanager_secret.deepgram.arn,
+      aws_secretsmanager_secret.deepseek.arn
+    ]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["true"]
+    }
+  }
+
+  statement {
+    sid    = "VoiceProviderSecretsKMS"
+    effect = "Allow"
+    actions = [
+      "kms:Decrypt",
+      "kms:DescribeKey"
+    ]
+    resources = [aws_kms_key.application_secrets.arn]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["true"]
+    }
   }
 
   statement {

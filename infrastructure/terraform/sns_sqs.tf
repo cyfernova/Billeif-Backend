@@ -15,35 +15,6 @@ resource "aws_sns_topic" "workflow_notifications" {
   }
 }
 
-# Mobile Push Notifications - FCM (Android)
-# Note: FCM API Key should be stored in AWS Secrets Manager for production
-resource "aws_sns_platform_application" "fcm" {
-  count = var.fcm_api_key != "" ? 1 : 0
-
-  name                = "invoice-backend-fcm"
-  platform            = "GCM"
-  platform_credential = var.fcm_api_key
-
-  success_feedback_role_arn    = aws_iam_role.sns_feedback.arn
-  failure_feedback_role_arn    = aws_iam_role.sns_feedback.arn
-  success_feedback_sample_rate = 100
-}
-
-# Mobile Push Notifications - APNs (iOS)
-# Note: APNs credentials should be stored in AWS Secrets Manager for production
-resource "aws_sns_platform_application" "apns" {
-  count = var.apns_private_key != "" && var.apns_certificate != "" ? 1 : 0
-
-  name                = "invoice-backend-apns"
-  platform            = var.apns_sandbox ? "APNS_SANDBOX" : "APNS"
-  platform_credential = var.apns_private_key
-  platform_principal  = var.apns_certificate
-
-  success_feedback_role_arn    = aws_iam_role.sns_feedback.arn
-  failure_feedback_role_arn    = aws_iam_role.sns_feedback.arn
-  success_feedback_sample_rate = 100
-}
-
 # IAM Role for SNS Feedback Logging
 resource "aws_iam_role" "sns_feedback" {
   name = "invoice-backend-sns-feedback"

@@ -119,49 +119,6 @@ variable "db_username" {
   sensitive   = true
 }
 
-variable "db_password" {
-  description = "Database master password (fetched from SSM at runtime)"
-  type        = string
-  sensitive   = true
-
-  validation {
-    condition     = can(regex("^[\\x21-\\x7E]+$", var.db_password)) && length(var.db_password) >= 20 && length(regexall("[/@\"]", var.db_password)) == 0 && !contains(["changeme", "password", "password123"], lower(var.db_password))
-    error_message = "db_password must use printable ASCII without spaces and cannot contain '/', '@', or '\"'."
-  }
-}
-
-variable "credential_encryption_key" {
-  description = "Base64-encoded 32-byte key used for application credential encryption"
-  type        = string
-  sensitive   = true
-
-  validation {
-    condition     = can(regex("^[A-Za-z0-9+/]{43}=$", var.credential_encryption_key))
-    error_message = "credential_encryption_key must be a base64-encoded 32-byte key."
-  }
-}
-
-variable "razorpay_key_id" {
-  description = "Razorpay test/live key ID stored as an SSM SecureString"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "razorpay_key_secret" {
-  description = "Razorpay test/live key secret stored as an SSM SecureString"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "razorpay_webhook_secret" {
-  description = "Razorpay webhook signing secret stored as an SSM SecureString"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
 # Lambda Artifacts
 variable "lambda_artifact_dir" {
   description = "Directory containing built lambda zip artifacts"
@@ -192,39 +149,6 @@ variable "log_retention_days" {
   description = "Number of days to retain CloudWatch logs"
   type        = number
   default     = 14
-}
-
-# Application Secrets
-variable "jwt_secret" {
-  description = "JWT secret for compatibility with legacy integrations"
-  type        = string
-  sensitive   = true
-
-  validation {
-    condition     = length(var.jwt_secret) >= 32 && !can(regex("(?i)^(change[-_ ]?me|changeme|secret)$", var.jwt_secret))
-    error_message = "jwt_secret must be explicitly provided and at least 32 characters."
-  }
-}
-
-# Cognito/OIDC
-variable "google_oauth_secret_name" {
-  description = "AWS Secrets Manager secret name containing Google OAuth credentials as JSON with client_id and client_secret"
-  type        = string
-  default     = ""
-}
-
-variable "google_client_id" {
-  description = "Legacy Google OAuth Client ID override. Prefer google_oauth_secret_name backed by AWS Secrets Manager."
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "google_client_secret" {
-  description = "Legacy Google OAuth Client Secret override. Prefer google_oauth_secret_name backed by AWS Secrets Manager."
-  type        = string
-  sensitive   = true
-  default     = ""
 }
 
 variable "cognito_domain_prefix" {
@@ -310,42 +234,7 @@ variable "websocket_connections_table" {
   default     = "invoice-backend-ws-connections"
 }
 
-# Mobile Push Notification Configuration
-variable "fcm_api_key" {
-  description = "Firebase Cloud Messaging (FCM) API Key for Android push notifications"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "apns_sandbox" {
-  description = "Whether to use APNs sandbox"
-  type        = bool
-  default     = true
-}
-
-variable "apns_private_key" {
-  description = "Apple Push Notification service (APNs) private key content"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "apns_certificate" {
-  description = "Apple Push Notification service (APNs) certificate content"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
 # LLM Configuration
-variable "llm_api_key" {
-  description = "API key for the configured LLM provider"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
 variable "llm_api_url" {
   description = "Chat completions API URL for the configured LLM provider"
   type        = string
@@ -376,13 +265,6 @@ variable "llm_model" {
   }
 }
 
-variable "exa_api_key" {
-  description = "Exa API key for LLM web search"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
 variable "exa_base_url" {
   description = "Exa search API URL"
   type        = string
@@ -400,13 +282,6 @@ variable "exa_timeout" {
   default     = 12
 }
 
-variable "gst_lookup_api_key" {
-  description = "GSTINCheck API key for GSTIN lookup"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
 variable "gst_lookup_base_url" {
   description = "GSTIN lookup endpoint template. Supports {api_key} and {gstin} placeholders."
   type        = string
@@ -417,12 +292,6 @@ variable "gst_lookup_timeout" {
   description = "GSTIN lookup HTTP timeout in seconds"
   type        = number
   default     = 15
-}
-
-variable "deepgram_api_key" {
-  description = "Deepgram API key for realtime voice"
-  type        = string
-  sensitive   = true
 }
 
 variable "deepgram_voice_agent_url" {
@@ -465,12 +334,6 @@ variable "deepgram_voice_output_sample_rate" {
   description = "Realtime voice output sample rate"
   type        = number
   default     = 24000
-}
-
-variable "deepseek_api_key" {
-  description = "DeepSeek API key for Deepgram Voice Agent OpenAI-compatible LLM calls"
-  type        = string
-  sensitive   = true
 }
 
 variable "deepseek_base_url" {

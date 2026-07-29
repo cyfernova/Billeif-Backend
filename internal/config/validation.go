@@ -15,13 +15,13 @@ func validate(cfg *Config) error {
 		return err
 	}
 
-	if cfg.Database.Host == "" {
+	if cfg.Database.Host == "" && cfg.SSM.DatabaseHostParam == "" {
 		return fmt.Errorf("DATABASE_HOST is required")
 	}
-	if cfg.Database.User == "" {
+	if cfg.Database.User == "" && cfg.Secrets.Database == "" {
 		return fmt.Errorf("DATABASE_USER is required")
 	}
-	if cfg.Database.Password == "" {
+	if cfg.Database.Password == "" && cfg.Secrets.Database == "" {
 		return fmt.Errorf("DATABASE_PASSWORD is required")
 	}
 	if cfg.Database.Name == "" {
@@ -65,7 +65,7 @@ func validate(cfg *Config) error {
 	if cfg.SQS.PaymentQueue == "" {
 		return fmt.Errorf("SQS_PAYMENT_QUEUE is required")
 	}
-	if strings.TrimSpace(cfg.LLM.APIKey) == "" {
+	if strings.TrimSpace(cfg.LLM.APIKey) == "" && strings.TrimSpace(cfg.Secrets.LLM) == "" {
 		return fmt.Errorf("LLM_API_KEY is required")
 	}
 	if strings.TrimSpace(cfg.LLM.APIURL) == "" {
@@ -84,15 +84,17 @@ func validate(cfg *Config) error {
 	if isPlaceholderLLMValue(cfg.LLM.Model) {
 		return fmt.Errorf("LLM_MODEL cannot be a placeholder value")
 	}
-	if cfg.Credentials.EncryptionKey == "" {
+	if cfg.Credentials.EncryptionKey == "" && cfg.Secrets.CredentialEncryption == "" {
 		return fmt.Errorf("CREDENTIAL_ENCRYPTION_KEY is required")
 	}
-	key, err := base64.StdEncoding.DecodeString(cfg.Credentials.EncryptionKey)
-	if err != nil {
-		return fmt.Errorf("CREDENTIAL_ENCRYPTION_KEY must be base64 encoded: %w", err)
-	}
-	if len(key) != 32 {
-		return fmt.Errorf("CREDENTIAL_ENCRYPTION_KEY must decode to exactly 32 bytes")
+	if cfg.Credentials.EncryptionKey != "" {
+		key, err := base64.StdEncoding.DecodeString(cfg.Credentials.EncryptionKey)
+		if err != nil {
+			return fmt.Errorf("CREDENTIAL_ENCRYPTION_KEY must be base64 encoded: %w", err)
+		}
+		if len(key) != 32 {
+			return fmt.Errorf("CREDENTIAL_ENCRYPTION_KEY must decode to exactly 32 bytes")
+		}
 	}
 
 	if cfg.Cognito.Phone.UserPoolID != "" || cfg.Cognito.Phone.ClientID != "" || cfg.Cognito.Phone.Region != "" {
@@ -130,13 +132,13 @@ func validate(cfg *Config) error {
 		if strings.TrimSpace(cfg.Cognito.Domain) == "" {
 			return fmt.Errorf("COGNITO_DOMAIN is required in production")
 		}
-		if strings.TrimSpace(cfg.Razorpay.KeyID) == "" {
+		if strings.TrimSpace(cfg.Razorpay.KeyID) == "" && strings.TrimSpace(cfg.Secrets.Razorpay) == "" {
 			return fmt.Errorf("RAZORPAY_KEY_ID is required in production")
 		}
-		if strings.TrimSpace(cfg.Razorpay.KeySecret) == "" {
+		if strings.TrimSpace(cfg.Razorpay.KeySecret) == "" && strings.TrimSpace(cfg.Secrets.Razorpay) == "" {
 			return fmt.Errorf("RAZORPAY_KEY_SECRET is required in production")
 		}
-		if strings.TrimSpace(cfg.Razorpay.WebhookSecret) == "" {
+		if strings.TrimSpace(cfg.Razorpay.WebhookSecret) == "" && strings.TrimSpace(cfg.Secrets.Razorpay) == "" {
 			return fmt.Errorf("RAZORPAY_WEBHOOK_SECRET is required in production")
 		}
 		if cfg.MCP.ServerURL != "" {

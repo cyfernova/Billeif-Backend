@@ -2,103 +2,117 @@ package config
 
 import (
 	"context"
-	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 )
 
-func resolveSSMParameters(cfg *Config) error {
-	if cfg == nil {
-		return fmt.Errorf("config is nil")
-	}
+const maxSSMBatchSize = 10
 
-	paramTargets := map[string]*string{
-		cfg.SSM.DatabaseHostParam:            &cfg.Database.Host,
-		cfg.SSM.DatabaseUserParam:            &cfg.Database.User,
-		cfg.SSM.DatabasePasswordParam:        &cfg.Database.Password,
-		cfg.SSM.CredentialEncryptionKeyParam: &cfg.Credentials.EncryptionKey,
-		cfg.SSM.RazorpayKeyIDParam:           &cfg.Razorpay.KeyID,
-		cfg.SSM.RazorpayKeySecretParam:       &cfg.Razorpay.KeySecret,
-		cfg.SSM.RazorpayWebhookSecretParam:   &cfg.Razorpay.WebhookSecret,
-		cfg.SSM.LLMAPIKeyParam:               &cfg.LLM.APIKey,
-		cfg.SSM.ExaAPIKeyParam:               &cfg.LLM.ExaAPIKey,
-		cfg.SSM.GSTLookupAPIKeyParam:         &cfg.GSTLookup.APIKey,
-		cfg.SSM.DeepgramAPIKeyParam:          &cfg.Deepgram.APIKey,
-		cfg.SSM.DeepSeekAPIKeyParam:          &cfg.VoiceRealtime.DeepSeekAPIKey,
-	}
-
-	hasParams := false
-	for name, target := range paramTargets {
-		if name != "" && (target == nil || strings.TrimSpace(*target) == "") {
-			hasParams = true
-			break
-		}
-	}
-	if !hasParams {
-		return nil
-	}
-
-	loaders := []func(*config.LoadOptions) error{
-		config.WithRegion(cfg.AWS.Region),
-	}
-	if cfg.AWS.AccessKey != "" && cfg.AWS.SecretKey != "" {
-		loaders = append(loaders, config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
-			cfg.AWS.AccessKey,
-			cfg.AWS.SecretKey,
-			cfg.AWS.SessionToken,
-		)))
-	}
-
-	awsCfg, err := config.LoadDefaultConfig(context.Background(), loaders...)
-	if err != nil {
-		return fmt.Errorf("load aws config for ssm: %w", err)
-	}
-
-	client := ssm.NewFromConfig(awsCfg)
-	for paramName, target := range paramTargets {
-		if paramName == "" {
-			continue
-		}
-		if target != nil && strings.TrimSpace(*target) != "" {
-			continue
-		}
-
-		out, err := client.GetParameter(context.Background(), &ssm.GetParameterInput{
-			Name:           &paramName,
-			WithDecryption: aws.Bool(true),
-		})
-		if err != nil {
-			return fmt.Errorf("get SSM parameter %s: %w", paramName, err)
-		}
-		if out.Parameter != nil && out.Parameter.Value != nil {
-			*target = *out.Parameter.Value
-		}
-	}
-
-	return nil
+type SSMAPI interface {
+	GetParameters(context.Context, *ssm.GetParametersInput, ...func(*ssm.Options)) (*ssm.GetParametersOutput, error)
 }
 
-func resolveSingleSSMParameter(region, paramName string) (string, error) {
-	if strings.TrimSpace(paramName) == "" {
-		return "", fmt.Errorf("SSM parameter name is required")
+type ssmCacheEntry struct {
+	value     string
+	expiresAt time.Time
+}
+
+type SSMResolver struct {
+	client  SSMAPI
+	allowed map[string]struct{}
+	ttl     time.Duration
+	now     func() time.Time
+
+	mu    sync.Mutex
+	cache map[string]ssmCacheEntry
+}
+
+func NewSSMResolver(client SSMAPI, names []string, ttl time.Duration, now func() time.Time) (*SSMResolver, error) {
+	if client == nil {
+		return nil, &ConfigurationError{Resource: "SSM", Reason: "client is required"}
 	}
-	awsCfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(region))
-	if err != nil {
-		return "", fmt.Errorf("load aws config for ssm: %w", err)
+	if ttl <= 0 {
+		return nil, &ConfigurationError{Resource: "SSM cache", Reason: "TTL must be positive"}
 	}
-	out, err := ssm.NewFromConfig(awsCfg).GetParameter(context.Background(), &ssm.GetParameterInput{
-		Name:           &paramName,
-		WithDecryption: aws.Bool(true),
-	})
-	if err != nil {
-		return "", fmt.Errorf("get SSM parameter %s: %w", paramName, err)
+	if ttl > maxResolverTTL {
+		ttl = maxResolverTTL
 	}
-	if out.Parameter == nil || out.Parameter.Value == nil || strings.TrimSpace(*out.Parameter.Value) == "" {
-		return "", fmt.Errorf("SSM parameter %s is empty", paramName)
+	if now == nil {
+		now = time.Now
 	}
-	return strings.TrimSpace(*out.Parameter.Value), nil
+	allowed := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			allowed[name] = struct{}{}
+		}
+	}
+	return &SSMResolver{
+		client:  client,
+		allowed: allowed,
+		ttl:     ttl,
+		now:     now,
+		cache:   make(map[string]ssmCacheEntry),
+	}, nil
+}
+
+func (r *SSMResolver) Get(ctx context.Context, names []string) (map[string]string, error) {
+	normalized := make([]string, 0, len(names))
+	seen := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if _, ok := r.allowed[name]; !ok || name == "" {
+			return nil, &ConfigurationError{Resource: "SSM parameter identifier", Reason: "identifier is not configured"}
+		}
+		if _, ok := seen[name]; !ok {
+			seen[name] = struct{}{}
+			normalized = append(normalized, name)
+		}
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := r.now()
+	result := make(map[string]string, len(normalized))
+	missing := make([]string, 0, len(normalized))
+	for _, name := range normalized {
+		if cached, ok := r.cache[name]; ok && now.Before(cached.expiresAt) {
+			result[name] = cached.value
+		} else {
+			missing = append(missing, name)
+		}
+	}
+
+	for start := 0; start < len(missing); start += maxSSMBatchSize {
+		end := min(start+maxSSMBatchSize, len(missing))
+		batch := missing[start:end]
+		out, err := r.client.GetParameters(ctx, &ssm.GetParametersInput{
+			Names:          batch,
+			WithDecryption: aws.Bool(false),
+		})
+		if err != nil {
+			return nil, &ResolutionError{Resource: "configured SSM parameters"}
+		}
+		if out == nil || len(out.InvalidParameters) != 0 {
+			return nil, &ConfigurationError{Resource: "configured SSM parameters", Reason: "one or more parameters are missing"}
+		}
+		for _, parameter := range out.Parameters {
+			if parameter.Name == nil || parameter.Value == nil {
+				continue
+			}
+			r.cache[*parameter.Name] = ssmCacheEntry{value: *parameter.Value, expiresAt: now.Add(r.ttl)}
+			result[*parameter.Name] = *parameter.Value
+		}
+	}
+
+	for _, name := range normalized {
+		if _, ok := result[name]; !ok {
+			return nil, &ConfigurationError{Resource: "configured SSM parameters", Reason: "one or more parameters returned no value"}
+		}
+	}
+	return result, nil
 }
