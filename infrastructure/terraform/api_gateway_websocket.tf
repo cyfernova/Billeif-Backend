@@ -1,5 +1,5 @@
 resource "aws_apigatewayv2_api" "websocket" {
-  name                       = "${var.project_name}-websocket"
+  name                       = "${local.resource_prefix}-websocket"
   protocol_type              = "WEBSOCKET"
   route_selection_expression = "$request.body.action"
 }
@@ -69,7 +69,7 @@ resource "aws_apigatewayv2_deployment" "websocket" {
 }
 
 resource "aws_cloudwatch_log_group" "websocket_api_access" {
-  name              = "/aws/apigateway/${var.project_name}-websocket"
+  name              = "/aws/apigateway/${local.resource_prefix}-websocket"
   retention_in_days = var.log_retention_days
 }
 

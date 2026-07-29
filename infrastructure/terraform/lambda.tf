@@ -122,42 +122,42 @@ locals {
 }
 
 resource "aws_cloudwatch_log_group" "lambda_api_http" {
-  name              = "/aws/lambda/${var.project_name}-api-http"
+  name              = "/aws/lambda/${local.resource_prefix}-api-http"
   retention_in_days = var.log_retention_days
 }
 
 resource "aws_cloudwatch_log_group" "lambda_a2a_stream" {
-  name              = "/aws/lambda/${var.project_name}-a2a-stream"
+  name              = "/aws/lambda/${local.resource_prefix}-a2a-stream"
   retention_in_days = var.log_retention_days
 }
 
 resource "aws_cloudwatch_log_group" "lambda_sqs_invoice" {
-  name              = "/aws/lambda/${var.project_name}-sqs-invoice"
+  name              = "/aws/lambda/${local.resource_prefix}-sqs-invoice"
   retention_in_days = var.log_retention_days
 }
 
 resource "aws_cloudwatch_log_group" "lambda_sqs_payment" {
-  name              = "/aws/lambda/${var.project_name}-sqs-payment"
+  name              = "/aws/lambda/${local.resource_prefix}-sqs-payment"
   retention_in_days = var.log_retention_days
 }
 
 resource "aws_cloudwatch_log_group" "lambda_sqs_gst" {
-  name              = "/aws/lambda/${var.project_name}-sqs-gst"
+  name              = "/aws/lambda/${local.resource_prefix}-sqs-gst"
   retention_in_days = var.log_retention_days
 }
 
 resource "aws_cloudwatch_log_group" "lambda_ws_handler" {
-  name              = "/aws/lambda/${var.project_name}-ws-handler"
+  name              = "/aws/lambda/${local.resource_prefix}-ws-handler"
   retention_in_days = var.log_retention_days
 }
 
 resource "aws_cloudwatch_log_group" "lambda_voice_session" {
-  name              = "/aws/lambda/${var.voice_session_lambda_function_name}"
+  name              = "/aws/lambda/${local.voice_session_lambda_name}"
   retention_in_days = var.log_retention_days
 }
 
 resource "aws_lambda_function" "api_http" {
-  function_name     = "${var.project_name}-api-http"
+  function_name     = "${local.resource_prefix}-api-http"
   role              = aws_iam_role.lambda_exec.arn
   runtime           = "provided.al2023"
   handler           = "bootstrap"
@@ -194,7 +194,7 @@ resource "aws_lambda_function" "api_http" {
 }
 
 resource "aws_lambda_function" "a2a_stream" {
-  function_name    = "${var.project_name}-a2a-stream"
+  function_name    = "${local.resource_prefix}-a2a-stream"
   role             = aws_iam_role.lambda_exec.arn
   runtime          = "provided.al2023"
   handler          = "bootstrap"
@@ -229,7 +229,7 @@ resource "aws_lambda_function" "a2a_stream" {
 }
 
 resource "aws_lambda_function" "sqs_invoice" {
-  function_name    = "${var.project_name}-sqs-invoice"
+  function_name    = "${local.resource_prefix}-sqs-invoice"
   role             = aws_iam_role.lambda_worker_exec["invoice"].arn
   runtime          = "provided.al2023"
   handler          = "bootstrap"
@@ -263,7 +263,7 @@ resource "aws_lambda_function" "sqs_invoice" {
 }
 
 resource "aws_lambda_function" "sqs_payment" {
-  function_name    = "${var.project_name}-sqs-payment"
+  function_name    = "${local.resource_prefix}-sqs-payment"
   role             = aws_iam_role.lambda_worker_exec["payment"].arn
   runtime          = "provided.al2023"
   handler          = "bootstrap"
@@ -297,7 +297,7 @@ resource "aws_lambda_function" "sqs_payment" {
 }
 
 resource "aws_lambda_function" "sqs_gst" {
-  function_name    = "${var.project_name}-sqs-gst"
+  function_name    = "${local.resource_prefix}-sqs-gst"
   role             = aws_iam_role.lambda_worker_exec["gst"].arn
   runtime          = "provided.al2023"
   handler          = "bootstrap"
@@ -331,12 +331,12 @@ resource "aws_lambda_function" "sqs_gst" {
 }
 
 resource "aws_cloudwatch_log_group" "lambda_sqs_bargaining" {
-  name              = "/aws/lambda/${var.project_name}-sqs-bargaining"
+  name              = "/aws/lambda/${local.resource_prefix}-sqs-bargaining"
   retention_in_days = var.log_retention_days
 }
 
 resource "aws_lambda_function" "sqs_bargaining" {
-  function_name     = "${var.project_name}-sqs-bargaining"
+  function_name     = "${local.resource_prefix}-sqs-bargaining"
   role              = aws_iam_role.lambda_worker_exec["bargaining"].arn
   runtime           = "provided.al2023"
   handler           = "bootstrap"
@@ -372,7 +372,7 @@ resource "aws_lambda_function" "sqs_bargaining" {
 }
 
 resource "aws_lambda_function" "ws_handler" {
-  function_name    = "${var.project_name}-ws-handler"
+  function_name    = "${local.resource_prefix}-ws-handler"
   role             = aws_iam_role.lambda_websocket_exec.arn
   runtime          = "provided.al2023"
   handler          = "bootstrap"
@@ -408,7 +408,7 @@ resource "aws_lambda_function" "ws_handler" {
 }
 
 resource "aws_lambda_function" "voice_session" {
-  function_name    = var.voice_session_lambda_function_name
+  function_name    = local.voice_session_lambda_name
   role             = aws_iam_role.lambda_voice_exec.arn
   runtime          = "provided.al2023"
   handler          = "bootstrap"

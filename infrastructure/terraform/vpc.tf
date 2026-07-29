@@ -5,7 +5,7 @@ resource "aws_vpc" "main" {
   enable_dns_support   = true
 
   tags = {
-    Name = "${var.project_name}-vpc"
+    Name = "${local.resource_prefix}-vpc"
   }
 }
 
@@ -14,7 +14,7 @@ resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
 
   tags = {
-    Name = "${var.project_name}-igw"
+    Name = "${local.resource_prefix}-igw"
   }
 }
 
@@ -27,7 +27,7 @@ resource "aws_subnet" "public" {
   map_public_ip_on_launch = true
 
   tags = {
-    Name = "${var.project_name}-public-${count.index + 1}"
+    Name = "${local.resource_prefix}-public-${count.index + 1}"
     Type = "public"
   }
 }
@@ -40,7 +40,7 @@ resource "aws_subnet" "private" {
   availability_zone = var.availability_zones[count.index]
 
   tags = {
-    Name = "${var.project_name}-private-${count.index + 1}"
+    Name = "${local.resource_prefix}-private-${count.index + 1}"
     Type = "private"
   }
 }
@@ -55,7 +55,7 @@ resource "aws_route_table" "public" {
   }
 
   tags = {
-    Name = "${var.project_name}-public-rt"
+    Name = "${local.resource_prefix}-public-rt"
   }
 }
 
@@ -70,7 +70,7 @@ resource "aws_eip" "nat" {
   domain = "vpc"
 
   tags = {
-    Name = "${var.project_name}-nat-eip"
+    Name = "${local.resource_prefix}-nat-eip"
   }
 }
 
@@ -79,7 +79,7 @@ resource "aws_nat_gateway" "main" {
   subnet_id     = aws_subnet.public[0].id
 
   tags = {
-    Name = "${var.project_name}-nat"
+    Name = "${local.resource_prefix}-nat"
   }
 
   depends_on = [aws_internet_gateway.main]
@@ -94,7 +94,7 @@ resource "aws_route_table" "private" {
   }
 
   tags = {
-    Name = "${var.project_name}-private-rt"
+    Name = "${local.resource_prefix}-private-rt"
   }
 }
 
@@ -105,8 +105,8 @@ resource "aws_route_table_association" "private" {
 }
 
 resource "aws_security_group" "lambda" {
-  name        = "${var.project_name}-lambda-sg"
-  description = "Security group for Lambda functions"
+  name        = "${local.resource_prefix}-lambda-sg"
+  description = "${local.resource_prefix} security group for Lambda functions"
   vpc_id      = aws_vpc.main.id
 
   egress {
@@ -117,14 +117,14 @@ resource "aws_security_group" "lambda" {
   }
 
   tags = {
-    Name = "${var.project_name}-lambda-sg"
+    Name = "${local.resource_prefix}-lambda-sg"
   }
 }
 
 # Security Group for RDS
 resource "aws_security_group" "rds" {
-  name        = "${var.project_name}-rds-sg"
-  description = "Security group for RDS PostgreSQL"
+  name        = "${local.resource_prefix}-rds-sg"
+  description = "${local.resource_prefix} security group for RDS PostgreSQL"
   vpc_id      = aws_vpc.main.id
 
   ingress {
@@ -151,6 +151,6 @@ resource "aws_security_group" "rds" {
   }
 
   tags = {
-    Name = "${var.project_name}-rds-sg"
+    Name = "${local.resource_prefix}-rds-sg"
   }
 }

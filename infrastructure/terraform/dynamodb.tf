@@ -1,5 +1,5 @@
 resource "aws_dynamodb_table" "users_sessions" {
-  name         = "users_sessions"
+  name         = "${local.resource_prefix}-users-sessions"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "user_id"
   range_key    = "session_id"
@@ -21,7 +21,7 @@ resource "aws_dynamodb_table" "users_sessions" {
 }
 
 resource "aws_dynamodb_table" "refresh_tokens" {
-  name         = "refresh_tokens"
+  name         = "${local.resource_prefix}-refresh-tokens"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "token"
 
@@ -37,7 +37,7 @@ resource "aws_dynamodb_table" "refresh_tokens" {
 }
 
 resource "aws_dynamodb_table" "password_reset_tokens" {
-  name         = "password_reset_tokens"
+  name         = "${local.resource_prefix}-password-reset-tokens"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "token"
 
@@ -53,7 +53,7 @@ resource "aws_dynamodb_table" "password_reset_tokens" {
 }
 
 resource "aws_dynamodb_table" "mfa_codes" {
-  name         = "mfa_codes"
+  name         = "${local.resource_prefix}-mfa-codes"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "user_id"
   range_key    = "code"
@@ -75,7 +75,7 @@ resource "aws_dynamodb_table" "mfa_codes" {
 }
 
 resource "aws_dynamodb_table" "phone_auth_cooldowns" {
-  name         = var.phone_auth_cooldown_table_name
+  name         = local.phone_auth_cooldown_table_name
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "cooldown_key"
 
@@ -91,7 +91,7 @@ resource "aws_dynamodb_table" "phone_auth_cooldowns" {
 }
 
 resource "aws_dynamodb_table" "customers_cache" {
-  name         = "customers_cache"
+  name         = "${local.resource_prefix}-customers-cache"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "customer_id"
 
@@ -116,7 +116,7 @@ resource "aws_dynamodb_table" "customers_cache" {
 }
 
 resource "aws_dynamodb_table" "vendors_cache" {
-  name         = "vendors_cache"
+  name         = "${local.resource_prefix}-vendors-cache"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "vendor_id"
 
@@ -141,7 +141,7 @@ resource "aws_dynamodb_table" "vendors_cache" {
 }
 
 resource "aws_dynamodb_table" "products_cache" {
-  name         = "products_cache"
+  name         = "${local.resource_prefix}-products-cache"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "product_id"
 
@@ -180,7 +180,7 @@ resource "aws_dynamodb_table" "products_cache" {
 }
 
 resource "aws_dynamodb_table" "invoices_cache" {
-  name         = "invoices_cache"
+  name         = "${local.resource_prefix}-invoices-cache"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "invoice_id"
 
@@ -219,7 +219,7 @@ resource "aws_dynamodb_table" "invoices_cache" {
 }
 
 resource "aws_dynamodb_table" "invoice_sequences" {
-  name         = "invoice_sequences"
+  name         = "${local.resource_prefix}-invoice-sequences"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "business_id"
   range_key    = "invoice_type"
@@ -236,7 +236,7 @@ resource "aws_dynamodb_table" "invoice_sequences" {
 }
 
 resource "aws_dynamodb_table" "ledger_cache" {
-  name         = "ledger_cache"
+  name         = "${local.resource_prefix}-ledger-cache"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "ledger_entry_id"
 
@@ -261,7 +261,7 @@ resource "aws_dynamodb_table" "ledger_cache" {
 }
 
 resource "aws_dynamodb_table" "payments_cache" {
-  name         = "payments_cache"
+  name         = "${local.resource_prefix}-payments-cache"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "payment_id"
 
@@ -287,7 +287,7 @@ resource "aws_dynamodb_table" "payments_cache" {
 
 # WebSocket connection registry
 resource "aws_dynamodb_table" "ws_connections" {
-  name         = var.websocket_connections_table
+  name         = local.websocket_connections_table
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "connection_id"
 
@@ -320,12 +320,12 @@ resource "aws_dynamodb_table" "ws_connections" {
   }
 
   tags = {
-    Name = "${var.project_name}-ws-connections"
+    Name = local.websocket_connections_table
   }
 }
 
 resource "aws_dynamodb_table" "voice_sessions" {
-  name         = var.voice_sessions_table_name
+  name         = local.voice_sessions_table_name
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "pk"
   range_key    = "sk"
@@ -350,6 +350,6 @@ resource "aws_dynamodb_table" "voice_sessions" {
   }
 
   tags = {
-    Name = var.voice_sessions_table_name
+    Name = local.voice_sessions_table_name
   }
 }

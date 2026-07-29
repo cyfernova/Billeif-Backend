@@ -125,13 +125,14 @@ run "mumbai_defaults_and_oidc_profile" {
   command = plan
 
   variables {
-    project_name        = "invoice-backend-test"
+    project_name        = "billeif-test"
     environment         = "test"
     lambda_artifact_dir = "tests/fixtures/lambda"
     llm_api_url         = "https://llm.example.test/chat/completions"
     llm_model           = "test-model"
     deepseek_base_url   = "https://voice-llm.example.test/v1"
     deepseek_model      = "voice-test-model"
+    ses_verified_sender = "notifications@billeif.example"
 
     db_allowed_cidr = "10.0.0.0/24"
   }
@@ -161,13 +162,14 @@ run "aws_profile_accepts_null_for_oidc" {
   command = plan
 
   variables {
-    project_name        = "invoice-backend-test"
+    project_name        = "billeif-test"
     environment         = "test"
     lambda_artifact_dir = "tests/fixtures/lambda"
     llm_api_url         = "https://llm.example.test/chat/completions"
     llm_model           = "test-model"
     deepseek_base_url   = "https://voice-llm.example.test/v1"
     deepseek_model      = "voice-test-model"
+    ses_verified_sender = "notifications@billeif.example"
 
     aws_profile     = null
     db_allowed_cidr = "10.0.0.0/24"
@@ -183,7 +185,7 @@ run "secret_metadata_rds_lambda_iam_and_output" {
   command = plan
 
   variables {
-    project_name        = "invoice-backend-test"
+    project_name        = "billeif-test"
     environment         = "test"
     aws_region          = "us-east-1"
     lambda_artifact_dir = "tests/fixtures/lambda"
@@ -191,6 +193,7 @@ run "secret_metadata_rds_lambda_iam_and_output" {
     llm_model           = "test-model"
     deepseek_base_url   = "https://voice-llm.example.test/v1"
     deepseek_model      = "voice-test-model"
+    ses_verified_sender = "notifications@billeif.example"
 
     db_allowed_cidr                    = "10.0.0.0/24"
     enable_lambda_reserved_concurrency = false
@@ -440,4 +443,113 @@ run "secret_metadata_rds_lambda_iam_and_output" {
     condition     = endswith(output.razorpay_webhook_url, "/api/v1/webhooks/razorpay")
     error_message = "Razorpay webhook output must expose the fresh webhook endpoint."
   }
+}
+
+run "billeif_branding_defaults_and_public_url_inputs" {
+  command = plan
+
+  variables {
+    environment                      = "preview"
+    lambda_artifact_dir              = "tests/fixtures/lambda"
+    llm_api_url                      = "https://llm.example.test/chat/completions"
+    llm_model                        = "test-model"
+    deepseek_base_url                = "https://voice-llm.example.test/v1"
+    deepseek_model                   = "voice-test-model"
+    db_allowed_cidr                  = "10.0.0.0/24"
+    ses_verified_sender              = "notifications@billeif.example"
+    cognito_additional_callback_urls = ["https://customer.example/callback"]
+    cognito_additional_logout_urls   = ["https://customer.example/logout"]
+  }
+
+  assert {
+    condition     = var.project_name == "billeif"
+    error_message = "Billeif must be the lowercase Terraform project default."
+  }
+
+  assert {
+    condition = (
+      local.cognito_hosted_ui_domain_prefix == "billeif-preview-123456789012" &&
+      can(regex("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", local.cognito_hosted_ui_domain_prefix)) &&
+      length(local.cognito_hosted_ui_domain_prefix) <= 63
+    )
+    error_message = "The Cognito hosted UI prefix must be a collision-resistant Billeif-branded value within Cognito limits."
+  }
+
+  assert {
+    condition = (
+      aws_cognito_user_pool.main.name == "billeif-preview-web-user-pool" &&
+      aws_cognito_user_pool_client.main.name == "billeif-preview-web-client" &&
+      aws_cognito_user_pool.phone.name == "billeif-preview-native-user-pool" &&
+      aws_cognito_user_pool_client.phone.name == "billeif-preview-native-client" &&
+      aws_cognito_resource_server.main.identifier == "billeif-preview-api" &&
+      aws_cognito_resource_server.main.name == "billeif-preview-resource-server"
+    )
+    error_message = "Cognito web, native, and resource-server names must use Billeif branding."
+  }
+
+  assert {
+    condition = (
+      aws_dynamodb_table.users_sessions.name == "billeif-preview-users-sessions" &&
+      aws_sns_topic.low_stock_alerts.name == "billeif-preview-low-stock-alerts" &&
+      aws_sqs_queue.invoice_processing.name == "billeif-preview-invoice-processing-queue" &&
+      aws_iam_role.lambda_exec.name == "billeif-preview-lambda-exec-role" &&
+      aws_lambda_function.api_http.function_name == "billeif-preview-api-http" &&
+      aws_cloudwatch_log_group.lambda_api_http.name == "/aws/lambda/billeif-preview-api-http" &&
+      aws_db_instance.main.identifier == "billeif-preview-postgres" &&
+      aws_s3_bucket.business_logos.bucket == "billeif-preview-123456789012-business-logos" &&
+      aws_apigatewayv2_api.websocket.name == "billeif-preview-websocket" &&
+      aws_dynamodb_table.voice_sessions.name == "billeif-preview-voice-sessions" &&
+      aws_lambda_function.voice_session.function_name == "billeif-preview-voice-session" &&
+      aws_ses_configuration_set.main.name == "billeif-preview-ses-config" &&
+      aws_ses_email_identity.main.email == "notifications@billeif.example"
+    )
+    error_message = "Representative AWS resources and the SES contract must use Billeif project/environment naming."
+  }
+
+  assert {
+    condition = (
+      contains(aws_cognito_user_pool_client.main.callback_urls, "https://customer.example/callback") &&
+      contains(aws_cognito_user_pool_client.main.logout_urls, "https://customer.example/logout")
+    )
+    error_message = "User-owned Cognito callback and logout URLs must remain unchanged."
+  }
+}
+
+run "billeif_cognito_domain_override_is_constrained" {
+  command = plan
+
+  variables {
+    environment           = "preview"
+    lambda_artifact_dir   = "tests/fixtures/lambda"
+    llm_api_url           = "https://llm.example.test/chat/completions"
+    llm_model             = "test-model"
+    deepseek_base_url     = "https://voice-llm.example.test/v1"
+    deepseek_model        = "voice-test-model"
+    db_allowed_cidr       = "10.0.0.0/24"
+    ses_verified_sender   = "notifications@billeif.example"
+    cognito_domain_prefix = "billeif-preview-ui"
+  }
+
+  assert {
+    condition     = aws_cognito_user_pool_domain.main.domain == "billeif-preview-ui"
+    error_message = "A valid Billeif-branded Cognito hosted UI prefix must remain overridable."
+  }
+}
+
+run "cognito_domain_rejects_reserved_or_unbranded_prefixes" {
+  command = plan
+
+  variables {
+    environment           = "preview"
+    lambda_artifact_dir   = "tests/fixtures/lambda"
+    llm_api_url           = "https://llm.example.test/chat/completions"
+    llm_model             = "test-model"
+    deepseek_base_url     = "https://voice-llm.example.test/v1"
+    deepseek_model        = "voice-test-model"
+    db_allowed_cidr       = "10.0.0.0/24"
+    ses_verified_sender   = "notifications@billeif.example"
+    cognito_domain_prefix = "aws-preview-ui"
+  }
+
+  expect_failures = [var.cognito_domain_prefix]
 }

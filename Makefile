@@ -7,9 +7,9 @@ export
 
 LAMBDA_BUILD_DIR := .build/lambda
 TERRAFORM_DIR := infrastructure/terraform
-TF_BACKEND_BUCKET ?= invoice-backend-tfstate-830283279729
+TF_BACKEND_BUCKET ?= billeif-tfstate-830283279729
 TF_BACKEND_REGION ?= us-east-1
-TF_BACKEND_LOCK_TABLE ?= terraform-state-lock
+TF_BACKEND_LOCK_TABLE ?= billeif-terraform-state-lock
 TF_BACKEND_KEY ?= terraform.tfstate
 RDS_LOCAL_PORT ?= 15432
 TF_VAR_india_sms_sender_id ?= $(INDIA_SMS_SENDER_ID)

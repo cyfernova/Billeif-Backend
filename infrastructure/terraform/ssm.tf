@@ -5,7 +5,7 @@ locals {
 
 resource "aws_ssm_parameter" "db_host" {
   name        = local.db_host_ssm_parameter_name
-  description = "Database host for ${var.project_name}"
+  description = "Database host for ${local.resource_prefix}"
   type        = "String"
   value       = aws_db_instance.main.address
   overwrite   = true

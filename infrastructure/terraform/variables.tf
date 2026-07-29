@@ -12,39 +12,69 @@ variable "aws_profile" {
 }
 
 variable "project_name" {
-  description = "Project name for resource naming"
+  description = "Lowercase project name used in AWS resource names."
   type        = string
-  default     = "invoice-backend"
+  default     = "billeif"
+
+  validation {
+    condition     = can(regex("^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$", trimspace(var.project_name)))
+    error_message = "project_name must be 1-32 lowercase letters, digits, or hyphens, beginning and ending with an alphanumeric character."
+  }
 }
 
 variable "environment" {
   description = "Environment (dev, staging, prod)"
   type        = string
   default     = "dev"
+
+  validation {
+    condition     = can(regex("^[a-z0-9](?:[a-z0-9-]{0,40}[a-z0-9])?$", trimspace(var.environment)))
+    error_message = "environment must be 1-42 lowercase letters, digits, or hyphens, beginning and ending with an alphanumeric character."
+  }
 }
 
 variable "user_pool_name" {
-  description = "Cognito User Pool name"
+  description = "Optional Billeif web Cognito User Pool name override."
   type        = string
-  default     = "Billeif-pool"
+  default     = ""
+
+  validation {
+    condition     = trimspace(var.user_pool_name) == "" || strcontains(lower(trimspace(var.user_pool_name)), "billeif")
+    error_message = "user_pool_name overrides must contain the billeif brand."
+  }
 }
 
 variable "client_name" {
-  description = "Cognito App Client name"
+  description = "Optional Billeif web Cognito App Client name override."
   type        = string
-  default     = "Billeif-client"
+  default     = ""
+
+  validation {
+    condition     = trimspace(var.client_name) == "" || strcontains(lower(trimspace(var.client_name)), "billeif")
+    error_message = "client_name overrides must contain the billeif brand."
+  }
 }
 
 variable "phone_user_pool_name" {
-  description = "Cognito User Pool name for India phone auth"
+  description = "Optional Billeif native Cognito User Pool name override."
   type        = string
-  default     = "Billeif-phone-pool"
+  default     = ""
+
+  validation {
+    condition     = trimspace(var.phone_user_pool_name) == "" || strcontains(lower(trimspace(var.phone_user_pool_name)), "billeif")
+    error_message = "phone_user_pool_name overrides must contain the billeif brand."
+  }
 }
 
 variable "phone_client_name" {
-  description = "Cognito App Client name for India phone auth"
+  description = "Optional Billeif native Cognito App Client name override."
   type        = string
-  default     = "Billeif-phone-client"
+  default     = ""
+
+  validation {
+    condition     = trimspace(var.phone_client_name) == "" || strcontains(lower(trimspace(var.phone_client_name)), "billeif")
+    error_message = "phone_client_name overrides must contain the billeif brand."
+  }
 }
 
 # VPC Configuration
@@ -152,9 +182,21 @@ variable "log_retention_days" {
 }
 
 variable "cognito_domain_prefix" {
-  description = "Prefix for the Cognito User Pool Domain"
+  description = "Optional hosted UI prefix override. It must be lowercase, Cognito-valid, and contain billeif."
   type        = string
-  default     = "invoice-backend-app"
+  default     = ""
+
+  validation {
+    condition = trimspace(var.cognito_domain_prefix) == "" || (
+      trimspace(var.cognito_domain_prefix) == lower(trimspace(var.cognito_domain_prefix)) &&
+      can(regex("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", trimspace(var.cognito_domain_prefix))) &&
+      strcontains(lower(trimspace(var.cognito_domain_prefix)), "billeif") &&
+      !strcontains(lower(trimspace(var.cognito_domain_prefix)), "aws") &&
+      !strcontains(lower(trimspace(var.cognito_domain_prefix)), "amazon") &&
+      !strcontains(lower(trimspace(var.cognito_domain_prefix)), "cognito")
+    )
+    error_message = "cognito_domain_prefix must be a 1-63 character lowercase Cognito prefix containing billeif and no reserved aws, amazon, or cognito text."
+  }
 }
 
 variable "cognito_additional_callback_urls" {
@@ -212,26 +254,26 @@ variable "india_auth_template_id" {
 variable "india_signup_message_template" {
   description = "Exact DLT-approved signup or verification SMS template. Use {####} where the OTP should appear."
   type        = string
-  default     = "Your Invoice Backend verification code is {####}."
+  default     = "Your Billeif verification code is {####}."
 }
 
 variable "india_auth_message_template" {
   description = "Exact DLT-approved authentication SMS template. Use {####} where the OTP should appear."
   type        = string
-  default     = "Your Invoice Backend login code is {####}."
+  default     = "Your Billeif login code is {####}."
 }
 
 variable "phone_auth_cooldown_table_name" {
-  description = "DynamoDB table used to throttle per-phone OTP requests"
+  description = "Optional DynamoDB table name override for per-phone OTP throttling."
   type        = string
-  default     = "phone_auth_cooldowns"
+  default     = ""
 }
 
 # DynamoDB tables
 variable "websocket_connections_table" {
-  description = "DynamoDB table name for websocket connections"
+  description = "Optional DynamoDB table name override for websocket connections."
   type        = string
-  default     = "invoice-backend-ws-connections"
+  default     = ""
 }
 
 # LLM Configuration
@@ -432,15 +474,28 @@ variable "voice_ws_provider_ready_timeout_seconds" {
 }
 
 variable "voice_sessions_table_name" {
-  description = "DynamoDB table name for realtime voice session state"
+  description = "Optional DynamoDB table name override for realtime voice session state."
   type        = string
-  default     = "voice_sessions"
+  default     = ""
 }
 
 variable "voice_session_lambda_function_name" {
-  description = "Lambda function name for realtime voice session worker"
+  description = "Optional Lambda function name override for the realtime voice session worker."
   type        = string
-  default     = "invoice-backend-voice-session"
+  default     = ""
+}
+
+variable "ses_verified_sender" {
+  description = "Already-verified SES sender email address or domain. Supply this before the first application apply; Terraform does not verify it."
+  type        = string
+
+  validation {
+    condition = (
+      can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", trimspace(var.ses_verified_sender))) ||
+      can(regex("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$", lower(trimspace(var.ses_verified_sender))))
+    ) && !endswith(lower(trimspace(var.ses_verified_sender)), ".local")
+    error_message = "ses_verified_sender must be a non-.local email address or domain that is already verified in SES."
+  }
 }
 
 variable "voice_session_lambda_memory_size" {

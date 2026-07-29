@@ -1,6 +1,6 @@
 # Locals for unique bucket naming
 locals {
-  bucket_prefix = "${var.project_name}-${var.environment}-${data.aws_caller_identity.current.account_id}"
+  bucket_prefix = "${local.resource_prefix}-${data.aws_caller_identity.current.account_id}"
 }
 
 # Business Logos Bucket

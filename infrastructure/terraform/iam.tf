@@ -59,7 +59,7 @@ data "aws_iam_policy_document" "apigateway_cloudwatch_assume_role" {
 }
 
 resource "aws_iam_role" "apigateway_cloudwatch" {
-  name               = "${var.project_name}-apigateway-cloudwatch-role"
+  name               = "${local.resource_prefix}-apigateway-cloudwatch-role"
   assume_role_policy = data.aws_iam_policy_document.apigateway_cloudwatch_assume_role.json
 }
 
@@ -75,7 +75,7 @@ resource "aws_api_gateway_account" "main" {
 }
 
 resource "aws_iam_role" "lambda_exec" {
-  name               = "${var.project_name}-lambda-exec-role"
+  name               = "${local.resource_prefix}-lambda-exec-role"
   assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
 }
 
@@ -92,7 +92,7 @@ resource "aws_iam_role_policy_attachment" "lambda_vpc_access" {
 resource "aws_iam_role" "lambda_worker_exec" {
   for_each = local.worker_runtime_secret_arns
 
-  name               = "${var.project_name}-lambda-${each.key}-worker-exec-role"
+  name               = "${local.resource_prefix}-lambda-${each.key}-worker-exec-role"
   assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
 }
 
@@ -111,7 +111,7 @@ resource "aws_iam_role_policy_attachment" "lambda_worker_vpc_access" {
 }
 
 resource "aws_iam_role" "lambda_websocket_exec" {
-  name               = "${var.project_name}-lambda-websocket-exec-role"
+  name               = "${local.resource_prefix}-lambda-websocket-exec-role"
   assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
 }
 
@@ -121,7 +121,7 @@ resource "aws_iam_role_policy_attachment" "lambda_websocket_basic" {
 }
 
 resource "aws_iam_role" "lambda_voice_exec" {
-  name               = "${var.project_name}-lambda-voice-exec-role"
+  name               = "${local.resource_prefix}-lambda-voice-exec-role"
   assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
 }
 
@@ -327,7 +327,7 @@ data "aws_iam_policy_document" "lambda_app" {
 }
 
 resource "aws_iam_role_policy" "lambda_app" {
-  name   = "${var.project_name}-lambda-app-policy"
+  name   = "${local.resource_prefix}-lambda-app-policy"
   role   = aws_iam_role.lambda_exec.id
   policy = data.aws_iam_policy_document.lambda_app.json
 }
@@ -450,7 +450,7 @@ data "aws_iam_policy_document" "lambda_worker_app" {
 resource "aws_iam_role_policy" "lambda_worker_app" {
   for_each = local.worker_runtime_secret_arns
 
-  name   = "${var.project_name}-lambda-${each.key}-worker-policy"
+  name   = "${local.resource_prefix}-lambda-${each.key}-worker-policy"
   role   = aws_iam_role.lambda_worker_exec[each.key].id
   policy = data.aws_iam_policy_document.lambda_worker_app[each.key].json
 }
@@ -547,7 +547,7 @@ data "aws_iam_policy_document" "lambda_websocket_app" {
 }
 
 resource "aws_iam_role_policy" "lambda_websocket_app" {
-  name   = "${var.project_name}-lambda-websocket-policy"
+  name   = "${local.resource_prefix}-lambda-websocket-policy"
   role   = aws_iam_role.lambda_websocket_exec.id
   policy = data.aws_iam_policy_document.lambda_websocket_app.json
 }
@@ -628,7 +628,7 @@ data "aws_iam_policy_document" "lambda_voice_app" {
 }
 
 resource "aws_iam_role_policy" "lambda_voice_app" {
-  name   = "${var.project_name}-lambda-voice-policy"
+  name   = "${local.resource_prefix}-lambda-voice-policy"
   role   = aws_iam_role.lambda_voice_exec.id
   policy = data.aws_iam_policy_document.lambda_voice_app.json
 }

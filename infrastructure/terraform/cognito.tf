@@ -5,7 +5,7 @@ locals {
 }
 
 resource "aws_cognito_user_pool" "main" {
-  name = var.user_pool_name
+  name = local.cognito_web_user_pool_name
 
   username_attributes      = ["email"]
   auto_verified_attributes = ["email"]
@@ -53,7 +53,7 @@ resource "aws_cognito_user_pool" "main" {
 }
 
 resource "aws_cognito_user_pool_client" "main" {
-  name         = var.client_name
+  name         = local.cognito_web_client_name
   user_pool_id = aws_cognito_user_pool.main.id
 
   explicit_auth_flows           = ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_REFRESH_TOKEN_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH"]
@@ -67,12 +67,23 @@ resource "aws_cognito_user_pool_client" "main" {
   logout_urls                          = local.cognito_logout_urls
   allowed_oauth_flows_user_pool_client = true
   allowed_oauth_flows                  = ["code"]
-  allowed_oauth_scopes                 = ["email", "openid", "profile", "aws.cognito.signin.user.admin"]
+  allowed_oauth_scopes                 = ["email", "openid", "profile", "aws.cognito.signin.user.admin", aws_cognito_resource_server.main.scope_identifiers[0]]
 
   token_validity_units {
     access_token  = "hours"
     id_token      = "hours"
     refresh_token = "days"
+  }
+}
+
+resource "aws_cognito_resource_server" "main" {
+  identifier   = local.cognito_resource_server_id
+  name         = local.cognito_resource_server_name
+  user_pool_id = aws_cognito_user_pool.main.id
+
+  scope {
+    scope_name        = "access"
+    scope_description = "Billeif application API access"
   }
 }
 
@@ -99,6 +110,20 @@ resource "aws_cognito_user_group" "viewer" {
 
 # Cognito Domain for Hosted UI
 resource "aws_cognito_user_pool_domain" "main" {
-  domain       = var.cognito_domain_prefix
+  domain       = local.cognito_hosted_ui_domain_prefix
   user_pool_id = aws_cognito_user_pool.main.id
+
+  lifecycle {
+    precondition {
+      condition = (
+        length(local.resource_prefix) <= 32 &&
+        can(regex("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", local.cognito_hosted_ui_domain_prefix)) &&
+        strcontains(local.cognito_hosted_ui_domain_prefix, "billeif") &&
+        !strcontains(local.cognito_hosted_ui_domain_prefix, "aws") &&
+        !strcontains(local.cognito_hosted_ui_domain_prefix, "amazon") &&
+        !strcontains(local.cognito_hosted_ui_domain_prefix, "cognito")
+      )
+      error_message = "Generated AWS names must fit their service limits, and the Cognito hosted UI prefix must be a valid Billeif-branded 1-63 character prefix."
+    }
+  }
 }

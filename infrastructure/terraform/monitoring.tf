@@ -1,8 +1,8 @@
 resource "aws_sns_topic" "alerts" {
-  name = "${var.project_name}-alerts"
+  name = "${local.resource_prefix}-alerts"
 
   tags = {
-    Name = "${var.project_name}-alerts"
+    Name = "${local.resource_prefix}-alerts"
   }
 }
 
@@ -14,7 +14,7 @@ resource "aws_sns_topic_subscription" "alerts_email" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "lambda_api_errors" {
-  alarm_name          = "${var.project_name}-lambda-api-errors"
+  alarm_name          = "${local.resource_prefix}-lambda-api-errors"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
   metric_name         = "Errors"
@@ -32,7 +32,7 @@ resource "aws_cloudwatch_metric_alarm" "lambda_api_errors" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "lambda_ws_errors" {
-  alarm_name          = "${var.project_name}-lambda-ws-errors"
+  alarm_name          = "${local.resource_prefix}-lambda-ws-errors"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
   metric_name         = "Errors"
@@ -50,7 +50,7 @@ resource "aws_cloudwatch_metric_alarm" "lambda_ws_errors" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "lambda_invoice_errors" {
-  alarm_name          = "${var.project_name}-lambda-invoice-errors"
+  alarm_name          = "${local.resource_prefix}-lambda-invoice-errors"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
   metric_name         = "Errors"
@@ -68,7 +68,7 @@ resource "aws_cloudwatch_metric_alarm" "lambda_invoice_errors" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "lambda_payment_errors" {
-  alarm_name          = "${var.project_name}-lambda-payment-errors"
+  alarm_name          = "${local.resource_prefix}-lambda-payment-errors"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
   metric_name         = "Errors"
@@ -86,7 +86,7 @@ resource "aws_cloudwatch_metric_alarm" "lambda_payment_errors" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "lambda_gst_errors" {
-  alarm_name          = "${var.project_name}-lambda-gst-errors"
+  alarm_name          = "${local.resource_prefix}-lambda-gst-errors"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
   metric_name         = "Errors"
@@ -113,23 +113,23 @@ locals {
 
 resource "aws_cloudwatch_log_metric_filter" "threat_detection" {
   for_each       = local.threat_detection_log_groups
-  name           = "${var.project_name}-${each.key}-threat-detection"
+  name           = "${local.resource_prefix}-${each.key}-threat-detection"
   log_group_name = each.value
   pattern        = "{ $.security_detection = true }"
 
   metric_transformation {
     name      = "ThreatDetectionCount"
-    namespace = "${var.project_name}/Security"
+    namespace = "${local.resource_prefix}/Security"
     value     = "1"
   }
 }
 
 resource "aws_cloudwatch_metric_alarm" "threat_detection" {
-  alarm_name          = "${var.project_name}-threat-detection"
+  alarm_name          = "${local.resource_prefix}-threat-detection"
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
   metric_name         = "ThreatDetectionCount"
-  namespace           = "${var.project_name}/Security"
+  namespace           = "${local.resource_prefix}/Security"
   period              = 300
   statistic           = "Sum"
   threshold           = 1
@@ -142,7 +142,7 @@ resource "aws_cloudwatch_metric_alarm" "threat_detection" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "rds_cpu_high" {
-  alarm_name          = "${var.project_name}-rds-cpu-high"
+  alarm_name          = "${local.resource_prefix}-rds-cpu-high"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 2
   metric_name         = "CPUUtilization"
@@ -160,7 +160,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_cpu_high" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "rds_storage_low" {
-  alarm_name          = "${var.project_name}-rds-storage-low"
+  alarm_name          = "${local.resource_prefix}-rds-storage-low"
   comparison_operator = "LessThanThreshold"
   evaluation_periods  = 1
   metric_name         = "FreeStorageSpace"
@@ -178,7 +178,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_storage_low" {
 }
 
 resource "aws_cloudwatch_dashboard" "main" {
-  dashboard_name = "${var.project_name}-dashboard"
+  dashboard_name = "${local.resource_prefix}-dashboard"
 
   dashboard_body = jsonencode({
     widgets = [

@@ -1,11 +1,11 @@
 resource "aws_api_gateway_rest_api" "main" {
-  name               = "${var.project_name}-rest-api"
-  description        = "REST API for ${var.project_name} Lambda backend"
+  name               = "${local.resource_prefix}-rest-api"
+  description        = "REST API for ${local.resource_prefix} Lambda backend"
   binary_media_types = ["multipart/form-data", "application/octet-stream", "audio/mp4", "audio/mpeg", "audio/wav", "audio/webm", "audio/x-caf"]
 }
 
 resource "aws_api_gateway_authorizer" "cognito" {
-  name            = "${var.project_name}-cognito"
+  name            = "${local.resource_prefix}-cognito"
   rest_api_id     = aws_api_gateway_rest_api.main.id
   type            = "COGNITO_USER_POOLS"
   provider_arns   = [aws_cognito_user_pool.main.arn, aws_cognito_user_pool.phone.arn]
@@ -579,7 +579,7 @@ resource "aws_api_gateway_deployment" "main" {
 }
 
 resource "aws_cloudwatch_log_group" "rest_api_access" {
-  name              = "/aws/apigateway/${var.project_name}-rest"
+  name              = "/aws/apigateway/${local.resource_prefix}-rest"
   retention_in_days = var.log_retention_days
 }
 
