@@ -40,6 +40,8 @@ func TestDeployWorkflowLaunchSafetyPolicy(t *testing.T) {
 
 	secretScan := requiredMap(t, jobs, "secret-scan")
 	requireSecretScan(t, secretScan)
+	requireTerraformVersion(t, verify, "1.13.5")
+	requireTerraformTest(t, verify)
 
 	deploy := requiredMap(t, jobs, "deploy")
 	deployIf := requiredScalar(t, deploy, "if")
@@ -50,6 +52,7 @@ func TestDeployWorkflowLaunchSafetyPolicy(t *testing.T) {
 	deployPermissions := requiredMap(t, deploy, "permissions")
 	requireScalar(t, deployPermissions, "contents", "read")
 	requireScalar(t, deployPermissions, "id-token", "write")
+	requireTerraformVersion(t, deploy, "1.13.5")
 	requireOIDCOnlyDeploy(t, deploy)
 	if !hasNullProfileEnvironment(deploy) {
 		t.Fatal("deploy must set TF_VAR_aws_profile to Terraform null for OIDC credentials")
@@ -150,31 +153,76 @@ func requireSecretScan(t *testing.T, job *yaml.Node) {
 	}
 
 	checkoutWithFullHistory := false
-	pinnedScanner := false
-	sha := regexp.MustCompile(`^[0-9a-f]{40}$`)
+	explicitFullHistoryScan := false
+	checksum := regexp.MustCompile(`^[0-9a-f]{64}$`)
 	for _, step := range steps.Content {
 		if step.Kind != yaml.MappingNode {
 			continue
 		}
 		uses := mappingValue(step, "uses")
-		if uses == nil {
-			continue
-		}
-		if strings.HasPrefix(uses.Value, "actions/checkout@") {
+		if uses != nil && strings.HasPrefix(uses.Value, "actions/checkout@") {
 			with := mappingValue(step, "with")
 			checkoutWithFullHistory = with != nil && mappingValue(with, "fetch-depth") != nil && mappingValue(with, "fetch-depth").Value == "0"
 		}
-		if strings.HasPrefix(uses.Value, "gitleaks/gitleaks-action@") {
-			parts := strings.Split(uses.Value, "@")
-			pinnedScanner = len(parts) == 2 && sha.MatchString(parts[1])
+
+		run := mappingValue(step, "run")
+		env := mappingValue(step, "env")
+		if run == nil || env == nil {
+			continue
 		}
+		version := mappingValue(env, "GITLEAKS_VERSION")
+		digest := mappingValue(env, "GITLEAKS_SHA256")
+		if version == nil || digest == nil || !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`).MatchString(version.Value) || !checksum.MatchString(digest.Value) {
+			continue
+		}
+		script := run.Value
+		explicitFullHistoryScan = strings.Contains(script, "github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}") &&
+			strings.Contains(script, "sha256sum --check") &&
+			strings.Contains(script, "gitleaks detect") &&
+			strings.Contains(script, "--source .") &&
+			strings.Contains(script, `--log-opts="--all"`) &&
+			strings.Contains(script, "--redact") &&
+			strings.Contains(script, "--exit-code 1")
 	}
 	if !checkoutWithFullHistory {
 		t.Fatal("secret-scan must check out full Git history with fetch-depth: 0")
 	}
-	if !pinnedScanner {
-		t.Fatal("secret-scan must use an official scanner action pinned to a full commit SHA")
+	if !explicitFullHistoryScan {
+		t.Fatal("secret-scan must checksum a pinned Gitleaks release and explicitly scan --log-opts=\"--all\"")
 	}
+}
+
+func requireTerraformVersion(t *testing.T, job *yaml.Node, want string) {
+	t.Helper()
+	steps := mappingValue(job, "steps")
+	if steps == nil || steps.Kind != yaml.SequenceNode {
+		t.Fatal("Terraform job must have steps")
+	}
+	for _, step := range steps.Content {
+		uses := mappingValue(step, "uses")
+		if uses == nil || !strings.HasPrefix(uses.Value, "hashicorp/setup-terraform@") {
+			continue
+		}
+		with := mappingValue(step, "with")
+		if with != nil && mappingValue(with, "terraform_version") != nil && mappingValue(with, "terraform_version").Value == want {
+			return
+		}
+	}
+	t.Fatalf("Terraform job must use Terraform %s", want)
+}
+
+func requireTerraformTest(t *testing.T, job *yaml.Node) {
+	t.Helper()
+	steps := mappingValue(job, "steps")
+	if steps == nil || steps.Kind != yaml.SequenceNode {
+		t.Fatal("Terraform verification job must have steps")
+	}
+	for _, step := range steps.Content {
+		if run := mappingValue(step, "run"); run != nil && strings.Contains(run.Value, `terraform -chdir="${TERRAFORM_DIR}" test`) {
+			return
+		}
+	}
+	t.Fatal("verification job must execute terraform test")
 }
 
 func containsSecretTerraformVariable(node *yaml.Node) bool {

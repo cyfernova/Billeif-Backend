@@ -1,4 +1,41 @@
-mock_provider "aws" {}
+mock_provider "aws" {
+  override_during = plan
+
+  mock_data "aws_iam_policy_document" {
+    override_during = plan
+    defaults = {
+      json = <<-JSON
+        {"Version":"2012-10-17","Statement":[{"Sid":"AssumeRole","Effect":"Allow","Action":"sts:AssumeRole","Principal":{"Service":"lambda.amazonaws.com"}}]}
+      JSON
+    }
+  }
+
+  override_data {
+    target = data.aws_caller_identity.current
+    values = {
+      account_id = "123456789012"
+      arn        = "arn:aws:iam::123456789012:user/terraform-test"
+      user_id    = "AIDATEST1234567890"
+    }
+  }
+
+  override_data {
+    target = data.aws_partition.current
+    values = {
+      partition = "aws"
+    }
+  }
+
+  override_resource {
+    target          = aws_api_gateway_rest_api.main
+    override_during = plan
+    values = {
+      id               = "test-rest-api"
+      root_resource_id = "test-root-resource"
+      execution_arn    = "arn:aws:execute-api:ap-south-1:123456789012:test-rest-api"
+    }
+  }
+}
 
 run "mumbai_defaults_and_oidc_profile" {
   command = plan
@@ -76,14 +113,18 @@ run "razorpay_ssm_lambda_iam_and_output" {
   command = plan
 
   variables {
-    project_name        = "invoice-backend-test"
-    environment         = "test"
-    aws_region          = "us-east-1"
-    lambda_artifact_dir = "tests/fixtures/lambda"
-    llm_api_url         = "https://llm.example.test/chat/completions"
-    llm_model           = "test-model"
-    deepseek_base_url   = "https://voice-llm.example.test/v1"
-    deepseek_model      = "voice-test-model"
+    project_name         = "invoice-backend-test"
+    environment          = "test"
+    aws_region           = "us-east-1"
+    lambda_artifact_dir  = "tests/fixtures/lambda"
+    llm_api_url          = "https://llm.example.test/chat/completions"
+    llm_model            = "test-model"
+    deepgram_api_key     = "test-deepgram-key"
+    deepseek_api_key     = "test-deepseek-key"
+    deepseek_base_url    = "https://voice-llm.example.test/v1"
+    deepseek_model       = "voice-test-model"
+    google_client_id     = "test-google-client-id"
+    google_client_secret = "test-google-client-secret"
 
     db_allowed_cidr                    = "10.0.0.0/24"
     db_password                        = "unit-test-db-password-123!"
@@ -126,11 +167,11 @@ run "razorpay_ssm_lambda_iam_and_output" {
 
   assert {
     condition = length([
-      for statement in jsondecode(data.aws_iam_policy_document.lambda_app.json).Statement : statement
-      if statement.Sid == "SSMAccess" &&
-      contains(statement.Resource, local.razorpay_key_id_ssm_parameter_arn) &&
-      contains(statement.Resource, local.razorpay_key_secret_ssm_parameter_arn) &&
-      contains(statement.Resource, local.razorpay_webhook_secret_ssm_parameter_arn)
+      for statement in data.aws_iam_policy_document.lambda_app.statement : statement
+      if statement.sid == "SSMAccess" &&
+      contains(statement.resources, local.razorpay_key_id_ssm_parameter_arn) &&
+      contains(statement.resources, local.razorpay_key_secret_ssm_parameter_arn) &&
+      contains(statement.resources, local.razorpay_webhook_secret_ssm_parameter_arn)
     ]) == 1
     error_message = "Lambda IAM policy must grant GetParameter access to Razorpay SSM parameters."
   }
