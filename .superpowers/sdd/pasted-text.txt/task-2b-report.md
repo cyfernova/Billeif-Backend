@@ -332,3 +332,43 @@ make test
 
 - No canonical actor or idempotency requirement was weakened.
 - No external database, migration, issue transition, AWS, deployment, dispatcher, mobile, cloud, secret, or Terraform/state operation was performed.
+
+## Review fix round 4
+
+### Status and architecture
+
+- The POS boundary now trims the party ID exactly once and reuses that normalized value for party pairing, customer lookup, command mapping, and persistence.
+- A whitespace-only manual party ID deterministically becomes an anonymous sale with an empty customer ID and the existing `Counter sale` buyer snapshot.
+- A padded customer UUID is accepted after trimming and reaches lookup and persistence in canonical form.
+- Customer IDs must parse as canonical lowercase, hyphenated UUIDs after trimming; malformed and non-canonical values are rejected as invalid payloads.
+- All actor, idempotency, lifecycle, tax, and source-linkage behavior from the previous rounds remains unchanged.
+
+### TDD evidence
+
+Focused RED:
+
+```text
+go test ./internal/services -run 'TestCanonicalPOSCheckoutInputValidatesPartyTypeAndIDPairing|TestCanonicalPOSCheckoutInputNormalizesCustomerIDBeforeLookupAndPersistence' -count=1
+```
+
+The whitespace-only manual case retained whitespace in `CustomerID`, the padded UUID reached lookup unchanged and returned `customer not found`, and the malformed UUID was accepted.
+
+Focused GREEN:
+
+```text
+go test ./internal/services -run 'TestCanonicalPOSCheckoutInputValidatesPartyTypeAndIDPairing|TestCanonicalPOSCheckoutInputNormalizesCustomerIDBeforeLookupAndPersistence' -count=1
+go test -race ./internal/services ./internal/handlers ./internal/repositories/postgres ./internal/idempotency -count=1
+```
+
+Full verification completed with exit code 0:
+
+```text
+make fmt
+make lint
+go test ./... -count=1
+make test
+```
+
+### Concerns
+
+- No external database, migration, issue transition, AWS, deployment, dispatcher, mobile, cloud, secret, or Terraform/state operation was performed.

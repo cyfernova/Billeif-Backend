@@ -11,6 +11,7 @@ import (
 	"invoice-backend/internal/models"
 	"invoice-backend/pkg/logger"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -434,9 +435,16 @@ func canonicalPOSCheckoutInput(session *models.POSSession, idempotencyKey string
 	if partyType != models.DocumentPartyTypeManual && partyType != models.DocumentPartyTypeCustomer {
 		return CreateInvoiceInput{}, &idempotency.InvalidPayloadError{}
 	}
-	hasPartyID := strings.TrimSpace(input.PartyID) != ""
+	partyID := strings.TrimSpace(input.PartyID)
+	hasPartyID := partyID != ""
 	if (partyType == models.DocumentPartyTypeCustomer) != hasPartyID {
 		return CreateInvoiceInput{}, &idempotency.InvalidPayloadError{}
+	}
+	if partyType == models.DocumentPartyTypeCustomer {
+		parsedPartyID, err := uuid.Parse(partyID)
+		if err != nil || parsedPartyID.String() != partyID {
+			return CreateInvoiceInput{}, &idempotency.InvalidPayloadError{}
+		}
 	}
 	status := firstNonEmpty(input.Status, models.DocumentStatusIssued)
 	if status != models.DocumentStatusIssued && status != models.DocumentStatusDraft {
@@ -451,7 +459,7 @@ func canonicalPOSCheckoutInput(session *models.POSSession, idempotencyKey string
 	}
 
 	buyerSnapshot := models.PartySnapshot{}
-	if strings.TrimSpace(input.PartyID) == "" {
+	if partyID == "" {
 		buyerSnapshot = models.PartySnapshot{
 			Name:  "Counter sale",
 			TaxID: input.PartyPAN,
@@ -462,7 +470,7 @@ func canonicalPOSCheckoutInput(session *models.POSSession, idempotencyKey string
 	return CreateInvoiceInput{
 		IdempotencyKey: idempotencyKey,
 		Origin:         models.InvoiceOriginPOS,
-		CustomerID:     input.PartyID,
+		CustomerID:     partyID,
 		BuyerSnapshot:  buyerSnapshot,
 		Currency:       firstNonEmpty(session.Currency, "INR"),
 		Notes:          coalesceString(input.Notes, fmt.Sprintf("POS checkout from session %s", session.ID)),

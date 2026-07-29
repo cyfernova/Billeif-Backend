@@ -202,8 +202,11 @@ func TestCanonicalPOSCheckoutInputValidatesPartyTypeAndIDPairing(t *testing.T) {
 		wantError bool
 	}{
 		{name: "anonymous manual", partyType: models.DocumentPartyTypeManual},
+		{name: "anonymous manual with whitespace ID", partyType: models.DocumentPartyTypeManual, partyID: " \t "},
 		{name: "anonymous default", partyType: ""},
 		{name: "identified customer", partyType: models.DocumentPartyTypeCustomer, partyID: customerID},
+		{name: "identified customer with padded ID", partyType: models.DocumentPartyTypeCustomer, partyID: " \t" + customerID + " "},
+		{name: "customer with invalid ID", partyType: models.DocumentPartyTypeCustomer, partyID: "not-a-uuid", wantError: true},
 		{name: "customer without ID", partyType: models.DocumentPartyTypeCustomer, wantError: true},
 		{name: "manual with ID", partyType: models.DocumentPartyTypeManual, partyID: customerID, wantError: true},
 		{name: "default manual with ID", partyType: "", partyID: customerID, wantError: true},
@@ -235,5 +238,32 @@ func TestCanonicalPOSCheckoutInputValidatesPartyTypeAndIDPairing(t *testing.T) {
 				t.Fatalf("anonymous manual mapping = %#v", input)
 			}
 		})
+	}
+}
+
+func TestCanonicalPOSCheckoutInputNormalizesCustomerIDBeforeLookupAndPersistence(t *testing.T) {
+	service, repo, template, ctx := newAtomicInvoiceServiceFixture(t)
+	session := &models.POSSession{ID: uuid.NewString(), Currency: "INR"}
+
+	input, err := canonicalPOSCheckoutInput(session, uuid.NewString(), CheckoutPOSCartInput{
+		PartyType: models.DocumentPartyTypeCustomer,
+		PartyID:   " \t" + template.CustomerID + " ",
+		TaxMode:   models.DocumentTaxModeNonGST,
+	}, template.Items)
+	if err != nil {
+		t.Fatalf("map padded customer ID: %v", err)
+	}
+	invoice, err := service.CreateByBusiness(ctx, template.BusinessID, input)
+	if err != nil {
+		t.Fatalf("look up normalized customer ID: %v", err)
+	}
+	if input.CustomerID != template.CustomerID {
+		t.Fatalf("mapped customer ID = %q, want %q", input.CustomerID, template.CustomerID)
+	}
+	if models.StringValue(invoice.CustomerID) != template.CustomerID {
+		t.Fatalf("invoice customer ID = %q, want %q", models.StringValue(invoice.CustomerID), template.CustomerID)
+	}
+	if models.StringValue(repo.last.Invoice.CustomerID) != template.CustomerID {
+		t.Fatalf("persisted customer ID = %q, want %q", models.StringValue(repo.last.Invoice.CustomerID), template.CustomerID)
 	}
 }
