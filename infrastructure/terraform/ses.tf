@@ -3,9 +3,15 @@ resource "aws_ses_configuration_set" "main" {
 
   lifecycle {
     precondition {
-      condition = local.ses_verified_identity_is_email ? (
-        lower(var.ses_sender_email) == lower(var.ses_verified_identity)
-      ) : endswith(lower(var.ses_sender_email), "@${lower(var.ses_verified_identity)}")
+      condition = (
+        local.ses_verified_identity_is_email ? (
+          local.ses_sender_email_local_part == local.ses_verified_identity_local_part &&
+          local.ses_sender_email_domain == local.ses_verified_identity_domain
+          ) : (
+          local.ses_sender_email_domain == local.ses_verified_identity_domain ||
+          endswith(local.ses_sender_email_domain, ".${local.ses_verified_identity_domain}")
+        )
+      )
       error_message = "ses_sender_email must equal the verified email identity or belong to the verified SES domain identity."
     }
   }

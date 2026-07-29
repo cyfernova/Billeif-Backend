@@ -699,3 +699,106 @@ run "ses_sender_must_belong_to_verified_domain_identity" {
 
   expect_failures = [aws_ses_configuration_set.main]
 }
+
+run "ses_email_identity_allows_case_insensitive_domain" {
+  command = plan
+
+  variables {
+    lambda_artifact_dir   = "tests/fixtures/lambda"
+    llm_api_url           = "https://llm.example.test/chat/completions"
+    llm_model             = "test-model"
+    deepseek_base_url     = "https://voice-llm.example.test/v1"
+    deepseek_model        = "voice-test-model"
+    db_allowed_cidr       = "10.0.0.0/24"
+    ses_verified_identity = "Billing@Billeif.example"
+    ses_sender_email      = "Billing@billeif.example"
+  }
+
+  assert {
+    condition     = local.ses_verified_identity_arn == "arn:aws:ses:ap-south-1:123456789012:identity/Billing@Billeif.example"
+    error_message = "An SES email identity ARN must retain the validated caller-supplied identity exactly."
+  }
+}
+
+run "ses_email_identity_rejects_different_local_part_case" {
+  command = plan
+
+  variables {
+    lambda_artifact_dir   = "tests/fixtures/lambda"
+    llm_api_url           = "https://llm.example.test/chat/completions"
+    llm_model             = "test-model"
+    deepseek_base_url     = "https://voice-llm.example.test/v1"
+    deepseek_model        = "voice-test-model"
+    db_allowed_cidr       = "10.0.0.0/24"
+    ses_verified_identity = "Billing@billeif.example"
+    ses_sender_email      = "billing@billeif.example"
+  }
+
+  expect_failures = [aws_ses_configuration_set.main]
+}
+
+run "ses_domain_identity_accepts_true_subdomain_sender" {
+  command = plan
+
+  variables {
+    lambda_artifact_dir   = "tests/fixtures/lambda"
+    llm_api_url           = "https://llm.example.test/chat/completions"
+    llm_model             = "test-model"
+    deepseek_base_url     = "https://voice-llm.example.test/v1"
+    deepseek_model        = "voice-test-model"
+    db_allowed_cidr       = "10.0.0.0/24"
+    ses_verified_identity = "billeif.example"
+    ses_sender_email      = "notifications@mail.billeif.example"
+  }
+}
+
+run "ses_domain_identity_rejects_suffix_spoof" {
+  command = plan
+
+  variables {
+    lambda_artifact_dir   = "tests/fixtures/lambda"
+    llm_api_url           = "https://llm.example.test/chat/completions"
+    llm_model             = "test-model"
+    deepseek_base_url     = "https://voice-llm.example.test/v1"
+    deepseek_model        = "voice-test-model"
+    db_allowed_cidr       = "10.0.0.0/24"
+    ses_verified_identity = "billeif.example"
+    ses_sender_email      = "notifications@notbilleif.example"
+  }
+
+  expect_failures = [aws_ses_configuration_set.main]
+}
+
+run "ses_identity_rejects_iam_wildcard" {
+  command = plan
+
+  variables {
+    lambda_artifact_dir   = "tests/fixtures/lambda"
+    llm_api_url           = "https://llm.example.test/chat/completions"
+    llm_model             = "test-model"
+    deepseek_base_url     = "https://voice-llm.example.test/v1"
+    deepseek_model        = "voice-test-model"
+    db_allowed_cidr       = "10.0.0.0/24"
+    ses_verified_identity = "*.billeif.example"
+    ses_sender_email      = "notifications@billeif.example"
+  }
+
+  expect_failures = [var.ses_verified_identity]
+}
+
+run "ses_identity_rejects_malformed_domain" {
+  command = plan
+
+  variables {
+    lambda_artifact_dir   = "tests/fixtures/lambda"
+    llm_api_url           = "https://llm.example.test/chat/completions"
+    llm_model             = "test-model"
+    deepseek_base_url     = "https://voice-llm.example.test/v1"
+    deepseek_model        = "voice-test-model"
+    db_allowed_cidr       = "10.0.0.0/24"
+    ses_verified_identity = "billeif..example"
+    ses_sender_email      = "notifications@billeif.example"
+  }
+
+  expect_failures = [var.ses_verified_identity]
+}

@@ -16,6 +16,15 @@ locals {
   voice_sessions_table_name      = var.voice_sessions_table_name != "" ? var.voice_sessions_table_name : "${local.resource_prefix}-voice-sessions"
   voice_session_lambda_name      = var.voice_session_lambda_function_name != "" ? var.voice_session_lambda_function_name : "${local.resource_prefix}-voice-session"
 
-  ses_verified_identity_is_email = can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", var.ses_verified_identity))
+  ses_dns_label_pattern          = "[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+  ses_domain_pattern             = "${local.ses_dns_label_pattern}(?:\\.${local.ses_dns_label_pattern})+"
+  ses_email_local_part_pattern   = "[A-Za-z0-9!#$%&'+_-]+(?:\\.[A-Za-z0-9!#$%&'+_-]+)*"
+  ses_email_pattern              = "${local.ses_email_local_part_pattern}@${local.ses_domain_pattern}"
+  ses_verified_identity_is_email = can(regex("^${local.ses_email_pattern}$", var.ses_verified_identity))
   ses_verified_identity_arn      = "arn:${data.aws_partition.current.partition}:ses:${var.aws_region}:${data.aws_caller_identity.current.account_id}:identity/${var.ses_verified_identity}"
+
+  ses_sender_email_local_part      = split("@", var.ses_sender_email)[0]
+  ses_sender_email_domain          = lower(split("@", var.ses_sender_email)[1])
+  ses_verified_identity_domain     = lower(local.ses_verified_identity_is_email ? split("@", var.ses_verified_identity)[1] : var.ses_verified_identity)
+  ses_verified_identity_local_part = local.ses_verified_identity_is_email ? split("@", var.ses_verified_identity)[0] : null
 }

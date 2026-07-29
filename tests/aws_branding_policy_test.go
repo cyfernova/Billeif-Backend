@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -320,7 +321,7 @@ websocket_connections_table
 workflow_runs_queue_url
 `
 
-const preTaskLambdaEnvironmentManifest = `
+const preTaskEnvironmentManifest = `
 ALLOWED_ORIGINS
 AWS_ENDPOINT
 COGNITO_CLIENT_ID
@@ -356,8 +357,16 @@ GST_LOOKUP_BASE_URL
 GST_LOOKUP_SECRET_ARN
 GST_LOOKUP_TIMEOUT
 GST_PROVIDER_SECRET_ARN
+INDIA_AUTH_MESSAGE_TEMPLATE
+INDIA_AUTH_TEMPLATE_ID
+INDIA_DLT_ENTITY_ID
+INDIA_SENDER_ID
+INDIA_SIGNUP_MESSAGE_TEMPLATE
+INDIA_SIGNUP_TEMPLATE_ID
 JWT_ACCESS_TOKEN_EXPIRY
 JWT_REFRESH_TOKEN_EXPIRY
+KEY_ARN
+KEY_ID
 LLM_API_URL
 LLM_MODEL
 LLM_SECRET_ARN
@@ -371,6 +380,7 @@ S3_BUCKET_LOGOS
 S3_BUCKET_PRODUCTS
 SERVER_BASE_URL
 SERVER_PORT
+SMS_REGION
 SQS_BARGAINING_QUEUE
 SQS_GST_QUEUE
 SQS_INVOICE_QUEUE
@@ -500,7 +510,12 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 	wantResources = append(wantResources, "aws_cognito_resource_server.main")
 	assertExactManifest(t, "Terraform resource labels", terraformResourceLabels(t), wantResources)
 	assertExactManifest(t, "Terraform output keys", terraformOutputKeys(t), manifestLines(preTaskOutputManifest))
-	assertExactManifest(t, "Lambda environment keys", terraformLambdaEnvironmentKeys(t), manifestLines(preTaskLambdaEnvironmentManifest))
+	assertExactManifest(t, "Terraform environment keys", terraformEnvironmentKeys(t), manifestLines(preTaskEnvironmentManifest))
+
+	providers := readTerraformFile(t, "providers.tf")
+	if !strings.Contains(providers, `required_version = ">= 1.13.0, < 2.0.0"`) {
+		t.Error("Terraform must require a version that supports the cross-variable resource-prefix validation")
+	}
 
 	for _, attribute := range terraformAWSNameAttributes(t) {
 		allow, ok := stableAWSNameAttributeAllowlist[attribute.resourceType+"."+attribute.name]
@@ -510,6 +525,43 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		}
 		if !containsOne(attribute.expression, allow) {
 			t.Errorf("AWS name-bearing attribute %s.%s = %q does not use an approved expression %q", attribute.resourceType, attribute.name, attribute.expression, allow)
+		}
+	}
+	if failures := stableNameLocalDefinitionFailures(terraformAWSNameAttributes(t), terraformLocalDefinitions(t)); len(failures) > 0 {
+		t.Errorf("stable AWS name locals must resolve to Billeif-derived or explicit approved definitions:\n%s", strings.Join(failures, "\n"))
+	}
+}
+
+func TestTerraformStableNameLocalValidationRejectsUnbrandedDefinition(t *testing.T) {
+	failures := stableNameLocalDefinitionFailures(
+		[]terraformAWSNameAttribute{{resourceType: "aws_sqs_queue", name: "name", expression: "local.unbranded_queue_name"}},
+		map[string]string{"unbranded_queue_name": `"legacy-queue"`},
+	)
+	if len(failures) == 0 {
+		t.Fatal("an unbranded local used as a stable AWS name must be rejected")
+	}
+}
+
+func TestTerraformEnvironmentKeyScannerIncludesEveryTerraformSource(t *testing.T) {
+	keys := terraformEnvironmentKeysFromSources([]string{
+		`resource "aws_lambda_function" "http" {
+  environment {
+    variables = {
+      HTTP_KEY = "value"
+    }
+  }
+}`,
+		`resource "aws_lambda_function" "phone" {
+  environment {
+    variables = {
+      PHONE_KEY = "value"
+    }
+  }
+}`,
+	})
+	for _, want := range []string{"HTTP_KEY", "PHONE_KEY"} {
+		if !containsString(keys, want) {
+			t.Errorf("environment key from a Terraform source was missed: %s", want)
 		}
 	}
 }
@@ -571,7 +623,10 @@ type terraformAWSNameAttribute struct {
 var terraformResourceDeclaration = regexp.MustCompile(`(?m)^resource\s+"([^"]+)"\s+"([^"]+)"\s*\{`)
 var terraformOutputDeclaration = regexp.MustCompile(`(?m)^output\s+"([^"]+)"\s*\{`)
 var terraformNameAttributeDeclaration = regexp.MustCompile(`^\s*(name|bucket|identifier|function_name|log_group_name|alarm_name|dashboard_name|domain|stage_name)\s*=\s*(.+?)\s*$`)
-var terraformLambdaEnvironmentDeclaration = regexp.MustCompile(`^\s*([A-Z][A-Z0-9_]+)\s*=`)
+var terraformEnvironmentKeyDeclaration = regexp.MustCompile(`^\s*([A-Z][A-Z0-9_]+)\s*=`)
+var terraformLocalReference = regexp.MustCompile(`\blocal\.([A-Za-z0-9_]+)\b`)
+var terraformLocalsBlockDeclaration = regexp.MustCompile(`^\s*locals\s*\{`)
+var terraformLocalDefinitionDeclaration = regexp.MustCompile(`^\s*([a-z][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$`)
 
 func terraformResourceLabels(t *testing.T) []string {
 	t.Helper()
@@ -595,15 +650,180 @@ func terraformOutputKeys(t *testing.T) []string {
 	return sortedUnique(keys)
 }
 
-func terraformLambdaEnvironmentKeys(t *testing.T) []string {
+func terraformEnvironmentKeys(t *testing.T) []string {
 	t.Helper()
+	return terraformEnvironmentKeysFromSources(terraformSourceFiles(t))
+}
+
+func terraformEnvironmentKeysFromSources(sources []string) []string {
 	var keys []string
-	for _, line := range strings.Split(readTerraformFile(t, "lambda.tf"), "\n") {
-		if match := terraformLambdaEnvironmentDeclaration.FindStringSubmatch(line); match != nil {
-			keys = append(keys, match[1])
+	for _, source := range sources {
+		for _, line := range strings.Split(source, "\n") {
+			if match := terraformEnvironmentKeyDeclaration.FindStringSubmatch(line); match != nil {
+				keys = append(keys, match[1])
+			}
 		}
 	}
 	return sortedUnique(keys)
+}
+
+func terraformLocalDefinitions(t *testing.T) map[string]string {
+	t.Helper()
+	return terraformLocalDefinitionsFromSources(terraformSourceFiles(t))
+}
+
+func terraformLocalDefinitionsFromSources(sources []string) map[string]string {
+	definitions := make(map[string]string)
+	for _, source := range sources {
+		inLocalsBlock := false
+		depth := 0
+		for _, line := range strings.Split(source, "\n") {
+			if !inLocalsBlock {
+				if terraformLocalsBlockDeclaration.MatchString(line) {
+					inLocalsBlock = true
+					depth = terraformBraceDelta(line)
+				}
+				continue
+			}
+
+			if depth == 1 {
+				if match := terraformLocalDefinitionDeclaration.FindStringSubmatch(line); match != nil {
+					definitions[match[1]] = match[2]
+				}
+			}
+			depth += terraformBraceDelta(line)
+			if depth == 0 {
+				inLocalsBlock = false
+			}
+		}
+	}
+	return definitions
+}
+
+type stableNameLocalDefinitionContract struct {
+	approvedTokens []string
+	requiredTokens []string
+}
+
+var stableNameLocalDefinitionContracts = map[string]stableNameLocalDefinitionContract{
+	"resource_prefix": {
+		approvedTokens: []string{"var.project_name", "var.environment"},
+		requiredTokens: []string{"var.project_name", "var.environment"},
+	},
+	"bucket_prefix": {
+		approvedTokens: []string{"local.resource_prefix"},
+		requiredTokens: []string{"local.resource_prefix"},
+	},
+	"cognito_web_user_pool_name": {
+		approvedTokens: []string{"var.user_pool_name", "local.resource_prefix"},
+		requiredTokens: []string{"local.resource_prefix"},
+	},
+	"cognito_web_client_name": {
+		approvedTokens: []string{"var.client_name", "local.resource_prefix"},
+		requiredTokens: []string{"local.resource_prefix"},
+	},
+	"cognito_native_user_pool_name": {
+		approvedTokens: []string{"var.phone_user_pool_name", "local.resource_prefix"},
+		requiredTokens: []string{"local.resource_prefix"},
+	},
+	"cognito_native_client_name": {
+		approvedTokens: []string{"var.phone_client_name", "local.resource_prefix"},
+		requiredTokens: []string{"local.resource_prefix"},
+	},
+	"cognito_resource_server_id": {
+		approvedTokens: []string{"local.resource_prefix"},
+		requiredTokens: []string{"local.resource_prefix"},
+	},
+	"cognito_resource_server_name": {
+		approvedTokens: []string{"local.resource_prefix"},
+		requiredTokens: []string{"local.resource_prefix"},
+	},
+	"cognito_hosted_ui_domain_prefix": {
+		approvedTokens: []string{"var.cognito_domain_prefix", "var.environment", `"billeif-`},
+		requiredTokens: []string{"var.environment", `"billeif-`},
+	},
+	"phone_auth_cooldown_table_name": {
+		approvedTokens: []string{"var.phone_auth_cooldown_table_name", "local.resource_prefix"},
+		requiredTokens: []string{"local.resource_prefix"},
+	},
+	"websocket_connections_table": {
+		approvedTokens: []string{"var.websocket_connections_table", "local.resource_prefix"},
+		requiredTokens: []string{"local.resource_prefix"},
+	},
+	"voice_sessions_table_name": {
+		approvedTokens: []string{"var.voice_sessions_table_name", "local.resource_prefix"},
+		requiredTokens: []string{"local.resource_prefix"},
+	},
+	"voice_session_lambda_name": {
+		approvedTokens: []string{"var.voice_session_lambda_function_name", "local.resource_prefix"},
+		requiredTokens: []string{"local.resource_prefix"},
+	},
+	"db_host_ssm_parameter_name": {
+		approvedTokens: []string{"var.project_name", "var.environment"},
+		requiredTokens: []string{"var.project_name", "var.environment"},
+	},
+}
+
+func stableNameLocalDefinitionFailures(attributes []terraformAWSNameAttribute, definitions map[string]string) []string {
+	var failures []string
+	validated := make(map[string]error)
+	for _, attribute := range attributes {
+		for _, match := range terraformLocalReference.FindAllStringSubmatch(attribute.expression, -1) {
+			name := match[1]
+			if _, alreadyValidated := validated[name]; !alreadyValidated {
+				validated[name] = validateStableNameLocalDefinition(name, definitions, make(map[string]bool))
+			}
+			if err := validated[name]; err != nil {
+				failures = append(failures, fmt.Sprintf("%s.%s references local.%s: %v", attribute.resourceType, attribute.name, name, err))
+			}
+		}
+	}
+	return sortedUnique(failures)
+}
+
+func validateStableNameLocalDefinition(name string, definitions map[string]string, visiting map[string]bool) error {
+	if visiting[name] {
+		return fmt.Errorf("cyclic local definition")
+	}
+	definition, exists := definitions[name]
+	if !exists {
+		return fmt.Errorf("definition is missing")
+	}
+	contract, allowed := stableNameLocalDefinitionContracts[name]
+	if !allowed {
+		return fmt.Errorf("definition %q is not explicitly classified", definition)
+	}
+	for _, required := range contract.requiredTokens {
+		if !strings.Contains(definition, required) {
+			return fmt.Errorf("definition %q is missing required Billeif-derived token %q", definition, required)
+		}
+	}
+
+	visiting[name] = true
+	defer delete(visiting, name)
+	for _, match := range terraformLocalReference.FindAllStringSubmatch(definition, -1) {
+		dependency := match[1]
+		if err := validateStableNameLocalDefinition(dependency, definitions, visiting); err != nil {
+			return fmt.Errorf("dependency local.%s: %w", dependency, err)
+		}
+	}
+
+	for _, token := range terraformVariableAndLiteralTokens(definition) {
+		if !containsOne(token, contract.approvedTokens) {
+			return fmt.Errorf("definition %q contains unapproved token %q", definition, token)
+		}
+	}
+	return nil
+}
+
+var terraformVariableOrLiteralToken = regexp.MustCompile(`\bvar\.[A-Za-z0-9_]+\b|"billeif-`)
+
+func terraformVariableAndLiteralTokens(definition string) []string {
+	var tokens []string
+	for _, match := range terraformVariableOrLiteralToken.FindAllString(definition, -1) {
+		tokens = append(tokens, match)
+	}
+	return sortedUnique(tokens)
 }
 
 func terraformAWSNameAttributes(t *testing.T) []terraformAWSNameAttribute {
@@ -695,6 +915,15 @@ func assertExactManifest(t *testing.T, name string, got, want []string) {
 func containsOne(expression string, allowed []string) bool {
 	for _, token := range allowed {
 		if strings.Contains(expression, token) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
 			return true
 		}
 	}

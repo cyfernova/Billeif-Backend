@@ -516,10 +516,10 @@ variable "ses_verified_identity" {
 
   validation {
     condition = (
-      can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", var.ses_verified_identity)) ||
-      can(regex("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$", lower(var.ses_verified_identity)))
+      can(regex("^[A-Za-z0-9!#$%&'+_-]+(?:\\.[A-Za-z0-9!#$%&'+_-]+)*@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$", var.ses_verified_identity)) ||
+      can(regex("^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$", var.ses_verified_identity))
     ) && var.ses_verified_identity == trimspace(var.ses_verified_identity) && !endswith(lower(var.ses_verified_identity), ".local")
-    error_message = "ses_verified_identity must be a non-.local email address or domain, without surrounding whitespace, that is already verified in SES."
+    error_message = "ses_verified_identity must be a non-.local email address or domain with strict DNS labels and no ARN wildcard or path characters."
   }
 }
 
@@ -528,8 +528,8 @@ variable "ses_sender_email" {
   type        = string
 
   validation {
-    condition     = var.ses_sender_email == trimspace(var.ses_sender_email) && can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", var.ses_sender_email)) && !endswith(lower(var.ses_sender_email), ".local")
-    error_message = "ses_sender_email must be a non-.local email address without surrounding whitespace."
+    condition     = var.ses_sender_email == trimspace(var.ses_sender_email) && can(regex("^[A-Za-z0-9!#$%&'+_-]+(?:\\.[A-Za-z0-9!#$%&'+_-]+)*@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$", var.ses_sender_email)) && !endswith(lower(var.ses_sender_email), ".local")
+    error_message = "ses_sender_email must be a non-.local email address with strict DNS labels and no ARN wildcard or path characters."
   }
 }
 
