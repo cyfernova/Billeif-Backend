@@ -216,7 +216,9 @@ func (r *invoiceRepository) getReplayInvoice(ctx context.Context, id, businessID
 	var invoice models.Invoice
 	err := r.db.WithContext(ctx).
 		Unscoped().
-		Preload("Items").
+		Preload("Items", func(db *gorm.DB) *gorm.DB {
+			return db.Order("created_at ASC, id ASC")
+		}).
 		Where("id = ? AND business_id = ?", id, businessID).
 		First(&invoice).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {

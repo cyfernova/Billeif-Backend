@@ -33,6 +33,8 @@ type canonicalInvoiceIssuePayload struct {
 	Series          string `json:"series"`
 	ActorID         string `json:"actor_id"`
 	ActorRole       string `json:"actor_role"`
+	RequestID       string `json:"request_id"`
+	IPAddress       string `json:"ip_address"`
 }
 
 func (s *InvoiceService) IssueByBusiness(
@@ -60,6 +62,8 @@ func (s *InvoiceService) IssueByBusiness(
 		Series:          input.Series,
 		ActorID:         actor.UserID,
 		ActorRole:       actor.Role,
+		RequestID:       actor.RequestID,
+		IPAddress:       actor.IPAddress,
 	})
 	if err != nil {
 		return nil, err

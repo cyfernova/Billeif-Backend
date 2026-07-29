@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"invoice-backend/internal/invoiceprojection"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 
@@ -277,27 +278,7 @@ func atomicRepositoryTestCommand() interfaces.AtomicInvoiceDraft {
 			Total:       100,
 		}},
 	}
-	document := &models.Document{
-		ID:           invoiceID,
-		BusinessID:   businessID,
-		DocumentType: models.DocumentTypeSalesInvoice,
-		PartyType:    models.DocumentPartyTypeCustomer,
-		PartyID:      &customerID,
-		Status:       models.DocumentStatusDraft,
-		DraftState:   models.DocumentDraftStateDraft,
-		SerialNumber: "",
-		IssueDate:    now,
-		Currency:     "INR",
-		Total:        100,
-		Lines: []*models.DocumentLine{{
-			ID:          itemID,
-			DocumentID:  invoiceID,
-			Description: "Atomic item",
-			Quantity:    1,
-			UnitPrice:   100,
-			LineTotal:   100,
-		}},
-	}
+	document := invoiceprojection.Build(invoice)
 	return interfaces.AtomicInvoiceDraft{
 		BusinessID:     businessID,
 		Command:        "invoice.create",

@@ -100,7 +100,10 @@ func TestInvoiceServiceIssueValidatesKeyActorAndAllHashedSemantics(t *testing.T)
 	if _, err := service.IssueByBusiness(context.Background(), uuid.NewString(), uuid.NewString(), base); err == nil {
 		t.Fatal("issue without actor succeeded")
 	}
-	ctx := ContextWithActor(context.Background(), ActorContext{UserID: uuid.NewString()})
+	actorID := uuid.NewString()
+	ctx := ContextWithActor(context.Background(), ActorContext{
+		UserID: actorID, Role: "accountant", RequestID: "request-base", IPAddress: "127.0.0.1",
+	})
 	invalidKey := base
 	invalidKey.IdempotencyKey = "not-a-uuid"
 	if _, err := service.IssueByBusiness(ctx, uuid.NewString(), uuid.NewString(), invalidKey); err == nil {
@@ -124,6 +127,19 @@ func TestInvoiceServiceIssueValidatesKeyActorAndAllHashedSemantics(t *testing.T)
 		}
 		if repo.lastIssue.RequestHash == baseHash {
 			t.Fatalf("mutation was omitted from canonical hash: %#v", mutation)
+		}
+	}
+	actorMutations := []ActorContext{
+		{UserID: actorID, Role: "accountant", RequestID: "request-changed", IPAddress: "127.0.0.1"},
+		{UserID: actorID, Role: "accountant", RequestID: "request-base", IPAddress: "127.0.0.2"},
+	}
+	for _, mutation := range actorMutations {
+		mutatedContext := ContextWithActor(context.Background(), mutation)
+		if _, err := service.IssueByBusiness(mutatedContext, businessID, invoiceID, base); err != nil {
+			t.Fatalf("actor-metadata mutation issue: %v", err)
+		}
+		if repo.lastIssue.RequestHash == baseHash {
+			t.Fatalf("persisted actor metadata was omitted from canonical hash: %#v", mutation)
 		}
 	}
 }

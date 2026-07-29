@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -9,40 +10,92 @@ import (
 
 	"invoice-backend/internal/idempotency"
 	"invoice-backend/internal/invoiceissue"
+	"invoice-backend/internal/invoiceprojection"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
+	gormpostgres "gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
-func TestInvoiceRepositoryIssueDraftAtomicPersistsOneLegalResult(t *testing.T) {
-	repository, mock, closeDatabase := newAtomicSQLMockRepository(t)
-	defer closeDatabase()
-	command := issueRepositoryTestCommand()
-	customerID := uuid.NewString()
-	invoiceDate := time.Date(2026, time.April, 1, 0, 30, 0, 0, time.UTC)
+const (
+	issueStageCount = 7
 
-	mock.ExpectBegin()
-	expectSuccessfulInsert(mock)
-	mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{
-		"id", "business_id", "customer_id", "version", "status", "origin", "invoice_date",
-		"seller_snapshot", "buyer_snapshot", "currency", "total",
-	}).AddRow(
-		command.InvoiceID, command.BusinessID, customerID, command.ExpectedVersion, models.InvoiceStatusDraft,
-		models.InvoiceOriginManual, invoiceDate, `{"name":"Seller"}`, `{"name":"Buyer"}`, "INR", 100,
-	))
-	mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{"timezone"}).AddRow("Asia/Kolkata"))
-	mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{
-		"id", "business_id", "status", "bill_of_supply", "source_linkage", "locale",
-	}).AddRow(command.InvoiceID, command.BusinessID, models.DocumentStatusDraft, false, `{}`, "en-IN"))
-	mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{"last_number"}).AddRow(1))
-	mock.ExpectExec("").WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectExec("").WillReturnResult(sqlmock.NewResult(0, 1))
-	expectSuccessfulInsert(mock)
-	expectSuccessfulInsert(mock)
-	expectSuccessfulInsert(mock)
-	mock.ExpectExec("").WillReturnResult(sqlmock.NewResult(0, 1))
+	issueClaimSQL         = `INSERT INTO "api_idempotency_keys".*"business_id".*"command".*"idempotency_key".*"request_hash".*"status".*ON CONFLICT \("business_id","command","idempotency_key"\) DO NOTHING.*RETURNING "id"`
+	issueReplayLookupSQL  = `SELECT \* FROM "api_idempotency_keys".*business_id = \$1 AND command = \$2 AND idempotency_key = \$3.*LIMIT \$4`
+	issueReplayInvoiceSQL = `SELECT \* FROM "invoices".*id = \$1 AND business_id = \$2.*LIMIT \$3`
+	issueReplayItemsSQL   = `SELECT \* FROM "invoice_items".*"invoice_items"."invoice_id" = \$1.*ORDER BY created_at ASC, id ASC`
+	issueReplayRenderSQL  = `SELECT \* FROM "document_render_jobs".*invoice_id = \$1 AND business_id = \$2 AND kind = \$3 AND source_invoice_version = \$4.*LIMIT \$5`
+
+	issueSequenceSQL          = `INSERT INTO document_sequences .*business_id, document_type, financial_year, series, last_number.*ON CONFLICT \(business_id, document_type, financial_year, series\).*WHERE document_sequences.last_number < 999999.*RETURNING last_number`
+	issueInvoiceUpdateSQL     = `UPDATE "invoices" SET .*"invoice_no".*"status".*"version".*WHERE \(id = \$[0-9]+ AND business_id = \$[0-9]+ AND version = \$[0-9]+ AND status = \$[0-9]+ AND deleted_at IS NULL\).*"invoices"."deleted_at" IS NULL`
+	issueDocumentUpdateSQL    = `UPDATE "documents" SET .*"draft_state".*"serial_number".*"source_linkage".*"status".*WHERE \(id = \$[0-9]+ AND business_id = \$[0-9]+ AND status = \$[0-9]+ AND deleted_at IS NULL\).*"documents"."deleted_at" IS NULL`
+	issueFinalRenderInsertSQL = `INSERT INTO "document_render_jobs".*"document_id".*"invoice_id".*"business_id".*"kind".*"source_invoice_version".*"object_key".*"output_url".*RETURNING "id"`
+	issueOutboxInsertSQL      = `INSERT INTO "outbox_events".*"business_id".*"aggregate_type".*"aggregate_id".*"event_type".*"payload".*"available_at".*RETURNING "id"`
+	issueActivityInsertSQL    = `INSERT INTO "activity_logs".*"business_id".*"actor_id".*"request_id".*"ip_address".*"entity_type".*"entity_id".*"action".*"snapshot".*RETURNING "id"`
+	issueCompletionSQL        = `UPDATE "api_idempotency_keys" SET .*"result_id".*"result_type".*"status".*WHERE business_id = \$[0-9]+ AND command = \$[0-9]+ AND idempotency_key = \$[0-9]+ AND request_hash = \$[0-9]+ AND status = \$[0-9]+`
+)
+
+func TestNewInvoiceIssueActivitySnapshotsCompleteIssuedInvoice(t *testing.T) {
+	command, invoice, _ := strictIssueFixture()
+	invoice.Status = models.InvoiceStatusIssued
+	invoice.Version++
+	invoiceNumber := "INV/26-27/000001"
+	renderID := uuid.NewString()
+
+	activity := newInvoiceIssueActivity(command, invoice, invoiceNumber, renderID)
+
+	var snapshot models.Invoice
+	if err := json.Unmarshal([]byte(activity.Snapshot), &snapshot); err != nil {
+		t.Fatalf("decode activity snapshot: %v", err)
+	}
+	if len(snapshot.Items) != 1 || snapshot.Items[0].ID != invoice.Items[0].ID {
+		t.Fatalf("activity snapshot items = %#v, want complete issued invoice items", snapshot.Items)
+	}
+	if activity.RequestID != command.RequestID || activity.IPAddress != command.IPAddress {
+		t.Fatalf("activity request metadata = %#v", activity)
+	}
+}
+
+func TestInvoiceRepositoryIssueDraftAtomicRejectsDriftedProjectionBeforeSequence(t *testing.T) {
+	repository, mock, closeDatabase := newStrictIssueSQLMockRepository(t)
+	defer closeDatabase()
+	command, invoice, document := strictIssueFixture()
+	document.Total = 101
+
+	expectStrictIssueClaim(mock)
+	expectStrictLockedInvoice(t, mock, invoice)
+	expectStrictInvoiceItems(mock, invoice.Items)
+	mock.ExpectQuery(`SELECT "timezone" FROM "business_profiles".*id = \$1 AND deleted_at IS NULL`).
+		WillReturnRows(sqlmock.NewRows([]string{"timezone"}).AddRow("Asia/Kolkata"))
+	expectStrictLockedDocument(mock, document)
+	expectStrictDocumentLines(mock, document.Lines)
+	mock.ExpectRollback()
+
+	result, err := repository.IssueDraftAtomic(context.Background(), command)
+
+	var lifecycle *invoiceissue.InvalidLifecycleError
+	if result != nil || !errors.As(err, &lifecycle) ||
+		!strings.Contains(lifecycle.Error(), "projection") {
+		t.Fatalf("result/error = %#v/%T %v, want projection lifecycle error", result, err, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations: %v", err)
+	}
+}
+
+func TestInvoiceRepositoryIssueDraftAtomicPersistsOneLegalResult(t *testing.T) {
+	repository, mock, closeDatabase := newStrictIssueSQLMockRepository(t)
+	defer closeDatabase()
+	command, invoice, document := strictIssueFixture()
+
+	expectStrictIssueTransactionPrefix(t, mock, invoice, document)
+	for stage := 0; stage < issueStageCount; stage++ {
+		expectSuccessfulIssueStage(mock, stage)
+	}
 	mock.ExpectCommit()
 
 	result, err := repository.IssueDraftAtomic(context.Background(), command)
@@ -52,6 +105,9 @@ func TestInvoiceRepositoryIssueDraftAtomicPersistsOneLegalResult(t *testing.T) {
 	}
 	if result == nil || result.Invoice == nil || result.FinalRender == nil {
 		t.Fatalf("result = %#v, want invoice and render", result)
+	}
+	if len(result.Invoice.Items) != 1 || result.Invoice.Items[0].ID != invoice.Items[0].ID {
+		t.Fatalf("first issue items = %#v, want locked canonical items", result.Invoice.Items)
 	}
 	if result.Invoice.Version != command.ExpectedVersion+1 || result.Invoice.Status != models.InvoiceStatusIssued ||
 		result.Invoice.InvoiceNo == nil || *result.Invoice.InvoiceNo != "INV/26-27/000001" ||
@@ -96,18 +152,17 @@ func TestInvoiceRepositoryIssueDraftAtomicReturnsTypedLifecycleErrors(t *testing
 
 	for _, fixture := range fixtures {
 		t.Run(fixture.name, func(t *testing.T) {
-			repository, mock, closeDatabase := newAtomicSQLMockRepository(t)
+			repository, mock, closeDatabase := newStrictIssueSQLMockRepository(t)
 			defer closeDatabase()
-			command := issueRepositoryTestCommand()
-			mock.ExpectBegin()
-			expectSuccessfulInsert(mock)
-			mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{
-				"id", "business_id", "customer_id", "version", "status", "origin", "invoice_date",
-				"seller_snapshot", "buyer_snapshot",
-			}).AddRow(
-				command.InvoiceID, command.BusinessID, uuid.NewString(), fixture.version, fixture.status,
-				models.InvoiceOriginManual, time.Now(), fixture.seller, fixture.buyer,
-			))
+			command, invoice, _ := strictIssueFixture()
+			invoice.Version = fixture.version
+			invoice.Status = fixture.status
+			invoice.SellerSnapshot = models.PartySnapshot{}
+			invoice.BuyerSnapshot = models.PartySnapshot{}
+			_ = json.Unmarshal([]byte(fixture.seller), &invoice.SellerSnapshot)
+			_ = json.Unmarshal([]byte(fixture.buyer), &invoice.BuyerSnapshot)
+			expectStrictIssueClaim(mock)
+			expectStrictLockedInvoice(t, mock, invoice)
 			mock.ExpectRollback()
 
 			result, err := repository.IssueDraftAtomic(context.Background(), command)
@@ -140,26 +195,30 @@ func TestInvoiceRepositoryIssueDraftAtomicValidatesBeforeClaim(t *testing.T) {
 
 func TestInvoiceRepositoryIssueDraftAtomicReplaysCompletedResultAndRejectsChangedPayload(t *testing.T) {
 	t.Run("replay", func(t *testing.T) {
-		repository, mock, closeDatabase := newAtomicSQLMockRepository(t)
+		repository, mock, closeDatabase := newStrictIssueSQLMockRepository(t)
 		defer closeDatabase()
 		command := issueRepositoryTestCommand()
 		resultType := "invoice_issue"
 		issuedVersion := command.ExpectedVersion + 1
+		itemID := uuid.NewString()
 
 		mock.ExpectBegin()
-		mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{"id"}))
-		mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{
+		mock.ExpectQuery(issueClaimSQL).
+			WillReturnRows(sqlmock.NewRows([]string{"id"}))
+		mock.ExpectQuery(issueReplayLookupSQL).WillReturnRows(sqlmock.NewRows([]string{
 			"business_id", "command", "idempotency_key", "request_hash", "status", "result_type", "result_id",
 		}).AddRow(
 			command.BusinessID, command.Command, command.IdempotencyKey, command.RequestHash,
 			models.IdempotencyStatusCompleted, resultType, command.InvoiceID,
 		))
 		mock.ExpectCommit()
-		mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{
+		mock.ExpectQuery(issueReplayInvoiceSQL).WillReturnRows(sqlmock.NewRows([]string{
 			"id", "business_id", "version", "status",
 		}).AddRow(command.InvoiceID, command.BusinessID, issuedVersion, models.InvoiceStatusIssued))
-		mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{"id", "invoice_id"}))
-		mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{
+		mock.ExpectQuery(issueReplayItemsSQL).WillReturnRows(sqlmock.NewRows([]string{
+			"id", "invoice_id", "description",
+		}).AddRow(itemID, command.InvoiceID, "Canonical item"))
+		mock.ExpectQuery(issueReplayRenderSQL).WillReturnRows(sqlmock.NewRows([]string{
 			"id", "business_id", "invoice_id", "kind", "source_invoice_version",
 		}).AddRow(uuid.NewString(), command.BusinessID, command.InvoiceID, models.RenderKindFinal, issuedVersion))
 
@@ -167,6 +226,7 @@ func TestInvoiceRepositoryIssueDraftAtomicReplaysCompletedResultAndRejectsChange
 
 		if err != nil || result == nil || !result.Replayed ||
 			result.Invoice == nil || result.Invoice.ID != command.InvoiceID ||
+			len(result.Invoice.Items) != 1 || result.Invoice.Items[0].ID != itemID ||
 			result.FinalRender == nil || result.FinalRender.SourceInvoiceVersion == nil ||
 			*result.FinalRender.SourceInvoiceVersion != issuedVersion {
 			t.Fatalf("replay result/error = %#v/%v", result, err)
@@ -177,12 +237,12 @@ func TestInvoiceRepositoryIssueDraftAtomicReplaysCompletedResultAndRejectsChange
 	})
 
 	t.Run("conflict", func(t *testing.T) {
-		repository, mock, closeDatabase := newAtomicSQLMockRepository(t)
+		repository, mock, closeDatabase := newStrictIssueSQLMockRepository(t)
 		defer closeDatabase()
 		command := issueRepositoryTestCommand()
 		mock.ExpectBegin()
-		mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{"id"}))
-		mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{
+		mock.ExpectQuery(issueClaimSQL).WillReturnRows(sqlmock.NewRows([]string{"id"}))
+		mock.ExpectQuery(issueReplayLookupSQL).WillReturnRows(sqlmock.NewRows([]string{
 			"business_id", "command", "idempotency_key", "request_hash", "status",
 		}).AddRow(
 			command.BusinessID, command.Command, command.IdempotencyKey, strings.Repeat("b", 64),
@@ -217,18 +277,14 @@ func TestInvoiceRepositoryIssueDraftAtomicRollsBackEveryIssuanceStage(t *testing
 
 	for failedIndex, failedStage := range stages {
 		t.Run(failedStage.name, func(t *testing.T) {
-			repository, mock, closeDatabase := newAtomicSQLMockRepository(t)
+			repository, mock, closeDatabase := newStrictIssueSQLMockRepository(t)
 			defer closeDatabase()
-			command := issueRepositoryTestCommand()
-			expectIssueTransactionPrefix(mock, command)
+			command, invoice, document := strictIssueFixture()
+			expectStrictIssueTransactionPrefix(t, mock, invoice, document)
 			for index := 0; index < failedIndex; index++ {
 				expectSuccessfulIssueStage(mock, index)
 			}
-			if failedStage.queryStep {
-				mock.ExpectQuery("").WillReturnError(errors.New("injected issue failure"))
-			} else {
-				mock.ExpectExec("").WillReturnError(errors.New("injected issue failure"))
-			}
+			expectFailedIssueStage(mock, failedIndex, failedStage.queryStep)
 			mock.ExpectRollback()
 
 			result, err := repository.IssueDraftAtomic(context.Background(), command)
@@ -248,11 +304,11 @@ func TestInvoiceRepositoryIssueDraftAtomicRollsBackEveryIssuanceStage(t *testing
 }
 
 func TestInvoiceRepositoryIssueDraftAtomicDoesNotReturnCommitFailureAsSuccess(t *testing.T) {
-	repository, mock, closeDatabase := newAtomicSQLMockRepository(t)
+	repository, mock, closeDatabase := newStrictIssueSQLMockRepository(t)
 	defer closeDatabase()
-	command := issueRepositoryTestCommand()
-	expectIssueTransactionPrefix(mock, command)
-	for index := 0; index < 7; index++ {
+	command, invoice, document := strictIssueFixture()
+	expectStrictIssueTransactionPrefix(t, mock, invoice, document)
+	for index := 0; index < issueStageCount; index++ {
 		expectSuccessfulIssueStage(mock, index)
 	}
 	mock.ExpectCommit().WillReturnError(errors.New("injected commit failure"))
@@ -271,11 +327,11 @@ func TestInvoiceRepositoryIssueDraftAtomicDoesNotReturnCommitFailureAsSuccess(t 
 }
 
 func TestInvoiceRepositoryIssueDraftAtomicReturnsTypedSequenceExhaustion(t *testing.T) {
-	repository, mock, closeDatabase := newAtomicSQLMockRepository(t)
+	repository, mock, closeDatabase := newStrictIssueSQLMockRepository(t)
 	defer closeDatabase()
-	command := issueRepositoryTestCommand()
-	expectIssueTransactionPrefix(mock, command)
-	mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{"last_number"}))
+	command, invoice, document := strictIssueFixture()
+	expectStrictIssueTransactionPrefix(t, mock, invoice, document)
+	mock.ExpectQuery(issueSequenceSQL).WillReturnRows(sqlmock.NewRows([]string{"last_number"}))
 	mock.ExpectRollback()
 
 	result, err := repository.IssueDraftAtomic(context.Background(), command)
@@ -288,32 +344,43 @@ func TestInvoiceRepositoryIssueDraftAtomicReturnsTypedSequenceExhaustion(t *test
 	}
 }
 
-func expectIssueTransactionPrefix(mock sqlmock.Sqlmock, command interfaces.AtomicInvoiceIssue) {
-	mock.ExpectBegin()
-	expectSuccessfulInsert(mock)
-	mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{
-		"id", "business_id", "customer_id", "version", "status", "origin", "invoice_date",
-		"seller_snapshot", "buyer_snapshot", "currency", "total",
-	}).AddRow(
-		command.InvoiceID, command.BusinessID, uuid.NewString(), command.ExpectedVersion, models.InvoiceStatusDraft,
-		models.InvoiceOriginManual, time.Date(2026, time.April, 1, 0, 30, 0, 0, time.UTC),
-		`{"name":"Seller"}`, `{"name":"Buyer"}`, "INR", 100,
-	))
-	mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{"timezone"}).AddRow("Asia/Kolkata"))
-	mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{
-		"id", "business_id", "status", "bill_of_supply", "source_linkage", "locale",
-	}).AddRow(command.InvoiceID, command.BusinessID, models.DocumentStatusDraft, false, `{}`, "en-IN"))
-}
-
 func expectSuccessfulIssueStage(mock sqlmock.Sqlmock, index int) {
 	switch index {
 	case 0:
-		mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{"last_number"}).AddRow(1))
-	case 1, 2, 6:
-		mock.ExpectExec("").WillReturnResult(sqlmock.NewResult(0, 1))
-	case 3, 4, 5:
-		expectSuccessfulInsert(mock)
+		mock.ExpectQuery(issueSequenceSQL).WillReturnRows(sqlmock.NewRows([]string{"last_number"}).AddRow(1))
+	case 1:
+		mock.ExpectExec(issueInvoiceUpdateSQL).WillReturnResult(sqlmock.NewResult(0, 1))
+	case 2:
+		mock.ExpectExec(issueDocumentUpdateSQL).WillReturnResult(sqlmock.NewResult(0, 1))
+	case 3:
+		mock.ExpectQuery(issueFinalRenderInsertSQL).
+			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(uuid.NewString()))
+	case 4:
+		mock.ExpectQuery(issueOutboxInsertSQL).
+			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(uuid.NewString()))
+	case 5:
+		mock.ExpectQuery(issueActivityInsertSQL).
+			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(uuid.NewString()))
+	case 6:
+		mock.ExpectExec(issueCompletionSQL).WillReturnResult(sqlmock.NewResult(0, 1))
 	}
+}
+
+func expectFailedIssueStage(mock sqlmock.Sqlmock, index int, queryStep bool) {
+	patterns := []string{
+		issueSequenceSQL,
+		issueInvoiceUpdateSQL,
+		issueDocumentUpdateSQL,
+		issueFinalRenderInsertSQL,
+		issueOutboxInsertSQL,
+		issueActivityInsertSQL,
+		issueCompletionSQL,
+	}
+	if queryStep {
+		mock.ExpectQuery(patterns[index]).WillReturnError(errors.New("injected issue failure"))
+		return
+	}
+	mock.ExpectExec(patterns[index]).WillReturnError(errors.New("injected issue failure"))
 }
 
 func issueRepositoryTestCommand() interfaces.AtomicInvoiceIssue {
@@ -331,4 +398,158 @@ func issueRepositoryTestCommand() interfaces.AtomicInvoiceIssue {
 		RequestID:       "request-issue",
 		IPAddress:       "127.0.0.1",
 	}
+}
+
+func newStrictIssueSQLMockRepository(t *testing.T) (*invoiceRepository, sqlmock.Sqlmock, func()) {
+	t.Helper()
+	sqlDatabase, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("open strict issue sqlmock: %v", err)
+	}
+	gormDatabase, err := gorm.Open(gormpostgres.New(gormpostgres.Config{Conn: sqlDatabase}), &gorm.Config{
+		Logger: gormlogger.Default.LogMode(gormlogger.Silent),
+	})
+	if err != nil {
+		_ = sqlDatabase.Close()
+		t.Fatalf("open strict issue gorm adapter: %v", err)
+	}
+	return &invoiceRepository{db: gormDatabase}, mock, func() {
+		mock.ExpectClose()
+		if err := sqlDatabase.Close(); err != nil {
+			t.Errorf("close strict issue sqlmock: %v", err)
+		}
+	}
+}
+
+func strictIssueFixture() (interfaces.AtomicInvoiceIssue, *models.Invoice, *models.Document) {
+	command := issueRepositoryTestCommand()
+	customerID := uuid.NewString()
+	itemID := uuid.NewString()
+	invoiceDate := time.Date(2026, time.April, 1, 0, 30, 0, 0, time.UTC)
+	invoice := &models.Invoice{
+		ID: command.InvoiceID, BusinessID: command.BusinessID, CustomerID: &customerID,
+		Version: 1, Status: models.InvoiceStatusDraft, Origin: models.InvoiceOriginManual,
+		SellerSnapshot: models.PartySnapshot{Name: "Seller"},
+		BuyerSnapshot:  models.PartySnapshot{Name: "Buyer"},
+		InvoiceDate:    invoiceDate, DueDate: invoiceDate.AddDate(0, 0, 30),
+		Currency: "INR", Subtotal: 100, Total: 100, BalanceDue: 100,
+		CustomFields: "{}", AdditionalCharges: "[]", TaxProfile: "{}",
+		Items: []*models.InvoiceItem{{
+			ID: itemID, InvoiceID: command.InvoiceID, Description: "Canonical item",
+			Unit: "NOS", Quantity: 1, UnitPrice: 100, Total: 100,
+			CustomFields: "{}", ChargeSnapshot: "[]", BatchAllocations: "[]", SerialIDs: "[]",
+		}},
+	}
+	return command, invoice, invoiceprojection.Build(invoice)
+}
+
+func expectStrictIssueClaim(mock sqlmock.Sqlmock) {
+	mock.ExpectBegin()
+	mock.ExpectQuery(issueClaimSQL).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(uuid.NewString()))
+}
+
+func expectStrictIssueTransactionPrefix(
+	t *testing.T,
+	mock sqlmock.Sqlmock,
+	invoice *models.Invoice,
+	document *models.Document,
+) {
+	t.Helper()
+	expectStrictIssueClaim(mock)
+	expectStrictLockedInvoice(t, mock, invoice)
+	expectStrictInvoiceItems(mock, invoice.Items)
+	mock.ExpectQuery(`SELECT "timezone" FROM "business_profiles".*id = \$1 AND deleted_at IS NULL`).
+		WillReturnRows(sqlmock.NewRows([]string{"timezone"}).AddRow("Asia/Kolkata"))
+	expectStrictLockedDocument(mock, document)
+	expectStrictDocumentLines(mock, document.Lines)
+}
+
+func expectStrictLockedInvoice(t *testing.T, mock sqlmock.Sqlmock, invoice *models.Invoice) {
+	mock.ExpectQuery(`SELECT \* FROM "invoices".*id = \$1 AND business_id = \$2 AND deleted_at IS NULL.*FOR UPDATE`).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "business_id", "customer_id", "version", "status", "origin",
+			"seller_snapshot", "buyer_snapshot", "invoice_date", "due_date", "currency",
+			"subtotal", "tax", "discount", "total", "paid_amount", "balance_due",
+			"notes", "custom_fields", "additional_charges", "tax_profile",
+		}).AddRow(
+			invoice.ID, invoice.BusinessID, invoice.CustomerID, invoice.Version, invoice.Status, invoice.Origin,
+			mustJSONTest(t, invoice.SellerSnapshot), mustJSONTest(t, invoice.BuyerSnapshot),
+			invoice.InvoiceDate, invoice.DueDate, invoice.Currency,
+			invoice.Subtotal, invoice.Tax, invoice.Discount, invoice.Total, invoice.PaidAmount, invoice.BalanceDue,
+			invoice.Notes, invoice.CustomFields, invoice.AdditionalCharges, invoice.TaxProfile,
+		))
+}
+
+func mustJSONTest(t *testing.T, value interface{}) string {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal SQL fixture: %v", err)
+	}
+	return string(encoded)
+}
+
+func expectStrictInvoiceItems(mock sqlmock.Sqlmock, items []*models.InvoiceItem) {
+	rows := sqlmock.NewRows([]string{
+		"id", "invoice_id", "description", "unit", "quantity", "unit_price", "discount",
+		"tax_rate", "cess_rate", "cess_amount", "custom_fields", "charge_snapshot",
+		"batch_allocations", "serial_ids", "total",
+	})
+	for _, item := range items {
+		rows.AddRow(
+			item.ID, item.InvoiceID, item.Description, item.Unit, item.Quantity, item.UnitPrice, item.Discount,
+			item.TaxRate, item.CessRate, item.CessAmount, item.CustomFields, item.ChargeSnapshot,
+			item.BatchAllocations, item.SerialIDs, item.Total,
+		)
+	}
+	mock.ExpectQuery(`SELECT \* FROM "invoice_items".*invoice_id = \$1.*ORDER BY created_at ASC, id ASC.*FOR UPDATE`).
+		WillReturnRows(rows)
+}
+
+func expectStrictLockedDocument(mock sqlmock.Sqlmock, document *models.Document) {
+	mock.ExpectQuery(`SELECT \* FROM "documents".*id = \$1 AND business_id = \$2 AND deleted_at IS NULL.*FOR UPDATE`).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "business_id", "document_type", "party_type", "party_id", "status", "draft_state",
+			"tax_mode", "gst_treatment", "bill_of_supply", "serial_number", "issue_date", "due_date",
+			"currency", "exchange_rate", "locale", "source_linkage", "profit_snapshot_enabled",
+			"notes", "direction", "subtotal", "discount_total", "tax_total", "cess_total",
+			"withholding_total", "tds_total", "tcs_total", "total", "paid_amount", "balance_due",
+			"dispatch_from", "dispatch_to", "transporter", "vehicle", "multi_vehicle_plan",
+			"extra_fields", "report_tags",
+		}).AddRow(
+			document.ID, document.BusinessID, document.DocumentType, document.PartyType, document.PartyID,
+			document.Status, document.DraftState, document.TaxMode, document.GSTTreatment,
+			document.BillOfSupply, document.SerialNumber, document.IssueDate, document.DueDate,
+			document.Currency, document.ExchangeRate, document.Locale, document.SourceLinkage,
+			document.ProfitSnapshotEnabled, document.Notes, document.Direction, document.Subtotal,
+			document.DiscountTotal, document.TaxTotal, document.CessTotal, document.WithholdingTotal,
+			document.TDSTotal, document.TCSTotal, document.Total, document.PaidAmount, document.BalanceDue,
+			document.DispatchFrom, document.DispatchTo, document.Transporter, document.Vehicle,
+			document.MultiVehiclePlan, document.ExtraFields, document.ReportTags,
+		))
+}
+
+func expectStrictDocumentLines(mock sqlmock.Sqlmock, lines []*models.DocumentLine) {
+	rows := sqlmock.NewRows([]string{
+		"id", "document_id", "description", "hsn_sac_code", "uqc_code", "unit", "quantity",
+		"free_quantity", "remaining_quantity", "unit_price", "mrp", "discount_amount",
+		"tax_rate", "cgst_rate", "sgst_rate", "igst_rate", "cess_rate", "cgst_amount",
+		"sgst_amount", "igst_amount", "cess_amount", "tax_amount", "line_subtotal",
+		"line_total", "cost_snapshot", "margin_snapshot", "custom_fields", "charge_linkage",
+		"packing_metadata", "batch_allocations", "serial_ids", "report_tags", "stock_effect",
+	})
+	for _, line := range lines {
+		rows.AddRow(
+			line.ID, line.DocumentID, line.Description, line.HSNSACCode, line.UQCCode, line.Unit,
+			line.Quantity, line.FreeQuantity, line.RemainingQuantity, line.UnitPrice, line.MRP,
+			line.DiscountAmount, line.TaxRate, line.CGSTRate, line.SGSTRate, line.IGSTRate,
+			line.CessRate, line.CGSTAmount, line.SGSTAmount, line.IGSTAmount, line.CessAmount,
+			line.TaxAmount, line.LineSubtotal, line.LineTotal, line.CostSnapshot, line.MarginSnapshot,
+			line.CustomFields, line.ChargeLinkage, line.PackingMetadata, line.BatchAllocations,
+			line.SerialIDs, line.ReportTags, line.StockEffect,
+		)
+	}
+	mock.ExpectQuery(`SELECT \* FROM "document_lines".*document_id = \$1.*ORDER BY created_at ASC, id ASC.*FOR UPDATE`).
+		WillReturnRows(rows)
 }

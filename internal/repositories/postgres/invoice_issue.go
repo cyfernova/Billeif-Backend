@@ -9,6 +9,7 @@ import (
 
 	"invoice-backend/internal/idempotency"
 	"invoice-backend/internal/invoiceissue"
+	"invoice-backend/internal/invoiceprojection"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 
@@ -74,6 +75,12 @@ func (r *invoiceRepository) IssueDraftAtomic(
 		if err := invoice.ValidateState(); err != nil {
 			return &invoiceissue.InvalidLifecycleError{Reason: err.Error()}
 		}
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("invoice_id = ?", invoice.ID).
+			Order("created_at ASC, id ASC").
+			Find(&invoice.Items).Error; err != nil {
+			return issueStageError("invoice items lock", err)
+		}
 
 		var business struct {
 			Timezone string
@@ -97,6 +104,15 @@ func (r *invoiceRepository) IssueDraftAtomic(
 		}
 		if document.Status != models.DocumentStatusDraft {
 			return &invoiceissue.InvalidLifecycleError{Reason: "document projection is not draft"}
+		}
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("document_id = ?", document.ID).
+			Order("created_at ASC, id ASC").
+			Find(&document.Lines).Error; err != nil {
+			return issueStageError("document projection lines lock", err)
+		}
+		if err := invoiceprojection.Validate(&invoice, &document); err != nil {
+			return &invoiceissue.InvalidLifecycleError{Reason: err.Error()}
 		}
 		if (command.DocumentType == invoiceissue.DocumentTypeBillOfSupply) != document.BillOfSupply {
 			return &invoiceissue.InvalidLifecycleError{Reason: "document type does not match legal projection"}
@@ -219,20 +235,7 @@ func (r *invoiceRepository) IssueDraftAtomic(
 		if err := tx.Create(event).Error; err != nil {
 			return issueStageError("outbox event", err)
 		}
-		activity := &models.ActivityLog{
-			ID:         uuid.NewString(),
-			BusinessID: invoice.BusinessID,
-			ActorID:    command.ActorID,
-			ActorRole:  command.ActorRole,
-			RequestID:  command.RequestID,
-			IPAddress:  command.IPAddress,
-			EntityType: "invoice",
-			EntityID:   invoice.ID,
-			Action:     "issued",
-			Snapshot:   mustMarshalIssue(invoice),
-			Diff:       fmt.Sprintf(`{"status":"issued","invoice_no":%q,"version":%d}`, invoiceNumber, invoice.Version),
-			Metadata:   fmt.Sprintf(`{"render_job_id":%q}`, finalRender.ID),
-		}
+		activity := newInvoiceIssueActivity(command, &invoice, invoiceNumber, finalRender.ID)
 		if err := tx.Create(activity).Error; err != nil {
 			return issueStageError("activity", err)
 		}
@@ -256,6 +259,27 @@ func (r *invoiceRepository) IssueDraftAtomic(
 		return &interfaces.AtomicInvoiceIssueResult{Invoice: invoice, FinalRender: render, Replayed: true}, nil
 	}
 	return &interfaces.AtomicInvoiceIssueResult{Invoice: issuedInvoice, FinalRender: finalRender}, nil
+}
+
+func newInvoiceIssueActivity(
+	command interfaces.AtomicInvoiceIssue,
+	invoice *models.Invoice,
+	invoiceNumber, renderID string,
+) *models.ActivityLog {
+	return &models.ActivityLog{
+		ID:         uuid.NewString(),
+		BusinessID: invoice.BusinessID,
+		ActorID:    command.ActorID,
+		ActorRole:  command.ActorRole,
+		RequestID:  command.RequestID,
+		IPAddress:  command.IPAddress,
+		EntityType: "invoice",
+		EntityID:   invoice.ID,
+		Action:     "issued",
+		Snapshot:   mustMarshalIssue(invoice),
+		Diff:       fmt.Sprintf(`{"status":"issued","invoice_no":%q,"version":%d}`, invoiceNumber, invoice.Version),
+		Metadata:   fmt.Sprintf(`{"render_job_id":%q}`, renderID),
+	}
 }
 
 func validateAtomicInvoiceIssue(command interfaces.AtomicInvoiceIssue) error {

@@ -2,11 +2,10 @@ package services
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 
-	"invoice-backend/internal/gst"
 	"invoice-backend/internal/idempotency"
+	"invoice-backend/internal/invoiceprojection"
 	"invoice-backend/internal/models"
 )
 
@@ -201,148 +200,5 @@ func customerPartySnapshot(customer *models.Customer) models.PartySnapshot {
 }
 
 func invoiceDocumentProjection(invoice *models.Invoice) *models.Document {
-	taxProfile := unmarshalJSONMap(invoice.TaxProfile)
-	editorFields := unmarshalJSONMap(invoice.CustomFields)
-	terms, _ := editorFields["terms_and_conditions"].(string)
-	delete(editorFields, "terms_and_conditions")
-	extraFields := make(map[string]interface{})
-	if len(editorFields) > 0 {
-		extraFields["custom_fields"] = editorFields
-	}
-	var additionalCharges []map[string]interface{}
-	if err := json.Unmarshal([]byte(invoice.AdditionalCharges), &additionalCharges); err == nil && len(additionalCharges) > 0 {
-		extraFields["additional_charges"] = additionalCharges
-	}
-	sourceLinkage := nestedMap(taxProfile, "source_linkage")
-	if sourceLinkage == nil {
-		sourceLinkage = make(map[string]interface{})
-	}
-	sourceLinkage["source_invoice_id"] = invoice.ID
-	sourceLinkage["invoice_origin"] = string(invoice.Origin)
-	sourceLinkage["seller_snapshot"] = invoice.SellerSnapshot
-	sourceLinkage["buyer_snapshot"] = invoice.BuyerSnapshot
-
-	document := &models.Document{
-		ID:                    invoice.ID,
-		BusinessID:            invoice.BusinessID,
-		DocumentType:          models.DocumentTypeSalesInvoice,
-		PartyType:             models.DocumentPartyTypeCustomer,
-		PartyID:               invoice.CustomerID,
-		Status:                models.DocumentStatusDraft,
-		DraftState:            models.DocumentDraftStateDraft,
-		TaxMode:               defaultTaxMode(models.DocumentTypeSalesInvoice, readStringCandidate(taxProfile, "gst_treatment")),
-		GSTTreatment:          firstNonEmpty(readStringCandidate(taxProfile, "gst_treatment"), models.DocumentGSTTreatmentRegular),
-		PlaceOfSupply:         readStringCandidate(taxProfile, "place_of_supply"),
-		PartyGSTIN:            readStringCandidate(taxProfile, "counterparty_gstin"),
-		PartyPAN:              readStringCandidate(taxProfile, "counterparty_pan"),
-		PartyStateCode:        readStringCandidate(taxProfile, "counterparty_state_code"),
-		SupplyType:            readStringCandidate(taxProfile, "supply_type"),
-		ExportType:            readStringCandidate(taxProfile, "export_type"),
-		BillOfSupply:          readBoolCandidate(taxProfile, "bill_of_supply"),
-		SerialNumber:          "",
-		IssueDate:             invoice.InvoiceDate,
-		DueDate:               &invoice.DueDate,
-		Currency:              invoice.Currency,
-		Locale:                "en-IN",
-		SourceLinkage:         mustMarshalMap(sourceLinkage),
-		RenderProfileID:       invoice.RenderProfileID,
-		ProjectID:             invoice.ProjectID,
-		PriceListID:           invoice.PriceListID,
-		OriginSubscriptionID:  invoice.OriginSubscriptionID,
-		OriginRunID:           invoice.OriginRunID,
-		GenerateEInvoice:      readBoolCandidate(taxProfile, "generate_einvoice"),
-		GenerateEWayBill:      readBoolCandidate(taxProfile, "generate_ewaybill"),
-		ReverseCharge:         readBoolCandidate(taxProfile, "reverse_charge"),
-		ReverseChargeReason:   readStringCandidate(taxProfile, "reverse_charge_reason"),
-		DispatchFrom:          mustMarshalMap(nestedMap(taxProfile, "dispatch_from")),
-		DispatchTo:            mustMarshalMap(nestedMap(taxProfile, "dispatch_to")),
-		DistanceKM:            floatValue(taxProfile["distance_km"]),
-		Transporter:           mustMarshalMap(nestedMap(taxProfile, "transporter")),
-		Vehicle:               mustMarshalMap(nestedMap(taxProfile, "vehicle")),
-		MultiVehiclePlan:      mustMarshalMap(nestedMap(taxProfile, "multi_vehicle_plan")),
-		Notes:                 invoice.Notes,
-		Terms:                 terms,
-		Direction:             models.DocumentDirectionOutward,
-		Subtotal:              invoice.Subtotal,
-		DiscountTotal:         invoice.Discount,
-		Total:                 invoice.Total,
-		PaidAmount:            invoice.PaidAmount,
-		BalanceDue:            invoice.BalanceDue,
-		ExtraFields:           mustMarshalMap(extraFields),
-		ReportTags:            mustMarshalMap(nestedMap(taxProfile, "report_tags")),
-		ProfitSnapshotEnabled: true,
-	}
-	if document.BillOfSupply {
-		document.DocumentType = models.DocumentTypeBillOfSupply
-		document.TaxMode = models.DocumentTaxModeNonGST
-	}
-
-	intraState := invoiceProjectionIsIntraState(invoice, document)
-	document.Lines = make([]*models.DocumentLine, 0, len(invoice.Items))
-	for _, item := range invoice.Items {
-		lineSubtotal := (item.Quantity * item.UnitPrice) - item.Discount
-		taxAmount := roundCurrency(item.Total - lineSubtotal - item.CessAmount)
-		document.TaxTotal += taxAmount
-		document.CessTotal += item.CessAmount
-		line := &models.DocumentLine{
-			ID:                item.ID,
-			DocumentID:        invoice.ID,
-			ProductID:         item.ProductID,
-			VariantID:         item.VariantID,
-			Description:       item.Description,
-			HSNSACCode:        item.HSNSACCode,
-			UQCCode:           gst.CanonicalSnapshotUQC(item.Unit, ""),
-			Unit:              gst.CanonicalSnapshotUQC(item.Unit, ""),
-			WarehouseID:       item.WarehouseID,
-			Quantity:          item.Quantity,
-			FreeQuantity:      item.FreeQuantity,
-			RemainingQuantity: item.Quantity,
-			UnitPrice:         item.UnitPrice,
-			MRP:               item.MRP,
-			DiscountAmount:    item.Discount,
-			TaxRate:           item.TaxRate,
-			CessRate:          item.CessRate,
-			CessAmount:        item.CessAmount,
-			TaxAmount:         taxAmount,
-			LineSubtotal:      lineSubtotal,
-			LineTotal:         item.Total,
-			CustomFields:      item.CustomFields,
-			ChargeLinkage:     item.ChargeSnapshot,
-			BatchAllocations:  item.BatchAllocations,
-			SerialIDs:         item.SerialIDs,
-			StockEffect:       "out",
-		}
-		if document.TaxMode == models.DocumentTaxModeGST {
-			if intraState {
-				line.CGSTRate = item.TaxRate / 2
-				line.SGSTRate = item.TaxRate / 2
-				line.CGSTAmount = roundCurrency(taxAmount / 2)
-				line.SGSTAmount = roundCurrency(taxAmount - line.CGSTAmount)
-			} else {
-				line.IGSTRate = item.TaxRate
-				line.IGSTAmount = taxAmount
-			}
-		}
-		document.Lines = append(document.Lines, line)
-	}
-	document.WithholdingTotal, document.TDSTotal, document.TCSTotal =
-		summarizeWithholdings(mapSliceToWithholdings(readMapSlice(taxProfile, "tcs")))
-	return document
-}
-
-func invoiceProjectionIsIntraState(invoice *models.Invoice, document *models.Document) bool {
-	sellerState := strings.TrimSpace(invoice.SellerSnapshot.State)
-	sellerStateCode := ""
-	if gstin := strings.TrimSpace(invoice.SellerSnapshot.GSTIN); len(gstin) >= 2 {
-		sellerStateCode = gstin[:2]
-	}
-	placeOfSupply := strings.TrimSpace(document.PlaceOfSupply)
-	if placeOfSupply == "" {
-		placeOfSupply = strings.TrimSpace(document.PartyStateCode)
-	}
-	if sellerState == "" && sellerStateCode == "" {
-		return true
-	}
-	return strings.EqualFold(sellerState, placeOfSupply) ||
-		strings.EqualFold(sellerStateCode, placeOfSupply)
+	return invoiceprojection.Build(invoice)
 }

@@ -15,6 +15,7 @@ import (
 
 	"invoice-backend/internal/idempotency"
 	"invoice-backend/internal/invoiceissue"
+	"invoice-backend/internal/invoiceprojection"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 
@@ -142,6 +143,8 @@ func TestInvoiceRepositoryCreateDraftAtomicPostgresConcurrencyAndRollback(t *tes
 	secondCommand.Invoice.SellerSnapshot = models.PartySnapshot{Name: "Seller"}
 	secondCommand.Invoice.BuyerSnapshot = models.PartySnapshot{Name: "Buyer"}
 	copyAtomicScope(&secondCommand, firstCommand)
+	firstCommand.Document = invoiceprojection.Build(firstCommand.Invoice)
+	secondCommand.Document = invoiceprojection.Build(secondCommand.Invoice)
 	if err := database.Exec(`INSERT INTO business_profiles (id) VALUES (?)`, firstCommand.BusinessID).Error; err != nil {
 		t.Fatalf("seed isolated business: %v", err)
 	}
@@ -356,10 +359,10 @@ func TestInvoiceRepositoryCreateDraftAtomicPostgresConcurrencyAndRollback(t *tes
 	}
 	scopes := []allocationScope{
 		{name: "tenant-one-tax", businessID: firstCommand.BusinessID, documentType: invoiceissue.DocumentTypeTaxInvoice, series: "TAX", invoiceDate: time.Date(2026, 4, 1, 0, 30, 0, 0, time.UTC)},
-		{name: "tenant-one-custom", businessID: firstCommand.BusinessID, documentType: invoiceissue.DocumentTypeTaxInvoice, series: "AAA", invoiceDate: time.Date(2026, 4, 1, 0, 30, 0, 0, time.UTC)},
 		{name: "tenant-one-bill", businessID: firstCommand.BusinessID, documentType: invoiceissue.DocumentTypeBillOfSupply, series: "BOS", invoiceDate: time.Date(2026, 4, 1, 0, 30, 0, 0, time.UTC), billOfSupply: true},
-		{name: "before-fy-boundary", businessID: firstCommand.BusinessID, documentType: invoiceissue.DocumentTypeTaxInvoice, series: "MAR", invoiceDate: time.Date(2026, 3, 31, 18, 29, 59, 0, time.UTC)},
-		{name: "second-tenant", businessID: secondBusinessID, documentType: invoiceissue.DocumentTypeTaxInvoice, series: "APR", invoiceDate: time.Date(2026, 3, 31, 18, 30, 0, 0, time.UTC)},
+		{name: "before-fy-boundary", businessID: firstCommand.BusinessID, documentType: invoiceissue.DocumentTypeTaxInvoice, series: "FYR", invoiceDate: time.Date(2026, 3, 31, 18, 29, 59, 0, time.UTC)},
+		{name: "after-fy-boundary", businessID: firstCommand.BusinessID, documentType: invoiceissue.DocumentTypeTaxInvoice, series: "FYR", invoiceDate: time.Date(2026, 3, 31, 18, 30, 0, 0, time.UTC)},
+		{name: "second-tenant", businessID: secondBusinessID, documentType: invoiceissue.DocumentTypeTaxInvoice, series: "TAX", invoiceDate: time.Date(2026, 4, 1, 0, 30, 0, 0, time.UTC)},
 	}
 	type allocationWork struct {
 		scope   allocationScope
@@ -375,15 +378,13 @@ func TestInvoiceRepositoryCreateDraftAtomicPostgresConcurrencyAndRollback(t *tes
 				BuyerSnapshot: models.PartySnapshot{Name: "Buyer"}, InvoiceDate: scope.invoiceDate,
 				DueDate: scope.invoiceDate.AddDate(0, 0, 30), Currency: "INR", Total: 100, BalanceDue: 100,
 			}
+			if scope.billOfSupply {
+				invoice.TaxProfile = `{"bill_of_supply":true}`
+			}
 			if err := database.Omit("Items").Create(invoice).Error; err != nil {
 				t.Fatalf("seed allocation invoice: %v", err)
 			}
-			document := &models.Document{
-				ID: invoiceID, BusinessID: scope.businessID, DocumentType: models.DocumentTypeSalesInvoice,
-				PartyType: models.DocumentPartyTypeCustomer, Status: models.DocumentStatusDraft,
-				DraftState: models.DocumentDraftStateDraft, SerialNumber: "", IssueDate: scope.invoiceDate,
-				Currency: "INR", Locale: "en-IN", BillOfSupply: scope.billOfSupply,
-			}
+			document := invoiceprojection.Build(invoice)
 			if err := database.Omit("Lines").Create(document).Error; err != nil {
 				t.Fatalf("seed allocation document: %v", err)
 			}
