@@ -3,7 +3,7 @@
 -include .env.local
 export
 
-.PHONY: help infra-backend-init infra-init infra-validate infra-apply infra-plan infra-destroy infra-output build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-payment build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-voice-session build-lambda-custom-sms-sender package-lambda rds-tunnel run-local test test-integration migrate-up migrate-down migrate-rds-up migrate-rds-down migrate-create fmt lint clean deps test-coverage swagger
+.PHONY: help infra-backend-init infra-init infra-validate infra-apply infra-plan infra-destroy infra-output build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-payment build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-voice-session build-lambda-migrator build-lambda-custom-sms-sender package-lambda package-lambda-migrator migration-manifest migration-manifest-verify rds-tunnel run-local test test-integration migrate-up migrate-down migrate-rds-up migrate-rds-down migrate-create fmt lint clean deps test-coverage swagger
 
 LAMBDA_BUILD_DIR := .build/lambda
 TERRAFORM_DIR := infrastructure/terraform
@@ -90,7 +90,7 @@ infra-output: ## Save Terraform output to file
 	@echo "Terraform output saved to infrastructure/terraform/terraform_output.txt"
 
 # Build targets
-build-lambda: build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-payment build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-voice-session ## Build all Lambda binaries
+build-lambda: build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-payment build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-voice-session build-lambda-migrator ## Build all Lambda binaries
 
 build-lambda-http: ## Build HTTP API Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/http
@@ -124,13 +124,17 @@ build-lambda-voice-session: ## Build realtime voice session Lambda bootstrap bin
 	mkdir -p $(LAMBDA_BUILD_DIR)/voice-session
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(LAMBDA_BUILD_DIR)/voice-session/bootstrap ./cmd/lambda/voice-session
 
+build-lambda-migrator: migration-manifest-verify ## Build stripped ARM64 database migration Lambda bootstrap binary
+	mkdir -p $(LAMBDA_BUILD_DIR)/migrator
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o $(LAMBDA_BUILD_DIR)/migrator/bootstrap ./cmd/lambda/migrator
+
 build-lambda-custom-sms-sender: ## Build the Node.js custom SMS sender Lambda package
 	rm -rf $(LAMBDA_BUILD_DIR)/custom-sms-sender
 	mkdir -p $(LAMBDA_BUILD_DIR)/custom-sms-sender
 	cp -R infrastructure/lambda/custom-sms-sender/. $(LAMBDA_BUILD_DIR)/custom-sms-sender/
 	cd $(LAMBDA_BUILD_DIR)/custom-sms-sender && pnpm install --prod --frozen-lockfile
 
-package-lambda: build-lambda build-lambda-custom-sms-sender ## Package Lambda artifacts into zip files
+package-lambda: build-lambda build-lambda-custom-sms-sender package-lambda-migrator ## Package Lambda artifacts into zip files
 	cd $(LAMBDA_BUILD_DIR)/http && zip -q -r ../http.zip bootstrap
 	cd $(LAMBDA_BUILD_DIR)/a2a-stream && zip -q -r ../a2a-stream.zip bootstrap
 	cd $(LAMBDA_BUILD_DIR)/sqs-invoice && zip -q -r ../sqs-invoice.zip bootstrap
@@ -140,6 +144,25 @@ package-lambda: build-lambda build-lambda-custom-sms-sender ## Package Lambda ar
 	cd $(LAMBDA_BUILD_DIR)/ws && zip -q -r ../ws.zip bootstrap
 	cd $(LAMBDA_BUILD_DIR)/voice-session && zip -q -r ../voice-session.zip bootstrap
 	cd $(LAMBDA_BUILD_DIR)/custom-sms-sender && zip -q -r ../custom-sms-sender.zip .
+
+package-lambda-migrator: build-lambda-migrator ## Package the migration Lambda deterministically
+	rm -f $(LAMBDA_BUILD_DIR)/migrator.zip
+	TZ=UTC touch -t 198001010000 $(LAMBDA_BUILD_DIR)/migrator/bootstrap
+	cd $(LAMBDA_BUILD_DIR)/migrator && TZ=UTC zip -q -X -j ../migrator.zip bootstrap
+
+migration-manifest: ## Regenerate the deterministic root migration checksum manifest
+	@set -euo pipefail; \
+	TEMP_MANIFEST=$$(mktemp); \
+	trap 'rm -f "$$TEMP_MANIFEST"' EXIT; \
+	cd migrations; \
+	find . -maxdepth 1 -type f \( -name '*.up.sql' -o -name '*.down.sql' \) -exec basename {} \; | LC_ALL=C sort | \
+		while IFS= read -r MIGRATION_FILE; do shasum -a 256 "$$MIGRATION_FILE"; done > "$$TEMP_MANIFEST"; \
+	mv "$$TEMP_MANIFEST" manifest.sha256; \
+	trap - EXIT
+
+migration-manifest-verify: ## Verify root migration files against the embedded checksum manifest
+	cd migrations && shasum -a 256 -c manifest.sha256
+	go test ./migrations -run TestEmbeddedBundleContainsEveryRootNumberedMigration -count=1
 
 rds-tunnel: ## Forward localhost:RDS_LOCAL_PORT to private RDS through SSM
 	@set -euo pipefail; \

@@ -54,6 +54,10 @@ func TestProductionValidationProfilesRequireOnlyEntrypointConfiguration(t *testi
 				cfg.SSM.DatabaseHostParam = "/app/database/host"
 			},
 		},
+		{
+			name:    "migration",
+			profile: ProfileMigration,
+		},
 	}
 
 	for _, tc := range tests {
@@ -197,6 +201,7 @@ func TestLoadForProfileAcceptsScopedProductionWorkerAndWebSocketEnvironments(t *
 			"LLM_MODEL":                        "production-model",
 		}},
 		{ProfileWebSocket, nil},
+		{ProfileMigration, nil},
 	}
 
 	for _, tc := range tests {

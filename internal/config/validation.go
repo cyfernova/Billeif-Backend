@@ -17,6 +17,7 @@ const (
 	ProfileBargaining Profile = "sqs-bargaining"
 	ProfilePayment    Profile = "sqs-payment"
 	ProfileWebSocket  Profile = "websocket"
+	ProfileMigration  Profile = "migration"
 )
 
 func ValidateForProfile(cfg *Config, profile Profile) error {
@@ -45,6 +46,11 @@ func ValidateForProfile(cfg *Config, profile Profile) error {
 		return nil
 	case ProfilePayment:
 		return validateProfileBase(cfg)
+	case ProfileMigration:
+		if err := validateProfileBase(cfg); err != nil {
+			return err
+		}
+		return validateProfileDatabase(cfg)
 	case ProfileInvoice, ProfileGST, ProfileBargaining, ProfileWebSocket:
 		if err := validateProfileBase(cfg); err != nil {
 			return err

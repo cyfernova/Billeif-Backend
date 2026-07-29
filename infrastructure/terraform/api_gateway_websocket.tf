@@ -100,6 +100,8 @@ resource "aws_apigatewayv2_stage" "websocket_default" {
 }
 
 resource "aws_lambda_permission" "allow_websocket_lambda" {
+  count = var.enable_application ? 1 : 0
+
   statement_id  = "AllowExecutionFromAPIGatewayWebSocket"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.ws_handler.function_name

@@ -167,6 +167,18 @@ variable "enable_lambda_reserved_concurrency" {
   default     = false
 }
 
+variable "enable_application" {
+  description = "Activate ordinary application Lambda invocation paths after a reviewed successful migration deployment."
+  type        = bool
+  default     = false
+}
+
+variable "migration_lambda_artifact_path" {
+  description = "Optional path to the packaged database migration Lambda artifact."
+  type        = string
+  default     = ""
+}
+
 variable "worker_queue_visibility_timeout_seconds" {
   description = "Visibility timeout for SQS worker queues. Keep this at least 6x the Lambda timeout plus batching window."
   type        = number

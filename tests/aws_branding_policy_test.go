@@ -507,7 +507,15 @@ func TestTerraformBrandingPreservesPublicInterfaceNames(t *testing.T) {
 func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 	wantResources := manifestLines(preTaskResourceManifest)
 	wantResources = removeManifestEntry(wantResources, "aws_ses_email_identity.main")
-	wantResources = append(wantResources, "aws_cognito_resource_server.main")
+	wantResources = append(wantResources,
+		"aws_cognito_resource_server.main",
+		"aws_cloudwatch_log_group.database_migrator",
+		"aws_iam_role.database_migrator",
+		"aws_iam_role_policy.database_migrator",
+		"aws_lambda_function.database_migrator",
+		"aws_lambda_invocation.database_migrations",
+		"aws_security_group.database_migrator",
+	)
 	assertExactManifest(t, "Terraform resource labels", terraformResourceLabels(t), wantResources)
 	assertExactManifest(t, "Terraform output keys", terraformOutputKeys(t), manifestLines(preTaskOutputManifest))
 	assertExactManifest(t, "Terraform environment keys", terraformEnvironmentKeys(t), manifestLines(preTaskEnvironmentManifest))
@@ -819,6 +827,7 @@ var stableAWSNameAttributeAllowlist = map[string][]string{
 	"aws_kms_alias.name":                                        {"var.project_name"},
 	"aws_lambda_event_source_mapping.function_name":             {"aws_lambda_function."},
 	"aws_lambda_function.function_name":                         {"local.resource_prefix", "local.voice_session_lambda_name"},
+	"aws_lambda_invocation.function_name":                       {"aws_lambda_function."},
 	"aws_lambda_permission.function_name":                       {"aws_lambda_function."},
 	"aws_s3_bucket.bucket":                                      {"local.bucket_prefix"},
 	"aws_s3_bucket_lifecycle_configuration.bucket":              {"aws_s3_bucket."},

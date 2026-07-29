@@ -10,6 +10,12 @@ mock_provider "aws" {
     }
   }
 
+  mock_resource "aws_lambda_invocation" {
+    defaults = {
+      result = "{\"status\":\"applied\",\"version\":43,\"latest_version\":43,\"dirty\":false,\"manifest_checksum\":\"e7c51b8069e0785e8d2881a4eb06070c3899107ad55a72166e86e26a7979e936\"}"
+    }
+  }
+
   override_data {
     target = data.aws_caller_identity.current
     values = {
@@ -119,6 +125,10 @@ mock_provider "aws" {
       arn = "arn:aws:secretsmanager:ap-south-1:123456789012:secret:deepseek"
     }
   }
+}
+
+variables {
+  migration_lambda_artifact_path = "tests/fixtures/lambda/http.zip"
 }
 
 run "mumbai_defaults_and_oidc_profile" {

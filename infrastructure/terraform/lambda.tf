@@ -169,7 +169,11 @@ resource "aws_lambda_function" "api_http" {
   memory_size       = 1024
   timeout           = 500
 
-  reserved_concurrent_executions = var.enable_lambda_reserved_concurrency ? 10 : null
+  reserved_concurrent_executions = var.enable_application ? (var.enable_lambda_reserved_concurrency ? 10 : null) : 0
+
+  tags = {
+    MigrationChecksum = local.application_migration_checksum
+  }
 
   environment {
     variables = merge(local.common_lambda_env, local.http_secret_env, {
@@ -204,7 +208,11 @@ resource "aws_lambda_function" "a2a_stream" {
   memory_size      = 1024
   timeout          = 60
 
-  reserved_concurrent_executions = var.enable_lambda_reserved_concurrency ? 5 : null
+  reserved_concurrent_executions = var.enable_application ? (var.enable_lambda_reserved_concurrency ? 5 : null) : 0
+
+  tags = {
+    MigrationChecksum = local.application_migration_checksum
+  }
 
   environment {
     variables = merge(local.common_lambda_env, local.http_secret_env, {
@@ -239,7 +247,11 @@ resource "aws_lambda_function" "sqs_invoice" {
   memory_size      = 512
   timeout          = 60
 
-  reserved_concurrent_executions = var.enable_lambda_reserved_concurrency ? 2 : null
+  reserved_concurrent_executions = var.enable_application ? (var.enable_lambda_reserved_concurrency ? 2 : null) : 0
+
+  tags = {
+    MigrationChecksum = local.application_migration_checksum
+  }
 
   environment {
     variables = merge(local.common_lambda_env, local.worker_secret_env.invoice, {
@@ -273,7 +285,11 @@ resource "aws_lambda_function" "sqs_payment" {
   memory_size      = 512
   timeout          = 60
 
-  reserved_concurrent_executions = var.enable_lambda_reserved_concurrency ? 2 : null
+  reserved_concurrent_executions = var.enable_application ? (var.enable_lambda_reserved_concurrency ? 2 : null) : 0
+
+  tags = {
+    MigrationChecksum = local.application_migration_checksum
+  }
 
   environment {
     variables = merge(local.common_lambda_env, local.worker_secret_env.payment, {
@@ -307,7 +323,11 @@ resource "aws_lambda_function" "sqs_gst" {
   memory_size      = 512
   timeout          = 60
 
-  reserved_concurrent_executions = var.enable_lambda_reserved_concurrency ? 2 : null
+  reserved_concurrent_executions = var.enable_application ? (var.enable_lambda_reserved_concurrency ? 2 : null) : 0
+
+  tags = {
+    MigrationChecksum = local.application_migration_checksum
+  }
 
   environment {
     variables = merge(local.common_lambda_env, local.worker_secret_env.gst, {
@@ -348,7 +368,11 @@ resource "aws_lambda_function" "sqs_bargaining" {
   memory_size       = 1024
   timeout           = 350
 
-  reserved_concurrent_executions = var.enable_lambda_reserved_concurrency ? 5 : null
+  reserved_concurrent_executions = var.enable_application ? (var.enable_lambda_reserved_concurrency ? 5 : null) : 0
+
+  tags = {
+    MigrationChecksum = local.application_migration_checksum
+  }
 
   environment {
     variables = merge(local.common_lambda_env, local.worker_secret_env.bargaining, {
@@ -382,7 +406,11 @@ resource "aws_lambda_function" "ws_handler" {
   memory_size      = 256
   timeout          = 15
 
-  reserved_concurrent_executions = var.enable_lambda_reserved_concurrency ? 5 : null
+  reserved_concurrent_executions = var.enable_application ? (var.enable_lambda_reserved_concurrency ? 5 : null) : 0
+
+  tags = {
+    MigrationChecksum = local.application_migration_checksum
+  }
 
   environment {
     variables = merge(local.common_lambda_env, local.database_runtime_env, {
@@ -418,7 +446,11 @@ resource "aws_lambda_function" "voice_session" {
   memory_size      = var.voice_session_lambda_memory_size
   timeout          = var.voice_session_lambda_timeout_seconds
 
-  reserved_concurrent_executions = var.enable_lambda_reserved_concurrency ? var.voice_session_reserved_concurrency : null
+  reserved_concurrent_executions = var.enable_application ? (var.enable_lambda_reserved_concurrency ? var.voice_session_reserved_concurrency : null) : 0
+
+  tags = {
+    MigrationChecksum = local.application_migration_checksum
+  }
 
   environment {
     variables = merge(local.common_lambda_env, local.voice_secret_env, {
@@ -443,6 +475,8 @@ resource "aws_lambda_function" "voice_session" {
 }
 
 resource "aws_lambda_event_source_mapping" "invoice_queue" {
+  count = var.enable_application ? 1 : 0
+
   event_source_arn                   = aws_sqs_queue.invoice_processing.arn
   function_name                      = aws_lambda_function.sqs_invoice.arn
   batch_size                         = 10
@@ -451,6 +485,8 @@ resource "aws_lambda_event_source_mapping" "invoice_queue" {
 }
 
 resource "aws_lambda_event_source_mapping" "payment_queue" {
+  count = var.enable_application ? 1 : 0
+
   event_source_arn                   = aws_sqs_queue.payment_processing.arn
   function_name                      = aws_lambda_function.sqs_payment.arn
   batch_size                         = 10
@@ -459,6 +495,8 @@ resource "aws_lambda_event_source_mapping" "payment_queue" {
 }
 
 resource "aws_lambda_event_source_mapping" "gst_queue" {
+  count = var.enable_application ? 1 : 0
+
   event_source_arn                   = aws_sqs_queue.gst_processing.arn
   function_name                      = aws_lambda_function.sqs_gst.arn
   batch_size                         = 10
@@ -467,6 +505,8 @@ resource "aws_lambda_event_source_mapping" "gst_queue" {
 }
 
 resource "aws_lambda_event_source_mapping" "bargaining_queue" {
+  count = var.enable_application ? 1 : 0
+
   event_source_arn                   = aws_sqs_queue.bargaining_negotiation.arn
   function_name                      = aws_lambda_function.sqs_bargaining.arn
   batch_size                         = 10

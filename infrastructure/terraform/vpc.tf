@@ -121,6 +121,23 @@ resource "aws_security_group" "lambda" {
   }
 }
 
+resource "aws_security_group" "database_migrator" {
+  name        = "${local.resource_prefix}-database-migrator-sg"
+  description = "${local.resource_prefix} security group for the database migration Lambda"
+  vpc_id      = aws_vpc.main.id
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${local.resource_prefix}-database-migrator-sg"
+  }
+}
+
 # Security Group for RDS
 resource "aws_security_group" "rds" {
   name        = "${local.resource_prefix}-rds-sg"
@@ -137,10 +154,18 @@ resource "aws_security_group" "rds" {
 
   ingress {
     description     = "PostgreSQL from Lambda"
-    from_port       = 5432
-    to_port         = 5432
+    from_port       = var.db_port
+    to_port         = var.db_port
     protocol        = "tcp"
     security_groups = [aws_security_group.lambda.id]
+  }
+
+  ingress {
+    description     = "PostgreSQL from database migrator"
+    from_port       = var.db_port
+    to_port         = var.db_port
+    protocol        = "tcp"
+    security_groups = [aws_security_group.database_migrator.id]
   }
 
   egress {

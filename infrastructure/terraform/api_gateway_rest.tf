@@ -619,6 +619,8 @@ resource "aws_api_gateway_method_settings" "main" {
 }
 
 resource "aws_lambda_permission" "allow_rest_api_http" {
+  count = var.enable_application ? 1 : 0
+
   statement_id  = "AllowExecutionFromAPIGatewayRestApi"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.api_http.function_name
@@ -627,6 +629,8 @@ resource "aws_lambda_permission" "allow_rest_api_http" {
 }
 
 resource "aws_lambda_permission" "allow_rest_a2a_stream" {
+  count = var.enable_application ? 1 : 0
+
   statement_id  = "AllowExecutionFromAPIGatewayRestA2AStream"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.a2a_stream.function_name

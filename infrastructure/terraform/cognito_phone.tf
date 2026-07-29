@@ -156,6 +156,12 @@ resource "aws_lambda_function" "custom_sms_sender" {
   memory_size      = 256
   timeout          = 15
 
+  reserved_concurrent_executions = var.enable_application ? (var.enable_lambda_reserved_concurrency ? 2 : null) : 0
+
+  tags = {
+    MigrationChecksum = local.application_migration_checksum
+  }
+
   environment {
     variables = {
       KEY_ID                        = aws_kms_key.cognito_phone_custom_sms.key_id
@@ -238,6 +244,8 @@ resource "aws_cognito_user_pool" "phone" {
 }
 
 resource "aws_lambda_permission" "cognito_phone_custom_sms" {
+  count = var.enable_application ? 1 : 0
+
   provider       = aws.ap_south_1
   statement_id   = "AllowExecutionFromCognitoPhoneUserPool"
   action         = "lambda:InvokeFunction"
