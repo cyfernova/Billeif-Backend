@@ -381,19 +381,24 @@ type canonicalInvoiceCreatorFake struct {
 func (f *canonicalInvoiceCreatorFake) CreateByBusiness(_ context.Context, businessID string, input CreateInvoiceInput) (*models.Invoice, error) {
 	f.calls++
 	f.input = input
+	origin := input.Origin
+	if origin == "" {
+		origin = models.InvoiceOriginManual
+	}
 	return &models.Invoice{
-		ID:          uuid.NewString(),
-		BusinessID:  businessID,
-		CustomerID:  models.StringPointer(input.CustomerID),
-		Status:      models.InvoiceStatusDraft,
-		Origin:      models.InvoiceOriginManual,
-		Version:     1,
-		InvoiceDate: input.InvoiceDate,
-		DueDate:     input.DueDate,
-		Currency:    "INR",
-		Subtotal:    100,
-		Total:       100,
-		BalanceDue:  100,
+		ID:            uuid.NewString(),
+		BusinessID:    businessID,
+		CustomerID:    models.StringPointer(input.CustomerID),
+		Status:        models.InvoiceStatusDraft,
+		Origin:        origin,
+		Version:       1,
+		BuyerSnapshot: input.BuyerSnapshot,
+		InvoiceDate:   input.InvoiceDate,
+		DueDate:       input.DueDate,
+		Currency:      firstNonEmpty(input.Currency, "INR"),
+		Subtotal:      100,
+		Total:         100,
+		BalanceDue:    100,
 		Items: []*models.InvoiceItem{{
 			ID:          uuid.NewString(),
 			Description: input.Items[0].Description,
@@ -523,6 +528,42 @@ func TestInvoiceDocumentProjectionPreservesSupportedEditorFields(t *testing.T) {
 	}
 	if len(additionalCharges) != 1 {
 		t.Fatalf("document additional charges = %#v, want one charge", additionalCharges)
+	}
+}
+
+func TestInvoiceDocumentProjectionSplitsOddPaiseGSTWithoutLosingRemainder(t *testing.T) {
+	customerID := uuid.NewString()
+	invoice := &models.Invoice{
+		ID:             uuid.NewString(),
+		BusinessID:     uuid.NewString(),
+		CustomerID:     &customerID,
+		Status:         models.InvoiceStatusDraft,
+		Origin:         models.InvoiceOriginManual,
+		Version:        1,
+		SellerSnapshot: models.PartySnapshot{GSTIN: "27AAAAA0000A1Z5"},
+		TaxProfile:     `{"gst_treatment":"regular","place_of_supply":"27"}`,
+		Items: []*models.InvoiceItem{{
+			ID:          uuid.NewString(),
+			Description: "Odd paise tax",
+			Quantity:    1,
+			UnitPrice:   1,
+			TaxRate:     5,
+			Total:       1.05,
+		}},
+	}
+
+	document := invoiceDocumentProjection(invoice)
+	if len(document.Lines) != 1 {
+		t.Fatalf("projected lines = %d, want 1", len(document.Lines))
+	}
+	line := document.Lines[0]
+	if line.TaxAmount != 0.05 || line.CGSTAmount != 0.03 || line.SGSTAmount != 0.02 {
+		t.Fatalf("tax/CGST/SGST = %.2f/%.2f/%.2f, want 0.05/0.03/0.02",
+			line.TaxAmount, line.CGSTAmount, line.SGSTAmount)
+	}
+	if line.CGSTAmount+line.SGSTAmount != line.TaxAmount {
+		t.Fatalf("CGST %.2f + SGST %.2f != tax amount %.2f",
+			line.CGSTAmount, line.SGSTAmount, line.TaxAmount)
 	}
 }
 

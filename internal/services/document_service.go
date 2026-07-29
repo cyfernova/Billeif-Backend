@@ -239,6 +239,13 @@ func (s *DocumentService) CreateByType(ctx context.Context, businessID, document
 	return document, nil
 }
 
+func (s *DocumentService) createPOSSalesInvoice(ctx context.Context, businessID string, input CreateInvoiceInput) (*models.Document, error) {
+	if s.salesInvoices == nil {
+		return nil, fmt.Errorf("canonical sales invoice creator is not configured")
+	}
+	return s.salesInvoices.createPOSSalesInvoiceDocument(ctx, businessID, input)
+}
+
 func (s *DocumentService) buildDocument(ctx context.Context, businessID, documentType string, input CreateDocumentInput) (*models.Document, error) {
 	if !isSupportedDocumentType(documentType) {
 		return nil, fmt.Errorf("unsupported document type: %s", documentType)

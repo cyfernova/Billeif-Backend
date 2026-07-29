@@ -85,7 +85,10 @@ type CreateInvoiceItemInput struct {
 type CreateInvoiceInput struct {
 	BusinessID           string                   `json:"business_id,omitempty"`
 	IdempotencyKey       string                   `json:"-"`
+	Origin               models.InvoiceOrigin     `json:"-"`
 	CustomerID           string                   `json:"customer_id" binding:"required,uuid"`
+	BuyerSnapshot        models.PartySnapshot     `json:"-"`
+	Currency             string                   `json:"-"`
 	ProjectID            string                   `json:"project_id,omitempty" binding:"omitempty,uuid"`
 	PriceListID          string                   `json:"price_list_id,omitempty"`
 	RenderProfileID      string                   `json:"render_profile_id,omitempty" binding:"omitempty,uuid"`
@@ -105,7 +108,10 @@ type CreateInvoiceInput struct {
 
 type canonicalInvoiceCreatePayload struct {
 	BusinessID           string                   `json:"business_id"`
+	Origin               models.InvoiceOrigin     `json:"origin"`
 	CustomerID           string                   `json:"customer_id"`
+	BuyerSnapshot        models.PartySnapshot     `json:"buyer_snapshot"`
+	Currency             string                   `json:"currency"`
 	ProjectID            string                   `json:"project_id,omitempty"`
 	PriceListID          string                   `json:"price_list_id,omitempty"`
 	RenderProfileID      string                   `json:"render_profile_id,omitempty"`
@@ -126,7 +132,10 @@ type canonicalInvoiceCreatePayload struct {
 func canonicalInvoiceCreateRequest(input CreateInvoiceInput) canonicalInvoiceCreatePayload {
 	return canonicalInvoiceCreatePayload{
 		BusinessID:           input.BusinessID,
+		Origin:               input.Origin,
 		CustomerID:           input.CustomerID,
+		BuyerSnapshot:        input.BuyerSnapshot,
+		Currency:             input.Currency,
 		ProjectID:            input.ProjectID,
 		PriceListID:          input.PriceListID,
 		RenderProfileID:      input.RenderProfileID,
@@ -145,11 +154,53 @@ func canonicalInvoiceCreateRequest(input CreateInvoiceInput) canonicalInvoiceCre
 	}
 }
 
+func normalizedInvoiceCreateOrigin(input CreateInvoiceInput) (models.InvoiceOrigin, error) {
+	hasSubscriptionOrigin := strings.TrimSpace(input.OriginSubscriptionID) != "" ||
+		strings.TrimSpace(input.OriginRunID) != ""
+	switch input.Origin {
+	case "":
+		if hasSubscriptionOrigin {
+			return models.InvoiceOriginSubscription, nil
+		}
+		return models.InvoiceOriginManual, nil
+	case models.InvoiceOriginManual:
+		if hasSubscriptionOrigin || !input.BuyerSnapshot.IsEmpty() {
+			return "", &idempotency.InvalidPayloadError{}
+		}
+		return input.Origin, nil
+	case models.InvoiceOriginPOS:
+		if hasSubscriptionOrigin ||
+			(strings.TrimSpace(input.CustomerID) != "" && !input.BuyerSnapshot.IsEmpty()) {
+			return "", &idempotency.InvalidPayloadError{}
+		}
+		return input.Origin, nil
+	case models.InvoiceOriginSubscription:
+		if !hasSubscriptionOrigin || !input.BuyerSnapshot.IsEmpty() {
+			return "", &idempotency.InvalidPayloadError{}
+		}
+		return input.Origin, nil
+	default:
+		return "", &idempotency.InvalidPayloadError{}
+	}
+}
+
+func firstInvoiceBuyerSnapshot(customer *models.Customer, trusted models.PartySnapshot) models.PartySnapshot {
+	if customer != nil {
+		return customerPartySnapshot(customer)
+	}
+	return trusted
+}
+
 func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (*models.Invoice, error) {
 	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
 	if _, err := uuid.Parse(input.IdempotencyKey); err != nil {
 		return nil, &idempotency.InvalidKeyError{}
 	}
+	origin, err := normalizedInvoiceCreateOrigin(input)
+	if err != nil {
+		return nil, err
+	}
+	input.Origin = origin
 	if s.repo == nil {
 		return nil, fmt.Errorf("canonical invoice repository is not configured")
 	}
@@ -171,9 +222,14 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 	if err != nil {
 		return nil, fmt.Errorf("business not found: %w", err)
 	}
-	customer, err := s.customerRepo.GetByID(ctx, input.CustomerID, input.BusinessID)
-	if err != nil {
-		return nil, fmt.Errorf("customer not found: %w", err)
+	var customer *models.Customer
+	if strings.TrimSpace(input.CustomerID) != "" {
+		customer, err = s.customerRepo.GetByID(ctx, input.CustomerID, input.BusinessID)
+		if err != nil {
+			return nil, fmt.Errorf("customer not found: %w", err)
+		}
+	} else if input.Origin != models.InvoiceOriginPOS || input.BuyerSnapshot.IsEmpty() {
+		return nil, &idempotency.InvalidPayloadError{}
 	}
 	if input.RenderProfileID != "" && s.documents != nil {
 		if _, err := s.documents.GetRenderProfileByBusiness(ctx, input.BusinessID, input.RenderProfileID); err != nil {
@@ -198,11 +254,6 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 	projectID := syncProjectIDFromTags(input.ProjectID, input.TaxProfile.ReportTags)
 	input.TaxProfile.ReportTags = mergeProjectIntoTags(input.TaxProfile.ReportTags, projectID)
 	customFields := mergeInvoiceEditorCustomFields(input.CustomFields, input.TermsAndConditions, input.PONumber, input.TemplateOverride)
-	origin := models.InvoiceOriginManual
-	if strings.TrimSpace(input.OriginSubscriptionID) != "" || strings.TrimSpace(input.OriginRunID) != "" {
-		origin = models.InvoiceOriginSubscription
-	}
-
 	var subtotal, taxTotal float64
 	var cessTotal float64
 	items := make([]*models.InvoiceItem, len(input.Items))
@@ -286,15 +337,15 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 	invoice := &models.Invoice{
 		ID:                uuid.NewString(),
 		BusinessID:        input.BusinessID,
-		CustomerID:        models.StringPointer(input.CustomerID),
+		CustomerID:        stringPointer(input.CustomerID),
 		ProjectID:         projectIDPointer(projectID),
 		PriceListID:       priceListID,
 		RenderProfileID:   stringPointer(input.RenderProfileID),
 		Status:            models.InvoiceStatusDraft,
-		Origin:            origin,
+		Origin:            input.Origin,
 		Version:           1,
 		SellerSnapshot:    businessPartySnapshot(business),
-		BuyerSnapshot:     customerPartySnapshot(customer),
+		BuyerSnapshot:     firstInvoiceBuyerSnapshot(customer, input.BuyerSnapshot),
 		InvoiceDate:       invoiceDate,
 		DueDate:           input.DueDate,
 		Subtotal:          subtotal,
@@ -305,7 +356,7 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 		CustomFields:      mustMarshalMap(customFields),
 		AdditionalCharges: mustMarshalAny(input.AdditionalCharges, "[]"),
 		TaxProfile:        mustMarshalMap(taxProfileToMap(input.TaxProfile)),
-		Currency:          defaultCurrency(business.Currency),
+		Currency:          defaultCurrency(firstNonEmpty(input.Currency, business.Currency)),
 		Items:             items,
 	}
 	if input.OriginSubscriptionID != "" {

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"invoice-backend/internal/idempotency"
 	"invoice-backend/internal/models"
 	"invoice-backend/pkg/logger"
 
@@ -384,9 +385,9 @@ func (s *POSService) Checkout(ctx context.Context, businessID, userID, sessionID
 		return nil, err
 	}
 
-	lines := make([]CreateDocumentLineInput, 0, len(cart.Items))
+	items := make([]CreateInvoiceItemInput, 0, len(cart.Items))
 	for _, item := range cart.Items {
-		lines = append(lines, CreateDocumentLineInput{
+		items = append(items, CreateInvoiceItemInput{
 			ProductID:    item.ProductID,
 			VariantID:    item.VariantID,
 			Description:  item.Description,
@@ -396,47 +397,17 @@ func (s *POSService) Checkout(ctx context.Context, businessID, userID, sessionID
 			TaxRate:      item.TaxRate,
 			CessRate:     item.CessRate,
 			HSNSACCode:   item.HSNSACCode,
-			UQCCode:      item.UQCCode,
-			Unit:         item.Unit,
+			Unit:         firstNonEmpty(item.Unit, item.UQCCode),
 			WarehouseID:  posStringValue(session.WarehouseID),
 			CustomFields: item.Metadata,
 		})
 	}
 
-	partyType := firstNonEmpty(input.PartyType, models.DocumentPartyTypeManual)
-	createInput := CreateDocumentInput{
-		PartyID:             input.PartyID,
-		PartyType:           partyType,
-		Status:              firstNonEmpty(input.Status, models.DocumentStatusIssued),
-		DraftState:          models.DocumentDraftStateFinal,
-		TaxMode:             firstNonEmpty(input.TaxMode, models.DocumentTaxModeNonGST),
-		GSTTreatment:        firstNonEmpty(input.GSTTreatment, models.DocumentGSTTreatmentRegular),
-		PlaceOfSupply:       input.PlaceOfSupply,
-		PartyGSTIN:          input.PartyGSTIN,
-		PartyPAN:            input.PartyPAN,
-		PartyStateCode:      input.PartyStateCode,
-		SupplyType:          "sale",
-		IssueDate:           time.Now().UTC(),
-		Currency:            firstNonEmpty(session.Currency, "INR"),
-		Locale:              "en-IN",
-		Direction:           models.DocumentDirectionOutward,
-		GenerateEInvoice:    input.GenerateEInvoice,
-		GenerateEWayBill:    input.GenerateEWayBill,
-		ReverseCharge:       input.ReverseCharge,
-		ReverseChargeReason: input.ReverseChargeReason,
-		DispatchFrom:        input.DispatchFrom,
-		DispatchTo:          input.DispatchTo,
-		DistanceKM:          input.DistanceKM,
-		Transporter:         input.Transporter,
-		Vehicle:             input.Vehicle,
-		Notes:               coalesceString(input.Notes, fmt.Sprintf("POS checkout from session %s", session.ID)),
-		ExtraFields: map[string]interface{}{
-			"source":      coalesceString(input.Source, "pos"),
-			"pos_session": session.ID,
-		},
-		Lines: lines,
+	createInput, err := canonicalPOSCheckoutInput(session, idempotencyKey, input, items)
+	if err != nil {
+		return nil, err
 	}
-	document, err := s.documents.CreateByType(ctx, businessID, models.DocumentTypeSalesInvoice, createInput)
+	document, err := s.documents.createPOSSalesInvoice(ctx, businessID, createInput)
 	if err != nil {
 		return nil, err
 	}
@@ -453,6 +424,85 @@ func (s *POSService) Checkout(ctx context.Context, businessID, userID, sessionID
 		return nil, err
 	}
 	return document, nil
+}
+
+func canonicalPOSCheckoutInput(session *models.POSSession, idempotencyKey string, input CheckoutPOSCartInput, items []CreateInvoiceItemInput) (CreateInvoiceInput, error) {
+	if session == nil {
+		return CreateInvoiceInput{}, &idempotency.InvalidPayloadError{}
+	}
+	partyType := firstNonEmpty(input.PartyType, models.DocumentPartyTypeManual)
+	if partyType != models.DocumentPartyTypeManual && partyType != models.DocumentPartyTypeCustomer {
+		return CreateInvoiceInput{}, &idempotency.InvalidPayloadError{}
+	}
+	status := firstNonEmpty(input.Status, models.DocumentStatusIssued)
+	if status != models.DocumentStatusIssued && status != models.DocumentStatusDraft {
+		return CreateInvoiceInput{}, &idempotency.InvalidPayloadError{}
+	}
+	gstTreatment, err := canonicalPOSGSTTreatment(
+		firstNonEmpty(input.TaxMode, models.DocumentTaxModeNonGST),
+		firstNonEmpty(input.GSTTreatment, models.DocumentGSTTreatmentRegular),
+	)
+	if err != nil {
+		return CreateInvoiceInput{}, err
+	}
+
+	buyerSnapshot := models.PartySnapshot{}
+	if strings.TrimSpace(input.PartyID) == "" {
+		buyerSnapshot = models.PartySnapshot{
+			Name:  "Counter sale",
+			TaxID: input.PartyPAN,
+			GSTIN: input.PartyGSTIN,
+		}
+	}
+	source := coalesceString(input.Source, "pos")
+	return CreateInvoiceInput{
+		IdempotencyKey: idempotencyKey,
+		Origin:         models.InvoiceOriginPOS,
+		CustomerID:     input.PartyID,
+		BuyerSnapshot:  buyerSnapshot,
+		Currency:       firstNonEmpty(session.Currency, "INR"),
+		InvoiceDate:    time.Now().UTC(),
+		Notes:          coalesceString(input.Notes, fmt.Sprintf("POS checkout from session %s", session.ID)),
+		TaxProfile: TaxProfileInput{
+			GSTTreatment:          gstTreatment,
+			PlaceOfSupply:         input.PlaceOfSupply,
+			SupplyType:            "sale",
+			CounterpartyGSTIN:     input.PartyGSTIN,
+			CounterpartyPAN:       input.PartyPAN,
+			CounterpartyStateCode: input.PartyStateCode,
+			GenerateEInvoice:      input.GenerateEInvoice,
+			GenerateEWayBill:      input.GenerateEWayBill,
+			ReverseCharge:         input.ReverseCharge,
+			ReverseChargeReason:   input.ReverseChargeReason,
+			DispatchFrom:          input.DispatchFrom,
+			DispatchTo:            input.DispatchTo,
+			DistanceKM:            input.DistanceKM,
+			Transporter:           input.Transporter,
+			Vehicle:               input.Vehicle,
+			SourceLinkage: map[string]interface{}{
+				"source":      source,
+				"pos_session": session.ID,
+			},
+		},
+		Items: items,
+	}, nil
+}
+
+func canonicalPOSGSTTreatment(taxMode, gstTreatment string) (string, error) {
+	switch taxMode {
+	case models.DocumentTaxModeNonGST:
+		if gstTreatment == models.DocumentGSTTreatmentComposition || gstTreatment == models.DocumentGSTTreatmentExempt {
+			return gstTreatment, nil
+		}
+		return models.DocumentGSTTreatmentExempt, nil
+	case models.DocumentTaxModeGST:
+		if gstTreatment == models.DocumentGSTTreatmentComposition || gstTreatment == models.DocumentGSTTreatmentExempt {
+			return "", &idempotency.InvalidPayloadError{}
+		}
+		return gstTreatment, nil
+	default:
+		return "", &idempotency.InvalidPayloadError{}
+	}
 }
 
 func (s *POSService) CloseSession(ctx context.Context, businessID, userID, sessionID string) (*models.POSSession, error) {

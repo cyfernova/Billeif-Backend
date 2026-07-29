@@ -16,6 +16,7 @@ type canonicalInvoiceCreator interface {
 
 type salesInvoiceDocumentCreator interface {
 	CreateSalesInvoiceDocument(ctx context.Context, businessID string, input CreateDocumentInput) (*models.Document, error)
+	createPOSSalesInvoiceDocument(ctx context.Context, businessID string, input CreateInvoiceInput) (*models.Document, error)
 }
 
 type invoiceSalesDocumentCreator struct {
@@ -92,7 +93,19 @@ func (c *invoiceSalesDocumentCreator) CreateSalesInvoiceDocument(ctx context.Con
 			SerialIDs:        line.SerialIDs,
 		})
 	}
-	invoice, err := c.invoices.CreateByBusiness(ctx, businessID, invoiceInput)
+	return c.createInvoiceDocument(ctx, businessID, invoiceInput)
+}
+
+func (c *invoiceSalesDocumentCreator) createPOSSalesInvoiceDocument(ctx context.Context, businessID string, input CreateInvoiceInput) (*models.Document, error) {
+	input.Origin = models.InvoiceOriginPOS
+	if strings.TrimSpace(input.CustomerID) == "" && input.BuyerSnapshot.IsEmpty() {
+		return nil, &idempotency.InvalidPayloadError{}
+	}
+	return c.createInvoiceDocument(ctx, businessID, input)
+}
+
+func (c *invoiceSalesDocumentCreator) createInvoiceDocument(ctx context.Context, businessID string, input CreateInvoiceInput) (*models.Document, error) {
+	invoice, err := c.invoices.CreateByBusiness(ctx, businessID, input)
 	if err != nil {
 		return nil, err
 	}
@@ -244,7 +257,7 @@ func invoiceDocumentProjection(invoice *models.Invoice) *models.Document {
 	document.Lines = make([]*models.DocumentLine, 0, len(invoice.Items))
 	for _, item := range invoice.Items {
 		lineSubtotal := (item.Quantity * item.UnitPrice) - item.Discount
-		taxAmount := item.Total - lineSubtotal - item.CessAmount
+		taxAmount := roundCurrency(item.Total - lineSubtotal - item.CessAmount)
 		document.TaxTotal += taxAmount
 		document.CessTotal += item.CessAmount
 		line := &models.DocumentLine{
@@ -279,8 +292,8 @@ func invoiceDocumentProjection(invoice *models.Invoice) *models.Document {
 			if intraState {
 				line.CGSTRate = item.TaxRate / 2
 				line.SGSTRate = item.TaxRate / 2
-				line.CGSTAmount = taxAmount / 2
-				line.SGSTAmount = taxAmount / 2
+				line.CGSTAmount = roundCurrency(taxAmount / 2)
+				line.SGSTAmount = roundCurrency(taxAmount - line.CGSTAmount)
 			} else {
 				line.IGSTRate = item.TaxRate
 				line.IGSTAmount = taxAmount

@@ -228,3 +228,55 @@ git diff --check
 
 - `MIGRATION_TEST_DATABASE_URL` was not configured, so the real PostgreSQL path deterministically skipped; its safety guard has deterministic SQL-mock coverage.
 - No AWS, deployment, secret, Terraform/state, migration, or non-disposable database operation was performed.
+
+## Review fix round 2
+
+### Status and architecture
+
+- Preserved the strict generic sales-document validator from round 1.
+- Added a package-private POS-to-canonical entry point. It is not reachable through the generic document HTTP contract.
+- POS checkout now maps its server cart and session into a trusted canonical invoice command with:
+  - the required checkout idempotency key;
+  - `pos` invoice origin;
+  - customer identity when present, or an explicit `Counter sale` buyer snapshot for anonymous/manual checkout;
+  - session currency;
+  - tax, dispatch, transport, and counterparty facts;
+  - POS source and session linkage;
+  - canonical line snapshots.
+- Legacy POS `issued` and `final` intent is deliberately normalized at the boundary to the canonical unnumbered draft lifecycle. The checkout path does not allocate a sequence, number an invoice, set `issued_at`, or dispatch work.
+- Legacy POS non-GST mode maps to a canonical non-GST treatment rather than being silently discarded.
+- Trusted origin, currency, and anonymous buyer snapshot fields are excluded from public JSON input and included in the canonical idempotency hash.
+- Intra-state GST projection now rounds CGST to decimal storage precision and assigns the rounded tax remainder to SGST, so odd-paise GST reconciles exactly.
+
+### TDD evidence
+
+Focused RED:
+
+```text
+go test ./internal/services -run 'TestPOSCheckoutMapsActivePayloadToCanonicalUnnumberedDraft|TestInvoiceDocumentProjectionSplitsOddPaiseGSTWithoutLosingRemainder' -count=1
+```
+
+The POS regression failed with `invalid canonical payload`. The odd-paise regression projected `0.05` as `0.03 + 0.03` instead of `0.03 + 0.02`.
+
+Focused GREEN:
+
+```text
+go test ./internal/services -run 'TestPOSCheckoutMapsActivePayloadToCanonicalUnnumberedDraft|TestInvoiceDocumentProjectionSplitsOddPaiseGSTWithoutLosingRemainder' -count=1
+go test ./internal/services -count=1
+go test -race ./internal/idempotency ./internal/services ./internal/repositories/postgres ./internal/handlers -count=1
+```
+
+Full verification completed with exit code 0:
+
+```text
+make fmt
+make lint
+go test ./... -count=1
+make test
+git diff --check
+```
+
+### Concerns
+
+- The POS regression uses an isolated in-memory SQLite session table and no external or persistent database.
+- No migration, issue transition, AWS, deployment, dispatcher, mobile, cloud, secret, Terraform/state, or non-disposable database operation was performed.
