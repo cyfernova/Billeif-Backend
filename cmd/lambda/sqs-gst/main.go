@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"invoice-backend/internal/app"
+	"invoice-backend/internal/config"
 	"invoice-backend/internal/workers"
 
 	"github.com/aws/aws-lambda-go/events"
@@ -20,7 +21,10 @@ var (
 
 func initGSTRuntime() {
 	ctx := context.Background()
-	gstRT, gstInitErr = app.Initialize(ctx, app.InitializeOptions{EnableWorker: false})
+	gstRT, gstInitErr = app.Initialize(ctx, app.InitializeOptions{
+		EnableWorker: false,
+		SecretKinds:  config.SecretKindsForEntrypoint("sqs-gst"),
+	})
 	if gstInitErr != nil {
 		gstInitErr = fmt.Errorf("initialize gst worker runtime: %w", gstInitErr)
 	}
@@ -30,6 +34,9 @@ func handleSQSEvent(ctx context.Context, event events.SQSEvent) (events.SQSEvent
 	gstInitOnce.Do(initGSTRuntime)
 	if gstInitErr != nil {
 		return events.SQSEventResponse{}, gstInitErr
+	}
+	if err := gstRT.RefreshCredentials(ctx); err != nil {
+		return events.SQSEventResponse{}, err
 	}
 
 	failures := make([]events.SQSBatchItemFailure, 0)

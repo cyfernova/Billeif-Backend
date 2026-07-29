@@ -3,16 +3,33 @@ data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
 
 locals {
-  application_runtime_secret_arns = [
+  http_runtime_secret_arns = [
     aws_db_instance.main.master_user_secret[0].secret_arn,
     aws_secretsmanager_secret.credential_encryption.arn,
     aws_secretsmanager_secret.razorpay.arn,
     aws_secretsmanager_secret.llm.arn,
     aws_secretsmanager_secret.exa.arn,
     aws_secretsmanager_secret.gst_lookup.arn,
-    aws_secretsmanager_secret.deepgram.arn,
-    aws_secretsmanager_secret.deepseek.arn
+    aws_secretsmanager_secret.gst_provider.arn
   ]
+  worker_runtime_secret_arns = {
+    invoice = [
+      aws_db_instance.main.master_user_secret[0].secret_arn,
+      aws_secretsmanager_secret.credential_encryption.arn
+    ]
+    payment = []
+    gst = [
+      aws_db_instance.main.master_user_secret[0].secret_arn,
+      aws_secretsmanager_secret.credential_encryption.arn,
+      aws_secretsmanager_secret.gst_provider.arn
+    ]
+    bargaining = [
+      aws_db_instance.main.master_user_secret[0].secret_arn,
+      aws_secretsmanager_secret.credential_encryption.arn,
+      aws_secretsmanager_secret.llm.arn,
+      aws_secretsmanager_secret.exa.arn
+    ]
+  }
 }
 
 data "aws_iam_policy_document" "lambda_assume_role" {
@@ -71,17 +88,23 @@ resource "aws_iam_role_policy_attachment" "lambda_vpc_access" {
 }
 
 resource "aws_iam_role" "lambda_worker_exec" {
-  name               = "${var.project_name}-lambda-worker-exec-role"
+  for_each = local.worker_runtime_secret_arns
+
+  name               = "${var.project_name}-lambda-${each.key}-worker-exec-role"
   assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_worker_basic" {
-  role       = aws_iam_role.lambda_worker_exec.name
+  for_each = local.worker_runtime_secret_arns
+
+  role       = aws_iam_role.lambda_worker_exec[each.key].name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_worker_vpc_access" {
-  role       = aws_iam_role.lambda_worker_exec.name
+  for_each = local.worker_runtime_secret_arns
+
+  role       = aws_iam_role.lambda_worker_exec[each.key].name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
 }
 
@@ -243,7 +266,7 @@ data "aws_iam_policy_document" "lambda_app" {
       "secretsmanager:DescribeSecret",
       "secretsmanager:GetSecretValue"
     ]
-    resources = local.application_runtime_secret_arns
+    resources = local.http_runtime_secret_arns
 
     condition {
       test     = "Bool"
@@ -265,6 +288,18 @@ data "aws_iam_policy_document" "lambda_app" {
       test     = "Bool"
       variable = "aws:SecureTransport"
       values   = ["true"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["secretsmanager.${var.aws_region}.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:EncryptionContext:SecretARN"
+      values   = local.http_runtime_secret_arns
     }
   }
 
@@ -296,6 +331,8 @@ resource "aws_iam_role_policy" "lambda_app" {
 }
 
 data "aws_iam_policy_document" "lambda_worker_app" {
+  for_each = local.worker_runtime_secret_arns
+
   statement {
     sid    = "WorkerQueues"
     effect = "Allow"
@@ -334,48 +371,69 @@ data "aws_iam_policy_document" "lambda_worker_app" {
     ]
   }
 
-  statement {
-    sid       = "WorkerParameters"
-    effect    = "Allow"
-    actions   = ["ssm:GetParameters"]
-    resources = [local.db_host_ssm_parameter_arn]
+  dynamic "statement" {
+    for_each = length(each.value) > 0 ? [true] : []
+    content {
+      sid       = "WorkerParameters"
+      effect    = "Allow"
+      actions   = ["ssm:GetParameters"]
+      resources = [local.db_host_ssm_parameter_arn]
 
-    condition {
-      test     = "Bool"
-      variable = "aws:SecureTransport"
-      values   = ["true"]
+      condition {
+        test     = "Bool"
+        variable = "aws:SecureTransport"
+        values   = ["true"]
+      }
     }
   }
 
-  statement {
-    sid    = "WorkerSecrets"
-    effect = "Allow"
-    actions = [
-      "secretsmanager:DescribeSecret",
-      "secretsmanager:GetSecretValue"
-    ]
-    resources = local.application_runtime_secret_arns
+  dynamic "statement" {
+    for_each = length(each.value) > 0 ? [true] : []
+    content {
+      sid    = "WorkerSecrets"
+      effect = "Allow"
+      actions = [
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetSecretValue"
+      ]
+      resources = each.value
 
-    condition {
-      test     = "Bool"
-      variable = "aws:SecureTransport"
-      values   = ["true"]
+      condition {
+        test     = "Bool"
+        variable = "aws:SecureTransport"
+        values   = ["true"]
+      }
     }
   }
 
-  statement {
-    sid    = "WorkerSecretsKMS"
-    effect = "Allow"
-    actions = [
-      "kms:Decrypt",
-      "kms:DescribeKey"
-    ]
-    resources = [aws_kms_key.application_secrets.arn]
+  dynamic "statement" {
+    for_each = length(each.value) > 0 ? [true] : []
+    content {
+      sid    = "WorkerSecretsKMS"
+      effect = "Allow"
+      actions = [
+        "kms:Decrypt",
+        "kms:DescribeKey"
+      ]
+      resources = [aws_kms_key.application_secrets.arn]
 
-    condition {
-      test     = "Bool"
-      variable = "aws:SecureTransport"
-      values   = ["true"]
+      condition {
+        test     = "Bool"
+        variable = "aws:SecureTransport"
+        values   = ["true"]
+      }
+
+      condition {
+        test     = "StringEquals"
+        variable = "kms:ViaService"
+        values   = ["secretsmanager.${var.aws_region}.amazonaws.com"]
+      }
+
+      condition {
+        test     = "StringEquals"
+        variable = "kms:EncryptionContext:SecretARN"
+        values   = each.value
+      }
     }
   }
 
@@ -388,9 +446,11 @@ data "aws_iam_policy_document" "lambda_worker_app" {
 }
 
 resource "aws_iam_role_policy" "lambda_worker_app" {
-  name   = "${var.project_name}-lambda-worker-policy"
-  role   = aws_iam_role.lambda_worker_exec.id
-  policy = data.aws_iam_policy_document.lambda_worker_app.json
+  for_each = local.worker_runtime_secret_arns
+
+  name   = "${var.project_name}-lambda-${each.key}-worker-policy"
+  role   = aws_iam_role.lambda_worker_exec[each.key].id
+  policy = data.aws_iam_policy_document.lambda_worker_app[each.key].json
 }
 
 data "aws_iam_policy_document" "lambda_websocket_app" {
@@ -414,7 +474,7 @@ data "aws_iam_policy_document" "lambda_websocket_app" {
       "secretsmanager:DescribeSecret",
       "secretsmanager:GetSecretValue"
     ]
-    resources = local.application_runtime_secret_arns
+    resources = [aws_db_instance.main.master_user_secret[0].secret_arn]
 
     condition {
       test     = "Bool"
@@ -436,6 +496,18 @@ data "aws_iam_policy_document" "lambda_websocket_app" {
       test     = "Bool"
       variable = "aws:SecureTransport"
       values   = ["true"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["secretsmanager.${var.aws_region}.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:EncryptionContext:SecretARN"
+      values   = [aws_db_instance.main.master_user_secret[0].secret_arn]
     }
   }
 
@@ -511,6 +583,21 @@ data "aws_iam_policy_document" "lambda_voice_app" {
       test     = "Bool"
       variable = "aws:SecureTransport"
       values   = ["true"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["secretsmanager.${var.aws_region}.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:EncryptionContext:SecretARN"
+      values = [
+        aws_secretsmanager_secret.deepgram.arn,
+        aws_secretsmanager_secret.deepseek.arn
+      ]
     }
   }
 

@@ -32,18 +32,9 @@ locals {
     LOG_LEVEL                                 = "info"
     LOG_FORMAT                                = "json"
     SERVER_PORT                               = "8080"
-    DATABASE_HOST_SSM_PARAM                   = local.db_host_ssm_parameter_name
     DATABASE_PORT                             = tostring(var.db_port)
     DATABASE_NAME                             = var.db_name
     DATABASE_SSL_MODE                         = "require"
-    DATABASE_SECRET_ARN                       = aws_db_instance.main.master_user_secret[0].secret_arn
-    RAZORPAY_SECRET_ARN                       = aws_secretsmanager_secret.razorpay.arn
-    CREDENTIAL_ENCRYPTION_SECRET_ARN          = aws_secretsmanager_secret.credential_encryption.arn
-    LLM_SECRET_ARN                            = aws_secretsmanager_secret.llm.arn
-    EXA_SECRET_ARN                            = aws_secretsmanager_secret.exa.arn
-    GST_LOOKUP_SECRET_ARN                     = aws_secretsmanager_secret.gst_lookup.arn
-    DEEPGRAM_SECRET_ARN                       = aws_secretsmanager_secret.deepgram.arn
-    DEEPSEEK_SECRET_ARN                       = aws_secretsmanager_secret.deepseek.arn
     ALLOWED_ORIGINS                           = local.rest_api_invoke_url
     S3_BUCKET_LOGOS                           = aws_s3_bucket.business_logos.id
     S3_BUCKET_INVOICES                        = aws_s3_bucket.invoices_pdf.id
@@ -90,6 +81,41 @@ locals {
     VOICE_WS_MAX_OUTBOUND_CHUNK_BYTES         = tostring(var.voice_ws_max_outbound_chunk_bytes)
     VOICE_WS_PROVIDER_READY_TIMEOUT_SECONDS   = tostring(var.voice_ws_provider_ready_timeout_seconds)
     VOICE_SESSIONS_TABLE                      = aws_dynamodb_table.voice_sessions.name
+  }
+
+  database_runtime_env = {
+    DATABASE_HOST_SSM_PARAM = local.db_host_ssm_parameter_name
+    DATABASE_SECRET_ARN     = aws_db_instance.main.master_user_secret[0].secret_arn
+  }
+
+  http_secret_env = merge(local.database_runtime_env, {
+    CREDENTIAL_ENCRYPTION_SECRET_ARN = aws_secretsmanager_secret.credential_encryption.arn
+    RAZORPAY_SECRET_ARN              = aws_secretsmanager_secret.razorpay.arn
+    LLM_SECRET_ARN                   = aws_secretsmanager_secret.llm.arn
+    EXA_SECRET_ARN                   = aws_secretsmanager_secret.exa.arn
+    GST_LOOKUP_SECRET_ARN            = aws_secretsmanager_secret.gst_lookup.arn
+    GST_PROVIDER_SECRET_ARN          = aws_secretsmanager_secret.gst_provider.arn
+  })
+
+  worker_secret_env = {
+    invoice = merge(local.database_runtime_env, {
+      CREDENTIAL_ENCRYPTION_SECRET_ARN = aws_secretsmanager_secret.credential_encryption.arn
+    })
+    payment = {}
+    gst = merge(local.database_runtime_env, {
+      CREDENTIAL_ENCRYPTION_SECRET_ARN = aws_secretsmanager_secret.credential_encryption.arn
+      GST_PROVIDER_SECRET_ARN          = aws_secretsmanager_secret.gst_provider.arn
+    })
+    bargaining = merge(local.database_runtime_env, {
+      CREDENTIAL_ENCRYPTION_SECRET_ARN = aws_secretsmanager_secret.credential_encryption.arn
+      LLM_SECRET_ARN                   = aws_secretsmanager_secret.llm.arn
+      EXA_SECRET_ARN                   = aws_secretsmanager_secret.exa.arn
+    })
+  }
+
+  voice_secret_env = {
+    DEEPGRAM_SECRET_ARN = aws_secretsmanager_secret.deepgram.arn
+    DEEPSEEK_SECRET_ARN = aws_secretsmanager_secret.deepseek.arn
   }
 }
 
@@ -144,7 +170,7 @@ resource "aws_lambda_function" "api_http" {
   reserved_concurrent_executions = var.enable_lambda_reserved_concurrency ? 10 : null
 
   environment {
-    variables = merge(local.common_lambda_env, {
+    variables = merge(local.common_lambda_env, local.http_secret_env, {
       WEBSOCKET_API_ENDPOINT = local.websocket_api_invoke_url
       SERVER_BASE_URL        = local.rest_api_invoke_url
     })
@@ -179,7 +205,7 @@ resource "aws_lambda_function" "a2a_stream" {
   reserved_concurrent_executions = var.enable_lambda_reserved_concurrency ? 5 : null
 
   environment {
-    variables = merge(local.common_lambda_env, {
+    variables = merge(local.common_lambda_env, local.http_secret_env, {
       WEBSOCKET_API_ENDPOINT = local.websocket_api_invoke_url
       SERVER_BASE_URL        = local.rest_api_invoke_url
     })
@@ -202,7 +228,7 @@ resource "aws_lambda_function" "a2a_stream" {
 
 resource "aws_lambda_function" "sqs_invoice" {
   function_name    = "${var.project_name}-sqs-invoice"
-  role             = aws_iam_role.lambda_worker_exec.arn
+  role             = aws_iam_role.lambda_worker_exec["invoice"].arn
   runtime          = "provided.al2023"
   handler          = "bootstrap"
   architectures    = ["arm64"]
@@ -214,7 +240,7 @@ resource "aws_lambda_function" "sqs_invoice" {
   reserved_concurrent_executions = var.enable_lambda_reserved_concurrency ? 2 : null
 
   environment {
-    variables = merge(local.common_lambda_env, {
+    variables = merge(local.common_lambda_env, local.worker_secret_env.invoice, {
       WEBSOCKET_API_ENDPOINT = local.websocket_api_invoke_url
     })
   }
@@ -236,7 +262,7 @@ resource "aws_lambda_function" "sqs_invoice" {
 
 resource "aws_lambda_function" "sqs_payment" {
   function_name    = "${var.project_name}-sqs-payment"
-  role             = aws_iam_role.lambda_worker_exec.arn
+  role             = aws_iam_role.lambda_worker_exec["payment"].arn
   runtime          = "provided.al2023"
   handler          = "bootstrap"
   architectures    = ["arm64"]
@@ -248,7 +274,7 @@ resource "aws_lambda_function" "sqs_payment" {
   reserved_concurrent_executions = var.enable_lambda_reserved_concurrency ? 2 : null
 
   environment {
-    variables = merge(local.common_lambda_env, {
+    variables = merge(local.common_lambda_env, local.worker_secret_env.payment, {
       WEBSOCKET_API_ENDPOINT = local.websocket_api_invoke_url
     })
   }
@@ -270,7 +296,7 @@ resource "aws_lambda_function" "sqs_payment" {
 
 resource "aws_lambda_function" "sqs_gst" {
   function_name    = "${var.project_name}-sqs-gst"
-  role             = aws_iam_role.lambda_worker_exec.arn
+  role             = aws_iam_role.lambda_worker_exec["gst"].arn
   runtime          = "provided.al2023"
   handler          = "bootstrap"
   architectures    = ["arm64"]
@@ -282,7 +308,7 @@ resource "aws_lambda_function" "sqs_gst" {
   reserved_concurrent_executions = var.enable_lambda_reserved_concurrency ? 2 : null
 
   environment {
-    variables = merge(local.common_lambda_env, {
+    variables = merge(local.common_lambda_env, local.worker_secret_env.gst, {
       WEBSOCKET_API_ENDPOINT = local.websocket_api_invoke_url
     })
   }
@@ -309,7 +335,7 @@ resource "aws_cloudwatch_log_group" "lambda_sqs_bargaining" {
 
 resource "aws_lambda_function" "sqs_bargaining" {
   function_name     = "${var.project_name}-sqs-bargaining"
-  role              = aws_iam_role.lambda_worker_exec.arn
+  role              = aws_iam_role.lambda_worker_exec["bargaining"].arn
   runtime           = "provided.al2023"
   handler           = "bootstrap"
   architectures     = ["arm64"]
@@ -323,7 +349,7 @@ resource "aws_lambda_function" "sqs_bargaining" {
   reserved_concurrent_executions = var.enable_lambda_reserved_concurrency ? 5 : null
 
   environment {
-    variables = merge(local.common_lambda_env, {
+    variables = merge(local.common_lambda_env, local.worker_secret_env.bargaining, {
       WEBSOCKET_API_ENDPOINT = local.websocket_api_invoke_url
     })
   }
@@ -357,7 +383,7 @@ resource "aws_lambda_function" "ws_handler" {
   reserved_concurrent_executions = var.enable_lambda_reserved_concurrency ? 5 : null
 
   environment {
-    variables = merge(local.common_lambda_env, {
+    variables = merge(local.common_lambda_env, local.database_runtime_env, {
       AWS_ENDPOINT                       = ""
       WEBSOCKET_API_ENDPOINT             = local.websocket_management_api_endpoint
       VOICE_SESSION_WORKER_FUNCTION_NAME = aws_lambda_function.voice_session.function_name
@@ -393,7 +419,7 @@ resource "aws_lambda_function" "voice_session" {
   reserved_concurrent_executions = var.enable_lambda_reserved_concurrency ? var.voice_session_reserved_concurrency : null
 
   environment {
-    variables = merge(local.common_lambda_env, {
+    variables = merge(local.common_lambda_env, local.voice_secret_env, {
       AWS_ENDPOINT           = ""
       WEBSOCKET_API_ENDPOINT = local.websocket_management_api_endpoint
     })

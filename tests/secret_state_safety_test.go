@@ -65,10 +65,10 @@ func TestKMSAndReaderPoliciesAreScopedForApplicationSecrets(t *testing.T) {
 	}
 	for _, required := range []string{
 		`enable_key_rotation     = true`,
-		`sid       = "AccountAdministration"`,
+		`sid    = "AccountAdministration"`,
 		`:root"`,
 		`variable = "kms:ViaService"`,
-		`values   = ["secretsmanager.ap-south-1.amazonaws.com"]`,
+		`values   = ["secretsmanager.${var.aws_region}.amazonaws.com"]`,
 		`name          = "alias/${var.project_name}-${var.environment}-application-secrets"`,
 	} {
 		if !strings.Contains(string(secretsSource), required) {
@@ -83,8 +83,10 @@ func TestKMSAndReaderPoliciesAreScopedForApplicationSecrets(t *testing.T) {
 	for _, required := range []string{
 		`"secretsmanager:GetSecretValue"`,
 		`"secretsmanager:DescribeSecret"`,
-		`resources = local.application_runtime_secret_arns`,
+		`resources = local.http_runtime_secret_arns`,
 		`resources = [aws_kms_key.application_secrets.arn]`,
+		`variable = "kms:ViaService"`,
+		`variable = "kms:EncryptionContext:SecretARN"`,
 		`variable = "aws:SecureTransport"`,
 	} {
 		if !strings.Contains(string(iamSource), required) {

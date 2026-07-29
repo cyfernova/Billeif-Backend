@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"invoice-backend/internal/app"
 	"invoice-backend/internal/config"
 	"invoice-backend/internal/middleware"
 	postgresrepo "invoice-backend/internal/repositories/postgres"
@@ -21,8 +22,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awslambda "github.com/aws/aws-sdk-go-v2/service/lambda"
 	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
+	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 )
 
 var (
@@ -48,10 +48,6 @@ func initWSRuntime() {
 		wsInitErr = fmt.Errorf("load lambda voice config: %w", err)
 		return
 	}
-	if err := config.ResolveLambdaVoiceRuntime(context.Background(), lambdaVoiceCfg, nil); err != nil {
-		wsInitErr = fmt.Errorf("resolve lambda voice config: %w", err)
-		return
-	}
 	cfg := loadWSConfig(lambdaVoiceCfg)
 
 	log := logger.NewWithConfig(logger.Config{
@@ -65,19 +61,26 @@ func initWSRuntime() {
 		wsInitErr = fmt.Errorf("load app config for websocket auth: %w", err)
 		return
 	}
-	if err := config.ResolveRuntime(context.Background(), appCfg, config.RuntimeResolvers{}); err != nil {
-		wsInitErr = fmt.Errorf("resolve app config for websocket auth: %w", err)
-		return
-	}
-	authSvc, err := initWebSocketBusinessAuth(appCfg, log)
-	if err != nil {
-		wsInitErr = fmt.Errorf("initialize websocket business auth: %w", err)
-		return
-	}
-
 	awsCfg, err := awsclients.New(context.Background(), cfg.AWS, log)
 	if err != nil {
 		wsInitErr = fmt.Errorf("init aws clients: %w", err)
+		return
+	}
+	resolver, err := config.NewRuntimeResolver(config.RuntimeResolverOptions{
+		Clients: config.RuntimeResolvers{
+			Secrets: secretsmanager.NewFromConfig(awsCfg.SDKConfig),
+			SSM:     awsCfg.SSM,
+		},
+		SecretIdentifiers: []string{appCfg.Secrets.Database},
+		ParameterNames:    []string{appCfg.SSM.DatabaseHostParam},
+	})
+	if err != nil {
+		wsInitErr = fmt.Errorf("initialize websocket credential resolver: %w", err)
+		return
+	}
+	authSvc, err := initWebSocketBusinessAuth(appCfg, resolver, log)
+	if err != nil {
+		wsInitErr = fmt.Errorf("initialize websocket business auth: %w", err)
 		return
 	}
 
@@ -174,32 +177,8 @@ func parseClaims(token string) (*middleware.CognitoClaims, error) {
 	return middleware.ValidateCognitoToken(wsCfg.Cognito, token)
 }
 
-func initWebSocketBusinessAuth(cfg *config.Config, log *logger.Logger) (*services.BusinessAuthService, error) {
-	gormLevel := "warn"
-	if strings.EqualFold(cfg.Logging.Level, "debug") || strings.EqualFold(cfg.Logging.Level, "info") {
-		gormLevel = cfg.Logging.Level
-	}
-
-	db, err := gorm.Open(postgres.New(postgres.Config{
-		DSN: fmt.Sprintf(
-			"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-			cfg.Database.Host,
-			cfg.Database.Port,
-			cfg.Database.User,
-			cfg.Database.Password,
-			cfg.Database.Name,
-			cfg.Database.SSLMode,
-		),
-		PreferSimpleProtocol: true,
-	}), &gorm.Config{
-		Logger: logger.NewGORMLogger(log, logger.GORMOptions{
-			Environment:               cfg.Environment,
-			SlowThreshold:             200 * time.Millisecond,
-			Level:                     gormLevel,
-			IgnoreRecordNotFoundError: true,
-			IncludeQuery:              !logger.IsProductionEnvironment(cfg.Environment),
-		}),
-	})
+func initWebSocketBusinessAuth(cfg *config.Config, resolver *config.RuntimeResolver, log *logger.Logger) (*services.BusinessAuthService, error) {
+	db, err := app.OpenDatabase(cfg, resolver, log)
 	if err != nil {
 		return nil, fmt.Errorf("connect database: %w", err)
 	}

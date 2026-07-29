@@ -296,7 +296,7 @@ func TestTerraformAddsGatewayAuthLoggingAndLeastPrivilegeBoundaries(t *testing.T
 		"lambda": {
 			source: string(lambda),
 			fragments: []string{
-				`role             = aws_iam_role.lambda_worker_exec.arn`,
+				`role             = aws_iam_role.lambda_worker_exec["invoice"].arn`,
 				`role             = aws_iam_role.lambda_websocket_exec.arn`,
 				`DATABASE_SECRET_ARN`,
 				`CREDENTIAL_ENCRYPTION_SECRET_ARN`,
@@ -304,6 +304,7 @@ func TestTerraformAddsGatewayAuthLoggingAndLeastPrivilegeBoundaries(t *testing.T
 				`LLM_SECRET_ARN`,
 				`EXA_SECRET_ARN`,
 				`GST_LOOKUP_SECRET_ARN`,
+				`GST_PROVIDER_SECRET_ARN`,
 				`DEEPGRAM_SECRET_ARN`,
 				`DEEPSEEK_SECRET_ARN`,
 			},

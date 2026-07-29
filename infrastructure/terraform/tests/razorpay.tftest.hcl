@@ -97,6 +97,14 @@ mock_provider "aws" {
   }
 
   override_resource {
+    target          = aws_secretsmanager_secret.gst_provider
+    override_during = plan
+    values = {
+      arn = "arn:aws:secretsmanager:ap-south-1:123456789012:secret:gst-provider"
+    }
+  }
+
+  override_resource {
     target          = aws_secretsmanager_secret.deepgram
     override_during = plan
     values = {
@@ -247,10 +255,9 @@ run "secret_metadata_rds_lambda_iam_and_output" {
         ]) == sort([
         "CREDENTIAL_ENCRYPTION_SECRET_ARN",
         "DATABASE_SECRET_ARN",
-        "DEEPGRAM_SECRET_ARN",
-        "DEEPSEEK_SECRET_ARN",
         "EXA_SECRET_ARN",
         "GST_LOOKUP_SECRET_ARN",
+        "GST_PROVIDER_SECRET_ARN",
         "LLM_SECRET_ARN",
         "RAZORPAY_SECRET_ARN"
       ]) &&
@@ -267,7 +274,8 @@ run "secret_metadata_rds_lambda_iam_and_output" {
       contains(statement.actions, "secretsmanager:GetSecretValue") &&
       contains(statement.actions, "secretsmanager:DescribeSecret") &&
       contains(statement.resources, aws_secretsmanager_secret.razorpay.arn) &&
-      length(statement.resources) == 8 &&
+      contains(statement.resources, aws_secretsmanager_secret.gst_provider.arn) &&
+      length(statement.resources) == 7 &&
       !contains(statement.resources, "*")
     ]) == 1
     error_message = "Lambda IAM must scope secret reads to exact managed ARNs."
@@ -278,9 +286,140 @@ run "secret_metadata_rds_lambda_iam_and_output" {
       for statement in data.aws_iam_policy_document.lambda_app.statement : statement
       if statement.sid == "ApplicationSecretsKMSDecrypt" &&
       length(statement.resources) == 1 &&
-      contains(statement.resources, aws_kms_key.application_secrets.arn)
+      contains(statement.resources, aws_kms_key.application_secrets.arn) &&
+      length([
+        for condition in statement.condition : condition
+        if condition.variable == "kms:ViaService" &&
+        condition.test == "StringEquals" &&
+        length(condition.values) == 1 &&
+        contains(condition.values, "secretsmanager.us-east-1.amazonaws.com")
+      ]) == 1 &&
+      length([
+        for condition in statement.condition : condition
+        if condition.variable == "kms:EncryptionContext:SecretARN" &&
+        condition.test == "StringEquals" &&
+        length(condition.values) == 7
+      ]) == 1
     ]) == 1
     error_message = "Lambda IAM must scope KMS decrypt to the dedicated key ARN."
+  }
+
+  assert {
+    condition = alltrue([
+      toset([
+        for key in keys(aws_lambda_function.sqs_invoice.environment[0].variables) : key
+        if endswith(key, "_SECRET_ARN")
+      ]) == toset(["CREDENTIAL_ENCRYPTION_SECRET_ARN", "DATABASE_SECRET_ARN"]),
+      length([
+        for key in keys(aws_lambda_function.sqs_payment.environment[0].variables) : key
+        if endswith(key, "_SECRET_ARN")
+      ]) == 0,
+      toset([
+        for key in keys(aws_lambda_function.sqs_gst.environment[0].variables) : key
+        if endswith(key, "_SECRET_ARN")
+      ]) == toset(["CREDENTIAL_ENCRYPTION_SECRET_ARN", "DATABASE_SECRET_ARN", "GST_PROVIDER_SECRET_ARN"]),
+      toset([
+        for key in keys(aws_lambda_function.sqs_bargaining.environment[0].variables) : key
+        if endswith(key, "_SECRET_ARN")
+      ]) == toset(["CREDENTIAL_ENCRYPTION_SECRET_ARN", "DATABASE_SECRET_ARN", "EXA_SECRET_ARN", "LLM_SECRET_ARN"]),
+      toset([
+        for key in keys(aws_lambda_function.ws_handler.environment[0].variables) : key
+        if endswith(key, "_SECRET_ARN")
+      ]) == toset(["DATABASE_SECRET_ARN"]),
+      toset([
+        for key in keys(aws_lambda_function.voice_session.environment[0].variables) : key
+        if endswith(key, "_SECRET_ARN")
+      ]) == toset(["DEEPGRAM_SECRET_ARN", "DEEPSEEK_SECRET_ARN"])
+    ])
+    error_message = "Every Lambda environment must receive only the secret identifiers used by its entrypoint."
+  }
+
+  assert {
+    condition = alltrue([
+      length([
+        for statement in data.aws_iam_policy_document.lambda_worker_app["payment"].statement : statement
+        if contains(["WorkerSecrets", "WorkerSecretsKMS", "WorkerParameters"], statement.sid)
+      ]) == 0,
+      length([
+        for statement in data.aws_iam_policy_document.lambda_worker_app["invoice"].statement : statement
+        if statement.sid == "WorkerSecrets" && length(statement.resources) == 2
+      ]) == 1,
+      length([
+        for statement in data.aws_iam_policy_document.lambda_worker_app["gst"].statement : statement
+        if statement.sid == "WorkerSecrets" &&
+        length(statement.resources) == 3 &&
+        contains(statement.resources, aws_secretsmanager_secret.gst_provider.arn)
+      ]) == 1,
+      length([
+        for statement in data.aws_iam_policy_document.lambda_worker_app["bargaining"].statement : statement
+        if statement.sid == "WorkerSecrets" && length(statement.resources) == 4
+      ]) == 1
+    ])
+    error_message = "Worker roles must have entrypoint-specific secret access."
+  }
+
+  assert {
+    condition = alltrue(concat(
+      [
+        length([
+          for statement in data.aws_iam_policy_document.lambda_websocket_app.statement : statement
+          if statement.sid == "WebSocketSecretsKMS" &&
+          length([
+            for condition in statement.condition : condition
+            if condition.variable == "kms:ViaService" &&
+            condition.test == "StringEquals" &&
+            contains(condition.values, "secretsmanager.us-east-1.amazonaws.com")
+          ]) == 1
+        ]) == 1,
+        length([
+          for statement in data.aws_iam_policy_document.lambda_voice_app.statement : statement
+          if statement.sid == "VoiceProviderSecretsKMS" &&
+          length([
+            for condition in statement.condition : condition
+            if condition.variable == "kms:ViaService" &&
+            condition.test == "StringEquals" &&
+            contains(condition.values, "secretsmanager.us-east-1.amazonaws.com")
+          ]) == 1
+        ]) == 1
+      ],
+      [
+        for worker in ["invoice", "gst", "bargaining"] :
+        length([
+          for statement in data.aws_iam_policy_document.lambda_worker_app[worker].statement : statement
+          if statement.sid == "WorkerSecretsKMS" &&
+          length([
+            for condition in statement.condition : condition
+            if condition.variable == "kms:ViaService" &&
+            condition.test == "StringEquals" &&
+            contains(condition.values, "secretsmanager.us-east-1.amazonaws.com")
+          ]) == 1
+        ]) == 1
+      ]
+    ))
+    error_message = "Every runtime KMS decrypt statement must be constrained through regional Secrets Manager."
+  }
+
+  assert {
+    condition = (
+      length([
+        for statement in data.aws_iam_policy_document.application_secrets_kms.statement : statement
+        if statement.sid == "AccountAdministration" &&
+        !contains(statement.actions, "kms:*") &&
+        !contains(statement.actions, "kms:Decrypt") &&
+        !contains(statement.actions, "kms:Encrypt")
+      ]) == 1 &&
+      length([
+        for statement in data.aws_iam_policy_document.application_secrets_kms.statement : statement
+        if statement.sid == "SecretsManagerServiceUse" &&
+        contains(statement.actions, "kms:Decrypt") &&
+        length([
+          for condition in statement.condition : condition
+          if condition.variable == "kms:ViaService" &&
+          contains(condition.values, "secretsmanager.us-east-1.amazonaws.com")
+        ]) == 1
+      ]) == 1
+    )
+    error_message = "KMS administration and runtime cryptographic use must be separated."
   }
 
   assert {

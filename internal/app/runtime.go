@@ -2,11 +2,14 @@ package app
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 	_ "time/tzdata"
 
@@ -22,7 +25,9 @@ import (
 	"invoice-backend/pkg/logger"
 	pkgsentry "invoice-backend/pkg/sentry"
 
+	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/gin-gonic/gin"
+	"github.com/lib/pq"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 	"github.com/swaggo/swag"
@@ -49,20 +54,25 @@ import (
 
 type InitializeOptions struct {
 	EnableWorker bool
+	SecretKinds  []config.SecretKind
 }
 
 type Runtime struct {
 	Config *config.Config
 
-	Log    *logger.Logger
-	DB     *gorm.DB
-	AWS    *awsclients.Config
-	Repos  *Repositories
-	Svcs   *services.Container
-	H      *handlers.Handler
-	Router *gin.Engine
-	Worker *workers.Worker
-	WAF    *middleware.WAFRateLimiter
+	Log     *logger.Logger
+	DB      *gorm.DB
+	AWS     *awsclients.Config
+	Repos   *Repositories
+	Svcs    *services.Container
+	H       *handlers.Handler
+	Router  *gin.Engine
+	Worker  *workers.Worker
+	WAF     *middleware.WAFRateLimiter
+	Secrets *config.RuntimeResolver
+
+	secretKinds []config.SecretKind
+	refreshMu   sync.Mutex
 }
 
 func Initialize(ctx context.Context, opts InitializeOptions) (*Runtime, error) {
@@ -71,9 +81,6 @@ func Initialize(ctx context.Context, opts InitializeOptions) (*Runtime, error) {
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
-	}
-	if err := config.ResolveRuntime(ctx, cfg, config.RuntimeResolvers{}); err != nil {
-		return nil, fmt.Errorf("resolve runtime config: %w", err)
 	}
 
 	log := logger.NewWithConfig(logger.Config{
@@ -102,16 +109,37 @@ func Initialize(ctx context.Context, opts InitializeOptions) (*Runtime, error) {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	db, err := initDatabase(cfg, log)
-	if err != nil {
-		log.Sync()
-		return nil, fmt.Errorf("connect database: %w", err)
-	}
-
 	awsClients, err := awsclients.New(ctx, cfg.AWS, log.Named("awsclients"))
 	if err != nil {
 		log.Sync()
 		return nil, fmt.Errorf("initialize AWS clients: %w", err)
+	}
+
+	resolver, err := config.NewRuntimeResolver(config.RuntimeResolverOptions{
+		Clients: config.RuntimeResolvers{
+			Secrets: secretsmanager.NewFromConfig(awsClients.SDKConfig),
+			SSM:     awsClients.SSM,
+		},
+		SecretIdentifiers: cfg.SecretIdentifierValues(),
+		ParameterNames:    []string{cfg.SSM.DatabaseHostParam},
+	})
+	if err != nil {
+		log.Sync()
+		return nil, fmt.Errorf("initialize runtime resolver: %w", err)
+	}
+	kinds := opts.SecretKinds
+	if kinds == nil {
+		kinds = config.ApplicationSecretKinds
+	}
+	if err := resolver.Resolve(ctx, cfg, kinds); err != nil {
+		log.Sync()
+		return nil, fmt.Errorf("resolve provider config: %w", err)
+	}
+
+	db, err := initDatabase(cfg, resolver, log)
+	if err != nil {
+		log.Sync()
+		return nil, fmt.Errorf("connect database: %w", err)
 	}
 
 	repos := initRepositories(db)
@@ -120,14 +148,16 @@ func Initialize(ctx context.Context, opts InitializeOptions) (*Runtime, error) {
 	router := setupRouter(cfg, svcs, h, log)
 
 	rt := &Runtime{
-		Config: cfg,
-		Log:    log,
-		DB:     db,
-		AWS:    awsClients,
-		Repos:  repos,
-		Svcs:   svcs,
-		H:      h,
-		Router: router,
+		Config:      cfg,
+		Log:         log,
+		DB:          db,
+		AWS:         awsClients,
+		Repos:       repos,
+		Svcs:        svcs,
+		H:           h,
+		Router:      router,
+		Secrets:     resolver,
+		secretKinds: append([]config.SecretKind(nil), kinds...),
 	}
 
 	// Initialize WAF rate limiter if enabled
@@ -144,6 +174,21 @@ func Initialize(ctx context.Context, opts InitializeOptions) (*Runtime, error) {
 	return rt, nil
 }
 
+// RefreshCredentials is the provider use boundary for warm processes. It asks
+// the retained resolver for current values and rebuilds the service graph that
+// captures provider credentials.
+func (r *Runtime) RefreshCredentials(ctx context.Context) error {
+	r.refreshMu.Lock()
+	defer r.refreshMu.Unlock()
+	if err := r.Secrets.Resolve(ctx, r.Config, r.secretKinds); err != nil {
+		return fmt.Errorf("refresh provider credentials: %w", err)
+	}
+	r.Svcs = initServices(r.Config, r.DB, r.Repos, r.AWS, r.Log)
+	r.H = handlers.New(r.Svcs, &handlers.Repositories{AP2: r.Repos.AP2}, r.Config, r.Log)
+	r.Router = setupRouter(r.Config, r.Svcs, r.H, r.Log)
+	return nil
+}
+
 func (r *Runtime) Close() {
 	if r.Worker != nil {
 		r.Worker.Stop()
@@ -154,22 +199,72 @@ func (r *Runtime) Close() {
 	}
 }
 
-func initDatabase(cfg *config.Config, log *logger.Logger) (*gorm.DB, error) {
+type postgresConnectorFactory func(string) (driver.Connector, error)
+
+type refreshingPostgresConnector struct {
+	resolver *config.RuntimeResolver
+	cfg      *config.Config
+	factory  postgresConnectorFactory
+}
+
+func newRefreshingPostgresConnector(resolver *config.RuntimeResolver, cfg *config.Config, factory postgresConnectorFactory) driver.Connector {
+	return &refreshingPostgresConnector{resolver: resolver, cfg: cfg, factory: factory}
+}
+
+func (c *refreshingPostgresConnector) Connect(ctx context.Context) (driver.Conn, error) {
+	credentials, err := c.resolver.Database(ctx, c.cfg)
+	if err != nil {
+		return nil, err
+	}
+	connector, err := c.factory(postgresDataSourceName(credentials))
+	if err != nil {
+		return nil, &config.ConfigurationError{Resource: "database connection configuration", Reason: "invalid"}
+	}
+	return connector.Connect(ctx)
+}
+
+func (c *refreshingPostgresConnector) Driver() driver.Driver {
+	return &refreshingPostgresDriver{connector: c}
+}
+
+type refreshingPostgresDriver struct{ connector driver.Connector }
+
+func (d *refreshingPostgresDriver) Open(string) (driver.Conn, error) {
+	return d.connector.Connect(context.Background())
+}
+
+func postgresDataSourceName(credentials config.DatabaseCredentials) string {
+	return fmt.Sprintf(
+		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		quotePostgresValue(credentials.Host),
+		credentials.Port,
+		quotePostgresValue(credentials.User),
+		quotePostgresValue(credentials.Password),
+		quotePostgresValue(credentials.Name),
+		quotePostgresValue(credentials.SSLMode),
+	)
+}
+
+func quotePostgresValue(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, `'`, `\'`)
+	return "'" + value + "'"
+}
+
+func initDatabase(cfg *config.Config, resolver *config.RuntimeResolver, log *logger.Logger) (*gorm.DB, error) {
 	gormLevel := "warn"
 	if strings.EqualFold(cfg.Logging.Level, "debug") || strings.EqualFold(cfg.Logging.Level, "info") {
 		gormLevel = cfg.Logging.Level
 	}
 
+	connector := newRefreshingPostgresConnector(resolver, cfg, func(dataSourceName string) (driver.Connector, error) {
+		return pq.NewConnector(dataSourceName)
+	})
+	sqlDB := sql.OpenDB(connector)
+	sqlDB.SetConnMaxLifetime(4 * time.Minute)
+
 	return gorm.Open(postgres.New(postgres.Config{
-		DSN: fmt.Sprintf(
-			"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-			cfg.Database.Host,
-			cfg.Database.Port,
-			cfg.Database.User,
-			cfg.Database.Password,
-			cfg.Database.Name,
-			cfg.Database.SSLMode,
-		),
+		Conn:                 sqlDB,
 		PreferSimpleProtocol: true,
 	}), &gorm.Config{
 		Logger: logger.NewGORMLogger(log, logger.GORMOptions{
@@ -180,6 +275,10 @@ func initDatabase(cfg *config.Config, log *logger.Logger) (*gorm.DB, error) {
 			IncludeQuery:              !logger.IsProductionEnvironment(cfg.Environment),
 		}),
 	})
+}
+
+func OpenDatabase(cfg *config.Config, resolver *config.RuntimeResolver, log *logger.Logger) (*gorm.DB, error) {
+	return initDatabase(cfg, resolver, log)
 }
 
 type Repositories struct {

@@ -100,7 +100,14 @@ func LoadLambdaVoiceConfig(requireWorkerFunction bool) (*LambdaVoiceConfig, erro
 		cfg.SessionWorkerFunctionName = strings.TrimSpace(os.Getenv("VOICE_SESSION_WORKER_FUNCTION_NAME"))
 	}
 
-	if err := cfg.Validate(); err != nil {
+	validationCfg := cfg
+	if requireWorkerFunction {
+		copyForWebSocket := *cfg
+		copyForWebSocket.VoiceRealtime.DeepgramAPIKey = "not-required-by-websocket"
+		copyForWebSocket.VoiceRealtime.DeepSeekAPIKey = "not-required-by-websocket"
+		validationCfg = &copyForWebSocket
+	}
+	if err := validationCfg.Validate(); err != nil {
 		return nil, err
 	}
 	return cfg, nil

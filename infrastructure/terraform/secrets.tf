@@ -1,8 +1,28 @@
 data "aws_iam_policy_document" "application_secrets_kms" {
   statement {
-    sid       = "AccountAdministration"
-    effect    = "Allow"
-    actions   = ["kms:*"]
+    sid    = "AccountAdministration"
+    effect = "Allow"
+    actions = [
+      "kms:CancelKeyDeletion",
+      "kms:CreateAlias",
+      "kms:CreateKey",
+      "kms:DeleteAlias",
+      "kms:DescribeKey",
+      "kms:DisableKey",
+      "kms:EnableKey",
+      "kms:EnableKeyRotation",
+      "kms:GetKeyPolicy",
+      "kms:GetKeyRotationStatus",
+      "kms:ListAliases",
+      "kms:ListKeyPolicies",
+      "kms:ListResourceTags",
+      "kms:PutKeyPolicy",
+      "kms:ScheduleKeyDeletion",
+      "kms:TagResource",
+      "kms:UntagResource",
+      "kms:UpdateAlias",
+      "kms:UpdateKeyDescription"
+    ]
     resources = ["*"]
 
     principals {
@@ -38,7 +58,7 @@ data "aws_iam_policy_document" "application_secrets_kms" {
     condition {
       test     = "StringEquals"
       variable = "kms:ViaService"
-      values   = ["secretsmanager.ap-south-1.amazonaws.com"]
+      values   = ["secretsmanager.${var.aws_region}.amazonaws.com"]
     }
   }
 }

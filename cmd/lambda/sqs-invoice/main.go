@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"invoice-backend/internal/app"
+	"invoice-backend/internal/config"
 	"invoice-backend/internal/workers"
 
 	"github.com/aws/aws-lambda-go/events"
@@ -20,7 +21,10 @@ var (
 
 func initInvoiceRuntime() {
 	ctx := context.Background()
-	invoiceRT, invoiceInitErr = app.Initialize(ctx, app.InitializeOptions{EnableWorker: false})
+	invoiceRT, invoiceInitErr = app.Initialize(ctx, app.InitializeOptions{
+		EnableWorker: false,
+		SecretKinds:  config.SecretKindsForEntrypoint("sqs-invoice"),
+	})
 	if invoiceInitErr != nil {
 		invoiceInitErr = fmt.Errorf("initialize invoice worker runtime: %w", invoiceInitErr)
 	}
@@ -30,6 +34,9 @@ func handleSQSEvent(ctx context.Context, event events.SQSEvent) (events.SQSEvent
 	invoiceInitOnce.Do(initInvoiceRuntime)
 	if invoiceInitErr != nil {
 		return events.SQSEventResponse{}, invoiceInitErr
+	}
+	if err := invoiceRT.RefreshCredentials(ctx); err != nil {
+		return events.SQSEventResponse{}, err
 	}
 
 	failures := make([]events.SQSBatchItemFailure, 0)
