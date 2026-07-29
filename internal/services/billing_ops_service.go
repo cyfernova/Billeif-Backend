@@ -1540,6 +1540,11 @@ func (s *BillingOpsService) DispatchDueInvoiceSubscriptions(ctx context.Context,
 		Find(&subscriptions).Error; err != nil {
 		return nil, err
 	}
+	for i := range subscriptions {
+		if err := rejectInvoiceSubscriptionAutoSend(subscriptions[i].AutoSend); err != nil {
+			return nil, fmt.Errorf("dispatch invoice subscription %s: %w", subscriptions[i].ID, err)
+		}
+	}
 	dispatched := make([]*models.InvoiceSubscriptionRun, 0, len(subscriptions))
 	for _, subscription := range subscriptions {
 		nextRunAt, err := cadenceNextRun(now, subscription.Cadence, subscription.Timezone)
