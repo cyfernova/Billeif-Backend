@@ -70,9 +70,22 @@ func TestValidateRejectsConflictingLegalPricingAndLineProjection(t *testing.T) {
 			shifted := document.DueDate.AddDate(0, 0, 1)
 			document.DueDate = &shifted
 		}},
+		{name: "dispatch date", mutate: func(document *models.Document) {
+			dispatchDate := document.IssueDate.AddDate(0, 0, 1)
+			document.DispatchDate = &dispatchDate
+		}},
 		{name: "currency", mutate: func(document *models.Document) { document.Currency = "USD" }},
+		{name: "FX provider", mutate: func(document *models.Document) { document.FXProvider = "trusted-rates" }},
+		{name: "FX base currency", mutate: func(document *models.Document) { document.FXBaseCurrency = "USD" }},
+		{name: "FX quote currency", mutate: func(document *models.Document) { document.FXQuoteCurrency = "INR" }},
+		{name: "FX rate timestamp", mutate: func(document *models.Document) {
+			fetchedAt := document.IssueDate.Add(time.Hour)
+			document.FXRateTimestamp = &fetchedAt
+		}},
+		{name: "FX metadata", mutate: func(document *models.Document) { document.FXMetadata = `{"source":"daily-fix"}` }},
 		{name: "totals", mutate: func(document *models.Document) { document.Total++ }},
 		{name: "source legal snapshots", mutate: func(document *models.Document) { document.SourceLinkage = `{"source_invoice_id":"wrong"}` }},
+		{name: "declaration", mutate: func(document *models.Document) { document.Declaration = "Certified legal declaration" }},
 		{name: "line count", mutate: func(document *models.Document) {
 			document.Lines = append(document.Lines, &models.DocumentLine{ID: uuid.NewString(), DocumentID: document.ID})
 		}},
@@ -97,6 +110,30 @@ func TestValidateRejectsConflictingLegalPricingAndLineProjection(t *testing.T) {
 	}
 }
 
+func TestLegalPricingDocumentNormalizesEquivalentTimestampsAndFXMetadata(t *testing.T) {
+	left := Build(richProjectionInvoice())
+	right := *left
+	dispatchDate := time.Date(2026, time.April, 2, 15, 30, 0, 0, time.FixedZone("IST", 5*60*60+30*60))
+	dispatchDateUTC := dispatchDate.UTC()
+	rateTimestamp := time.Date(2026, time.April, 1, 14, 45, 0, 0, time.FixedZone("IST", 5*60*60+30*60))
+	rateTimestampUTC := rateTimestamp.UTC()
+	left.DispatchDate = &dispatchDate
+	right.DispatchDate = &dispatchDateUTC
+	left.FXRateTimestamp = &rateTimestamp
+	right.FXRateTimestamp = &rateTimestampUTC
+	left.FXMetadata = `{"provider":{"name":"daily-fix","priority":1},"manual":false}`
+	right.FXMetadata = `{"manual":false,"provider":{"priority":1,"name":"daily-fix"}}`
+
+	if legalPricingDocument(left) != legalPricingDocument(&right) {
+		t.Fatal("equivalent timestamp instants or FX metadata JSON were treated as drift")
+	}
+
+	right.FXProvider = "different-provider"
+	if legalPricingDocument(left) == legalPricingDocument(&right) {
+		t.Fatal("FX provider provenance was ignored")
+	}
+}
+
 func TestValidateAcceptsEquivalentJSONWithDifferentObjectKeyOrder(t *testing.T) {
 	invoice := richProjectionInvoice()
 	document := Build(invoice)
@@ -107,6 +144,7 @@ func TestValidateAcceptsEquivalentJSONWithDifferentObjectKeyOrder(t *testing.T) 
 		"channel":"api",
 		"source_invoice_id":"` + invoice.ID + `"
 	}`
+	document.FXMetadata = "{}"
 
 	if err := Validate(invoice, document); err != nil {
 		t.Fatalf("equivalent JSON projection rejected: %v", err)

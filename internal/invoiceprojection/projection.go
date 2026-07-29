@@ -193,8 +193,14 @@ type documentProjection struct {
 	SerialNumber          string
 	IssueDate             time.Time
 	DueDate               optionalTime
+	DispatchDate          optionalTime
 	Currency              string
 	ExchangeRate          float64
+	FXProvider            string
+	FXBaseCurrency        string
+	FXQuoteCurrency       string
+	FXRateTimestamp       optionalTime
+	FXMetadata            string
 	Locale                string
 	SourceLinkage         string
 	RenderProfileID       optionalString
@@ -215,6 +221,7 @@ type documentProjection struct {
 	MultiVehiclePlan      string
 	Notes                 string
 	Terms                 string
+	Declaration           string
 	Direction             string
 	Subtotal              float64
 	DiscountTotal         float64
@@ -251,8 +258,14 @@ func legalPricingDocument(document *models.Document) documentProjection {
 		SerialNumber:          document.SerialNumber,
 		IssueDate:             document.IssueDate.UTC(),
 		DueDate:               normalizedTimePointer(document.DueDate),
+		DispatchDate:          normalizedTimePointer(document.DispatchDate),
 		Currency:              document.Currency,
 		ExchangeRate:          roundScale(document.ExchangeRate, 6),
+		FXProvider:            document.FXProvider,
+		FXBaseCurrency:        document.FXBaseCurrency,
+		FXQuoteCurrency:       document.FXQuoteCurrency,
+		FXRateTimestamp:       normalizedTimePointer(document.FXRateTimestamp),
+		FXMetadata:            normalizedJSON(document.FXMetadata, "{}"),
 		Locale:                document.Locale,
 		SourceLinkage:         normalizedJSON(document.SourceLinkage, "{}"),
 		RenderProfileID:       normalizedStringPointer(document.RenderProfileID),
@@ -273,6 +286,7 @@ func legalPricingDocument(document *models.Document) documentProjection {
 		MultiVehiclePlan:      normalizedJSON(document.MultiVehiclePlan, "{}"),
 		Notes:                 document.Notes,
 		Terms:                 document.Terms,
+		Declaration:           document.Declaration,
 		Direction:             document.Direction,
 		Subtotal:              roundScale(document.Subtotal, 2),
 		DiscountTotal:         roundScale(document.DiscountTotal, 2),

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 
 	"invoice-backend/internal/models"
@@ -126,6 +127,7 @@ func (h *DocumentHandler) Create(c *gin.Context) {
 // @Success 200 {object} interface{}
 // @Failure 400 {object} map[string]string
 // @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /documents/{id} [put]
 func (h *DocumentHandler) Update(c *gin.Context) {
@@ -141,16 +143,24 @@ func (h *DocumentHandler) Update(c *gin.Context) {
 	requestContextWithActor(c)
 	document, err := h.svc.UpdateByType(c.Request.Context(), businessID, c.Param("id"), h.documentType, input)
 	if err != nil {
-		statusCode := http.StatusInternalServerError
-		if isNotFoundErr(err) {
-			statusCode = http.StatusNotFound
-		} else if err.Error() == "only draft documents can be updated" || err.Error() == "document type mismatch" {
-			statusCode = http.StatusBadRequest
-		}
-		c.JSON(statusCode, gin.H{"error": err.Error()})
+		c.JSON(documentUpdateErrorStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, document)
+}
+
+func documentUpdateErrorStatus(err error) int {
+	var conflict *models.DocumentDraftConflictError
+	switch {
+	case errors.As(err, &conflict):
+		return http.StatusConflict
+	case isNotFoundErr(err):
+		return http.StatusNotFound
+	case err.Error() == "only draft documents can be updated" || err.Error() == "document type mismatch":
+		return http.StatusBadRequest
+	default:
+		return http.StatusInternalServerError
+	}
 }
 
 // Delete deletes a document
