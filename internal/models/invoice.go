@@ -1,23 +1,86 @@
 package models
 
 import (
+	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
 )
 
+type InvoiceOrigin string
+
+const (
+	InvoiceOriginManual       InvoiceOrigin = "manual"
+	InvoiceOriginPOS          InvoiceOrigin = "pos"
+	InvoiceOriginStorefront   InvoiceOrigin = "storefront"
+	InvoiceOriginSubscription InvoiceOrigin = "subscription"
+	InvoiceOriginConversion   InvoiceOrigin = "conversion"
+)
+
+const (
+	InvoiceStatusDraft    = "draft"
+	InvoiceStatusIssued   = "issued"
+	InvoiceStatusSent     = "sent"
+	InvoiceStatusPaid     = "paid"
+	InvoiceStatusOverdue  = "overdue"
+	InvoiceStatusVoid     = "void"
+	InvoiceStatusCanceled = "canceled"
+)
+
+var (
+	ErrInvalidInvoiceOrigin         = errors.New("invalid invoice origin")
+	ErrInvoiceCustomerRequired      = errors.New("invoice customer required")
+	ErrInvoicePartySnapshotRequired = errors.New("invoice party snapshot required")
+	ErrInvalidInvoiceLifecycle      = errors.New("invalid invoice lifecycle")
+)
+
+type InvalidInvoiceStateError struct {
+	Reason error
+}
+
+func (e *InvalidInvoiceStateError) Error() string {
+	return fmt.Sprintf("invalid invoice state: %v", e.Reason)
+}
+
+func (e *InvalidInvoiceStateError) Unwrap() error {
+	return e.Reason
+}
+
+type PartySnapshot struct {
+	Name       string `json:"name"`
+	Email      string `json:"email,omitempty"`
+	Phone      string `json:"phone,omitempty"`
+	Address    string `json:"address,omitempty"`
+	City       string `json:"city,omitempty"`
+	State      string `json:"state,omitempty"`
+	Country    string `json:"country,omitempty"`
+	PostalCode string `json:"postal_code,omitempty"`
+	TaxID      string `json:"tax_id,omitempty"`
+	GSTIN      string `json:"gstin,omitempty"`
+}
+
+func (p PartySnapshot) IsEmpty() bool {
+	return strings.TrimSpace(p.Name) == ""
+}
+
 type Invoice struct {
 	ID                   string                 `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
 	BusinessID           string                 `gorm:"not null;index" json:"business_id" validate:"required,uuid"`
-	CustomerID           string                 `gorm:"not null;index" json:"customer_id" validate:"required,uuid"`
+	CustomerID           *string                `gorm:"index" json:"customer_id,omitempty" validate:"omitempty,uuid"`
 	Version              int                    `gorm:"not null;default:1" json:"version"`
 	ProjectID            *string                `gorm:"index" json:"project_id,omitempty" validate:"omitempty,uuid"`
 	PriceListID          *string                `gorm:"index" json:"price_list_id,omitempty" validate:"omitempty,uuid"`
 	RenderProfileID      *string                `gorm:"index" json:"render_profile_id,omitempty" validate:"omitempty,uuid"`
-	InvoiceNo            string                 `gorm:"not null;uniqueIndex:idx_business_invoice;size:50" json:"invoice_no" validate:"required,max=50"`
+	InvoiceNo            *string                `gorm:"uniqueIndex:idx_business_invoice;size:50" json:"invoice_no,omitempty" validate:"omitempty,max=50"`
+	Origin               InvoiceOrigin          `gorm:"not null;size:24;default:'conversion'" json:"origin"`
+	IssuedAt             *time.Time             `json:"issued_at,omitempty"`
+	SellerSnapshot       PartySnapshot          `gorm:"serializer:json;type:jsonb;not null;default:'{}'" json:"seller_snapshot"`
+	BuyerSnapshot        PartySnapshot          `gorm:"serializer:json;type:jsonb;not null;default:'{}'" json:"buyer_snapshot"`
 	InvoiceDate          time.Time              `gorm:"not null;index" json:"invoice_date" validate:"required"`
 	DueDate              time.Time              `json:"due_date,omitempty" validate:"omitempty"`
-	Status               string                 `gorm:"not null;size:50;default:'draft';index" json:"status" validate:"required,oneof=draft sent paid overdue void canceled"`
+	Status               string                 `gorm:"not null;size:50;default:'draft';index" json:"status" validate:"required,oneof=draft issued sent paid overdue void canceled"`
 	Currency             string                 `gorm:"not null;size:3;default:'USD'" json:"currency" validate:"required,len=3"`
 	Subtotal             float64                `gorm:"type:decimal(15,2);default:0" json:"subtotal" validate:"gte=0"`
 	Tax                  float64                `gorm:"type:decimal(15,2);default:0" json:"tax" validate:"gte=0"`
@@ -97,4 +160,63 @@ func (i *Invoice) TableName() string {
 
 func (i *InvoiceItem) TableName() string {
 	return "invoice_items"
+}
+
+func (i Invoice) IsEditableDraft() bool {
+	return i.Status == InvoiceStatusDraft && i.InvoiceNo == nil && i.IssuedAt == nil
+}
+
+func (i Invoice) ValidateState() error {
+	switch i.Origin {
+	case InvoiceOriginManual, InvoiceOriginPOS:
+		if !hasStringValue(i.CustomerID) && i.BuyerSnapshot.IsEmpty() {
+			return invalidInvoiceState(ErrInvoicePartySnapshotRequired)
+		}
+	case InvoiceOriginStorefront, InvoiceOriginSubscription, InvoiceOriginConversion:
+		if !hasStringValue(i.CustomerID) {
+			return invalidInvoiceState(ErrInvoiceCustomerRequired)
+		}
+	default:
+		return invalidInvoiceState(ErrInvalidInvoiceOrigin)
+	}
+
+	if i.Version < 1 {
+		return invalidInvoiceState(ErrInvalidInvoiceLifecycle)
+	}
+	switch i.Status {
+	case InvoiceStatusDraft, InvoiceStatusIssued, InvoiceStatusSent, InvoiceStatusPaid,
+		InvoiceStatusOverdue, InvoiceStatusVoid, InvoiceStatusCanceled:
+	default:
+		return invalidInvoiceState(ErrInvalidInvoiceLifecycle)
+	}
+	if i.Status == InvoiceStatusDraft {
+		if !i.IsEditableDraft() {
+			return invalidInvoiceState(ErrInvalidInvoiceLifecycle)
+		}
+		return nil
+	}
+	if i.InvoiceNo == nil || strings.TrimSpace(*i.InvoiceNo) == "" || i.IssuedAt == nil ||
+		i.SellerSnapshot.IsEmpty() || i.BuyerSnapshot.IsEmpty() {
+		return invalidInvoiceState(ErrInvalidInvoiceLifecycle)
+	}
+	return nil
+}
+
+func invalidInvoiceState(reason error) error {
+	return &InvalidInvoiceStateError{Reason: reason}
+}
+
+func StringPointer(value string) *string {
+	return &value
+}
+
+func StringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func hasStringValue(value *string) bool {
+	return value != nil && strings.TrimSpace(*value) != ""
 }

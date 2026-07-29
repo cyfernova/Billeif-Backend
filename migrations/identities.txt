@@ -41,3 +41,4 @@
 000041_add_razorpay_payment_attempts
 000042_add_invoice_draft_persistence
 000043_add_llm_chat_history
+000044_canonical_invoice_foundations

@@ -221,11 +221,11 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 	}
 	invoice := &models.Invoice{
 		BusinessID:        input.BusinessID,
-		CustomerID:        input.CustomerID,
+		CustomerID:        models.StringPointer(input.CustomerID),
 		ProjectID:         projectIDPointer(projectID),
 		PriceListID:       priceListID,
 		RenderProfileID:   stringPointer(input.RenderProfileID),
-		InvoiceNo:         invoiceNo,
+		InvoiceNo:         models.StringPointer(invoiceNo),
 		Status:            "draft",
 		InvoiceDate:       invoiceDate,
 		DueDate:           input.DueDate,
@@ -588,7 +588,10 @@ func (s *InvoiceService) SendByBusiness(ctx context.Context, businessID, id stri
 		return err
 	}
 
-	customer, err := s.customerRepo.GetByID(ctx, invoice.CustomerID, businessID)
+	if invoice.CustomerID == nil {
+		return models.ErrInvoiceCustomerRequired
+	}
+	customer, err := s.customerRepo.GetByID(ctx, *invoice.CustomerID, businessID)
 	if err != nil {
 		return err
 	}
@@ -606,8 +609,8 @@ func (s *InvoiceService) SendByBusiness(ctx context.Context, businessID, id stri
 	}
 	_ = recordActivityLog(ctx, s.db, businessID, "invoice", invoice.ID, "sent", "", invoice, nil, nil)
 
-	subject := fmt.Sprintf("Invoice %s", invoice.InvoiceNo)
-	body := fmt.Sprintf("Please find attached invoice %s for amount %s%.2f", invoice.InvoiceNo, invoice.Currency, invoice.Total)
+	subject := fmt.Sprintf("Invoice %s", models.StringValue(invoice.InvoiceNo))
+	body := fmt.Sprintf("Please find attached invoice %s for amount %s%.2f", models.StringValue(invoice.InvoiceNo), invoice.Currency, invoice.Total)
 	return s.email.SendEmail(ctx, customer.Email, subject, body)
 }
 
@@ -756,9 +759,9 @@ func (s *InvoiceServiceTestable) Create(ctx context.Context, input CreateInvoice
 
 	invoice := &models.Invoice{
 		BusinessID:      input.BusinessID,
-		CustomerID:      input.CustomerID,
+		CustomerID:      models.StringPointer(input.CustomerID),
 		RenderProfileID: stringPointer(input.RenderProfileID),
-		InvoiceNo:       invoiceNo,
+		InvoiceNo:       models.StringPointer(invoiceNo),
 		Status:          "draft",
 		InvoiceDate:     time.Now(),
 		DueDate:         input.DueDate,
@@ -846,7 +849,10 @@ func (s *InvoiceServiceTestable) SendByBusiness(ctx context.Context, businessID,
 		return err
 	}
 
-	customer, err := s.customerRepo.GetByID(ctx, invoice.CustomerID, businessID)
+	if invoice.CustomerID == nil {
+		return models.ErrInvoiceCustomerRequired
+	}
+	customer, err := s.customerRepo.GetByID(ctx, *invoice.CustomerID, businessID)
 	if err != nil {
 		return err
 	}
@@ -855,8 +861,8 @@ func (s *InvoiceServiceTestable) SendByBusiness(ctx context.Context, businessID,
 		return err
 	}
 
-	subject := fmt.Sprintf("Invoice %s", invoice.InvoiceNo)
-	body := fmt.Sprintf("Please find attached invoice %s for amount %s%.2f", invoice.InvoiceNo, invoice.Currency, invoice.Total)
+	subject := fmt.Sprintf("Invoice %s", models.StringValue(invoice.InvoiceNo))
+	body := fmt.Sprintf("Please find attached invoice %s for amount %s%.2f", models.StringValue(invoice.InvoiceNo), invoice.Currency, invoice.Total)
 	return s.email.SendEmail(ctx, customer.Email, subject, body)
 }
 

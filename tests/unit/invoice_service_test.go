@@ -235,7 +235,7 @@ func TestInvoiceService_Create_Success(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, invoice)
 	assert.Equal(t, businessID, invoice.BusinessID)
-	assert.Equal(t, customerID, invoice.CustomerID)
+	assert.Equal(t, customerID, models.StringValue(invoice.CustomerID))
 	assert.Equal(t, "draft", invoice.Status)
 	assert.Equal(t, 200.00, invoice.Subtotal) // 2 * 100
 	assert.Equal(t, 20.00, invoice.Tax)       // 200 * 10%
@@ -812,8 +812,8 @@ func TestInvoiceService_SendByBusiness_Success(t *testing.T) {
 	invoice := &models.Invoice{
 		ID:         invoiceID,
 		BusinessID: businessID,
-		CustomerID: customerID,
-		InvoiceNo:  "INV-2026-123456",
+		CustomerID: models.StringPointer(customerID),
+		InvoiceNo:  models.StringPointer("INV-2026-123456"),
 		Status:     "draft",
 		Total:      100.00,
 		Currency:   "USD",
@@ -856,7 +856,7 @@ func TestInvoiceService_SendByBusiness_CustomerNotFound(t *testing.T) {
 	invoice := &models.Invoice{
 		ID:         invoiceID,
 		BusinessID: businessID,
-		CustomerID: customerID,
+		CustomerID: models.StringPointer(customerID),
 		Status:     "draft",
 	}
 

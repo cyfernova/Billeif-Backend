@@ -935,7 +935,7 @@ func (s *DocumentService) RequestRenderByBusiness(ctx context.Context, businessI
 		return nil, err
 	}
 	job := &models.DocumentRenderJob{
-		DocumentID:      document.ID,
+		DocumentID:      models.StringPointer(document.ID),
 		BusinessID:      businessID,
 		Status:          models.RenderJobStatusQueued,
 		Locale:          coalesceString(input.Locale, document.Locale),
@@ -1126,7 +1126,7 @@ func (s *DocumentService) MirrorLegacyInvoice(ctx context.Context, invoice *mode
 	doc.BusinessID = invoice.BusinessID
 	doc.DocumentType = models.DocumentTypeSalesInvoice
 	doc.PartyType = models.DocumentPartyTypeCustomer
-	doc.PartyID = &invoice.CustomerID
+	doc.PartyID = invoice.CustomerID
 	doc.Status = legacyInvoiceStatusToDocument(invoice.Status)
 	doc.DraftState = models.DocumentDraftStateFinal
 	if invoice.Status == "draft" {
@@ -1137,7 +1137,7 @@ func (s *DocumentService) MirrorLegacyInvoice(ctx context.Context, invoice *mode
 		doc.TaxMode = models.DocumentTaxModeGST
 	}
 	doc.GSTTreatment = models.DocumentGSTTreatmentRegular
-	doc.SerialNumber = invoice.InvoiceNo
+	doc.SerialNumber = models.StringValue(invoice.InvoiceNo)
 	doc.IssueDate = invoice.InvoiceDate
 	doc.DueDate = &invoice.DueDate
 	doc.Currency = defaultCurrency(invoice.Currency)

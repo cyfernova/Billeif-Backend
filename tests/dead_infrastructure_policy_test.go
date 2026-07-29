@@ -177,6 +177,38 @@ func TestRemovedInfrastructureIsAbsentFromBothMockedPlans(t *testing.T) {
 	}
 }
 
+func TestTerraformMockEnvironmentIsHermetic(t *testing.T) {
+	environment := terraformTestEnvironment([]string{
+		"PATH=/usr/bin",
+		"TF_VAR_exa_base_url=",
+		"TF_VAR_voice_ws_max_frame_bytes=not-a-number",
+		"AWS_PROFILE=unexpected",
+		"TF_IN_AUTOMATION=0",
+	})
+
+	got := make(map[string]string, len(environment))
+	for _, variable := range environment {
+		key, value, ok := strings.Cut(variable, "=")
+		if ok {
+			got[key] = value
+		}
+	}
+	if got["PATH"] != "/usr/bin" {
+		t.Fatalf("PATH = %q, want preserved", got["PATH"])
+	}
+	if got["AWS_PROFILE"] != "default" {
+		t.Fatalf("AWS_PROFILE = %q, want default", got["AWS_PROFILE"])
+	}
+	if got["TF_IN_AUTOMATION"] != "1" {
+		t.Fatalf("TF_IN_AUTOMATION = %q, want 1", got["TF_IN_AUTOMATION"])
+	}
+	for key := range got {
+		if strings.HasPrefix(key, "TF_VAR_") {
+			t.Fatalf("mock Terraform environment leaked %s", key)
+		}
+	}
+}
+
 func activePaymentContract() map[string]bool {
 	paymentHandler := reflect.TypeOf((*handlers.PaymentHandler)(nil))
 	razorpayHandler := reflect.TypeOf((*handlers.RazorpayPaymentHandler)(nil))
@@ -262,7 +294,7 @@ func mockedPlanResourceAddresses() (map[string][]string, error) {
 		"-verbose",
 	)
 	command.Dir = terraformDir
-	command.Env = append(os.Environ(), "AWS_PROFILE=default", "TF_IN_AUTOMATION=1")
+	command.Env = terraformTestEnvironment(os.Environ())
 
 	stdout, err := command.StdoutPipe()
 	if err != nil {
@@ -314,6 +346,18 @@ func mockedPlanResourceAddresses() (map[string][]string, error) {
 		return nil, fmt.Errorf("mocked terraform test failed: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	return plans, nil
+}
+
+func terraformTestEnvironment(base []string) []string {
+	environment := make([]string, 0, len(base)+2)
+	for _, variable := range base {
+		key, _, ok := strings.Cut(variable, "=")
+		if !ok || strings.HasPrefix(key, "TF_VAR_") || key == "AWS_PROFILE" || key == "TF_IN_AUTOMATION" {
+			continue
+		}
+		environment = append(environment, variable)
+	}
+	return append(environment, "AWS_PROFILE=default", "TF_IN_AUTOMATION=1")
 }
 
 func sortedStrings(values []string) []string {

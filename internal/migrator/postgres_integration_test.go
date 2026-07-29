@@ -38,8 +38,23 @@ func TestEmbeddedBundleAgainstEmptyPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read final PostgreSQL migration version: %v", err)
 	}
+	if version != 44 || dirty {
+		t.Fatalf("final PostgreSQL migration state = version %d dirty %t, want version 44 clean", version, dirty)
+	}
+
+	postgresMigration, ok := runner.(*postgresRunner)
+	if !ok {
+		t.Fatalf("migration runner type = %T, want *postgresRunner", runner)
+	}
+	if err := postgresMigration.migrate.Steps(-1); err != nil {
+		t.Fatalf("reverse canonical invoice schema slice: %v", err)
+	}
+	version, dirty, err = runner.Version()
+	if err != nil {
+		t.Fatalf("read PostgreSQL migration version after slice reversal: %v", err)
+	}
 	if version != 43 || dirty {
-		t.Fatalf("final PostgreSQL migration state = version %d dirty %t, want version 43 clean", version, dirty)
+		t.Fatalf("reversed PostgreSQL migration state = version %d dirty %t, want version 43 clean", version, dirty)
 	}
 }
 

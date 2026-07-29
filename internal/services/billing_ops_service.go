@@ -716,7 +716,7 @@ func (s *BillingOpsService) SignInvoice(ctx context.Context, businessID, invoice
 		BusinessID:         businessID,
 		InvoiceID:          &invoice.ID,
 		SignatureProfileID: profile.ID,
-		FileName:           fmt.Sprintf("signed-%s.pdf", strings.ToLower(invoice.InvoiceNo)),
+		FileName:           fmt.Sprintf("signed-%s.pdf", strings.ToLower(models.StringValue(invoice.InvoiceNo))),
 		FileKey:            path.Join("signed-documents", businessID, "invoices", invoice.ID, fmt.Sprintf("%d.pdf", now.UnixNano())),
 		SourcePDFURL:       invoice.PDFURL,
 		SignedPDFURL:       invoice.PDFURL,

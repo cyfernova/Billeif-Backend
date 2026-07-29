@@ -120,9 +120,10 @@ func (s *InvoiceService) UpdateDraftByBusiness(ctx context.Context, businessID, 
 
 		customerID := invoice.CustomerID
 		if input.CustomerID != nil && strings.TrimSpace(*input.CustomerID) != "" {
-			customerID = strings.TrimSpace(*input.CustomerID)
+			customerIDValue := strings.TrimSpace(*input.CustomerID)
+			customerID = &customerIDValue
 			if s.customerRepo != nil {
-				if _, err := s.customerRepo.GetByID(ctx, customerID, businessID); err != nil {
+				if _, err := s.customerRepo.GetByID(ctx, customerIDValue, businessID); err != nil {
 					return fmt.Errorf("customer not found: %w", err)
 				}
 			}

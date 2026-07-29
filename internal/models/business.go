@@ -32,6 +32,7 @@ type BusinessProfile struct {
 	LogoURL             string         `gorm:"size:500" json:"logo_url,omitempty"`
 	LogoKey             string         `gorm:"size:255" json:"logo_key,omitempty"`
 	Currency            string         `gorm:"not null;size:3;default:'USD'" json:"currency" validate:"required,len=3"`
+	Timezone            string         `gorm:"not null;size:64;default:'Asia/Kolkata'" json:"timezone"`
 	CreatedAt           time.Time      `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt           time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
 	DeletedAt           gorm.DeletedAt `gorm:"index" json:"-"`

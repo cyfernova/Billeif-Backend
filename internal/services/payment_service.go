@@ -461,7 +461,7 @@ func (s *PaymentService) createPaymentJournal(ctx context.Context, payment *mode
 	}
 
 	_, err := s.journals.CreateByBusiness(ctx, invoice.BusinessID, CreateJournalInput{
-		Name:        fmt.Sprintf("Payment %s", invoice.InvoiceNo),
+		Name:        fmt.Sprintf("Payment %s", models.StringValue(invoice.InvoiceNo)),
 		Reference:   coalesceString(payment.Reference, payment.ID),
 		ProjectID:   normalizeProjectID(derefString(payment.ProjectID)),
 		PostingDate: payment.PaymentDate,
@@ -474,7 +474,7 @@ func (s *PaymentService) createPaymentJournal(ctx context.Context, payment *mode
 				EntryType:   "debit",
 				Amount:      payment.Amount,
 				Currency:    payment.Currency,
-				Description: fmt.Sprintf("Receipt for invoice %s", invoice.InvoiceNo),
+				Description: fmt.Sprintf("Receipt for invoice %s", models.StringValue(invoice.InvoiceNo)),
 				DocumentID:  &documentID,
 				Metadata:    metadata,
 			},
@@ -484,7 +484,7 @@ func (s *PaymentService) createPaymentJournal(ctx context.Context, payment *mode
 				EntryType:   "credit",
 				Amount:      payment.Amount,
 				Currency:    payment.Currency,
-				Description: fmt.Sprintf("Settlement for invoice %s", invoice.InvoiceNo),
+				Description: fmt.Sprintf("Settlement for invoice %s", models.StringValue(invoice.InvoiceNo)),
 				DocumentID:  &documentID,
 				Metadata:    metadata,
 			},
