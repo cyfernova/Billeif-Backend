@@ -12,7 +12,8 @@ terraform {
 }
 
 provider "aws" {
-  region = var.aws_region
+  region  = var.aws_region
+  profile = var.aws_profile
 
   default_tags {
     tags = {
@@ -24,8 +25,9 @@ provider "aws" {
 }
 
 provider "aws" {
-  alias  = "ap_south_1"
-  region = "ap-south-1"
+  alias   = "ap_south_1"
+  region  = "ap-south-1"
+  profile = var.aws_profile
 
   default_tags {
     tags = {

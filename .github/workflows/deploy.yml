@@ -13,65 +13,34 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
   group: terraform-deploy-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   TERRAFORM_DIR: infrastructure/terraform
-  AWS_REGION: ${{ vars.AWS_REGION != '' && vars.AWS_REGION || 'us-east-1' }}
+  AWS_REGION: ${{ vars.AWS_REGION != '' && vars.AWS_REGION || 'ap-south-1' }}
   TF_BACKEND_KEY: ${{ vars.TF_STATE_KEY != '' && vars.TF_STATE_KEY || 'terraform.tfstate' }}
-  TF_VAR_db_allowed_cidr: ${{ secrets.TF_VAR_DB_ALLOWED_CIDR }}
-  TF_VAR_db_password: ${{ secrets.TF_VAR_DB_PASSWORD }}
-  TF_VAR_credential_encryption_key: ${{ secrets.TF_VAR_CREDENTIAL_ENCRYPTION_KEY }}
-  TF_VAR_jwt_secret: ${{ secrets.TF_VAR_JWT_SECRET }}
-  TF_VAR_cognito_additional_callback_urls: '["invoiceappv2://callback","myapp://callback"]'
-  TF_VAR_cognito_additional_logout_urls: '["invoiceappv2://logout","myapp://logout"]'
-  TF_VAR_google_client_id: ${{ secrets.TF_VAR_GOOGLE_CLIENT_ID }}
-  TF_VAR_google_client_secret: ${{ secrets.TF_VAR_GOOGLE_CLIENT_SECRET }}
-  TF_VAR_india_sms_sender_id: ${{ secrets.TF_VAR_INDIA_SMS_SENDER_ID }}
-  TF_VAR_india_dlt_entity_id: ${{ secrets.TF_VAR_INDIA_DLT_ENTITY_ID }}
-  TF_VAR_india_signup_template_id: ${{ secrets.TF_VAR_INDIA_SIGNUP_TEMPLATE_ID }}
-  TF_VAR_india_auth_template_id: ${{ secrets.TF_VAR_INDIA_AUTH_TEMPLATE_ID }}
-  TF_VAR_india_signup_message_template: ${{ secrets.TF_VAR_INDIA_SIGNUP_MESSAGE_TEMPLATE }}
-  TF_VAR_india_auth_message_template: ${{ secrets.TF_VAR_INDIA_AUTH_MESSAGE_TEMPLATE }}
-  TF_VAR_fcm_api_key: ${{ secrets.TF_VAR_FCM_API_KEY }}
-  TF_VAR_apns_private_key: ${{ secrets.TF_VAR_APNS_PRIVATE_KEY }}
-  TF_VAR_apns_certificate: ${{ secrets.TF_VAR_APNS_CERTIFICATE }}
-  TF_VAR_llm_api_key: ${{ secrets.TF_VAR_LLM_API_KEY }}
-  TF_VAR_llm_api_url: ${{ secrets.TF_VAR_LLM_API_URL }}
-  TF_VAR_llm_model: ${{ secrets.TF_VAR_LLM_MODEL }}
-  TF_VAR_exa_api_key: ${{ secrets.TF_VAR_EXA_API_KEY }}
-  TF_VAR_gst_lookup_api_key: ${{ secrets.TF_VAR_GST_LOOKUP_API_KEY }}
-  TF_VAR_gst_lookup_base_url: ${{ secrets.TF_VAR_GST_LOOKUP_BASE_URL }}
-  TF_VAR_gst_lookup_timeout: ${{ secrets.TF_VAR_GST_LOOKUP_TIMEOUT }}
-  TF_VAR_deepgram_api_key: ${{ secrets.TF_VAR_DEEPGRAM_API_KEY }}
-  TF_VAR_deepgram_voice_agent_url: ${{ secrets.TF_VAR_DEEPGRAM_VOICE_AGENT_URL }}
-  TF_VAR_deepgram_voice_listen_model: ${{ secrets.TF_VAR_DEEPGRAM_VOICE_LISTEN_MODEL }}
-  TF_VAR_deepgram_voice_speak_model: ${{ secrets.TF_VAR_DEEPGRAM_VOICE_SPEAK_MODEL }}
-  TF_VAR_deepgram_voice_input_encoding: ${{ secrets.TF_VAR_DEEPGRAM_VOICE_INPUT_ENCODING }}
-  TF_VAR_deepgram_voice_input_sample_rate: ${{ secrets.TF_VAR_DEEPGRAM_VOICE_INPUT_SAMPLE_RATE }}
-  TF_VAR_deepgram_voice_output_encoding: ${{ secrets.TF_VAR_DEEPGRAM_VOICE_OUTPUT_ENCODING }}
-  TF_VAR_deepgram_voice_output_sample_rate: ${{ secrets.TF_VAR_DEEPGRAM_VOICE_OUTPUT_SAMPLE_RATE }}
-  TF_VAR_deepseek_api_key: ${{ secrets.TF_VAR_DEEPSEEK_API_KEY }}
-  TF_VAR_deepseek_base_url: ${{ secrets.TF_VAR_DEEPSEEK_BASE_URL }}
-  TF_VAR_deepseek_model: ${{ secrets.TF_VAR_DEEPSEEK_MODEL }}
-  TF_VAR_mcp_server_url: ${{ secrets.TF_VAR_MCP_SERVER_URL }}
-  TF_VAR_voice_ws_max_session_seconds: ${{ secrets.TF_VAR_VOICE_WS_MAX_SESSION_SECONDS }}
-  TF_VAR_voice_ws_ping_interval_seconds: ${{ secrets.TF_VAR_VOICE_WS_PING_INTERVAL_SECONDS }}
-  TF_VAR_voice_ws_write_timeout_seconds: ${{ secrets.TF_VAR_VOICE_WS_WRITE_TIMEOUT_SECONDS }}
-  TF_VAR_voice_ws_max_frame_bytes: ${{ secrets.TF_VAR_VOICE_WS_MAX_FRAME_BYTES }}
-  TF_VAR_voice_ws_max_concurrent_sessions_per_user: ${{ secrets.TF_VAR_VOICE_WS_MAX_CONCURRENT_SESSIONS_PER_USER }}
-  TF_VAR_environment_override: ${{ vars.TF_ENVIRONMENT }}
-  TF_VAR_project_name_override: ${{ vars.TF_PROJECT_NAME }}
-  TF_VAR_user_pool_name_override: ${{ vars.TF_USER_POOL_NAME }}
-  TF_VAR_client_name_override: ${{ vars.TF_CLIENT_NAME }}
-  TF_VAR_phone_user_pool_name_override: ${{ vars.TF_PHONE_USER_POOL_NAME }}
-  TF_VAR_phone_client_name_override: ${{ vars.TF_PHONE_CLIENT_NAME }}
 
 jobs:
+  secret-scan:
+    name: Scan Git History For Secrets
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Scan full Git history
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: "false"
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+
   verify:
     name: Verify Build And Terraform
     runs-on: ubuntu-latest
@@ -101,27 +70,6 @@ jobs:
         with:
           terraform_version: 1.5.7
 
-      - name: Export optional Terraform overrides
-        run: |
-          if [ -n "${TF_VAR_environment_override}" ]; then
-            echo "TF_VAR_environment=${TF_VAR_environment_override}" >> "${GITHUB_ENV}"
-          fi
-          if [ -n "${TF_VAR_project_name_override}" ]; then
-            echo "TF_VAR_project_name=${TF_VAR_project_name_override}" >> "${GITHUB_ENV}"
-          fi
-          if [ -n "${TF_VAR_user_pool_name_override}" ]; then
-            echo "TF_VAR_user_pool_name=${TF_VAR_user_pool_name_override}" >> "${GITHUB_ENV}"
-          fi
-          if [ -n "${TF_VAR_client_name_override}" ]; then
-            echo "TF_VAR_client_name=${TF_VAR_client_name_override}" >> "${GITHUB_ENV}"
-          fi
-          if [ -n "${TF_VAR_phone_user_pool_name_override}" ]; then
-            echo "TF_VAR_phone_user_pool_name=${TF_VAR_phone_user_pool_name_override}" >> "${GITHUB_ENV}"
-          fi
-          if [ -n "${TF_VAR_phone_client_name_override}" ]; then
-            echo "TF_VAR_phone_client_name=${TF_VAR_phone_client_name_override}" >> "${GITHUB_ENV}"
-          fi
-
       - name: Run Go tests
         run: go test ./...
 
@@ -140,8 +88,13 @@ jobs:
   deploy:
     name: Apply Terraform
     runs-on: ubuntu-latest
-    needs: verify
+    needs:
+      - secret-scan
+      - verify
     if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - name: Checkout code
@@ -168,94 +121,34 @@ jobs:
         with:
           terraform_version: 1.5.7
 
-      - name: Export optional Terraform overrides
-        run: |
-          if [ -n "${TF_VAR_environment_override}" ]; then
-            echo "TF_VAR_environment=${TF_VAR_environment_override}" >> "${GITHUB_ENV}"
-          fi
-          if [ -n "${TF_VAR_project_name_override}" ]; then
-            echo "TF_VAR_project_name=${TF_VAR_project_name_override}" >> "${GITHUB_ENV}"
-          fi
-          if [ -n "${TF_VAR_user_pool_name_override}" ]; then
-            echo "TF_VAR_user_pool_name=${TF_VAR_user_pool_name_override}" >> "${GITHUB_ENV}"
-          fi
-          if [ -n "${TF_VAR_client_name_override}" ]; then
-            echo "TF_VAR_client_name=${TF_VAR_client_name_override}" >> "${GITHUB_ENV}"
-          fi
-          if [ -n "${TF_VAR_phone_user_pool_name_override}" ]; then
-            echo "TF_VAR_phone_user_pool_name=${TF_VAR_phone_user_pool_name_override}" >> "${GITHUB_ENV}"
-          fi
-          if [ -n "${TF_VAR_phone_client_name_override}" ]; then
-            echo "TF_VAR_phone_client_name=${TF_VAR_phone_client_name_override}" >> "${GITHUB_ENV}"
-          fi
-
       - name: Check deployment configuration
-        id: check_config
         env:
           AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
           TF_STATE_LOCK_TABLE: ${{ secrets.TF_STATE_LOCK_TABLE }}
         run: |
-          missing=0
-          configured=0
-
           require() {
             if [ -z "$2" ]; then
-              echo "::warning::$1 (deploy will be skipped)"
-            else
-              configured=1
+              echo "::error::$1"
+              exit 1
             fi
           }
 
+          require "Missing AWS_DEPLOY_ROLE_ARN secret." "${AWS_DEPLOY_ROLE_ARN}"
           require "Missing TF_STATE_BUCKET secret." "${TF_STATE_BUCKET}"
           require "Missing TF_STATE_LOCK_TABLE secret." "${TF_STATE_LOCK_TABLE}"
 
-          if [ -z "${AWS_DEPLOY_ROLE_ARN}" ] && { [ -z "${AWS_ACCESS_KEY_ID}" ] || [ -z "${AWS_SECRET_ACCESS_KEY}" ]; }; then
-            echo "::warning::AWS credentials not configured (deploy will be skipped)"
-          else
-            configured=1
-          fi
-
-          # Set output for conditional AWS credentials
-          if [ -n "${AWS_DEPLOY_ROLE_ARN}" ]; then
-            echo "USE_OIDC=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "USE_OIDC=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          if [ "${configured}" = "1" ]; then
-            echo "DEPLOY_ENABLED=true" >> "$GITHUB_OUTPUT"
-            echo "All required secrets are configured, deploy will proceed."
-          else
-            echo "DEPLOY_ENABLED=false" >> "$GITHUB_OUTPUT"
-            echo "Deploy skipped: missing required secrets."
-          fi
-
       - name: Configure AWS credentials with OIDC
-        if: steps.check_config.outputs.DEPLOY_ENABLED == 'true' && steps.check_config.outputs.USE_OIDC == 'true'
         uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: ${{ env.AWS_REGION }}
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           role-session-name: github-actions-terraform
 
-      - name: Configure AWS credentials with access keys
-        if: steps.check_config.outputs.DEPLOY_ENABLED == 'true' && steps.check_config.outputs.USE_OIDC != 'true'
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          aws-region: ${{ env.AWS_REGION }}
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-
       - name: Build Lambda artifacts
-        if: steps.check_config.outputs.DEPLOY_ENABLED == 'true'
         run: make package-lambda
 
       - name: Initialize Terraform backend
-        if: steps.check_config.outputs.DEPLOY_ENABLED == 'true'
         env:
           TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
           TF_STATE_LOCK_TABLE: ${{ secrets.TF_STATE_LOCK_TABLE }}
@@ -268,9 +161,11 @@ jobs:
             -backend-config="dynamodb_table=${TF_STATE_LOCK_TABLE}"
 
       - name: Terraform plan
-        if: steps.check_config.outputs.DEPLOY_ENABLED == 'true'
+        env:
+          TF_VAR_aws_profile: "null"
         run: terraform -chdir="${TERRAFORM_DIR}" plan -input=false -out=tfplan
 
       - name: Terraform apply
-        if: steps.check_config.outputs.DEPLOY_ENABLED == 'true'
+        env:
+          TF_VAR_aws_profile: "null"
         run: terraform -chdir="${TERRAFORM_DIR}" apply -input=false -auto-approve tfplan

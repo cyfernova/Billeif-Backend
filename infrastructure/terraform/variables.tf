@@ -1,7 +1,14 @@
 variable "aws_region" {
   description = "AWS region"
   type        = string
-  default     = "us-east-1"
+  default     = "ap-south-1"
+}
+
+variable "aws_profile" {
+  description = "AWS shared configuration profile for local Terraform runs; set to null for OIDC."
+  type        = string
+  nullable    = true
+  default     = "default"
 }
 
 variable "project_name" {
@@ -50,7 +57,7 @@ variable "vpc_cidr" {
 variable "availability_zones" {
   description = "Availability zones for public subnets"
   type        = list(string)
-  default     = ["us-east-1a", "us-east-1b"]
+  default     = ["ap-south-1a", "ap-south-1b"]
 }
 
 variable "db_allowed_cidr" {
