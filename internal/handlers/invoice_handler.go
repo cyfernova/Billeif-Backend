@@ -253,38 +253,6 @@ func (h *InvoiceHandler) Delete(c *gin.Context) {
 	c.JSON(http.StatusNoContent, nil)
 }
 
-// Send sends an invoice to the customer
-// @Summary Send invoice
-// @Description Trigger the delivery of an invoice to the customer (e.g., via email).
-// @Tags Invoices
-// @Produce json
-// @Security BearerAuth
-// @Param id path string true "Invoice ID"
-// @Success 200 {object} map[string]string
-// @Failure 500 {object} map[string]string
-// @Router /invoices/{id}/send [post]
-func (h *InvoiceHandler) Send(c *gin.Context) {
-	log := logger.FromContext(c.Request.Context()).Named("invoice_handler").With("operation", "send")
-	businessID, ok := requireBusinessScope(c)
-	if !ok {
-		return
-	}
-	id := c.Param("id")
-	requestContextWithActor(c)
-	if err := h.svc.SendByBusiness(c.Request.Context(), businessID, id); err != nil {
-		log.Error("failed to send invoice", "error", err, "invoice_id", id)
-		if isNotFoundErr(err) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "invoice not found"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	log.Info("invoice sent", "invoice_id", id)
-
-	c.JSON(http.StatusOK, gin.H{"message": "invoice sent successfully"})
-}
-
 // GetPDF returns a presigned URL for the invoice PDF
 // @Summary Get invoice PDF
 // @Description Returns a presigned S3 URL to download the invoice in PDF format.

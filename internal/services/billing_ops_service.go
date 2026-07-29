@@ -34,6 +34,23 @@ type BillingOpsService struct {
 
 var ErrInvalidPartyGroupMember = errors.New("invalid party group member")
 
+func rejectInvoiceSubscriptionAutoSend(autoSend bool) error {
+	if !autoSend {
+		return nil
+	}
+	return fmt.Errorf("invoice subscription auto-send requires the issue and delivery workflow: %w", models.ErrInvalidInvoiceLifecycle)
+}
+
+func validateInvoiceSubscriptionGeneration(subscription *models.InvoiceSubscription) error {
+	if subscription.Status != models.InvoiceSubscriptionStatusActive {
+		return fmt.Errorf("invoice subscription is not active")
+	}
+	if err := rejectInvoiceSubscriptionAutoSend(subscription.AutoSend); err != nil {
+		return err
+	}
+	return nil
+}
+
 func NewBillingOpsService(
 	cfg *config.Config,
 	db *gorm.DB,
@@ -1004,6 +1021,9 @@ type UpdateInvoiceSubscriptionInput struct {
 }
 
 func (s *BillingOpsService) CreateInvoiceSubscription(ctx context.Context, input CreateInvoiceSubscriptionInput) (*models.InvoiceSubscription, error) {
+	if err := rejectInvoiceSubscriptionAutoSend(input.AutoSend); err != nil {
+		return nil, err
+	}
 	if s.db == nil {
 		return nil, fmt.Errorf("database is not configured")
 	}
@@ -1135,6 +1155,11 @@ func (s *BillingOpsService) ListInvoiceSubscriptions(ctx context.Context, busine
 }
 
 func (s *BillingOpsService) UpdateInvoiceSubscription(ctx context.Context, businessID, id string, input UpdateInvoiceSubscriptionInput) (*models.InvoiceSubscription, error) {
+	if input.AutoSend != nil {
+		if err := rejectInvoiceSubscriptionAutoSend(*input.AutoSend); err != nil {
+			return nil, err
+		}
+	}
 	if s.db == nil {
 		return nil, fmt.Errorf("database is not configured")
 	}
@@ -1555,8 +1580,8 @@ func (s *BillingOpsService) GenerateInvoiceSubscriptionNow(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	if subscription.Status != models.InvoiceSubscriptionStatusActive {
-		return nil, fmt.Errorf("invoice subscription is not active")
+	if err := validateInvoiceSubscriptionGeneration(subscription); err != nil {
+		return nil, err
 	}
 	scheduledFor := time.Now().UTC()
 	run := &models.InvoiceSubscriptionRun{
@@ -1622,9 +1647,6 @@ func (s *BillingOpsService) GenerateInvoiceSubscriptionNow(ctx context.Context, 
 			Where("id = ?", run.ID).
 			Updates(map[string]interface{}{"status": models.BulkJobStatusFailed, "last_error": lastError}).Error
 		return nil, err
-	}
-	if subscription.AutoSend {
-		_ = s.invoices.SendByBusiness(ctx, businessID, invoice.ID)
 	}
 	nextRunAt, cadenceErr := cadenceNextRun(scheduledFor, subscription.Cadence, subscription.Timezone)
 	if cadenceErr != nil {

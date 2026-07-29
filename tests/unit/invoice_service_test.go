@@ -2,6 +2,7 @@ package unit
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -284,6 +285,19 @@ func TestInvoiceService_Create_DerivesSubscriptionOriginFromRunMarkers(t *testin
 	}
 	mockCustomer.AssertExpectations(t)
 	mockRepo.AssertExpectations(t)
+}
+
+func TestCreateInvoiceInput_IgnoresInternalSubscriptionMarkersFromPublicJSON(t *testing.T) {
+	var input services.CreateInvoiceInput
+	err := json.Unmarshal([]byte(`{
+		"customer_id": "customer-456",
+		"origin_subscription_id": "forged-subscription",
+		"origin_run_id": "forged-run"
+	}`), &input)
+
+	assert.NoError(t, err)
+	assert.Empty(t, input.OriginSubscriptionID)
+	assert.Empty(t, input.OriginRunID)
 }
 
 // TestCreateInvoice_CustomerNotFound tests invoice creation when customer is not found

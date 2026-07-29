@@ -47,3 +47,20 @@ func TestProtectedDeleteRoutesRequireIDParam(t *testing.T) {
 		}
 	}
 }
+
+func TestLegacyInvoiceSendRouteIsNotRegistered(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := setupRouter(
+		&config.Config{AllowedOrigins: []string{"http://localhost:3000"}},
+		&services.Container{AWS: &awsclients.Config{}},
+		&handlers.Handler{},
+		logger.New(),
+	)
+
+	for _, route := range router.Routes() {
+		if route.Method == "POST" && route.Path == "/api/v1/invoices/:id/send" {
+			t.Fatal("legacy invoice send route must not be registered before the issue and delivery workflow exists")
+		}
+	}
+}

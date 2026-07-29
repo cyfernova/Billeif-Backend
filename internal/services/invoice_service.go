@@ -92,8 +92,8 @@ type CreateInvoiceInput struct {
 	TemplateOverride     map[string]interface{}   `json:"template_override,omitempty"`
 	CustomFields         map[string]interface{}   `json:"custom_fields,omitempty"`
 	AdditionalCharges    []map[string]interface{} `json:"additional_charges,omitempty"`
-	OriginSubscriptionID string                   `json:"origin_subscription_id,omitempty"`
-	OriginRunID          string                   `json:"origin_run_id,omitempty"`
+	OriginSubscriptionID string                   `json:"-"`
+	OriginRunID          string                   `json:"-"`
 	TaxProfile           TaxProfileInput          `json:"tax_profile"`
 	Items                []CreateInvoiceItemInput `json:"items" binding:"required,min=1,dive"`
 }
