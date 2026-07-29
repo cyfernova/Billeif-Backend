@@ -113,6 +113,62 @@ func TestValidateAcceptsEquivalentJSONWithDifferentObjectKeyOrder(t *testing.T) 
 	}
 }
 
+func TestValidateAcceptsPostgresFixedScaleFractionalProjection(t *testing.T) {
+	invoice := richProjectionInvoice()
+	invoice.Subtotal = 26.64
+	invoice.Tax = 3.56
+	invoice.Total = 30.20
+	invoice.BalanceDue = 30.20
+	invoice.TaxProfile = `{
+		"gst_treatment":"regular",
+		"place_of_supply":"27",
+		"distance_km":12.345,
+		"tcs":[{"withholding_type":"tcs","amount":2.345}]
+	}`
+	item := invoice.Items[0]
+	item.Quantity = 1.333
+	item.UnitPrice = 19.99
+	item.Discount = 0.01
+	item.TaxRate = 12.34
+	item.CessRate = 1.125
+	item.CessAmount = 0.30
+	item.Total = 30.20
+
+	persisted := Build(invoice)
+	persisted.DistanceKM = 12.35
+	persisted.WithholdingTotal = 2.35
+	persisted.TCSTotal = 2.35
+	persisted.Lines[0].LineSubtotal = 26.64
+
+	if err := Validate(invoice, persisted); err != nil {
+		t.Fatalf("fixed-scale PostgreSQL projection rejected: %v", err)
+	}
+}
+
+func TestValidateIgnoresUnrelatedOperationalDocumentMetadata(t *testing.T) {
+	invoice := richProjectionInvoice()
+	document := Build(invoice)
+	shipmentID := uuid.NewString()
+	complianceID := uuid.NewString()
+	signerID := uuid.NewString()
+	signedAt := time.Date(2026, time.April, 2, 12, 0, 0, 0, time.UTC)
+	document.ShipmentID = &shipmentID
+	document.CurrentEInvoiceID = &complianceID
+	document.SignedAt = &signedAt
+	document.SignedByProfileID = &signerID
+	document.SignMetadata = `{"provider":"test"}`
+	document.PDFURL = "private://preview.pdf"
+	document.PDFFilename = "preview.pdf"
+	document.Lines[0].CostSnapshot = 55
+	document.Lines[0].MarginSnapshot = 45
+	document.Lines[0].PackingMetadata = `{"box":"A"}`
+	document.Lines[0].ReportTags = `{"preview":"ready"}`
+
+	if err := Validate(invoice, document); err != nil {
+		t.Fatalf("operational metadata was treated as legal projection drift: %v", err)
+	}
+}
+
 func richProjectionInvoice() *models.Invoice {
 	customerID := uuid.NewString()
 	invoiceID := uuid.NewString()

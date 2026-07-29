@@ -30,7 +30,7 @@ const (
 	issueReplayItemsSQL   = `SELECT \* FROM "invoice_items".*"invoice_items"."invoice_id" = \$1.*ORDER BY created_at ASC, id ASC`
 	issueReplayRenderSQL  = `SELECT \* FROM "document_render_jobs".*invoice_id = \$1 AND business_id = \$2 AND kind = \$3 AND source_invoice_version = \$4.*LIMIT \$5`
 
-	issueSequenceSQL          = `INSERT INTO document_sequences .*business_id, document_type, financial_year, series, last_number.*ON CONFLICT \(business_id, document_type, financial_year, series\).*WHERE document_sequences.last_number < 999999.*RETURNING last_number`
+	issueSequenceSQL          = `INSERT INTO document_sequences .*business_id, document_type, financial_year, series, last_number.*ON CONFLICT \(business_id, document_type, financial_year, series\).*DO UPDATE SET last_number = document_sequences.last_number \+ 1, updated_at = NOW\(\).*WHERE document_sequences.last_number < 999999.*RETURNING last_number`
 	issueInvoiceUpdateSQL     = `UPDATE "invoices" SET .*"invoice_no".*"status".*"version".*WHERE \(id = \$[0-9]+ AND business_id = \$[0-9]+ AND version = \$[0-9]+ AND status = \$[0-9]+ AND deleted_at IS NULL\).*"invoices"."deleted_at" IS NULL`
 	issueDocumentUpdateSQL    = `UPDATE "documents" SET .*"draft_state".*"serial_number".*"source_linkage".*"status".*WHERE \(id = \$[0-9]+ AND business_id = \$[0-9]+ AND status = \$[0-9]+ AND deleted_at IS NULL\).*"documents"."deleted_at" IS NULL`
 	issueFinalRenderInsertSQL = `INSERT INTO "document_render_jobs".*"document_id".*"invoice_id".*"business_id".*"kind".*"source_invoice_version".*"object_key".*"output_url".*RETURNING "id"`

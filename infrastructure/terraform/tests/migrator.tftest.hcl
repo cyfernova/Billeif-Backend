@@ -94,6 +94,11 @@ mock_provider "aws" {
   }
 }
 
+mock_provider "aws" {
+  alias           = "ap_south_1"
+  override_during = plan
+}
+
 variables {
   project_name                       = "billeif-test"
   environment                        = "test"

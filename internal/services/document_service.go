@@ -651,7 +651,7 @@ func (s *DocumentService) UpdateByType(ctx context.Context, businessID, id, docu
 	existing.CessTotal = rebuilt.CessTotal
 	existing.Total = rebuilt.Total
 	existing.BalanceDue = rebuilt.Total - existing.PaidAmount
-	if err := s.repo.Update(ctx, existing); err != nil {
+	if err := s.repo.UpdateDraft(ctx, existing); err != nil {
 		return nil, err
 	}
 	if err := s.syncDocumentWithholdings(ctx, existing, input.Withholdings); err != nil {

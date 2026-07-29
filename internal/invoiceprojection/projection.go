@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -148,61 +147,224 @@ func Validate(invoice *models.Invoice, document *models.Document) error {
 		return fmt.Errorf("invoice projection is required")
 	}
 	expected := Build(invoice)
-	expectedDocument := normalizedDocument(expected)
-	actualDocument := normalizedDocument(document)
-	if !reflect.DeepEqual(expectedDocument, actualDocument) {
+	if legalPricingDocument(expected) != legalPricingDocument(document) {
 		return fmt.Errorf("document legal or pricing projection differs from invoice")
 	}
-	expectedLines := normalizedLines(expected.Lines)
-	actualLines := normalizedLines(document.Lines)
-	if !reflect.DeepEqual(expectedLines, actualLines) {
+	expectedLines := legalPricingLines(expected.Lines)
+	actualLines := legalPricingLines(document.Lines)
+	if len(expectedLines) != len(actualLines) {
 		return fmt.Errorf("document line projection differs from invoice items")
+	}
+	for index := range expectedLines {
+		if expectedLines[index] != actualLines[index] {
+			return fmt.Errorf("document line projection differs from invoice items")
+		}
 	}
 	return nil
 }
 
-func normalizedDocument(document *models.Document) models.Document {
-	normalized := *document
-	normalized.Lines = nil
-	normalized.CreatedAt = time.Time{}
-	normalized.UpdatedAt = time.Time{}
-	normalized.DeletedAt = models.Document{}.DeletedAt
-	normalized.IssueDate = normalized.IssueDate.UTC()
-	normalized.DueDate = normalizedTimePointer(normalized.DueDate)
-	normalized.DispatchDate = normalizedTimePointer(normalized.DispatchDate)
-	normalized.FXRateTimestamp = normalizedTimePointer(normalized.FXRateTimestamp)
-	normalized.SignedAt = normalizedTimePointer(normalized.SignedAt)
-	normalized.CancelledAt = normalizedTimePointer(normalized.CancelledAt)
-	normalized.SourceLinkage = normalizedJSON(normalized.SourceLinkage, "{}")
-	normalized.FXMetadata = normalizedJSON(normalized.FXMetadata, "{}")
-	normalized.DispatchFrom = normalizedJSON(normalized.DispatchFrom, "{}")
-	normalized.DispatchTo = normalizedJSON(normalized.DispatchTo, "{}")
-	normalized.Transporter = normalizedJSON(normalized.Transporter, "{}")
-	normalized.Vehicle = normalizedJSON(normalized.Vehicle, "{}")
-	normalized.MultiVehiclePlan = normalizedJSON(normalized.MultiVehiclePlan, "{}")
-	normalized.SignMetadata = normalizedJSON(normalized.SignMetadata, "{}")
-	normalized.ExtraFields = normalizedJSON(normalized.ExtraFields, "{}")
-	normalized.ReportTags = normalizedJSON(normalized.ReportTags, "{}")
-	return normalized
+type optionalString struct {
+	Set   bool
+	Value string
 }
 
-func normalizedLines(lines []*models.DocumentLine) []models.DocumentLine {
-	normalized := make([]models.DocumentLine, 0, len(lines))
+type optionalTime struct {
+	Set   bool
+	Value time.Time
+}
+
+type documentProjection struct {
+	ID                    string
+	BusinessID            string
+	DocumentType          string
+	PartyType             string
+	PartyID               optionalString
+	Status                string
+	DraftState            string
+	TaxMode               string
+	GSTTreatment          string
+	PlaceOfSupply         string
+	PartyGSTIN            string
+	PartyPAN              string
+	PartyStateCode        string
+	SupplyType            string
+	ExportType            string
+	BillOfSupply          bool
+	SerialNumber          string
+	IssueDate             time.Time
+	DueDate               optionalTime
+	Currency              string
+	ExchangeRate          float64
+	Locale                string
+	SourceLinkage         string
+	RenderProfileID       optionalString
+	ProjectID             optionalString
+	PriceListID           optionalString
+	OriginSubscriptionID  optionalString
+	OriginRunID           optionalString
+	ProfitSnapshotEnabled bool
+	GenerateEInvoice      bool
+	GenerateEWayBill      bool
+	ReverseCharge         bool
+	ReverseChargeReason   string
+	DispatchFrom          string
+	DispatchTo            string
+	DistanceKM            float64
+	Transporter           string
+	Vehicle               string
+	MultiVehiclePlan      string
+	Notes                 string
+	Terms                 string
+	Direction             string
+	Subtotal              float64
+	DiscountTotal         float64
+	TaxTotal              float64
+	CessTotal             float64
+	WithholdingTotal      float64
+	TDSTotal              float64
+	TCSTotal              float64
+	Total                 float64
+	PaidAmount            float64
+	BalanceDue            float64
+	ExtraFields           string
+	ReportTags            string
+}
+
+func legalPricingDocument(document *models.Document) documentProjection {
+	return documentProjection{
+		ID:                    document.ID,
+		BusinessID:            document.BusinessID,
+		DocumentType:          document.DocumentType,
+		PartyType:             document.PartyType,
+		PartyID:               normalizedStringPointer(document.PartyID),
+		Status:                document.Status,
+		DraftState:            document.DraftState,
+		TaxMode:               document.TaxMode,
+		GSTTreatment:          document.GSTTreatment,
+		PlaceOfSupply:         document.PlaceOfSupply,
+		PartyGSTIN:            document.PartyGSTIN,
+		PartyPAN:              document.PartyPAN,
+		PartyStateCode:        document.PartyStateCode,
+		SupplyType:            document.SupplyType,
+		ExportType:            document.ExportType,
+		BillOfSupply:          document.BillOfSupply,
+		SerialNumber:          document.SerialNumber,
+		IssueDate:             document.IssueDate.UTC(),
+		DueDate:               normalizedTimePointer(document.DueDate),
+		Currency:              document.Currency,
+		ExchangeRate:          roundScale(document.ExchangeRate, 6),
+		Locale:                document.Locale,
+		SourceLinkage:         normalizedJSON(document.SourceLinkage, "{}"),
+		RenderProfileID:       normalizedStringPointer(document.RenderProfileID),
+		ProjectID:             normalizedStringPointer(document.ProjectID),
+		PriceListID:           normalizedStringPointer(document.PriceListID),
+		OriginSubscriptionID:  normalizedStringPointer(document.OriginSubscriptionID),
+		OriginRunID:           normalizedStringPointer(document.OriginRunID),
+		ProfitSnapshotEnabled: document.ProfitSnapshotEnabled,
+		GenerateEInvoice:      document.GenerateEInvoice,
+		GenerateEWayBill:      document.GenerateEWayBill,
+		ReverseCharge:         document.ReverseCharge,
+		ReverseChargeReason:   document.ReverseChargeReason,
+		DispatchFrom:          normalizedJSON(document.DispatchFrom, "{}"),
+		DispatchTo:            normalizedJSON(document.DispatchTo, "{}"),
+		DistanceKM:            roundScale(document.DistanceKM, 2),
+		Transporter:           normalizedJSON(document.Transporter, "{}"),
+		Vehicle:               normalizedJSON(document.Vehicle, "{}"),
+		MultiVehiclePlan:      normalizedJSON(document.MultiVehiclePlan, "{}"),
+		Notes:                 document.Notes,
+		Terms:                 document.Terms,
+		Direction:             document.Direction,
+		Subtotal:              roundScale(document.Subtotal, 2),
+		DiscountTotal:         roundScale(document.DiscountTotal, 2),
+		TaxTotal:              roundScale(document.TaxTotal, 2),
+		CessTotal:             roundScale(document.CessTotal, 2),
+		WithholdingTotal:      roundScale(document.WithholdingTotal, 2),
+		TDSTotal:              roundScale(document.TDSTotal, 2),
+		TCSTotal:              roundScale(document.TCSTotal, 2),
+		Total:                 roundScale(document.Total, 2),
+		PaidAmount:            roundScale(document.PaidAmount, 2),
+		BalanceDue:            roundScale(document.BalanceDue, 2),
+		ExtraFields:           normalizedJSON(document.ExtraFields, "{}"),
+		ReportTags:            normalizedJSON(document.ReportTags, "{}"),
+	}
+}
+
+type lineProjection struct {
+	ID                string
+	DocumentID        string
+	ProductID         optionalString
+	VariantID         optionalString
+	Description       string
+	HSNSACCode        string
+	UQCCode           string
+	Unit              string
+	WarehouseID       optionalString
+	Quantity          float64
+	FreeQuantity      float64
+	RemainingQuantity float64
+	UnitPrice         float64
+	MRP               float64
+	DiscountAmount    float64
+	TaxRate           float64
+	CGSTRate          float64
+	SGSTRate          float64
+	IGSTRate          float64
+	CessRate          float64
+	CGSTAmount        float64
+	SGSTAmount        float64
+	IGSTAmount        float64
+	CessAmount        float64
+	TaxAmount         float64
+	LineSubtotal      float64
+	LineTotal         float64
+	CustomFields      string
+	ChargeLinkage     string
+	BatchAllocations  string
+	SerialIDs         string
+	StockEffect       string
+}
+
+func legalPricingLines(lines []*models.DocumentLine) []lineProjection {
+	normalized := make([]lineProjection, 0, len(lines))
 	for _, line := range lines {
 		if line == nil {
-			normalized = append(normalized, models.DocumentLine{})
+			normalized = append(normalized, lineProjection{})
 			continue
 		}
-		value := *line
-		value.CreatedAt = time.Time{}
-		value.UpdatedAt = time.Time{}
-		value.CustomFields = normalizedJSON(value.CustomFields, "{}")
-		value.ChargeLinkage = normalizedJSON(value.ChargeLinkage, "[]")
-		value.PackingMetadata = normalizedJSON(value.PackingMetadata, "{}")
-		value.BatchAllocations = normalizedJSON(value.BatchAllocations, "[]")
-		value.SerialIDs = normalizedJSON(value.SerialIDs, "[]")
-		value.ReportTags = normalizedJSON(value.ReportTags, "{}")
-		normalized = append(normalized, value)
+		normalized = append(normalized, lineProjection{
+			ID:                line.ID,
+			DocumentID:        line.DocumentID,
+			ProductID:         normalizedStringPointer(line.ProductID),
+			VariantID:         normalizedStringPointer(line.VariantID),
+			Description:       line.Description,
+			HSNSACCode:        line.HSNSACCode,
+			UQCCode:           line.UQCCode,
+			Unit:              line.Unit,
+			WarehouseID:       normalizedStringPointer(line.WarehouseID),
+			Quantity:          roundScale(line.Quantity, 3),
+			FreeQuantity:      roundScale(line.FreeQuantity, 3),
+			RemainingQuantity: roundScale(line.RemainingQuantity, 3),
+			UnitPrice:         roundScale(line.UnitPrice, 2),
+			MRP:               roundScale(line.MRP, 2),
+			DiscountAmount:    roundScale(line.DiscountAmount, 2),
+			TaxRate:           roundScale(line.TaxRate, 3),
+			CGSTRate:          roundScale(line.CGSTRate, 3),
+			SGSTRate:          roundScale(line.SGSTRate, 3),
+			IGSTRate:          roundScale(line.IGSTRate, 3),
+			CessRate:          roundScale(line.CessRate, 3),
+			CGSTAmount:        roundScale(line.CGSTAmount, 2),
+			SGSTAmount:        roundScale(line.SGSTAmount, 2),
+			IGSTAmount:        roundScale(line.IGSTAmount, 2),
+			CessAmount:        roundScale(line.CessAmount, 2),
+			TaxAmount:         roundScale(line.TaxAmount, 2),
+			LineSubtotal:      roundScale(line.LineSubtotal, 2),
+			LineTotal:         roundScale(line.LineTotal, 2),
+			CustomFields:      normalizedJSON(line.CustomFields, "{}"),
+			ChargeLinkage:     normalizedJSON(line.ChargeLinkage, "[]"),
+			BatchAllocations:  normalizedJSON(line.BatchAllocations, "[]"),
+			SerialIDs:         normalizedJSON(line.SerialIDs, "[]"),
+			StockEffect:       line.StockEffect,
+		})
 	}
 	sort.Slice(normalized, func(left, right int) bool {
 		return normalized[left].ID < normalized[right].ID
@@ -210,12 +372,23 @@ func normalizedLines(lines []*models.DocumentLine) []models.DocumentLine {
 	return normalized
 }
 
-func normalizedTimePointer(value *time.Time) *time.Time {
+func normalizedStringPointer(value *string) optionalString {
 	if value == nil {
-		return nil
+		return optionalString{}
 	}
-	normalized := value.UTC()
-	return &normalized
+	return optionalString{Set: true, Value: *value}
+}
+
+func normalizedTimePointer(value *time.Time) optionalTime {
+	if value == nil {
+		return optionalTime{}
+	}
+	return optionalTime{Set: true, Value: value.UTC()}
+}
+
+func roundScale(value float64, scale int) float64 {
+	factor := math.Pow10(scale)
+	return math.Round(value*factor) / factor
 }
 
 func normalizedJSON(raw, fallback string) string {

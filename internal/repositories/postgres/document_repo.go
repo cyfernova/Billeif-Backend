@@ -83,9 +83,25 @@ func (r *documentRepository) ListByType(ctx context.Context, businessID, documen
 }
 
 func (r *documentRepository) Update(ctx context.Context, document *models.Document) error {
+	return r.update(ctx, document, false)
+}
+
+func (r *documentRepository) UpdateDraft(ctx context.Context, document *models.Document) error {
+	return r.update(ctx, document, true)
+}
+
+func (r *documentRepository) update(ctx context.Context, document *models.Document, draftEdit bool) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&models.Document{}).
-			Where("id = ?", document.ID).
+		update := tx.Model(&models.Document{}).
+			Where("id = ? AND business_id = ? AND deleted_at IS NULL", document.ID, document.BusinessID)
+		if draftEdit {
+			update = update.Where(
+				"status = ? AND draft_state = ?",
+				models.DocumentStatusDraft,
+				models.DocumentDraftStateDraft,
+			)
+		}
+		result := update.
 			Updates(map[string]interface{}{
 				"party_type":              document.PartyType,
 				"party_id":                document.PartyID,
@@ -150,8 +166,12 @@ func (r *documentRepository) Update(ctx context.Context, document *models.Docume
 				"balance_due":             document.BalanceDue,
 				"extra_fields":            document.ExtraFields,
 				"report_tags":             document.ReportTags,
-			}).Error; err != nil {
-			return err
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if draftEdit && result.RowsAffected != 1 {
+			return &models.DocumentDraftConflictError{}
 		}
 
 		if err := tx.Where("document_id = ?", document.ID).Delete(&models.DocumentLine{}).Error; err != nil {

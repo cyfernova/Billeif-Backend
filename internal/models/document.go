@@ -92,6 +92,12 @@ const (
 
 var ErrInvalidRenderKind = errors.New("invalid render kind")
 
+type DocumentDraftConflictError struct{}
+
+func (e *DocumentDraftConflictError) Error() string {
+	return "document draft changed before update"
+}
+
 type Document struct {
 	ID                    string         `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
 	BusinessID            string         `gorm:"not null;index" json:"business_id" validate:"required,uuid"`

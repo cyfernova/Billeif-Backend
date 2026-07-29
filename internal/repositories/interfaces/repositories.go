@@ -129,6 +129,7 @@ type DocumentRepository interface {
 	GetByIDInternal(ctx context.Context, id string) (*models.Document, error)
 	ListByType(ctx context.Context, businessID, documentType string, page, limit int) ([]*models.Document, int64, error)
 	Update(ctx context.Context, document *models.Document) error
+	UpdateDraft(ctx context.Context, document *models.Document) error
 	UpdatePDF(ctx context.Context, documentID, pdfURL, filename string) error
 	Delete(ctx context.Context, id string) error
 	CreateLink(ctx context.Context, link *models.DocumentLink) error
