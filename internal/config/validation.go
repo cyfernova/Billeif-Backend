@@ -55,6 +55,9 @@ func ValidateForProfile(cfg *Config, profile Profile) error {
 		if profile == ProfileWebSocket {
 			return nil
 		}
+		if err := validateProfileDependencies(cfg, profile); err != nil {
+			return err
+		}
 		if err := requireProviderIdentifier(cfg.Secrets.CredentialEncryption, cfg.Credentials.EncryptionKey, "CREDENTIAL_ENCRYPTION_SECRET_ARN"); err != nil {
 			return err
 		}
@@ -79,6 +82,20 @@ func ValidateForProfile(cfg *Config, profile Profile) error {
 	default:
 		return fmt.Errorf("unknown configuration profile %q", profile)
 	}
+}
+
+func validateProfileDependencies(cfg *Config, profile Profile) error {
+	switch profile {
+	case ProfileInvoice, ProfileGST:
+		if strings.TrimSpace(cfg.S3.BucketInvoices) == "" {
+			return fmt.Errorf("S3_BUCKET_INVOICES is required")
+		}
+	case ProfileBargaining:
+		if strings.TrimSpace(cfg.SQS.BargainingQueue) == "" {
+			return fmt.Errorf("SQS_BARGAINING_QUEUE is required")
+		}
+	}
+	return nil
 }
 
 func validateProfileBase(cfg *Config) error {

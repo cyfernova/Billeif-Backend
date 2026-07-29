@@ -18,6 +18,7 @@ func TestProductionValidationProfilesRequireOnlyEntrypointConfiguration(t *testi
 			profile: ProfileInvoice,
 			mutate: func(cfg *Config) {
 				cfg.Secrets.CredentialEncryption = "credential-secret"
+				cfg.S3.BucketInvoices = "invoice-pdfs"
 			},
 		},
 		{
@@ -26,6 +27,7 @@ func TestProductionValidationProfilesRequireOnlyEntrypointConfiguration(t *testi
 			mutate: func(cfg *Config) {
 				cfg.Secrets.CredentialEncryption = "credential-secret"
 				cfg.Secrets.GSTProvider = "gst-provider-secret"
+				cfg.S3.BucketInvoices = "invoice-pdfs"
 			},
 		},
 		{
@@ -37,6 +39,7 @@ func TestProductionValidationProfilesRequireOnlyEntrypointConfiguration(t *testi
 				cfg.Secrets.Exa = "exa-secret"
 				cfg.LLM.APIURL = "https://llm.example.test/chat"
 				cfg.LLM.Model = "production-model"
+				cfg.SQS.BargainingQueue = "https://sqs.ap-south-1.amazonaws.com/123/bargaining"
 			},
 		},
 		{
@@ -75,6 +78,44 @@ func TestProductionValidationProfilesRequireOnlyEntrypointConfiguration(t *testi
 	}
 }
 
+func TestProductionValidationProfilesRejectMissingConcreteEntrypointDependencies(t *testing.T) {
+	tests := []struct {
+		name    string
+		profile Profile
+		mutate  func(*Config)
+		want    string
+	}{
+		{
+			name:    "invoice bucket",
+			profile: ProfileInvoice,
+			mutate:  func(cfg *Config) { cfg.S3.BucketInvoices = "" },
+			want:    "S3_BUCKET_INVOICES",
+		},
+		{
+			name:    "GST persistence bucket",
+			profile: ProfileGST,
+			mutate:  func(cfg *Config) { cfg.S3.BucketInvoices = "" },
+			want:    "S3_BUCKET_INVOICES",
+		},
+		{
+			name:    "bargaining continuation queue",
+			profile: ProfileBargaining,
+			mutate:  func(cfg *Config) { cfg.SQS.BargainingQueue = "" },
+			want:    "SQS_BARGAINING_QUEUE",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := completeProductionWorkerProfileConfig(tc.profile)
+			tc.mutate(cfg)
+			err := ValidateForProfile(cfg, tc.profile)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected %s error, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
 func TestProductionValidationProfilesFailClosedForTheirOwnSecretIdentifiers(t *testing.T) {
 	tests := []struct {
 		profile Profile
@@ -95,6 +136,12 @@ func TestProductionValidationProfilesFailClosedForTheirOwnSecretIdentifiers(t *t
 			}
 			if tc.profile == ProfileGST || tc.profile == ProfileBargaining {
 				cfg.Secrets.CredentialEncryption = "credential-secret"
+			}
+			if tc.profile == ProfileInvoice || tc.profile == ProfileGST {
+				cfg.S3.BucketInvoices = "invoice-pdfs"
+			}
+			if tc.profile == ProfileBargaining {
+				cfg.SQS.BargainingQueue = "https://sqs.ap-south-1.amazonaws.com/123/bargaining"
 			}
 			if tc.profile != ProfileWebSocket {
 				cfg.Secrets.Database = "database-secret"
@@ -175,10 +222,51 @@ func TestLoadForProfileAcceptsScopedProductionWorkerAndWebSocketEnvironments(t *
 			for key, value := range tc.secrets {
 				t.Setenv(key, value)
 			}
+			switch tc.profile {
+			case ProfileInvoice, ProfileGST:
+				t.Setenv("S3_BUCKET_INVOICES", "invoice-pdfs")
+			case ProfileBargaining:
+				t.Setenv("SQS_BARGAINING_QUEUE", "https://sqs.ap-south-1.amazonaws.com/123/bargaining")
+			}
 
 			if _, err := LoadForProfile(tc.profile); err != nil {
 				t.Fatalf("scoped production load failed: %v", err)
 			}
 		})
 	}
+}
+
+func completeProductionWorkerProfileConfig(profile Profile) *Config {
+	cfg := &Config{
+		Environment: "production",
+		Logging:     LoggingConfig{Level: "info", Format: "json"},
+		AWS:         AWSConfig{Region: "ap-south-1"},
+		Database:    DatabaseConfig{Port: 5432, Name: "invoice", SSLMode: "require"},
+		Secrets: SecretIdentifiers{
+			Database:             "database-secret",
+			CredentialEncryption: "credential-secret",
+			GSTProvider:          "gst-provider-secret",
+			LLM:                  "llm-secret",
+			Exa:                  "exa-secret",
+		},
+		S3: S3Config{BucketInvoices: "invoice-pdfs"},
+		SQS: SQSConfig{
+			BargainingQueue: "https://sqs.ap-south-1.amazonaws.com/123/bargaining",
+		},
+		LLM: LLMConfig{
+			APIURL: "https://llm.example.test/chat",
+			Model:  "production-model",
+		},
+		SSM: SSMConfig{DatabaseHostParam: "/app/database/host"},
+	}
+	if profile == ProfileInvoice {
+		cfg.Secrets.GSTProvider = ""
+		cfg.Secrets.LLM = ""
+		cfg.Secrets.Exa = ""
+	}
+	if profile == ProfileGST {
+		cfg.Secrets.LLM = ""
+		cfg.Secrets.Exa = ""
+	}
+	return cfg
 }
