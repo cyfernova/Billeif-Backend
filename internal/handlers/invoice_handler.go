@@ -69,6 +69,10 @@ func (h *InvoiceHandler) Create(c *gin.Context) {
 }
 
 func invoiceCreateErrorStatus(err error) int {
+	var invalidPayload *idempotency.InvalidPayloadError
+	if errors.As(err, &invalidPayload) {
+		return http.StatusBadRequest
+	}
 	var invalidKey *idempotency.InvalidKeyError
 	if errors.As(err, &invalidKey) {
 		return http.StatusBadRequest

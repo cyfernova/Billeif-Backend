@@ -36,6 +36,9 @@ func (e *atomicInvoicePersistenceError) Unwrap() error {
 }
 
 func (r *invoiceRepository) CreateDraftAtomic(ctx context.Context, command interfaces.AtomicInvoiceDraft) (*interfaces.AtomicInvoiceDraftResult, error) {
+	if err := validateAtomicInvoiceDraft(command); err != nil {
+		return nil, atomicStageError("command validation", err)
+	}
 	var replayInvoiceID string
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		claim := &models.APIIdempotencyKey{
@@ -78,9 +81,6 @@ func (r *invoiceRepository) CreateDraftAtomic(ctx context.Context, command inter
 			return nil
 		}
 
-		if command.Invoice == nil || command.Document == nil || command.Activity == nil {
-			return atomicStageError("command validation", errors.New("missing required atomic row"))
-		}
 		if err := tx.Omit(clause.Associations).Create(command.Invoice).Error; err != nil {
 			return atomicStageError("invoice", err)
 		}
@@ -152,13 +152,80 @@ func (r *invoiceRepository) CreateDraftAtomic(ctx context.Context, command inter
 		return nil, atomicStageError("transaction commit", err)
 	}
 	if replayInvoiceID != "" {
-		invoice, err := r.GetByID(ctx, replayInvoiceID, command.BusinessID)
+		invoice, err := r.getReplayInvoice(ctx, replayInvoiceID, command.BusinessID)
 		if err != nil {
 			return nil, atomicStageError("idempotency result replay", err)
 		}
 		return &interfaces.AtomicInvoiceDraftResult{Invoice: invoice, Replayed: true}, nil
 	}
 	return &interfaces.AtomicInvoiceDraftResult{Invoice: command.Invoice}, nil
+}
+
+func validateAtomicInvoiceDraft(command interfaces.AtomicInvoiceDraft) error {
+	if command.BusinessID == "" || command.Command == "" || command.IdempotencyKey == "" || command.RequestHash == "" ||
+		command.Invoice == nil || command.Document == nil || command.Activity == nil {
+		return errors.New("missing required atomic command field")
+	}
+	if command.Invoice.BusinessID != command.BusinessID ||
+		command.Document.BusinessID != command.BusinessID ||
+		command.Activity.BusinessID != command.BusinessID {
+		return errors.New("atomic command tenant mismatch")
+	}
+	if command.Invoice.ID == "" || command.Document.ID != command.Invoice.ID ||
+		command.Activity.EntityID != command.Invoice.ID {
+		return errors.New("atomic command aggregate mismatch")
+	}
+	for _, item := range command.Invoice.Items {
+		if item == nil || item.InvoiceID != command.Invoice.ID {
+			return errors.New("atomic invoice item mismatch")
+		}
+	}
+	for _, line := range command.Document.Lines {
+		if line == nil || line.DocumentID != command.Document.ID {
+			return errors.New("atomic document line mismatch")
+		}
+	}
+	for _, event := range command.OutboxEvents {
+		if event == nil || event.BusinessID != command.BusinessID {
+			return errors.New("atomic outbox tenant mismatch")
+		}
+	}
+	for _, job := range command.RenderJobs {
+		if job == nil || job.BusinessID != command.BusinessID {
+			return errors.New("atomic render tenant mismatch")
+		}
+		if job.DocumentID != nil && *job.DocumentID != command.Document.ID {
+			return errors.New("atomic render document mismatch")
+		}
+		if job.InvoiceID != nil && *job.InvoiceID != command.Invoice.ID {
+			return errors.New("atomic render invoice mismatch")
+		}
+	}
+	for _, delivery := range command.EmailDeliveries {
+		if delivery == nil || delivery.BusinessID != command.BusinessID {
+			return errors.New("atomic email tenant mismatch")
+		}
+		if delivery.InvoiceID != nil && *delivery.InvoiceID != command.Invoice.ID {
+			return errors.New("atomic email invoice mismatch")
+		}
+	}
+	return nil
+}
+
+func (r *invoiceRepository) getReplayInvoice(ctx context.Context, id, businessID string) (*models.Invoice, error) {
+	var invoice models.Invoice
+	err := r.db.WithContext(ctx).
+		Unscoped().
+		Preload("Items").
+		Where("id = ? AND business_id = ?", id, businessID).
+		First(&invoice).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return &models.Invoice{ID: id, BusinessID: businessID}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &invoice, nil
 }
 
 func atomicStageError(stage string, err error) error {

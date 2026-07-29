@@ -79,9 +79,11 @@ func (h *DocumentHandler) Get(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Security BearerAuth
+// @Param Idempotency-Key header string false "Required UUID for sales invoice documents"
 // @Param input body services.CreateDocumentInput true "Document details"
 // @Success 201 {object} interface{}
 // @Failure 400 {object} map[string]string
+// @Failure 409 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /documents [post]
 func (h *DocumentHandler) Create(c *gin.Context) {

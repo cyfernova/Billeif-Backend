@@ -103,6 +103,48 @@ type CreateInvoiceInput struct {
 	Items                []CreateInvoiceItemInput `json:"items" binding:"required,min=1,dive"`
 }
 
+type canonicalInvoiceCreatePayload struct {
+	BusinessID           string                   `json:"business_id"`
+	CustomerID           string                   `json:"customer_id"`
+	ProjectID            string                   `json:"project_id,omitempty"`
+	PriceListID          string                   `json:"price_list_id,omitempty"`
+	RenderProfileID      string                   `json:"render_profile_id,omitempty"`
+	InvoiceDate          time.Time                `json:"invoice_date"`
+	DueDate              time.Time                `json:"due_date"`
+	Notes                string                   `json:"notes"`
+	TermsAndConditions   string                   `json:"terms_and_conditions"`
+	PONumber             string                   `json:"po_number"`
+	TemplateOverride     map[string]interface{}   `json:"template_override,omitempty"`
+	CustomFields         map[string]interface{}   `json:"custom_fields,omitempty"`
+	AdditionalCharges    []map[string]interface{} `json:"additional_charges,omitempty"`
+	OriginSubscriptionID string                   `json:"origin_subscription_id"`
+	OriginRunID          string                   `json:"origin_run_id"`
+	TaxProfile           TaxProfileInput          `json:"tax_profile"`
+	Items                []CreateInvoiceItemInput `json:"items"`
+}
+
+func canonicalInvoiceCreateRequest(input CreateInvoiceInput) canonicalInvoiceCreatePayload {
+	return canonicalInvoiceCreatePayload{
+		BusinessID:           input.BusinessID,
+		CustomerID:           input.CustomerID,
+		ProjectID:            input.ProjectID,
+		PriceListID:          input.PriceListID,
+		RenderProfileID:      input.RenderProfileID,
+		InvoiceDate:          input.InvoiceDate,
+		DueDate:              input.DueDate,
+		Notes:                input.Notes,
+		TermsAndConditions:   input.TermsAndConditions,
+		PONumber:             input.PONumber,
+		TemplateOverride:     input.TemplateOverride,
+		CustomFields:         input.CustomFields,
+		AdditionalCharges:    input.AdditionalCharges,
+		OriginSubscriptionID: input.OriginSubscriptionID,
+		OriginRunID:          input.OriginRunID,
+		TaxProfile:           input.TaxProfile,
+		Items:                input.Items,
+	}
+}
+
 func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (*models.Invoice, error) {
 	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
 	if _, err := uuid.Parse(input.IdempotencyKey); err != nil {
@@ -118,7 +160,7 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 		}
 		input.RenderProfileID = normalized
 	}
-	requestHash, err := idempotency.CanonicalHash(input)
+	requestHash, err := idempotency.CanonicalHash(canonicalInvoiceCreateRequest(input))
 	if err != nil {
 		return nil, err
 	}

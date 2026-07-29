@@ -15,6 +15,7 @@ func TestInvoiceCreateErrorStatusMapsIdempotencyErrors(t *testing.T) {
 		want int
 	}{
 		{name: "missing or malformed key", err: &idempotency.InvalidKeyError{}, want: http.StatusBadRequest},
+		{name: "invalid canonical payload", err: &idempotency.InvalidPayloadError{}, want: http.StatusBadRequest},
 		{name: "changed payload conflict", err: &idempotency.ConflictError{}, want: http.StatusConflict},
 		{name: "identical request still in progress", err: &idempotency.InProgressError{}, want: http.StatusConflict},
 		{name: "wrapped conflict", err: errors.New("not idempotency"), want: http.StatusInternalServerError},

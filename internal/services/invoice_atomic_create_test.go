@@ -204,7 +204,7 @@ func TestInvoiceServiceCreatePersistsCanonicalDraftProjectionAtomically(t *testi
 		models.StringValue(document.PartyID) != models.StringValue(invoice.CustomerID) ||
 		document.Currency != invoice.Currency ||
 		document.Subtotal != invoice.Subtotal ||
-		document.TaxTotal != invoice.Tax ||
+		document.TaxTotal+document.CessTotal != invoice.Tax ||
 		document.Total != invoice.Total ||
 		document.BalanceDue != invoice.BalanceDue {
 		t.Fatalf("invoice/document facts diverged:\ninvoice=%#v\ndocument=%#v", invoice, document)
@@ -233,6 +233,46 @@ func TestInvoiceServiceCreatePersistsCanonicalDraftProjectionAtomically(t *testi
 	if len(command.OutboxEvents) != 0 || len(command.RenderJobs) != 0 || len(command.EmailDeliveries) != 0 {
 		t.Fatalf("plain draft created optional rows: outbox=%d render=%d email=%d",
 			len(command.OutboxEvents), len(command.RenderJobs), len(command.EmailDeliveries))
+	}
+}
+
+func TestInvoiceServiceCreateProjectsGSTAndCessAsDistinctTaxComponents(t *testing.T) {
+	service, repo, input, ctx := newAtomicInvoiceServiceFixture(t)
+	input.TaxProfile.PlaceOfSupply = "27"
+
+	invoice, err := service.Create(ctx, input)
+	if err != nil {
+		t.Fatalf("create invoice: %v", err)
+	}
+	document := repo.last.Document
+	if document == nil || len(document.Lines) != 1 {
+		t.Fatalf("document projection = %#v, want one projected line", document)
+	}
+	line := document.Lines[0]
+
+	const (
+		wantGST  = 360.0
+		wantCess = 20.0
+	)
+	if document.TaxTotal != wantGST || document.CessTotal != wantCess {
+		t.Fatalf("document tax/cess = %.2f/%.2f, want %.2f/%.2f",
+			document.TaxTotal, document.CessTotal, wantGST, wantCess)
+	}
+	if document.Subtotal+document.TaxTotal+document.CessTotal != document.Total {
+		t.Fatalf("document components do not reconcile: subtotal %.2f + tax %.2f + cess %.2f != total %.2f",
+			document.Subtotal, document.TaxTotal, document.CessTotal, document.Total)
+	}
+	if line.TaxAmount != wantGST ||
+		line.CGSTAmount != wantGST/2 ||
+		line.SGSTAmount != wantGST/2 ||
+		line.IGSTAmount != 0 ||
+		line.CGSTRate != 9 ||
+		line.SGSTRate != 9 ||
+		line.IGSTRate != 0 {
+		t.Fatalf("projected GST components = %#v, want intra-state 9%% CGST + 9%% SGST", line)
+	}
+	if invoice.Tax != wantGST+wantCess {
+		t.Fatalf("legacy invoice tax total = %.2f, want %.2f", invoice.Tax, wantGST+wantCess)
 	}
 }
 
@@ -265,6 +305,30 @@ func TestInvoiceServiceCreateReplaysSameKeyAndConflictsOnChangedPayload(t *testi
 	}
 	if repo.executions != 1 {
 		t.Fatalf("atomic executions after conflict = %d, want 1", repo.executions)
+	}
+}
+
+func TestInvoiceServiceCreateHashIncludesTrustedSubscriptionOrigin(t *testing.T) {
+	service, repo, input, ctx := newAtomicInvoiceServiceFixture(t)
+	input.OriginSubscriptionID = uuid.NewString()
+	input.OriginRunID = uuid.NewString()
+
+	if _, err := service.Create(ctx, input); err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	changed := input
+	changed.OriginRunID = uuid.NewString()
+
+	invoice, err := service.Create(ctx, changed)
+	if invoice != nil {
+		t.Fatalf("changed-origin invoice = %#v, want nil", invoice)
+	}
+	var conflict *idempotency.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("changed-origin error = %T %v, want *idempotency.ConflictError", err, err)
+	}
+	if repo.executions != 1 {
+		t.Fatalf("atomic executions = %d, want 1", repo.executions)
 	}
 }
 
@@ -377,6 +441,88 @@ func TestDocumentServiceSalesInvoiceDelegationCallsCanonicalCreatorOnceWithoutRe
 		len(creator.input.Items) != 1 ||
 		creator.input.Items[0].Description != "Canonical line" {
 		t.Fatalf("delegated input = %#v", creator.input)
+	}
+}
+
+func TestDocumentServiceSalesInvoiceDelegationRejectsFieldsCanonicalInvoiceCannotPreserve(t *testing.T) {
+	dueDate := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
+	base := CreateDocumentInput{
+		IdempotencyKey: uuid.NewString(),
+		PartyID:        uuid.NewString(),
+		PartyType:      models.DocumentPartyTypeCustomer,
+		IssueDate:      time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
+		DueDate:        &dueDate,
+		Lines: []CreateDocumentLineInput{{
+			Description: "Canonical line",
+			Quantity:    1,
+			UnitPrice:   100,
+		}},
+	}
+	fixtures := []struct {
+		name   string
+		mutate func(*CreateDocumentInput)
+	}{
+		{name: "branch", mutate: func(input *CreateDocumentInput) { input.BranchID = uuid.NewString() }},
+		{name: "foreign currency", mutate: func(input *CreateDocumentInput) {
+			input.Currency = "USD"
+			input.ExchangeRate = 83
+		}},
+		{name: "line discount", mutate: func(input *CreateDocumentInput) {
+			input.Lines[0].DiscountAmount = 10
+		}},
+		{name: "packing metadata", mutate: func(input *CreateDocumentInput) {
+			input.Lines[0].PackingMetadata = map[string]interface{}{"box": "A"}
+		}},
+	}
+
+	for _, fixture := range fixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			creator := &canonicalInvoiceCreatorFake{}
+			service := &DocumentService{salesInvoices: newInvoiceSalesDocumentCreator(creator)}
+			input := base
+			input.Lines = append([]CreateDocumentLineInput(nil), base.Lines...)
+			fixture.mutate(&input)
+
+			document, err := service.CreateByType(context.Background(), uuid.NewString(), models.DocumentTypeSalesInvoice, input)
+			if err == nil || document != nil {
+				t.Fatalf("document/error = %#v/%v, want nil/unsupported-field error", document, err)
+			}
+			if creator.calls != 0 {
+				t.Fatalf("canonical creator calls = %d, want 0", creator.calls)
+			}
+		})
+	}
+}
+
+func TestInvoiceDocumentProjectionPreservesSupportedEditorFields(t *testing.T) {
+	customerID := uuid.NewString()
+	invoice := &models.Invoice{
+		ID:                uuid.NewString(),
+		BusinessID:        uuid.NewString(),
+		CustomerID:        &customerID,
+		Status:            models.InvoiceStatusDraft,
+		Origin:            models.InvoiceOriginManual,
+		Version:           1,
+		InvoiceDate:       time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
+		DueDate:           time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC),
+		Currency:          "INR",
+		CustomFields:      `{"reference":"A-100","terms_and_conditions":"Net 30"}`,
+		AdditionalCharges: `[{"name":"Freight","amount":25}]`,
+	}
+
+	document := invoiceDocumentProjection(invoice)
+	extraFields := unmarshalJSONMap(document.ExtraFields)
+	customFields, _ := extraFields["custom_fields"].(map[string]interface{})
+	additionalCharges, _ := extraFields["additional_charges"].([]interface{})
+
+	if document.Terms != "Net 30" {
+		t.Fatalf("document terms = %q, want Net 30", document.Terms)
+	}
+	if customFields["reference"] != "A-100" {
+		t.Fatalf("document custom fields = %#v, want reference A-100", customFields)
+	}
+	if len(additionalCharges) != 1 {
+		t.Fatalf("document additional charges = %#v, want one charge", additionalCharges)
 	}
 }
 

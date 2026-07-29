@@ -143,6 +143,83 @@ func TestInvoiceRepositoryCreateDraftAtomicPersistsLegalPartySnapshots(t *testin
 	}
 }
 
+func TestInvoiceRepositoryCreateDraftAtomicReplaysStoredReferenceWhenInvoiceIsNoLongerVisible(t *testing.T) {
+	repository, mock, closeDatabase := newAtomicSQLMockRepository(t)
+	defer closeDatabase()
+	command := atomicRepositoryTestCommand()
+	resultType := "invoice"
+	resultID := uuid.NewString()
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{"id"}))
+	mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{
+		"business_id",
+		"command",
+		"idempotency_key",
+		"request_hash",
+		"status",
+		"result_type",
+		"result_id",
+	}).AddRow(
+		command.BusinessID,
+		command.Command,
+		command.IdempotencyKey,
+		command.RequestHash,
+		models.IdempotencyStatusCompleted,
+		resultType,
+		resultID,
+	))
+	mock.ExpectCommit()
+	mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{"id", "business_id"}))
+
+	result, err := repository.CreateDraftAtomic(context.Background(), command)
+
+	if err != nil {
+		t.Fatalf("replay completed reference: %v", err)
+	}
+	if result == nil || result.Invoice == nil || result.Invoice.ID != resultID || !result.Replayed {
+		t.Fatalf("replay result = %#v, want stored invoice reference %s", result, resultID)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations: %v", err)
+	}
+}
+
+func TestInvoiceRepositoryCreateDraftAtomicRejectsCrossTenantOptionalRowsBeforeClaim(t *testing.T) {
+	fixtures := []struct {
+		name   string
+		mutate func(*interfaces.AtomicInvoiceDraft)
+	}{
+		{name: "outbox", mutate: func(command *interfaces.AtomicInvoiceDraft) {
+			command.OutboxEvents[0].BusinessID = uuid.NewString()
+		}},
+		{name: "render job", mutate: func(command *interfaces.AtomicInvoiceDraft) {
+			command.RenderJobs[0].BusinessID = uuid.NewString()
+		}},
+		{name: "email delivery", mutate: func(command *interfaces.AtomicInvoiceDraft) {
+			command.EmailDeliveries[0].BusinessID = uuid.NewString()
+		}},
+	}
+
+	for _, fixture := range fixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			repository, mock, closeDatabase := newAtomicSQLMockRepository(t)
+			defer closeDatabase()
+			command := atomicRepositoryTestCommand()
+			fixture.mutate(&command)
+
+			result, err := repository.CreateDraftAtomic(context.Background(), command)
+
+			if result != nil || err == nil || !strings.Contains(err.Error(), "command validation") {
+				t.Fatalf("result/error = %#v/%v, want nil/sanitized command validation error", result, err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatalf("unexpected SQL before validation: %v", err)
+			}
+		})
+	}
+}
+
 func newAtomicSQLMockRepository(t *testing.T) (*invoiceRepository, sqlmock.Sqlmock, func()) {
 	t.Helper()
 	sqlDatabase, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(

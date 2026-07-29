@@ -6623,6 +6623,12 @@ const docTemplate = `{
                 "summary": "Create document",
                 "parameters": [
                     {
+                        "type": "string",
+                        "description": "Required UUID for sales invoice documents",
+                        "name": "Idempotency-Key",
+                        "in": "header"
+                    },
+                    {
                         "description": "Document details",
                         "name": "input",
                         "in": "body",
@@ -6639,6 +6645,15 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
