@@ -1028,46 +1028,6 @@ func TestInvoiceService_GetPDFURLByBusiness_NotGenerated(t *testing.T) {
 	mockRepo.AssertExpectations(t)
 }
 
-// TestGetNextNumber_Success tests generating next invoice number
-func TestInvoiceService_GetNextNumber_Success(t *testing.T) {
-	mockRepo := new(MockInvoiceRepository)
-	mockCustomer := new(MockCustomerRepository)
-	mockProduct := new(MockProductRepository)
-	mockEmail := new(MockEmailService)
-	log := logger.New()
-
-	svc := newInvoiceService(mockRepo, mockProduct, mockCustomer, mockEmail, log)
-
-	ctx := services.ContextWithActor(context.Background(), services.ActorContext{UserID: uuid.NewString()})
-	businessID := "business-123"
-
-	invoiceNo, err := svc.GetNextNumber(ctx, businessID)
-
-	assert.NoError(t, err)
-	assert.NotEmpty(t, invoiceNo)
-	assert.Contains(t, invoiceNo, "INV-")
-	mockRepo.AssertExpectations(t)
-}
-
-// TestGenerateInvoiceNumber_Format tests invoice number format
-func TestInvoiceService_GenerateInvoiceNumber_Format(t *testing.T) {
-	mockRepo := new(MockInvoiceRepository)
-	mockCustomer := new(MockCustomerRepository)
-	mockProduct := new(MockProductRepository)
-	mockEmail := new(MockEmailService)
-	log := logger.New()
-
-	svc := newInvoiceService(mockRepo, mockProduct, mockCustomer, mockEmail, log)
-
-	ctx := services.ContextWithActor(context.Background(), services.ActorContext{UserID: uuid.NewString()})
-	businessID := "business-123"
-
-	invoiceNo, err := svc.GetNextNumber(ctx, businessID)
-
-	assert.NoError(t, err)
-	assert.Regexp(t, "^INV-\\d{4}-\\d{6}$", invoiceNo)
-}
-
 // TestCreateInvoice_WithProductID tests invoice creation with product ID
 func TestInvoiceService_Create_WithProductID(t *testing.T) {
 	mockRepo := new(MockInvoiceRepository)

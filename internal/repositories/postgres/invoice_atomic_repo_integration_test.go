@@ -6,11 +6,15 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"invoice-backend/internal/idempotency"
+	"invoice-backend/internal/invoiceissue"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 
@@ -71,7 +75,9 @@ func TestInvoiceRepositoryCreateDraftAtomicPostgresConcurrencyAndRollback(t *tes
 	}
 	if err := database.Exec(`
 		CREATE TABLE business_profiles (
-			id UUID PRIMARY KEY
+			id UUID PRIMARY KEY,
+			timezone VARCHAR(64) NOT NULL DEFAULT 'Asia/Kolkata',
+			deleted_at TIMESTAMPTZ
 		);
 		CREATE TABLE customers (
 			id UUID PRIMARY KEY,
@@ -82,6 +88,7 @@ func TestInvoiceRepositoryCreateDraftAtomicPostgresConcurrencyAndRollback(t *tes
 	}
 	if err := database.AutoMigrate(
 		&models.APIIdempotencyKey{},
+		&models.DocumentSequence{},
 		&models.Invoice{},
 		&models.InvoiceItem{},
 		&models.Document{},
@@ -95,6 +102,7 @@ func TestInvoiceRepositoryCreateDraftAtomicPostgresConcurrencyAndRollback(t *tes
 	}
 	for _, statement := range []string{
 		`ALTER TABLE api_idempotency_keys ALTER COLUMN business_id TYPE UUID USING business_id::uuid`,
+		`ALTER TABLE document_sequences ALTER COLUMN business_id TYPE UUID USING business_id::uuid`,
 		`ALTER TABLE invoices ALTER COLUMN business_id TYPE UUID USING business_id::uuid, ALTER COLUMN customer_id TYPE UUID USING customer_id::uuid`,
 		`ALTER TABLE documents ALTER COLUMN business_id TYPE UUID USING business_id::uuid`,
 		`ALTER TABLE activity_logs ALTER COLUMN business_id TYPE UUID USING business_id::uuid`,
@@ -108,6 +116,7 @@ func TestInvoiceRepositoryCreateDraftAtomicPostgresConcurrencyAndRollback(t *tes
 	}
 	for _, statement := range []string{
 		`ALTER TABLE api_idempotency_keys ADD CONSTRAINT fk_atomic_idempotency_business FOREIGN KEY (business_id) REFERENCES business_profiles(id) ON DELETE CASCADE`,
+		`ALTER TABLE document_sequences ADD CONSTRAINT fk_atomic_sequence_business FOREIGN KEY (business_id) REFERENCES business_profiles(id) ON DELETE CASCADE`,
 		`ALTER TABLE invoices ADD CONSTRAINT fk_atomic_invoice_business FOREIGN KEY (business_id) REFERENCES business_profiles(id) ON DELETE CASCADE`,
 		`ALTER TABLE invoices ADD CONSTRAINT fk_atomic_invoice_customer FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE RESTRICT`,
 		`ALTER TABLE documents ADD CONSTRAINT fk_atomic_document_business FOREIGN KEY (business_id) REFERENCES business_profiles(id) ON DELETE CASCADE`,
@@ -128,6 +137,10 @@ func TestInvoiceRepositoryCreateDraftAtomicPostgresConcurrencyAndRollback(t *tes
 	repository := &invoiceRepository{db: database}
 	firstCommand := atomicRepositoryTestCommand()
 	secondCommand := atomicRepositoryTestCommand()
+	firstCommand.Invoice.SellerSnapshot = models.PartySnapshot{Name: "Seller"}
+	firstCommand.Invoice.BuyerSnapshot = models.PartySnapshot{Name: "Buyer"}
+	secondCommand.Invoice.SellerSnapshot = models.PartySnapshot{Name: "Seller"}
+	secondCommand.Invoice.BuyerSnapshot = models.PartySnapshot{Name: "Buyer"}
 	copyAtomicScope(&secondCommand, firstCommand)
 	if err := database.Exec(`INSERT INTO business_profiles (id) VALUES (?)`, firstCommand.BusinessID).Error; err != nil {
 		t.Fatalf("seed isolated business: %v", err)
@@ -213,8 +226,218 @@ func TestInvoiceRepositoryCreateDraftAtomicPostgresConcurrencyAndRollback(t *tes
 	rollbackCommand.Activity = atomicRepositoryTestCommand().Activity
 	rollbackCommand.Activity.BusinessID = rollbackCommand.BusinessID
 	rollbackCommand.Activity.EntityID = rollbackCommand.Invoice.ID
+	if err := database.Exec(`INSERT INTO business_profiles (id) VALUES (?)`, rollbackCommand.BusinessID).Error; err != nil {
+		t.Fatalf("seed rollback business: %v", err)
+	}
+	if err := database.Exec(`INSERT INTO customers (id, business_id) VALUES (?, ?)`,
+		models.StringValue(rollbackCommand.Invoice.CustomerID), rollbackCommand.BusinessID).Error; err != nil {
+		t.Fatalf("seed rollback customer: %v", err)
+	}
 	if _, err := repository.CreateDraftAtomic(context.Background(), rollbackCommand); err != nil {
 		t.Fatalf("retry after rollback: %v", err)
+	}
+
+	issueCommand := issueRepositoryTestCommand()
+	issueCommand.BusinessID = firstCommand.BusinessID
+	issueCommand.InvoiceID = resultID
+	var issueGroup sync.WaitGroup
+	issueResults := make(chan *interfaces.AtomicInvoiceIssueResult, 2)
+	issueErrors := make(chan error, 2)
+	for attempt := 0; attempt < 2; attempt++ {
+		issueGroup.Add(1)
+		go func() {
+			defer issueGroup.Done()
+			result, err := repository.IssueDraftAtomic(context.Background(), issueCommand)
+			issueResults <- result
+			issueErrors <- err
+		}()
+	}
+	issueGroup.Wait()
+	close(issueResults)
+	close(issueErrors)
+	for err := range issueErrors {
+		if err != nil {
+			t.Fatalf("concurrent atomic issue: %v", err)
+		}
+	}
+	var issuedNumber string
+	var finalRenderID string
+	for result := range issueResults {
+		if result == nil || result.Invoice == nil || result.FinalRender == nil || result.Invoice.InvoiceNo == nil {
+			t.Fatalf("concurrent issue result = %#v", result)
+		}
+		if issuedNumber == "" {
+			issuedNumber = *result.Invoice.InvoiceNo
+			finalRenderID = result.FinalRender.ID
+		}
+		if *result.Invoice.InvoiceNo != issuedNumber || result.FinalRender.ID != finalRenderID {
+			t.Fatalf("concurrent issue identities differ: %#v", result)
+		}
+	}
+	if issuedNumber != "INV/26-27/000001" {
+		t.Fatalf("issued number = %q, want INV/26-27/000001", issuedNumber)
+	}
+	assertAtomicTableCount(t, database, "document_sequences", 1)
+	var finalRenderCount int64
+	if err := database.Model(&models.DocumentRenderJob{}).
+		Where("invoice_id = ? AND kind = ?", resultID, models.RenderKindFinal).
+		Count(&finalRenderCount).Error; err != nil {
+		t.Fatalf("count final renders: %v", err)
+	}
+	if finalRenderCount != 1 {
+		t.Fatalf("final render count = %d, want 1", finalRenderCount)
+	}
+	var issuedEventCount int64
+	if err := database.Model(&models.OutboxEvent{}).
+		Where("business_id = ? AND aggregate_id = ? AND event_type = ?",
+			firstCommand.BusinessID, resultID, "invoice.issued.v1").
+		Count(&issuedEventCount).Error; err != nil {
+		t.Fatalf("count issue outbox events: %v", err)
+	}
+	if issuedEventCount != 1 {
+		t.Fatalf("issue outbox count = %d, want 1", issuedEventCount)
+	}
+	var issuedActivityCount int64
+	if err := database.Model(&models.ActivityLog{}).
+		Where("business_id = ? AND entity_id = ? AND action = ?",
+			firstCommand.BusinessID, resultID, "issued").
+		Count(&issuedActivityCount).Error; err != nil {
+		t.Fatalf("count issue activities: %v", err)
+	}
+	if issuedActivityCount != 1 {
+		t.Fatalf("issue activity count = %d, want 1", issuedActivityCount)
+	}
+	var persistedInvoice models.Invoice
+	if err := database.Where("id = ? AND business_id = ?", resultID, firstCommand.BusinessID).
+		First(&persistedInvoice).Error; err != nil {
+		t.Fatalf("load issued invoice: %v", err)
+	}
+	if persistedInvoice.InvoiceNo == nil || *persistedInvoice.InvoiceNo != issuedNumber ||
+		persistedInvoice.Status != models.InvoiceStatusIssued || persistedInvoice.Version != 2 ||
+		persistedInvoice.IssuedAt == nil || persistedInvoice.SellerSnapshot.Name != "Seller" ||
+		persistedInvoice.BuyerSnapshot.Name != "Buyer" {
+		t.Fatalf("persisted legal invoice = %#v", persistedInvoice)
+	}
+	var persistedDocument models.Document
+	if err := database.Where("id = ? AND business_id = ?", resultID, firstCommand.BusinessID).
+		First(&persistedDocument).Error; err != nil {
+		t.Fatalf("load issued document: %v", err)
+	}
+	if persistedDocument.SerialNumber != issuedNumber ||
+		persistedDocument.Status != models.DocumentStatusIssued ||
+		persistedDocument.DraftState != models.DocumentDraftStateFinal ||
+		!strings.Contains(persistedDocument.SourceLinkage, `"source_invoice_version":2`) ||
+		!strings.Contains(persistedDocument.SourceLinkage, `"seller_snapshot"`) ||
+		!strings.Contains(persistedDocument.SourceLinkage, `"buyer_snapshot"`) {
+		t.Fatalf("persisted legal document projection = %#v", persistedDocument)
+	}
+	differentKey := issueCommand
+	differentKey.IdempotencyKey = uuid.NewString()
+	if _, err := repository.IssueDraftAtomic(context.Background(), differentKey); err == nil {
+		t.Fatal("different-key duplicate issue succeeded")
+	} else {
+		var alreadyIssued *invoiceissue.AlreadyIssuedError
+		if !errors.As(err, &alreadyIssued) {
+			t.Fatalf("different-key duplicate error = %T %v, want already-issued", err, err)
+		}
+	}
+
+	secondBusinessID := uuid.NewString()
+	if err := database.Exec(`INSERT INTO business_profiles (id) VALUES (?)`, secondBusinessID).Error; err != nil {
+		t.Fatalf("seed second allocation business: %v", err)
+	}
+	type allocationScope struct {
+		name         string
+		businessID   string
+		documentType string
+		series       string
+		invoiceDate  time.Time
+		billOfSupply bool
+	}
+	scopes := []allocationScope{
+		{name: "tenant-one-tax", businessID: firstCommand.BusinessID, documentType: invoiceissue.DocumentTypeTaxInvoice, series: "TAX", invoiceDate: time.Date(2026, 4, 1, 0, 30, 0, 0, time.UTC)},
+		{name: "tenant-one-custom", businessID: firstCommand.BusinessID, documentType: invoiceissue.DocumentTypeTaxInvoice, series: "AAA", invoiceDate: time.Date(2026, 4, 1, 0, 30, 0, 0, time.UTC)},
+		{name: "tenant-one-bill", businessID: firstCommand.BusinessID, documentType: invoiceissue.DocumentTypeBillOfSupply, series: "BOS", invoiceDate: time.Date(2026, 4, 1, 0, 30, 0, 0, time.UTC), billOfSupply: true},
+		{name: "before-fy-boundary", businessID: firstCommand.BusinessID, documentType: invoiceissue.DocumentTypeTaxInvoice, series: "MAR", invoiceDate: time.Date(2026, 3, 31, 18, 29, 59, 0, time.UTC)},
+		{name: "second-tenant", businessID: secondBusinessID, documentType: invoiceissue.DocumentTypeTaxInvoice, series: "APR", invoiceDate: time.Date(2026, 3, 31, 18, 30, 0, 0, time.UTC)},
+	}
+	type allocationWork struct {
+		scope   allocationScope
+		command interfaces.AtomicInvoiceIssue
+	}
+	work := make([]allocationWork, 0, 100)
+	for _, scope := range scopes {
+		for index := 0; index < 20; index++ {
+			invoiceID := uuid.NewString()
+			invoice := &models.Invoice{
+				ID: invoiceID, BusinessID: scope.businessID, Version: 1, Status: models.InvoiceStatusDraft,
+				Origin: models.InvoiceOriginManual, SellerSnapshot: models.PartySnapshot{Name: "Seller"},
+				BuyerSnapshot: models.PartySnapshot{Name: "Buyer"}, InvoiceDate: scope.invoiceDate,
+				DueDate: scope.invoiceDate.AddDate(0, 0, 30), Currency: "INR", Total: 100, BalanceDue: 100,
+			}
+			if err := database.Omit("Items").Create(invoice).Error; err != nil {
+				t.Fatalf("seed allocation invoice: %v", err)
+			}
+			document := &models.Document{
+				ID: invoiceID, BusinessID: scope.businessID, DocumentType: models.DocumentTypeSalesInvoice,
+				PartyType: models.DocumentPartyTypeCustomer, Status: models.DocumentStatusDraft,
+				DraftState: models.DocumentDraftStateDraft, SerialNumber: "", IssueDate: scope.invoiceDate,
+				Currency: "INR", Locale: "en-IN", BillOfSupply: scope.billOfSupply,
+			}
+			if err := database.Omit("Lines").Create(document).Error; err != nil {
+				t.Fatalf("seed allocation document: %v", err)
+			}
+			command := issueRepositoryTestCommand()
+			command.BusinessID = scope.businessID
+			command.InvoiceID = invoiceID
+			command.DocumentType = scope.documentType
+			command.Series = scope.series
+			work = append(work, allocationWork{scope: scope, command: command})
+		}
+	}
+	type allocationResult struct {
+		scope  string
+		number int
+		err    error
+	}
+	allocationResults := make(chan allocationResult, len(work))
+	var allocationGroup sync.WaitGroup
+	for _, item := range work {
+		item := item
+		allocationGroup.Add(1)
+		go func() {
+			defer allocationGroup.Done()
+			result, err := repository.IssueDraftAtomic(context.Background(), item.command)
+			if err != nil {
+				allocationResults <- allocationResult{scope: item.scope.name, err: err}
+				return
+			}
+			serial := models.StringValue(result.Invoice.InvoiceNo)
+			lastSlash := strings.LastIndex(serial, "/")
+			number, parseErr := strconv.Atoi(serial[lastSlash+1:])
+			allocationResults <- allocationResult{scope: item.scope.name, number: number, err: parseErr}
+		}()
+	}
+	allocationGroup.Wait()
+	close(allocationResults)
+	numbersByScope := make(map[string][]int)
+	for result := range allocationResults {
+		if result.err != nil {
+			t.Fatalf("100-way allocation for %s: %v", result.scope, result.err)
+		}
+		numbersByScope[result.scope] = append(numbersByScope[result.scope], result.number)
+	}
+	for _, scope := range scopes {
+		numbers := numbersByScope[scope.name]
+		sort.Ints(numbers)
+		if len(numbers) != 20 {
+			t.Fatalf("%s allocation count = %d, want 20", scope.name, len(numbers))
+		}
+		for index, number := range numbers {
+			if number != index+1 {
+				t.Fatalf("%s allocation[%d] = %d, want %d", scope.name, index, number, index+1)
+			}
+		}
 	}
 }
 

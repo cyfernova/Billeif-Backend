@@ -34,7 +34,6 @@ var voiceMCPToolAllowlist = map[string]voiceMCPToolRule{
 	"get_customers_by_id":       {Description: "Get one customer for the current business.", Scope: voiceMCPNoScope},
 	"get_invoices":              {Description: "List invoices for the current business.", Scope: voiceMCPQueryScope},
 	"get_invoices_by_id":        {Description: "Get one invoice for the current business.", Scope: voiceMCPNoScope},
-	"get_invoices_next_number":  {Description: "Get the next invoice number for the current business.", Scope: voiceMCPQueryScope},
 	"get_payments":              {Description: "List payments for the current business.", Scope: voiceMCPQueryScope},
 	"get_payments_by_id":        {Description: "Get one payment for the current business.", Scope: voiceMCPNoScope},
 	"get_products":              {Description: "List products for the current business.", Scope: voiceMCPQueryScope},

@@ -834,18 +834,50 @@ paths:
         '204':
           description: Invoice deleted
 
-  /api/v1/invoices/{id}/send:
+  /api/v1/invoices/{id}/issue:
     post:
       tags: [Invoices]
-      summary: Send invoice via email
-      operationId: sendInvoice
+      summary: Issue an invoice
+      operationId: issueInvoice
       security:
         - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/ID'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [document_type, series]
+              properties:
+                document_type:
+                  type: string
+                  enum: [tax_invoice, bill_of_supply]
+                series:
+                  type: string
+                  pattern: '^[A-Z]{1,3}$'
       responses:
-        '200':
-          description: Invoice sent
+        '202':
+          description: Invoice issued and final render queued
+        '400':
+          description: Invalid issue command or lifecycle
+        '404':
+          description: Tenant-scoped invoice not found
+        '409':
+          description: Version, lifecycle, idempotency, or sequence conflict
 
   /api/v1/invoices/{id}/pdf:
     get:
@@ -865,26 +897,6 @@ paths:
                 type: object
                 properties:
                   pdf_url:
-                    type: string
-
-  /api/v1/invoices/next-number:
-    get:
-      tags: [Invoices]
-      summary: Get next invoice number
-      operationId: getNextInvoiceNumber
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: '#/components/parameters/BusinessID'
-      responses:
-        '200':
-          description: Next invoice number
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  next_number:
                     type: string
 
   /api/v1/payments:

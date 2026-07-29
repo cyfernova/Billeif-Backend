@@ -84,6 +84,31 @@ type AtomicInvoiceDraftResult struct {
 	Replayed bool
 }
 
+type AtomicInvoiceIssue struct {
+	BusinessID      string
+	InvoiceID       string
+	Command         string
+	IdempotencyKey  string
+	RequestHash     string
+	ExpectedVersion int
+	DocumentType    string
+	Series          string
+	ActorID         string
+	ActorRole       string
+	RequestID       string
+	IPAddress       string
+}
+
+type AtomicInvoiceIssueResult struct {
+	Invoice     *models.Invoice
+	FinalRender *models.DocumentRenderJob
+	Replayed    bool
+}
+
+type CanonicalInvoiceIssuer interface {
+	IssueDraftAtomic(ctx context.Context, command AtomicInvoiceIssue) (*AtomicInvoiceIssueResult, error)
+}
+
 type CanonicalInvoiceRepository interface {
 	InvoiceRepository
 	CreateDraftAtomic(ctx context.Context, command AtomicInvoiceDraft) (*AtomicInvoiceDraftResult, error)

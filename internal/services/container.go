@@ -131,6 +131,7 @@ func NewContainer(
 	taxComplianceSvc := NewTaxComplianceService(cfg, db, businessRepo, customerRepo, vendorRepo, subscriptionRepo, aws, s3Svc, webhookSvc, log, resolver)
 	invoiceSvc := NewInvoiceService(db, cfg, invoiceRepo, businessRepo, productRepo, customerRepo, documentSvc, aws, s3Svc, emailSvc, log)
 	documentSvc.salesInvoices = newInvoiceSalesDocumentCreator(invoiceSvc)
+	documentSvc.salesInvoiceIssuer = newInvoiceSalesDocumentIssuer(invoiceSvc)
 	billingOpsSvc := NewBillingOpsService(cfg, db, customerRepo, vendorRepo, productRepo, invoiceSvc, documentSvc, s3Svc, log)
 	documentSvc.AttachTaxComplianceService(taxComplianceSvc)
 	taxComplianceSvc.AttachDocumentService(documentSvc)

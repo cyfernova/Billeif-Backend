@@ -58,9 +58,17 @@ func TestLegacyInvoiceSendRouteIsNotRegistered(t *testing.T) {
 		logger.New(),
 	)
 
+	routes := map[string]bool{}
 	for _, route := range router.Routes() {
+		routes[route.Method+" "+route.Path] = true
 		if route.Method == "POST" && route.Path == "/api/v1/invoices/:id/send" {
 			t.Fatal("legacy invoice send route must not be registered before the issue and delivery workflow exists")
 		}
+	}
+	if routes["GET /api/v1/invoices/next-number"] {
+		t.Fatal("legacy next-number route must not be registered")
+	}
+	if !routes["POST /api/v1/invoices/:id/issue"] {
+		t.Fatal("canonical invoice issue route must be registered")
 	}
 }

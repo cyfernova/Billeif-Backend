@@ -608,13 +608,13 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 				invoices.GET("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.List)
 				invoices.GET("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.Get)
 				invoices.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Invoice.Create)
+				invoices.POST("/:id/issue", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Invoice.Issue)
 				invoices.PATCH("/:id/draft", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Invoice.UpdateDraft)
 				invoices.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Invoice.Update)
 				invoices.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Invoice.Delete)
 				invoices.POST("/bulk-actions", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserHeavyRL, h.BillingOps.CreateInvoiceBulkAction)
 				invoices.GET("/:id/pdf", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.GetPDF)
 				invoices.POST("/:id/einvoice", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserHeavyRL, h.Invoice.GenerateEInvoice)
-				invoices.GET("/next-number", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.NextNumber)
 			}
 
 			payments := protected.Group("/payments")

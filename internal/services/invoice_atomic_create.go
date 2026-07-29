@@ -14,9 +14,33 @@ type canonicalInvoiceCreator interface {
 	CreateByBusiness(ctx context.Context, businessID string, input CreateInvoiceInput) (*models.Invoice, error)
 }
 
+type canonicalInvoiceIssuerService interface {
+	IssueByBusiness(ctx context.Context, businessID, invoiceID string, input IssueInvoiceInput) (*IssueInvoiceResult, error)
+}
+
+type salesInvoiceDocumentIssuer interface {
+	IssueSalesInvoiceDocument(ctx context.Context, businessID, invoiceID string, input IssueInvoiceInput) (*IssueInvoiceResult, error)
+}
+
 type salesInvoiceDocumentCreator interface {
 	CreateSalesInvoiceDocument(ctx context.Context, businessID string, input CreateDocumentInput) (*models.Document, error)
 	createPOSSalesInvoiceDocument(ctx context.Context, businessID string, input CreateInvoiceInput) (*models.Document, error)
+}
+
+type invoiceSalesDocumentIssuer struct {
+	invoices canonicalInvoiceIssuerService
+}
+
+func newInvoiceSalesDocumentIssuer(invoices canonicalInvoiceIssuerService) salesInvoiceDocumentIssuer {
+	return &invoiceSalesDocumentIssuer{invoices: invoices}
+}
+
+func (i *invoiceSalesDocumentIssuer) IssueSalesInvoiceDocument(
+	ctx context.Context,
+	businessID, invoiceID string,
+	input IssueInvoiceInput,
+) (*IssueInvoiceResult, error) {
+	return i.invoices.IssueByBusiness(ctx, businessID, invoiceID, input)
 }
 
 type invoiceSalesDocumentCreator struct {

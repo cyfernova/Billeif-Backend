@@ -412,12 +412,6 @@ func (s *InvoiceService) CreateByBusiness(ctx context.Context, businessID string
 	return s.Create(ctx, input)
 }
 
-func (s *InvoiceService) generateInvoiceNumber(ctx context.Context, businessID string) (string, error) {
-	year := time.Now().Year()
-	prefix := fmt.Sprintf("INV-%d-", year)
-	return prefix + fmt.Sprintf("%06d", time.Now().UnixNano()%1000000), nil
-}
-
 func (s *InvoiceService) GetByBusiness(ctx context.Context, businessID, id string) (*models.Invoice, error) {
 	invoice, err := s.repo.GetByID(ctx, id, businessID)
 	if err != nil {
@@ -749,10 +743,6 @@ func (s *InvoiceService) GetPDFURLByBusiness(ctx context.Context, businessID, in
 		return invoice.PDFURL, nil
 	}
 	return "", fmt.Errorf("PDF not yet generated")
-}
-
-func (s *InvoiceService) GetNextNumber(ctx context.Context, businessID string) (string, error) {
-	return s.generateInvoiceNumber(ctx, businessID)
 }
 
 // UpdatePDFUrl is called by the internal worker (no tenant context).

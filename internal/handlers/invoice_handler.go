@@ -3,11 +3,14 @@ package handlers
 import (
 	"errors"
 	"invoice-backend/internal/idempotency"
+	"invoice-backend/internal/invoiceissue"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/services"
 	"invoice-backend/internal/utils"
 	"invoice-backend/pkg/logger"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -83,6 +86,97 @@ func invoiceCreateErrorStatus(err error) int {
 	}
 	var inProgress *idempotency.InProgressError
 	if errors.As(err, &inProgress) {
+		return http.StatusConflict
+	}
+	return http.StatusInternalServerError
+}
+
+// Issue freezes and numbers a canonical draft invoice.
+// @Summary Issue invoice
+// @Description Atomically assigns the legal invoice number, freezes the draft, and queues the final private render.
+// @Tags Invoices
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Invoice ID"
+// @Param Idempotency-Key header string true "UUID idempotency key"
+// @Param If-Match header string true "Expected invoice version"
+// @Param input body services.IssueInvoiceInput true "Issue details"
+// @Success 202 {object} services.IssueInvoiceResult
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /invoices/{id}/issue [post]
+func (h *InvoiceHandler) Issue(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	idempotencyKey, ok := requireIdempotencyKey(c)
+	if !ok {
+		return
+	}
+	expectedVersion, ok := requireInvoiceIfMatch(c)
+	if !ok {
+		return
+	}
+	var input services.IssueInvoiceInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	input.IdempotencyKey = idempotencyKey
+	input.ExpectedVersion = expectedVersion
+	requestContextWithActor(c)
+	result, err := h.svc.IssueByBusiness(c.Request.Context(), businessID, c.Param("id"), input)
+	if err != nil {
+		c.JSON(invoiceIssueErrorStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusAccepted, result)
+}
+
+func requireInvoiceIfMatch(c *gin.Context) (int, bool) {
+	value := strings.TrimSpace(c.GetHeader("If-Match"))
+	value = strings.TrimSpace(strings.Trim(value, `"`))
+	version, err := strconv.Atoi(value)
+	if err != nil || version < 1 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "If-Match expected invoice version is required"})
+		return 0, false
+	}
+	return version, true
+}
+
+func invoiceIssueErrorStatus(err error) int {
+	var invalidKey *idempotency.InvalidKeyError
+	var invalidPayload *idempotency.InvalidPayloadError
+	var invalidSeries *invoiceissue.InvalidSeriesError
+	var invalidDocumentType *invoiceissue.InvalidDocumentTypeError
+	var invalidLifecycle *invoiceissue.InvalidLifecycleError
+	var invalidTimezone *invoiceissue.InvalidTimezoneError
+	if errors.As(err, &invalidKey) ||
+		errors.As(err, &invalidPayload) ||
+		errors.As(err, &invalidSeries) ||
+		errors.As(err, &invalidDocumentType) ||
+		errors.As(err, &invalidLifecycle) ||
+		errors.As(err, &invalidTimezone) {
+		return http.StatusBadRequest
+	}
+	var notFound *invoiceissue.NotFoundError
+	if errors.As(err, &notFound) {
+		return http.StatusNotFound
+	}
+	var stale *invoiceissue.StaleVersionError
+	var alreadyIssued *invoiceissue.AlreadyIssuedError
+	var conflict *idempotency.ConflictError
+	var inProgress *idempotency.InProgressError
+	var exhausted *invoiceissue.SequenceExhaustedError
+	if errors.As(err, &stale) ||
+		errors.As(err, &alreadyIssued) ||
+		errors.As(err, &conflict) ||
+		errors.As(err, &inProgress) ||
+		errors.As(err, &exhausted) {
 		return http.StatusConflict
 	}
 	return http.StatusInternalServerError
@@ -331,33 +425,4 @@ func (h *InvoiceHandler) GenerateEInvoice(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusAccepted, job)
-}
-
-// NextNumber returns the next available invoice number
-// @Summary Get next invoice number
-// @Description Returns the incremented invoice number for the next invoice to be created.
-// @Tags Invoices
-// @Produce json
-// @Security BearerAuth
-// @Param business_id query string true "Business ID"
-// @Success 200 {object} map[string]string
-// @Failure 400 {object} map[string]string
-// @Failure 500 {object} map[string]string
-// @Router /invoices/next-number [get]
-func (h *InvoiceHandler) NextNumber(c *gin.Context) {
-	log := logger.FromContext(c.Request.Context()).Named("invoice_handler").With("operation", "next_number")
-	businessID, ok := requireBusinessScope(c)
-	if !ok {
-		return
-	}
-
-	number, err := h.svc.GetNextNumber(c.Request.Context(), businessID)
-	if err != nil {
-		log.Error("failed to get next invoice number", "error", err, "business_id", businessID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	log.Debug("next invoice number generated", "business_id", businessID)
-
-	c.JSON(http.StatusOK, gin.H{"next_number": number})
 }

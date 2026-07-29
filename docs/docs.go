@@ -7734,61 +7734,6 @@ const docTemplate = `{
                 ]
             }
         },
-        "/invoices/next-number": {
-            "get": {
-                "description": "Returns the incremented invoice number for the next invoice to be created.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Invoices"
-                ],
-                "summary": "Get next invoice number",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Business ID",
-                        "name": "business_id",
-                        "in": "query",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                },
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ]
-            }
-        },
         "/invoices/{id}": {
             "get": {
                 "description": "Returns the details of a specific invoice.",
@@ -7972,6 +7917,102 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/invoices/{id}/issue": {
+            "post": {
+                "description": "Atomically assigns the legal invoice number, freezes the draft, and queues the final private render.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Invoices"
+                ],
+                "summary": "Issue invoice",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Invoice ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "UUID idempotency key",
+                        "name": "Idempotency-Key",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Expected invoice version",
+                        "name": "If-Match",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Issue details",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/services.IssueInvoiceInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/services.IssueInvoiceResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -17871,6 +17912,77 @@ const docTemplate = `{
                 }
             }
         },
+        "models.DocumentRenderJob": {
+            "type": "object",
+            "required": [
+                "business_id"
+            ],
+            "properties": {
+                "attempts": {
+                    "type": "integer"
+                },
+                "business_id": {
+                    "type": "string"
+                },
+                "completed_at": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "document_id": {
+                    "type": "string"
+                },
+                "error_message": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "invoice_id": {
+                    "type": "string"
+                },
+                "kind": {
+                    "$ref": "#/definitions/models.RenderKind"
+                },
+                "lease_expires_at": {
+                    "type": "string"
+                },
+                "lease_owner": {
+                    "type": "string"
+                },
+                "locale": {
+                    "type": "string"
+                },
+                "object_key": {
+                    "type": "string"
+                },
+                "output_filename": {
+                    "type": "string"
+                },
+                "output_url": {
+                    "type": "string"
+                },
+                "render_profile_id": {
+                    "type": "string"
+                },
+                "requested_at": {
+                    "type": "string"
+                },
+                "source_invoice_version": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "template_version": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
         "models.Invoice": {
             "type": "object",
             "required": [
@@ -18729,6 +18841,17 @@ const docTemplate = `{
                     "type": "string"
                 }
             }
+        },
+        "models.RenderKind": {
+            "type": "string",
+            "enum": [
+                "preview",
+                "final"
+            ],
+            "x-enum-varnames": [
+                "RenderKindPreview",
+                "RenderKindFinal"
+            ]
         },
         "models.Role": {
             "type": "object",
@@ -20964,6 +21087,35 @@ const docTemplate = `{
                 },
                 "variant_id": {
                     "type": "string"
+                }
+            }
+        },
+        "services.IssueInvoiceInput": {
+            "type": "object",
+            "required": [
+                "document_type",
+                "series"
+            ],
+            "properties": {
+                "document_type": {
+                    "type": "string"
+                },
+                "series": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.IssueInvoiceResult": {
+            "type": "object",
+            "properties": {
+                "final_render": {
+                    "$ref": "#/definitions/models.DocumentRenderJob"
+                },
+                "invoice": {
+                    "$ref": "#/definitions/models.Invoice"
+                },
+                "replayed": {
+                    "type": "boolean"
                 }
             }
         },

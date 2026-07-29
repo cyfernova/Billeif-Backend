@@ -20,20 +20,35 @@ import (
 )
 
 type DocumentService struct {
-	db            *gorm.DB
-	cfg           *config.Config
-	repo          interfaces.DocumentRepository
-	businessRepo  interfaces.BusinessRepository
-	customerRepo  interfaces.CustomerRepository
-	vendorRepo    interfaces.VendorRepository
-	productRepo   interfaces.ProductRepository
-	inventory     *InventoryService
-	journals      *JournalService
-	shipping      *ShippingService
-	taxCompliance *TaxComplianceService
-	salesInvoices salesInvoiceDocumentCreator
-	sqs           *sqs.Client
-	log           *logger.Logger
+	db                 *gorm.DB
+	cfg                *config.Config
+	repo               interfaces.DocumentRepository
+	businessRepo       interfaces.BusinessRepository
+	customerRepo       interfaces.CustomerRepository
+	vendorRepo         interfaces.VendorRepository
+	productRepo        interfaces.ProductRepository
+	inventory          *InventoryService
+	journals           *JournalService
+	shipping           *ShippingService
+	taxCompliance      *TaxComplianceService
+	salesInvoices      salesInvoiceDocumentCreator
+	salesInvoiceIssuer salesInvoiceDocumentIssuer
+	sqs                *sqs.Client
+	log                *logger.Logger
+}
+
+func (s *DocumentService) IssueSalesDocumentByBusiness(
+	ctx context.Context,
+	businessID, documentType, documentID string,
+	input IssueInvoiceInput,
+) (*IssueInvoiceResult, error) {
+	if documentType != models.DocumentTypeSalesInvoice {
+		return nil, fmt.Errorf("generic issuance is not supported for document type %q", documentType)
+	}
+	if s.salesInvoiceIssuer == nil {
+		return nil, fmt.Errorf("canonical sales invoice issuer is not configured")
+	}
+	return s.salesInvoiceIssuer.IssueSalesInvoiceDocument(ctx, businessID, documentID, input)
 }
 
 type CreateDocumentLineInput struct {

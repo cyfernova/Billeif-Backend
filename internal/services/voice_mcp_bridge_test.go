@@ -56,6 +56,7 @@ func TestBuildVoiceMCPFunctionDefinitionsExposeOnlyAllowlistedFinanceTools(t *te
 	require.Contains(t, tools, "post_payments")
 	require.Contains(t, tools, "post_products")
 	require.Contains(t, tools, "put_invoices_by_id")
+	require.NotContains(t, tools, "get_invoices_next_number")
 	require.NotContains(t, tools, "post_invoices_by_id_send")
 	require.NotContains(t, tools, "delete_customers_by_id")
 	require.NotContains(t, tools, "delete_business_profiles_by_id")
