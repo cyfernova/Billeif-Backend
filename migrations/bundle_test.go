@@ -105,6 +105,22 @@ func TestVerifyRejectsInvalidBundleEntries(t *testing.T) {
 			},
 			wantErr: ErrRenamedEntry,
 		},
+		{
+			name: "both directions renamed and manifest regenerated",
+			mutate: func(fsys fstest.MapFS) {
+				delete(fsys, "000002_add_name.down.sql")
+				delete(fsys, "000002_add_name.up.sql")
+				fsys["000002_old_name.down.sql"] = &fstest.MapFile{Data: []byte(testDownTwo)}
+				fsys["000002_old_name.up.sql"] = &fstest.MapFile{Data: []byte(testUpTwo)}
+				fsys[ManifestFilename].Data = []byte(
+					"5111d07169d0ba3c9f4c861fa6076c786f86469e298450c641c3e70ea21df8f6  000001_test.down.sql\n" +
+						"30d16a80498b1d62b4b13130c046b82dedf340b99cdb15ba0d2500a7e6a102be  000001_test.up.sql\n" +
+						"b984852a927d0b678f00dd889b89331e69002fa7ec56eacdcbc869a4ebc252e9  000002_old_name.down.sql\n" +
+						"ce9d98e373b52335a1f1a4dfbfae88940a58ee177c2f74d34fa557caf4bfe3db  000002_old_name.up.sql\n",
+				)
+			},
+			wantErr: ErrRenamedEntry,
+		},
 	}
 
 	for _, tt := range tests {
@@ -126,6 +142,10 @@ func validTestBundle() fstest.MapFS {
 		"000001_test.down.sql":     &fstest.MapFile{Data: []byte(testDownOne)},
 		"000002_add_name.up.sql":   &fstest.MapFile{Data: []byte(testUpTwo)},
 		"000002_add_name.down.sql": &fstest.MapFile{Data: []byte(testDownTwo)},
+		IdentityFilename: &fstest.MapFile{Data: []byte(
+			"000001_test\n" +
+				"000002_add_name\n",
+		)},
 		ManifestFilename: &fstest.MapFile{Data: []byte(
 			"5111d07169d0ba3c9f4c861fa6076c786f86469e298450c641c3e70ea21df8f6  000001_test.down.sql\n" +
 				"30d16a80498b1d62b4b13130c046b82dedf340b99cdb15ba0d2500a7e6a102be  000001_test.up.sql\n" +

@@ -14,11 +14,14 @@ import (
 	"strings"
 )
 
-const ManifestFilename = "manifest.sha256"
+const (
+	IdentityFilename = "identities.txt"
+	ManifestFilename = "manifest.sha256"
+)
 
 // Embedded is the canonical repository-root migration bundle.
 //
-//go:embed *.up.sql *.down.sql manifest.sha256
+//go:embed *.up.sql *.down.sql identities.txt manifest.sha256
 var Embedded embed.FS
 
 var (
@@ -29,6 +32,7 @@ var (
 )
 
 var migrationFilename = regexp.MustCompile(`^([0-9]{6})_([a-z0-9]+(?:_[a-z0-9]+)*)\.(up|down)\.sql$`)
+var migrationIdentity = regexp.MustCompile(`^([0-9]{6})_([a-z0-9]+(?:_[a-z0-9]+)*)$`)
 
 type Entry struct {
 	Name      string
@@ -55,6 +59,9 @@ func Verify(fsys fs.FS, root string) (Manifest, error) {
 		return Manifest{}, err
 	}
 	if err := verifyFiles(fsys, root, entries); err != nil {
+		return Manifest{}, err
+	}
+	if err := verifyIdentities(fsys, root, entries); err != nil {
 		return Manifest{}, err
 	}
 	if err := verifyPairs(entries); err != nil {
@@ -121,6 +128,40 @@ func parseManifest(body []byte) ([]Entry, error) {
 		return nil, fmt.Errorf("%w: empty manifest", ErrMissingEntry)
 	}
 	return entries, nil
+}
+
+func verifyIdentities(fsys fs.FS, root string, entries []Entry) error {
+	body, err := fs.ReadFile(fsys, path.Join(root, IdentityFilename))
+	if err != nil {
+		return fmt.Errorf("%w: %s", ErrMissingEntry, IdentityFilename)
+	}
+	if len(body) == 0 || body[len(body)-1] != '\n' {
+		return fmt.Errorf("%w: malformed identity baseline", ErrRenamedEntry)
+	}
+
+	identities := strings.Split(strings.TrimSuffix(string(body), "\n"), "\n")
+	if len(entries) != len(identities)*2 {
+		return fmt.Errorf("%w: identity baseline", ErrMissingEntry)
+	}
+	expectedStems := make(map[uint]string, len(identities))
+	for index, identity := range identities {
+		matches := migrationIdentity.FindStringSubmatch(identity)
+		if matches == nil {
+			return fmt.Errorf("%w: malformed identity baseline", ErrRenamedEntry)
+		}
+		versionValue, err := strconv.ParseUint(matches[1], 10, 64)
+		if err != nil || versionValue != uint64(index+1) {
+			return fmt.Errorf("%w: identity baseline version %06d", ErrRenamedEntry, index+1)
+		}
+		expectedStems[uint(versionValue)] = matches[2]
+	}
+	for _, entry := range entries {
+		matches := migrationFilename.FindStringSubmatch(entry.Name)
+		if expectedStems[entry.Version] != matches[2] {
+			return fmt.Errorf("%w: version %06d", ErrRenamedEntry, entry.Version)
+		}
+	}
+	return nil
 }
 
 func verifyFiles(fsys fs.FS, root string, entries []Entry) error {

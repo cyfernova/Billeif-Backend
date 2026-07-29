@@ -215,6 +215,9 @@ func handlerTestBundle() fstest.MapFS {
 	return fstest.MapFS{
 		"000001_test.up.sql":   &fstest.MapFile{Data: []byte("CREATE TABLE test (id integer);\n")},
 		"000001_test.down.sql": &fstest.MapFile{Data: []byte("DROP TABLE test;\n")},
+		migrationbundle.IdentityFilename: &fstest.MapFile{Data: []byte(
+			"000001_test\n",
+		)},
 		migrationbundle.ManifestFilename: &fstest.MapFile{Data: []byte(
 			"5111d07169d0ba3c9f4c861fa6076c786f86469e298450c641c3e70ea21df8f6  000001_test.down.sql\n" +
 				"30d16a80498b1d62b4b13130c046b82dedf340b99cdb15ba0d2500a7e6a102be  000001_test.up.sql\n",

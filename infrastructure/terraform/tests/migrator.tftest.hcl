@@ -190,6 +190,25 @@ run "migrator_iam_and_database_ingress_are_exact" {
   assert {
     condition = length([
       for statement in data.aws_iam_policy_document.database_migrator.statement : statement
+      if statement.sid == "MigrationVPC" &&
+      length(statement.actions) == 6 &&
+      alltrue([
+        for action in [
+          "ec2:AssignPrivateIpAddresses",
+          "ec2:CreateNetworkInterface",
+          "ec2:DeleteNetworkInterface",
+          "ec2:DescribeNetworkInterfaces",
+          "ec2:DescribeSubnets",
+          "ec2:UnassignPrivateIpAddresses",
+        ] : contains(statement.actions, action)
+      ])
+    ]) == 1
+    error_message = "The VPC-attached migrator must have the complete exact Lambda ENI permission set."
+  }
+
+  assert {
+    condition = length([
+      for statement in data.aws_iam_policy_document.database_migrator.statement : statement
       if statement.sid == "MigrationSecret" &&
       length(statement.resources) == 1 &&
       contains(statement.resources, aws_db_instance.main.master_user_secret[0].secret_arn) &&
