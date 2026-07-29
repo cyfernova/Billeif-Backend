@@ -66,6 +66,29 @@ type InvoiceRepository interface {
 	Delete(ctx context.Context, id string) error
 }
 
+type AtomicInvoiceDraft struct {
+	BusinessID      string
+	Command         string
+	IdempotencyKey  string
+	RequestHash     string
+	Invoice         *models.Invoice
+	Document        *models.Document
+	Activity        *models.ActivityLog
+	OutboxEvents    []*models.OutboxEvent
+	RenderJobs      []*models.DocumentRenderJob
+	EmailDeliveries []*models.EmailDelivery
+}
+
+type AtomicInvoiceDraftResult struct {
+	Invoice  *models.Invoice
+	Replayed bool
+}
+
+type CanonicalInvoiceRepository interface {
+	InvoiceRepository
+	CreateDraftAtomic(ctx context.Context, command AtomicInvoiceDraft) (*AtomicInvoiceDraftResult, error)
+}
+
 type PaymentRepository interface {
 	Create(ctx context.Context, payment *models.Payment) error
 	GetByID(ctx context.Context, id, businessID string) (*models.Payment, error)

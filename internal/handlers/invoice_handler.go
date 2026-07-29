@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"errors"
+	"invoice-backend/internal/idempotency"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/services"
 	"invoice-backend/internal/utils"
@@ -27,14 +29,20 @@ func NewInvoiceHandler(svc *services.InvoiceService, compliance *services.TaxCom
 // @Accept json
 // @Produce json
 // @Security BearerAuth
+// @Param Idempotency-Key header string true "UUID idempotency key"
 // @Param input body services.CreateInvoiceInput true "Invoice details"
 // @Success 201 {object} models.Invoice
 // @Failure 400 {object} map[string]string
+// @Failure 409 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /invoices [post]
 func (h *InvoiceHandler) Create(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("invoice_handler").With("operation", "create")
 	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	idempotencyKey, ok := requireIdempotencyKey(c)
 	if !ok {
 		return
 	}
@@ -45,18 +53,35 @@ func (h *InvoiceHandler) Create(c *gin.Context) {
 		return
 	}
 	input.BusinessID = businessID
+	input.IdempotencyKey = idempotencyKey
 	requestContextWithActor(c)
 
 	var invoice *models.Invoice
 	invoice, err := h.svc.CreateByBusiness(c.Request.Context(), businessID, input)
 	if err != nil {
 		log.Error("failed to create invoice", "error", err, "business_id", input.BusinessID, "customer_id", input.CustomerID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(invoiceCreateErrorStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 	log.Info("invoice created", "invoice_id", invoice.ID, "business_id", invoice.BusinessID, "invoice_no", invoice.InvoiceNo)
 
 	c.JSON(http.StatusCreated, invoice)
+}
+
+func invoiceCreateErrorStatus(err error) int {
+	var invalidKey *idempotency.InvalidKeyError
+	if errors.As(err, &invalidKey) {
+		return http.StatusBadRequest
+	}
+	var conflict *idempotency.ConflictError
+	if errors.As(err, &conflict) {
+		return http.StatusConflict
+	}
+	var inProgress *idempotency.InProgressError
+	if errors.As(err, &inProgress) {
+		return http.StatusConflict
+	}
+	return http.StatusInternalServerError
 }
 
 // Get retrieves an invoice by ID

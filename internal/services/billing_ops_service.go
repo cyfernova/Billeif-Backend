@@ -1638,6 +1638,7 @@ func (s *BillingOpsService) GenerateInvoiceSubscriptionNow(ctx context.Context, 
 	input := CreateInvoiceInput{
 		BusinessID:           businessID,
 		CustomerID:           subscription.CustomerID,
+		IdempotencyKey:       run.ID,
 		DueDate:              scheduledFor.AddDate(0, 0, 30),
 		Notes:                subscription.Notes,
 		Items:                items,

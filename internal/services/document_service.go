@@ -31,6 +31,7 @@ type DocumentService struct {
 	journals      *JournalService
 	shipping      *ShippingService
 	taxCompliance *TaxComplianceService
+	salesInvoices salesInvoiceDocumentCreator
 	sqs           *sqs.Client
 	log           *logger.Logger
 }
@@ -59,6 +60,7 @@ type CreateDocumentLineInput struct {
 
 type CreateDocumentInput struct {
 	BusinessID           string                    `json:"business_id,omitempty"`
+	IdempotencyKey       string                    `json:"-"`
 	BranchID             string                    `json:"branch_id,omitempty" binding:"omitempty,uuid"`
 	PartyID              string                    `json:"party_id"`
 	PartyType            string                    `json:"party_type"`
@@ -206,6 +208,12 @@ func (s *DocumentService) AttachTaxComplianceService(taxCompliance *TaxComplianc
 }
 
 func (s *DocumentService) CreateByType(ctx context.Context, businessID, documentType string, input CreateDocumentInput) (*models.Document, error) {
+	if documentType == models.DocumentTypeSalesInvoice {
+		if s.salesInvoices == nil {
+			return nil, fmt.Errorf("canonical sales invoice creator is not configured")
+		}
+		return s.salesInvoices.CreateSalesInvoiceDocument(ctx, businessID, input)
+	}
 	document, err := s.buildDocument(ctx, businessID, documentType, input)
 	if err != nil {
 		return nil, err

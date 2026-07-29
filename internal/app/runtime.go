@@ -265,7 +265,7 @@ type Repositories struct {
 	Journal      interfaces.JournalRepository
 	Inventory    interfaces.InventoryRepository
 	Shipping     interfaces.ShippingRepository
-	Invoice      interfaces.InvoiceRepository
+	Invoice      interfaces.CanonicalInvoiceRepository
 	Payment      interfaces.PaymentRepository
 	Ledger       interfaces.LedgerRepository
 	Reporting    interfaces.ReportingRepository

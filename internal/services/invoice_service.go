@@ -9,6 +9,7 @@ import (
 
 	"invoice-backend/internal/config"
 	"invoice-backend/internal/gst"
+	"invoice-backend/internal/idempotency"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/awsclients"
@@ -25,7 +26,8 @@ type InvoiceEmailSender interface {
 type InvoiceService struct {
 	db           *gorm.DB
 	cfg          *config.Config
-	repo         interfaces.InvoiceRepository
+	repo         interfaces.CanonicalInvoiceRepository
+	businessRepo interfaces.BusinessRepository
 	productRepo  interfaces.ProductRepository
 	customerRepo interfaces.CustomerRepository
 	documents    *DocumentService
@@ -37,7 +39,8 @@ type InvoiceService struct {
 func NewInvoiceService(
 	db *gorm.DB,
 	cfg *config.Config,
-	repo interfaces.InvoiceRepository,
+	repo interfaces.CanonicalInvoiceRepository,
+	businessRepo interfaces.BusinessRepository,
 	productRepo interfaces.ProductRepository,
 	customerRepo interfaces.CustomerRepository,
 	documents *DocumentService,
@@ -50,6 +53,7 @@ func NewInvoiceService(
 		db:           db,
 		cfg:          cfg,
 		repo:         repo,
+		businessRepo: businessRepo,
 		productRepo:  productRepo,
 		customerRepo: customerRepo,
 		documents:    documents,
@@ -80,6 +84,7 @@ type CreateInvoiceItemInput struct {
 
 type CreateInvoiceInput struct {
 	BusinessID           string                   `json:"business_id,omitempty"`
+	IdempotencyKey       string                   `json:"-"`
 	CustomerID           string                   `json:"customer_id" binding:"required,uuid"`
 	ProjectID            string                   `json:"project_id,omitempty" binding:"omitempty,uuid"`
 	PriceListID          string                   `json:"price_list_id,omitempty"`
@@ -99,6 +104,13 @@ type CreateInvoiceInput struct {
 }
 
 func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (*models.Invoice, error) {
+	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
+	if _, err := uuid.Parse(input.IdempotencyKey); err != nil {
+		return nil, &idempotency.InvalidKeyError{}
+	}
+	if s.repo == nil {
+		return nil, fmt.Errorf("canonical invoice repository is not configured")
+	}
 	if input.RenderProfileID != "" {
 		normalized, err := normalizeRenderProfileID(input.RenderProfileID)
 		if err != nil {
@@ -106,7 +118,18 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 		}
 		input.RenderProfileID = normalized
 	}
-	_, err := s.customerRepo.GetByID(ctx, input.CustomerID, input.BusinessID)
+	requestHash, err := idempotency.CanonicalHash(input)
+	if err != nil {
+		return nil, err
+	}
+	if s.businessRepo == nil {
+		return nil, fmt.Errorf("business repository is not configured")
+	}
+	business, err := s.businessRepo.GetByID(ctx, input.BusinessID)
+	if err != nil {
+		return nil, fmt.Errorf("business not found: %w", err)
+	}
+	customer, err := s.customerRepo.GetByID(ctx, input.CustomerID, input.BusinessID)
 	if err != nil {
 		return nil, fmt.Errorf("customer not found: %w", err)
 	}
@@ -219,6 +242,7 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 		invoiceDate = time.Now()
 	}
 	invoice := &models.Invoice{
+		ID:                uuid.NewString(),
 		BusinessID:        input.BusinessID,
 		CustomerID:        models.StringPointer(input.CustomerID),
 		ProjectID:         projectIDPointer(projectID),
@@ -227,6 +251,8 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 		Status:            models.InvoiceStatusDraft,
 		Origin:            origin,
 		Version:           1,
+		SellerSnapshot:    businessPartySnapshot(business),
+		BuyerSnapshot:     customerPartySnapshot(customer),
 		InvoiceDate:       invoiceDate,
 		DueDate:           input.DueDate,
 		Subtotal:          subtotal,
@@ -237,7 +263,7 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 		CustomFields:      mustMarshalMap(customFields),
 		AdditionalCharges: mustMarshalAny(input.AdditionalCharges, "[]"),
 		TaxProfile:        mustMarshalMap(taxProfileToMap(input.TaxProfile)),
-		Currency:          "USD",
+		Currency:          defaultCurrency(business.Currency),
 		Items:             items,
 	}
 	if input.OriginSubscriptionID != "" {
@@ -247,18 +273,45 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 		invoice.OriginRunID = &input.OriginRunID
 	}
 
-	if err := s.repo.Create(ctx, invoice); err != nil {
+	for _, item := range invoice.Items {
+		item.ID = uuid.NewString()
+		item.InvoiceID = invoice.ID
+	}
+	actor := actorFromContext(ctx)
+	if _, err := uuid.Parse(actor.UserID); err != nil {
+		return nil, fmt.Errorf("invoice create actor is required")
+	}
+	document := invoiceDocumentProjection(invoice)
+	activity := &models.ActivityLog{
+		BusinessID: invoice.BusinessID,
+		ActorID:    actor.UserID,
+		ActorRole:  actor.Role,
+		RequestID:  actor.RequestID,
+		IPAddress:  actor.IPAddress,
+		EntityType: "invoice",
+		EntityID:   invoice.ID,
+		Action:     "created",
+		Snapshot:   mustMarshalAny(invoice, "{}"),
+		Diff:       "{}",
+		Metadata:   "{}",
+	}
+	result, err := s.repo.CreateDraftAtomic(ctx, interfaces.AtomicInvoiceDraft{
+		BusinessID:     invoice.BusinessID,
+		Command:        "invoice.create",
+		IdempotencyKey: input.IdempotencyKey,
+		RequestHash:    requestHash,
+		Invoice:        invoice,
+		Document:       document,
+		Activity:       activity,
+	})
+	if err != nil {
 		return nil, fmt.Errorf("failed to create invoice: %w", err)
 	}
-	hydrateInvoiceEditorFields(invoice)
-	if s.documents != nil {
-		if err := s.documents.MirrorLegacyInvoice(ctx, invoice); err != nil {
-			s.log.Error("failed to mirror invoice into documents", "invoice_id", invoice.ID, "error", err)
-		}
+	if result == nil || result.Invoice == nil {
+		return nil, fmt.Errorf("failed to create invoice: atomic repository returned no result")
 	}
-	_ = recordActivityLog(ctx, s.db, invoice.BusinessID, "invoice", invoice.ID, "created", "", invoice, nil, nil)
-
-	return invoice, nil
+	hydrateInvoiceEditorFields(result.Invoice)
+	return result.Invoice, nil
 }
 
 func (s *InvoiceService) CreateByBusiness(ctx context.Context, businessID string, input CreateInvoiceInput) (*models.Invoice, error) {

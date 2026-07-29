@@ -7661,6 +7661,13 @@ const docTemplate = `{
                 "summary": "Create invoice",
                 "parameters": [
                     {
+                        "type": "string",
+                        "description": "UUID idempotency key",
+                        "name": "Idempotency-Key",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
                         "description": "Invoice details",
                         "name": "input",
                         "in": "body",
@@ -7679,6 +7686,15 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {

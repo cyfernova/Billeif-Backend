@@ -3,9 +3,13 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
+	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
+	"invoice-backend/internal/idempotency"
 	"invoice-backend/internal/models"
 	interfaces "invoice-backend/internal/repositories/interfaces"
 )
@@ -14,8 +18,151 @@ type invoiceRepository struct {
 	db *gorm.DB
 }
 
-func NewInvoiceRepository(db *gorm.DB) interfaces.InvoiceRepository {
+func NewInvoiceRepository(db *gorm.DB) interfaces.CanonicalInvoiceRepository {
 	return &invoiceRepository{db: db}
+}
+
+type atomicInvoicePersistenceError struct {
+	stage string
+	cause error
+}
+
+func (e *atomicInvoicePersistenceError) Error() string {
+	return fmt.Sprintf("atomic invoice draft persistence failed at %s", e.stage)
+}
+
+func (e *atomicInvoicePersistenceError) Unwrap() error {
+	return e.cause
+}
+
+func (r *invoiceRepository) CreateDraftAtomic(ctx context.Context, command interfaces.AtomicInvoiceDraft) (*interfaces.AtomicInvoiceDraftResult, error) {
+	var replayInvoiceID string
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		claim := &models.APIIdempotencyKey{
+			BusinessID:     command.BusinessID,
+			Command:        command.Command,
+			IdempotencyKey: command.IdempotencyKey,
+			RequestHash:    command.RequestHash,
+			Status:         models.IdempotencyStatusInProgress,
+		}
+		result := tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{
+				{Name: "business_id"},
+				{Name: "command"},
+				{Name: "idempotency_key"},
+			},
+			DoNothing: true,
+		}).Create(claim)
+		if result.Error != nil {
+			return atomicStageError("idempotency claim", result.Error)
+		}
+		if result.RowsAffected == 0 {
+			var existing models.APIIdempotencyKey
+			if err := tx.Where(
+				"business_id = ? AND command = ? AND idempotency_key = ?",
+				command.BusinessID,
+				command.Command,
+				command.IdempotencyKey,
+			).First(&existing).Error; err != nil {
+				return atomicStageError("idempotency replay lookup", err)
+			}
+			if existing.RequestHash != command.RequestHash {
+				return &idempotency.ConflictError{}
+			}
+			if existing.Status != models.IdempotencyStatusCompleted ||
+				existing.ResultType == nil || *existing.ResultType != "invoice" ||
+				existing.ResultID == nil {
+				return &idempotency.InProgressError{}
+			}
+			replayInvoiceID = *existing.ResultID
+			return nil
+		}
+
+		if command.Invoice == nil || command.Document == nil || command.Activity == nil {
+			return atomicStageError("command validation", errors.New("missing required atomic row"))
+		}
+		if err := tx.Omit(clause.Associations).Create(command.Invoice).Error; err != nil {
+			return atomicStageError("invoice", err)
+		}
+		for _, item := range command.Invoice.Items {
+			if err := tx.Create(item).Error; err != nil {
+				return atomicStageError("invoice items", err)
+			}
+		}
+		if err := tx.Omit(clause.Associations).Create(command.Document).Error; err != nil {
+			return atomicStageError("document projection", err)
+		}
+		for _, line := range command.Document.Lines {
+			if err := tx.Create(line).Error; err != nil {
+				return atomicStageError("document projection items", err)
+			}
+		}
+		if err := tx.Create(command.Activity).Error; err != nil {
+			return atomicStageError("activity", err)
+		}
+		for _, event := range command.OutboxEvents {
+			if err := tx.Create(event).Error; err != nil {
+				return atomicStageError("outbox events", err)
+			}
+		}
+		for _, job := range command.RenderJobs {
+			if err := tx.Create(job).Error; err != nil {
+				return atomicStageError("render jobs", err)
+			}
+		}
+		for _, delivery := range command.EmailDeliveries {
+			if err := tx.Create(delivery).Error; err != nil {
+				return atomicStageError("email deliveries", err)
+			}
+		}
+
+		now := time.Now().UTC()
+		resultType := "invoice"
+		update := tx.Model(&models.APIIdempotencyKey{}).
+			Where(
+				"business_id = ? AND command = ? AND idempotency_key = ? AND request_hash = ? AND status = ?",
+				command.BusinessID,
+				command.Command,
+				command.IdempotencyKey,
+				command.RequestHash,
+				models.IdempotencyStatusInProgress,
+			).
+			Updates(map[string]interface{}{
+				"status":       models.IdempotencyStatusCompleted,
+				"result_type":  resultType,
+				"result_id":    command.Invoice.ID,
+				"completed_at": now,
+				"updated_at":   now,
+			})
+		if update.Error != nil {
+			return atomicStageError("idempotency completion", update.Error)
+		}
+		if update.RowsAffected != 1 {
+			return atomicStageError("idempotency completion", errors.New("claim was not completed"))
+		}
+		return nil
+	})
+	if err != nil {
+		var typedConflict *idempotency.ConflictError
+		var typedInProgress *idempotency.InProgressError
+		var persistence *atomicInvoicePersistenceError
+		if errors.As(err, &typedConflict) || errors.As(err, &typedInProgress) || errors.As(err, &persistence) {
+			return nil, err
+		}
+		return nil, atomicStageError("transaction commit", err)
+	}
+	if replayInvoiceID != "" {
+		invoice, err := r.GetByID(ctx, replayInvoiceID, command.BusinessID)
+		if err != nil {
+			return nil, atomicStageError("idempotency result replay", err)
+		}
+		return &interfaces.AtomicInvoiceDraftResult{Invoice: invoice, Replayed: true}, nil
+	}
+	return &interfaces.AtomicInvoiceDraftResult{Invoice: command.Invoice}, nil
+}
+
+func atomicStageError(stage string, err error) error {
+	return &atomicInvoicePersistenceError{stage: stage, cause: err}
 }
 
 func (r *invoiceRepository) Create(ctx context.Context, invoice *models.Invoice) error {

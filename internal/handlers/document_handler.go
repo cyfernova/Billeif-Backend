@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 
+	"invoice-backend/internal/models"
 	"invoice-backend/internal/services"
 	"invoice-backend/internal/utils"
 	"invoice-backend/pkg/logger"
@@ -88,15 +89,24 @@ func (h *DocumentHandler) Create(c *gin.Context) {
 	if !ok {
 		return
 	}
+	idempotencyKey := ""
+	if h.documentType == models.DocumentTypeSalesInvoice {
+		var present bool
+		idempotencyKey, present = requireIdempotencyKey(c)
+		if !present {
+			return
+		}
+	}
 	var input services.CreateDocumentInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	input.IdempotencyKey = idempotencyKey
 	requestContextWithActor(c)
 	document, err := h.svc.CreateByType(c.Request.Context(), businessID, h.documentType, input)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(invoiceCreateErrorStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusCreated, document)

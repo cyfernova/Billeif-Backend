@@ -76,7 +76,7 @@ func NewContainer(
 	journalRepo interfaces.JournalRepository,
 	inventoryRepo interfaces.InventoryRepository,
 	shippingRepo interfaces.ShippingRepository,
-	invoiceRepo interfaces.InvoiceRepository,
+	invoiceRepo interfaces.CanonicalInvoiceRepository,
 	paymentRepo interfaces.PaymentRepository,
 	ledgerRepo interfaces.LedgerRepository,
 	reportingRepo interfaces.ReportingRepository,
@@ -129,7 +129,8 @@ func NewContainer(
 
 	webhookSvc := NewWebhookService(webhookRepo, log)
 	taxComplianceSvc := NewTaxComplianceService(cfg, db, businessRepo, customerRepo, vendorRepo, subscriptionRepo, aws, s3Svc, webhookSvc, log, resolver)
-	invoiceSvc := NewInvoiceService(db, cfg, invoiceRepo, productRepo, customerRepo, documentSvc, aws, s3Svc, emailSvc, log)
+	invoiceSvc := NewInvoiceService(db, cfg, invoiceRepo, businessRepo, productRepo, customerRepo, documentSvc, aws, s3Svc, emailSvc, log)
+	documentSvc.salesInvoices = newInvoiceSalesDocumentCreator(invoiceSvc)
 	billingOpsSvc := NewBillingOpsService(cfg, db, customerRepo, vendorRepo, productRepo, invoiceSvc, documentSvc, s3Svc, log)
 	documentSvc.AttachTaxComplianceService(taxComplianceSvc)
 	taxComplianceSvc.AttachDocumentService(documentSvc)
