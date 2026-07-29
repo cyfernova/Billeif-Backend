@@ -83,6 +83,15 @@ terraform.tfvars.json
 docs/swagger.json
 docs/swagger.yaml
 
+# Local implementation progress
+.superpowers/
+progress.md
+progress-*.md
+*-progress.md
+PROGRESS.md
+PROGRESS-*.md
+*-PROGRESS.md
+
 # Logs
 *.log
 logs.txt
