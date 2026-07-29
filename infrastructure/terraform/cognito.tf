@@ -116,7 +116,7 @@ resource "aws_cognito_user_pool_domain" "main" {
   lifecycle {
     precondition {
       condition = (
-        length(local.resource_prefix) <= 32 &&
+        length(local.resource_prefix) <= 29 &&
         can(regex("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", local.cognito_hosted_ui_domain_prefix)) &&
         strcontains(local.cognito_hosted_ui_domain_prefix, "billeif") &&
         !strcontains(local.cognito_hosted_ui_domain_prefix, "aws") &&

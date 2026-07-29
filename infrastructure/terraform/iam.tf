@@ -185,7 +185,7 @@ data "aws_iam_policy_document" "lambda_app" {
       "sns:Publish"
     ]
     resources = [
-      aws_ses_email_identity.main.arn,
+      local.ses_verified_identity_arn,
       aws_sns_topic.alerts.arn,
       aws_sns_topic.low_stock_alerts.arn,
       aws_sns_topic.payment_notifications.arn,
@@ -443,7 +443,7 @@ data "aws_iam_policy_document" "lambda_worker_app" {
     sid       = "WorkerEmail"
     effect    = "Allow"
     actions   = ["ses:SendEmail", "ses:SendRawEmail"]
-    resources = [aws_ses_email_identity.main.arn]
+    resources = [local.ses_verified_identity_arn]
   }
 }
 

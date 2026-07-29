@@ -17,8 +17,8 @@ variable "project_name" {
   default     = "billeif"
 
   validation {
-    condition     = can(regex("^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$", trimspace(var.project_name)))
-    error_message = "project_name must be 1-32 lowercase letters, digits, or hyphens, beginning and ending with an alphanumeric character."
+    condition     = var.project_name == trimspace(var.project_name) && can(regex("^[a-z0-9](?:[a-z0-9-]{0,27}[a-z0-9])?$", var.project_name))
+    error_message = "project_name must be 1-29 lowercase letters, digits, or hyphens, without surrounding whitespace and beginning and ending with an alphanumeric character."
   }
 }
 
@@ -28,8 +28,13 @@ variable "environment" {
   default     = "dev"
 
   validation {
-    condition     = can(regex("^[a-z0-9](?:[a-z0-9-]{0,40}[a-z0-9])?$", trimspace(var.environment)))
-    error_message = "environment must be 1-42 lowercase letters, digits, or hyphens, beginning and ending with an alphanumeric character."
+    condition     = var.environment == trimspace(var.environment) && can(regex("^[a-z0-9](?:[a-z0-9-]{0,40}[a-z0-9])?$", var.environment))
+    error_message = "environment must be 1-42 lowercase letters, digits, or hyphens, without surrounding whitespace and beginning and ending with an alphanumeric character."
+  }
+
+  validation {
+    condition     = length("${var.project_name}-${var.environment}") <= 29
+    error_message = "project_name and environment must form a resource prefix of at most 29 characters so generated IAM role names fit AWS limits."
   }
 }
 
@@ -39,8 +44,8 @@ variable "user_pool_name" {
   default     = ""
 
   validation {
-    condition     = trimspace(var.user_pool_name) == "" || strcontains(lower(trimspace(var.user_pool_name)), "billeif")
-    error_message = "user_pool_name overrides must contain the billeif brand."
+    condition     = var.user_pool_name == trimspace(var.user_pool_name) && (var.user_pool_name == "" || (can(regex("^[\\w\\s+=,.@-]{1,128}$", var.user_pool_name)) && strcontains(lower(var.user_pool_name), "billeif")))
+    error_message = "user_pool_name overrides must be 1-128 Cognito-valid characters without surrounding whitespace and contain the billeif brand."
   }
 }
 
@@ -50,8 +55,8 @@ variable "client_name" {
   default     = ""
 
   validation {
-    condition     = trimspace(var.client_name) == "" || strcontains(lower(trimspace(var.client_name)), "billeif")
-    error_message = "client_name overrides must contain the billeif brand."
+    condition     = var.client_name == trimspace(var.client_name) && (var.client_name == "" || (can(regex("^[\\w\\s+=,.@-]{1,128}$", var.client_name)) && strcontains(lower(var.client_name), "billeif")))
+    error_message = "client_name overrides must be 1-128 Cognito-valid characters without surrounding whitespace and contain the billeif brand."
   }
 }
 
@@ -61,8 +66,8 @@ variable "phone_user_pool_name" {
   default     = ""
 
   validation {
-    condition     = trimspace(var.phone_user_pool_name) == "" || strcontains(lower(trimspace(var.phone_user_pool_name)), "billeif")
-    error_message = "phone_user_pool_name overrides must contain the billeif brand."
+    condition     = var.phone_user_pool_name == trimspace(var.phone_user_pool_name) && (var.phone_user_pool_name == "" || (can(regex("^[\\w\\s+=,.@-]{1,128}$", var.phone_user_pool_name)) && strcontains(lower(var.phone_user_pool_name), "billeif")))
+    error_message = "phone_user_pool_name overrides must be 1-128 Cognito-valid characters without surrounding whitespace and contain the billeif brand."
   }
 }
 
@@ -72,8 +77,8 @@ variable "phone_client_name" {
   default     = ""
 
   validation {
-    condition     = trimspace(var.phone_client_name) == "" || strcontains(lower(trimspace(var.phone_client_name)), "billeif")
-    error_message = "phone_client_name overrides must contain the billeif brand."
+    condition     = var.phone_client_name == trimspace(var.phone_client_name) && (var.phone_client_name == "" || (can(regex("^[\\w\\s+=,.@-]{1,128}$", var.phone_client_name)) && strcontains(lower(var.phone_client_name), "billeif")))
+    error_message = "phone_client_name overrides must be 1-128 Cognito-valid characters without surrounding whitespace and contain the billeif brand."
   }
 }
 
@@ -187,14 +192,14 @@ variable "cognito_domain_prefix" {
   default     = ""
 
   validation {
-    condition = trimspace(var.cognito_domain_prefix) == "" || (
-      trimspace(var.cognito_domain_prefix) == lower(trimspace(var.cognito_domain_prefix)) &&
-      can(regex("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", trimspace(var.cognito_domain_prefix))) &&
-      strcontains(lower(trimspace(var.cognito_domain_prefix)), "billeif") &&
-      !strcontains(lower(trimspace(var.cognito_domain_prefix)), "aws") &&
-      !strcontains(lower(trimspace(var.cognito_domain_prefix)), "amazon") &&
-      !strcontains(lower(trimspace(var.cognito_domain_prefix)), "cognito")
-    )
+    condition = var.cognito_domain_prefix == trimspace(var.cognito_domain_prefix) && (var.cognito_domain_prefix == "" || (
+      var.cognito_domain_prefix == lower(var.cognito_domain_prefix) &&
+      can(regex("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", var.cognito_domain_prefix)) &&
+      strcontains(lower(var.cognito_domain_prefix), "billeif") &&
+      !strcontains(lower(var.cognito_domain_prefix), "aws") &&
+      !strcontains(lower(var.cognito_domain_prefix), "amazon") &&
+      !strcontains(lower(var.cognito_domain_prefix), "cognito")
+    ))
     error_message = "cognito_domain_prefix must be a 1-63 character lowercase Cognito prefix containing billeif and no reserved aws, amazon, or cognito text."
   }
 }
@@ -267,6 +272,11 @@ variable "phone_auth_cooldown_table_name" {
   description = "Optional DynamoDB table name override for per-phone OTP throttling."
   type        = string
   default     = ""
+
+  validation {
+    condition     = var.phone_auth_cooldown_table_name == trimspace(var.phone_auth_cooldown_table_name) && (var.phone_auth_cooldown_table_name == "" || can(regex("^[A-Za-z0-9_.-]{3,255}$", var.phone_auth_cooldown_table_name)))
+    error_message = "phone_auth_cooldown_table_name must be a 3-255 character DynamoDB table name without surrounding whitespace."
+  }
 }
 
 # DynamoDB tables
@@ -274,6 +284,11 @@ variable "websocket_connections_table" {
   description = "Optional DynamoDB table name override for websocket connections."
   type        = string
   default     = ""
+
+  validation {
+    condition     = var.websocket_connections_table == trimspace(var.websocket_connections_table) && (var.websocket_connections_table == "" || can(regex("^[A-Za-z0-9_.-]{3,255}$", var.websocket_connections_table)))
+    error_message = "websocket_connections_table must be a 3-255 character DynamoDB table name without surrounding whitespace."
+  }
 }
 
 # LLM Configuration
@@ -477,24 +492,44 @@ variable "voice_sessions_table_name" {
   description = "Optional DynamoDB table name override for realtime voice session state."
   type        = string
   default     = ""
+
+  validation {
+    condition     = var.voice_sessions_table_name == trimspace(var.voice_sessions_table_name) && (var.voice_sessions_table_name == "" || can(regex("^[A-Za-z0-9_.-]{3,255}$", var.voice_sessions_table_name)))
+    error_message = "voice_sessions_table_name must be a 3-255 character DynamoDB table name without surrounding whitespace."
+  }
 }
 
 variable "voice_session_lambda_function_name" {
   description = "Optional Lambda function name override for the realtime voice session worker."
   type        = string
   default     = ""
+
+  validation {
+    condition     = var.voice_session_lambda_function_name == trimspace(var.voice_session_lambda_function_name) && (var.voice_session_lambda_function_name == "" || can(regex("^[A-Za-z0-9-_]{1,64}$", var.voice_session_lambda_function_name)))
+    error_message = "voice_session_lambda_function_name must be a 1-64 character Lambda name without surrounding whitespace."
+  }
 }
 
-variable "ses_verified_sender" {
-  description = "Already-verified SES sender email address or domain. Supply this before the first application apply; Terraform does not verify it."
+variable "ses_verified_identity" {
+  description = "Already-verified SES identity email address or domain. Supply this before the first application apply; Terraform only references its ARN."
   type        = string
 
   validation {
     condition = (
-      can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", trimspace(var.ses_verified_sender))) ||
-      can(regex("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$", lower(trimspace(var.ses_verified_sender))))
-    ) && !endswith(lower(trimspace(var.ses_verified_sender)), ".local")
-    error_message = "ses_verified_sender must be a non-.local email address or domain that is already verified in SES."
+      can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", var.ses_verified_identity)) ||
+      can(regex("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$", lower(var.ses_verified_identity)))
+    ) && var.ses_verified_identity == trimspace(var.ses_verified_identity) && !endswith(lower(var.ses_verified_identity), ".local")
+    error_message = "ses_verified_identity must be a non-.local email address or domain, without surrounding whitespace, that is already verified in SES."
+  }
+}
+
+variable "ses_sender_email" {
+  description = "Concrete email address used as SES From address. It must be the verified identity or belong to the verified identity domain."
+  type        = string
+
+  validation {
+    condition     = var.ses_sender_email == trimspace(var.ses_sender_email) && can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", var.ses_sender_email)) && !endswith(lower(var.ses_sender_email), ".local")
+    error_message = "ses_sender_email must be a non-.local email address without surrounding whitespace."
   }
 }
 

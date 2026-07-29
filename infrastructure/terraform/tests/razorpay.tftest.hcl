@@ -125,14 +125,15 @@ run "mumbai_defaults_and_oidc_profile" {
   command = plan
 
   variables {
-    project_name        = "billeif-test"
-    environment         = "test"
-    lambda_artifact_dir = "tests/fixtures/lambda"
-    llm_api_url         = "https://llm.example.test/chat/completions"
-    llm_model           = "test-model"
-    deepseek_base_url   = "https://voice-llm.example.test/v1"
-    deepseek_model      = "voice-test-model"
-    ses_verified_sender = "notifications@billeif.example"
+    project_name          = "billeif-test"
+    environment           = "test"
+    lambda_artifact_dir   = "tests/fixtures/lambda"
+    llm_api_url           = "https://llm.example.test/chat/completions"
+    llm_model             = "test-model"
+    deepseek_base_url     = "https://voice-llm.example.test/v1"
+    deepseek_model        = "voice-test-model"
+    ses_verified_identity = "billeif.example"
+    ses_sender_email      = "notifications@billeif.example"
 
     db_allowed_cidr = "10.0.0.0/24"
   }
@@ -162,14 +163,15 @@ run "aws_profile_accepts_null_for_oidc" {
   command = plan
 
   variables {
-    project_name        = "billeif-test"
-    environment         = "test"
-    lambda_artifact_dir = "tests/fixtures/lambda"
-    llm_api_url         = "https://llm.example.test/chat/completions"
-    llm_model           = "test-model"
-    deepseek_base_url   = "https://voice-llm.example.test/v1"
-    deepseek_model      = "voice-test-model"
-    ses_verified_sender = "notifications@billeif.example"
+    project_name          = "billeif-test"
+    environment           = "test"
+    lambda_artifact_dir   = "tests/fixtures/lambda"
+    llm_api_url           = "https://llm.example.test/chat/completions"
+    llm_model             = "test-model"
+    deepseek_base_url     = "https://voice-llm.example.test/v1"
+    deepseek_model        = "voice-test-model"
+    ses_verified_identity = "billeif.example"
+    ses_sender_email      = "notifications@billeif.example"
 
     aws_profile     = null
     db_allowed_cidr = "10.0.0.0/24"
@@ -185,15 +187,16 @@ run "secret_metadata_rds_lambda_iam_and_output" {
   command = plan
 
   variables {
-    project_name        = "billeif-test"
-    environment         = "test"
-    aws_region          = "us-east-1"
-    lambda_artifact_dir = "tests/fixtures/lambda"
-    llm_api_url         = "https://llm.example.test/chat/completions"
-    llm_model           = "test-model"
-    deepseek_base_url   = "https://voice-llm.example.test/v1"
-    deepseek_model      = "voice-test-model"
-    ses_verified_sender = "notifications@billeif.example"
+    project_name          = "billeif-test"
+    environment           = "test"
+    aws_region            = "us-east-1"
+    lambda_artifact_dir   = "tests/fixtures/lambda"
+    llm_api_url           = "https://llm.example.test/chat/completions"
+    llm_model             = "test-model"
+    deepseek_base_url     = "https://voice-llm.example.test/v1"
+    deepseek_model        = "voice-test-model"
+    ses_verified_identity = "billeif.example"
+    ses_sender_email      = "notifications@billeif.example"
 
     db_allowed_cidr                    = "10.0.0.0/24"
     enable_lambda_reserved_concurrency = false
@@ -456,7 +459,8 @@ run "billeif_branding_defaults_and_public_url_inputs" {
     deepseek_base_url                = "https://voice-llm.example.test/v1"
     deepseek_model                   = "voice-test-model"
     db_allowed_cidr                  = "10.0.0.0/24"
-    ses_verified_sender              = "notifications@billeif.example"
+    ses_verified_identity            = "billeif.example"
+    ses_sender_email                 = "notifications@billeif.example"
     cognito_additional_callback_urls = ["https://customer.example/callback"]
     cognito_additional_logout_urls   = ["https://customer.example/logout"]
   }
@@ -501,7 +505,7 @@ run "billeif_branding_defaults_and_public_url_inputs" {
       aws_dynamodb_table.voice_sessions.name == "billeif-preview-voice-sessions" &&
       aws_lambda_function.voice_session.function_name == "billeif-preview-voice-session" &&
       aws_ses_configuration_set.main.name == "billeif-preview-ses-config" &&
-      aws_ses_email_identity.main.email == "notifications@billeif.example"
+      local.ses_verified_identity_arn == "arn:aws:ses:ap-south-1:123456789012:identity/billeif.example"
     )
     error_message = "Representative AWS resources and the SES contract must use Billeif project/environment naming."
   }
@@ -526,7 +530,8 @@ run "billeif_cognito_domain_override_is_constrained" {
     deepseek_base_url     = "https://voice-llm.example.test/v1"
     deepseek_model        = "voice-test-model"
     db_allowed_cidr       = "10.0.0.0/24"
-    ses_verified_sender   = "notifications@billeif.example"
+    ses_verified_identity = "billeif.example"
+    ses_sender_email      = "notifications@billeif.example"
     cognito_domain_prefix = "billeif-preview-ui"
   }
 
@@ -547,9 +552,150 @@ run "cognito_domain_rejects_reserved_or_unbranded_prefixes" {
     deepseek_base_url     = "https://voice-llm.example.test/v1"
     deepseek_model        = "voice-test-model"
     db_allowed_cidr       = "10.0.0.0/24"
-    ses_verified_sender   = "notifications@billeif.example"
+    ses_verified_identity = "billeif.example"
+    ses_sender_email      = "notifications@billeif.example"
     cognito_domain_prefix = "aws-preview-ui"
   }
 
   expect_failures = [var.cognito_domain_prefix]
+}
+
+run "billeif_resource_prefix_accepts_iam_role_boundary" {
+  command = plan
+
+  variables {
+    project_name          = "billeif-project"
+    environment           = "integration-x"
+    lambda_artifact_dir   = "tests/fixtures/lambda"
+    llm_api_url           = "https://llm.example.test/chat/completions"
+    llm_model             = "test-model"
+    deepseek_base_url     = "https://voice-llm.example.test/v1"
+    deepseek_model        = "voice-test-model"
+    db_allowed_cidr       = "10.0.0.0/24"
+    ses_verified_identity = "billeif.example"
+    ses_sender_email      = "notifications@billeif.example"
+  }
+
+  assert {
+    condition = (
+      length(local.resource_prefix) == 29 &&
+      length(aws_iam_role.lambda_worker_exec["bargaining"].name) == 64 &&
+      length(aws_lambda_function.custom_sms_sender.function_name) <= 64 &&
+      length(aws_s3_bucket.lambda_artifacts.bucket) <= 63
+    )
+    error_message = "The shared Billeif prefix must fit IAM, Lambda, and S3 generated-name limits at the boundary."
+  }
+}
+
+run "resource_prefix_rejects_iam_role_overflow" {
+  command = plan
+
+  variables {
+    project_name          = "billeif-project"
+    environment           = "integration-xx"
+    lambda_artifact_dir   = "tests/fixtures/lambda"
+    llm_api_url           = "https://llm.example.test/chat/completions"
+    llm_model             = "test-model"
+    deepseek_base_url     = "https://voice-llm.example.test/v1"
+    deepseek_model        = "voice-test-model"
+    db_allowed_cidr       = "10.0.0.0/24"
+    ses_verified_identity = "billeif.example"
+    ses_sender_email      = "notifications@billeif.example"
+  }
+
+  expect_failures = [var.environment]
+}
+
+run "project_name_rejects_surrounding_whitespace" {
+  command = plan
+
+  variables {
+    project_name          = "billeif "
+    lambda_artifact_dir   = "tests/fixtures/lambda"
+    llm_api_url           = "https://llm.example.test/chat/completions"
+    llm_model             = "test-model"
+    deepseek_base_url     = "https://voice-llm.example.test/v1"
+    deepseek_model        = "voice-test-model"
+    db_allowed_cidr       = "10.0.0.0/24"
+    ses_verified_identity = "billeif.example"
+    ses_sender_email      = "notifications@billeif.example"
+  }
+
+  expect_failures = [var.project_name]
+}
+
+run "cognito_name_override_accepts_128_characters" {
+  command = plan
+
+  variables {
+    client_name           = format("billeif-%s", join("", [for index in range(120) : "a"]))
+    lambda_artifact_dir   = "tests/fixtures/lambda"
+    llm_api_url           = "https://llm.example.test/chat/completions"
+    llm_model             = "test-model"
+    deepseek_base_url     = "https://voice-llm.example.test/v1"
+    deepseek_model        = "voice-test-model"
+    db_allowed_cidr       = "10.0.0.0/24"
+    ses_verified_identity = "billeif.example"
+    ses_sender_email      = "notifications@billeif.example"
+  }
+
+  assert {
+    condition     = length(aws_cognito_user_pool_client.main.name) == 128
+    error_message = "A valid 128-character Billeif Cognito client override must be accepted."
+  }
+}
+
+run "cognito_name_override_rejects_invalid_characters" {
+  command = plan
+
+  variables {
+    client_name           = "billeif/invalid"
+    lambda_artifact_dir   = "tests/fixtures/lambda"
+    llm_api_url           = "https://llm.example.test/chat/completions"
+    llm_model             = "test-model"
+    deepseek_base_url     = "https://voice-llm.example.test/v1"
+    deepseek_model        = "voice-test-model"
+    db_allowed_cidr       = "10.0.0.0/24"
+    ses_verified_identity = "billeif.example"
+    ses_sender_email      = "notifications@billeif.example"
+  }
+
+  expect_failures = [var.client_name]
+}
+
+run "ses_email_identity_uses_caller_supplied_arn" {
+  command = plan
+
+  variables {
+    lambda_artifact_dir   = "tests/fixtures/lambda"
+    llm_api_url           = "https://llm.example.test/chat/completions"
+    llm_model             = "test-model"
+    deepseek_base_url     = "https://voice-llm.example.test/v1"
+    deepseek_model        = "voice-test-model"
+    db_allowed_cidr       = "10.0.0.0/24"
+    ses_verified_identity = "billing@billeif.example"
+    ses_sender_email      = "billing@billeif.example"
+  }
+
+  assert {
+    condition     = local.ses_verified_identity_arn == "arn:aws:ses:ap-south-1:123456789012:identity/billing@billeif.example"
+    error_message = "An already-verified SES email identity must be referenced directly in IAM."
+  }
+}
+
+run "ses_sender_must_belong_to_verified_domain_identity" {
+  command = plan
+
+  variables {
+    lambda_artifact_dir   = "tests/fixtures/lambda"
+    llm_api_url           = "https://llm.example.test/chat/completions"
+    llm_model             = "test-model"
+    deepseek_base_url     = "https://voice-llm.example.test/v1"
+    deepseek_model        = "voice-test-model"
+    db_allowed_cidr       = "10.0.0.0/24"
+    ses_verified_identity = "billeif.example"
+    ses_sender_email      = "notifications@other.example"
+  }
+
+  expect_failures = [aws_ses_configuration_set.main]
 }

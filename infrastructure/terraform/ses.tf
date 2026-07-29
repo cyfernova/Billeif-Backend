@@ -1,9 +1,14 @@
-resource "aws_ses_email_identity" "main" {
-  email = var.ses_verified_sender
-}
-
 resource "aws_ses_configuration_set" "main" {
   name = "${local.resource_prefix}-ses-config"
+
+  lifecycle {
+    precondition {
+      condition = local.ses_verified_identity_is_email ? (
+        lower(var.ses_sender_email) == lower(var.ses_verified_identity)
+      ) : endswith(lower(var.ses_sender_email), "@${lower(var.ses_verified_identity)}")
+      error_message = "ses_sender_email must equal the verified email identity or belong to the verified SES domain identity."
+    }
+  }
 }
 
 resource "aws_sns_topic" "ses_events" {
