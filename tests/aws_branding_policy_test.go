@@ -589,6 +589,131 @@ resource "aws_lambda_function" "http" {
 	}
 }
 
+func TestTerraformEnvironmentKeyScannerIgnoresLambdaResourceInBlockComment(t *testing.T) {
+	source := `
+/*
+resource "aws_lambda_function" "fake" {
+  environment {
+    variables = {
+      FAKE_BLOCK_COMMENT_KEY = "value"
+    }
+  }
+}
+*/
+resource "aws_lambda_function" "real" {
+  environment {
+    variables = {
+      REAL_BLOCK_COMMENT_KEY = "value"
+    }
+  }
+}`
+	if bodies := terraformLambdaResourceBodies(source); len(bodies) != 1 {
+		t.Fatalf("only the real Lambda resource outside the block comment should be discovered, got %d", len(bodies))
+	}
+	keys := terraformEnvironmentKeysFromSources([]string{source})
+	if containsString(keys, "FAKE_BLOCK_COMMENT_KEY") {
+		t.Fatal("a Lambda environment key inside a block comment must not enter the runtime environment manifest")
+	}
+	if !containsString(keys, "REAL_BLOCK_COMMENT_KEY") {
+		t.Fatal("a real Lambda resource adjacent to a block comment must still be discovered")
+	}
+}
+
+func TestTerraformEnvironmentKeyScannerIgnoresLambdaResourcesInLineComments(t *testing.T) {
+	for name, source := range map[string]string{
+		"slash": `
+// resource "aws_lambda_function" "fake" { environment { variables = { FAKE_SLASH_COMMENT_KEY = "value" } } }
+resource "aws_lambda_function" "real" {
+  environment {
+    variables = {
+      REAL_SLASH_COMMENT_KEY = "value"
+    }
+  }
+}`,
+		"hash": `
+# resource "aws_lambda_function" "fake" { environment { variables = { FAKE_HASH_COMMENT_KEY = "value" } } }
+resource "aws_lambda_function" "real" {
+  environment {
+    variables = {
+      REAL_HASH_COMMENT_KEY = "value"
+    }
+  }
+}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if bodies := terraformLambdaResourceBodies(source); len(bodies) != 1 {
+				t.Fatalf("only the real Lambda resource outside the %s line comment should be discovered, got %d", name, len(bodies))
+			}
+			keys := terraformEnvironmentKeysFromSources([]string{source})
+			fakeKey := "FAKE_" + strings.ToUpper(name) + "_COMMENT_KEY"
+			realKey := "REAL_" + strings.ToUpper(name) + "_COMMENT_KEY"
+			if containsString(keys, fakeKey) {
+				t.Fatalf("a Lambda environment key inside a %s line comment must not enter the runtime environment manifest", name)
+			}
+			if !containsString(keys, realKey) {
+				t.Fatalf("a real Lambda resource adjacent to a %s line comment must still be discovered", name)
+			}
+		})
+	}
+}
+
+func TestTerraformEnvironmentKeyScannerIgnoresLambdaResourceInIndentedHeredoc(t *testing.T) {
+	source := `
+locals {
+  fake_lambda = <<-EOT
+resource "aws_lambda_function" "fake" {
+  environment {
+    variables = {
+      FAKE_HEREDOC_KEY = "value"
+    }
+  }
+}
+shell_function {
+  EOT
+}
+resource "aws_lambda_function" "real" {
+  environment {
+    variables = {
+      REAL_HEREDOC_KEY = "value"
+    }
+  }
+}`
+	if bodies := terraformLambdaResourceBodies(source); len(bodies) != 1 {
+		t.Fatalf("only the real Lambda resource outside the indented heredoc should be discovered, got %d", len(bodies))
+	}
+	keys := terraformEnvironmentKeysFromSources([]string{source})
+	if containsString(keys, "FAKE_HEREDOC_KEY") {
+		t.Fatal("a Lambda environment key inside an indented heredoc must not enter the runtime environment manifest")
+	}
+	if !containsString(keys, "REAL_HEREDOC_KEY") {
+		t.Fatal("a real Lambda resource adjacent to an indented heredoc must still be discovered")
+	}
+}
+
+func TestTerraformEnvironmentKeyScannerIgnoresLambdaResourceInQuotedString(t *testing.T) {
+	source := `
+locals {
+  fake_lambda = "resource \"aws_lambda_function\" \"fake\" { environment { variables = { FAKE_QUOTED_STRING_KEY = \"value\" } } }"
+}
+resource "aws_lambda_function" "real" {
+  environment {
+    variables = {
+      REAL_QUOTED_STRING_KEY = "value"
+    }
+  }
+}`
+	if bodies := terraformLambdaResourceBodies(source); len(bodies) != 1 {
+		t.Fatalf("only the real Lambda resource outside the ordinary quoted string should be discovered, got %d", len(bodies))
+	}
+	keys := terraformEnvironmentKeysFromSources([]string{source})
+	if containsString(keys, "FAKE_QUOTED_STRING_KEY") {
+		t.Fatal("a Lambda environment key inside an ordinary quoted string must not enter the runtime environment manifest")
+	}
+	if !containsString(keys, "REAL_QUOTED_STRING_KEY") {
+		t.Fatal("a real Lambda resource adjacent to an ordinary quoted string must still be discovered")
+	}
+}
+
 func TestTerraformStableNameLocalValidationRejectsConditionalBadBranch(t *testing.T) {
 	failures := stableNameLocalDefinitionFailures(
 		[]terraformAWSNameAttribute{{resourceType: "aws_cognito_user_pool_client", name: "name", expression: "local.cognito_web_client_name"}},
@@ -718,7 +843,6 @@ type terraformAWSNameAttribute struct {
 
 var terraformResourceDeclaration = regexp.MustCompile(`(?m)^resource\s+"([^"]+)"\s+"([^"]+)"\s*\{`)
 var terraformOutputDeclaration = regexp.MustCompile(`(?m)^output\s+"([^"]+)"\s*\{`)
-var terraformLambdaResourceDeclaration = regexp.MustCompile(`(?m)^resource\s+"aws_lambda_function"\s+"[^"]+"\s*\{`)
 var terraformLocalReference = regexp.MustCompile(`\blocal\.([A-Za-z0-9_]+)\b`)
 
 var terraformStableNameAttributes = []string{
@@ -796,14 +920,76 @@ func terraformLocalDefinitionsFromSources(sources []string) map[string]string {
 
 func terraformLambdaResourceBodies(source string) []string {
 	var bodies []string
-	for _, match := range terraformLambdaResourceDeclaration.FindAllStringIndex(source, -1) {
-		openingBrace := strings.LastIndex(source[match[0]:match[1]], "{") + match[0]
+	depth := 0
+	for index := 0; index < len(source); {
+		if next, skipped := terraformSkipQuotedCommentOrHeredoc(source, index); skipped {
+			index = next
+			continue
+		}
+		switch source[index] {
+		case '{', '(', '[':
+			depth++
+			index++
+			continue
+		case '}', ')', ']':
+			if depth > 0 {
+				depth--
+			}
+			index++
+			continue
+		}
+		if depth != 0 || !terraformIdentifierStart(source[index]) {
+			index++
+			continue
+		}
+
+		start, end := index, terraformIdentifierEnd(source, index)
+		if source[start:end] != "resource" {
+			index = end
+			continue
+		}
+		resourceType, next, ok := terraformQuotedLabel(source, terraformSkipWhitespace(source, end))
+		if !ok {
+			index = end
+			continue
+		}
+		_, next, ok = terraformQuotedLabel(source, terraformSkipWhitespace(source, next))
+		if !ok {
+			index = end
+			continue
+		}
+		openingBrace := terraformSkipWhitespace(source, next)
+		if openingBrace >= len(source) || source[openingBrace] != '{' {
+			index = end
+			continue
+		}
 		closingBrace := terraformMatchingDelimiter(source, openingBrace, '{', '}')
-		if closingBrace != -1 {
+		if closingBrace == -1 {
+			return bodies
+		}
+		if resourceType == "aws_lambda_function" {
 			bodies = append(bodies, source[openingBrace+1:closingBrace])
 		}
+		index = closingBrace + 1
 	}
 	return bodies
+}
+
+func terraformQuotedLabel(source string, index int) (string, int, bool) {
+	if index >= len(source) || source[index] != '"' {
+		return "", index, false
+	}
+	start := index + 1
+	for index = start; index < len(source); index++ {
+		if source[index] == '\\' {
+			index++
+			continue
+		}
+		if source[index] == '"' {
+			return source[start:index], index + 1, true
+		}
+	}
+	return "", len(source), false
 }
 
 func terraformEnvironmentMapKeys(expression string, localDefinitions map[string]string, visiting map[string]bool) []string {
@@ -865,7 +1051,7 @@ func terraformTopLevelBlocks(source, name string) []string {
 	var bodies []string
 	depth := 0
 	for index := 0; index < len(source); {
-		if next, skipped := terraformSkipQuotedOrComment(source, index); skipped {
+		if next, skipped := terraformSkipQuotedCommentOrHeredoc(source, index); skipped {
 			index = next
 			continue
 		}
@@ -912,7 +1098,7 @@ func terraformTopLevelAssignments(body string) map[string]string {
 	var entries []topLevelEntry
 	depth := 0
 	for index := 0; index < len(body); {
-		if next, skipped := terraformSkipQuotedOrComment(body, index); skipped {
+		if next, skipped := terraformSkipQuotedCommentOrHeredoc(body, index); skipped {
 			index = next
 			continue
 		}
@@ -958,7 +1144,7 @@ func terraformTopLevelAssignments(body string) map[string]string {
 func terraformMatchingDelimiter(source string, opening int, open, close byte) int {
 	depth := 0
 	for index := opening; index < len(source); {
-		if next, skipped := terraformSkipQuotedOrComment(source, index); skipped {
+		if next, skipped := terraformSkipQuotedCommentOrHeredoc(source, index); skipped {
 			index = next
 			continue
 		}
@@ -975,7 +1161,7 @@ func terraformMatchingDelimiter(source string, opening int, open, close byte) in
 	return -1
 }
 
-func terraformSkipQuotedOrComment(source string, index int) (int, bool) {
+func terraformSkipQuotedCommentOrHeredoc(source string, index int) (int, bool) {
 	if source[index] == '"' {
 		index++
 		for index < len(source) {
@@ -1006,7 +1192,57 @@ func terraformSkipQuotedOrComment(source string, index int) (int, bool) {
 		}
 		return len(source), true
 	}
+	if source[index] == '<' && index+1 < len(source) && source[index+1] == '<' {
+		if end, ok := terraformHeredocEnd(source, index); ok {
+			return end, true
+		}
+	}
 	return index, false
+}
+
+func terraformHeredocEnd(source string, index int) (int, bool) {
+	delimiterStart := index + 2
+	indented := delimiterStart < len(source) && source[delimiterStart] == '-'
+	if indented {
+		delimiterStart++
+	}
+	if delimiterStart >= len(source) || !terraformIdentifierStart(source[delimiterStart]) {
+		return index, false
+	}
+	delimiterEnd := terraformIdentifierEnd(source, delimiterStart)
+	delimiter := source[delimiterStart:delimiterEnd]
+	lineEnd := delimiterEnd
+	for lineEnd < len(source) && (source[lineEnd] == ' ' || source[lineEnd] == '\t' || source[lineEnd] == '\r') {
+		lineEnd++
+	}
+	if lineEnd >= len(source) || source[lineEnd] != '\n' {
+		return index, false
+	}
+
+	for lineStart := lineEnd + 1; lineStart <= len(source); {
+		nextLine := strings.IndexByte(source[lineStart:], '\n')
+		if nextLine == -1 {
+			nextLine = len(source)
+		} else {
+			nextLine += lineStart
+		}
+		candidate := strings.TrimSuffix(source[lineStart:nextLine], "\r")
+		candidate = strings.TrimRight(candidate, " \t")
+		if indented {
+			candidate = strings.TrimLeft(candidate, " \t")
+		}
+		if candidate == delimiter {
+			if nextLine < len(source) {
+				return nextLine + 1, true
+			}
+			return nextLine, true
+		}
+		if nextLine == len(source) {
+			return len(source), true
+		}
+		lineStart = nextLine + 1
+	}
+	return len(source), true
 }
 
 func terraformSkipWhitespace(source string, index int) int {
@@ -1056,7 +1292,7 @@ func terraformSplitTopLevel(source string, delimiter byte) []string {
 	var values []string
 	start, depth := 0, 0
 	for index := 0; index < len(source); {
-		if next, skipped := terraformSkipQuotedOrComment(source, index); skipped {
+		if next, skipped := terraformSkipQuotedCommentOrHeredoc(source, index); skipped {
 			index = next
 			continue
 		}
@@ -1221,7 +1457,7 @@ func validateStableNameExpression(expression string, definitions map[string]stri
 func terraformConditionalBranches(expression string) (string, string, bool) {
 	questionIndex, nestedQuestions, depth := -1, 0, 0
 	for index := 0; index < len(expression); {
-		if next, skipped := terraformSkipQuotedOrComment(expression, index); skipped {
+		if next, skipped := terraformSkipQuotedCommentOrHeredoc(expression, index); skipped {
 			index = next
 			continue
 		}
