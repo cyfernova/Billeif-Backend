@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"invoice-backend/internal/invoiceresolution"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/internal/services"
@@ -89,6 +90,19 @@ func (m *MockInvoiceRepository) CreateDraftAtomic(ctx context.Context, command i
 		return nil, err
 	}
 	return &interfaces.AtomicInvoiceDraftResult{Invoice: command.Invoice}, nil
+}
+
+func (m *MockInvoiceRepository) ResolveInvoiceLines(
+	_ context.Context,
+	request invoiceresolution.Request,
+) ([]invoiceresolution.LineSnapshot, error) {
+	snapshots := make([]invoiceresolution.LineSnapshot, len(request.Lines))
+	for index, line := range request.Lines {
+		snapshots[index] = invoiceresolution.LineSnapshot{
+			ProductID: line.ProductID, VariantID: line.VariantID, WarehouseID: line.WarehouseID,
+		}
+	}
+	return snapshots, nil
 }
 
 type invoiceBusinessRepository struct{}

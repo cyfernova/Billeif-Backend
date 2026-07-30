@@ -10,6 +10,7 @@ import (
 	"invoice-backend/internal/config"
 	"invoice-backend/internal/gst"
 	"invoice-backend/internal/idempotency"
+	"invoice-backend/internal/invoiceresolution"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/awsclients"
@@ -74,6 +75,7 @@ type CreateInvoiceItemInput struct {
 	FreeQuantity     float64                  `json:"free_quantity"`
 	UnitPrice        float64                  `json:"unit_price" binding:"gte=0"`
 	MRP              float64                  `json:"mrp"`
+	Discount         float64                  `json:"discount" binding:"gte=0"`
 	TaxRate          float64                  `json:"tax_rate"`
 	CessRate         float64                  `json:"cess_rate"`
 	CustomFields     map[string]interface{}   `json:"custom_fields,omitempty"`
@@ -254,75 +256,105 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 	projectID := syncProjectIDFromTags(input.ProjectID, input.TaxProfile.ReportTags)
 	input.TaxProfile.ReportTags = mergeProjectIntoTags(input.TaxProfile.ReportTags, projectID)
 	customFields := mergeInvoiceEditorCustomFields(input.CustomFields, input.TermsAndConditions, input.PONumber, input.TemplateOverride)
-	var subtotal, taxTotal float64
+	lineReferences := make([]invoiceresolution.LineReference, len(input.Items))
+	for index, item := range input.Items {
+		lineReferences[index] = invoiceresolution.LineReference{
+			ProductID:   item.ProductID,
+			VariantID:   item.VariantID,
+			WarehouseID: item.WarehouseID,
+		}
+	}
+	resolvedLines, err := s.repo.ResolveInvoiceLines(ctx, invoiceresolution.Request{
+		BusinessID:  input.BusinessID,
+		PriceListID: pointerStringValue(priceListID),
+		Lines:       lineReferences,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(resolvedLines) != len(input.Items) {
+		return nil, fmt.Errorf("invoice line resolver returned %d snapshots for %d lines", len(resolvedLines), len(input.Items))
+	}
+
+	var subtotal, discountTotal, taxTotal float64
 	var cessTotal float64
 	items := make([]*models.InvoiceItem, len(input.Items))
 
 	for i, item := range input.Items {
-		pricing, err := resolveLinePricing(ctx, s.db, s.productRepo, input.BusinessID, priceListID, item.ProductID, item.VariantID, stringPointer(item.WarehouseID))
-		if err != nil {
-			return nil, err
-		}
-		var product *models.Product
-		if item.ProductID != "" {
-			product, _ = s.productRepo.GetByID(ctx, item.ProductID, input.BusinessID)
-		}
+		resolved := resolvedLines[i]
 		unitPrice := item.UnitPrice
 		if unitPrice <= 0 {
-			unitPrice = pricing.UnitPrice
+			unitPrice = resolved.UnitPrice
 		}
 		mrp := item.MRP
 		if mrp <= 0 {
-			mrp = pricing.MRP
+			mrp = resolved.MRP
 		}
 		cessRate := item.CessRate
 		if cessRate <= 0 {
-			cessRate = pricing.CessRate
+			cessRate = resolved.CessRate
 		}
-		itemSubtotal := item.Quantity * unitPrice
+		itemSubtotal := (item.Quantity * unitPrice) - item.Discount
 		itemTax := itemSubtotal * (item.TaxRate / 100)
 		itemCess := itemSubtotal * (cessRate / 100)
 		subtotal += itemSubtotal
+		discountTotal += item.Discount
 		taxTotal += itemTax
 		cessTotal += itemCess
 
 		var productID *string
-		if item.ProductID != "" {
-			productID = &item.ProductID
+		if resolved.ProductID != "" {
+			productID = &resolved.ProductID
 		}
 		var variantID *string
-		if item.VariantID != "" {
-			variantID = &item.VariantID
+		if resolved.VariantID != "" {
+			variantID = &resolved.VariantID
 		}
 		var warehouseID *string
-		if item.WarehouseID != "" {
-			warehouseID = &item.WarehouseID
-		}
-		legacyUnit := ""
-		if product != nil {
-			legacyUnit = firstNonEmpty(product.Unit, product.UQCCode)
+		if resolved.WarehouseID != "" {
+			warehouseID = &resolved.WarehouseID
 		}
 		hsnCode := item.HSNSACCode
-		if hsnCode == "" && product != nil {
-			hsnCode = product.HSNSACCode
+		if hsnCode == "" {
+			hsnCode = resolved.HSNSACCode
 		}
-		unit := gst.CanonicalSnapshotUQC(item.Unit, legacyUnit)
+		unit := gst.CanonicalSnapshotUQC(item.Unit, firstNonEmpty(resolved.Unit, resolved.UQCCode))
+		lineCustomFields := make(map[string]interface{}, len(item.CustomFields)+1)
+		for key, value := range item.CustomFields {
+			lineCustomFields[key] = value
+		}
+		if resolved.SKU != "" {
+			lineCustomFields["sku"] = resolved.SKU
+		}
+		delete(lineCustomFields, "pricing_provenance")
+		if resolved.CatalogueID != "" || resolved.PriceListID != "" {
+			provenance := map[string]interface{}{}
+			if resolved.CatalogueID != "" {
+				provenance["catalogue_id"] = resolved.CatalogueID
+			}
+			if resolved.PriceListID != "" {
+				provenance["price_list_id"] = resolved.PriceListID
+			}
+			lineCustomFields["pricing_provenance"] = provenance
+		}
 
 		items[i] = &models.InvoiceItem{
 			ProductID:        productID,
 			VariantID:        variantID,
 			WarehouseID:      warehouseID,
-			Description:      item.Description,
+			Description:      firstNonEmpty(item.Description, resolved.ProductName),
 			HSNSACCode:       hsnCode,
 			Unit:             unit,
+			SKU:              resolved.SKU,
 			Quantity:         item.Quantity,
 			FreeQuantity:     item.FreeQuantity,
 			UnitPrice:        unitPrice,
 			MRP:              mrp,
+			Discount:         item.Discount,
 			TaxRate:          item.TaxRate,
 			CessRate:         cessRate,
 			CessAmount:       itemCess,
-			CustomFields:     mustMarshalMap(item.CustomFields),
+			CustomFields:     mustMarshalMap(lineCustomFields),
 			ChargeSnapshot:   mustMarshalAny(item.ChargeSnapshot, "[]"),
 			BatchAllocations: mustMarshalBatchAllocations(item.BatchAllocations),
 			SerialIDs:        marshalStringSlice(item.SerialIDs),
@@ -349,6 +381,7 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 		InvoiceDate:       invoiceDate,
 		DueDate:           input.DueDate,
 		Subtotal:          subtotal,
+		Discount:          discountTotal,
 		Tax:               taxTotal + cessTotal,
 		Total:             subtotal + taxTotal + cessTotal,
 		BalanceDue:        subtotal + taxTotal + cessTotal,

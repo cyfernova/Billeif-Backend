@@ -1600,41 +1600,7 @@ func (s *BillingOpsService) GenerateInvoiceSubscriptionNow(ctx context.Context, 
 	if err := s.db.WithContext(ctx).Create(run).Error; err != nil {
 		return nil, err
 	}
-	items := make([]CreateInvoiceItemInput, 0, len(subscription.Lines))
-	for _, line := range subscription.Lines {
-		unitPrice := line.UnitPrice
-		mrp := line.MRP
-		cessRate := line.CessRate
-		if subscription.PricePolicy == models.InvoiceSubscriptionPricePolicyFollow {
-			pricing, err := resolveLinePricing(ctx, s.db, s.productRepo, businessID, subscription.PriceListID, pointerStringValue(line.ProductID), pointerStringValue(line.VariantID), line.WarehouseID)
-			if err != nil {
-				return nil, err
-			}
-			if pricing.UnitPrice > 0 {
-				unitPrice = pricing.UnitPrice
-			}
-			if pricing.MRP > 0 {
-				mrp = pricing.MRP
-			}
-			if pricing.CessRate > 0 {
-				cessRate = pricing.CessRate
-			}
-		}
-		items = append(items, CreateInvoiceItemInput{
-			ProductID:      pointerStringValue(line.ProductID),
-			VariantID:      pointerStringValue(line.VariantID),
-			WarehouseID:    pointerStringValue(line.WarehouseID),
-			Description:    line.Description,
-			Quantity:       line.Quantity,
-			FreeQuantity:   line.FreeQuantity,
-			UnitPrice:      unitPrice,
-			MRP:            mrp,
-			TaxRate:        line.TaxRate,
-			CessRate:       cessRate,
-			CustomFields:   unmarshalJSONMap(line.CustomFields),
-			ChargeSnapshot: readMapSliceString(line.AdditionalCharge),
-		})
-	}
+	items := invoiceSubscriptionCreateItems(subscription)
 	input := CreateInvoiceInput{
 		BusinessID:           businessID,
 		CustomerID:           subscription.CustomerID,
@@ -1680,6 +1646,42 @@ func (s *BillingOpsService) GenerateInvoiceSubscriptionNow(ctx context.Context, 
 	}
 	_ = recordActivityLog(ctx, s.db, businessID, "invoice_subscription", subscription.ID, "generated", "", run, nil, map[string]interface{}{"invoice_id": invoice.ID})
 	return run, nil
+}
+
+func invoiceSubscriptionCreateItems(subscription *models.InvoiceSubscription) []CreateInvoiceItemInput {
+	if subscription == nil {
+		return nil
+	}
+	items := make([]CreateInvoiceItemInput, 0, len(subscription.Lines))
+	for _, line := range subscription.Lines {
+		if line == nil {
+			continue
+		}
+		unitPrice := line.UnitPrice
+		mrp := line.MRP
+		cessRate := line.CessRate
+		if subscription.PricePolicy == models.InvoiceSubscriptionPricePolicyFollow {
+			unitPrice = 0
+			mrp = 0
+			cessRate = 0
+		}
+		items = append(items, CreateInvoiceItemInput{
+			ProductID:      pointerStringValue(line.ProductID),
+			VariantID:      pointerStringValue(line.VariantID),
+			WarehouseID:    pointerStringValue(line.WarehouseID),
+			Description:    line.Description,
+			Quantity:       line.Quantity,
+			FreeQuantity:   line.FreeQuantity,
+			UnitPrice:      unitPrice,
+			MRP:            mrp,
+			Discount:       line.DiscountAmount,
+			TaxRate:        line.TaxRate,
+			CessRate:       cessRate,
+			CustomFields:   unmarshalJSONMap(line.CustomFields),
+			ChargeSnapshot: readMapSliceString(line.AdditionalCharge),
+		})
+	}
+	return items
 }
 
 func readMapSliceString(raw string) []map[string]interface{} {

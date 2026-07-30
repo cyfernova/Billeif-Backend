@@ -9,6 +9,7 @@ import (
 	"invoice-backend/internal/models"
 	"invoice-backend/pkg/logger"
 
+	"github.com/google/uuid"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -132,5 +133,38 @@ func TestDispatchDueInvoiceSubscriptionsRejectsAutoSendBeforeQueuedRun(t *testin
 	}
 	if subscription.NextRunAt == nil || !subscription.NextRunAt.Equal(dueAt) {
 		t.Fatalf("next_run_at = %v, want unchanged %v", subscription.NextRunAt, dueAt)
+	}
+}
+
+func TestInvoiceSubscriptionCreateItemsDefersFollowPricingToCanonicalBatchResolver(t *testing.T) {
+	productID := uuid.NewString()
+	variantID := uuid.NewString()
+	warehouseID := uuid.NewString()
+	line := &models.InvoiceSubscriptionLine{
+		ProductID: &productID, VariantID: &variantID, WarehouseID: &warehouseID,
+		Description: "Subscription line", Quantity: 2, FreeQuantity: 1,
+		UnitPrice: 50, MRP: 60, DiscountAmount: 5, TaxRate: 18, CessRate: 2,
+		CustomFields: `{"source":"subscription"}`,
+	}
+
+	follow := invoiceSubscriptionCreateItems(&models.InvoiceSubscription{
+		PricePolicy: models.InvoiceSubscriptionPricePolicyFollow,
+		Lines:       []*models.InvoiceSubscriptionLine{line},
+	})
+	snapshot := invoiceSubscriptionCreateItems(&models.InvoiceSubscription{
+		PricePolicy: models.InvoiceSubscriptionPricePolicyFreeze,
+		Lines:       []*models.InvoiceSubscriptionLine{line},
+	})
+
+	if len(follow) != 1 || follow[0].UnitPrice != 0 || follow[0].MRP != 0 || follow[0].CessRate != 0 {
+		t.Fatalf("follow-pricing item = %#v, want deferred database pricing", follow)
+	}
+	if follow[0].ProductID != productID || follow[0].VariantID != variantID ||
+		follow[0].WarehouseID != warehouseID || follow[0].Discount != 5 {
+		t.Fatalf("follow-pricing identity/discount = %#v", follow[0])
+	}
+	if len(snapshot) != 1 || snapshot[0].UnitPrice != 50 || snapshot[0].MRP != 60 ||
+		snapshot[0].CessRate != 2 || snapshot[0].Discount != 5 {
+		t.Fatalf("snapshot-pricing item = %#v, want stored subscription facts", snapshot)
 	}
 }

@@ -108,6 +108,7 @@ func (c *invoiceSalesDocumentCreator) CreateSalesInvoiceDocument(ctx context.Con
 			FreeQuantity:     line.FreeQuantity,
 			UnitPrice:        line.UnitPrice,
 			MRP:              line.MRP,
+			Discount:         line.DiscountAmount,
 			TaxRate:          line.TaxRate,
 			CessRate:         line.CessRate,
 			CustomFields:     line.CustomFields,
@@ -151,7 +152,7 @@ func validateSalesInvoiceDelegationInput(businessID string, input CreateDocument
 		len(input.ExtraFields) != 0
 	if !unsupported {
 		for _, line := range input.Lines {
-			if line.DiscountAmount != 0 || len(line.PackingMetadata) != 0 {
+			if len(line.PackingMetadata) != 0 {
 				unsupported = true
 				break
 			}

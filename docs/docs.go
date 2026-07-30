@@ -20182,6 +20182,10 @@ const docTemplate = `{
                 "description": {
                     "type": "string"
                 },
+                "discount": {
+                    "type": "number",
+                    "minimum": 0
+                },
                 "free_quantity": {
                     "type": "number"
                 },

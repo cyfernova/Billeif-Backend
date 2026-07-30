@@ -3,6 +3,7 @@ package interfaces
 import (
 	"context"
 
+	"invoice-backend/internal/invoiceresolution"
 	"invoice-backend/internal/models"
 )
 
@@ -111,6 +112,7 @@ type CanonicalInvoiceIssuer interface {
 
 type CanonicalInvoiceRepository interface {
 	InvoiceRepository
+	invoiceresolution.Resolver
 	CreateDraftAtomic(ctx context.Context, command AtomicInvoiceDraft) (*AtomicInvoiceDraftResult, error)
 }
 

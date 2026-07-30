@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"invoice-backend/internal/idempotency"
+	"invoice-backend/internal/invoiceresolution"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/logger"
@@ -21,6 +22,11 @@ type atomicInvoiceRepositoryFake struct {
 	executions int
 	last       interfaces.AtomicInvoiceDraft
 	err        error
+
+	resolutionCalls     int
+	lastResolution      invoiceresolution.Request
+	resolutionSnapshots []invoiceresolution.LineSnapshot
+	resolutionErr       error
 }
 
 type atomicInvoiceEntry struct {
@@ -48,6 +54,26 @@ func (r *atomicInvoiceRepositoryFake) CreateDraftAtomic(ctx context.Context, com
 	r.last = command
 	r.entries[scope] = atomicInvoiceEntry{hash: command.RequestHash, invoice: cloneInvoiceForAtomicTest(command.Invoice)}
 	return &interfaces.AtomicInvoiceDraftResult{Invoice: command.Invoice}, nil
+}
+
+func (r *atomicInvoiceRepositoryFake) ResolveInvoiceLines(
+	ctx context.Context,
+	request invoiceresolution.Request,
+) ([]invoiceresolution.LineSnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.resolutionCalls++
+	r.lastResolution = request
+	if r.resolutionErr != nil {
+		return nil, r.resolutionErr
+	}
+	if r.resolutionSnapshots == nil {
+		return make([]invoiceresolution.LineSnapshot, len(request.Lines)), nil
+	}
+	return append([]invoiceresolution.LineSnapshot(nil), r.resolutionSnapshots...), nil
 }
 
 func (r *atomicInvoiceRepositoryFake) Create(ctx context.Context, invoice *models.Invoice) error {
@@ -236,6 +262,182 @@ func TestInvoiceServiceCreatePersistsCanonicalDraftProjectionAtomically(t *testi
 	}
 }
 
+func TestInvoiceServiceCreateReusesOneResolvedSnapshotForInvoiceAndDocument(t *testing.T) {
+	service, repo, input, ctx := newAtomicInvoiceServiceFixture(t)
+	productID := uuid.NewString()
+	variantID := uuid.NewString()
+	warehouseID := uuid.NewString()
+	catalogueID := uuid.NewString()
+	priceListID := uuid.NewString()
+	input.PriceListID = priceListID
+	input.Items[0].ProductID = productID
+	input.Items[0].VariantID = variantID
+	input.Items[0].WarehouseID = warehouseID
+	input.Items[0].HSNSACCode = ""
+	input.Items[0].Unit = ""
+	input.Items[0].UnitPrice = 0
+	input.Items[0].MRP = 0
+	input.Items[0].CessRate = 0
+	repo.resolutionSnapshots = []invoiceresolution.LineSnapshot{{
+		ProductID: productID, VariantID: variantID, WarehouseID: warehouseID,
+		CatalogueID: catalogueID, PriceListID: priceListID,
+		ProductName: "Resolved product", SKU: "VAR-1", HSNSACCode: "1001",
+		UQCCode: "KGS", Unit: "KGS", UnitPrice: 125, MRP: 140, CessRate: 2.5,
+	}}
+
+	invoice, err := service.Create(ctx, input)
+
+	if err != nil {
+		t.Fatalf("create resolved invoice: %v", err)
+	}
+	if repo.resolutionCalls != 1 {
+		t.Fatalf("resolution calls = %d, want 1", repo.resolutionCalls)
+	}
+	if repo.lastResolution.BusinessID != input.BusinessID ||
+		repo.lastResolution.PriceListID != priceListID ||
+		len(repo.lastResolution.Lines) != 1 ||
+		repo.lastResolution.Lines[0].ProductID != productID ||
+		repo.lastResolution.Lines[0].VariantID != variantID ||
+		repo.lastResolution.Lines[0].WarehouseID != warehouseID {
+		t.Fatalf("resolution request = %#v", repo.lastResolution)
+	}
+	item := invoice.Items[0]
+	line := repo.last.Document.Lines[0]
+	if models.StringValue(item.ProductID) != productID ||
+		models.StringValue(item.VariantID) != variantID ||
+		models.StringValue(item.WarehouseID) != warehouseID ||
+		item.SKU != "VAR-1" ||
+		item.HSNSACCode != "1001" ||
+		item.Unit != "KGS" ||
+		item.UnitPrice != 125 ||
+		item.MRP != 140 ||
+		item.CessRate != 2.5 {
+		t.Fatalf("resolved invoice item = %#v", item)
+	}
+	if models.StringValue(line.ProductID) != models.StringValue(item.ProductID) ||
+		models.StringValue(line.VariantID) != models.StringValue(item.VariantID) ||
+		models.StringValue(line.WarehouseID) != models.StringValue(item.WarehouseID) ||
+		line.Description != item.Description ||
+		line.HSNSACCode != item.HSNSACCode ||
+		line.Unit != item.Unit ||
+		line.UnitPrice != item.UnitPrice ||
+		line.MRP != item.MRP ||
+		line.CessRate != item.CessRate ||
+		line.CessAmount != item.CessAmount ||
+		line.LineTotal != item.Total {
+		t.Fatalf("invoice/document resolved snapshots diverged:\nitem=%#v\nline=%#v", item, line)
+	}
+	itemFields := unmarshalJSONMap(item.CustomFields)
+	lineFields := unmarshalJSONMap(line.CustomFields)
+	itemProvenance, _ := itemFields["pricing_provenance"].(map[string]interface{})
+	lineProvenance, _ := lineFields["pricing_provenance"].(map[string]interface{})
+	if itemProvenance["catalogue_id"] != catalogueID ||
+		itemProvenance["price_list_id"] != priceListID ||
+		lineProvenance["catalogue_id"] != catalogueID ||
+		lineProvenance["price_list_id"] != priceListID {
+		t.Fatalf("invoice/document pricing provenance diverged: item=%#v line=%#v", itemFields, lineFields)
+	}
+}
+
+func TestInvoiceServiceCreateUsesResolvedSKUInPersistedProjectionSnapshots(t *testing.T) {
+	service, repo, input, ctx := newAtomicInvoiceServiceFixture(t)
+	input.Items[0].ProductID = uuid.NewString()
+	input.Items[0].VariantID = uuid.NewString()
+	input.Items[0].CustomFields = map[string]interface{}{"sku": "caller-supplied"}
+	repo.resolutionSnapshots = []invoiceresolution.LineSnapshot{{
+		ProductID: input.Items[0].ProductID,
+		VariantID: input.Items[0].VariantID,
+		SKU:       "RESOLVED-SKU",
+	}}
+
+	invoice, err := service.Create(ctx, input)
+
+	if err != nil {
+		t.Fatalf("create resolved invoice: %v", err)
+	}
+	itemFields := unmarshalJSONMap(invoice.Items[0].CustomFields)
+	lineFields := unmarshalJSONMap(repo.last.Document.Lines[0].CustomFields)
+	if itemFields["sku"] != "RESOLVED-SKU" || lineFields["sku"] != "RESOLVED-SKU" {
+		t.Fatalf("persisted SKU snapshots = item:%#v line:%#v, want resolver-owned SKU", itemFields, lineFields)
+	}
+}
+
+func TestInvoiceServiceCreateUsesOnlyResolvedPricingProvenance(t *testing.T) {
+	service, repo, input, ctx := newAtomicInvoiceServiceFixture(t)
+	input.Items[0].ProductID = uuid.NewString()
+	input.Items[0].CustomFields = map[string]interface{}{
+		"pricing_provenance": map[string]interface{}{
+			"catalogue_id":  "caller-catalogue",
+			"price_list_id": "caller-price-list",
+			"source":        "caller",
+		},
+	}
+	resolvedPriceListID := uuid.NewString()
+	repo.resolutionSnapshots = []invoiceresolution.LineSnapshot{{
+		ProductID:   input.Items[0].ProductID,
+		PriceListID: resolvedPriceListID,
+	}}
+
+	invoice, err := service.Create(ctx, input)
+
+	if err != nil {
+		t.Fatalf("create resolved invoice: %v", err)
+	}
+	itemFields := unmarshalJSONMap(invoice.Items[0].CustomFields)
+	lineFields := unmarshalJSONMap(repo.last.Document.Lines[0].CustomFields)
+	itemProvenance, _ := itemFields["pricing_provenance"].(map[string]interface{})
+	lineProvenance, _ := lineFields["pricing_provenance"].(map[string]interface{})
+	if len(itemProvenance) != 1 || itemProvenance["price_list_id"] != resolvedPriceListID {
+		t.Fatalf("invoice pricing provenance = %#v, want only resolved price list", itemProvenance)
+	}
+	if len(lineProvenance) != 1 || lineProvenance["price_list_id"] != resolvedPriceListID {
+		t.Fatalf("document pricing provenance = %#v, want only resolved price list", lineProvenance)
+	}
+}
+
+func TestInvoiceServiceCreateRejectsResolutionFailureBeforeAtomicCreate(t *testing.T) {
+	service, repo, input, ctx := newAtomicInvoiceServiceFixture(t)
+	productID := uuid.NewString()
+	input.Items[0].ProductID = productID
+	repo.resolutionErr = &invoiceresolution.MissingReferenceError{
+		Kind: invoiceresolution.ReferenceProduct,
+		ID:   productID,
+	}
+
+	invoice, err := service.Create(ctx, input)
+
+	if invoice != nil {
+		t.Fatalf("invoice = %#v, want nil", invoice)
+	}
+	var missing *invoiceresolution.MissingReferenceError
+	if !errors.As(err, &missing) || missing.ID != productID {
+		t.Fatalf("error = %T %v, want typed missing product", err, err)
+	}
+	if repo.executions != 0 {
+		t.Fatalf("atomic executions = %d, want 0", repo.executions)
+	}
+}
+
+func TestInvoiceServiceCreateKeepsExplicitLinePricingOverResolvedDefaults(t *testing.T) {
+	service, repo, input, ctx := newAtomicInvoiceServiceFixture(t)
+	input.Items[0].UnitPrice = 77
+	input.Items[0].MRP = 88
+	input.Items[0].CessRate = 4
+	repo.resolutionSnapshots = []invoiceresolution.LineSnapshot{
+		{UnitPrice: 125, MRP: 140, CessRate: 2.5},
+	}
+
+	invoice, err := service.Create(ctx, input)
+
+	if err != nil {
+		t.Fatalf("create explicitly priced invoice: %v", err)
+	}
+	item := invoice.Items[0]
+	if item.UnitPrice != 77 || item.MRP != 88 || item.CessRate != 4 {
+		t.Fatalf("explicit pricing was overridden: %#v", item)
+	}
+}
+
 func TestInvoiceServiceCreateProjectsGSTAndCessAsDistinctTaxComponents(t *testing.T) {
 	service, repo, input, ctx := newAtomicInvoiceServiceFixture(t)
 	input.TaxProfile.PlaceOfSupply = "27"
@@ -273,6 +475,28 @@ func TestInvoiceServiceCreateProjectsGSTAndCessAsDistinctTaxComponents(t *testin
 	}
 	if invoice.Tax != wantGST+wantCess {
 		t.Fatalf("legacy invoice tax total = %.2f, want %.2f", invoice.Tax, wantGST+wantCess)
+	}
+}
+
+func TestInvoiceServiceCreateSnapshotsDiscountInInvoiceAndDocument(t *testing.T) {
+	service, repo, input, ctx := newAtomicInvoiceServiceFixture(t)
+	input.Items[0].Discount = 10
+
+	invoice, err := service.Create(ctx, input)
+
+	if err != nil {
+		t.Fatalf("create discounted invoice: %v", err)
+	}
+	item := invoice.Items[0]
+	line := repo.last.Document.Lines[0]
+	if item.Discount != 10 || line.DiscountAmount != 10 {
+		t.Fatalf("discount snapshot item/line = %.2f/%.2f, want 10/10", item.Discount, line.DiscountAmount)
+	}
+	if item.Total != 2368.1 || line.LineSubtotal != 1990 || line.LineTotal != 2368.1 {
+		t.Fatalf("discounted totals item=%#v line=%#v", item, line)
+	}
+	if invoice.Subtotal != 1990 || invoice.Discount != 10 || invoice.Total != 2368.1 {
+		t.Fatalf("discounted invoice totals = %#v", invoice)
 	}
 }
 
@@ -425,9 +649,10 @@ func TestDocumentServiceSalesInvoiceDelegationCallsCanonicalCreatorOnceWithoutRe
 		DueDate:        &dueDate,
 		Notes:          "delegated",
 		Lines: []CreateDocumentLineInput{{
-			Description: "Canonical line",
-			Quantity:    1,
-			UnitPrice:   100,
+			Description:    "Canonical line",
+			Quantity:       1,
+			UnitPrice:      100,
+			DiscountAmount: 10,
 		}},
 	})
 
@@ -444,7 +669,8 @@ func TestDocumentServiceSalesInvoiceDelegationCallsCanonicalCreatorOnceWithoutRe
 		creator.input.CustomerID != customerID ||
 		creator.input.IdempotencyKey != idempotencyKey ||
 		len(creator.input.Items) != 1 ||
-		creator.input.Items[0].Description != "Canonical line" {
+		creator.input.Items[0].Description != "Canonical line" ||
+		creator.input.Items[0].Discount != 10 {
 		t.Fatalf("delegated input = %#v", creator.input)
 	}
 }
@@ -471,9 +697,6 @@ func TestDocumentServiceSalesInvoiceDelegationRejectsFieldsCanonicalInvoiceCanno
 		{name: "foreign currency", mutate: func(input *CreateDocumentInput) {
 			input.Currency = "USD"
 			input.ExchangeRate = 83
-		}},
-		{name: "line discount", mutate: func(input *CreateDocumentInput) {
-			input.Lines[0].DiscountAmount = 10
 		}},
 		{name: "packing metadata", mutate: func(input *CreateDocumentInput) {
 			input.Lines[0].PackingMetadata = map[string]interface{}{"box": "A"}
