@@ -466,8 +466,8 @@ run "ses_feedback_is_raw_cost_capped_and_least_privilege" {
         aws_cloudwatch_metric_alarm.lambda_ses_feedback_errors,
         aws_cloudwatch_metric_alarm.lambda_ses_feedback_throttles,
         aws_cloudwatch_metric_alarm.lambda_ses_feedback_duration,
-        aws_cloudwatch_metric_alarm.ses_feedback_queue_age,
-        aws_cloudwatch_metric_alarm.ses_feedback_dlq_messages,
+        aws_cloudwatch_metric_alarm.worker_queue_age["ses_feedback"],
+        aws_cloudwatch_metric_alarm.worker_dlq_messages["ses_feedback"],
       ] :
       alarm.evaluation_periods == 3 &&
       alarm.datapoints_to_alarm == 2 &&
@@ -557,5 +557,51 @@ run "monthly_budget_warns_at_actual_and_forecast_thresholds" {
       alltrue([for notification in aws_budgets_budget.monthly_cost.notification : notification.comparison_operator == "GREATER_THAN" && notification.threshold_type == "PERCENTAGE" && contains(notification.subscriber_email_addresses, var.alert_email)])
     )
     error_message = "Billeif must have a $125 monthly cost budget with actual 50/80/100 percent and forecasted 100 percent email alerts."
+  }
+}
+
+run "standard_resolution_operational_alarms_use_two_of_three" {
+  command = plan
+
+  assert {
+    condition = (
+      aws_cloudwatch_metric_alarm.lambda_api_errors.evaluation_periods == 3 &&
+      aws_cloudwatch_metric_alarm.lambda_api_errors.datapoints_to_alarm == 2 &&
+      aws_cloudwatch_metric_alarm.lambda_api_errors.treat_missing_data == "notBreaching" &&
+      aws_cloudwatch_metric_alarm.lambda_api_throttles.evaluation_periods == 3 &&
+      aws_cloudwatch_metric_alarm.lambda_api_throttles.datapoints_to_alarm == 2 &&
+      aws_cloudwatch_metric_alarm.lambda_api_throttles.treat_missing_data == "notBreaching" &&
+      aws_cloudwatch_metric_alarm.lambda_api_duration.evaluation_periods == 3 &&
+      aws_cloudwatch_metric_alarm.lambda_api_duration.datapoints_to_alarm == 2 &&
+      aws_cloudwatch_metric_alarm.lambda_api_duration.extended_statistic == "p99" &&
+      aws_cloudwatch_metric_alarm.lambda_api_duration.treat_missing_data == "notBreaching"
+    )
+    error_message = "API error, throttle, and p99 duration alarms must use explicit two-of-three standard-resolution evaluation."
+  }
+
+  assert {
+    condition = (
+      length(aws_cloudwatch_metric_alarm.worker_queue_age) == 5 &&
+      length(aws_cloudwatch_metric_alarm.worker_dlq_messages) == 5 &&
+      alltrue([for alarm in aws_cloudwatch_metric_alarm.worker_queue_age : alarm.evaluation_periods == 3 && alarm.datapoints_to_alarm == 2 && alarm.treat_missing_data == "notBreaching"]) &&
+      alltrue([for alarm in aws_cloudwatch_metric_alarm.worker_dlq_messages : alarm.evaluation_periods == 3 && alarm.datapoints_to_alarm == 2 && alarm.treat_missing_data == "notBreaching"])
+    )
+    error_message = "Every active worker queue and DLQ must have explicit two-of-three age/depth monitoring."
+  }
+
+  assert {
+    condition = (
+      aws_cloudwatch_metric_alarm.rds_cpu_high.evaluation_periods == 3 &&
+      aws_cloudwatch_metric_alarm.rds_cpu_high.datapoints_to_alarm == 2 &&
+      aws_cloudwatch_metric_alarm.rds_connections_high.evaluation_periods == 3 &&
+      aws_cloudwatch_metric_alarm.rds_memory_low.evaluation_periods == 3 &&
+      aws_cloudwatch_metric_alarm.rds_storage_low.evaluation_periods == 3 &&
+      aws_cloudwatch_metric_alarm.rds_cpu_credits_low.evaluation_periods == 3 &&
+      aws_cloudwatch_metric_alarm.rds_connections_high.treat_missing_data == "notBreaching" &&
+      aws_cloudwatch_metric_alarm.rds_memory_low.treat_missing_data == "breaching" &&
+      aws_cloudwatch_metric_alarm.rds_storage_low.treat_missing_data == "breaching" &&
+      aws_cloudwatch_metric_alarm.rds_cpu_credits_low.treat_missing_data == "notBreaching"
+    )
+    error_message = "RDS connections, CPU, memory, storage, and burst credits must use explicit two-of-three monitoring."
   }
 }

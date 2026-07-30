@@ -16,18 +16,121 @@ resource "aws_sns_topic_subscription" "alerts_email" {
 resource "aws_cloudwatch_metric_alarm" "lambda_api_errors" {
   alarm_name          = "${local.resource_prefix}-lambda-api-errors"
   comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 1
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
   metric_name         = "Errors"
   namespace           = "AWS/Lambda"
-  period              = 300
+  period              = 60
   statistic           = "Sum"
-  threshold           = 5
-  alarm_description   = "API Lambda error count is high"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif API Lambda is returning errors"
   alarm_actions       = [aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]
 
   dimensions = {
     FunctionName = aws_lambda_function.api_http.function_name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "lambda_api_throttles" {
+  alarm_name          = "${local.resource_prefix}-lambda-api-throttles"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "Throttles"
+  namespace           = "AWS/Lambda"
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif API Lambda is being throttled"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    FunctionName = aws_lambda_function.api_http.function_name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "lambda_api_duration" {
+  alarm_name          = "${local.resource_prefix}-lambda-api-duration-p99"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "Duration"
+  namespace           = "AWS/Lambda"
+  period              = 60
+  extended_statistic  = "p99"
+  threshold           = 22400
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif API Lambda p99 duration exceeds 80 percent of its 28-second timeout"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    FunctionName = aws_lambda_function.api_http.function_name
+  }
+}
+
+locals {
+  worker_queue_names = {
+    invoice        = aws_sqs_queue.invoice_processing.name
+    gst            = aws_sqs_queue.gst_processing.name
+    bargaining     = aws_sqs_queue.bargaining_negotiation.name
+    email_delivery = aws_sqs_queue.email_delivery.name
+    ses_feedback   = aws_sqs_queue.ses_feedback.name
+  }
+  worker_dlq_names = {
+    invoice        = aws_sqs_queue.invoice_processing_dlq.name
+    gst            = aws_sqs_queue.gst_processing_dlq.name
+    bargaining     = aws_sqs_queue.bargaining_negotiation_dlq.name
+    email_delivery = aws_sqs_queue.email_delivery_dlq.name
+    ses_feedback   = aws_sqs_queue.ses_feedback_dlq.name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "worker_queue_age" {
+  for_each = local.worker_queue_names
+
+  alarm_name          = "${local.resource_prefix}-${replace(each.key, "_", "-")}-queue-age"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "ApproximateAgeOfOldestMessage"
+  namespace           = "AWS/SQS"
+  period              = 300
+  statistic           = "Maximum"
+  threshold           = 600
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif ${replace(each.key, "_", " ")} queue oldest message exceeds ten minutes"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    QueueName = each.value
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "worker_dlq_messages" {
+  for_each = local.worker_dlq_names
+
+  alarm_name          = "${local.resource_prefix}-${replace(each.key, "_", "-")}-dlq-messages"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  namespace           = "AWS/SQS"
+  period              = 300
+  statistic           = "Maximum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif ${replace(each.key, "_", " ")} dead-letter queue has messages"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    QueueName = each.value
   }
 }
 
@@ -145,46 +248,6 @@ resource "aws_cloudwatch_metric_alarm" "lambda_email_delivery_duration" {
   }
 }
 
-resource "aws_cloudwatch_metric_alarm" "email_delivery_queue_age" {
-  alarm_name          = "${local.resource_prefix}-email-delivery-queue-age"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 3
-  datapoints_to_alarm = 2
-  metric_name         = "ApproximateAgeOfOldestMessage"
-  namespace           = "AWS/SQS"
-  period              = 300
-  statistic           = "Maximum"
-  threshold           = 600
-  treat_missing_data  = "notBreaching"
-  alarm_description   = "Billeif email delivery queue oldest message exceeds ten minutes"
-  alarm_actions       = [aws_sns_topic.alerts.arn]
-  ok_actions          = [aws_sns_topic.alerts.arn]
-
-  dimensions = {
-    QueueName = aws_sqs_queue.email_delivery.name
-  }
-}
-
-resource "aws_cloudwatch_metric_alarm" "email_delivery_dlq_messages" {
-  alarm_name          = "${local.resource_prefix}-email-delivery-dlq-messages"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 3
-  datapoints_to_alarm = 2
-  metric_name         = "ApproximateNumberOfMessagesVisible"
-  namespace           = "AWS/SQS"
-  period              = 300
-  statistic           = "Maximum"
-  threshold           = 0
-  treat_missing_data  = "notBreaching"
-  alarm_description   = "Billeif email delivery dead-letter queue has messages"
-  alarm_actions       = [aws_sns_topic.alerts.arn]
-  ok_actions          = [aws_sns_topic.alerts.arn]
-
-  dimensions = {
-    QueueName = aws_sqs_queue.email_delivery_dlq.name
-  }
-}
-
 resource "aws_cloudwatch_metric_alarm" "lambda_ses_feedback_errors" {
   alarm_name          = "${local.resource_prefix}-lambda-ses-feedback-errors"
   comparison_operator = "GreaterThanThreshold"
@@ -245,46 +308,6 @@ resource "aws_cloudwatch_metric_alarm" "lambda_ses_feedback_duration" {
   }
 }
 
-resource "aws_cloudwatch_metric_alarm" "ses_feedback_queue_age" {
-  alarm_name          = "${local.resource_prefix}-ses-feedback-queue-age"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 3
-  datapoints_to_alarm = 2
-  metric_name         = "ApproximateAgeOfOldestMessage"
-  namespace           = "AWS/SQS"
-  period              = 300
-  statistic           = "Maximum"
-  threshold           = 600
-  treat_missing_data  = "notBreaching"
-  alarm_description   = "Billeif SES feedback queue oldest message exceeds ten minutes"
-  alarm_actions       = [aws_sns_topic.alerts.arn]
-  ok_actions          = [aws_sns_topic.alerts.arn]
-
-  dimensions = {
-    QueueName = aws_sqs_queue.ses_feedback.name
-  }
-}
-
-resource "aws_cloudwatch_metric_alarm" "ses_feedback_dlq_messages" {
-  alarm_name          = "${local.resource_prefix}-ses-feedback-dlq-messages"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 3
-  datapoints_to_alarm = 2
-  metric_name         = "ApproximateNumberOfMessagesVisible"
-  namespace           = "AWS/SQS"
-  period              = 300
-  statistic           = "Maximum"
-  threshold           = 0
-  treat_missing_data  = "notBreaching"
-  alarm_description   = "Billeif SES feedback dead-letter queue has messages"
-  alarm_actions       = [aws_sns_topic.alerts.arn]
-  ok_actions          = [aws_sns_topic.alerts.arn]
-
-  dimensions = {
-    QueueName = aws_sqs_queue.ses_feedback_dlq.name
-  }
-}
-
 locals {
   threat_detection_log_groups = {
     api_http   = aws_cloudwatch_log_group.lambda_api_http.name
@@ -326,12 +349,14 @@ resource "aws_cloudwatch_metric_alarm" "threat_detection" {
 resource "aws_cloudwatch_metric_alarm" "rds_cpu_high" {
   alarm_name          = "${local.resource_prefix}-rds-cpu-high"
   comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 2
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
   metric_name         = "CPUUtilization"
   namespace           = "AWS/RDS"
   period              = 300
   statistic           = "Average"
   threshold           = 80
+  treat_missing_data  = "notBreaching"
   alarm_description   = "RDS CPU utilization is above 80%"
   alarm_actions       = [aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]
@@ -344,13 +369,75 @@ resource "aws_cloudwatch_metric_alarm" "rds_cpu_high" {
 resource "aws_cloudwatch_metric_alarm" "rds_storage_low" {
   alarm_name          = "${local.resource_prefix}-rds-storage-low"
   comparison_operator = "LessThanThreshold"
-  evaluation_periods  = 1
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
   metric_name         = "FreeStorageSpace"
   namespace           = "AWS/RDS"
   period              = 300
   statistic           = "Average"
   threshold           = 2147483648 # 2 GB in bytes
+  treat_missing_data  = "breaching"
   alarm_description   = "RDS free storage is below 2GB"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    DBInstanceIdentifier = aws_db_instance.main.id
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "rds_connections_high" {
+  alarm_name          = "${local.resource_prefix}-rds-connections-high"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "DatabaseConnections"
+  namespace           = "AWS/RDS"
+  period              = 300
+  statistic           = "Maximum"
+  threshold           = 60
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif RDS database connections exceed the beta pool envelope"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    DBInstanceIdentifier = aws_db_instance.main.id
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "rds_memory_low" {
+  alarm_name          = "${local.resource_prefix}-rds-memory-low"
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "FreeableMemory"
+  namespace           = "AWS/RDS"
+  period              = 300
+  statistic           = "Average"
+  threshold           = 134217728
+  treat_missing_data  = "breaching"
+  alarm_description   = "Billeif RDS freeable memory is below 128 MiB"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    DBInstanceIdentifier = aws_db_instance.main.id
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "rds_cpu_credits_low" {
+  alarm_name          = "${local.resource_prefix}-rds-cpu-credits-low"
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "CPUCreditBalance"
+  namespace           = "AWS/RDS"
+  period              = 300
+  statistic           = "Minimum"
+  threshold           = 20
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif burstable RDS CPU credit balance is low"
   alarm_actions       = [aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]
 
