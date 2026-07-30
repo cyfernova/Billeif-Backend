@@ -71,4 +71,7 @@ func TestLegacyInvoiceSendRouteIsNotRegistered(t *testing.T) {
 	if !routes["POST /api/v1/invoices/:id/issue"] {
 		t.Fatal("canonical invoice issue route must be registered")
 	}
+	if !routes["POST /api/v1/invoices/:id/previews"] {
+		t.Fatal("canonical invoice preview route must be registered")
+	}
 }

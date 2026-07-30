@@ -188,6 +188,75 @@ func invoiceIssueErrorStatus(err error) int {
 	return http.StatusInternalServerError
 }
 
+// Preview queues a private PDF render for the current draft invoice version.
+// @Summary Preview invoice
+// @Description Atomically queues a private PDF preview for the current draft invoice version.
+// @Tags Invoices
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Invoice ID"
+// @Param Idempotency-Key header string true "UUID idempotency key"
+// @Success 202 {object} services.PreviewInvoiceResult
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /invoices/{id}/previews [post]
+func (h *InvoiceHandler) Preview(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	idempotencyKey, ok := requireIdempotencyKey(c)
+	if !ok {
+		return
+	}
+	requestContextWithActor(c)
+	result, err := h.svc.PreviewByBusiness(
+		c.Request.Context(),
+		businessID,
+		c.Param("id"),
+		services.PreviewInvoiceInput{IdempotencyKey: idempotencyKey},
+	)
+	if err != nil {
+		status, message := invoicePreviewErrorResponse(err)
+		h.log.Error(
+			"failed to request invoice preview",
+			"error", err,
+			"business_id", businessID,
+			"invoice_id", c.Param("id"),
+		)
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+	c.JSON(http.StatusAccepted, result)
+}
+
+func invoicePreviewErrorResponse(err error) (int, string) {
+	var invalidKey *idempotency.InvalidKeyError
+	if errors.As(err, &invalidKey) {
+		return http.StatusBadRequest, "a UUID idempotency key is required"
+	}
+	var invalidPayload *idempotency.InvalidPayloadError
+	var invalidLifecycle *invoiceissue.InvalidLifecycleError
+	if errors.As(err, &invalidPayload) || errors.As(err, &invalidLifecycle) {
+		return http.StatusBadRequest, "invalid invoice preview request"
+	}
+	var notFound *invoiceissue.NotFoundError
+	if errors.As(err, &notFound) {
+		return http.StatusNotFound, "invoice not found"
+	}
+	var conflict *idempotency.ConflictError
+	if errors.As(err, &conflict) {
+		return http.StatusConflict, "idempotency key conflicts with a different request"
+	}
+	var inProgress *idempotency.InProgressError
+	if errors.As(err, &inProgress) {
+		return http.StatusConflict, "idempotent request is still in progress"
+	}
+	return http.StatusInternalServerError, "invoice preview unavailable"
+}
+
 // Get retrieves an invoice by ID
 // @Summary Get invoice
 // @Description Returns the details of a specific invoice.

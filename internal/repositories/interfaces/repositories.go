@@ -106,8 +106,38 @@ type AtomicInvoiceIssueResult struct {
 	Replayed    bool
 }
 
+type AtomicInvoicePreview struct {
+	BusinessID     string
+	InvoiceID      string
+	Command        string
+	IdempotencyKey string
+	RequestHash    string
+	ActorID        string
+	ActorRole      string
+	RequestID      string
+	IPAddress      string
+}
+
+type AtomicInvoicePreviewResult struct {
+	RenderJob   *models.DocumentRenderJob
+	OutboxEvent *models.OutboxEvent
+	Replayed    bool
+}
+
 type CanonicalInvoiceIssuer interface {
 	IssueDraftAtomic(ctx context.Context, command AtomicInvoiceIssue) (*AtomicInvoiceIssueResult, error)
+}
+
+type CanonicalInvoicePreviewer interface {
+	RequestPreviewAtomic(ctx context.Context, command AtomicInvoicePreview) (*AtomicInvoicePreviewResult, error)
+}
+
+type VersionedInvoiceDraftMetadataUpdater interface {
+	UpdateDraftMetadataVersioned(
+		ctx context.Context,
+		invoice *models.Invoice,
+		expectedVersion int,
+	) error
 }
 
 type CanonicalInvoiceRepository interface {
@@ -149,6 +179,22 @@ type DocumentRepository interface {
 	UpdateRenderJob(ctx context.Context, job *models.DocumentRenderJob) error
 	CreateRevision(ctx context.Context, revision *models.DocumentRevision) error
 	ListRevisions(ctx context.Context, businessID, documentID string, page, limit int) ([]*models.DocumentRevision, int64, error)
+}
+
+type PreviewRenderRepository interface {
+	ClaimPreviewRender(
+		ctx context.Context,
+		businessID, jobID string,
+		sourceVersion int,
+	) (bool, error)
+	MarkPreviewRenderObsolete(ctx context.Context, businessID, jobID string) error
+	FailPreviewRender(ctx context.Context, businessID, jobID, errorMessage string) error
+	CompletePreviewRender(
+		ctx context.Context,
+		businessID, jobID string,
+		sourceVersion int,
+		objectKey, filename string,
+	) (bool, error)
 }
 
 type LedgerRepository interface {

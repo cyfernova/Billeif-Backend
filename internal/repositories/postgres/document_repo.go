@@ -3,6 +3,8 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
+	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -349,6 +351,235 @@ func (r *documentRepository) GetLatestRenderJob(ctx context.Context, documentID 
 
 func (r *documentRepository) UpdateRenderJob(ctx context.Context, job *models.DocumentRenderJob) error {
 	return r.db.WithContext(ctx).Save(job).Error
+}
+
+func (r *documentRepository) ClaimPreviewRender(
+	ctx context.Context,
+	businessID, jobID string,
+	sourceVersion int,
+) (bool, error) {
+	if businessID == "" || jobID == "" || sourceVersion < 1 {
+		return false, errors.New("claim preview render requires exact job identity")
+	}
+	result := r.db.WithContext(ctx).
+		Model(&models.DocumentRenderJob{}).
+		Where(
+			"id = ? AND business_id = ? AND kind = ? AND source_invoice_version = ? AND status IN ? AND deleted_at IS NULL",
+			jobID,
+			businessID,
+			models.RenderKindPreview,
+			sourceVersion,
+			[]string{models.RenderJobStatusQueued, models.RenderJobStatusFailed},
+		).
+		Updates(map[string]interface{}{
+			"status":           models.RenderJobStatusProcessing,
+			"attempts":         gorm.Expr("attempts + 1"),
+			"error_message":    "",
+			"completed_at":     nil,
+			"lease_owner":      nil,
+			"lease_expires_at": nil,
+		})
+	if result.Error != nil {
+		return false, fmt.Errorf("claim preview render job: %w", result.Error)
+	}
+	if result.RowsAffected == 1 {
+		return true, nil
+	}
+
+	var job models.DocumentRenderJob
+	if err := r.db.WithContext(ctx).
+		Select("id", "business_id", "kind", "source_invoice_version", "status").
+		Where(
+			"id = ? AND business_id = ? AND kind = ? AND deleted_at IS NULL",
+			jobID,
+			businessID,
+			models.RenderKindPreview,
+		).
+		First(&job).Error; err != nil {
+		return false, fmt.Errorf("load unclaimed preview render job: %w", err)
+	}
+	if job.SourceInvoiceVersion == nil || *job.SourceInvoiceVersion != sourceVersion {
+		return false, errors.New("preview render source version mismatch")
+	}
+	switch job.Status {
+	case models.RenderJobStatusProcessing,
+		models.RenderJobStatusCompleted,
+		models.RenderJobStatusObsolete:
+		return false, nil
+	default:
+		return false, fmt.Errorf("preview render job was not claimable from status %q", job.Status)
+	}
+}
+
+func (r *documentRepository) MarkPreviewRenderObsolete(
+	ctx context.Context,
+	businessID, jobID string,
+) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var job models.DocumentRenderJob
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where(
+				"id = ? AND business_id = ? AND kind = ? AND deleted_at IS NULL",
+				jobID,
+				businessID,
+				models.RenderKindPreview,
+			).
+			First(&job).Error; err != nil {
+			return fmt.Errorf("load preview render job: %w", err)
+		}
+		if job.Status == models.RenderJobStatusObsolete {
+			return nil
+		}
+		if job.Status == models.RenderJobStatusCompleted {
+			return errors.New("completed preview render job cannot become obsolete")
+		}
+		return tx.Model(&models.DocumentRenderJob{}).
+			Where("id = ? AND business_id = ?", jobID, businessID).
+			Updates(map[string]interface{}{
+				"status":           models.RenderJobStatusObsolete,
+				"error_message":    "",
+				"completed_at":     nil,
+				"lease_owner":      nil,
+				"lease_expires_at": nil,
+			}).Error
+	})
+}
+
+func (r *documentRepository) FailPreviewRender(
+	ctx context.Context,
+	businessID, jobID, errorMessage string,
+) error {
+	if businessID == "" || jobID == "" {
+		return errors.New("fail preview render requires exact job identity")
+	}
+	result := r.db.WithContext(ctx).
+		Model(&models.DocumentRenderJob{}).
+		Where(
+			"id = ? AND business_id = ? AND kind = ? AND status = ? AND deleted_at IS NULL",
+			jobID,
+			businessID,
+			models.RenderKindPreview,
+			models.RenderJobStatusProcessing,
+		).
+		Updates(map[string]interface{}{
+			"status":           models.RenderJobStatusFailed,
+			"error_message":    errorMessage,
+			"completed_at":     nil,
+			"lease_owner":      nil,
+			"lease_expires_at": nil,
+		})
+	if result.Error != nil {
+		return fmt.Errorf("fail preview render job: %w", result.Error)
+	}
+	if result.RowsAffected == 1 {
+		return nil
+	}
+
+	var job models.DocumentRenderJob
+	if err := r.db.WithContext(ctx).
+		Select("id", "business_id", "kind", "status").
+		Where(
+			"id = ? AND business_id = ? AND kind = ? AND deleted_at IS NULL",
+			jobID,
+			businessID,
+			models.RenderKindPreview,
+		).
+		First(&job).Error; err != nil {
+		return fmt.Errorf("load unfailed preview render job: %w", err)
+	}
+	switch job.Status {
+	case models.RenderJobStatusFailed,
+		models.RenderJobStatusCompleted,
+		models.RenderJobStatusObsolete:
+		return nil
+	default:
+		return fmt.Errorf("preview render job was not fail-safe from status %q", job.Status)
+	}
+}
+
+func (r *documentRepository) CompletePreviewRender(
+	ctx context.Context,
+	businessID, jobID string,
+	sourceVersion int,
+	objectKey, filename string,
+) (bool, error) {
+	if businessID == "" || jobID == "" || sourceVersion < 1 || objectKey == "" || filename == "" {
+		return false, errors.New("complete preview render requires exact job identity")
+	}
+	completed := false
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var job models.DocumentRenderJob
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where(
+				"id = ? AND business_id = ? AND kind = ? AND deleted_at IS NULL",
+				jobID,
+				businessID,
+				models.RenderKindPreview,
+			).
+			First(&job).Error; err != nil {
+			return fmt.Errorf("load preview render job: %w", err)
+		}
+		if job.SourceInvoiceVersion == nil ||
+			*job.SourceInvoiceVersion != sourceVersion ||
+			job.ObjectKey != objectKey ||
+			job.InvoiceID == nil ||
+			job.DocumentID == nil ||
+			*job.InvoiceID != *job.DocumentID {
+			return errors.New("preview render job identity mismatch")
+		}
+		if job.Status == models.RenderJobStatusObsolete {
+			return nil
+		}
+		if job.Status == models.RenderJobStatusCompleted {
+			completed = true
+			return nil
+		}
+		if job.Status != models.RenderJobStatusProcessing {
+			return fmt.Errorf("preview render job cannot complete from status %q", job.Status)
+		}
+
+		var invoice models.Invoice
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Select("id", "business_id", "version").
+			Where(
+				"id = ? AND business_id = ? AND deleted_at IS NULL",
+				*job.InvoiceID,
+				businessID,
+			).
+			First(&invoice).Error; err != nil {
+			return fmt.Errorf("load preview invoice version: %w", err)
+		}
+		if invoice.Version != sourceVersion {
+			return tx.Model(&models.DocumentRenderJob{}).
+				Where("id = ? AND business_id = ?", jobID, businessID).
+				Updates(map[string]interface{}{
+					"status":           models.RenderJobStatusObsolete,
+					"error_message":    "",
+					"completed_at":     nil,
+					"lease_owner":      nil,
+					"lease_expires_at": nil,
+				}).Error
+		}
+
+		now := time.Now().UTC()
+		if err := tx.Model(&models.DocumentRenderJob{}).
+			Where("id = ? AND business_id = ?", jobID, businessID).
+			Updates(map[string]interface{}{
+				"status":           models.RenderJobStatusCompleted,
+				"object_key":       objectKey,
+				"output_url":       "",
+				"output_filename":  filename,
+				"error_message":    "",
+				"completed_at":     now,
+				"lease_owner":      nil,
+				"lease_expires_at": nil,
+			}).Error; err != nil {
+			return fmt.Errorf("complete preview render job: %w", err)
+		}
+		completed = true
+		return nil
+	})
+	return completed, err
 }
 
 func (r *documentRepository) CreateRevision(ctx context.Context, revision *models.DocumentRevision) error {

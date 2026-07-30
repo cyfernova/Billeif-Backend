@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"invoice-backend/internal/idempotency"
+	"invoice-backend/internal/invoiceissue"
 	"invoice-backend/internal/models"
 	interfaces "invoice-backend/internal/repositories/interfaces"
 )
@@ -339,6 +340,48 @@ func (r *invoiceRepository) GetItems(ctx context.Context, invoiceID string) ([]*
 
 func (r *invoiceRepository) Update(ctx context.Context, invoice *models.Invoice) error {
 	return r.db.WithContext(ctx).Save(invoice).Error
+}
+
+func (r *invoiceRepository) UpdateDraftMetadataVersioned(
+	ctx context.Context,
+	invoice *models.Invoice,
+	expectedVersion int,
+) error {
+	if invoice == nil || invoice.ID == "" || invoice.BusinessID == "" || expectedVersion < 1 ||
+		invoice.Version != expectedVersion+1 {
+		return errors.New("versioned draft metadata update requires exact invoice identity")
+	}
+	now := time.Now().UTC()
+	invoice.UpdatedAt = now
+	result := r.db.WithContext(ctx).
+		Model(&models.Invoice{}).
+		Where(
+			"id = ? AND business_id = ? AND version = ? AND status = ? AND deleted_at IS NULL",
+			invoice.ID,
+			invoice.BusinessID,
+			expectedVersion,
+			models.InvoiceStatusDraft,
+		).
+		Updates(map[string]interface{}{
+			"version":            invoice.Version,
+			"invoice_date":       invoice.InvoiceDate,
+			"due_date":           invoice.DueDate,
+			"notes":              invoice.Notes,
+			"project_id":         invoice.ProjectID,
+			"price_list_id":      invoice.PriceListID,
+			"render_profile_id":  invoice.RenderProfileID,
+			"custom_fields":      invoice.CustomFields,
+			"additional_charges": invoice.AdditionalCharges,
+			"tax_profile":        invoice.TaxProfile,
+			"updated_at":         now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return &invoiceissue.StaleVersionError{Expected: expectedVersion, Actual: 0}
+	}
+	return nil
 }
 
 func (r *invoiceRepository) UpdateStatus(ctx context.Context, invoiceID string, status string) error {

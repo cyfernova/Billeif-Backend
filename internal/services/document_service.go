@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -1346,6 +1347,60 @@ func (s *DocumentService) FailRenderJob(ctx context.Context, businessID, jobID, 
 	job.ErrorMessage = errorMessage
 	job.CompletedAt = nil
 	return s.repo.UpdateRenderJob(ctx, job)
+}
+
+func (s *DocumentService) MarkPreviewRenderObsolete(
+	ctx context.Context,
+	businessID, jobID string,
+) error {
+	repository, ok := s.repo.(interfaces.PreviewRenderRepository)
+	if !ok {
+		return errors.New("preview render repository is not configured")
+	}
+	return repository.MarkPreviewRenderObsolete(ctx, businessID, jobID)
+}
+
+func (s *DocumentService) ClaimPreviewRender(
+	ctx context.Context,
+	businessID, jobID string,
+	sourceVersion int,
+) (bool, error) {
+	repository, ok := s.repo.(interfaces.PreviewRenderRepository)
+	if !ok {
+		return false, errors.New("preview render repository is not configured")
+	}
+	return repository.ClaimPreviewRender(ctx, businessID, jobID, sourceVersion)
+}
+
+func (s *DocumentService) FailPreviewRender(
+	ctx context.Context,
+	businessID, jobID, errorMessage string,
+) error {
+	repository, ok := s.repo.(interfaces.PreviewRenderRepository)
+	if !ok {
+		return errors.New("preview render repository is not configured")
+	}
+	return repository.FailPreviewRender(ctx, businessID, jobID, errorMessage)
+}
+
+func (s *DocumentService) CompletePreviewRender(
+	ctx context.Context,
+	businessID, jobID string,
+	sourceVersion int,
+	objectKey, filename string,
+) (bool, error) {
+	repository, ok := s.repo.(interfaces.PreviewRenderRepository)
+	if !ok {
+		return false, errors.New("preview render repository is not configured")
+	}
+	return repository.CompletePreviewRender(
+		ctx,
+		businessID,
+		jobID,
+		sourceVersion,
+		objectKey,
+		filename,
+	)
 }
 
 func (s *DocumentService) applyPostCreateSideEffects(ctx context.Context, document *models.Document) error {

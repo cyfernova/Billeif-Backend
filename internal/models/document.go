@@ -81,6 +81,7 @@ const (
 	RenderJobStatusProcessing = "processing"
 	RenderJobStatusCompleted  = "completed"
 	RenderJobStatusFailed     = "failed"
+	RenderJobStatusObsolete   = "obsolete"
 )
 
 type RenderKind string

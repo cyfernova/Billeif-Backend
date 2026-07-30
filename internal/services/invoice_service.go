@@ -36,6 +36,8 @@ type InvoiceService struct {
 	s3           *S3Service
 	email        InvoiceEmailSender
 	log          *logger.Logger
+
+	immediateOutboxPublisher ImmediateOutboxPublisher
 }
 
 func NewInvoiceService(
@@ -587,7 +589,27 @@ func (s *InvoiceService) UpdateByBusiness(ctx context.Context, businessID, id st
 	}
 	hydrateInvoiceEditorFields(invoice)
 
-	if err := s.repo.Update(ctx, invoice); err != nil {
+	if invoice.Status == models.InvoiceStatusDraft {
+		expectedVersion := invoice.Version
+		if expectedVersion < 1 {
+			expectedVersion = 1
+		}
+		updater, ok := s.repo.(interfaces.VersionedInvoiceDraftMetadataUpdater)
+		if !ok {
+			if s.db != nil {
+				return nil, fmt.Errorf("versioned draft metadata repository is not configured")
+			}
+			invoice.Version = expectedVersion + 1
+			if err := s.repo.Update(ctx, invoice); err != nil {
+				return nil, err
+			}
+		} else {
+			invoice.Version = expectedVersion + 1
+			if err := updater.UpdateDraftMetadataVersioned(ctx, invoice, expectedVersion); err != nil {
+				return nil, err
+			}
+		}
+	} else if err := s.repo.Update(ctx, invoice); err != nil {
 		return nil, err
 	}
 	if s.documents != nil {

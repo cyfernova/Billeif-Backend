@@ -2,6 +2,7 @@ package services
 
 import (
 	"invoice-backend/internal/config"
+	"invoice-backend/internal/outbox"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/a2a"
 	"invoice-backend/pkg/ap2"
@@ -130,6 +131,11 @@ func NewContainer(
 	webhookSvc := NewWebhookService(webhookRepo, log)
 	taxComplianceSvc := NewTaxComplianceService(cfg, db, businessRepo, customerRepo, vendorRepo, subscriptionRepo, aws, s3Svc, webhookSvc, log, resolver)
 	invoiceSvc := NewInvoiceService(db, cfg, invoiceRepo, businessRepo, productRepo, customerRepo, documentSvc, aws, s3Svc, emailSvc, log)
+	if marker, ok := invoiceRepo.(outbox.PublishedMarker); ok {
+		invoiceSvc.WithImmediateOutboxPublisher(
+			outbox.NewImmediatePublisher(cfg.SQS.InvoiceQueue, aws.SQS, marker),
+		)
+	}
 	documentSvc.salesInvoices = newInvoiceSalesDocumentCreator(invoiceSvc)
 	documentSvc.salesInvoiceIssuer = newInvoiceSalesDocumentIssuer(invoiceSvc)
 	billingOpsSvc := NewBillingOpsService(cfg, db, customerRepo, vendorRepo, productRepo, invoiceSvc, documentSvc, s3Svc, log)

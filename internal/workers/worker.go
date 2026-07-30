@@ -3,6 +3,7 @@ package workers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path"
 	"sync"
@@ -115,10 +116,11 @@ func (w *Worker) processQueue(ctx context.Context, queueURL string, handler func
 }
 
 type InvoiceMessage struct {
-	Type        string `json:"type"`
-	InvoiceID   string `json:"invoice_id,omitempty"`
-	DocumentID  string `json:"document_id,omitempty"`
-	RenderJobID string `json:"render_job_id,omitempty"`
+	Type           string `json:"type"`
+	InvoiceID      string `json:"invoice_id,omitempty"`
+	DocumentID     string `json:"document_id,omitempty"`
+	InvoiceVersion int    `json:"invoice_version,omitempty"`
+	RenderJobID    string `json:"render_job_id,omitempty"`
 }
 
 func (w *Worker) handleInvoiceMessage(ctx context.Context, body string) error {
@@ -146,7 +148,7 @@ func ProcessInvoiceQueueMessage(ctx context.Context, cfg *config.Config, svc *se
 	case "generate_pdf":
 		return generateInvoicePDF(ctx, cfg, svc, msg.InvoiceID)
 	case "generate_document_pdf":
-		return generateDocumentPDF(ctx, cfg, svc, log, msg.DocumentID, msg.RenderJobID)
+		return generateDocumentPDF(ctx, cfg, svc, log, msg.DocumentID, msg.RenderJobID, msg.InvoiceVersion)
 	default:
 		log.Warn("unknown invoice message type", "type", msg.Type)
 	}
@@ -184,10 +186,40 @@ func generateInvoicePDF(ctx context.Context, cfg *config.Config, svc *services.C
 	return svc.Invoice.UpdatePDFUrl(ctx, invoiceID, pdfURL)
 }
 
-func generateDocumentPDF(ctx context.Context, cfg *config.Config, svc *services.Container, log *logger.Logger, documentID, renderJobID string) error {
+func generateDocumentPDF(
+	ctx context.Context,
+	cfg *config.Config,
+	svc *services.Container,
+	log *logger.Logger,
+	documentID, renderJobID string,
+	expectedInvoiceVersion int,
+) error {
 	document, err := svc.Document.GetForWorker(ctx, documentID)
 	if err != nil {
 		return err
+	}
+
+	job, jobErr := svc.Document.GetRenderJobByBusiness(ctx, document.BusinessID, renderJobID)
+	isCanonicalPreview := jobErr == nil &&
+		job.Kind == models.RenderKindPreview &&
+		job.InvoiceID != nil &&
+		job.SourceInvoiceVersion != nil &&
+		job.ObjectKey != ""
+	if expectedInvoiceVersion > 0 {
+		if jobErr != nil {
+			return fmt.Errorf("load exact preview render job: %w", jobErr)
+		}
+		if !isCanonicalPreview || *job.SourceInvoiceVersion != expectedInvoiceVersion {
+			return errors.New("preview render message does not match exact versioned job")
+		}
+	}
+	if isCanonicalPreview {
+		return processPreviewRender(
+			ctx,
+			document,
+			job,
+			&servicePreviewRenderOperations{cfg: cfg, svc: svc},
+		)
 	}
 
 	if err := svc.Document.MarkRenderJobProcessing(ctx, document.BusinessID, renderJobID); err != nil {
@@ -221,6 +253,202 @@ func generateDocumentPDF(ctx context.Context, cfg *config.Config, svc *services.
 		if err := svc.Invoice.UpdatePDFUrl(ctx, document.ID, pdfURL); err != nil {
 			log.Warn("failed to sync rendered sales invoice PDF to legacy invoice", "document_id", document.ID, "error", err)
 		}
+	}
+	return nil
+}
+
+type previewRenderOperations interface {
+	currentInvoiceVersion(ctx context.Context, businessID, invoiceID string) (int, error)
+	claimPreview(ctx context.Context, businessID, jobID string, sourceVersion int) (bool, error)
+	loadProfile(ctx context.Context, businessID, profileID string) (*models.RenderProfile, error)
+	render(ctx context.Context, document *models.Document, profile *models.RenderProfile) ([]byte, string, error)
+	upload(ctx context.Context, key string, content []byte) error
+	markObsolete(ctx context.Context, businessID, jobID string) error
+	complete(
+		ctx context.Context,
+		businessID, jobID string,
+		sourceVersion int,
+		objectKey, filename string,
+	) (bool, error)
+	fail(ctx context.Context, businessID, jobID, message string) error
+}
+
+type servicePreviewRenderOperations struct {
+	cfg *config.Config
+	svc *services.Container
+}
+
+func (o *servicePreviewRenderOperations) currentInvoiceVersion(
+	ctx context.Context,
+	businessID, invoiceID string,
+) (int, error) {
+	invoice, err := o.svc.Invoice.GetForWorker(ctx, invoiceID)
+	if err != nil {
+		return 0, err
+	}
+	if invoice.BusinessID != businessID {
+		return 0, errors.New("preview invoice tenant mismatch")
+	}
+	return invoice.Version, nil
+}
+
+func (o *servicePreviewRenderOperations) claimPreview(
+	ctx context.Context,
+	businessID, jobID string,
+	sourceVersion int,
+) (bool, error) {
+	return o.svc.Document.ClaimPreviewRender(ctx, businessID, jobID, sourceVersion)
+}
+
+func (o *servicePreviewRenderOperations) loadProfile(
+	ctx context.Context,
+	businessID, profileID string,
+) (*models.RenderProfile, error) {
+	return o.svc.Document.GetRenderProfileByBusiness(ctx, businessID, profileID)
+}
+
+func (o *servicePreviewRenderOperations) render(
+	ctx context.Context,
+	document *models.Document,
+	profile *models.RenderProfile,
+) ([]byte, string, error) {
+	return renderDocumentPDF(ctx, o.svc, document, profile)
+}
+
+func (o *servicePreviewRenderOperations) upload(
+	ctx context.Context,
+	key string,
+	content []byte,
+) error {
+	return o.svc.S3.Upload(ctx, o.cfg.S3.BucketInvoices, key, content, "application/pdf")
+}
+
+func (o *servicePreviewRenderOperations) markObsolete(
+	ctx context.Context,
+	businessID, jobID string,
+) error {
+	return o.svc.Document.MarkPreviewRenderObsolete(ctx, businessID, jobID)
+}
+
+func (o *servicePreviewRenderOperations) complete(
+	ctx context.Context,
+	businessID, jobID string,
+	sourceVersion int,
+	objectKey, filename string,
+) (bool, error) {
+	return o.svc.Document.CompletePreviewRender(
+		ctx,
+		businessID,
+		jobID,
+		sourceVersion,
+		objectKey,
+		filename,
+	)
+}
+
+func (o *servicePreviewRenderOperations) fail(
+	ctx context.Context,
+	businessID, jobID, message string,
+) error {
+	return o.svc.Document.FailPreviewRender(ctx, businessID, jobID, message)
+}
+
+func processPreviewRender(
+	ctx context.Context,
+	document *models.Document,
+	job *models.DocumentRenderJob,
+	operations previewRenderOperations,
+) error {
+	if document == nil || job == nil || operations == nil ||
+		document.ID == "" || document.BusinessID == "" || job.ID == "" ||
+		job.BusinessID != document.BusinessID ||
+		job.Kind != models.RenderKindPreview ||
+		job.DocumentID == nil || *job.DocumentID != document.ID ||
+		job.InvoiceID == nil || *job.InvoiceID != document.ID ||
+		job.SourceInvoiceVersion == nil || *job.SourceInvoiceVersion < 1 {
+		return errors.New("preview render job identity mismatch")
+	}
+	sourceVersion := *job.SourceInvoiceVersion
+	expectedObjectKey := path.Join(
+		"invoices",
+		document.BusinessID,
+		document.ID,
+		"previews",
+		fmt.Sprintf("v%d", sourceVersion),
+		job.ID+".pdf",
+	)
+	if job.ObjectKey != expectedObjectKey {
+		return errors.New("preview render object key mismatch")
+	}
+	if job.Status == models.RenderJobStatusCompleted ||
+		job.Status == models.RenderJobStatusObsolete {
+		return nil
+	}
+
+	currentVersion, err := operations.currentInvoiceVersion(
+		ctx,
+		document.BusinessID,
+		document.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("load preview invoice version: %w", err)
+	}
+	if currentVersion != sourceVersion {
+		return operations.markObsolete(ctx, document.BusinessID, job.ID)
+	}
+	claimed, err := operations.claimPreview(
+		ctx,
+		document.BusinessID,
+		job.ID,
+		sourceVersion,
+	)
+	if err != nil {
+		return fmt.Errorf("claim preview render: %w", err)
+	}
+	if !claimed {
+		return nil
+	}
+
+	var profile *models.RenderProfile
+	if job.RenderProfileID != nil {
+		profile, err = operations.loadProfile(ctx, document.BusinessID, *job.RenderProfileID)
+		if err != nil {
+			_ = operations.fail(ctx, document.BusinessID, job.ID, err.Error())
+			return fmt.Errorf("load frozen preview render profile: %w", err)
+		}
+	}
+	content, filename, err := operations.render(ctx, document, profile)
+	if err != nil {
+		_ = operations.fail(ctx, document.BusinessID, job.ID, err.Error())
+		return fmt.Errorf("render private invoice preview: %w", err)
+	}
+	if err := operations.upload(ctx, job.ObjectKey, content); err != nil {
+		_ = operations.fail(ctx, document.BusinessID, job.ID, err.Error())
+		return fmt.Errorf("upload private invoice preview: %w", err)
+	}
+
+	currentVersion, err = operations.currentInvoiceVersion(
+		ctx,
+		document.BusinessID,
+		document.ID,
+	)
+	if err != nil {
+		_ = operations.fail(ctx, document.BusinessID, job.ID, err.Error())
+		return fmt.Errorf("reload preview invoice version: %w", err)
+	}
+	if currentVersion != sourceVersion {
+		return operations.markObsolete(ctx, document.BusinessID, job.ID)
+	}
+	if _, err := operations.complete(
+		ctx,
+		document.BusinessID,
+		job.ID,
+		sourceVersion,
+		job.ObjectKey,
+		filename,
+	); err != nil {
+		_ = operations.fail(ctx, document.BusinessID, job.ID, err.Error())
+		return fmt.Errorf("complete private invoice preview: %w", err)
 	}
 	return nil
 }
