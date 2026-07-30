@@ -134,6 +134,11 @@ resource "aws_iam_role_policy_attachment" "lambda_websocket_basic" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
+resource "aws_iam_role_policy_attachment" "lambda_websocket_vpc_access" {
+  role       = aws_iam_role.lambda_websocket_exec.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+}
+
 resource "aws_iam_role" "lambda_voice_exec" {
   name               = "${local.resource_prefix}-lambda-voice-exec-role"
   assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json

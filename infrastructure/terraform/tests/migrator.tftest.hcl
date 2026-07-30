@@ -432,9 +432,11 @@ run "voice_pilot_is_explicit_outside_vpc_and_hard_capped" {
       aws_lambda_function.voice_session.environment[0].variables.VOICE_WS_MAX_SESSION_SECONDS == "900" &&
       aws_lambda_function.voice_session.environment[0].variables.VOICE_WS_MAX_CONCURRENT_SESSIONS_PER_USER == "1" &&
       aws_lambda_function.voice_session.environment[0].variables.VOICE_WS_EVENT_POLL_INTERVAL_MS == "250" &&
-      aws_lambda_function.ws_handler.environment[0].variables.VOICE_ENABLED == "true"
+      aws_lambda_function.ws_handler.environment[0].variables.VOICE_ENABLED == "true" &&
+      aws_iam_role_policy_attachment.lambda_websocket_vpc_access.role == aws_iam_role.lambda_websocket_exec.name &&
+      aws_iam_role_policy_attachment.lambda_websocket_vpc_access.policy_arn == "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
     )
-    error_message = "Explicit Billeif voice pilot mode must stay outside the VPC and enforce one session per user, five globally, 900 seconds, and 250 ms polling."
+    error_message = "Explicit Billeif voice pilot mode must stay outside the VPC, enforce its hard caps, and keep the database-backed WebSocket runtime VPC-capable."
   }
 
   assert {
