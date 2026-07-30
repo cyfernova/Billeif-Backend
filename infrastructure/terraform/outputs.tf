@@ -18,6 +18,11 @@ output "rds_address" {
   value       = aws_db_instance.main.address
 }
 
+output "rds_proxy_endpoint" {
+  description = "Optional Billeif RDS Proxy endpoint, empty while direct RDS is enabled."
+  value       = try(aws_db_proxy.main[0].endpoint, "")
+}
+
 output "rds_port" {
   description = "RDS PostgreSQL port"
   value       = aws_db_instance.main.port

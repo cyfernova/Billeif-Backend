@@ -628,9 +628,13 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_cloudwatch_metric_alarm.rds_memory_low",
 		"aws_cloudwatch_metric_alarm.worker_dlq_messages",
 		"aws_cloudwatch_metric_alarm.worker_queue_age",
+		"aws_db_proxy.main",
+		"aws_db_proxy_default_target_group.main",
+		"aws_db_proxy_target.main",
 		"aws_iam_role.database_migrator",
 		"aws_iam_role.email_delivery",
 		"aws_iam_role.lambda_http_exec",
+		"aws_iam_role.rds_proxy",
 		"aws_iam_role.ses_feedback",
 		"aws_iam_role.outbox_dispatcher",
 		"aws_iam_role.outbox_scheduler",
@@ -638,6 +642,7 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_iam_role_policy.email_delivery",
 		"aws_iam_role_policy.invoice_cursor_http",
 		"aws_iam_role_policy.lambda_http_app",
+		"aws_iam_role_policy.rds_proxy",
 		"aws_iam_role_policy.ses_feedback",
 		"aws_iam_role_policy.outbox_dispatcher",
 		"aws_iam_role_policy.outbox_scheduler",
@@ -657,6 +662,8 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_lambda_function.sqs_ses_feedback",
 		"aws_lambda_invocation.database_migrations",
 		"aws_lambda_permission.allow_http_api_http",
+		"aws_route_table.database",
+		"aws_route_table_association.database",
 		"aws_scheduler_schedule.outbox_dispatcher",
 		"aws_secretsmanager_secret.billeif_invoice_cursor_hmac",
 		"aws_security_group.database_migrator",
@@ -676,6 +683,7 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_sqs_queue_redrive_allow_policy.ses_feedback_dlq",
 		"aws_sqs_queue_redrive_policy.email_delivery",
 		"aws_sqs_queue_redrive_policy.ses_feedback",
+		"aws_subnet.database",
 	)
 	assertExactManifest(t, "Terraform resource labels", terraformResourceLabels(t), wantResources)
 	wantOutputs := manifestLines(preTaskOutputManifest)
@@ -688,6 +696,7 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"http_api_url",
 		"lambda_sqs_email_delivery_arn",
 		"lambda_sqs_ses_feedback_arn",
+		"rds_proxy_endpoint",
 		"ses_feedback_queue_url",
 	)
 	assertExactManifest(t, "Terraform output keys", terraformOutputKeys(t), wantOutputs)
@@ -994,6 +1003,7 @@ var stableAWSNameAttributeAllowlist = map[string][]string{
 	"aws_cognito_user_pool_client.name":                         {"local.cognito_"},
 	"aws_cognito_user_pool_domain.domain":                       {"local.cognito_hosted_ui_domain_prefix"},
 	"aws_db_instance.identifier":                                {"local.resource_prefix"},
+	"aws_db_proxy.name":                                         {"local.resource_prefix"},
 	"aws_db_subnet_group.name":                                  {"local.resource_prefix"},
 	"aws_dynamodb_table.name":                                   {"local.resource_prefix", "local.phone_auth_cooldown_table_name", "local.websocket_connections_table", "local.voice_sessions_table_name"},
 	"aws_eip.domain":                                            {`"vpc"`},

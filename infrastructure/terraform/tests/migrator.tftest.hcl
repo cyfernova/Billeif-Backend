@@ -285,6 +285,72 @@ run "migrator_iam_and_database_ingress_are_exact" {
   }
 }
 
+run "database_beta_profile_is_isolated_protected_and_proxy_optional" {
+  command = plan
+
+  assert {
+    condition = (
+      aws_db_instance.main.allocated_storage == 20 &&
+      aws_db_instance.main.max_allocated_storage == 100 &&
+      aws_db_instance.main.storage_type == "gp3" &&
+      aws_db_instance.main.backup_retention_period == 7 &&
+      aws_db_instance.main.database_insights_mode == "standard" &&
+      aws_db_instance.main.deletion_protection &&
+      !aws_db_instance.main.skip_final_snapshot &&
+      aws_db_instance.main.copy_tags_to_snapshot &&
+      !aws_db_instance.main.multi_az &&
+      aws_db_instance.main.db_subnet_group_name == aws_db_subnet_group.public.name &&
+      aws_db_subnet_group.public.name == "${local.resource_prefix}-db-isolated-subnet-group" &&
+      length(aws_db_proxy.main) == 0 &&
+      aws_ssm_parameter.db_host.value == aws_db_instance.main.address &&
+      length(aws_route_table_association.database) == length(aws_subnet.database) &&
+      alltrue([
+        for subnet in aws_subnet.database :
+        subnet.map_public_ip_on_launch == false && subnet.tags.Type == "database-isolated"
+      ])
+    )
+    error_message = "The Billeif beta database must be single-AZ, protected, autoscaling gp3 storage in isolated database subnets."
+  }
+
+  assert {
+    condition = (
+      toset([for ingress in aws_security_group.rds.ingress : ingress.description]) == toset([
+        "PostgreSQL from Lambda",
+        "PostgreSQL from database migrator",
+        "PostgreSQL from Billeif RDS tunnel",
+      ])
+    )
+    error_message = "RDS ingress must be limited to Billeif Lambda, migrator, and tunnel security groups."
+  }
+}
+
+run "rds_proxy_is_opt_in_and_uses_billeif_private_networking" {
+  command = plan
+
+  variables {
+    enable_rds_proxy = true
+  }
+
+  assert {
+    condition = (
+      length(aws_db_proxy.main) == 1 &&
+      aws_db_proxy.main[0].name == "${local.resource_prefix}-rds-proxy" &&
+      aws_db_proxy.main[0].engine_family == "POSTGRESQL" &&
+      aws_db_proxy.main[0].require_tls &&
+      !aws_db_proxy.main[0].debug_logging &&
+      aws_db_proxy.main[0].idle_client_timeout == 1800 &&
+      toset(aws_db_proxy.main[0].vpc_subnet_ids) == toset(aws_subnet.private[*].id) &&
+      toset(aws_db_proxy.main[0].vpc_security_group_ids) == toset([aws_security_group.lambda.id]) &&
+      toset([for ingress in aws_security_group.lambda.ingress : ingress.description]) == toset([
+        "Billeif RDS Proxy from Lambda",
+        "Billeif RDS Proxy from database migrator",
+        "Billeif RDS Proxy from RDS tunnel",
+      ])
+    )
+    error_message = "The optional Billeif RDS Proxy must remain private, require TLS, and accept only the approved Billeif database clients."
+  }
+}
+
 run "reviewed_enablement_activates_stable_application_resources_after_migration" {
   command = plan
 

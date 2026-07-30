@@ -96,7 +96,7 @@ variable "availability_zones" {
 }
 
 variable "db_allowed_cidr" {
-  description = "CIDR block allowed to access public RDS instance"
+  description = "Deprecated compatibility input. RDS ingress is security-group-only."
   type        = string
 
   validation {
@@ -120,6 +120,18 @@ variable "enable_rds_tunnel" {
   description = "Create a private SSM-managed EC2 instance for local RDS port forwarding in non-production environments."
   type        = bool
   default     = true
+}
+
+variable "db_multi_az" {
+  description = "Enable Multi-AZ RDS. The Billeif beta defaults to a documented single-AZ profile."
+  type        = bool
+  default     = false
+}
+
+variable "enable_rds_proxy" {
+  description = "Route Billeif database connections through the optional RDS Proxy instead of direct RDS."
+  type        = bool
+  default     = false
 }
 
 # RDS Configuration

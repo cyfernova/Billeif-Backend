@@ -7,6 +7,6 @@ resource "aws_ssm_parameter" "db_host" {
   name        = local.db_host_ssm_parameter_name
   description = "Database host for ${local.resource_prefix}"
   type        = "String"
-  value       = aws_db_instance.main.address
+  value       = var.enable_rds_proxy ? aws_db_proxy.main[0].endpoint : aws_db_instance.main.address
   overwrite   = true
 }

@@ -131,7 +131,7 @@ func Initialize(ctx context.Context, opts InitializeOptions) (*Runtime, error) {
 			return nil, fmt.Errorf("initialize invoice cursor codec: %w", err)
 		}
 	}
-	db, err := initDatabase(cfg, resolver, log)
+	db, err := initDatabase(cfg, resolver, log, opts.Profile)
 	if err != nil {
 		log.Sync()
 		return nil, fmt.Errorf("connect database: %w", err)
@@ -174,6 +174,11 @@ func (r *Runtime) Close() {
 	}
 	if r.Svcs != nil && r.Svcs.Workflow != nil {
 		r.Svcs.Workflow.Stop()
+	}
+	if r.DB != nil {
+		if sqlDB, err := r.DB.DB(); err == nil {
+			_ = sqlDB.Close()
+		}
 	}
 	pkgsentry.Flush(2 * time.Second)
 	if r.Log != nil {
@@ -233,7 +238,27 @@ func quotePostgresValue(value string) string {
 	return "'" + value + "'"
 }
 
-func initDatabase(cfg *config.Config, resolver *config.RuntimeResolver, log *logger.Logger) (*gorm.DB, error) {
+type databasePool interface {
+	SetMaxOpenConns(int)
+	SetMaxIdleConns(int)
+	SetConnMaxIdleTime(time.Duration)
+	SetConnMaxLifetime(time.Duration)
+}
+
+func configureDatabasePool(pool databasePool, profile config.Profile) {
+	maxOpenConnections := 1
+	maxIdleConnections := 0
+	if profile == config.ProfileHTTP || profile == config.ProfileA2A {
+		maxOpenConnections = 2
+		maxIdleConnections = 1
+	}
+	pool.SetMaxOpenConns(maxOpenConnections)
+	pool.SetMaxIdleConns(maxIdleConnections)
+	pool.SetConnMaxIdleTime(2 * time.Minute)
+	pool.SetConnMaxLifetime(10 * time.Minute)
+}
+
+func initDatabase(cfg *config.Config, resolver *config.RuntimeResolver, log *logger.Logger, profile config.Profile) (*gorm.DB, error) {
 	gormLevel := "warn"
 	if strings.EqualFold(cfg.Logging.Level, "debug") || strings.EqualFold(cfg.Logging.Level, "info") {
 		gormLevel = cfg.Logging.Level
@@ -243,7 +268,7 @@ func initDatabase(cfg *config.Config, resolver *config.RuntimeResolver, log *log
 		return pq.NewConnector(dataSourceName)
 	})
 	sqlDB := sql.OpenDB(connector)
-	sqlDB.SetConnMaxLifetime(4 * time.Minute)
+	configureDatabasePool(sqlDB, profile)
 
 	return gorm.Open(postgres.New(postgres.Config{
 		Conn:                 sqlDB,
@@ -260,7 +285,7 @@ func initDatabase(cfg *config.Config, resolver *config.RuntimeResolver, log *log
 }
 
 func OpenDatabase(cfg *config.Config, resolver *config.RuntimeResolver, log *logger.Logger) (*gorm.DB, error) {
-	return initDatabase(cfg, resolver, log)
+	return initDatabase(cfg, resolver, log, "")
 }
 
 type Repositories struct {
