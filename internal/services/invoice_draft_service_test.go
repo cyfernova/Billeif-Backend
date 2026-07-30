@@ -210,8 +210,8 @@ func TestInvoiceService_UpdateDraftByBusiness_PersistsCustomerItemsAndRecalculat
 	})
 
 	updated, err := svc.UpdateDraftByBusiness(ctx, businessID, invoiceID, UpdateInvoiceDraftInput{
-		Version:    1,
-		CustomerID: &newCustomerID,
+		ExpectedVersion: 1,
+		CustomerID:      &newCustomerID,
 		CustomerSnapshot: map[string]interface{}{
 			"id":                newCustomerID,
 			"name":              "New Customer",
@@ -289,8 +289,8 @@ func TestInvoiceService_UpdateDraftByBusiness_RejectsStaleVersion(t *testing.T) 
 	invoiceID := seedDraftInvoice(t, db, businessID, oldCustomerID, 3, "draft")
 
 	_, err := svc.UpdateDraftByBusiness(context.Background(), businessID, invoiceID, UpdateInvoiceDraftInput{
-		Version: 2,
-		Items:   []UpdateInvoiceDraftLineInput{{Description: "Item", Quantity: 1, UnitPricePaise: 10000}},
+		ExpectedVersion: 2,
+		Items:           []UpdateInvoiceDraftLineInput{{Description: "Item", Quantity: 1, UnitPricePaise: 10000}},
 	})
 	if err == nil || !strings.Contains(err.Error(), "version conflict") {
 		t.Fatalf("err = %v, want version conflict", err)
@@ -302,8 +302,8 @@ func TestInvoiceService_UpdateDraftByBusiness_RejectsNonDraft(t *testing.T) {
 	invoiceID := seedDraftInvoice(t, db, businessID, oldCustomerID, 1, "paid")
 
 	_, err := svc.UpdateDraftByBusiness(context.Background(), businessID, invoiceID, UpdateInvoiceDraftInput{
-		Version: 1,
-		Items:   []UpdateInvoiceDraftLineInput{{Description: "Item", Quantity: 1, UnitPricePaise: 10000}},
+		ExpectedVersion: 1,
+		Items:           []UpdateInvoiceDraftLineInput{{Description: "Item", Quantity: 1, UnitPricePaise: 10000}},
 	})
 	if err == nil || !strings.Contains(err.Error(), "only draft invoices") {
 		t.Fatalf("err = %v, want non-draft rejection", err)

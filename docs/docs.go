@@ -8064,6 +8064,13 @@ const docTemplate = `{
                         "required": true
                     },
                     {
+                        "type": "string",
+                        "description": "Expected invoice version",
+                        "name": "If-Match",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
                         "description": "Draft invoice updates",
                         "name": "input",
                         "in": "body",
@@ -22626,8 +22633,7 @@ const docTemplate = `{
         "services.UpdateInvoiceDraftInput": {
             "type": "object",
             "required": [
-                "items",
-                "version"
+                "items"
             ],
             "properties": {
                 "customer_id": {
@@ -22695,9 +22701,6 @@ const docTemplate = `{
                 },
                 "terms_and_conditions": {
                     "type": "string"
-                },
-                "version": {
-                    "type": "integer"
                 }
             }
         },

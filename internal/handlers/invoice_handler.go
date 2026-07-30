@@ -453,6 +453,7 @@ func (h *InvoiceHandler) Update(c *gin.Context) {
 // @Produce json
 // @Security BearerAuth
 // @Param id path string true "Invoice ID"
+// @Param If-Match header string true "Expected invoice version"
 // @Param input body services.UpdateInvoiceDraftInput true "Draft invoice updates"
 // @Success 200 {object} models.Invoice
 // @Failure 400 {object} map[string]string
@@ -465,6 +466,10 @@ func (h *InvoiceHandler) UpdateDraft(c *gin.Context) {
 	if !ok {
 		return
 	}
+	expectedVersion, ok := requireInvoiceIfMatch(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
 	var input services.UpdateInvoiceDraftInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -472,6 +477,7 @@ func (h *InvoiceHandler) UpdateDraft(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	input.ExpectedVersion = expectedVersion
 	requestContextWithActor(c)
 
 	invoice, err := h.svc.UpdateDraftByBusiness(c.Request.Context(), businessID, id, input)
