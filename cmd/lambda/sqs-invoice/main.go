@@ -11,6 +11,8 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/aws/aws-lambda-go/lambdacontext"
+	"github.com/google/uuid"
 )
 
 var (
@@ -36,8 +38,16 @@ func handleSQSEvent(ctx context.Context, event events.SQSEvent) (events.SQSEvent
 		return events.SQSEventResponse{}, invoiceInitErr
 	}
 	failures := make([]events.SQSBatchItemFailure, 0)
+	requestID := ""
+	if lambdaContext, ok := lambdacontext.FromContext(ctx); ok {
+		requestID = lambdaContext.AwsRequestID
+	}
+	if requestID == "" {
+		requestID = uuid.NewString()
+	}
 	for _, record := range event.Records {
-		if err := workers.ProcessInvoiceQueueMessageWithOwner(ctx, invoiceRT.Config, invoiceRT.Svcs, invoiceRT.Log, record.Body, record.MessageId); err != nil {
+		owner := workers.NewInvoiceRenderLeaseOwner(requestID, record.MessageId)
+		if err := workers.ProcessInvoiceQueueMessageWithOwner(ctx, invoiceRT.Config, invoiceRT.Svcs, invoiceRT.Log, record.Body, owner); err != nil {
 			invoiceRT.Log.Error("failed to process invoice queue record", "message_id", record.MessageId, "error", err)
 			failures = append(failures, events.SQSBatchItemFailure{ItemIdentifier: record.MessageId})
 		}

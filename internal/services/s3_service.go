@@ -3,6 +3,7 @@ package services
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 type S3Service struct {
@@ -82,6 +84,26 @@ func (s *S3Service) Upload(ctx context.Context, bucket, key string, data []byte,
 		return err
 	}
 	log.Info("S3 upload completed", "size_bytes", len(data), "duration_ms", time.Since(start).Milliseconds())
+	return err
+}
+
+// UploadIfAbsent creates an object without overwriting an existing key.
+// A precondition failure means another writer already created the object.
+func (s *S3Service) UploadIfAbsent(ctx context.Context, bucket, key string, data []byte, contentType string) error {
+	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:      aws.String(bucket),
+		Key:         aws.String(key),
+		Body:        bytes.NewReader(data),
+		ContentType: aws.String(contentType),
+		IfNoneMatch: aws.String("*"),
+	})
+	if err == nil {
+		return nil
+	}
+	var responseError *smithyhttp.ResponseError
+	if errors.As(err, &responseError) && responseError.HTTPStatusCode() == 412 {
+		return nil
+	}
 	return err
 }
 

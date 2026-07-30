@@ -1390,7 +1390,7 @@ func (s *DocumentService) CompletePreviewRender(
 	businessID, jobID string,
 	sourceVersion int,
 	owner string,
-	objectKey, filename string,
+	claimedObjectKey, selectedObjectKey, filename string,
 ) (bool, error) {
 	repository, ok := s.repo.(interfaces.PreviewRenderRepository)
 	if !ok {
@@ -1402,9 +1402,24 @@ func (s *DocumentService) CompletePreviewRender(
 		jobID,
 		sourceVersion,
 		owner,
-		objectKey,
+		claimedObjectKey,
+		selectedObjectKey,
 		filename,
 	)
+}
+
+func (s *DocumentService) VerifyRenderLease(
+	ctx context.Context,
+	businessID, jobID string,
+	kind models.RenderKind,
+	owner string,
+	now time.Time,
+) error {
+	repository, ok := s.repo.(interfaces.RenderLeaseRepository)
+	if !ok {
+		return errors.New("render lease repository is not configured")
+	}
+	return repository.VerifyRenderLease(ctx, businessID, jobID, kind, owner, now)
 }
 
 func (s *DocumentService) ClaimFinalRender(

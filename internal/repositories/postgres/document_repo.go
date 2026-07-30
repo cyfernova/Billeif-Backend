@@ -480,9 +480,40 @@ func (r *documentRepository) ClaimFinalRender(
 		return interfaces.FinalRenderAlreadyProcessing, nil
 	case models.RenderJobStatusCompleted:
 		return interfaces.FinalRenderAlreadyCompleted, nil
+	case models.RenderJobStatusObsolete:
+		return interfaces.FinalRenderAlreadyObsolete, nil
 	default:
 		return "", fmt.Errorf("final render job was not claimable from status %q", job.Status)
 	}
+}
+
+func (r *documentRepository) VerifyRenderLease(
+	ctx context.Context,
+	businessID, jobID string,
+	kind models.RenderKind,
+	owner string,
+	now time.Time,
+) error {
+	if businessID == "" || jobID == "" || !validRenderLeaseOwner(owner) ||
+		(kind != models.RenderKindPreview && kind != models.RenderKindFinal) {
+		return errors.New("verify render lease requires exact identity")
+	}
+	var job models.DocumentRenderJob
+	if err := r.db.WithContext(ctx).
+		Select("id").
+		Where(
+			"id = ? AND business_id = ? AND kind = ? AND status = ? AND lease_owner = ? AND lease_expires_at > ? AND deleted_at IS NULL",
+			jobID,
+			businessID,
+			kind,
+			models.RenderJobStatusProcessing,
+			owner,
+			now,
+		).
+		First(&job).Error; err != nil {
+		return fmt.Errorf("verify render lease ownership: %w", err)
+	}
+	return nil
 }
 
 func (r *documentRepository) LoadFinalRenderSnapshot(
@@ -738,9 +769,10 @@ func (r *documentRepository) CompletePreviewRender(
 	businessID, jobID string,
 	sourceVersion int,
 	owner string,
-	objectKey, filename string,
+	claimedObjectKey, selectedObjectKey, filename string,
 ) (bool, error) {
-	if businessID == "" || jobID == "" || sourceVersion < 1 || !validRenderLeaseOwner(owner) || objectKey == "" || filename == "" {
+	if businessID == "" || jobID == "" || sourceVersion < 1 || !validRenderLeaseOwner(owner) ||
+		claimedObjectKey == "" || selectedObjectKey == "" || filename == "" {
 		return false, errors.New("complete preview render requires exact job identity")
 	}
 	completed := false
@@ -760,7 +792,7 @@ func (r *documentRepository) CompletePreviewRender(
 		}
 		if job.SourceInvoiceVersion == nil ||
 			*job.SourceInvoiceVersion != sourceVersion ||
-			job.ObjectKey != objectKey ||
+			job.ObjectKey != claimedObjectKey ||
 			job.InvoiceID == nil ||
 			job.DocumentID == nil ||
 			*job.InvoiceID != *job.DocumentID {
@@ -801,7 +833,7 @@ func (r *documentRepository) CompletePreviewRender(
 			Where("id = ? AND business_id = ? AND kind = ? AND status = ? AND lease_owner = ? AND deleted_at IS NULL", jobID, businessID, models.RenderKindPreview, models.RenderJobStatusProcessing, owner).
 			Updates(map[string]interface{}{
 				"status":           models.RenderJobStatusCompleted,
-				"object_key":       objectKey,
+				"object_key":       selectedObjectKey,
 				"output_url":       "",
 				"output_filename":  filename,
 				"error_message":    "",

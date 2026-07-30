@@ -65,6 +65,7 @@ func (*queueMessageDocumentRepository) CompletePreviewRender(
 	string,
 	string,
 	string,
+	string,
 ) (bool, error) {
 	return true, nil
 }
@@ -82,6 +83,10 @@ type fakePreviewRenderOperations struct {
 	owner               string
 	claimOwner          string
 	completeOwner       string
+	finalCompleteKey    string
+	finalConditionalPut bool
+	verifyError         error
+	verifyCalls         int
 	invoiceVersions     []int
 	versionCalls        int
 	profileID           string
@@ -90,6 +95,7 @@ type fakePreviewRenderOperations struct {
 	obsolete            bool
 	claimState          interfaces.PreviewRenderClaimState
 	uploadKey           string
+	uploadError         error
 	completeVersion     int
 	completeKey         string
 	completeName        string
@@ -172,7 +178,19 @@ func (f *fakePreviewRenderOperations) renderFinal(
 func (f *fakePreviewRenderOperations) upload(_ context.Context, key string, content []byte) error {
 	f.uploadKey = key
 	f.uploadedContent = append([]byte(nil), content...)
-	return nil
+	return f.uploadError
+}
+
+func (f *fakePreviewRenderOperations) uploadFinalIfAbsent(_ context.Context, key string, content []byte) error {
+	f.finalConditionalPut = true
+	f.uploadKey = key
+	f.uploadedContent = append([]byte(nil), content...)
+	return f.uploadError
+}
+
+func (f *fakePreviewRenderOperations) verifyLease(context.Context, string, string, models.RenderKind, string, time.Time) error {
+	f.verifyCalls++
+	return f.verifyError
 }
 
 func (f *fakePreviewRenderOperations) markObsolete(context.Context, string, string, string) error {
@@ -185,6 +203,7 @@ func (f *fakePreviewRenderOperations) complete(
 	_, _ string,
 	sourceVersion int,
 	owner string,
+	_ string,
 	objectKey, filename string,
 ) (bool, error) {
 	f.completeOwner = owner
@@ -197,8 +216,9 @@ func (f *fakePreviewRenderOperations) complete(
 
 func TestProcessPreviewRenderPropagatesExactLeaseOwner(t *testing.T) {
 	document, job, version := validPreviewWorkerFixture()
+	owner := NewInvoiceRenderLeaseOwner("receive-123", "sqs-message-id-123")
 	operations := &fakePreviewRenderOperations{
-		owner:           "sqs-message-id-123",
+		owner:           owner,
 		invoiceVersions: []int{version, version},
 	}
 
@@ -249,15 +269,13 @@ func (f *fakePreviewRenderOperations) loadFinalSnapshot(
 }
 
 func (f *fakePreviewRenderOperations) completeFinal(
-	context.Context,
-	string,
-	string,
-	string,
-	int,
-	string,
-	string,
-	string,
+	_ context.Context,
+	_, _, _ string,
+	_ int,
+	_ string,
+	selectedObjectKey, _ string,
 ) (bool, error) {
+	f.finalCompleteKey = selectedObjectKey
 	f.finalCompleted = true
 	return true, nil
 }
@@ -265,6 +283,121 @@ func (f *fakePreviewRenderOperations) completeFinal(
 func (f *fakePreviewRenderOperations) failFinal(context.Context, string, string, string, string) error {
 	f.finalFailed = true
 	return nil
+}
+
+func validFinalRenderSnapshot(document *models.Document) *models.Document {
+	return &models.Document{
+		ID:            document.ID,
+		BusinessID:    document.BusinessID,
+		Status:        models.DocumentStatusIssued,
+		DraftState:    models.DocumentDraftStateFinal,
+		SerialNumber:  "INV/26-27/000001",
+		SourceLinkage: `{"seller_snapshot":{"name":"Frozen Seller"},"buyer_snapshot":{"name":"Frozen Buyer"}}`,
+		Lines:         []*models.DocumentLine{{Description: "Frozen line"}},
+	}
+}
+
+func TestCanonicalRenderPublishesOwnerSpecificImmutableAttempt(t *testing.T) {
+	tests := []struct {
+		name  string
+		final bool
+	}{
+		{name: "preview"},
+		{name: "final", final: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			document, job, version := validPreviewWorkerFixture()
+			operations := &fakePreviewRenderOperations{owner: "receive-a", invoiceVersions: []int{version, version}}
+			if test.final {
+				job.Kind = models.RenderKindFinal
+				job.ObjectKey = fmt.Sprintf("invoices/%s/%s/v%d/final.pdf", document.BusinessID, document.ID, version)
+				operations.finalSnapshot = validFinalRenderSnapshot(document)
+			}
+
+			if err := processDocumentRenderJob(context.Background(), document, job, version, operations); err != nil {
+				t.Fatalf("process canonical render: %v", err)
+			}
+			if test.final {
+				if operations.uploadKey != job.ObjectKey || !operations.finalConditionalPut {
+					t.Fatalf("final upload key/conditional = %q/%t, want deterministic conditional create at %q", operations.uploadKey, operations.finalConditionalPut, job.ObjectKey)
+				}
+			} else if operations.uploadKey == job.ObjectKey || operations.uploadKey == "" {
+				t.Fatalf("preview attempt upload key = %q, must be immutable and distinct from %q", operations.uploadKey, job.ObjectKey)
+			}
+			selected := operations.completeKey
+			if test.final {
+				selected = operations.finalCompleteKey
+			}
+			if selected != operations.uploadKey {
+				t.Fatalf("selected/upload key = %q/%q, want exact attempt key", selected, operations.uploadKey)
+			}
+		})
+	}
+}
+
+func TestCanonicalRenderVerifiesLeaseImmediatelyBeforeUpload(t *testing.T) {
+	document, job, version := validPreviewWorkerFixture()
+	operations := &fakePreviewRenderOperations{
+		owner:           "receive-a",
+		invoiceVersions: []int{version},
+		verifyError:     errors.New("lease reclaimed by receive-b"),
+	}
+
+	err := processDocumentRenderJob(context.Background(), document, job, version, operations)
+	if err == nil || operations.verifyCalls != 1 || operations.uploadKey != "" || operations.completed {
+		t.Fatalf("stale publish result/error = %#v/%v, want fenced before upload", operations, err)
+	}
+}
+
+func TestCanonicalRenderDoesNotCompleteWhenPublishFails(t *testing.T) {
+	for _, final := range []bool{false, true} {
+		t.Run(fmt.Sprintf("final=%t", final), func(t *testing.T) {
+			document, job, version := validPreviewWorkerFixture()
+			operations := &fakePreviewRenderOperations{
+				owner:           "receive-a",
+				invoiceVersions: []int{version},
+				uploadError:     errors.New("publish failed"),
+			}
+			if final {
+				job.Kind = models.RenderKindFinal
+				job.ObjectKey = fmt.Sprintf("invoices/%s/%s/v%d/final.pdf", document.BusinessID, document.ID, version)
+				operations.finalSnapshot = validFinalRenderSnapshot(document)
+			}
+
+			if err := processDocumentRenderJob(context.Background(), document, job, version, operations); err == nil {
+				t.Fatal("publish failure returned success")
+			}
+			if operations.completed || operations.finalCompleted {
+				t.Fatalf("publish failure marked render complete: %#v", operations)
+			}
+		})
+	}
+}
+
+func TestProcessDocumentRenderJobNoOpsObsoleteFinalDuplicate(t *testing.T) {
+	document, job, version := validPreviewWorkerFixture()
+	job.Kind = models.RenderKindFinal
+	job.ObjectKey = fmt.Sprintf("invoices/%s/%s/v%d/final.pdf", document.BusinessID, document.ID, version)
+	operations := &fakePreviewRenderOperations{finalClaimState: interfaces.FinalRenderClaimState("obsolete")}
+
+	if err := processDocumentRenderJob(context.Background(), document, job, version, operations); err != nil {
+		t.Fatalf("obsolete final duplicate: %v", err)
+	}
+	if operations.rendered || operations.uploadKey != "" || operations.finalCompleted {
+		t.Fatalf("obsolete final duplicate performed work: %#v", operations)
+	}
+}
+
+func TestInvoiceRenderLeaseOwnerIsFreshPerReceive(t *testing.T) {
+	first := NewInvoiceRenderLeaseOwner("receive-a", "message-123")
+	second := NewInvoiceRenderLeaseOwner("receive-b", "message-123")
+	if first == "" || second == "" || first == second {
+		t.Fatalf("fresh receive owners = %q/%q, want distinct non-empty tokens", first, second)
+	}
+	if len(first) > 255 || len(second) > 255 {
+		t.Fatalf("fresh receive owner exceeded schema bound: %d/%d", len(first), len(second))
+	}
 }
 
 func TestProcessPreviewRenderUsesFrozenProfileAndExactPrivateObjectKey(t *testing.T) {
@@ -297,8 +430,8 @@ func TestProcessPreviewRenderUsesFrozenProfileAndExactPrivateObjectKey(t *testin
 	if operations.profileID != profileID {
 		t.Fatalf("profile = %q, want frozen %q", operations.profileID, profileID)
 	}
-	if operations.uploadKey != objectKey || operations.completeKey != objectKey {
-		t.Fatalf("keys upload/complete = %q/%q, want %q", operations.uploadKey, operations.completeKey, objectKey)
+	if operations.uploadKey == objectKey || operations.completeKey != operations.uploadKey {
+		t.Fatalf("keys upload/complete = %q/%q, want matching immutable attempt distinct from %q", operations.uploadKey, operations.completeKey, objectKey)
 	}
 	if operations.completeVersion != version || operations.completeName != "invoice-preview.pdf" {
 		t.Fatalf("completion version/name = %d/%q", operations.completeVersion, operations.completeName)
@@ -330,7 +463,7 @@ func TestProcessPreviewRenderRechecksVersionBeforeCompletion(t *testing.T) {
 	if err := processPreviewRender(context.Background(), document, job, operations); err != nil {
 		t.Fatalf("process concurrently changed preview: %v", err)
 	}
-	if !operations.rendered || operations.uploadKey != job.ObjectKey {
+	if !operations.rendered || operations.uploadKey == "" || operations.uploadKey == job.ObjectKey {
 		t.Fatalf("render/upload = %t/%q", operations.rendered, operations.uploadKey)
 	}
 	if !operations.obsolete || operations.completed {
@@ -662,7 +795,8 @@ func TestProcessDocumentRenderJobRoutesCanonicalPreviewToPrivateRenderer(t *test
 	if operations.genericRendered {
 		t.Fatal("canonical preview entered legacy generic renderer")
 	}
-	if !operations.rendered || !operations.completed || operations.uploadKey != job.ObjectKey {
+	if !operations.rendered || !operations.completed ||
+		operations.uploadKey == job.ObjectKey || operations.completeKey != operations.uploadKey {
 		t.Fatalf("canonical preview workflow state: %#v", operations)
 	}
 }

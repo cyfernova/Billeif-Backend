@@ -198,7 +198,7 @@ type PreviewRenderRepository interface {
 		businessID, jobID string,
 		sourceVersion int,
 		owner string,
-		objectKey, filename string,
+		claimedObjectKey, selectedObjectKey, filename string,
 	) (bool, error)
 }
 
@@ -217,7 +217,12 @@ const (
 	FinalRenderClaimed           FinalRenderClaimState = "claimed"
 	FinalRenderAlreadyProcessing FinalRenderClaimState = "processing"
 	FinalRenderAlreadyCompleted  FinalRenderClaimState = "completed"
+	FinalRenderAlreadyObsolete   FinalRenderClaimState = "obsolete"
 )
+
+type RenderLeaseRepository interface {
+	VerifyRenderLease(ctx context.Context, businessID, jobID string, kind models.RenderKind, owner string, now time.Time) error
+}
 
 type FinalRenderRepository interface {
 	ClaimFinalRender(
