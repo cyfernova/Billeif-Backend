@@ -612,6 +612,33 @@ func (s *A2ABargainingService) RunAutonomousNegotiationRound(ctx context.Context
 	return nil
 }
 
+func (s *A2ABargainingService) ClaimAutonomousNegotiationRound(
+	ctx context.Context,
+	negotiationID string,
+	roundNumber int,
+	leaseOwner string,
+	now time.Time,
+	leaseExpiresAt time.Time,
+) (bool, error) {
+	if negotiationID == "" || roundNumber < 1 || leaseOwner == "" || !leaseExpiresAt.After(now) {
+		return false, fmt.Errorf("invalid bargaining round claim")
+	}
+	return s.ap2Repo.ClaimBargainingRound(ctx, negotiationID, roundNumber, leaseOwner, now, leaseExpiresAt)
+}
+
+func (s *A2ABargainingService) CompleteAutonomousNegotiationRound(
+	ctx context.Context,
+	negotiationID string,
+	roundNumber int,
+	leaseOwner string,
+	completedAt time.Time,
+) (bool, error) {
+	if negotiationID == "" || roundNumber < 1 || leaseOwner == "" {
+		return false, fmt.Errorf("invalid bargaining round completion")
+	}
+	return s.ap2Repo.CompleteBargainingRoundClaim(ctx, negotiationID, roundNumber, leaseOwner, completedAt)
+}
+
 func (s *A2ABargainingService) recordLearning(negotiation *models.BargainingNegotiation, lastAgentID, lastAgentType, action string, rounds int) {
 	if s.mentee == nil {
 		return

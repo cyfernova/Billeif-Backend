@@ -44,14 +44,16 @@ resource "aws_iam_role_policy" "sns_feedback" {
 
 resource "aws_sqs_queue" "invoice_processing" {
   name                       = "${local.resource_prefix}-invoice-processing-queue"
-  message_retention_seconds  = 86400
+  message_retention_seconds  = 604800
   visibility_timeout_seconds = var.worker_queue_visibility_timeout_seconds
+  sqs_managed_sse_enabled    = true
 }
 
 resource "aws_sqs_queue" "gst_processing" {
   name                       = "${local.resource_prefix}-gst-processing-queue"
-  message_retention_seconds  = 86400
+  message_retention_seconds  = 345600
   visibility_timeout_seconds = var.worker_queue_visibility_timeout_seconds
+  sqs_managed_sse_enabled    = true
 }
 
 resource "aws_sqs_queue" "email_delivery_dlq" {
@@ -278,12 +280,15 @@ resource "aws_sns_topic_subscription" "ses_feedback" {
 # Autonomous Bargaining Negotiation Queue
 resource "aws_sqs_queue" "bargaining_negotiation" {
   name                       = "${local.resource_prefix}-bargaining-negotiation-queue"
-  message_retention_seconds  = 86400
-  visibility_timeout_seconds = 390
+  message_retention_seconds  = 345600
+  visibility_timeout_seconds = 365
+  sqs_managed_sse_enabled    = true
 }
 
 resource "aws_sqs_queue" "bargaining_negotiation_dlq" {
-  name = "${local.resource_prefix}-bargaining-negotiation-dlq"
+  name                      = "${local.resource_prefix}-bargaining-negotiation-dlq"
+  message_retention_seconds = 1209600
+  sqs_managed_sse_enabled   = true
 }
 
 resource "aws_sqs_queue_redrive_allow_policy" "bargaining_negotiation_dlq" {
@@ -303,11 +308,15 @@ resource "aws_sqs_queue_redrive_policy" "bargaining_negotiation" {
 }
 
 resource "aws_sqs_queue" "invoice_processing_dlq" {
-  name = "${local.resource_prefix}-invoice-processing-dlq"
+  name                      = "${local.resource_prefix}-invoice-processing-dlq"
+  message_retention_seconds = 1209600
+  sqs_managed_sse_enabled   = true
 }
 
 resource "aws_sqs_queue" "gst_processing_dlq" {
-  name = "${local.resource_prefix}-gst-processing-dlq"
+  name                      = "${local.resource_prefix}-gst-processing-dlq"
+  message_retention_seconds = 1209600
+  sqs_managed_sse_enabled   = true
 }
 
 resource "aws_sqs_queue_redrive_allow_policy" "invoice_processing_dlq" {
@@ -330,7 +339,7 @@ resource "aws_sqs_queue_redrive_policy" "invoice_processing" {
   queue_url = aws_sqs_queue.invoice_processing.id
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.invoice_processing_dlq.arn
-    maxReceiveCount     = 3
+    maxReceiveCount     = 5
   })
 }
 
@@ -338,6 +347,6 @@ resource "aws_sqs_queue_redrive_policy" "gst_processing" {
   queue_url = aws_sqs_queue.gst_processing.id
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.gst_processing_dlq.arn
-    maxReceiveCount     = 3
+    maxReceiveCount     = 5
   })
 }

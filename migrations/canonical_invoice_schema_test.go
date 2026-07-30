@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	canonicalInvoiceMigrationVersion = 45
+	canonicalInvoiceMigrationVersion = 46
 	releasedManifestPrefixDigest     = "e7c51b8069e0785e8d2881a4eb06070c3899107ad55a72166e86e26a7979e936"
 )
 
@@ -140,6 +140,22 @@ func TestInvoiceDeliveryMigrationExtendsExistingDeliveryLifecycle(t *testing.T) 
 		"WHEN status = 'waiting_for_render' THEN 'failed'",
 		"WHEN status IN ('bounced', 'complained') THEN 'failed'",
 	)
+}
+
+func TestBargainingRoundClaimsAreDurableAndLeaseBound(t *testing.T) {
+	up := migrationSQL(t, "000046_add_bargaining_round_claims.up.sql")
+	requireSQLFragments(t, up,
+		"CREATE TABLE bargaining_round_claims",
+		"negotiation_id UUID NOT NULL",
+		"round_number INTEGER NOT NULL",
+		"lease_owner VARCHAR(255) NOT NULL",
+		"lease_expires_at TIMESTAMPTZ NOT NULL",
+		"completed_at TIMESTAMPTZ",
+		"PRIMARY KEY (negotiation_id, round_number)",
+		"CHECK (round_number > 0)",
+	)
+	down := migrationSQL(t, "000046_add_bargaining_round_claims.down.sql")
+	requireSQLFragments(t, down, "DROP TABLE IF EXISTS bargaining_round_claims")
 }
 
 func TestCanonicalInvoiceMigrationKeepsOneFinalRenderForever(t *testing.T) {

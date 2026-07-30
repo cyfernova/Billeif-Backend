@@ -499,7 +499,7 @@ resource "aws_lambda_function" "sqs_bargaining" {
   s3_object_version = aws_s3_object.sqs_bargaining_lambda_artifact.version_id
   source_code_hash  = local.lambda_artifact_hashes.sqs_bargaining
   memory_size       = 1024
-  timeout           = 350
+  timeout           = 60
 
   reserved_concurrent_executions = var.enable_application ? (var.enable_lambda_reserved_concurrency ? 5 : null) : 0
 
@@ -615,6 +615,10 @@ resource "aws_lambda_event_source_mapping" "invoice_queue" {
   batch_size                         = 10
   function_response_types            = ["ReportBatchItemFailures"]
   maximum_batching_window_in_seconds = 5
+
+  scaling_config {
+    maximum_concurrency = 2
+  }
 }
 
 resource "aws_lambda_event_source_mapping" "gst_queue" {
@@ -625,6 +629,10 @@ resource "aws_lambda_event_source_mapping" "gst_queue" {
   batch_size                         = 10
   function_response_types            = ["ReportBatchItemFailures"]
   maximum_batching_window_in_seconds = 5
+
+  scaling_config {
+    maximum_concurrency = 2
+  }
 }
 
 resource "aws_lambda_event_source_mapping" "bargaining_queue" {
@@ -632,9 +640,13 @@ resource "aws_lambda_event_source_mapping" "bargaining_queue" {
 
   event_source_arn                   = aws_sqs_queue.bargaining_negotiation.arn
   function_name                      = aws_lambda_function.sqs_bargaining.arn
-  batch_size                         = 10
+  batch_size                         = 1
   function_response_types            = ["ReportBatchItemFailures"]
-  maximum_batching_window_in_seconds = 5
+  maximum_batching_window_in_seconds = 0
+
+  scaling_config {
+    maximum_concurrency = 2
+  }
 }
 
 resource "aws_lambda_event_source_mapping" "email_delivery_queue" {

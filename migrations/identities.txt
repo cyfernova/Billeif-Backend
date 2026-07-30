@@ -43,3 +43,4 @@
 000043_add_llm_chat_history
 000044_canonical_invoice_foundations
 000045_extend_invoice_deliveries
+000046_add_bargaining_round_claims

@@ -159,4 +159,6 @@ type AP2Repository interface {
 	CreateBargainingRound(ctx context.Context, round *models.BargainingRound) error
 	GetBargainingRounds(ctx context.Context, negotiationID string) ([]*models.BargainingRound, error)
 	GetBargainingRoundsByAgent(ctx context.Context, agentID string, page, limit int) ([]*models.BargainingRound, int64, error)
+	ClaimBargainingRound(ctx context.Context, negotiationID string, roundNumber int, leaseOwner string, now, leaseExpiresAt time.Time) (bool, error)
+	CompleteBargainingRoundClaim(ctx context.Context, negotiationID string, roundNumber int, leaseOwner string, completedAt time.Time) (bool, error)
 }

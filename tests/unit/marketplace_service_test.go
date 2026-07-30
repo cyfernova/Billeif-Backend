@@ -728,6 +728,16 @@ func (m *MockMarketplaceAP2Repository) GetBargainingRoundsByAgent(ctx context.Co
 	return args.Get(0).([]*models.BargainingRound), args.Get(1).(int64), args.Error(2)
 }
 
+func (m *MockMarketplaceAP2Repository) ClaimBargainingRound(ctx context.Context, negotiationID string, roundNumber int, leaseOwner string, now, leaseExpiresAt time.Time) (bool, error) {
+	args := m.Called(ctx, negotiationID, roundNumber, leaseOwner, now, leaseExpiresAt)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockMarketplaceAP2Repository) CompleteBargainingRoundClaim(ctx context.Context, negotiationID string, roundNumber int, leaseOwner string, completedAt time.Time) (bool, error) {
+	args := m.Called(ctx, negotiationID, roundNumber, leaseOwner, completedAt)
+	return args.Bool(0), args.Error(1)
+}
+
 // TestListProducts_Success tests successful product listing
 func TestMarketplaceService_ListProducts_Success(t *testing.T) {
 	mockAP2 := new(MockMarketplaceAP2Repository)

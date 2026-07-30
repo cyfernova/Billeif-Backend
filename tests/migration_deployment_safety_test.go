@@ -14,8 +14,8 @@ func TestMigrationBundleHasOneRootSourceAndNoImperativeTerraformRunner(t *testin
 	if err != nil {
 		t.Fatalf("glob root migrations: %v", err)
 	}
-	if len(rootMigrations) != 90 {
-		t.Fatalf("root migration SQL count = %d, want 90", len(rootMigrations))
+	if len(rootMigrations) != 92 {
+		t.Fatalf("root migration SQL count = %d, want 92", len(rootMigrations))
 	}
 
 	var duplicateSQL []string

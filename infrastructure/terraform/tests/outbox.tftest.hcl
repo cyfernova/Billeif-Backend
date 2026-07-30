@@ -10,7 +10,7 @@ mock_provider "aws" {
 
   mock_resource "aws_lambda_invocation" {
     defaults = {
-      result = "{\"status\":\"applied\",\"version\":45,\"latest_version\":45,\"dirty\":false,\"manifest_checksum\":\"be1d51afbbb4e42563b767d03efc375a71fb7027f54d089bbf71792c62814452\"}"
+      result = "{\"status\":\"applied\",\"version\":46,\"latest_version\":46,\"dirty\":false,\"manifest_checksum\":\"c8ee4f07d7b006e5fed9890e052d1f567a11a65c1c9460c31387d343ed4a1602\"}"
     }
   }
 
@@ -66,6 +66,53 @@ mock_provider "aws" {
     values = {
       arn = "arn:aws:sqs:ap-south-1:123456789012:billeif-test-test-invoice-processing-queue"
       url = "https://sqs.ap-south-1.amazonaws.com/123456789012/billeif-test-test-invoice-processing-queue"
+    }
+  }
+
+  override_resource {
+    target          = aws_sqs_queue.invoice_processing_dlq
+    override_during = plan
+    values = {
+      arn = "arn:aws:sqs:ap-south-1:123456789012:billeif-test-test-invoice-processing-dlq"
+      id  = "https://sqs.ap-south-1.amazonaws.com/123456789012/billeif-test-test-invoice-processing-dlq"
+    }
+  }
+
+  override_resource {
+    target          = aws_sqs_queue.gst_processing
+    override_during = plan
+    values = {
+      arn = "arn:aws:sqs:ap-south-1:123456789012:billeif-test-test-gst-processing-queue"
+      id  = "https://sqs.ap-south-1.amazonaws.com/123456789012/billeif-test-test-gst-processing-queue"
+      url = "https://sqs.ap-south-1.amazonaws.com/123456789012/billeif-test-test-gst-processing-queue"
+    }
+  }
+
+  override_resource {
+    target          = aws_sqs_queue.gst_processing_dlq
+    override_during = plan
+    values = {
+      arn = "arn:aws:sqs:ap-south-1:123456789012:billeif-test-test-gst-processing-dlq"
+      id  = "https://sqs.ap-south-1.amazonaws.com/123456789012/billeif-test-test-gst-processing-dlq"
+    }
+  }
+
+  override_resource {
+    target          = aws_sqs_queue.bargaining_negotiation
+    override_during = plan
+    values = {
+      arn = "arn:aws:sqs:ap-south-1:123456789012:billeif-test-test-bargaining-negotiation-queue"
+      id  = "https://sqs.ap-south-1.amazonaws.com/123456789012/billeif-test-test-bargaining-negotiation-queue"
+      url = "https://sqs.ap-south-1.amazonaws.com/123456789012/billeif-test-test-bargaining-negotiation-queue"
+    }
+  }
+
+  override_resource {
+    target          = aws_sqs_queue.bargaining_negotiation_dlq
+    override_during = plan
+    values = {
+      arn = "arn:aws:sqs:ap-south-1:123456789012:billeif-test-test-bargaining-negotiation-dlq"
+      id  = "https://sqs.ap-south-1.amazonaws.com/123456789012/billeif-test-test-bargaining-negotiation-dlq"
     }
   }
 
@@ -446,5 +493,44 @@ run "ses_feedback_enablement_uses_zero_window_mapping_cap" {
       aws_lambda_event_source_mapping.ses_feedback_queue[0].scaling_config[0].maximum_concurrency == 2
     )
     error_message = "Enabled Billeif SES feedback must use zero batching delay, partial-batch responses, and a two-concurrency event-source cap."
+  }
+}
+
+run "active_worker_queues_are_retained_redriven_and_cost_capped" {
+  command = plan
+
+  variables {
+    enable_application = true
+  }
+
+  assert {
+    condition = (
+      aws_sqs_queue.invoice_processing.message_retention_seconds == 604800 &&
+      aws_sqs_queue.gst_processing.message_retention_seconds == 345600 &&
+      aws_sqs_queue.bargaining_negotiation.message_retention_seconds == 345600 &&
+      aws_sqs_queue.bargaining_negotiation.visibility_timeout_seconds == 365 &&
+      aws_sqs_queue.invoice_processing_dlq.message_retention_seconds == 1209600 &&
+      aws_sqs_queue.gst_processing_dlq.message_retention_seconds == 1209600 &&
+      aws_sqs_queue.bargaining_negotiation_dlq.message_retention_seconds == 1209600 &&
+      jsondecode(aws_sqs_queue_redrive_policy.invoice_processing.redrive_policy).maxReceiveCount == 5 &&
+      jsondecode(aws_sqs_queue_redrive_policy.gst_processing.redrive_policy).maxReceiveCount == 5 &&
+      jsondecode(aws_sqs_queue_redrive_policy.bargaining_negotiation.redrive_policy).maxReceiveCount == 5
+    )
+    error_message = "Invoice work must retain seven days; other jobs four days; all worker DLQs must retain fourteen days and redrive after five receives."
+  }
+
+  assert {
+    condition = (
+      aws_lambda_function.sqs_bargaining.timeout == 60 &&
+      aws_lambda_event_source_mapping.invoice_queue[0].scaling_config[0].maximum_concurrency == 2 &&
+      aws_lambda_event_source_mapping.gst_queue[0].scaling_config[0].maximum_concurrency == 2 &&
+      aws_lambda_event_source_mapping.bargaining_queue[0].scaling_config[0].maximum_concurrency == 2 &&
+      aws_lambda_event_source_mapping.bargaining_queue[0].batch_size == 1 &&
+      aws_lambda_event_source_mapping.bargaining_queue[0].maximum_batching_window_in_seconds == 0 &&
+      contains(aws_lambda_event_source_mapping.invoice_queue[0].function_response_types, "ReportBatchItemFailures") &&
+      contains(aws_lambda_event_source_mapping.gst_queue[0].function_response_types, "ReportBatchItemFailures") &&
+      contains(aws_lambda_event_source_mapping.bargaining_queue[0].function_response_types, "ReportBatchItemFailures")
+    )
+    error_message = "Every active queue must have its own partial-batch worker capped at two concurrent invocations; bargaining processes one round in a 60-second invocation."
   }
 }
