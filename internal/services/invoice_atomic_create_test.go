@@ -644,6 +644,57 @@ func TestInvoiceServiceCreateReplaysSameKeyAndConflictsOnChangedPayload(t *testi
 	}
 }
 
+func TestInvoiceServiceCreateRejectsCompletedReplayWithoutValidActor(t *testing.T) {
+	service, repo, input, validContext := newAtomicInvoiceServiceFixture(t)
+	_, err := service.Create(validContext, input)
+	if err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	initialReplayChecks := repo.replayChecks
+	initialResolutionCalls := repo.resolutionCalls
+	repo.resolutionErr = errors.New("resolver must not run for actor validation")
+
+	fixtures := []struct {
+		name string
+		ctx  context.Context
+	}{
+		{name: "missing", ctx: context.Background()},
+		{
+			name: "invalid",
+			ctx: ContextWithActor(context.Background(), ActorContext{
+				UserID: "not-a-uuid",
+			}),
+		},
+	}
+
+	for _, fixture := range fixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			invoice, err := service.Create(fixture.ctx, input)
+
+			if invoice != nil {
+				t.Fatalf("invoice = %#v, want nil", invoice)
+			}
+			if err == nil || err.Error() != "invoice create actor is required" {
+				t.Fatalf("error = %T %v, want required actor error", err, err)
+			}
+			if repo.replayChecks != initialReplayChecks {
+				t.Fatalf(
+					"replay checks = %d, want unchanged %d before actor validation",
+					repo.replayChecks,
+					initialReplayChecks,
+				)
+			}
+			if repo.resolutionCalls != initialResolutionCalls {
+				t.Fatalf(
+					"resolution calls = %d, want unchanged %d",
+					repo.resolutionCalls,
+					initialResolutionCalls,
+				)
+			}
+		})
+	}
+}
+
 func TestInvoiceServiceCreateHashIncludesTrustedSubscriptionOrigin(t *testing.T) {
 	service, repo, input, ctx := newAtomicInvoiceServiceFixture(t)
 	input.OriginSubscriptionID = uuid.NewString()

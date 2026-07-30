@@ -188,33 +188,45 @@ func TestInvoiceRepositoryCreateDraftAtomicReplaysStoredReferenceWhenInvoiceIsNo
 }
 
 func TestInvoiceRepositoryReplayCompletedDraftUsesRawRequestIdentityBeforeResolution(t *testing.T) {
-	repository, mock, closeDatabase := newAtomicSQLMockRepository(t)
+	repository, mock, closeDatabase := newAtomicSQLMockRepositoryWithMatcher(t, sqlmock.QueryMatcherRegexp)
 	defer closeDatabase()
 	command := atomicRepositoryTestCommand()
 	resultType := "invoice"
 	resultID := uuid.NewString()
 
-	mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{
-		"business_id",
-		"command",
-		"idempotency_key",
-		"request_hash",
-		"status",
-		"result_type",
-		"result_id",
-	}).AddRow(
-		command.BusinessID,
-		command.Command,
-		command.IdempotencyKey,
-		command.RequestHash,
-		models.IdempotencyStatusCompleted,
-		resultType,
-		resultID,
-	))
-	mock.ExpectQuery("").WillReturnRows(
-		sqlmock.NewRows([]string{"id", "business_id"}).AddRow(resultID, command.BusinessID),
-	)
-	mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{"id", "invoice_id"}))
+	mock.ExpectQuery(
+		`SELECT \* FROM "api_idempotency_keys" WHERE .*business_id = \$1 AND command = \$2 AND idempotency_key = \$3.*LIMIT \$4`,
+	).
+		WithArgs(command.BusinessID, command.Command, command.IdempotencyKey, 1).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"business_id",
+			"command",
+			"idempotency_key",
+			"request_hash",
+			"status",
+			"result_type",
+			"result_id",
+		}).AddRow(
+			command.BusinessID,
+			command.Command,
+			command.IdempotencyKey,
+			command.RequestHash,
+			models.IdempotencyStatusCompleted,
+			resultType,
+			resultID,
+		))
+	mock.ExpectQuery(
+		`SELECT \* FROM "invoices" WHERE .*id = \$1 AND business_id = \$2.*LIMIT \$3`,
+	).
+		WithArgs(resultID, command.BusinessID, 1).
+		WillReturnRows(
+			sqlmock.NewRows([]string{"id", "business_id"}).AddRow(resultID, command.BusinessID),
+		)
+	mock.ExpectQuery(
+		`SELECT \* FROM "invoice_items" WHERE "invoice_items"."invoice_id" = \$1 ORDER BY created_at ASC, id ASC`,
+	).
+		WithArgs(resultID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "invoice_id"}))
 
 	result, err := repository.ReplayCompletedDraft(
 		context.Background(),
@@ -236,23 +248,27 @@ func TestInvoiceRepositoryReplayCompletedDraftUsesRawRequestIdentityBeforeResolu
 }
 
 func TestInvoiceRepositoryReplayCompletedDraftRejectsChangedRawPayload(t *testing.T) {
-	repository, mock, closeDatabase := newAtomicSQLMockRepository(t)
+	repository, mock, closeDatabase := newAtomicSQLMockRepositoryWithMatcher(t, sqlmock.QueryMatcherRegexp)
 	defer closeDatabase()
 	command := atomicRepositoryTestCommand()
 
-	mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{
-		"business_id",
-		"command",
-		"idempotency_key",
-		"request_hash",
-		"status",
-	}).AddRow(
-		command.BusinessID,
-		command.Command,
-		command.IdempotencyKey,
-		strings.Repeat("b", 64),
-		models.IdempotencyStatusCompleted,
-	))
+	mock.ExpectQuery(
+		`SELECT \* FROM "api_idempotency_keys" WHERE .*business_id = \$1 AND command = \$2 AND idempotency_key = \$3.*LIMIT \$4`,
+	).
+		WithArgs(command.BusinessID, command.Command, command.IdempotencyKey, 1).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"business_id",
+			"command",
+			"idempotency_key",
+			"request_hash",
+			"status",
+		}).AddRow(
+			command.BusinessID,
+			command.Command,
+			command.IdempotencyKey,
+			strings.Repeat("b", 64),
+			models.IdempotencyStatusCompleted,
+		))
 
 	result, err := repository.ReplayCompletedDraft(
 		context.Background(),
@@ -311,9 +327,18 @@ func TestInvoiceRepositoryCreateDraftAtomicRejectsCrossTenantOptionalRowsBeforeC
 
 func newAtomicSQLMockRepository(t *testing.T) (*invoiceRepository, sqlmock.Sqlmock, func()) {
 	t.Helper()
-	sqlDatabase, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(
+	return newAtomicSQLMockRepositoryWithMatcher(
+		t,
 		sqlmock.QueryMatcherFunc(func(_, _ string) error { return nil }),
-	))
+	)
+}
+
+func newAtomicSQLMockRepositoryWithMatcher(
+	t *testing.T,
+	matcher sqlmock.QueryMatcher,
+) (*invoiceRepository, sqlmock.Sqlmock, func()) {
+	t.Helper()
+	sqlDatabase, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(matcher))
 	if err != nil {
 		t.Fatalf("open sqlmock: %v", err)
 	}

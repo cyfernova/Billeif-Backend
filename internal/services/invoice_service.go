@@ -218,6 +218,10 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 	if err != nil {
 		return nil, err
 	}
+	actor := actorFromContext(ctx)
+	if _, err := uuid.Parse(actor.UserID); err != nil {
+		return nil, fmt.Errorf("invoice create actor is required")
+	}
 	replay, err := s.repo.ReplayCompletedDraft(
 		ctx,
 		input.BusinessID,
@@ -426,10 +430,6 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 	for _, item := range invoice.Items {
 		item.ID = uuid.NewString()
 		item.InvoiceID = invoice.ID
-	}
-	actor := actorFromContext(ctx)
-	if _, err := uuid.Parse(actor.UserID); err != nil {
-		return nil, fmt.Errorf("invoice create actor is required")
 	}
 	document := invoiceDocumentProjection(invoice)
 	activity := &models.ActivityLog{
