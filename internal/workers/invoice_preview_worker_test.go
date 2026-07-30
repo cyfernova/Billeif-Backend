@@ -1,6 +1,7 @@
 package workers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -70,25 +71,29 @@ func (r *queueMessageInvoiceRepository) GetByIDInternal(context.Context, string)
 }
 
 type fakePreviewRenderOperations struct {
-	invoiceVersions  []int
-	versionCalls     int
-	profileID        string
-	rendered         bool
-	processing       bool
-	obsolete         bool
-	claimState       interfaces.PreviewRenderClaimState
-	uploadKey        string
-	completeVersion  int
-	completeKey      string
-	completeName     string
-	completed        bool
-	genericError     error
-	genericRendered  bool
-	finalClaimState  interfaces.FinalRenderClaimState
-	finalSnapshot    *models.Document
-	finalCompleted   bool
-	finalFailed      bool
-	renderedDocument *models.Document
+	invoiceVersions     []int
+	versionCalls        int
+	profileID           string
+	rendered            bool
+	processing          bool
+	obsolete            bool
+	claimState          interfaces.PreviewRenderClaimState
+	uploadKey           string
+	completeVersion     int
+	completeKey         string
+	completeName        string
+	completed           bool
+	genericError        error
+	genericRendered     bool
+	finalClaimState     interfaces.FinalRenderClaimState
+	finalSnapshot       *models.Document
+	finalCompleted      bool
+	finalFailed         bool
+	renderedDocument    *models.Document
+	liveComplianceState string
+	liveRenderCalls     int
+	finalRenderCalls    int
+	uploadedContent     []byte
 }
 
 func (f *fakePreviewRenderOperations) currentInvoiceVersion(context.Context, string, string) (int, error) {
@@ -125,11 +130,27 @@ func (f *fakePreviewRenderOperations) render(
 ) ([]byte, string, error) {
 	f.rendered = true
 	f.renderedDocument = document
+	f.liveRenderCalls++
+	if f.liveComplianceState != "" {
+		return []byte("live compliance: " + f.liveComplianceState), "invoice-preview.pdf", nil
+	}
 	return []byte("private preview"), "invoice-preview.pdf", nil
 }
 
-func (f *fakePreviewRenderOperations) upload(_ context.Context, key string, _ []byte) error {
+func (f *fakePreviewRenderOperations) renderFinal(
+	_ context.Context,
+	document *models.Document,
+	_ *models.RenderProfile,
+) ([]byte, string, error) {
+	f.rendered = true
+	f.renderedDocument = document
+	f.finalRenderCalls++
+	return []byte("frozen final: " + document.SerialNumber), "invoice-final.pdf", nil
+}
+
+func (f *fakePreviewRenderOperations) upload(_ context.Context, key string, content []byte) error {
 	f.uploadKey = key
+	f.uploadedContent = append([]byte(nil), content...)
 	return nil
 }
 
@@ -440,6 +461,50 @@ func TestProcessDocumentRenderJobRendersCanonicalFinalFromFrozenPrivateSnapshot(
 	}
 	if operations.profileID != profileID {
 		t.Fatalf("final profile = %q, want frozen %q", operations.profileID, profileID)
+	}
+}
+
+func TestProcessDocumentRenderJobFinalRetriesIgnoreLiveComplianceState(t *testing.T) {
+	var rendered [][]byte
+	for _, liveComplianceState := range []string{"IRN-A", "IRN-B"} {
+		document, job, version := validPreviewWorkerFixture()
+		job.Kind = models.RenderKindFinal
+		job.ObjectKey = fmt.Sprintf(
+			"invoices/%s/%s/v%d/final.pdf",
+			document.BusinessID,
+			document.ID,
+			version,
+		)
+		frozen := &models.Document{
+			ID:            document.ID,
+			BusinessID:    document.BusinessID,
+			Status:        models.DocumentStatusIssued,
+			DraftState:    models.DocumentDraftStateFinal,
+			SerialNumber:  "INV/26-27/000001",
+			SourceLinkage: `{"seller_snapshot":{"name":"Frozen Seller"},"buyer_snapshot":{"name":"Frozen Buyer"}}`,
+			Lines:         []*models.DocumentLine{{Description: "Frozen line"}},
+		}
+		operations := &fakePreviewRenderOperations{
+			invoiceVersions:     []int{version, version},
+			finalSnapshot:       frozen,
+			liveComplianceState: liveComplianceState,
+		}
+
+		if err := processDocumentRenderJob(context.Background(), document, job, version, operations); err != nil {
+			t.Fatalf("process final with live compliance %q: %v", liveComplianceState, err)
+		}
+		if operations.liveRenderCalls != 0 || operations.finalRenderCalls != 1 {
+			t.Fatalf(
+				"live/frozen render calls = %d/%d, want 0/1",
+				operations.liveRenderCalls,
+				operations.finalRenderCalls,
+			)
+		}
+		rendered = append(rendered, operations.uploadedContent)
+	}
+
+	if !bytes.Equal(rendered[0], rendered[1]) {
+		t.Fatalf("final retry bytes changed with live compliance: %q != %q", rendered[0], rendered[1])
 	}
 }
 

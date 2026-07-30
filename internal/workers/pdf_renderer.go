@@ -94,6 +94,20 @@ type registeredLogo struct {
 }
 
 func renderDocumentPDF(ctx context.Context, svc *services.Container, document *models.Document, profile *models.RenderProfile) ([]byte, string, error) {
+	return renderDocumentPDFWithLiveCompliance(ctx, svc, document, profile, true)
+}
+
+func renderFinalDocumentPDF(ctx context.Context, svc *services.Container, document *models.Document, profile *models.RenderProfile) ([]byte, string, error) {
+	return renderDocumentPDFWithLiveCompliance(ctx, svc, document, profile, false)
+}
+
+func renderDocumentPDFWithLiveCompliance(
+	ctx context.Context,
+	svc *services.Container,
+	document *models.Document,
+	profile *models.RenderProfile,
+	includeLiveCompliance bool,
+) ([]byte, string, error) {
 	if document == nil {
 		return nil, "", fmt.Errorf("document is required")
 	}
@@ -168,7 +182,9 @@ func renderDocumentPDF(ctx context.Context, svc *services.Container, document *m
 	renderDocumentSummary(pdf, fontFamily, document, party, labels)
 	renderLineTable(pdf, fontFamily, document, labels, theme)
 	renderTotalsSection(pdf, fontFamily, document, labels, theme)
-	renderComplianceSection(ctx, pdf, fontFamily, svc, document)
+	if includeLiveCompliance {
+		renderComplianceSection(ctx, pdf, fontFamily, svc, document)
+	}
 	renderTextSections(pdf, fontFamily, document, profile, labels)
 	if visibility["show_signature_line"] {
 		renderSignatureLine(pdf, fontFamily, theme)

@@ -281,6 +281,7 @@ type previewRenderOperations interface {
 	) (interfaces.PreviewRenderClaimState, error)
 	loadProfile(ctx context.Context, businessID, profileID string) (*models.RenderProfile, error)
 	render(ctx context.Context, document *models.Document, profile *models.RenderProfile) ([]byte, string, error)
+	renderFinal(ctx context.Context, document *models.Document, profile *models.RenderProfile) ([]byte, string, error)
 	upload(ctx context.Context, key string, content []byte) error
 	markObsolete(ctx context.Context, businessID, jobID string) error
 	complete(
@@ -351,6 +352,14 @@ func (o *servicePreviewRenderOperations) render(
 	profile *models.RenderProfile,
 ) ([]byte, string, error) {
 	return renderDocumentPDF(ctx, o.svc, document, profile)
+}
+
+func (o *servicePreviewRenderOperations) renderFinal(
+	ctx context.Context,
+	document *models.Document,
+	profile *models.RenderProfile,
+) ([]byte, string, error) {
+	return renderFinalDocumentPDF(ctx, o.svc, document, profile)
 }
 
 func (o *servicePreviewRenderOperations) upload(
@@ -592,7 +601,7 @@ func processFinalRender(
 			return fmt.Errorf("load frozen final render profile: %w", err)
 		}
 	}
-	content, filename, err := operations.render(ctx, frozen, profile)
+	content, filename, err := operations.renderFinal(ctx, frozen, profile)
 	if err != nil {
 		_ = operations.failFinal(ctx, document.BusinessID, job.ID, err.Error())
 		return fmt.Errorf("render private invoice final: %w", err)
