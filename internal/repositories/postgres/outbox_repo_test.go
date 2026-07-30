@@ -13,6 +13,34 @@ import (
 
 const claimOutboxSQL = `WITH ready AS .*SELECT id.*FROM outbox_events.*published_at IS NULL.*available_at <= \$[0-9]+.*lease_expires_at IS NULL OR lease_expires_at <= \$[0-9]+.*event_type IN \(\$[0-9]+,\$[0-9]+\).*ORDER BY available_at, created_at, id.*LIMIT \$[0-9]+.*FOR UPDATE SKIP LOCKED.*UPDATE outbox_events AS events.*publish_attempts = events.publish_attempts \+ 1.*RETURNING events\.\*`
 
+func TestOutboxRepositoryOldestPendingIncludesDelayedAndLeasedEvents(t *testing.T) {
+	invoiceRepository, mock, closeDatabase := newStrictIssueSQLMockRepository(t)
+	defer closeDatabase()
+	repository := &OutboxRepository{db: invoiceRepository.db}
+	oldest := time.Date(2026, time.July, 30, 10, 0, 0, 0, time.UTC)
+
+	mock.ExpectQuery(
+		`SELECT MIN\(created_at\) FROM "outbox_events" WHERE published_at IS NULL AND event_type IN \(\$1,\$2\)`,
+	).
+		WithArgs("invoice.preview.requested.v1", "invoice.issued.v1").
+		WillReturnRows(sqlmock.NewRows([]string{"min"}).AddRow(oldest))
+
+	got, err := repository.OldestPendingOutboxEventCreatedAt(
+		context.Background(),
+		[]string{"invoice.preview.requested.v1", "invoice.issued.v1"},
+	)
+
+	if err != nil {
+		t.Fatalf("oldest pending outbox event: %v", err)
+	}
+	if got == nil || !got.Equal(oldest) {
+		t.Fatalf("oldest pending = %v, want %v", got, oldest)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations: %v", err)
+	}
+}
+
 func TestOutboxRepositoryClaimUsesOrderedSkipLockedLeaseAndIncrementsAttempts(t *testing.T) {
 	invoiceRepository, mock, closeDatabase := newStrictIssueSQLMockRepository(t)
 	defer closeDatabase()

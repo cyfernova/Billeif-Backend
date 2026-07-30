@@ -12,6 +12,8 @@ import (
 
 type dispatcherStoreFake struct {
 	events          []*models.OutboxEvent
+	oldestPendingAt *time.Time
+	oldestErr       error
 	claimErr        error
 	claimOwner      string
 	claimNow        time.Time
@@ -23,6 +25,13 @@ type dispatcherStoreFake struct {
 	retryAt         map[string]time.Time
 	completeErr     map[string]error
 	retryErr        map[string]error
+}
+
+func (s *dispatcherStoreFake) OldestPendingOutboxEventCreatedAt(
+	_ context.Context,
+	_ []string,
+) (*time.Time, error) {
+	return s.oldestPendingAt, s.oldestErr
 }
 
 func (s *dispatcherStoreFake) ClaimOutboxEvents(
@@ -89,6 +98,8 @@ func TestDispatcherClaimsBoundedLeaseAndCompletesPublishedEvents(t *testing.T) {
 		completeErr: map[string]error{},
 		retryErr:    map[string]error{},
 	}
+	oldestPendingAt := now.Add(-20 * time.Minute)
+	store.oldestPendingAt = &oldestPendingAt
 	publisher := &dispatcherPublisherFake{failures: map[string]error{}}
 	dispatcher, err := NewDispatcher(store, publisher, DispatcherOptions{
 		BatchSize:     25,
@@ -106,7 +117,7 @@ func TestDispatcherClaimsBoundedLeaseAndCompletesPublishedEvents(t *testing.T) {
 		t.Fatalf("dispatch: %v", err)
 	}
 	if result.Claimed != 1 || result.Published != 1 || result.Retried != 0 ||
-		result.OldestPendingAgeSeconds != 420 {
+		result.OldestPendingAgeSeconds != 1200 {
 		t.Fatalf("result = %#v", result)
 	}
 	if store.claimOwner != "request-123" || !store.claimNow.Equal(now) ||
@@ -139,6 +150,8 @@ func TestDispatcherReportsOldestClaimedEventAgeWithoutGoingNegative(t *testing.T
 		completeErr: map[string]error{},
 		retryErr:    map[string]error{},
 	}
+	oldestPendingAt := now.Add(-10 * time.Minute)
+	store.oldestPendingAt = &oldestPendingAt
 	dispatcher, err := NewDispatcher(
 		store,
 		&dispatcherPublisherFake{failures: map[string]error{}},
@@ -158,6 +171,36 @@ func TestDispatcherReportsOldestClaimedEventAgeWithoutGoingNegative(t *testing.T
 	}
 	if result.OldestPendingAgeSeconds != 600 {
 		t.Fatalf("oldest pending age = %d, want 600", result.OldestPendingAgeSeconds)
+	}
+}
+
+func TestDispatcherReportsDelayedPendingEventWhenNothingIsClaimable(t *testing.T) {
+	now := time.Date(2026, time.July, 30, 12, 0, 0, 0, time.UTC)
+	oldestPendingAt := now.Add(-45 * time.Minute)
+	store := &dispatcherStoreFake{
+		oldestPendingAt: &oldestPendingAt,
+		completeErr:     map[string]error{},
+		retryErr:        map[string]error{},
+	}
+	dispatcher, err := NewDispatcher(
+		store,
+		&dispatcherPublisherFake{failures: map[string]error{}},
+		DispatcherOptions{
+			EventTypes: InvoiceRenderEventTypes(),
+			Now:        func() time.Time { return now },
+		},
+	)
+	if err != nil {
+		t.Fatalf("new dispatcher: %v", err)
+	}
+
+	result, err := dispatcher.Dispatch(context.Background(), "request-delayed")
+
+	if err != nil {
+		t.Fatalf("dispatch delayed event observation: %v", err)
+	}
+	if result.Claimed != 0 || result.OldestPendingAgeSeconds != 2700 {
+		t.Fatalf("delayed pending result = %#v", result)
 	}
 }
 

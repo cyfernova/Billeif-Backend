@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -18,6 +19,38 @@ type OutboxRepository struct {
 
 func NewOutboxRepository(db *gorm.DB) *OutboxRepository {
 	return &OutboxRepository{db: db}
+}
+
+func (r *OutboxRepository) OldestPendingOutboxEventCreatedAt(
+	ctx context.Context,
+	eventTypes []string,
+) (*time.Time, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("outbox repository database is required")
+	}
+	if len(eventTypes) == 0 {
+		return nil, errors.New("outbox event types are required")
+	}
+	for _, eventType := range eventTypes {
+		if strings.TrimSpace(eventType) == "" {
+			return nil, errors.New("outbox event types must not be blank")
+		}
+	}
+
+	row := r.db.WithContext(ctx).
+		Model(&models.OutboxEvent{}).
+		Select("MIN(created_at)").
+		Where("published_at IS NULL AND event_type IN ?", eventTypes).
+		Row()
+	var oldest sql.NullTime
+	if err := row.Scan(&oldest); err != nil {
+		return nil, fmt.Errorf("query oldest pending outbox event: %w", err)
+	}
+	if !oldest.Valid {
+		return nil, nil
+	}
+	value := oldest.Time.UTC()
+	return &value, nil
 }
 
 func (r *OutboxRepository) ClaimOutboxEvents(

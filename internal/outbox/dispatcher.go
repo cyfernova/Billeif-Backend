@@ -18,6 +18,10 @@ const (
 )
 
 type DispatchStore interface {
+	OldestPendingOutboxEventCreatedAt(
+		ctx context.Context,
+		eventTypes []string,
+	) (*time.Time, error)
 	ClaimOutboxEvents(
 		ctx context.Context,
 		owner string,
@@ -105,6 +109,13 @@ func (d *Dispatcher) Dispatch(ctx context.Context, owner string) (DispatchResult
 		return DispatchResult{}, errors.New("outbox lease owner is required")
 	}
 	now := d.now().UTC()
+	oldestPendingAt, err := d.store.OldestPendingOutboxEventCreatedAt(ctx, d.eventTypes)
+	if err != nil {
+		return DispatchResult{}, fmt.Errorf("observe oldest pending outbox event: %w", err)
+	}
+	result := DispatchResult{
+		OldestPendingAgeSeconds: pendingAgeSeconds(oldestPendingAt, now),
+	}
 	events, err := d.store.ClaimOutboxEvents(
 		ctx,
 		owner,
@@ -114,13 +125,10 @@ func (d *Dispatcher) Dispatch(ctx context.Context, owner string) (DispatchResult
 		d.batchSize,
 	)
 	if err != nil {
-		return DispatchResult{}, fmt.Errorf("claim outbox events: %w", err)
+		return result, fmt.Errorf("claim outbox events: %w", err)
 	}
 
-	result := DispatchResult{
-		Claimed:                 len(events),
-		OldestPendingAgeSeconds: oldestPendingAgeSeconds(events, now),
-	}
+	result.Claimed = len(events)
 	var dispatchErrors []error
 	for _, event := range events {
 		if event == nil {
@@ -155,18 +163,15 @@ func (d *Dispatcher) Dispatch(ctx context.Context, owner string) (DispatchResult
 	return result, errors.Join(dispatchErrors...)
 }
 
-func oldestPendingAgeSeconds(events []*models.OutboxEvent, now time.Time) int64 {
-	var oldestAge time.Duration
-	for _, event := range events {
-		if event == nil || event.CreatedAt.IsZero() {
-			continue
-		}
-		age := now.Sub(event.CreatedAt.UTC())
-		if age > oldestAge {
-			oldestAge = age
-		}
+func pendingAgeSeconds(createdAt *time.Time, now time.Time) int64 {
+	if createdAt == nil || createdAt.IsZero() {
+		return 0
 	}
-	return int64(oldestAge / time.Second)
+	age := now.Sub(createdAt.UTC())
+	if age <= 0 {
+		return 0
+	}
+	return int64(age / time.Second)
 }
 
 func InvoiceRenderEventTypes() []string {
