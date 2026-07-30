@@ -289,7 +289,9 @@ run "reviewed_enablement_activates_stable_application_resources_after_migration"
   command = plan
 
   variables {
-    enable_application = true
+    enable_application                 = true
+    alert_email                        = "alerts@example.com"
+    alert_email_subscription_confirmed = true
   }
 
   assert {

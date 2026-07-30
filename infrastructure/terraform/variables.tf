@@ -187,9 +187,15 @@ variable "worker_queue_visibility_timeout_seconds" {
 
 # Monitoring Configuration
 variable "alert_email" {
-  description = "Email address for CloudWatch alarm notifications (optional)"
+  description = "Email address for Billeif CloudWatch and AWS Budget notifications. Required before application enablement."
   type        = string
   default     = ""
+}
+
+variable "alert_email_subscription_confirmed" {
+  description = "Confirm that the alert_email recipient accepted the SNS subscription before Billeif application enablement."
+  type        = bool
+  default     = false
 }
 
 variable "log_retention_days" {

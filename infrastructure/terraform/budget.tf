@@ -37,4 +37,16 @@ resource "aws_budgets_budget" "monthly_cost" {
       subscriber_email_addresses = [var.alert_email]
     }
   }
+
+  lifecycle {
+    precondition {
+      condition     = !var.enable_application || trimspace(var.alert_email) != ""
+      error_message = "alert_email must be supplied before enabling the Billeif application so cost and operational alerts have a recipient."
+    }
+
+    precondition {
+      condition     = !var.enable_application || var.alert_email_subscription_confirmed
+      error_message = "alert_email_subscription_confirmed must be true before enabling the Billeif application; confirm the SNS email subscription first."
+    }
+  }
 }

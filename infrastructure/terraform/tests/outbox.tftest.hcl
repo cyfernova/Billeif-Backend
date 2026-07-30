@@ -372,7 +372,9 @@ run "outbox_dispatcher_schedule_enables_only_with_application" {
   command = plan
 
   variables {
-    enable_application = true
+    enable_application                 = true
+    alert_email                        = "alerts@example.com"
+    alert_email_subscription_confirmed = true
   }
 
   assert {
@@ -388,7 +390,9 @@ run "email_delivery_enablement_uses_mapping_cap_without_low_reserved_concurrency
   command = plan
 
   variables {
-    enable_application = true
+    enable_application                 = true
+    alert_email                        = "alerts@example.com"
+    alert_email_subscription_confirmed = true
   }
 
   assert {
@@ -481,7 +485,9 @@ run "ses_feedback_enablement_uses_zero_window_mapping_cap" {
   command = plan
 
   variables {
-    enable_application = true
+    enable_application                 = true
+    alert_email                        = "alerts@example.com"
+    alert_email_subscription_confirmed = true
   }
 
   assert {
@@ -500,7 +506,9 @@ run "active_worker_queues_are_retained_redriven_and_cost_capped" {
   command = plan
 
   variables {
-    enable_application = true
+    enable_application                 = true
+    alert_email                        = "alerts@example.com"
+    alert_email_subscription_confirmed = true
   }
 
   assert {
@@ -560,6 +568,27 @@ run "monthly_budget_warns_at_actual_and_forecast_thresholds" {
   }
 }
 
+run "application_enablement_requires_an_alert_recipient" {
+  command = plan
+
+  variables {
+    enable_application = true
+  }
+
+  expect_failures = [aws_budgets_budget.monthly_cost]
+}
+
+run "application_enablement_requires_confirmed_alert_subscription" {
+  command = plan
+
+  variables {
+    enable_application = true
+    alert_email        = "alerts@example.com"
+  }
+
+  expect_failures = [aws_budgets_budget.monthly_cost]
+}
+
 run "standard_resolution_operational_alarms_use_two_of_three" {
   command = plan
 
@@ -573,18 +602,19 @@ run "standard_resolution_operational_alarms_use_two_of_three" {
       aws_cloudwatch_metric_alarm.lambda_api_throttles.treat_missing_data == "notBreaching" &&
       aws_cloudwatch_metric_alarm.lambda_api_duration.evaluation_periods == 3 &&
       aws_cloudwatch_metric_alarm.lambda_api_duration.datapoints_to_alarm == 2 &&
-      aws_cloudwatch_metric_alarm.lambda_api_duration.extended_statistic == "p99" &&
+      aws_cloudwatch_metric_alarm.lambda_api_duration.extended_statistic == "p95" &&
+      aws_cloudwatch_metric_alarm.lambda_api_duration.threshold == 1500 &&
       aws_cloudwatch_metric_alarm.lambda_api_duration.treat_missing_data == "notBreaching"
     )
-    error_message = "API error, throttle, and p99 duration alarms must use explicit two-of-three standard-resolution evaluation."
+    error_message = "API error, throttle, and p95 launch-SLO duration alarms must use explicit two-of-three standard-resolution evaluation."
   }
 
   assert {
     condition = (
       length(aws_cloudwatch_metric_alarm.worker_queue_age) == 5 &&
       length(aws_cloudwatch_metric_alarm.worker_dlq_messages) == 5 &&
-      alltrue([for alarm in aws_cloudwatch_metric_alarm.worker_queue_age : alarm.evaluation_periods == 3 && alarm.datapoints_to_alarm == 2 && alarm.treat_missing_data == "notBreaching"]) &&
-      alltrue([for alarm in aws_cloudwatch_metric_alarm.worker_dlq_messages : alarm.evaluation_periods == 3 && alarm.datapoints_to_alarm == 2 && alarm.treat_missing_data == "notBreaching"])
+      alltrue([for alarm in aws_cloudwatch_metric_alarm.worker_queue_age : alarm.evaluation_periods == 3 && alarm.datapoints_to_alarm == 2 && alarm.period == 60 && alarm.threshold == 300 && alarm.treat_missing_data == "notBreaching"]) &&
+      alltrue([for alarm in aws_cloudwatch_metric_alarm.worker_dlq_messages : alarm.evaluation_periods == 3 && alarm.datapoints_to_alarm == 2 && alarm.period == 60 && alarm.treat_missing_data == "notBreaching"])
     )
     error_message = "Every active worker queue and DLQ must have explicit two-of-three age/depth monitoring."
   }
@@ -593,6 +623,7 @@ run "standard_resolution_operational_alarms_use_two_of_three" {
     condition = (
       aws_cloudwatch_metric_alarm.rds_cpu_high.evaluation_periods == 3 &&
       aws_cloudwatch_metric_alarm.rds_cpu_high.datapoints_to_alarm == 2 &&
+      aws_cloudwatch_metric_alarm.rds_cpu_high.threshold == 70 &&
       aws_cloudwatch_metric_alarm.rds_connections_high.evaluation_periods == 3 &&
       aws_cloudwatch_metric_alarm.rds_memory_low.evaluation_periods == 3 &&
       aws_cloudwatch_metric_alarm.rds_storage_low.evaluation_periods == 3 &&

@@ -89,7 +89,8 @@ type bargainingRoundProcessor interface {
 	GetSessionProgress(sessionID string) *services.A2ASessionProgress
 	GetSessionProgressByNegotiationID(ctx context.Context, negotiationID string) *services.A2ASessionProgress
 	ClaimAutonomousNegotiationRound(ctx context.Context, negotiationID string, roundNumber int, leaseOwner string, now, leaseExpiresAt time.Time) (bool, error)
-	RunAutonomousNegotiationRound(ctx context.Context, sessionID string) error
+	RunAutonomousNegotiationRound(ctx context.Context, sessionID string, roundNumber int) error
+	EnsureAutonomousNegotiationSuccessor(ctx context.Context, sessionID, negotiationID string, completedRound int) error
 	CompleteAutonomousNegotiationRound(ctx context.Context, negotiationID string, roundNumber int, leaseOwner string, completedAt time.Time) (bool, error)
 	StopNegotiation(sessionID string)
 }
@@ -110,7 +111,16 @@ func processBargainingRound(
 	}
 	_ = cfg
 	log.Info("received bargaining round", "session_id", sessionID, "negotiation_id", negotiationID, "message_round", currentRound)
-	return processBargainingRoundWithProcessor(ctx, a2aSvc, log, sessionID, negotiationID, leaseOwner, time.Now())
+	return processBargainingRoundWithProcessor(
+		ctx,
+		a2aSvc,
+		log,
+		sessionID,
+		negotiationID,
+		currentRound,
+		leaseOwner,
+		time.Now(),
+	)
 }
 
 func processBargainingRoundWithProcessor(
@@ -118,10 +128,14 @@ func processBargainingRoundWithProcessor(
 	processor bargainingRoundProcessor,
 	log *logger.Logger,
 	sessionID,
-	negotiationID,
+	negotiationID string,
+	messageRound int,
 	leaseOwner string,
 	startedAt time.Time,
 ) error {
+	if messageRound <= 0 {
+		return fmt.Errorf("invalid bargaining message round: %d", messageRound)
+	}
 	progress := processor.GetSessionProgress(sessionID)
 	if progress == nil {
 		progress = processor.GetSessionProgressByNegotiationID(ctx, negotiationID)
@@ -155,6 +169,59 @@ func processBargainingRoundWithProcessor(
 	}
 
 	nextRound := progress.Round + 1
+	if messageRound < nextRound {
+		if messageRound == progress.Round {
+			if err := processor.EnsureAutonomousNegotiationSuccessor(
+				ctx,
+				sessionID,
+				negotiationID,
+				messageRound,
+			); err != nil {
+				return fmt.Errorf(
+					"ensure bargaining round %d successor: %w",
+					messageRound,
+					err,
+				)
+			}
+			completed, err := processor.CompleteAutonomousNegotiationRound(
+				ctx,
+				negotiationID,
+				messageRound,
+				leaseOwner,
+				time.Now(),
+			)
+			if err != nil {
+				return fmt.Errorf(
+					"complete repaired bargaining round %d claim: %w",
+					messageRound,
+					err,
+				)
+			}
+			log.Info(
+				"repaired bargaining successor after committed round",
+				"session_id", sessionID,
+				"negotiation_id", negotiationID,
+				"message_round", messageRound,
+				"claim_completed", completed,
+			)
+			return nil
+		}
+		log.Info(
+			"stale bargaining round message already applied",
+			"session_id", sessionID,
+			"negotiation_id", negotiationID,
+			"message_round", messageRound,
+			"db_next_round", nextRound,
+		)
+		return nil
+	}
+	if messageRound > nextRound {
+		return fmt.Errorf(
+			"out-of-order bargaining round message: message_round=%d db_next_round=%d",
+			messageRound,
+			nextRound,
+		)
+	}
 	claimed, err := processor.ClaimAutonomousNegotiationRound(
 		ctx,
 		negotiationID,
@@ -173,7 +240,7 @@ func processBargainingRoundWithProcessor(
 
 	providerCtx, cancel := context.WithTimeout(ctx, bargainingProviderTimeout)
 	defer cancel()
-	if err := processor.RunAutonomousNegotiationRound(providerCtx, sessionID); err != nil {
+	if err := processor.RunAutonomousNegotiationRound(providerCtx, sessionID, nextRound); err != nil {
 		log.Error("failed to run bargaining round", "error", err, "session_id", sessionID, "round", nextRound)
 		return err
 	}

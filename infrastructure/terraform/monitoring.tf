@@ -54,17 +54,17 @@ resource "aws_cloudwatch_metric_alarm" "lambda_api_throttles" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "lambda_api_duration" {
-  alarm_name          = "${local.resource_prefix}-lambda-api-duration-p99"
+  alarm_name          = "${local.resource_prefix}-lambda-api-duration-p95"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 3
   datapoints_to_alarm = 2
   metric_name         = "Duration"
   namespace           = "AWS/Lambda"
   period              = 60
-  extended_statistic  = "p99"
-  threshold           = 22400
+  extended_statistic  = "p95"
+  threshold           = 1500
   treat_missing_data  = "notBreaching"
-  alarm_description   = "Billeif API Lambda p99 duration exceeds 80 percent of its 28-second timeout"
+  alarm_description   = "Billeif API Lambda p95 duration exceeds the 1.5-second launch SLO"
   alarm_actions       = [aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]
 
@@ -99,11 +99,11 @@ resource "aws_cloudwatch_metric_alarm" "worker_queue_age" {
   datapoints_to_alarm = 2
   metric_name         = "ApproximateAgeOfOldestMessage"
   namespace           = "AWS/SQS"
-  period              = 300
+  period              = 60
   statistic           = "Maximum"
-  threshold           = 600
+  threshold           = 300
   treat_missing_data  = "notBreaching"
-  alarm_description   = "Billeif ${replace(each.key, "_", " ")} queue oldest message exceeds ten minutes"
+  alarm_description   = "Billeif ${replace(each.key, "_", " ")} queue oldest message exceeds five minutes"
   alarm_actions       = [aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]
 
@@ -121,7 +121,7 @@ resource "aws_cloudwatch_metric_alarm" "worker_dlq_messages" {
   datapoints_to_alarm = 2
   metric_name         = "ApproximateNumberOfMessagesVisible"
   namespace           = "AWS/SQS"
-  period              = 300
+  period              = 60
   statistic           = "Maximum"
   threshold           = 0
   treat_missing_data  = "notBreaching"
@@ -355,9 +355,9 @@ resource "aws_cloudwatch_metric_alarm" "rds_cpu_high" {
   namespace           = "AWS/RDS"
   period              = 300
   statistic           = "Average"
-  threshold           = 80
+  threshold           = 70
   treat_missing_data  = "notBreaching"
-  alarm_description   = "RDS CPU utilization is above 80%"
+  alarm_description   = "Billeif RDS CPU utilization is above the 70% launch gate"
   alarm_actions       = [aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]
 
