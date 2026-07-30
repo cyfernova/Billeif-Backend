@@ -46,7 +46,7 @@ func TestProxyWithRequestDeadlineCapsOrdinaryRequestsAtTwentyFiveSeconds(t *test
 	}
 }
 
-func TestProxyWithRequestDeadlinePreservesEarlierLambdaCancellation(t *testing.T) {
+func TestProxyWithRequestDeadlinePreservesEarlierLambdaDeadline(t *testing.T) {
 	parentDeadline := time.Now().Add(2 * time.Second)
 	parent, cancel := context.WithDeadline(context.Background(), parentDeadline)
 	defer cancel()
@@ -72,12 +72,74 @@ func TestProxyWithRequestDeadlinePreservesEarlierLambdaCancellation(t *testing.T
 	}
 }
 
+func TestProxyWithRequestDeadlineBoundsLazyRuntimeInitialization(t *testing.T) {
+	startedAt := time.Now()
+	var gotInitializationDeadline time.Time
+	runtime := &lazyRuntimeProxy{
+		initialize: func(ctx context.Context) (requestProxy, error) {
+			var ok bool
+			gotInitializationDeadline, ok = ctx.Deadline()
+			if !ok {
+				t.Fatal("lazy runtime initialization context has no deadline")
+			}
+			return func(context.Context, events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+				return events.APIGatewayProxyResponse{StatusCode: 204}, nil
+			}, nil
+		},
+	}
+
+	response, err := proxyWithRequestDeadline(
+		context.Background(),
+		events.APIGatewayProxyRequest{HTTPMethod: "GET", Path: "/health"},
+		runtime.ProxyWithContext,
+	)
+	if err != nil {
+		t.Fatalf("proxy request: %v", err)
+	}
+	if response.StatusCode != 204 {
+		t.Fatalf("status = %d, want 204", response.StatusCode)
+	}
+	remaining := gotInitializationDeadline.Sub(startedAt)
+	if remaining < 24*time.Second || remaining > 26*time.Second {
+		t.Fatalf("initialization deadline = %s after start, want a 25-second cap", remaining)
+	}
+}
+
+func TestProxyWithRequestDeadlinePropagatesLambdaCancellationToLazyInitialization(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var gotInitializationError error
+	runtime := &lazyRuntimeProxy{
+		initialize: func(ctx context.Context) (requestProxy, error) {
+			gotInitializationError = ctx.Err()
+			return nil, ctx.Err()
+		},
+	}
+
+	response, err := proxyWithRequestDeadline(
+		parent,
+		events.APIGatewayProxyRequest{HTTPMethod: "GET", Path: "/health"},
+		runtime.ProxyWithContext,
+	)
+	if err != nil {
+		t.Fatalf("proxy canceled request: %v", err)
+	}
+	if response.StatusCode != 500 {
+		t.Fatalf("status = %d, want 500 when initialization is canceled", response.StatusCode)
+	}
+	if gotInitializationError != context.Canceled {
+		t.Fatalf("initialization error = %v, want Lambda context cancellation", gotInitializationError)
+	}
+}
+
 func TestProxyWithRequestDeadlineRejectsRESTOwnedStreamingRoutes(t *testing.T) {
 	t.Parallel()
 
 	tests := []events.APIGatewayProxyRequest{
 		{HTTPMethod: "POST", Path: "/api/v1/a2a/message:stream"},
 		{HTTPMethod: "GET", Path: "/api/v1/a2a/tasks/task-123/subscribe"},
+		{HTTPMethod: "GET", Path: "/api/v1/a2a/tasks/task-123:subscribe"},
 	}
 	for _, request := range tests {
 		request := request
