@@ -54,6 +54,13 @@ func TestProductionValidationProfilesRequireOnlyEntrypointConfiguration(t *testi
 			name:    "migration",
 			profile: ProfileMigration,
 		},
+		{
+			name:    "outbox",
+			profile: ProfileOutbox,
+			mutate: func(cfg *Config) {
+				cfg.SQS.InvoiceQueue = "https://sqs.ap-south-1.amazonaws.com/123/billeif-invoice"
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -100,6 +107,12 @@ func TestProductionValidationProfilesRejectMissingConcreteEntrypointDependencies
 			profile: ProfileBargaining,
 			mutate:  func(cfg *Config) { cfg.SQS.BargainingQueue = "" },
 			want:    "SQS_BARGAINING_QUEUE",
+		},
+		{
+			name:    "outbox invoice queue",
+			profile: ProfileOutbox,
+			mutate:  func(cfg *Config) { cfg.SQS.InvoiceQueue = "" },
+			want:    "SQS_INVOICE_QUEUE",
 		},
 	}
 	for _, tc := range tests {
@@ -177,6 +190,18 @@ func TestHTTPProfileRequiresVoiceProviderIdentifiersWhileRoutesExposeRealtimeVoi
 	}
 }
 
+func TestOutboxProfileDoesNotRequireProviderOrCredentialSecrets(t *testing.T) {
+	cfg := completeProductionWorkerProfileConfig(ProfileOutbox)
+	cfg.Secrets.CredentialEncryption = ""
+	cfg.Secrets.GSTProvider = ""
+	cfg.Secrets.LLM = ""
+	cfg.Secrets.Exa = ""
+
+	if err := ValidateForProfile(cfg, ProfileOutbox); err != nil {
+		t.Fatalf("outbox profile rejected database and invoice queue only: %v", err)
+	}
+}
+
 func TestLoadForProfileAcceptsScopedProductionWorkerAndWebSocketEnvironments(t *testing.T) {
 	tests := []struct {
 		profile Profile
@@ -196,6 +221,7 @@ func TestLoadForProfileAcceptsScopedProductionWorkerAndWebSocketEnvironments(t *
 		}},
 		{ProfileWebSocket, nil},
 		{ProfileMigration, nil},
+		{ProfileOutbox, nil},
 	}
 
 	for _, tc := range tests {
@@ -226,6 +252,8 @@ func TestLoadForProfileAcceptsScopedProductionWorkerAndWebSocketEnvironments(t *
 				t.Setenv("S3_BUCKET_INVOICES", "invoice-pdfs")
 			case ProfileBargaining:
 				t.Setenv("SQS_BARGAINING_QUEUE", "https://sqs.ap-south-1.amazonaws.com/123/bargaining")
+			case ProfileOutbox:
+				t.Setenv("SQS_INVOICE_QUEUE", "https://sqs.ap-south-1.amazonaws.com/123/billeif-invoice")
 			}
 
 			if _, err := LoadForProfile(tc.profile); err != nil {
@@ -251,6 +279,7 @@ func completeProductionWorkerProfileConfig(profile Profile) *Config {
 		S3: S3Config{BucketInvoices: "invoice-pdfs"},
 		SQS: SQSConfig{
 			BargainingQueue: "https://sqs.ap-south-1.amazonaws.com/123/bargaining",
+			InvoiceQueue:    "https://sqs.ap-south-1.amazonaws.com/123/billeif-invoice",
 		},
 		LLM: LLMConfig{
 			APIURL: "https://llm.example.test/chat",

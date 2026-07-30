@@ -26,9 +26,13 @@ type PublishedMarker interface {
 }
 
 type ImmediatePublisher struct {
+	publisher *SQSInvoicePublisher
+	marker    PublishedMarker
+}
+
+type SQSInvoicePublisher struct {
 	queueURL string
 	sender   SQSSender
-	marker   PublishedMarker
 }
 
 func NewImmediatePublisher(
@@ -37,16 +41,35 @@ func NewImmediatePublisher(
 	marker PublishedMarker,
 ) *ImmediatePublisher {
 	return &ImmediatePublisher{
-		queueURL: strings.TrimSpace(queueURL),
-		sender:   sender,
-		marker:   marker,
+		publisher: NewSQSInvoicePublisher(queueURL, sender),
+		marker:    marker,
 	}
 }
 
 func (p *ImmediatePublisher) TryPublish(ctx context.Context, event *models.OutboxEvent) error {
-	if p == nil || p.queueURL == "" || p.sender == nil || p.marker == nil ||
-		event == nil || event.ID == "" || event.Payload == "" {
+	if p == nil || p.publisher == nil || p.marker == nil {
 		return errors.New("immediate outbox publisher is not configured")
+	}
+	if err := p.publisher.Publish(ctx, event); err != nil {
+		return err
+	}
+	if err := p.marker.MarkOutboxPublished(ctx, event.ID, time.Now().UTC()); err != nil {
+		return fmt.Errorf("mark outbox event published: %w", err)
+	}
+	return nil
+}
+
+func NewSQSInvoicePublisher(queueURL string, sender SQSSender) *SQSInvoicePublisher {
+	return &SQSInvoicePublisher{
+		queueURL: strings.TrimSpace(queueURL),
+		sender:   sender,
+	}
+}
+
+func (p *SQSInvoicePublisher) Publish(ctx context.Context, event *models.OutboxEvent) error {
+	if p == nil || p.queueURL == "" || p.sender == nil ||
+		event == nil || event.ID == "" || event.Payload == "" {
+		return errors.New("SQS invoice outbox publisher is not configured")
 	}
 	message, err := MapInvoiceEventToSQSMessage(event)
 	if err != nil {
@@ -57,9 +80,6 @@ func (p *ImmediatePublisher) TryPublish(ctx context.Context, event *models.Outbo
 		MessageBody: aws.String(string(message)),
 	}); err != nil {
 		return fmt.Errorf("send outbox event: %w", err)
-	}
-	if err := p.marker.MarkOutboxPublished(ctx, event.ID, time.Now().UTC()); err != nil {
-		return fmt.Errorf("mark outbox event published: %w", err)
 	}
 	return nil
 }

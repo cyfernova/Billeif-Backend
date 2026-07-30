@@ -47,6 +47,7 @@ func TestWorkerBootstrapProfilesFailClosedWithoutTheirConcreteDependencies(t *te
 		{"invoice", config.ProfileInvoice, func(cfg *config.Config) { cfg.S3.BucketInvoices = "" }, "S3_BUCKET_INVOICES"},
 		{"GST", config.ProfileGST, func(cfg *config.Config) { cfg.S3.BucketInvoices = "" }, "S3_BUCKET_INVOICES"},
 		{"bargaining", config.ProfileBargaining, func(cfg *config.Config) { cfg.SQS.BargainingQueue = "" }, "SQS_BARGAINING_QUEUE"},
+		{"outbox", config.ProfileOutbox, func(cfg *config.Config) { cfg.SQS.InvoiceQueue = "" }, "SQS_INVOICE_QUEUE"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -61,7 +62,7 @@ func TestWorkerBootstrapProfilesFailClosedWithoutTheirConcreteDependencies(t *te
 }
 
 func TestWorkerBootstrapProfilesAcceptCompleteConcreteDependencies(t *testing.T) {
-	for _, profile := range []config.Profile{config.ProfileInvoice, config.ProfileGST, config.ProfileBargaining} {
+	for _, profile := range []config.Profile{config.ProfileInvoice, config.ProfileGST, config.ProfileBargaining, config.ProfileOutbox} {
 		if err := config.ValidateForProfile(completeWorkerBootstrapConfig(), profile); err != nil {
 			t.Fatalf("%s rejected complete bootstrap config: %v", profile, err)
 		}
@@ -83,7 +84,10 @@ func completeWorkerBootstrapConfig() *config.Config {
 		},
 		SSM: config.SSMConfig{DatabaseHostParam: "/app/database/host"},
 		S3:  config.S3Config{BucketInvoices: "invoice-pdfs"},
-		SQS: config.SQSConfig{BargainingQueue: "https://sqs.ap-south-1.amazonaws.com/123/bargaining"},
+		SQS: config.SQSConfig{
+			BargainingQueue: "https://sqs.ap-south-1.amazonaws.com/123/bargaining",
+			InvoiceQueue:    "https://sqs.ap-south-1.amazonaws.com/123/billeif-invoice",
+		},
 		LLM: config.LLMConfig{APIURL: "https://llm.example.test/chat", Model: "production-model"},
 	}
 }
@@ -97,5 +101,29 @@ func TestWebSocketEntrypointUsesWebSocketProfile(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "config.LoadForProfile(config.ProfileWebSocket)") {
 		t.Fatal("WebSocket entrypoint must validate only its scoped runtime configuration")
+	}
+}
+
+func TestOutboxEntrypointBootstrapsOnlyItsScopedRuntime(t *testing.T) {
+	t.Parallel()
+
+	body, err := os.ReadFile("../cmd/lambda/outbox/main.go")
+	if err != nil {
+		t.Fatalf("read outbox entrypoint: %v", err)
+	}
+	source := string(body)
+	for _, required := range []string{
+		"config.LoadForProfile(config.ProfileOutbox)",
+		"app.OpenDatabase(",
+		"postgresrepo.NewOutboxRepository(",
+	} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("outbox entrypoint must contain %s", required)
+		}
+	}
+	for _, forbidden := range []string{"app.Initialize(", "awsclients.New("} {
+		if strings.Contains(source, forbidden) {
+			t.Fatalf("outbox entrypoint must not contain %s", forbidden)
+		}
 	}
 }

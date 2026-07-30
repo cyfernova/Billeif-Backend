@@ -59,6 +59,8 @@ func SecretKindsForEntrypoint(entrypoint string) []SecretKind {
 		kinds = []SecretKind{SecretCredentialEncryption, SecretLLM, SecretExa}
 	case "voice-session":
 		kinds = []SecretKind{SecretDeepgram, SecretDeepSeek}
+	case "outbox":
+		kinds = nil
 	}
 	return append([]SecretKind(nil), kinds...)
 }

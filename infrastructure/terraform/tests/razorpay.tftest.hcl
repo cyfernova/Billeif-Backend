@@ -127,6 +127,11 @@ mock_provider "aws" {
   }
 }
 
+mock_provider "aws" {
+  alias           = "ap_south_1"
+  override_during = plan
+}
+
 variables {
   migration_lambda_artifact_path = "tests/fixtures/lambda/http.zip"
 }

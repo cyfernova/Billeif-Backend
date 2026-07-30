@@ -168,7 +168,9 @@ run "foundation_migrates_while_application_is_fail_closed" {
       aws_lambda_function.sqs_bargaining.reserved_concurrent_executions == 0 &&
       aws_lambda_function.ws_handler.reserved_concurrent_executions == 0 &&
       aws_lambda_function.voice_session.reserved_concurrent_executions == 0 &&
-      aws_lambda_function.custom_sms_sender.reserved_concurrent_executions == 0
+      aws_lambda_function.custom_sms_sender.reserved_concurrent_executions == 0 &&
+      aws_lambda_function.outbox_dispatcher.reserved_concurrent_executions == 0 &&
+      aws_scheduler_schedule.outbox_dispatcher.state == "DISABLED"
     )
     error_message = "Every ordinary application Lambda must be hard-throttled while application execution is disabled."
   }
@@ -297,7 +299,9 @@ run "reviewed_enablement_activates_stable_application_resources_after_migration"
       aws_lambda_function.sqs_invoice.reserved_concurrent_executions == 2 &&
       aws_lambda_function.sqs_gst.reserved_concurrent_executions == 2 &&
       aws_lambda_function.sqs_bargaining.reserved_concurrent_executions == 5 &&
-      aws_lambda_function.ws_handler.reserved_concurrent_executions == 5
+      aws_lambda_function.ws_handler.reserved_concurrent_executions == 5 &&
+      aws_lambda_function.outbox_dispatcher.reserved_concurrent_executions == 1 &&
+      aws_scheduler_schedule.outbox_dispatcher.state == "ENABLED"
     )
     error_message = "Reviewed enablement must activate the stable ordinary Lambda resources."
   }

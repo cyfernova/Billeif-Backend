@@ -18,6 +18,7 @@ func TestSecretKindsForEntrypointAreExact(t *testing.T) {
 		"sqs-invoice":    {SecretCredentialEncryption},
 		"sqs-gst":        {SecretCredentialEncryption, SecretGSTProvider},
 		"sqs-bargaining": {SecretCredentialEncryption, SecretLLM, SecretExa},
+		"outbox":         nil,
 		"ws":             nil,
 		"voice-session":  {SecretDeepgram, SecretDeepSeek},
 	}

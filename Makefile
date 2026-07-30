@@ -3,7 +3,7 @@
 -include .env.local
 export
 
-.PHONY: help infra-backend-init infra-init infra-validate infra-apply infra-plan infra-destroy infra-output build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-voice-session build-lambda-migrator build-lambda-custom-sms-sender package-lambda package-lambda-migrator migration-manifest migration-manifest-verify rds-tunnel run-local test test-integration migrate-up migrate-down migrate-rds-up migrate-rds-down migrate-create fmt lint clean deps test-coverage swagger
+.PHONY: help infra-backend-init infra-init infra-validate infra-apply infra-plan infra-destroy infra-output build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-voice-session build-lambda-outbox build-lambda-migrator build-lambda-custom-sms-sender package-lambda package-lambda-outbox package-lambda-migrator migration-manifest migration-manifest-verify rds-tunnel run-local test test-integration migrate-up migrate-down migrate-rds-up migrate-rds-down migrate-create fmt lint clean deps test-coverage swagger
 
 LAMBDA_BUILD_DIR := .build/lambda
 TERRAFORM_DIR := infrastructure/terraform
@@ -90,7 +90,7 @@ infra-output: ## Save Terraform output to file
 	@echo "Terraform output saved to infrastructure/terraform/terraform_output.txt"
 
 # Build targets
-build-lambda: build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-voice-session build-lambda-migrator ## Build all Lambda binaries
+build-lambda: build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-voice-session build-lambda-outbox build-lambda-migrator ## Build all Lambda binaries
 
 build-lambda-http: ## Build HTTP API Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/http
@@ -120,6 +120,10 @@ build-lambda-voice-session: ## Build realtime voice session Lambda bootstrap bin
 	mkdir -p $(LAMBDA_BUILD_DIR)/voice-session
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(LAMBDA_BUILD_DIR)/voice-session/bootstrap ./cmd/lambda/voice-session
 
+build-lambda-outbox: ## Build stripped ARM64 Billeif outbox dispatcher Lambda bootstrap binary
+	mkdir -p $(LAMBDA_BUILD_DIR)/outbox
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o $(LAMBDA_BUILD_DIR)/outbox/bootstrap ./cmd/lambda/outbox
+
 build-lambda-migrator: migration-manifest-verify ## Build stripped ARM64 database migration Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/migrator
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o $(LAMBDA_BUILD_DIR)/migrator/bootstrap ./cmd/lambda/migrator
@@ -130,7 +134,7 @@ build-lambda-custom-sms-sender: ## Build the Node.js custom SMS sender Lambda pa
 	cp -R infrastructure/lambda/custom-sms-sender/. $(LAMBDA_BUILD_DIR)/custom-sms-sender/
 	cd $(LAMBDA_BUILD_DIR)/custom-sms-sender && pnpm install --prod --frozen-lockfile
 
-package-lambda: build-lambda build-lambda-custom-sms-sender package-lambda-migrator ## Package Lambda artifacts into zip files
+package-lambda: build-lambda build-lambda-custom-sms-sender package-lambda-outbox package-lambda-migrator ## Package Lambda artifacts into zip files
 	cd $(LAMBDA_BUILD_DIR)/http && zip -q -r ../http.zip bootstrap
 	cd $(LAMBDA_BUILD_DIR)/a2a-stream && zip -q -r ../a2a-stream.zip bootstrap
 	cd $(LAMBDA_BUILD_DIR)/sqs-invoice && zip -q -r ../sqs-invoice.zip bootstrap
@@ -139,6 +143,11 @@ package-lambda: build-lambda build-lambda-custom-sms-sender package-lambda-migra
 	cd $(LAMBDA_BUILD_DIR)/ws && zip -q -r ../ws.zip bootstrap
 	cd $(LAMBDA_BUILD_DIR)/voice-session && zip -q -r ../voice-session.zip bootstrap
 	cd $(LAMBDA_BUILD_DIR)/custom-sms-sender && zip -q -r ../custom-sms-sender.zip .
+
+package-lambda-outbox: build-lambda-outbox ## Package the Billeif outbox Lambda deterministically
+	rm -f $(LAMBDA_BUILD_DIR)/outbox.zip
+	TZ=UTC touch -t 198001010000 $(LAMBDA_BUILD_DIR)/outbox/bootstrap
+	cd $(LAMBDA_BUILD_DIR)/outbox && TZ=UTC zip -q -X -j ../outbox.zip bootstrap
 
 package-lambda-migrator: build-lambda-migrator ## Package the migration Lambda deterministically
 	rm -f $(LAMBDA_BUILD_DIR)/migrator.zip

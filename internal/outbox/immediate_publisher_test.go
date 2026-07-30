@@ -80,6 +80,29 @@ func TestImmediatePublisherSendsMappedMessageThenMarksExactEvent(t *testing.T) {
 	}
 }
 
+func TestSQSInvoicePublisherPublishesMappedMessageWithoutMarker(t *testing.T) {
+	sender := &sqsSenderFake{}
+	publisher := NewSQSInvoicePublisher("invoice-queue-url", sender)
+	event, invoiceID, renderJobID := validIssuedOutboxEvent()
+
+	err := publisher.Publish(context.Background(), event)
+
+	if err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	wantMessage := fmt.Sprintf(
+		`{"type":"generate_document_pdf","invoice_id":%q,"document_id":%q,"invoice_version":8,"render_job_id":%q}`,
+		invoiceID,
+		invoiceID,
+		renderJobID,
+	)
+	if sender.calls != 1 || sender.input == nil ||
+		aws.ToString(sender.input.QueueUrl) != "invoice-queue-url" ||
+		aws.ToString(sender.input.MessageBody) != wantMessage {
+		t.Fatalf("send input = %#v, want body %s", sender.input, wantMessage)
+	}
+}
+
 func TestImmediatePublisherSendFailureLeavesEventPending(t *testing.T) {
 	sender := &sqsSenderFake{err: errors.New("send failed")}
 	marker := &publishedMarkerFake{}

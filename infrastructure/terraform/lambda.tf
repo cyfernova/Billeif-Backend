@@ -14,6 +14,7 @@ locals {
     ws_handler        = "${var.lambda_artifact_dir}/ws.zip"
     voice_session     = "${var.lambda_artifact_dir}/voice-session.zip"
     custom_sms_sender = "${var.lambda_artifact_dir}/custom-sms-sender.zip"
+    outbox            = "${var.lambda_artifact_dir}/outbox.zip"
   }
 
   lambda_artifact_hashes = {
@@ -146,6 +147,57 @@ resource "aws_cloudwatch_log_group" "lambda_ws_handler" {
 resource "aws_cloudwatch_log_group" "lambda_voice_session" {
   name              = "/aws/lambda/${local.voice_session_lambda_name}"
   retention_in_days = var.log_retention_days
+}
+
+resource "aws_cloudwatch_log_group" "lambda_outbox_dispatcher" {
+  name              = "/aws/lambda/${local.resource_prefix}-outbox-dispatcher"
+  retention_in_days = var.log_retention_days
+}
+
+resource "aws_lambda_function" "outbox_dispatcher" {
+  function_name    = "${local.resource_prefix}-outbox-dispatcher"
+  role             = aws_iam_role.outbox_dispatcher.arn
+  runtime          = "provided.al2023"
+  handler          = "bootstrap"
+  architectures    = ["arm64"]
+  filename         = local.lambda_artifacts.outbox
+  source_code_hash = local.lambda_artifact_hashes.outbox
+  memory_size      = 256
+  timeout          = 45
+
+  reserved_concurrent_executions = var.enable_application ? 1 : 0
+
+  environment {
+    variables = {
+      ENVIRONMENT             = var.environment
+      LOG_LEVEL               = "info"
+      LOG_FORMAT              = "json"
+      DATABASE_HOST_SSM_PARAM = local.db_host_ssm_parameter_name
+      DATABASE_SECRET_ARN     = aws_db_instance.main.master_user_secret[0].secret_arn
+      DATABASE_PORT           = tostring(var.db_port)
+      DATABASE_NAME           = var.db_name
+      DATABASE_SSL_MODE       = "require"
+      SQS_INVOICE_QUEUE       = aws_sqs_queue.invoice_processing.url
+    }
+  }
+
+  vpc_config {
+    subnet_ids         = aws_subnet.private[*].id
+    security_group_ids = [aws_security_group.lambda.id]
+  }
+
+  lifecycle {
+    precondition {
+      condition     = fileexists(local.lambda_artifacts.outbox)
+      error_message = "Missing Billeif outbox Lambda artifact ${local.lambda_artifacts.outbox}. Run make package-lambda from the repository root before running Terraform."
+    }
+  }
+
+  depends_on = [
+    aws_cloudwatch_log_group.lambda_outbox_dispatcher,
+    aws_iam_role_policy.outbox_dispatcher,
+    aws_ssm_parameter.db_host,
+  ]
 }
 
 resource "aws_lambda_function" "api_http" {

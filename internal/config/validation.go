@@ -17,6 +17,7 @@ const (
 	ProfileBargaining Profile = "sqs-bargaining"
 	ProfileWebSocket  Profile = "websocket"
 	ProfileMigration  Profile = "migration"
+	ProfileOutbox     Profile = "outbox"
 )
 
 func ValidateForProfile(cfg *Config, profile Profile) error {
@@ -48,6 +49,14 @@ func ValidateForProfile(cfg *Config, profile Profile) error {
 			return err
 		}
 		return validateProfileDatabase(cfg)
+	case ProfileOutbox:
+		if err := validateProfileBase(cfg); err != nil {
+			return err
+		}
+		if err := validateProfileDatabase(cfg); err != nil {
+			return err
+		}
+		return validateProfileDependencies(cfg, profile)
 	case ProfileInvoice, ProfileGST, ProfileBargaining, ProfileWebSocket:
 		if err := validateProfileBase(cfg); err != nil {
 			return err
@@ -96,6 +105,10 @@ func validateProfileDependencies(cfg *Config, profile Profile) error {
 	case ProfileBargaining:
 		if strings.TrimSpace(cfg.SQS.BargainingQueue) == "" {
 			return fmt.Errorf("SQS_BARGAINING_QUEUE is required")
+		}
+	case ProfileOutbox:
+		if strings.TrimSpace(cfg.SQS.InvoiceQueue) == "" {
+			return fmt.Errorf("SQS_INVOICE_QUEUE is required")
 		}
 	}
 	return nil

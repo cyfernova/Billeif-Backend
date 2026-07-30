@@ -129,6 +129,93 @@ resource "aws_iam_role_policy_attachment" "lambda_voice_basic" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
+resource "aws_iam_role" "outbox_dispatcher" {
+  name               = "${local.resource_prefix}-outbox-dispatcher-exec-role"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
+}
+
+resource "aws_iam_role_policy_attachment" "outbox_dispatcher_basic" {
+  role       = aws_iam_role.outbox_dispatcher.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy_attachment" "outbox_dispatcher_vpc_access" {
+  role       = aws_iam_role.outbox_dispatcher.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+}
+
+data "aws_iam_policy_document" "outbox_dispatcher" {
+  statement {
+    sid       = "OutboxParameters"
+    effect    = "Allow"
+    actions   = ["ssm:GetParameters"]
+    resources = [local.db_host_ssm_parameter_arn]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["true"]
+    }
+  }
+
+  statement {
+    sid    = "OutboxSecret"
+    effect = "Allow"
+    actions = [
+      "secretsmanager:DescribeSecret",
+      "secretsmanager:GetSecretValue",
+    ]
+    resources = [aws_db_instance.main.master_user_secret[0].secret_arn]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["true"]
+    }
+  }
+
+  statement {
+    sid    = "OutboxSecretKMS"
+    effect = "Allow"
+    actions = [
+      "kms:Decrypt",
+      "kms:DescribeKey",
+    ]
+    resources = [aws_kms_key.application_secrets.arn]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["true"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["secretsmanager.${var.aws_region}.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:EncryptionContext:SecretARN"
+      values   = [aws_db_instance.main.master_user_secret[0].secret_arn]
+    }
+  }
+
+  statement {
+    sid       = "OutboxInvoiceQueue"
+    effect    = "Allow"
+    actions   = ["sqs:SendMessage"]
+    resources = [aws_sqs_queue.invoice_processing.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "outbox_dispatcher" {
+  name   = "${local.resource_prefix}-outbox-dispatcher-policy"
+  role   = aws_iam_role.outbox_dispatcher.id
+  policy = data.aws_iam_policy_document.outbox_dispatcher.json
+}
+
 data "aws_iam_policy_document" "lambda_app" {
   statement {
     sid    = "S3Access"
