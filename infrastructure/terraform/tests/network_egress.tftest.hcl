@@ -1,0 +1,312 @@
+mock_provider "aws" {
+  override_during = plan
+
+  mock_data "aws_ami" {
+    defaults = {
+      id = "ami-0billeifnat"
+    }
+  }
+
+  mock_data "aws_iam_policy_document" {
+    override_during = plan
+    defaults = {
+      json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
+    }
+  }
+
+  mock_resource "aws_lambda_invocation" {
+    defaults = {
+      result = "{\"status\":\"applied\",\"version\":46,\"latest_version\":46,\"dirty\":false,\"manifest_checksum\":\"c8ee4f07d7b006e5fed9890e052d1f567a11a65c1c9460c31387d343ed4a1602\"}"
+    }
+  }
+
+  override_data {
+    target = data.aws_caller_identity.current
+    values = {
+      account_id = "123456789012"
+      arn        = "arn:aws:iam::123456789012:user/terraform-test"
+      user_id    = "AIDATEST1234567890"
+    }
+  }
+
+  override_data {
+    target = data.aws_partition.current
+    values = {
+      partition = "aws"
+    }
+  }
+
+  override_resource {
+    target          = aws_api_gateway_rest_api.main
+    override_during = plan
+    values = {
+      id               = "test-rest-api"
+      root_resource_id = "test-root-resource"
+      execution_arn    = "arn:aws:execute-api:ap-south-1:123456789012:test-rest-api"
+    }
+  }
+
+  override_resource {
+    target          = aws_kms_key.application_secrets
+    override_during = plan
+    values = {
+      arn    = "arn:aws:kms:ap-south-1:123456789012:key/application-secrets"
+      key_id = "application-secrets"
+    }
+  }
+
+  override_resource {
+    target          = aws_db_instance.main
+    override_during = plan
+    values = {
+      address = "database.internal"
+      master_user_secret = [{
+        kms_key_id = "arn:aws:kms:ap-south-1:123456789012:key/application-secrets"
+        secret_arn = "arn:aws:secretsmanager:ap-south-1:123456789012:secret/rds-managed"
+      }]
+    }
+  }
+
+  override_resource {
+    target          = aws_security_group.database_migrator
+    override_during = plan
+    values = {
+      id = "sg-database-migrator"
+    }
+  }
+
+  override_resource {
+    target          = aws_security_group.lambda
+    override_during = plan
+    values = {
+      id = "sg-application-lambda"
+    }
+  }
+
+  override_resource {
+    target          = aws_subnet.private[0]
+    override_during = plan
+    values = {
+      id = "subnet-private-a"
+    }
+  }
+
+  override_resource {
+    target          = aws_subnet.private[1]
+    override_during = plan
+    values = {
+      id = "subnet-private-b"
+    }
+  }
+
+  override_resource {
+    target          = aws_subnet.public[0]
+    override_during = plan
+    values = {
+      id = "subnet-public-a"
+    }
+  }
+
+  override_resource {
+    target          = aws_subnet.public[1]
+    override_during = plan
+    values = {
+      id = "subnet-public-b"
+    }
+  }
+
+  override_resource {
+    target          = aws_route_table.private
+    override_during = plan
+    values = {
+      id = "rtb-private"
+    }
+  }
+
+  override_resource {
+    target          = aws_route_table.database
+    override_during = plan
+    values = {
+      id = "rtb-database-isolated"
+    }
+  }
+
+  override_resource {
+    target          = aws_instance.nat[0]
+    override_during = plan
+    values = {
+      id                           = "i-billeifnat"
+      primary_network_interface_id = "eni-billeifnat"
+    }
+  }
+}
+
+mock_provider "aws" {
+  alias           = "ap_south_1"
+  override_during = plan
+}
+
+variables {
+  project_name                   = "billeif-test"
+  environment                    = "test"
+  lambda_artifact_dir            = "tests/fixtures/lambda"
+  migration_lambda_artifact_path = "tests/fixtures/lambda/http.zip"
+  llm_api_url                    = "https://llm.example.test/chat/completions"
+  llm_model                      = "test-model"
+  deepseek_base_url              = "https://voice-llm.example.test/v1"
+  deepseek_model                 = "voice-test-model"
+  ses_verified_identity          = "billeif.example"
+  ses_sender_email               = "notifications@billeif.example"
+  db_allowed_cidr                = "10.0.0.0/24"
+  enable_rds_tunnel              = false
+}
+
+run "nat_instance_is_the_cost_capped_default" {
+  command = plan
+
+  assert {
+    condition = (
+      var.egress_mode == "nat_instance" &&
+      length(aws_instance.nat) == 1 &&
+      length(aws_nat_gateway.main) == 0 &&
+      length(aws_eip_association.nat_instance) == 1 &&
+      length(aws_route.private_default_nat_instance) == 1 &&
+      length(aws_route.private_default_managed_nat) == 0
+    )
+    error_message = "Billeif private egress must default to one NAT instance with managed NAT disabled."
+  }
+
+  assert {
+    condition = (
+      aws_instance.nat[0].instance_type == "t4g.micro" &&
+      aws_instance.nat[0].ami == data.aws_ami.billeif_nat_instance[0].id &&
+      aws_instance.nat[0].source_dest_check == false &&
+      aws_instance.nat[0].subnet_id == aws_subnet.public[0].id &&
+      aws_instance.nat[0].associate_public_ip_address == false &&
+      aws_instance.nat[0].monitoring == false &&
+      aws_instance.nat[0].metadata_options[0].http_endpoint == "enabled" &&
+      aws_instance.nat[0].metadata_options[0].http_tokens == "required" &&
+      aws_instance.nat[0].credit_specification[0].cpu_credits == "standard" &&
+      aws_instance.nat[0].root_block_device[0].encrypted == true &&
+      aws_instance.nat[0].root_block_device[0].volume_type == "gp3"
+    )
+    error_message = "The Billeif NAT instance must be hardened Arm64 t4g.micro compute with encrypted gp3 and standard CPU credits."
+  }
+
+  assert {
+    condition = (
+      length(aws_security_group.nat_instance[0].ingress) == 1 &&
+      alltrue([
+        for rule in aws_security_group.nat_instance[0].ingress :
+        rule.protocol == "-1" &&
+        toset(rule.cidr_blocks) == toset(local.private_subnet_cidrs) &&
+        rule.from_port != 22 &&
+        rule.to_port != 22
+      ]) &&
+      length(aws_security_group.nat_instance[0].egress) == 1 &&
+      alltrue([
+        for rule in aws_security_group.nat_instance[0].egress :
+        rule.protocol == "-1" &&
+        toset(rule.cidr_blocks) == toset(["0.0.0.0/0"])
+      ])
+    )
+    error_message = "The Billeif NAT security group must allow forwarding only from private subnets, expose no SSH ingress, and allow outbound traffic."
+  }
+
+  assert {
+    condition = (
+      strcontains(aws_instance.nat[0].user_data, "net.ipv4.ip_forward=1") &&
+      strcontains(aws_instance.nat[0].user_data, "iptables -t nat") &&
+      strcontains(aws_instance.nat[0].user_data, "MASQUERADE") &&
+      strcontains(aws_instance.nat[0].user_data, "for attempt in {1..20}") &&
+      strcontains(aws_instance.nat[0].user_data, "systemctl enable --now iptables") &&
+      strcontains(aws_instance.nat[0].user_data, "billeif-nat-watchdog.timer") &&
+      strcontains(aws_instance.nat[0].user_data, "systemctl enable --now billeif-nat.service billeif-nat-watchdog.timer")
+    )
+    error_message = "The Billeif NAT bootstrap must persist forwarding and masquerading and enable the systemd watchdog."
+  }
+
+  assert {
+    condition = (
+      aws_iam_role.nat_instance[0].name == "${local.resource_prefix}-nat-instance-role" &&
+      aws_iam_instance_profile.nat_instance[0].name == "${local.resource_prefix}-nat-instance-profile" &&
+      aws_iam_role_policy_attachment.nat_instance_ssm[0].policy_arn == "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+    )
+    error_message = "The Billeif NAT instance must be SSM-managed without SSH."
+  }
+}
+
+run "managed_nat_is_an_explicit_opt_in" {
+  command = plan
+
+  variables {
+    egress_mode = "managed_nat"
+  }
+
+  assert {
+    condition = (
+      length(aws_instance.nat) == 0 &&
+      length(aws_nat_gateway.main) == 1 &&
+      length(aws_eip_association.nat_instance) == 0 &&
+      length(aws_route.private_default_nat_instance) == 0 &&
+      length(aws_route.private_default_managed_nat) == 1
+    )
+    error_message = "Managed NAT must replace, not duplicate, Billeif NAT-instance egress when explicitly selected."
+  }
+}
+
+run "private_gateway_endpoints_and_nat_alarms_are_explicit" {
+  command = plan
+
+  assert {
+    condition = (
+      aws_vpc_endpoint.s3.vpc_endpoint_type == "Gateway" &&
+      aws_vpc_endpoint.s3.service_name == "com.amazonaws.ap-south-1.s3" &&
+      toset(aws_vpc_endpoint.s3.route_table_ids) == toset([aws_route_table.private.id]) &&
+      aws_vpc_endpoint.dynamodb.vpc_endpoint_type == "Gateway" &&
+      aws_vpc_endpoint.dynamodb.service_name == "com.amazonaws.ap-south-1.dynamodb" &&
+      toset(aws_vpc_endpoint.dynamodb.route_table_ids) == toset([aws_route_table.private.id]) &&
+      !contains(aws_vpc_endpoint.s3.route_table_ids, aws_route_table.database.id) &&
+      !contains(aws_vpc_endpoint.dynamodb.route_table_ids, aws_route_table.database.id)
+    )
+    error_message = "Free S3 and DynamoDB gateway endpoints must attach only to the private application route table and leave the database route table isolated."
+  }
+
+  assert {
+    condition = alltrue([
+      for alarm in [
+        aws_cloudwatch_metric_alarm.nat_system_status[0],
+        aws_cloudwatch_metric_alarm.nat_cpu_high[0],
+        aws_cloudwatch_metric_alarm.nat_cpu_credits_low[0]
+      ] :
+      alarm.evaluation_periods == 3 &&
+      alarm.datapoints_to_alarm == 2 &&
+      alarm.treat_missing_data == "notBreaching" &&
+      alarm.dimensions.InstanceId == aws_instance.nat[0].id
+    ])
+    error_message = "Billeif NAT status, CPU, and credit alarms must use explicit 2-of-3 evaluation with non-breaching missing data."
+  }
+
+  assert {
+    condition = (
+      aws_cloudwatch_metric_alarm.nat_system_status[0].metric_name == "StatusCheckFailed_System" &&
+      aws_cloudwatch_metric_alarm.nat_system_status[0].period == 60 &&
+      contains(aws_cloudwatch_metric_alarm.nat_system_status[0].alarm_actions, "arn:aws:automate:ap-south-1:ec2:recover") &&
+      aws_cloudwatch_metric_alarm.nat_cpu_high[0].metric_name == "CPUUtilization" &&
+      aws_cloudwatch_metric_alarm.nat_cpu_high[0].period == 300 &&
+      aws_cloudwatch_metric_alarm.nat_cpu_credits_low[0].metric_name == "CPUCreditBalance" &&
+      aws_cloudwatch_metric_alarm.nat_cpu_credits_low[0].period == 300
+    )
+    error_message = "The Billeif NAT system alarm must recover the instance and the remaining alarms must cover CPU and credit exhaustion."
+  }
+}
+
+run "egress_mode_rejects_unknown_values" {
+  command = plan
+
+  variables {
+    egress_mode = "surprise"
+  }
+
+  expect_failures = [var.egress_mode]
+}

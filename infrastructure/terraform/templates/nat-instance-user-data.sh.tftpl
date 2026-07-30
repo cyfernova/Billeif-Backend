@@ -1,0 +1,77 @@
+#!/bin/bash
+set -euo pipefail
+
+for attempt in {1..20}; do
+  if dnf install -y iptables-services; then
+    break
+  fi
+  if [[ "$attempt" -eq 20 ]]; then
+    exit 1
+  fi
+  sleep 15
+done
+
+cat >/etc/sysctl.d/99-billeif-nat.conf <<'SYSCTL'
+net.ipv4.ip_forward=1
+SYSCTL
+
+cat >/usr/local/sbin/billeif-nat-configure <<'SCRIPT'
+#!/bin/bash
+set -euo pipefail
+
+PUBLIC_INTERFACE="$(ip -o route show to default | awk '{print $5; exit}')"
+test -n "$PUBLIC_INTERFACE"
+
+sysctl --system
+iptables -t nat -C POSTROUTING -s '${vpc_cidr}' -o "$PUBLIC_INTERFACE" -j MASQUERADE 2>/dev/null ||
+  iptables -t nat -A POSTROUTING -s '${vpc_cidr}' -o "$PUBLIC_INTERFACE" -j MASQUERADE
+iptables -C FORWARD -s '${vpc_cidr}' -o "$PUBLIC_INTERFACE" -j ACCEPT 2>/dev/null ||
+  iptables -A FORWARD -s '${vpc_cidr}' -o "$PUBLIC_INTERFACE" -j ACCEPT
+iptables -C FORWARD -d '${vpc_cidr}' -i "$PUBLIC_INTERFACE" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null ||
+  iptables -A FORWARD -d '${vpc_cidr}' -i "$PUBLIC_INTERFACE" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+iptables-save >/etc/sysconfig/iptables
+SCRIPT
+chmod 0755 /usr/local/sbin/billeif-nat-configure
+
+cat >/etc/systemd/system/billeif-nat.service <<'UNIT'
+[Unit]
+Description=Billeif NAT forwarding
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/billeif-nat-configure
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+cat >/etc/systemd/system/billeif-nat-watchdog.service <<'UNIT'
+[Unit]
+Description=Billeif NAT forwarding watchdog
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/billeif-nat-configure
+UNIT
+
+cat >/etc/systemd/system/billeif-nat-watchdog.timer <<'UNIT'
+[Unit]
+Description=Billeif NAT forwarding watchdog timer
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+Unit=billeif-nat-watchdog.service
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now iptables
+systemctl enable --now amazon-ssm-agent
+systemctl enable --now billeif-nat.service billeif-nat-watchdog.timer

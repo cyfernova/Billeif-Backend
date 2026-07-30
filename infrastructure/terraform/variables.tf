@@ -95,6 +95,17 @@ variable "availability_zones" {
   default     = ["ap-south-1a", "ap-south-1b"]
 }
 
+variable "egress_mode" {
+  description = "Billeif private-subnet egress mode. NAT instance is the cost-capped default; managed NAT is an explicit opt-in."
+  type        = string
+  default     = "nat_instance"
+
+  validation {
+    condition     = contains(["nat_instance", "managed_nat"], var.egress_mode)
+    error_message = "egress_mode must be either nat_instance or managed_nat."
+  }
+}
+
 variable "db_allowed_cidr" {
   description = "Deprecated compatibility input. RDS ingress is security-group-only."
   type        = string

@@ -550,6 +550,13 @@ run "billeif_branding_defaults_and_public_url_inputs" {
       aws_dynamodb_table.voice_sessions.name == "billeif-preview-voice-sessions" &&
       aws_lambda_function.voice_session.function_name == "billeif-preview-voice-session" &&
       aws_ses_configuration_set.main.name == "billeif-preview-ses-config" &&
+      aws_iam_role.nat_instance[0].name == "billeif-preview-nat-instance-role" &&
+      aws_iam_instance_profile.nat_instance[0].name == "billeif-preview-nat-instance-profile" &&
+      aws_security_group.nat_instance[0].name == "billeif-preview-nat-instance-sg" &&
+      aws_instance.nat[0].tags.Name == "billeif-preview-nat-instance" &&
+      aws_vpc_endpoint.s3.tags.Name == "billeif-preview-s3-gateway-endpoint" &&
+      aws_vpc_endpoint.dynamodb.tags.Name == "billeif-preview-dynamodb-gateway-endpoint" &&
+      aws_cloudwatch_metric_alarm.nat_system_status[0].alarm_name == "billeif-preview-nat-system-status" &&
       local.ses_verified_identity_arn == "arn:aws:ses:ap-south-1:123456789012:identity/billeif.example"
     )
     error_message = "Representative AWS resources and the SES contract must use Billeif project/environment naming."
