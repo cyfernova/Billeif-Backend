@@ -15,6 +15,7 @@ import (
 )
 
 const invoiceDeliveryCommand = "invoice.delivery.create.v1"
+const invoiceDeliveryImmediatePublishTimeout = 2 * time.Second
 
 var ErrInvoiceNotDeliverable = interfaces.ErrInvoiceNotDeliverable
 
@@ -101,6 +102,19 @@ func (s *InvoiceService) DeliverByBusiness(
 		!validDeliveryUUID(result.Delivery.ID) ||
 		!validDeliveryUUID(*result.Delivery.RenderJobID) {
 		return nil, errors.New("invoice delivery result is incomplete")
+	}
+	if !result.Replayed && result.OutboxEvent != nil && s.immediateOutboxPublisher != nil {
+		publishContext, cancel := context.WithTimeout(ctx, invoiceDeliveryImmediatePublishTimeout)
+		defer cancel()
+		if err := s.immediateOutboxPublisher.TryPublish(publishContext, result.OutboxEvent); err != nil {
+			s.log.Warn(
+				"immediate invoice delivery publication failed; event remains pending",
+				"invoice_id", invoiceID,
+				"delivery_id", result.Delivery.ID,
+				"outbox_event_id", result.OutboxEvent.ID,
+				"error", err,
+			)
+		}
 	}
 	return &DeliverInvoiceResult{
 		Delivery: safeInvoiceDeliveryStatus(result.Delivery),

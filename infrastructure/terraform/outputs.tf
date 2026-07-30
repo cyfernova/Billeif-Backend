@@ -63,6 +63,16 @@ output "lambda_sqs_invoice_arn" {
   value       = aws_lambda_function.sqs_invoice.arn
 }
 
+output "lambda_sqs_email_delivery_arn" {
+  description = "Billeif email delivery worker Lambda ARN"
+  value       = aws_lambda_function.sqs_email_delivery.arn
+}
+
+output "email_delivery_queue_url" {
+  description = "Billeif email delivery SQS queue URL"
+  value       = aws_sqs_queue.email_delivery.url
+}
+
 output "lambda_sqs_gst_arn" {
   description = "Lambda ARN for GST SQS worker"
   value       = aws_lambda_function.sqs_gst.arn

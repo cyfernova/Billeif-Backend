@@ -144,6 +144,97 @@ resource "aws_iam_role_policy_attachment" "outbox_dispatcher_vpc_access" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
 }
 
+resource "aws_iam_role" "email_delivery" {
+  name               = "${local.resource_prefix}-email-delivery-exec-role"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
+}
+
+resource "aws_iam_role_policy_attachment" "email_delivery_basic" {
+  role       = aws_iam_role.email_delivery.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy_attachment" "email_delivery_vpc_access" {
+  role       = aws_iam_role.email_delivery.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+}
+
+data "aws_iam_policy_document" "email_delivery" {
+  statement {
+    sid       = "EmailDeliveryParameters"
+    effect    = "Allow"
+    actions   = ["ssm:GetParameters"]
+    resources = [local.db_host_ssm_parameter_arn]
+  }
+
+  statement {
+    sid       = "EmailDeliveryDatabaseSecret"
+    effect    = "Allow"
+    actions   = ["secretsmanager:DescribeSecret", "secretsmanager:GetSecretValue"]
+    resources = [aws_db_instance.main.master_user_secret[0].secret_arn]
+  }
+
+  statement {
+    sid       = "EmailDeliveryDatabaseSecretKMS"
+    effect    = "Allow"
+    actions   = ["kms:Decrypt", "kms:DescribeKey"]
+    resources = [aws_kms_key.application_secrets.arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["secretsmanager.${var.aws_region}.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:EncryptionContext:SecretARN"
+      values   = [aws_db_instance.main.master_user_secret[0].secret_arn]
+    }
+  }
+
+  statement {
+    sid    = "EmailDeliveryQueue"
+    effect = "Allow"
+    actions = [
+      "sqs:ReceiveMessage",
+      "sqs:DeleteMessage",
+      "sqs:GetQueueAttributes",
+      "sqs:ChangeMessageVisibility",
+    ]
+    resources = [aws_sqs_queue.email_delivery.arn]
+  }
+
+  statement {
+    sid       = "EmailDeliveryFinalPDF"
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.invoices_pdf.arn}/invoices/*/*/v*/final.pdf"]
+  }
+
+  statement {
+    sid     = "EmailDeliverySES"
+    effect  = "Allow"
+    actions = ["ses:SendRawEmail"]
+    resources = [
+      local.ses_verified_identity_arn,
+      "arn:${data.aws_partition.current.partition}:ses:${var.aws_region}:${data.aws_caller_identity.current.account_id}:configuration-set/${aws_ses_configuration_set.main.name}",
+    ]
+
+    condition {
+      test     = "StringEquals"
+      variable = "ses:FromAddress"
+      values   = [var.ses_sender_email]
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "email_delivery" {
+  name   = "${local.resource_prefix}-email-delivery-policy"
+  role   = aws_iam_role.email_delivery.id
+  policy = data.aws_iam_policy_document.email_delivery.json
+}
+
 data "aws_iam_policy_document" "outbox_dispatcher" {
   statement {
     sid       = "OutboxParameters"
@@ -203,10 +294,13 @@ data "aws_iam_policy_document" "outbox_dispatcher" {
   }
 
   statement {
-    sid       = "OutboxInvoiceQueue"
-    effect    = "Allow"
-    actions   = ["sqs:SendMessage"]
-    resources = [aws_sqs_queue.invoice_processing.arn]
+    sid     = "OutboxQueues"
+    effect  = "Allow"
+    actions = ["sqs:SendMessage"]
+    resources = [
+      aws_sqs_queue.invoice_processing.arn,
+      aws_sqs_queue.email_delivery.arn,
+    ]
   }
 }
 
@@ -272,6 +366,13 @@ data "aws_iam_policy_document" "lambda_app" {
       aws_sns_topic.low_stock_alerts.arn,
       aws_sns_topic.ses_events.arn
     ]
+  }
+
+  statement {
+    sid       = "EmailDeliveryQueueSend"
+    effect    = "Allow"
+    actions   = ["sqs:SendMessage"]
+    resources = [aws_sqs_queue.email_delivery.arn]
   }
 
   statement {
@@ -514,12 +615,6 @@ data "aws_iam_policy_document" "lambda_worker_app" {
     }
   }
 
-  statement {
-    sid       = "WorkerEmail"
-    effect    = "Allow"
-    actions   = ["ses:SendEmail", "ses:SendRawEmail"]
-    resources = [local.ses_verified_identity_arn]
-  }
 }
 
 resource "aws_iam_role_policy" "lambda_worker_app" {

@@ -70,6 +70,26 @@ mock_provider "aws" {
   }
 
   override_resource {
+    target          = aws_sqs_queue.email_delivery
+    override_during = plan
+    values = {
+      arn  = "arn:aws:sqs:ap-south-1:123456789012:billeif-test-test-email-delivery-queue"
+      url  = "https://sqs.ap-south-1.amazonaws.com/123456789012/billeif-test-test-email-delivery-queue"
+      name = "billeif-test-test-email-delivery-queue"
+    }
+  }
+
+  override_resource {
+    target          = aws_sqs_queue.email_delivery_dlq
+    override_during = plan
+    values = {
+      arn  = "arn:aws:sqs:ap-south-1:123456789012:billeif-test-test-email-delivery-dlq"
+      url  = "https://sqs.ap-south-1.amazonaws.com/123456789012/billeif-test-test-email-delivery-dlq"
+      name = "billeif-test-test-email-delivery-dlq"
+    }
+  }
+
+  override_resource {
     target          = aws_lambda_function.outbox_dispatcher
     override_during = plan
     values = {
@@ -161,10 +181,11 @@ run "outbox_dispatcher_is_private_serial_and_fail_closed" {
       aws_cloudwatch_log_group.lambda_outbox_dispatcher.name == "/aws/lambda/${local.resource_prefix}-outbox-dispatcher" &&
       toset(keys(aws_lambda_function.outbox_dispatcher.environment[0].variables)) == toset([
         "ENVIRONMENT", "LOG_LEVEL", "LOG_FORMAT", "DATABASE_HOST_SSM_PARAM", "DATABASE_SECRET_ARN",
-        "DATABASE_PORT", "DATABASE_NAME", "DATABASE_SSL_MODE", "SQS_INVOICE_QUEUE"
+        "DATABASE_PORT", "DATABASE_NAME", "DATABASE_SSL_MODE", "SQS_INVOICE_QUEUE", "SQS_EMAIL_DELIVERY_QUEUE"
       ]) &&
       aws_lambda_function.outbox_dispatcher.environment[0].variables.ENVIRONMENT == var.environment &&
-      aws_lambda_function.outbox_dispatcher.environment[0].variables.SQS_INVOICE_QUEUE == aws_sqs_queue.invoice_processing.url
+      aws_lambda_function.outbox_dispatcher.environment[0].variables.SQS_INVOICE_QUEUE == aws_sqs_queue.invoice_processing.url &&
+      aws_lambda_function.outbox_dispatcher.environment[0].variables.SQS_EMAIL_DELIVERY_QUEUE == aws_sqs_queue.email_delivery.url
     )
     error_message = "The outbox dispatcher environment must contain only logging and database or invoice-queue runtime settings."
   }
@@ -194,7 +215,7 @@ run "outbox_dispatcher_iam_is_dedicated_and_least_privilege" {
       aws_iam_role.outbox_dispatcher.name == "${local.resource_prefix}-outbox-dispatcher-exec-role" &&
       aws_iam_role_policy_attachment.outbox_dispatcher_basic.policy_arn == "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole" &&
       aws_iam_role_policy_attachment.outbox_dispatcher_vpc_access.policy_arn == "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole" &&
-      length([for statement in data.aws_iam_policy_document.outbox_dispatcher.statement : statement if statement.sid == "OutboxInvoiceQueue" && length(statement.actions) == 1 && contains(statement.actions, "sqs:SendMessage") && length(statement.resources) == 1 && contains(statement.resources, aws_sqs_queue.invoice_processing.arn)]) == 1 &&
+      length([for statement in data.aws_iam_policy_document.outbox_dispatcher.statement : statement if statement.sid == "OutboxQueues" && length(statement.actions) == 1 && contains(statement.actions, "sqs:SendMessage") && length(statement.resources) == 2 && contains(statement.resources, aws_sqs_queue.invoice_processing.arn) && contains(statement.resources, aws_sqs_queue.email_delivery.arn)]) == 1 &&
       length([for statement in data.aws_iam_policy_document.outbox_dispatcher.statement : statement if statement.sid == "OutboxParameters" && length(statement.actions) == 1 && contains(statement.actions, "ssm:GetParameters") && length(statement.resources) == 1 && contains(statement.resources, local.db_host_ssm_parameter_arn)]) == 1 &&
       length([for statement in data.aws_iam_policy_document.outbox_dispatcher.statement : statement if statement.sid == "OutboxSecret" && length(statement.actions) == 2 && contains(statement.actions, "secretsmanager:DescribeSecret") && contains(statement.actions, "secretsmanager:GetSecretValue") && length(statement.resources) == 1 && contains(statement.resources, aws_db_instance.main.master_user_secret[0].secret_arn)]) == 1 &&
       length([for statement in data.aws_iam_policy_document.outbox_dispatcher.statement : statement if statement.sid == "OutboxSecretKMS" && length(statement.actions) == 2 && contains(statement.actions, "kms:Decrypt") && contains(statement.actions, "kms:DescribeKey") && length(statement.resources) == 1 && contains(statement.resources, aws_kms_key.application_secrets.arn)]) == 1
@@ -214,6 +235,47 @@ run "outbox_dispatcher_iam_is_dedicated_and_least_privilege" {
   }
 }
 
+run "email_delivery_worker_is_cost_capped_and_least_privilege" {
+  command = plan
+
+  assert {
+    condition = (
+      aws_sqs_queue.email_delivery.name == "${local.resource_prefix}-email-delivery-queue" &&
+      aws_sqs_queue.email_delivery.message_retention_seconds == 345600 &&
+      aws_sqs_queue.email_delivery.visibility_timeout_seconds == 365 &&
+      aws_sqs_queue.email_delivery.sqs_managed_sse_enabled &&
+      aws_sqs_queue.email_delivery_dlq.message_retention_seconds == 1209600 &&
+      aws_sqs_queue.email_delivery_dlq.sqs_managed_sse_enabled &&
+      jsondecode(aws_sqs_queue_redrive_policy.email_delivery.redrive_policy).maxReceiveCount == 5
+    )
+    error_message = "The Billeif email delivery queue must be encrypted, bounded, and use its dedicated 14-day DLQ."
+  }
+
+  assert {
+    condition = (
+      aws_lambda_function.sqs_email_delivery.function_name == "${local.resource_prefix}-sqs-email-delivery" &&
+      aws_lambda_function.sqs_email_delivery.runtime == "provided.al2023" &&
+      aws_lambda_function.sqs_email_delivery.architectures[0] == "arm64" &&
+      aws_lambda_function.sqs_email_delivery.memory_size == 512 &&
+      aws_lambda_function.sqs_email_delivery.timeout == 60 &&
+      aws_lambda_function.sqs_email_delivery.reserved_concurrent_executions == 0 &&
+      length(aws_lambda_event_source_mapping.email_delivery_queue) == 0
+    )
+    error_message = "The disabled Billeif email delivery worker must be hard-throttled and the enabled mapping capped at two single-record batches."
+  }
+
+  assert {
+    condition = (
+      length([for statement in data.aws_iam_policy_document.email_delivery.statement : statement if statement.sid == "EmailDeliveryFinalPDF" && length(statement.actions) == 1 && contains(statement.actions, "s3:GetObject") && length(statement.resources) == 1]) == 1 &&
+      length([for statement in data.aws_iam_policy_document.email_delivery.statement : statement if statement.sid == "EmailDeliverySES" && length(statement.actions) == 1 && contains(statement.actions, "ses:SendRawEmail") && length(statement.resources) == 2]) == 1 &&
+      length([for statement in data.aws_iam_policy_document.email_delivery.statement : statement if statement.sid == "EmailDeliveryQueue" && !contains(statement.actions, "sqs:SendMessage") && length(statement.resources) == 1 && contains(statement.resources, aws_sqs_queue.email_delivery.arn)]) == 1 &&
+      length([for statement in data.aws_iam_policy_document.lambda_app.statement : statement if statement.sid == "EmailDeliveryQueueSend" && length(statement.actions) == 1 && contains(statement.actions, "sqs:SendMessage") && length(statement.resources) == 1 && contains(statement.resources, aws_sqs_queue.email_delivery.arn)]) == 1 &&
+      toset(aws_ses_event_destination.to_sns.matching_types) == toset(["bounce", "complaint", "delivery"])
+    )
+    error_message = "The email delivery role must only read final PDFs, receive its queue, and call SES SendRawEmail."
+  }
+}
+
 run "outbox_dispatcher_schedule_enables_only_with_application" {
   command = plan
 
@@ -227,5 +289,23 @@ run "outbox_dispatcher_schedule_enables_only_with_application" {
       aws_scheduler_schedule.outbox_dispatcher.state == "ENABLED"
     )
     error_message = "Reviewed application enablement must release exactly one dispatcher execution and enable its schedule."
+  }
+}
+
+run "email_delivery_enablement_uses_mapping_cap_without_low_reserved_concurrency" {
+  command = plan
+
+  variables {
+    enable_application = true
+  }
+
+  assert {
+    condition = (
+      aws_lambda_function.sqs_email_delivery.reserved_concurrent_executions == null &&
+      aws_lambda_event_source_mapping.email_delivery_queue[0].batch_size == 1 &&
+      aws_lambda_event_source_mapping.email_delivery_queue[0].maximum_batching_window_in_seconds == 0 &&
+      aws_lambda_event_source_mapping.email_delivery_queue[0].scaling_config[0].maximum_concurrency == 2
+    )
+    error_message = "Enabled Billeif email delivery must rely on the two-concurrency event-source cap without configuring an unsafe reserved concurrency below five."
   }
 }

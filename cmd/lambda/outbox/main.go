@@ -103,12 +103,13 @@ func newOutboxHandler(ctx context.Context) (*lambdaHandler, error) {
 	configureDatabasePool(sqlDatabase)
 
 	repository := postgresrepo.NewOutboxRepository(db)
-	publisher := outbox.NewSQSInvoicePublisher(
+	publisher := outbox.NewSQSOutboxPublisher(
 		cfg.SQS.InvoiceQueue,
+		cfg.SQS.EmailDeliveryQueue,
 		sqs.NewFromConfig(awsCfg),
 	)
 	dispatcher, err := outbox.NewDispatcher(repository, publisher, outbox.DispatcherOptions{
-		EventTypes: outbox.InvoiceRenderEventTypes(),
+		EventTypes: outbox.InvoiceDispatchEventTypes(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize outbox dispatcher: %w", err)

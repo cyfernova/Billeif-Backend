@@ -12,12 +12,13 @@ func TestRuntimeEntrypointsUseScopedConfigurationProfiles(t *testing.T) {
 	t.Parallel()
 
 	cases := map[string]string{
-		"../cmd/lambda/http/main.go":           "config.ProfileHTTP",
-		"../cmd/lambda/a2a-stream/main.go":     "config.ProfileA2A",
-		"../cmd/lambda/sqs-invoice/main.go":    "config.ProfileInvoice",
-		"../cmd/lambda/sqs-gst/main.go":        "config.ProfileGST",
-		"../cmd/lambda/sqs-bargaining/main.go": "config.ProfileBargaining",
-		"../cmd/server/main.go":                "config.ProfileHTTP",
+		"../cmd/lambda/http/main.go":               "config.ProfileHTTP",
+		"../cmd/lambda/a2a-stream/main.go":         "config.ProfileA2A",
+		"../cmd/lambda/sqs-invoice/main.go":        "config.ProfileInvoice",
+		"../cmd/lambda/sqs-gst/main.go":            "config.ProfileGST",
+		"../cmd/lambda/sqs-bargaining/main.go":     "config.ProfileBargaining",
+		"../cmd/lambda/sqs-email-delivery/main.go": "config.ProfileEmailDelivery",
+		"../cmd/server/main.go":                    "config.ProfileHTTP",
 	}
 	for path, profile := range cases {
 		path, profile := path, profile
@@ -27,7 +28,9 @@ func TestRuntimeEntrypointsUseScopedConfigurationProfiles(t *testing.T) {
 				t.Fatalf("read entrypoint: %v", err)
 			}
 			source := string(body)
-			if !strings.Contains(source, "Profile:") || !strings.Contains(source, profile) {
+			usesInitializeProfile := strings.Contains(source, "Profile:") && strings.Contains(source, profile)
+			usesScopedLoad := strings.Contains(source, "config.LoadForProfile("+profile+")")
+			if !usesInitializeProfile && !usesScopedLoad {
 				t.Fatalf("entrypoint must bootstrap with %s", profile)
 			}
 			if strings.Contains(source, "RefreshCredentials(") {
@@ -48,6 +51,7 @@ func TestWorkerBootstrapProfilesFailClosedWithoutTheirConcreteDependencies(t *te
 		{"GST", config.ProfileGST, func(cfg *config.Config) { cfg.S3.BucketInvoices = "" }, "S3_BUCKET_INVOICES"},
 		{"bargaining", config.ProfileBargaining, func(cfg *config.Config) { cfg.SQS.BargainingQueue = "" }, "SQS_BARGAINING_QUEUE"},
 		{"outbox", config.ProfileOutbox, func(cfg *config.Config) { cfg.SQS.InvoiceQueue = "" }, "SQS_INVOICE_QUEUE"},
+		{"email delivery", config.ProfileEmailDelivery, func(cfg *config.Config) { cfg.SES.SenderEmail = "" }, "SES_SENDER_EMAIL"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -62,7 +66,7 @@ func TestWorkerBootstrapProfilesFailClosedWithoutTheirConcreteDependencies(t *te
 }
 
 func TestWorkerBootstrapProfilesAcceptCompleteConcreteDependencies(t *testing.T) {
-	for _, profile := range []config.Profile{config.ProfileInvoice, config.ProfileGST, config.ProfileBargaining, config.ProfileOutbox} {
+	for _, profile := range []config.Profile{config.ProfileInvoice, config.ProfileGST, config.ProfileBargaining, config.ProfileOutbox, config.ProfileEmailDelivery} {
 		if err := config.ValidateForProfile(completeWorkerBootstrapConfig(), profile); err != nil {
 			t.Fatalf("%s rejected complete bootstrap config: %v", profile, err)
 		}
@@ -85,9 +89,11 @@ func completeWorkerBootstrapConfig() *config.Config {
 		SSM: config.SSMConfig{DatabaseHostParam: "/app/database/host"},
 		S3:  config.S3Config{BucketInvoices: "invoice-pdfs"},
 		SQS: config.SQSConfig{
-			BargainingQueue: "https://sqs.ap-south-1.amazonaws.com/123/bargaining",
-			InvoiceQueue:    "https://sqs.ap-south-1.amazonaws.com/123/billeif-invoice",
+			BargainingQueue:    "https://sqs.ap-south-1.amazonaws.com/123/bargaining",
+			InvoiceQueue:       "https://sqs.ap-south-1.amazonaws.com/123/billeif-invoice",
+			EmailDeliveryQueue: "https://sqs.ap-south-1.amazonaws.com/123/billeif-email-delivery",
 		},
+		SES: config.SESConfig{SenderEmail: "billing@example.com", ConfigurationSet: "Billeif-production-ses-events"},
 		LLM: config.LLMConfig{APIURL: "https://llm.example.test/chat", Model: "production-model"},
 	}
 }

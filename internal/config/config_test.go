@@ -214,6 +214,7 @@ func TestLoadWithExplicitLocalDatabaseCredentialsDoesNotRequireAWS(t *testing.T)
 	t.Setenv("S3_BUCKET_INVOICES", "local-invoices")
 	t.Setenv("S3_BUCKET_PRODUCTS", "local-products")
 	t.Setenv("SQS_INVOICE_QUEUE", "local-invoice-queue")
+	t.Setenv("SQS_EMAIL_DELIVERY_QUEUE", "local-email-delivery-queue")
 	t.Setenv("LLM_API_KEY", "local-llm-key")
 	t.Setenv("LLM_API_URL", "https://llm.example.test/chat/completions")
 	t.Setenv("LLM_MODEL", "local-model")
@@ -268,7 +269,8 @@ func validConfigForTest() *Config {
 			BucketProducts: "products",
 		},
 		SQS: SQSConfig{
-			InvoiceQueue: "invoice-queue",
+			InvoiceQueue:       "invoice-queue",
+			EmailDeliveryQueue: "email-delivery-queue",
 		},
 		Razorpay: RazorpayConfig{
 			KeyID:         "rzp_test_key",
@@ -290,5 +292,16 @@ func validConfigForTest() *Config {
 			Domain:     "auth.example.test",
 		},
 		AllowedOrigins: []string{"https://app.example.test"},
+	}
+}
+
+func TestHTTPProfileRequiresDedicatedEmailDeliveryQueue(t *testing.T) {
+	cfg := validConfigForTest()
+	cfg.SQS.EmailDeliveryQueue = ""
+
+	err := ValidateForProfile(cfg, ProfileHTTP)
+
+	if err == nil || !strings.Contains(err.Error(), "SQS_EMAIL_DELIVERY_QUEUE") {
+		t.Fatalf("HTTP profile error = %v, want dedicated email delivery queue", err)
 	}
 }

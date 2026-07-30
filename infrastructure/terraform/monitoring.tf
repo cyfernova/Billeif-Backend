@@ -85,6 +85,106 @@ resource "aws_cloudwatch_metric_alarm" "lambda_gst_errors" {
   }
 }
 
+resource "aws_cloudwatch_metric_alarm" "lambda_email_delivery_errors" {
+  alarm_name          = "${local.resource_prefix}-lambda-email-delivery-errors"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "Errors"
+  namespace           = "AWS/Lambda"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif email delivery Lambda is returning errors"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    FunctionName = aws_lambda_function.sqs_email_delivery.function_name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "lambda_email_delivery_throttles" {
+  alarm_name          = "${local.resource_prefix}-lambda-email-delivery-throttles"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "Throttles"
+  namespace           = "AWS/Lambda"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif email delivery Lambda is being throttled"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    FunctionName = aws_lambda_function.sqs_email_delivery.function_name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "lambda_email_delivery_duration" {
+  alarm_name          = "${local.resource_prefix}-lambda-email-delivery-duration"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "Duration"
+  namespace           = "AWS/Lambda"
+  period              = 300
+  extended_statistic  = "p95"
+  threshold           = 45000
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif email delivery Lambda p95 duration exceeds 45 seconds"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    FunctionName = aws_lambda_function.sqs_email_delivery.function_name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "email_delivery_queue_age" {
+  alarm_name          = "${local.resource_prefix}-email-delivery-queue-age"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "ApproximateAgeOfOldestMessage"
+  namespace           = "AWS/SQS"
+  period              = 300
+  statistic           = "Maximum"
+  threshold           = 600
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif email delivery queue oldest message exceeds ten minutes"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    QueueName = aws_sqs_queue.email_delivery.name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "email_delivery_dlq_messages" {
+  alarm_name          = "${local.resource_prefix}-email-delivery-dlq-messages"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  namespace           = "AWS/SQS"
+  period              = 300
+  statistic           = "Maximum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif email delivery dead-letter queue has messages"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    QueueName = aws_sqs_queue.email_delivery_dlq.name
+  }
+}
+
 locals {
   threat_detection_log_groups = {
     api_http   = aws_cloudwatch_log_group.lambda_api_http.name

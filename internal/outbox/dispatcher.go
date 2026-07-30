@@ -155,6 +155,14 @@ func InvoiceRenderEventTypes() []string {
 	return []string{invoicePreviewRequestedEvent, invoiceIssuedEvent}
 }
 
+func InvoiceDispatchEventTypes() []string {
+	return []string{
+		invoicePreviewRequestedEvent,
+		invoiceIssuedEvent,
+		invoiceDeliveryRequestedEvent,
+	}
+}
+
 func validateEventTypes(values []string) ([]string, error) {
 	if len(values) == 0 {
 		return nil, errors.New("outbox event types are required")

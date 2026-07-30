@@ -25,6 +25,7 @@ type Config struct {
 	FX             FXConfig            `mapstructure:"FX"`
 	WhatsApp       WhatsAppConfig      `mapstructure:"WHATSAPP"`
 	SQS            SQSConfig           `mapstructure:"SQS"`
+	SES            SESConfig           `mapstructure:"SES"`
 	Sentry         SentryConfig        `mapstructure:"SENTRY"`
 	Shipping       ShippingConfig      `mapstructure:"SHIPPING"`
 	GST            GSTConfig           `mapstructure:"GST"`
@@ -186,9 +187,15 @@ type WhatsAppConfig struct {
 }
 
 type SQSConfig struct {
-	InvoiceQueue    string `mapstructure:"INVOICE_QUEUE"`
-	GSTQueue        string `mapstructure:"GST_QUEUE"`
-	BargainingQueue string `mapstructure:"BARGAINING_QUEUE"`
+	InvoiceQueue       string `mapstructure:"INVOICE_QUEUE"`
+	EmailDeliveryQueue string `mapstructure:"EMAIL_DELIVERY_QUEUE"`
+	GSTQueue           string `mapstructure:"GST_QUEUE"`
+	BargainingQueue    string `mapstructure:"BARGAINING_QUEUE"`
+}
+
+type SESConfig struct {
+	SenderEmail      string `mapstructure:"SENDER_EMAIL"`
+	ConfigurationSet string `mapstructure:"CONFIGURATION_SET"`
 }
 
 type ShippingConfig struct {
@@ -347,8 +354,11 @@ func LoadForProfile(profile Profile) (*Config, error) {
 	_ = viper.BindEnv("WHATSAPP.BASE_URL", "WHATSAPP_BASE_URL")
 	_ = viper.BindEnv("WHATSAPP.TIMEOUT", "WHATSAPP_TIMEOUT")
 	_ = viper.BindEnv("SQS.INVOICE_QUEUE", "SQS_INVOICE_QUEUE")
+	_ = viper.BindEnv("SQS.EMAIL_DELIVERY_QUEUE", "SQS_EMAIL_DELIVERY_QUEUE")
 	_ = viper.BindEnv("SQS.GST_QUEUE", "SQS_GST_QUEUE")
 	_ = viper.BindEnv("SQS.BARGAINING_QUEUE", "SQS_BARGAINING_QUEUE")
+	_ = viper.BindEnv("SES.SENDER_EMAIL", "SES_SENDER_EMAIL")
+	_ = viper.BindEnv("SES.CONFIGURATION_SET", "SES_CONFIGURATION_SET")
 	_ = viper.BindEnv("SENTRY.DSN", "SENTRY_DSN")
 	_ = viper.BindEnv("SENTRY.SAMPLE_RATE", "SENTRY_SAMPLE_RATE")
 	_ = viper.BindEnv("SENTRY.TRACES_SAMPLE_RATE", "SENTRY_TRACES_SAMPLE_RATE")
@@ -503,8 +513,11 @@ func applyFlatEnvFileFallbacks(cfg *Config) {
 	setIfZeroInt(&cfg.Razorpay.Timeout, "RAZORPAY_TIMEOUT")
 
 	setIfEmpty(&cfg.SQS.InvoiceQueue, "SQS_INVOICE_QUEUE")
+	setIfEmpty(&cfg.SQS.EmailDeliveryQueue, "SQS_EMAIL_DELIVERY_QUEUE")
 	setIfEmpty(&cfg.SQS.GSTQueue, "SQS_GST_QUEUE")
 	setIfEmpty(&cfg.SQS.BargainingQueue, "SQS_BARGAINING_QUEUE")
+	setIfEmpty(&cfg.SES.SenderEmail, "SES_SENDER_EMAIL")
+	setIfEmpty(&cfg.SES.ConfigurationSet, "SES_CONFIGURATION_SET")
 
 	setIfEmpty(&cfg.LLM.APIKey, "LLM_API_KEY")
 	setIfEmpty(&cfg.LLM.APIURL, "LLM_API_URL")

@@ -378,10 +378,13 @@ S3_BUCKET_EMAIL_SINK
 S3_BUCKET_INVOICES
 S3_BUCKET_LOGOS
 S3_BUCKET_PRODUCTS
+SES_CONFIGURATION_SET
+SES_SENDER_EMAIL
 SERVER_BASE_URL
 SERVER_PORT
 SMS_REGION
 SQS_BARGAINING_QUEUE
+SQS_EMAIL_DELIVERY_QUEUE
 SQS_GST_QUEUE
 SQS_INVOICE_QUEUE
 SQS_PAYMENT_QUEUE
@@ -414,7 +417,7 @@ func TestTerraformUsesBilleifBrandingAndVerifiedSESSenderContract(t *testing.T) 
 		`variable "ses_verified_identity"`,
 		`variable "ses_sender_email"`,
 		`ses_verified_identity_arn`,
-		`resources = [local.ses_verified_identity_arn]`,
+		`values   = [var.ses_sender_email]`,
 		`local.resource_prefix`,
 	} {
 		if !strings.Contains(terraform, required) {
@@ -532,27 +535,47 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_cognito_resource_server.main",
 		"aws_cloudwatch_log_group.database_migrator",
 		"aws_cloudwatch_log_group.lambda_outbox_dispatcher",
+		"aws_cloudwatch_log_group.lambda_sqs_email_delivery",
+		"aws_cloudwatch_metric_alarm.email_delivery_dlq_messages",
+		"aws_cloudwatch_metric_alarm.email_delivery_queue_age",
+		"aws_cloudwatch_metric_alarm.lambda_email_delivery_duration",
+		"aws_cloudwatch_metric_alarm.lambda_email_delivery_errors",
+		"aws_cloudwatch_metric_alarm.lambda_email_delivery_throttles",
 		"aws_iam_role.database_migrator",
+		"aws_iam_role.email_delivery",
 		"aws_iam_role.outbox_dispatcher",
 		"aws_iam_role.outbox_scheduler",
 		"aws_iam_role_policy.database_migrator",
+		"aws_iam_role_policy.email_delivery",
 		"aws_iam_role_policy.outbox_dispatcher",
 		"aws_iam_role_policy.outbox_scheduler",
 		"aws_iam_role_policy_attachment.outbox_dispatcher_basic",
 		"aws_iam_role_policy_attachment.outbox_dispatcher_vpc_access",
+		"aws_iam_role_policy_attachment.email_delivery_basic",
+		"aws_iam_role_policy_attachment.email_delivery_vpc_access",
+		"aws_lambda_event_source_mapping.email_delivery_queue",
 		"aws_lambda_function.database_migrator",
 		"aws_lambda_function.outbox_dispatcher",
+		"aws_lambda_function.sqs_email_delivery",
 		"aws_lambda_invocation.database_migrations",
 		"aws_scheduler_schedule.outbox_dispatcher",
 		"aws_security_group.database_migrator",
+		"aws_sns_topic_policy.ses_events",
+		"aws_sqs_queue.email_delivery",
+		"aws_sqs_queue.email_delivery_dlq",
 		"aws_sqs_queue.outbox_dispatcher_scheduler_dlq",
+		"aws_sqs_queue_policy.email_delivery",
+		"aws_sqs_queue_policy.email_delivery_dlq",
 		"aws_sqs_queue_policy.outbox_dispatcher_scheduler_dlq",
+		"aws_sqs_queue_redrive_allow_policy.email_delivery_dlq",
+		"aws_sqs_queue_redrive_policy.email_delivery",
 	)
 	assertExactManifest(t, "Terraform resource labels", terraformResourceLabels(t), wantResources)
 	wantOutputs := manifestLines(preTaskOutputManifest)
 	for _, removed := range []string{"lambda_sqs_payment_arn", "payment_processing_queue_url", "workflow_runs_queue_url"} {
 		wantOutputs = removeManifestEntry(wantOutputs, removed)
 	}
+	wantOutputs = append(wantOutputs, "email_delivery_queue_url", "lambda_sqs_email_delivery_arn")
 	assertExactManifest(t, "Terraform output keys", terraformOutputKeys(t), wantOutputs)
 	wantEnvironment := removeManifestEntry(manifestLines(preTaskEnvironmentManifest), "SQS_PAYMENT_QUEUE")
 	assertExactManifest(t, "Terraform environment keys", terraformEnvironmentKeys(t), wantEnvironment)

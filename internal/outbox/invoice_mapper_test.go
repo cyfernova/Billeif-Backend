@@ -181,6 +181,81 @@ func TestInvoiceRenderMapperRejectsDeliveryEventBeforeSQS(t *testing.T) {
 	}
 }
 
+func TestMapEmailDeliveryEventToSQSMessageMapsStrictIdentity(t *testing.T) {
+	deliveryID := uuid.NewString()
+	invoiceID := uuid.NewString()
+	renderJobID := uuid.NewString()
+	businessID := uuid.NewString()
+	event := &models.OutboxEvent{
+		ID: uuid.NewString(), BusinessID: businessID,
+		AggregateType: "email_delivery", AggregateID: deliveryID,
+		EventType: invoiceDeliveryRequestedEvent,
+		Payload: fmt.Sprintf(
+			`{"schema_version":1,"delivery_id":%q,"invoice_id":%q,"render_job_id":%q}`,
+			deliveryID, invoiceID, renderJobID,
+		),
+	}
+
+	message, err := MapEmailDeliveryEventToSQSMessage(event)
+
+	if err != nil {
+		t.Fatalf("map delivery event: %v", err)
+	}
+	want := fmt.Sprintf(
+		`{"schema_version":1,"type":"send_invoice_pdf","business_id":%q,"delivery_id":%q,"invoice_id":%q,"render_job_id":%q}`,
+		businessID, deliveryID, invoiceID, renderJobID,
+	)
+	if string(message) != want {
+		t.Fatalf("mapped delivery = %s, want %s", message, want)
+	}
+}
+
+func TestMapEmailDeliveryEventToSQSMessageRejectsInvalidStoredEvents(t *testing.T) {
+	deliveryID := uuid.NewString()
+	event := &models.OutboxEvent{
+		ID: uuid.NewString(), BusinessID: uuid.NewString(),
+		AggregateType: "email_delivery", AggregateID: deliveryID,
+		EventType: invoiceDeliveryRequestedEvent,
+		Payload: fmt.Sprintf(
+			`{"schema_version":1,"delivery_id":%q,"invoice_id":%q,"render_job_id":%q}`,
+			deliveryID, uuid.NewString(), uuid.NewString(),
+		),
+	}
+	tests := []struct {
+		name   string
+		mutate func(*models.OutboxEvent)
+	}{
+		{name: "wrong aggregate", mutate: func(event *models.OutboxEvent) { event.AggregateType = "invoice" }},
+		{name: "wrong event", mutate: func(event *models.OutboxEvent) { event.EventType = "invoice.issued.v1" }},
+		{name: "delivery mismatch", mutate: func(event *models.OutboxEvent) { event.AggregateID = uuid.NewString() }},
+		{name: "unknown field", mutate: func(event *models.OutboxEvent) {
+			event.Payload = strings.TrimSuffix(event.Payload, "}") + `,"recipient":"secret@example.com"}`
+		}},
+		{name: "invalid invoice", mutate: func(event *models.OutboxEvent) {
+			event.Payload = strings.Replace(event.Payload, `"invoice_id":"`, `"invoice_id":"bad-`, 1)
+		}},
+		{name: "invalid render job", mutate: func(event *models.OutboxEvent) {
+			event.Payload = strings.Replace(event.Payload, `"render_job_id":"`, `"render_job_id":"bad-`, 1)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := cloneOutboxEvent(event)
+			test.mutate(candidate)
+
+			message, err := MapEmailDeliveryEventToSQSMessage(candidate)
+
+			var mappingError *InvoiceEventMappingError
+			if message != nil || !errors.As(err, &mappingError) {
+				t.Fatalf("delivery mapping = %s/%T %v, want typed failure", message, err, err)
+			}
+			if strings.Contains(err.Error(), candidate.Payload) {
+				t.Fatalf("mapping error leaked payload: %v", err)
+			}
+		})
+	}
+}
+
 func validPreviewOutboxEvent() (*models.OutboxEvent, string, string) {
 	invoiceID := uuid.NewString()
 	renderJobID := uuid.NewString()

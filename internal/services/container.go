@@ -133,7 +133,12 @@ func NewContainer(
 	invoiceSvc := NewInvoiceService(db, cfg, invoiceRepo, businessRepo, productRepo, customerRepo, documentSvc, aws, s3Svc, emailSvc, log)
 	if marker, ok := invoiceRepo.(outbox.PublishedMarker); ok {
 		invoiceSvc.WithImmediateOutboxPublisher(
-			outbox.NewImmediatePublisher(cfg.SQS.InvoiceQueue, aws.SQS, marker),
+			outbox.NewRoutedImmediatePublisher(
+				cfg.SQS.InvoiceQueue,
+				cfg.SQS.EmailDeliveryQueue,
+				aws.SQS,
+				marker,
+			),
 		)
 	}
 	documentSvc.salesInvoices = newInvoiceSalesDocumentCreator(invoiceSvc)

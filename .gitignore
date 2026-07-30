@@ -91,6 +91,9 @@ progress-*.md
 PROGRESS.md
 PROGRESS-*.md
 *-PROGRESS.md
+*progress*.md
+*Progress*.md
+*PROGRESS*.md
 
 # Logs
 *.log

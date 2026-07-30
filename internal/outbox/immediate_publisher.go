@@ -26,13 +26,19 @@ type PublishedMarker interface {
 }
 
 type ImmediatePublisher struct {
-	publisher *SQSInvoicePublisher
+	publisher EventPublisher
 	marker    PublishedMarker
 }
 
 type SQSInvoicePublisher struct {
 	queueURL string
 	sender   SQSSender
+}
+
+type SQSOutboxPublisher struct {
+	invoiceQueueURL       string
+	emailDeliveryQueueURL string
+	sender                SQSSender
 }
 
 func NewImmediatePublisher(
@@ -44,6 +50,62 @@ func NewImmediatePublisher(
 		publisher: NewSQSInvoicePublisher(queueURL, sender),
 		marker:    marker,
 	}
+}
+
+func NewRoutedImmediatePublisher(
+	invoiceQueueURL, emailDeliveryQueueURL string,
+	sender SQSSender,
+	marker PublishedMarker,
+) *ImmediatePublisher {
+	return &ImmediatePublisher{
+		publisher: NewSQSOutboxPublisher(invoiceQueueURL, emailDeliveryQueueURL, sender),
+		marker:    marker,
+	}
+}
+
+func NewSQSOutboxPublisher(
+	invoiceQueueURL, emailDeliveryQueueURL string,
+	sender SQSSender,
+) *SQSOutboxPublisher {
+	return &SQSOutboxPublisher{
+		invoiceQueueURL:       strings.TrimSpace(invoiceQueueURL),
+		emailDeliveryQueueURL: strings.TrimSpace(emailDeliveryQueueURL),
+		sender:                sender,
+	}
+}
+
+func (p *SQSOutboxPublisher) Publish(ctx context.Context, event *models.OutboxEvent) error {
+	if p == nil || p.sender == nil || event == nil {
+		return errors.New("SQS outbox publisher is not configured")
+	}
+	var (
+		queueURL string
+		message  []byte
+		err      error
+	)
+	switch event.EventType {
+	case invoicePreviewRequestedEvent, invoiceIssuedEvent:
+		queueURL = p.invoiceQueueURL
+		message, err = MapInvoiceEventToSQSMessage(event)
+	case invoiceDeliveryRequestedEvent:
+		queueURL = p.emailDeliveryQueueURL
+		message, err = MapEmailDeliveryEventToSQSMessage(event)
+	default:
+		return invoiceMappingError(event)
+	}
+	if err != nil {
+		return err
+	}
+	if queueURL == "" {
+		return errors.New("SQS outbox destination is not configured")
+	}
+	if _, err := p.sender.SendMessage(ctx, &sqs.SendMessageInput{
+		QueueUrl:    aws.String(queueURL),
+		MessageBody: aws.String(string(message)),
+	}); err != nil {
+		return fmt.Errorf("send outbox event: %w", err)
+	}
+	return nil
 }
 
 func (p *ImmediatePublisher) TryPublish(ctx context.Context, event *models.OutboxEvent) error {

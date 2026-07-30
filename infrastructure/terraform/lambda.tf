@@ -6,15 +6,16 @@ locals {
   websocket_management_api_endpoint = "https://${aws_apigatewayv2_api.websocket.id}.execute-api.${var.aws_region}.amazonaws.com/${var.environment}"
 
   lambda_artifacts = {
-    api_http          = "${var.lambda_artifact_dir}/http.zip"
-    a2a_stream        = "${var.lambda_artifact_dir}/a2a-stream.zip"
-    sqs_invoice       = "${var.lambda_artifact_dir}/sqs-invoice.zip"
-    sqs_gst           = "${var.lambda_artifact_dir}/sqs-gst.zip"
-    sqs_bargaining    = "${var.lambda_artifact_dir}/sqs-bargaining.zip"
-    ws_handler        = "${var.lambda_artifact_dir}/ws.zip"
-    voice_session     = "${var.lambda_artifact_dir}/voice-session.zip"
-    custom_sms_sender = "${var.lambda_artifact_dir}/custom-sms-sender.zip"
-    outbox            = "${var.lambda_artifact_dir}/outbox.zip"
+    api_http           = "${var.lambda_artifact_dir}/http.zip"
+    a2a_stream         = "${var.lambda_artifact_dir}/a2a-stream.zip"
+    sqs_invoice        = "${var.lambda_artifact_dir}/sqs-invoice.zip"
+    sqs_gst            = "${var.lambda_artifact_dir}/sqs-gst.zip"
+    sqs_bargaining     = "${var.lambda_artifact_dir}/sqs-bargaining.zip"
+    ws_handler         = "${var.lambda_artifact_dir}/ws.zip"
+    voice_session      = "${var.lambda_artifact_dir}/voice-session.zip"
+    custom_sms_sender  = "${var.lambda_artifact_dir}/custom-sms-sender.zip"
+    outbox             = "${var.lambda_artifact_dir}/outbox.zip"
+    sqs_email_delivery = "${var.lambda_artifact_dir}/sqs-email-delivery.zip"
   }
 
   lambda_artifact_hashes = {
@@ -41,6 +42,7 @@ locals {
     S3_BUCKET_PRODUCTS                        = aws_s3_bucket.product_images.id
     S3_BUCKET_EMAIL_SINK                      = aws_s3_bucket.email_sink.id
     SQS_INVOICE_QUEUE                         = aws_sqs_queue.invoice_processing.url
+    SQS_EMAIL_DELIVERY_QUEUE                  = aws_sqs_queue.email_delivery.url
     SQS_GST_QUEUE                             = aws_sqs_queue.gst_processing.url
     SQS_BARGAINING_QUEUE                      = aws_sqs_queue.bargaining_negotiation.url
     COGNITO_USER_POOL_ID                      = aws_cognito_user_pool.main.id
@@ -154,6 +156,11 @@ resource "aws_cloudwatch_log_group" "lambda_outbox_dispatcher" {
   retention_in_days = var.log_retention_days
 }
 
+resource "aws_cloudwatch_log_group" "lambda_sqs_email_delivery" {
+  name              = "/aws/lambda/${local.resource_prefix}-sqs-email-delivery"
+  retention_in_days = var.log_retention_days
+}
+
 resource "aws_lambda_function" "outbox_dispatcher" {
   function_name    = "${local.resource_prefix}-outbox-dispatcher"
   role             = aws_iam_role.outbox_dispatcher.arn
@@ -169,15 +176,16 @@ resource "aws_lambda_function" "outbox_dispatcher" {
 
   environment {
     variables = {
-      ENVIRONMENT             = var.environment
-      LOG_LEVEL               = "info"
-      LOG_FORMAT              = "json"
-      DATABASE_HOST_SSM_PARAM = local.db_host_ssm_parameter_name
-      DATABASE_SECRET_ARN     = aws_db_instance.main.master_user_secret[0].secret_arn
-      DATABASE_PORT           = tostring(var.db_port)
-      DATABASE_NAME           = var.db_name
-      DATABASE_SSL_MODE       = "require"
-      SQS_INVOICE_QUEUE       = aws_sqs_queue.invoice_processing.url
+      ENVIRONMENT              = var.environment
+      LOG_LEVEL                = "info"
+      LOG_FORMAT               = "json"
+      DATABASE_HOST_SSM_PARAM  = local.db_host_ssm_parameter_name
+      DATABASE_SECRET_ARN      = aws_db_instance.main.master_user_secret[0].secret_arn
+      DATABASE_PORT            = tostring(var.db_port)
+      DATABASE_NAME            = var.db_name
+      DATABASE_SSL_MODE        = "require"
+      SQS_INVOICE_QUEUE        = aws_sqs_queue.invoice_processing.url
+      SQS_EMAIL_DELIVERY_QUEUE = aws_sqs_queue.email_delivery.url
     }
   }
 
@@ -196,6 +204,58 @@ resource "aws_lambda_function" "outbox_dispatcher" {
   depends_on = [
     aws_cloudwatch_log_group.lambda_outbox_dispatcher,
     aws_iam_role_policy.outbox_dispatcher,
+    aws_ssm_parameter.db_host,
+  ]
+}
+
+resource "aws_lambda_function" "sqs_email_delivery" {
+  function_name    = "${local.resource_prefix}-sqs-email-delivery"
+  role             = aws_iam_role.email_delivery.arn
+  runtime          = "provided.al2023"
+  handler          = "bootstrap"
+  architectures    = ["arm64"]
+  filename         = local.lambda_artifacts.sqs_email_delivery
+  source_code_hash = local.lambda_artifact_hashes.sqs_email_delivery
+  memory_size      = 512
+  timeout          = 60
+
+  reserved_concurrent_executions = var.enable_application ? null : 0
+
+  tags = {
+    MigrationChecksum = local.application_migration_checksum
+  }
+
+  environment {
+    variables = {
+      ENVIRONMENT             = var.environment
+      LOG_LEVEL               = "info"
+      LOG_FORMAT              = "json"
+      DATABASE_HOST_SSM_PARAM = local.db_host_ssm_parameter_name
+      DATABASE_SECRET_ARN     = aws_db_instance.main.master_user_secret[0].secret_arn
+      DATABASE_PORT           = tostring(var.db_port)
+      DATABASE_NAME           = var.db_name
+      DATABASE_SSL_MODE       = "require"
+      S3_BUCKET_INVOICES      = aws_s3_bucket.invoices_pdf.id
+      SES_SENDER_EMAIL        = var.ses_sender_email
+      SES_CONFIGURATION_SET   = aws_ses_configuration_set.main.name
+    }
+  }
+
+  vpc_config {
+    subnet_ids         = aws_subnet.private[*].id
+    security_group_ids = [aws_security_group.lambda.id]
+  }
+
+  lifecycle {
+    precondition {
+      condition     = fileexists(local.lambda_artifacts.sqs_email_delivery)
+      error_message = "Missing Billeif email delivery Lambda artifact ${local.lambda_artifacts.sqs_email_delivery}. Run make package-lambda-email-delivery from the repository root before running Terraform."
+    }
+  }
+
+  depends_on = [
+    aws_cloudwatch_log_group.lambda_sqs_email_delivery,
+    aws_iam_role_policy.email_delivery,
     aws_ssm_parameter.db_host,
   ]
 }
@@ -508,4 +568,18 @@ resource "aws_lambda_event_source_mapping" "bargaining_queue" {
   batch_size                         = 10
   function_response_types            = ["ReportBatchItemFailures"]
   maximum_batching_window_in_seconds = 5
+}
+
+resource "aws_lambda_event_source_mapping" "email_delivery_queue" {
+  count = var.enable_application ? 1 : 0
+
+  event_source_arn                   = aws_sqs_queue.email_delivery.arn
+  function_name                      = aws_lambda_function.sqs_email_delivery.arn
+  batch_size                         = 1
+  function_response_types            = ["ReportBatchItemFailures"]
+  maximum_batching_window_in_seconds = 0
+
+  scaling_config {
+    maximum_concurrency = 2
+  }
 }

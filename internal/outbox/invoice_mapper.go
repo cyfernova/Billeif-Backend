@@ -14,9 +14,11 @@ import (
 )
 
 const (
-	invoicePreviewRequestedEvent = "invoice.preview.requested.v1"
-	invoiceIssuedEvent           = "invoice.issued.v1"
-	generateDocumentPDFMessage   = "generate_document_pdf"
+	invoicePreviewRequestedEvent  = "invoice.preview.requested.v1"
+	invoiceIssuedEvent            = "invoice.issued.v1"
+	invoiceDeliveryRequestedEvent = "invoice.delivery.requested.v1"
+	generateDocumentPDFMessage    = "generate_document_pdf"
+	sendInvoicePDFMessage         = "send_invoice_pdf"
 )
 
 type InvoiceEventMappingError struct {
@@ -56,6 +58,22 @@ type invoiceIssuedEnvelope struct {
 	InvoiceNo      string `json:"invoice_no"`
 	InvoiceVersion int    `json:"invoice_version"`
 	RenderJobID    string `json:"render_job_id"`
+}
+
+type invoiceDeliveryEnvelope struct {
+	SchemaVersion int    `json:"schema_version"`
+	DeliveryID    string `json:"delivery_id"`
+	InvoiceID     string `json:"invoice_id"`
+	RenderJobID   string `json:"render_job_id"`
+}
+
+type emailDeliveryWorkerMessage struct {
+	SchemaVersion int    `json:"schema_version"`
+	Type          string `json:"type"`
+	BusinessID    string `json:"business_id"`
+	DeliveryID    string `json:"delivery_id"`
+	InvoiceID     string `json:"invoice_id"`
+	RenderJobID   string `json:"render_job_id"`
 }
 
 func MapInvoiceEventToSQSMessage(event *models.OutboxEvent) ([]byte, error) {
@@ -111,6 +129,39 @@ func MapInvoiceEventToSQSMessage(event *models.OutboxEvent) ([]byte, error) {
 		return nil, invoiceMappingError(event)
 	}
 	return mapped, nil
+}
+
+func MapEmailDeliveryEventToSQSMessage(event *models.OutboxEvent) ([]byte, error) {
+	if event == nil ||
+		!validUUID(event.ID) ||
+		!validUUID(event.BusinessID) ||
+		event.AggregateType != "email_delivery" ||
+		!validUUID(event.AggregateID) ||
+		event.EventType != invoiceDeliveryRequestedEvent ||
+		strings.TrimSpace(event.Payload) == "" {
+		return nil, invoiceMappingError(event)
+	}
+	var envelope invoiceDeliveryEnvelope
+	if err := decodeExactJSON(event.Payload, &envelope); err != nil ||
+		envelope.SchemaVersion != 1 ||
+		envelope.DeliveryID != event.AggregateID ||
+		!validUUID(envelope.DeliveryID) ||
+		!validUUID(envelope.InvoiceID) ||
+		!validUUID(envelope.RenderJobID) {
+		return nil, invoiceMappingError(event)
+	}
+	message, err := json.Marshal(emailDeliveryWorkerMessage{
+		SchemaVersion: 1,
+		Type:          sendInvoicePDFMessage,
+		BusinessID:    event.BusinessID,
+		DeliveryID:    envelope.DeliveryID,
+		InvoiceID:     envelope.InvoiceID,
+		RenderJobID:   envelope.RenderJobID,
+	})
+	if err != nil {
+		return nil, invoiceMappingError(event)
+	}
+	return message, nil
 }
 
 func validInvoiceOutboxIdentity(event *models.OutboxEvent) bool {

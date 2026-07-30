@@ -10,14 +10,15 @@ import (
 type Profile string
 
 const (
-	ProfileHTTP       Profile = "http"
-	ProfileA2A        Profile = "a2a-stream"
-	ProfileInvoice    Profile = "sqs-invoice"
-	ProfileGST        Profile = "sqs-gst"
-	ProfileBargaining Profile = "sqs-bargaining"
-	ProfileWebSocket  Profile = "websocket"
-	ProfileMigration  Profile = "migration"
-	ProfileOutbox     Profile = "outbox"
+	ProfileHTTP          Profile = "http"
+	ProfileA2A           Profile = "a2a-stream"
+	ProfileInvoice       Profile = "sqs-invoice"
+	ProfileGST           Profile = "sqs-gst"
+	ProfileBargaining    Profile = "sqs-bargaining"
+	ProfileWebSocket     Profile = "websocket"
+	ProfileMigration     Profile = "migration"
+	ProfileOutbox        Profile = "outbox"
+	ProfileEmailDelivery Profile = "sqs-email-delivery"
 )
 
 func ValidateForProfile(cfg *Config, profile Profile) error {
@@ -50,6 +51,14 @@ func ValidateForProfile(cfg *Config, profile Profile) error {
 		}
 		return validateProfileDatabase(cfg)
 	case ProfileOutbox:
+		if err := validateProfileBase(cfg); err != nil {
+			return err
+		}
+		if err := validateProfileDatabase(cfg); err != nil {
+			return err
+		}
+		return validateProfileDependencies(cfg, profile)
+	case ProfileEmailDelivery:
 		if err := validateProfileBase(cfg); err != nil {
 			return err
 		}
@@ -109,6 +118,19 @@ func validateProfileDependencies(cfg *Config, profile Profile) error {
 	case ProfileOutbox:
 		if strings.TrimSpace(cfg.SQS.InvoiceQueue) == "" {
 			return fmt.Errorf("SQS_INVOICE_QUEUE is required")
+		}
+		if strings.TrimSpace(cfg.SQS.EmailDeliveryQueue) == "" {
+			return fmt.Errorf("SQS_EMAIL_DELIVERY_QUEUE is required")
+		}
+	case ProfileEmailDelivery:
+		if strings.TrimSpace(cfg.S3.BucketInvoices) == "" {
+			return fmt.Errorf("S3_BUCKET_INVOICES is required")
+		}
+		if strings.TrimSpace(cfg.SES.SenderEmail) == "" {
+			return fmt.Errorf("SES_SENDER_EMAIL is required")
+		}
+		if strings.TrimSpace(cfg.SES.ConfigurationSet) == "" {
+			return fmt.Errorf("SES_CONFIGURATION_SET is required")
 		}
 	}
 	return nil
@@ -252,6 +274,9 @@ func validate(cfg *Config) error {
 
 	if cfg.SQS.InvoiceQueue == "" {
 		return fmt.Errorf("SQS_INVOICE_QUEUE is required")
+	}
+	if cfg.SQS.EmailDeliveryQueue == "" {
+		return fmt.Errorf("SQS_EMAIL_DELIVERY_QUEUE is required")
 	}
 	if strings.TrimSpace(cfg.LLM.APIKey) == "" && strings.TrimSpace(cfg.Secrets.LLM) == "" {
 		return fmt.Errorf("LLM_API_KEY is required")

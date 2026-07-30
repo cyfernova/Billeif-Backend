@@ -59,6 +59,16 @@ func TestProductionValidationProfilesRequireOnlyEntrypointConfiguration(t *testi
 			profile: ProfileOutbox,
 			mutate: func(cfg *Config) {
 				cfg.SQS.InvoiceQueue = "https://sqs.ap-south-1.amazonaws.com/123/billeif-invoice"
+				cfg.SQS.EmailDeliveryQueue = "https://sqs.ap-south-1.amazonaws.com/123/billeif-email-delivery"
+			},
+		},
+		{
+			name:    "email delivery",
+			profile: ProfileEmailDelivery,
+			mutate: func(cfg *Config) {
+				cfg.S3.BucketInvoices = "invoice-pdfs"
+				cfg.SES.SenderEmail = "billing@example.com"
+				cfg.SES.ConfigurationSet = "Billeif-production-ses-events"
 			},
 		},
 	}
@@ -113,6 +123,18 @@ func TestProductionValidationProfilesRejectMissingConcreteEntrypointDependencies
 			profile: ProfileOutbox,
 			mutate:  func(cfg *Config) { cfg.SQS.InvoiceQueue = "" },
 			want:    "SQS_INVOICE_QUEUE",
+		},
+		{
+			name:    "outbox email queue",
+			profile: ProfileOutbox,
+			mutate:  func(cfg *Config) { cfg.SQS.EmailDeliveryQueue = "" },
+			want:    "SQS_EMAIL_DELIVERY_QUEUE",
+		},
+		{
+			name:    "email delivery sender",
+			profile: ProfileEmailDelivery,
+			mutate:  func(cfg *Config) { cfg.SES.SenderEmail = "" },
+			want:    "SES_SENDER_EMAIL",
 		},
 	}
 	for _, tc := range tests {
@@ -197,6 +219,7 @@ func TestOutboxProfileDoesNotRequireProviderOrCredentialSecrets(t *testing.T) {
 	cfg.Secrets.LLM = ""
 	cfg.Secrets.Exa = ""
 
+	cfg.SQS.EmailDeliveryQueue = "https://sqs.ap-south-1.amazonaws.com/123/billeif-email-delivery"
 	if err := ValidateForProfile(cfg, ProfileOutbox); err != nil {
 		t.Fatalf("outbox profile rejected database and invoice queue only: %v", err)
 	}
@@ -222,6 +245,7 @@ func TestLoadForProfileAcceptsScopedProductionWorkerAndWebSocketEnvironments(t *
 		{ProfileWebSocket, nil},
 		{ProfileMigration, nil},
 		{ProfileOutbox, nil},
+		{ProfileEmailDelivery, nil},
 	}
 
 	for _, tc := range tests {
@@ -254,6 +278,11 @@ func TestLoadForProfileAcceptsScopedProductionWorkerAndWebSocketEnvironments(t *
 				t.Setenv("SQS_BARGAINING_QUEUE", "https://sqs.ap-south-1.amazonaws.com/123/bargaining")
 			case ProfileOutbox:
 				t.Setenv("SQS_INVOICE_QUEUE", "https://sqs.ap-south-1.amazonaws.com/123/billeif-invoice")
+				t.Setenv("SQS_EMAIL_DELIVERY_QUEUE", "https://sqs.ap-south-1.amazonaws.com/123/billeif-email-delivery")
+			case ProfileEmailDelivery:
+				t.Setenv("S3_BUCKET_INVOICES", "invoice-pdfs")
+				t.Setenv("SES_SENDER_EMAIL", "billing@example.com")
+				t.Setenv("SES_CONFIGURATION_SET", "Billeif-production-ses-events")
 			}
 
 			if _, err := LoadForProfile(tc.profile); err != nil {
@@ -278,9 +307,11 @@ func completeProductionWorkerProfileConfig(profile Profile) *Config {
 		},
 		S3: S3Config{BucketInvoices: "invoice-pdfs"},
 		SQS: SQSConfig{
-			BargainingQueue: "https://sqs.ap-south-1.amazonaws.com/123/bargaining",
-			InvoiceQueue:    "https://sqs.ap-south-1.amazonaws.com/123/billeif-invoice",
+			BargainingQueue:    "https://sqs.ap-south-1.amazonaws.com/123/bargaining",
+			InvoiceQueue:       "https://sqs.ap-south-1.amazonaws.com/123/billeif-invoice",
+			EmailDeliveryQueue: "https://sqs.ap-south-1.amazonaws.com/123/billeif-email-delivery",
 		},
+		SES: SESConfig{SenderEmail: "billing@example.com", ConfigurationSet: "Billeif-production-ses-events"},
 		LLM: LLMConfig{
 			APIURL: "https://llm.example.test/chat",
 			Model:  "production-model",
