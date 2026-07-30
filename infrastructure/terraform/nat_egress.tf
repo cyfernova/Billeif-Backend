@@ -136,9 +136,20 @@ resource "aws_instance" "nat" {
   ]
 }
 
+resource "aws_eip" "nat_instance" {
+  count  = local.nat_instance_enabled ? 1 : 0
+  domain = "vpc"
+
+  tags = {
+    Name = "${local.resource_prefix}-nat-instance-eip"
+  }
+
+  depends_on = [aws_internet_gateway.main]
+}
+
 resource "aws_eip_association" "nat_instance" {
   count         = local.nat_instance_enabled ? 1 : 0
-  allocation_id = aws_eip.nat.id
+  allocation_id = aws_eip.nat_instance[0].id
   instance_id   = aws_instance.nat[0].id
 }
 

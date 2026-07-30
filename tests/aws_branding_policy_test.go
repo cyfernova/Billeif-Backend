@@ -636,6 +636,7 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_db_proxy.main",
 		"aws_db_proxy_default_target_group.main",
 		"aws_db_proxy_target.main",
+		"aws_eip.nat_instance",
 		"aws_eip_association.nat_instance",
 		"aws_iam_instance_profile.nat_instance",
 		"aws_iam_role.database_migrator",

@@ -82,10 +82,11 @@ resource "aws_route_table_association" "public" {
 }
 
 resource "aws_eip" "nat" {
+  count  = var.egress_mode == "managed_nat" ? 1 : 0
   domain = "vpc"
 
   tags = {
-    Name = "${local.resource_prefix}-nat-eip"
+    Name = "${local.resource_prefix}-managed-nat-eip"
   }
 
   depends_on = [aws_internet_gateway.main]
@@ -93,7 +94,7 @@ resource "aws_eip" "nat" {
 
 resource "aws_nat_gateway" "main" {
   count         = var.egress_mode == "managed_nat" ? 1 : 0
-  allocation_id = aws_eip.nat.id
+  allocation_id = aws_eip.nat[0].id
   subnet_id     = aws_subnet.public[0].id
 
   tags = {

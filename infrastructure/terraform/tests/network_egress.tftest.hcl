@@ -164,12 +164,23 @@ variables {
 run "nat_instance_is_the_cost_capped_default" {
   command = plan
 
+  override_resource {
+    target          = aws_eip.nat_instance[0]
+    override_during = plan
+    values = {
+      id = "eipalloc-billeif-nat-instance"
+    }
+  }
+
   assert {
     condition = (
       var.egress_mode == "nat_instance" &&
       length(aws_instance.nat) == 1 &&
       length(aws_nat_gateway.main) == 0 &&
+      length(aws_eip.nat_instance) == 1 &&
+      length(aws_eip.nat) == 0 &&
       length(aws_eip_association.nat_instance) == 1 &&
+      aws_eip_association.nat_instance[0].allocation_id == aws_eip.nat_instance[0].id &&
       length(aws_route.private_default_nat_instance) == 1 &&
       length(aws_route.private_default_managed_nat) == 0
     )
@@ -243,10 +254,21 @@ run "managed_nat_is_an_explicit_opt_in" {
     egress_mode = "managed_nat"
   }
 
+  override_resource {
+    target          = aws_eip.nat[0]
+    override_during = plan
+    values = {
+      id = "eipalloc-billeif-managed-nat"
+    }
+  }
+
   assert {
     condition = (
       length(aws_instance.nat) == 0 &&
       length(aws_nat_gateway.main) == 1 &&
+      length(aws_eip.nat_instance) == 0 &&
+      length(aws_eip.nat) == 1 &&
+      aws_nat_gateway.main[0].allocation_id == aws_eip.nat[0].id &&
       length(aws_eip_association.nat_instance) == 0 &&
       length(aws_route.private_default_nat_instance) == 0 &&
       length(aws_route.private_default_managed_nat) == 1
