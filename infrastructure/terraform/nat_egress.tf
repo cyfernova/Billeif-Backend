@@ -153,20 +153,16 @@ resource "aws_eip_association" "nat_instance" {
   instance_id   = aws_instance.nat[0].id
 }
 
-resource "aws_route" "private_default_nat_instance" {
-  count                  = local.nat_instance_enabled ? 1 : 0
+resource "aws_route" "private_default_egress" {
   route_table_id         = aws_route_table.private.id
   destination_cidr_block = "0.0.0.0/0"
-  network_interface_id   = aws_instance.nat[0].primary_network_interface_id
+  network_interface_id   = local.nat_instance_enabled ? aws_instance.nat[0].primary_network_interface_id : null
+  nat_gateway_id         = var.egress_mode == "managed_nat" ? aws_nat_gateway.main[0].id : null
 
-  depends_on = [aws_eip_association.nat_instance]
-}
-
-resource "aws_route" "private_default_managed_nat" {
-  count                  = var.egress_mode == "managed_nat" ? 1 : 0
-  route_table_id         = aws_route_table.private.id
-  destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = aws_nat_gateway.main[0].id
+  depends_on = [
+    aws_eip_association.nat_instance,
+    aws_nat_gateway.main
+  ]
 }
 
 resource "aws_vpc_endpoint" "s3" {

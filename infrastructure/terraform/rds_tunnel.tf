@@ -94,7 +94,6 @@ resource "aws_instance" "rds_tunnel" {
 
   depends_on = [
     aws_iam_role_policy_attachment.rds_tunnel_ssm,
-    aws_route.private_default_nat_instance,
-    aws_route.private_default_managed_nat
+    aws_route.private_default_egress
   ]
 }

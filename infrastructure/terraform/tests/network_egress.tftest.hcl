@@ -181,8 +181,8 @@ run "nat_instance_is_the_cost_capped_default" {
       length(aws_eip.nat) == 0 &&
       length(aws_eip_association.nat_instance) == 1 &&
       aws_eip_association.nat_instance[0].allocation_id == aws_eip.nat_instance[0].id &&
-      length(aws_route.private_default_nat_instance) == 1 &&
-      length(aws_route.private_default_managed_nat) == 0
+      aws_route.private_default_egress.network_interface_id == aws_instance.nat[0].primary_network_interface_id &&
+      aws_route.private_default_egress.nat_gateway_id == null
     )
     error_message = "Billeif private egress must default to one NAT instance with managed NAT disabled."
   }
@@ -262,6 +262,14 @@ run "managed_nat_is_an_explicit_opt_in" {
     }
   }
 
+  override_resource {
+    target          = aws_nat_gateway.main[0]
+    override_during = plan
+    values = {
+      id = "nat-billeif-managed"
+    }
+  }
+
   assert {
     condition = (
       length(aws_instance.nat) == 0 &&
@@ -270,8 +278,7 @@ run "managed_nat_is_an_explicit_opt_in" {
       length(aws_eip.nat) == 1 &&
       aws_nat_gateway.main[0].allocation_id == aws_eip.nat[0].id &&
       length(aws_eip_association.nat_instance) == 0 &&
-      length(aws_route.private_default_nat_instance) == 0 &&
-      length(aws_route.private_default_managed_nat) == 1
+      aws_route.private_default_egress.nat_gateway_id == aws_nat_gateway.main[0].id
     )
     error_message = "Managed NAT must replace, not duplicate, Billeif NAT-instance egress when explicitly selected."
   }
