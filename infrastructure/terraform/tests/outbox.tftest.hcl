@@ -114,6 +114,26 @@ mock_provider "aws" {
   }
 
   override_resource {
+    target          = aws_sqs_queue.ses_feedback
+    override_during = plan
+    values = {
+      arn  = "arn:aws:sqs:ap-south-1:123456789012:billeif-test-test-ses-feedback-queue"
+      url  = "https://sqs.ap-south-1.amazonaws.com/123456789012/billeif-test-test-ses-feedback-queue"
+      name = "billeif-test-test-ses-feedback-queue"
+    }
+  }
+
+  override_resource {
+    target          = aws_sqs_queue.ses_feedback_dlq
+    override_during = plan
+    values = {
+      arn  = "arn:aws:sqs:ap-south-1:123456789012:billeif-test-test-ses-feedback-dlq"
+      url  = "https://sqs.ap-south-1.amazonaws.com/123456789012/billeif-test-test-ses-feedback-dlq"
+      name = "billeif-test-test-ses-feedback-dlq"
+    }
+  }
+
+  override_resource {
     target          = aws_lambda_function.outbox_dispatcher
     override_during = plan
     values = {
@@ -332,5 +352,99 @@ run "email_delivery_enablement_uses_mapping_cap_without_low_reserved_concurrency
       aws_lambda_event_source_mapping.email_delivery_queue[0].scaling_config[0].maximum_concurrency == 2
     )
     error_message = "Enabled Billeif email delivery must rely on the two-concurrency event-source cap without configuring an unsafe reserved concurrency below five."
+  }
+}
+
+run "ses_feedback_is_raw_cost_capped_and_least_privilege" {
+  command = plan
+
+  assert {
+    condition = (
+      aws_sqs_queue.ses_feedback.name == "${local.resource_prefix}-ses-feedback-queue" &&
+      aws_sqs_queue.ses_feedback.message_retention_seconds == 345600 &&
+      aws_sqs_queue.ses_feedback.visibility_timeout_seconds == 180 &&
+      aws_sqs_queue.ses_feedback.sqs_managed_sse_enabled &&
+      aws_sqs_queue.ses_feedback_dlq.name == "${local.resource_prefix}-ses-feedback-dlq" &&
+      aws_sqs_queue.ses_feedback_dlq.message_retention_seconds == 1209600 &&
+      aws_sqs_queue.ses_feedback_dlq.sqs_managed_sse_enabled &&
+      jsondecode(aws_sqs_queue_redrive_policy.ses_feedback.redrive_policy).maxReceiveCount == 5
+    )
+    error_message = "The Billeif SES feedback queue must be encrypted, retained for four days, use a 180-second visibility timeout, and redrive after five receives to its 14-day DLQ."
+  }
+
+  assert {
+    condition = (
+      aws_sns_topic_subscription.ses_feedback.topic_arn == aws_sns_topic.ses_events.arn &&
+      aws_sns_topic_subscription.ses_feedback.endpoint == aws_sqs_queue.ses_feedback.arn &&
+      aws_sns_topic_subscription.ses_feedback.protocol == "sqs" &&
+      aws_sns_topic_subscription.ses_feedback.raw_message_delivery &&
+      jsondecode(aws_sns_topic_subscription.ses_feedback.redrive_policy).deadLetterTargetArn == aws_sqs_queue.ses_feedback_dlq.arn &&
+      length([for statement in data.aws_iam_policy_document.ses_feedback_queue.statement : statement if statement.sid == "AllowSESEventTopic" && length(statement.actions) == 1 && contains(statement.actions, "sqs:SendMessage") && length(statement.resources) == 1 && contains(statement.resources, aws_sqs_queue.ses_feedback.arn) && anytrue([for principal in statement.principals : contains(principal.identifiers, "sns.amazonaws.com")])]) == 1 &&
+      length([for statement in data.aws_iam_policy_document.ses_feedback_dlq.statement : statement if statement.sid == "AllowSESEventTopicRedrive" && length(statement.actions) == 1 && contains(statement.actions, "sqs:SendMessage") && length(statement.resources) == 1 && contains(statement.resources, aws_sqs_queue.ses_feedback_dlq.arn)]) == 1
+    )
+    error_message = "SES feedback must use raw SNS delivery with an exact-topic/account queue policy and a subscription DLQ."
+  }
+
+  assert {
+    condition = (
+      local.lambda_artifacts.sqs_ses_feedback == "${var.lambda_artifact_dir}/sqs-ses-feedback.zip" &&
+      local.lambda_artifact_hashes.sqs_ses_feedback != null &&
+      aws_lambda_function.sqs_ses_feedback.function_name == "${local.resource_prefix}-sqs-ses-feedback" &&
+      aws_lambda_function.sqs_ses_feedback.runtime == "provided.al2023" &&
+      aws_lambda_function.sqs_ses_feedback.architectures[0] == "arm64" &&
+      aws_lambda_function.sqs_ses_feedback.memory_size == 256 &&
+      aws_lambda_function.sqs_ses_feedback.timeout == 30 &&
+      aws_lambda_function.sqs_ses_feedback.reserved_concurrent_executions == 0 &&
+      length(aws_lambda_event_source_mapping.ses_feedback_queue) == 0 &&
+      toset(keys(aws_lambda_function.sqs_ses_feedback.environment[0].variables)) == toset([
+        "ENVIRONMENT", "LOG_LEVEL", "LOG_FORMAT", "DATABASE_HOST_SSM_PARAM", "DATABASE_SECRET_ARN",
+        "DATABASE_PORT", "DATABASE_NAME", "DATABASE_SSL_MODE", "SES_SENDING_ACCOUNT_ID", "SES_CONFIGURATION_SET"
+      ])
+    )
+    error_message = "The disabled Billeif SES feedback Lambda must be minimal, private, ARM64, and hard-throttled."
+  }
+
+  assert {
+    condition = (
+      length([for statement in data.aws_iam_policy_document.ses_feedback.statement : statement if statement.sid == "SESFeedbackQueue" && !contains(statement.actions, "sqs:SendMessage") && length(statement.resources) == 1 && contains(statement.resources, aws_sqs_queue.ses_feedback.arn)]) == 1 &&
+      length(flatten([for statement in data.aws_iam_policy_document.ses_feedback.statement : statement.actions])) == 9 &&
+      alltrue([for action in flatten([for statement in data.aws_iam_policy_document.ses_feedback.statement : statement.actions]) : !startswith(action, "ses:") && !startswith(action, "sns:") && !startswith(action, "s3:")])
+    )
+    error_message = "The SES feedback role may only resolve the database and consume its own queue."
+  }
+
+  assert {
+    condition = alltrue([
+      for alarm in [
+        aws_cloudwatch_metric_alarm.lambda_ses_feedback_errors,
+        aws_cloudwatch_metric_alarm.lambda_ses_feedback_throttles,
+        aws_cloudwatch_metric_alarm.lambda_ses_feedback_duration,
+        aws_cloudwatch_metric_alarm.ses_feedback_queue_age,
+        aws_cloudwatch_metric_alarm.ses_feedback_dlq_messages,
+      ] :
+      alarm.evaluation_periods == 3 &&
+      alarm.datapoints_to_alarm == 2 &&
+      alarm.treat_missing_data == "notBreaching"
+    ])
+    error_message = "Every Billeif SES feedback alarm must use 2-of-3 evaluation and treat missing data as non-breaching."
+  }
+}
+
+run "ses_feedback_enablement_uses_zero_window_mapping_cap" {
+  command = plan
+
+  variables {
+    enable_application = true
+  }
+
+  assert {
+    condition = (
+      aws_lambda_function.sqs_ses_feedback.reserved_concurrent_executions == null &&
+      aws_lambda_event_source_mapping.ses_feedback_queue[0].batch_size == 10 &&
+      aws_lambda_event_source_mapping.ses_feedback_queue[0].maximum_batching_window_in_seconds == 0 &&
+      contains(aws_lambda_event_source_mapping.ses_feedback_queue[0].function_response_types, "ReportBatchItemFailures") &&
+      aws_lambda_event_source_mapping.ses_feedback_queue[0].scaling_config[0].maximum_concurrency == 2
+    )
+    error_message = "Enabled Billeif SES feedback must use zero batching delay, partial-batch responses, and a two-concurrency event-source cap."
   }
 }

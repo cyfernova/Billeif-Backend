@@ -18,6 +18,7 @@ func TestRuntimeEntrypointsUseScopedConfigurationProfiles(t *testing.T) {
 		"../cmd/lambda/sqs-gst/main.go":            "config.ProfileGST",
 		"../cmd/lambda/sqs-bargaining/main.go":     "config.ProfileBargaining",
 		"../cmd/lambda/sqs-email-delivery/main.go": "config.ProfileEmailDelivery",
+		"../cmd/lambda/sqs-ses-feedback/main.go":   "config.ProfileSESFeedback",
 		"../cmd/server/main.go":                    "config.ProfileHTTP",
 	}
 	for path, profile := range cases {

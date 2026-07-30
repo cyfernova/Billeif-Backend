@@ -196,6 +196,7 @@ type SQSConfig struct {
 type SESConfig struct {
 	SenderEmail      string `mapstructure:"SENDER_EMAIL"`
 	ConfigurationSet string `mapstructure:"CONFIGURATION_SET"`
+	SendingAccountID string `mapstructure:"SENDING_ACCOUNT_ID"`
 }
 
 type ShippingConfig struct {
@@ -359,6 +360,7 @@ func LoadForProfile(profile Profile) (*Config, error) {
 	_ = viper.BindEnv("SQS.BARGAINING_QUEUE", "SQS_BARGAINING_QUEUE")
 	_ = viper.BindEnv("SES.SENDER_EMAIL", "SES_SENDER_EMAIL")
 	_ = viper.BindEnv("SES.CONFIGURATION_SET", "SES_CONFIGURATION_SET")
+	_ = viper.BindEnv("SES.SENDING_ACCOUNT_ID", "SES_SENDING_ACCOUNT_ID")
 	_ = viper.BindEnv("SENTRY.DSN", "SENTRY_DSN")
 	_ = viper.BindEnv("SENTRY.SAMPLE_RATE", "SENTRY_SAMPLE_RATE")
 	_ = viper.BindEnv("SENTRY.TRACES_SAMPLE_RATE", "SENTRY_TRACES_SAMPLE_RATE")
@@ -518,6 +520,7 @@ func applyFlatEnvFileFallbacks(cfg *Config) {
 	setIfEmpty(&cfg.SQS.BargainingQueue, "SQS_BARGAINING_QUEUE")
 	setIfEmpty(&cfg.SES.SenderEmail, "SES_SENDER_EMAIL")
 	setIfEmpty(&cfg.SES.ConfigurationSet, "SES_CONFIGURATION_SET")
+	setIfEmpty(&cfg.SES.SendingAccountID, "SES_SENDING_ACCOUNT_ID")
 
 	setIfEmpty(&cfg.LLM.APIKey, "LLM_API_KEY")
 	setIfEmpty(&cfg.LLM.APIURL, "LLM_API_URL")

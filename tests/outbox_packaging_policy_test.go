@@ -48,3 +48,24 @@ func TestEmailDeliveryLambdaBuildAndPackageAreSmallAndDeterministic(t *testing.T
 		}
 	}
 }
+
+func TestSESFeedbackLambdaBuildAndPackageAreSmallAndDeterministic(t *testing.T) {
+	command := exec.Command("make", "-n", "package-lambda-ses-feedback")
+	command.Dir = ".."
+	body, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("render SES feedback package recipe: %v\n%s", err, body)
+	}
+	recipe := string(body)
+	for _, required := range []string{
+		"mkdir -p .build/lambda/sqs-ses-feedback",
+		"GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags=\"-s -w -buildid=\" -o .build/lambda/sqs-ses-feedback/bootstrap ./cmd/lambda/sqs-ses-feedback",
+		"rm -f .build/lambda/sqs-ses-feedback.zip",
+		"TZ=UTC touch -t 198001010000 .build/lambda/sqs-ses-feedback/bootstrap",
+		"cd .build/lambda/sqs-ses-feedback && TZ=UTC zip -q -X -j ../sqs-ses-feedback.zip bootstrap",
+	} {
+		if !strings.Contains(recipe, required) {
+			t.Fatalf("SES feedback package recipe is missing behavior %q\n%s", required, recipe)
+		}
+	}
+}

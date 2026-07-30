@@ -463,6 +463,19 @@ func TestTerraformUsesBilleifBrandingAndVerifiedSESSenderContract(t *testing.T) 
 	}
 }
 
+func TestSESFeedbackSubscriptionWaitsForSourceAndRedriveQueuePolicies(t *testing.T) {
+	terraform := readTerraformFile(t, "sns_sqs.tf")
+	for _, required := range []string{
+		`resource "aws_sns_topic_subscription" "ses_feedback"`,
+		`aws_sqs_queue_policy.ses_feedback,`,
+		`aws_sqs_queue_policy.ses_feedback_dlq,`,
+	} {
+		if !strings.Contains(terraform, required) {
+			t.Errorf("SES feedback subscription dependency contract is missing %q", required)
+		}
+	}
+}
+
 func terraformVariableHasDefault(source, variable string) bool {
 	start := strings.Index(source, `variable "`+variable+`"`)
 	if start == -1 {
@@ -536,48 +549,74 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_cloudwatch_log_group.database_migrator",
 		"aws_cloudwatch_log_group.lambda_outbox_dispatcher",
 		"aws_cloudwatch_log_group.lambda_sqs_email_delivery",
+		"aws_cloudwatch_log_group.lambda_sqs_ses_feedback",
 		"aws_cloudwatch_metric_alarm.email_delivery_dlq_messages",
 		"aws_cloudwatch_metric_alarm.email_delivery_queue_age",
 		"aws_cloudwatch_metric_alarm.lambda_email_delivery_duration",
 		"aws_cloudwatch_metric_alarm.lambda_email_delivery_errors",
 		"aws_cloudwatch_metric_alarm.lambda_email_delivery_throttles",
+		"aws_cloudwatch_metric_alarm.lambda_ses_feedback_duration",
+		"aws_cloudwatch_metric_alarm.lambda_ses_feedback_errors",
+		"aws_cloudwatch_metric_alarm.lambda_ses_feedback_throttles",
+		"aws_cloudwatch_metric_alarm.ses_feedback_dlq_messages",
+		"aws_cloudwatch_metric_alarm.ses_feedback_queue_age",
 		"aws_iam_role.database_migrator",
 		"aws_iam_role.email_delivery",
+		"aws_iam_role.ses_feedback",
 		"aws_iam_role.outbox_dispatcher",
 		"aws_iam_role.outbox_scheduler",
 		"aws_iam_role_policy.database_migrator",
 		"aws_iam_role_policy.email_delivery",
+		"aws_iam_role_policy.ses_feedback",
 		"aws_iam_role_policy.outbox_dispatcher",
 		"aws_iam_role_policy.outbox_scheduler",
 		"aws_iam_role_policy_attachment.outbox_dispatcher_basic",
 		"aws_iam_role_policy_attachment.outbox_dispatcher_vpc_access",
 		"aws_iam_role_policy_attachment.email_delivery_basic",
 		"aws_iam_role_policy_attachment.email_delivery_vpc_access",
+		"aws_iam_role_policy_attachment.ses_feedback_basic",
+		"aws_iam_role_policy_attachment.ses_feedback_vpc_access",
 		"aws_lambda_event_source_mapping.email_delivery_queue",
+		"aws_lambda_event_source_mapping.ses_feedback_queue",
 		"aws_lambda_function.database_migrator",
 		"aws_lambda_function.outbox_dispatcher",
 		"aws_lambda_function.sqs_email_delivery",
+		"aws_lambda_function.sqs_ses_feedback",
 		"aws_lambda_invocation.database_migrations",
 		"aws_scheduler_schedule.outbox_dispatcher",
 		"aws_security_group.database_migrator",
 		"aws_sns_topic_policy.ses_events",
+		"aws_sns_topic_subscription.ses_feedback",
 		"aws_sqs_queue.email_delivery",
 		"aws_sqs_queue.email_delivery_dlq",
 		"aws_sqs_queue.outbox_dispatcher_scheduler_dlq",
+		"aws_sqs_queue.ses_feedback",
+		"aws_sqs_queue.ses_feedback_dlq",
 		"aws_sqs_queue_policy.email_delivery",
 		"aws_sqs_queue_policy.email_delivery_dlq",
 		"aws_sqs_queue_policy.outbox_dispatcher_scheduler_dlq",
+		"aws_sqs_queue_policy.ses_feedback",
+		"aws_sqs_queue_policy.ses_feedback_dlq",
 		"aws_sqs_queue_redrive_allow_policy.email_delivery_dlq",
+		"aws_sqs_queue_redrive_allow_policy.ses_feedback_dlq",
 		"aws_sqs_queue_redrive_policy.email_delivery",
+		"aws_sqs_queue_redrive_policy.ses_feedback",
 	)
 	assertExactManifest(t, "Terraform resource labels", terraformResourceLabels(t), wantResources)
 	wantOutputs := manifestLines(preTaskOutputManifest)
 	for _, removed := range []string{"lambda_sqs_payment_arn", "payment_processing_queue_url", "workflow_runs_queue_url"} {
 		wantOutputs = removeManifestEntry(wantOutputs, removed)
 	}
-	wantOutputs = append(wantOutputs, "email_delivery_queue_url", "lambda_sqs_email_delivery_arn")
+	wantOutputs = append(
+		wantOutputs,
+		"email_delivery_queue_url",
+		"lambda_sqs_email_delivery_arn",
+		"lambda_sqs_ses_feedback_arn",
+		"ses_feedback_queue_url",
+	)
 	assertExactManifest(t, "Terraform output keys", terraformOutputKeys(t), wantOutputs)
 	wantEnvironment := removeManifestEntry(manifestLines(preTaskEnvironmentManifest), "SQS_PAYMENT_QUEUE")
+	wantEnvironment = append(wantEnvironment, "SES_SENDING_ACCOUNT_ID")
 	assertExactManifest(t, "Terraform environment keys", terraformEnvironmentKeys(t), wantEnvironment)
 
 	providers := readTerraformFile(t, "providers.tf")

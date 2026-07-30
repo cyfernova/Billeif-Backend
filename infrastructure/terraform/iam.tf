@@ -235,6 +235,74 @@ resource "aws_iam_role_policy" "email_delivery" {
   policy = data.aws_iam_policy_document.email_delivery.json
 }
 
+resource "aws_iam_role" "ses_feedback" {
+  name               = "${local.resource_prefix}-ses-feedback-exec-role"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
+}
+
+resource "aws_iam_role_policy_attachment" "ses_feedback_basic" {
+  role       = aws_iam_role.ses_feedback.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy_attachment" "ses_feedback_vpc_access" {
+  role       = aws_iam_role.ses_feedback.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+}
+
+data "aws_iam_policy_document" "ses_feedback" {
+  statement {
+    sid       = "SESFeedbackParameters"
+    effect    = "Allow"
+    actions   = ["ssm:GetParameters"]
+    resources = [local.db_host_ssm_parameter_arn]
+  }
+
+  statement {
+    sid       = "SESFeedbackDatabaseSecret"
+    effect    = "Allow"
+    actions   = ["secretsmanager:DescribeSecret", "secretsmanager:GetSecretValue"]
+    resources = [aws_db_instance.main.master_user_secret[0].secret_arn]
+  }
+
+  statement {
+    sid       = "SESFeedbackDatabaseSecretKMS"
+    effect    = "Allow"
+    actions   = ["kms:Decrypt", "kms:DescribeKey"]
+    resources = [aws_kms_key.application_secrets.arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["secretsmanager.${var.aws_region}.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:EncryptionContext:SecretARN"
+      values   = [aws_db_instance.main.master_user_secret[0].secret_arn]
+    }
+  }
+
+  statement {
+    sid    = "SESFeedbackQueue"
+    effect = "Allow"
+    actions = [
+      "sqs:ReceiveMessage",
+      "sqs:DeleteMessage",
+      "sqs:GetQueueAttributes",
+      "sqs:ChangeMessageVisibility",
+    ]
+    resources = [aws_sqs_queue.ses_feedback.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "ses_feedback" {
+  name   = "${local.resource_prefix}-ses-feedback-policy"
+  role   = aws_iam_role.ses_feedback.id
+  policy = data.aws_iam_policy_document.ses_feedback.json
+}
+
 data "aws_iam_policy_document" "outbox_dispatcher" {
   statement {
     sid       = "OutboxParameters"

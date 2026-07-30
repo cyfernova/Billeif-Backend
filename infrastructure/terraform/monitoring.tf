@@ -185,6 +185,106 @@ resource "aws_cloudwatch_metric_alarm" "email_delivery_dlq_messages" {
   }
 }
 
+resource "aws_cloudwatch_metric_alarm" "lambda_ses_feedback_errors" {
+  alarm_name          = "${local.resource_prefix}-lambda-ses-feedback-errors"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "Errors"
+  namespace           = "AWS/Lambda"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif SES feedback Lambda is returning errors"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    FunctionName = aws_lambda_function.sqs_ses_feedback.function_name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "lambda_ses_feedback_throttles" {
+  alarm_name          = "${local.resource_prefix}-lambda-ses-feedback-throttles"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "Throttles"
+  namespace           = "AWS/Lambda"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif SES feedback Lambda is being throttled"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    FunctionName = aws_lambda_function.sqs_ses_feedback.function_name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "lambda_ses_feedback_duration" {
+  alarm_name          = "${local.resource_prefix}-lambda-ses-feedback-duration"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "Duration"
+  namespace           = "AWS/Lambda"
+  period              = 300
+  extended_statistic  = "p95"
+  threshold           = 25000
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif SES feedback Lambda p95 duration exceeds 25 seconds"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    FunctionName = aws_lambda_function.sqs_ses_feedback.function_name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "ses_feedback_queue_age" {
+  alarm_name          = "${local.resource_prefix}-ses-feedback-queue-age"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "ApproximateAgeOfOldestMessage"
+  namespace           = "AWS/SQS"
+  period              = 300
+  statistic           = "Maximum"
+  threshold           = 600
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif SES feedback queue oldest message exceeds ten minutes"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    QueueName = aws_sqs_queue.ses_feedback.name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "ses_feedback_dlq_messages" {
+  alarm_name          = "${local.resource_prefix}-ses-feedback-dlq-messages"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  namespace           = "AWS/SQS"
+  period              = 300
+  statistic           = "Maximum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif SES feedback dead-letter queue has messages"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    QueueName = aws_sqs_queue.ses_feedback_dlq.name
+  }
+}
+
 locals {
   threat_detection_log_groups = {
     api_http   = aws_cloudwatch_log_group.lambda_api_http.name

@@ -19,6 +19,7 @@ const (
 	ProfileMigration     Profile = "migration"
 	ProfileOutbox        Profile = "outbox"
 	ProfileEmailDelivery Profile = "sqs-email-delivery"
+	ProfileSESFeedback   Profile = "sqs-ses-feedback"
 )
 
 func ValidateForProfile(cfg *Config, profile Profile) error {
@@ -58,7 +59,7 @@ func ValidateForProfile(cfg *Config, profile Profile) error {
 			return err
 		}
 		return validateProfileDependencies(cfg, profile)
-	case ProfileEmailDelivery:
+	case ProfileEmailDelivery, ProfileSESFeedback:
 		if err := validateProfileBase(cfg); err != nil {
 			return err
 		}
@@ -128,6 +129,13 @@ func validateProfileDependencies(cfg *Config, profile Profile) error {
 		}
 		if strings.TrimSpace(cfg.SES.SenderEmail) == "" {
 			return fmt.Errorf("SES_SENDER_EMAIL is required")
+		}
+		if strings.TrimSpace(cfg.SES.ConfigurationSet) == "" {
+			return fmt.Errorf("SES_CONFIGURATION_SET is required")
+		}
+	case ProfileSESFeedback:
+		if strings.TrimSpace(cfg.SES.SendingAccountID) == "" {
+			return fmt.Errorf("SES_SENDING_ACCOUNT_ID is required")
 		}
 		if strings.TrimSpace(cfg.SES.ConfigurationSet) == "" {
 			return fmt.Errorf("SES_CONFIGURATION_SET is required")

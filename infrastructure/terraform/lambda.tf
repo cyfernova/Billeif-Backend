@@ -16,6 +16,7 @@ locals {
     custom_sms_sender  = "${var.lambda_artifact_dir}/custom-sms-sender.zip"
     outbox             = "${var.lambda_artifact_dir}/outbox.zip"
     sqs_email_delivery = "${var.lambda_artifact_dir}/sqs-email-delivery.zip"
+    sqs_ses_feedback   = "${var.lambda_artifact_dir}/sqs-ses-feedback.zip"
   }
 
   lambda_artifact_hashes = {
@@ -161,6 +162,11 @@ resource "aws_cloudwatch_log_group" "lambda_sqs_email_delivery" {
   retention_in_days = var.log_retention_days
 }
 
+resource "aws_cloudwatch_log_group" "lambda_sqs_ses_feedback" {
+  name              = "/aws/lambda/${local.resource_prefix}-sqs-ses-feedback"
+  retention_in_days = var.log_retention_days
+}
+
 resource "aws_lambda_function" "outbox_dispatcher" {
   function_name    = "${local.resource_prefix}-outbox-dispatcher"
   role             = aws_iam_role.outbox_dispatcher.arn
@@ -256,6 +262,57 @@ resource "aws_lambda_function" "sqs_email_delivery" {
   depends_on = [
     aws_cloudwatch_log_group.lambda_sqs_email_delivery,
     aws_iam_role_policy.email_delivery,
+    aws_ssm_parameter.db_host,
+  ]
+}
+
+resource "aws_lambda_function" "sqs_ses_feedback" {
+  function_name    = "${local.resource_prefix}-sqs-ses-feedback"
+  role             = aws_iam_role.ses_feedback.arn
+  runtime          = "provided.al2023"
+  handler          = "bootstrap"
+  architectures    = ["arm64"]
+  filename         = local.lambda_artifacts.sqs_ses_feedback
+  source_code_hash = local.lambda_artifact_hashes.sqs_ses_feedback
+  memory_size      = 256
+  timeout          = 30
+
+  reserved_concurrent_executions = var.enable_application ? null : 0
+
+  tags = {
+    MigrationChecksum = local.application_migration_checksum
+  }
+
+  environment {
+    variables = {
+      ENVIRONMENT             = var.environment
+      LOG_LEVEL               = "info"
+      LOG_FORMAT              = "json"
+      DATABASE_HOST_SSM_PARAM = local.db_host_ssm_parameter_name
+      DATABASE_SECRET_ARN     = aws_db_instance.main.master_user_secret[0].secret_arn
+      DATABASE_PORT           = tostring(var.db_port)
+      DATABASE_NAME           = var.db_name
+      DATABASE_SSL_MODE       = "require"
+      SES_SENDING_ACCOUNT_ID  = data.aws_caller_identity.current.account_id
+      SES_CONFIGURATION_SET   = aws_ses_configuration_set.main.name
+    }
+  }
+
+  vpc_config {
+    subnet_ids         = aws_subnet.private[*].id
+    security_group_ids = [aws_security_group.lambda.id]
+  }
+
+  lifecycle {
+    precondition {
+      condition     = fileexists(local.lambda_artifacts.sqs_ses_feedback)
+      error_message = "Missing Billeif SES feedback Lambda artifact ${local.lambda_artifacts.sqs_ses_feedback}. Run make package-lambda-ses-feedback from the repository root before running Terraform."
+    }
+  }
+
+  depends_on = [
+    aws_cloudwatch_log_group.lambda_sqs_ses_feedback,
+    aws_iam_role_policy.ses_feedback,
     aws_ssm_parameter.db_host,
   ]
 }
@@ -576,6 +633,20 @@ resource "aws_lambda_event_source_mapping" "email_delivery_queue" {
   event_source_arn                   = aws_sqs_queue.email_delivery.arn
   function_name                      = aws_lambda_function.sqs_email_delivery.arn
   batch_size                         = 1
+  function_response_types            = ["ReportBatchItemFailures"]
+  maximum_batching_window_in_seconds = 0
+
+  scaling_config {
+    maximum_concurrency = 2
+  }
+}
+
+resource "aws_lambda_event_source_mapping" "ses_feedback_queue" {
+  count = var.enable_application ? 1 : 0
+
+  event_source_arn                   = aws_sqs_queue.ses_feedback.arn
+  function_name                      = aws_lambda_function.sqs_ses_feedback.arn
+  batch_size                         = 10
   function_response_types            = ["ReportBatchItemFailures"]
   maximum_batching_window_in_seconds = 0
 

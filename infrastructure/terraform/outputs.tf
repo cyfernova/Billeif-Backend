@@ -73,6 +73,16 @@ output "email_delivery_queue_url" {
   value       = aws_sqs_queue.email_delivery.url
 }
 
+output "lambda_sqs_ses_feedback_arn" {
+  description = "Billeif SES feedback worker Lambda ARN"
+  value       = aws_lambda_function.sqs_ses_feedback.arn
+}
+
+output "ses_feedback_queue_url" {
+  description = "Billeif SES feedback SQS queue URL"
+  value       = aws_sqs_queue.ses_feedback.url
+}
+
 output "lambda_sqs_gst_arn" {
   description = "Lambda ARN for GST SQS worker"
   value       = aws_lambda_function.sqs_gst.arn
