@@ -18,7 +18,10 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/google/uuid"
 )
+
+const canonicalRenderLeaseDuration = 2 * time.Minute
 
 type Worker struct {
 	cfg    *config.Config
@@ -64,7 +67,7 @@ func (w *Worker) processGSTQueue(ctx context.Context) {
 	w.processQueue(ctx, w.cfg.SQS.GSTQueue, w.handleGSTMessage)
 }
 
-func (w *Worker) processQueue(ctx context.Context, queueURL string, handler func(context.Context, string) error) {
+func (w *Worker) processQueue(ctx context.Context, queueURL string, handler func(context.Context, string, string) error) {
 	log := w.log.Named("queue_worker").With("queue_url", queueURL)
 	for {
 		select {
@@ -98,7 +101,7 @@ func (w *Worker) processQueue(ctx context.Context, queueURL string, handler func
 		log.Debug("received messages", "count", len(result.Messages), "duration_ms", time.Since(receiveStart).Milliseconds())
 
 		for _, msg := range result.Messages {
-			if err := handler(ctx, *msg.Body); err != nil {
+			if err := handler(ctx, *msg.Body, aws.ToString(msg.MessageId)); err != nil {
 				log.Error("failed to process message", "error", err)
 				continue
 			}
@@ -124,16 +127,21 @@ type InvoiceMessage struct {
 	RenderJobID    string `json:"render_job_id,omitempty"`
 }
 
-func (w *Worker) handleInvoiceMessage(ctx context.Context, body string) error {
-	return ProcessInvoiceQueueMessage(ctx, w.cfg, w.svc, w.log, body)
+func (w *Worker) handleInvoiceMessage(ctx context.Context, body, owner string) error {
+	return ProcessInvoiceQueueMessageWithOwner(ctx, w.cfg, w.svc, w.log, body, owner)
 }
 
-func (w *Worker) handleGSTMessage(ctx context.Context, body string) error {
+func (w *Worker) handleGSTMessage(ctx context.Context, body, _ string) error {
 	return ProcessGSTQueueMessage(ctx, w.svc, w.log, body)
 }
 
 // ProcessInvoiceQueueMessage handles one invoice queue message in a transport-agnostic way.
 func ProcessInvoiceQueueMessage(ctx context.Context, cfg *config.Config, svc *services.Container, log *logger.Logger, body string) error {
+	return ProcessInvoiceQueueMessageWithOwner(ctx, cfg, svc, log, body, uuid.NewString())
+}
+
+// ProcessInvoiceQueueMessageWithOwner handles one invoice queue message with its unique transport owner.
+func ProcessInvoiceQueueMessageWithOwner(ctx context.Context, cfg *config.Config, svc *services.Container, log *logger.Logger, body, owner string) error {
 	if cfg == nil || svc == nil || log == nil {
 		return fmt.Errorf("invalid dependencies for invoice queue processing")
 	}
@@ -149,7 +157,7 @@ func ProcessInvoiceQueueMessage(ctx context.Context, cfg *config.Config, svc *se
 	case "generate_pdf":
 		return generateInvoicePDF(ctx, cfg, svc, msg.InvoiceID)
 	case "generate_document_pdf":
-		return generateDocumentPDF(ctx, cfg, svc, log, msg.DocumentID, msg.RenderJobID, msg.InvoiceVersion)
+		return generateDocumentPDF(ctx, cfg, svc, log, msg.DocumentID, msg.RenderJobID, msg.InvoiceVersion, owner)
 	default:
 		log.Warn("unknown invoice message type", "type", msg.Type)
 	}
@@ -194,6 +202,7 @@ func generateDocumentPDF(
 	log *logger.Logger,
 	documentID, renderJobID string,
 	expectedInvoiceVersion int,
+	owner string,
 ) error {
 	document, err := svc.Document.GetForWorker(ctx, documentID)
 	if err != nil {
@@ -209,7 +218,7 @@ func generateDocumentPDF(
 		document,
 		job,
 		expectedInvoiceVersion,
-		&servicePreviewRenderOperations{cfg: cfg, svc: svc, log: log},
+		&servicePreviewRenderOperations{cfg: cfg, svc: svc, log: log, owner: owner},
 	)
 }
 
@@ -273,29 +282,35 @@ func processDocumentRenderJob(
 }
 
 type previewRenderOperations interface {
+	canonicalRenderLeaseOwner() string
 	currentInvoiceVersion(ctx context.Context, businessID, invoiceID string) (int, error)
 	claimPreview(
 		ctx context.Context,
 		businessID, jobID string,
 		sourceVersion int,
+		owner string,
+		now, leaseUntil time.Time,
 	) (interfaces.PreviewRenderClaimState, error)
 	loadProfile(ctx context.Context, businessID, profileID string) (*models.RenderProfile, error)
 	render(ctx context.Context, document *models.Document, profile *models.RenderProfile) ([]byte, string, error)
 	renderFinal(ctx context.Context, document *models.Document, profile *models.RenderProfile) ([]byte, string, error)
 	upload(ctx context.Context, key string, content []byte) error
-	markObsolete(ctx context.Context, businessID, jobID string) error
+	markObsolete(ctx context.Context, businessID, jobID, owner string) error
 	complete(
 		ctx context.Context,
 		businessID, jobID string,
 		sourceVersion int,
+		owner string,
 		objectKey, filename string,
 	) (bool, error)
-	fail(ctx context.Context, businessID, jobID, message string) error
+	fail(ctx context.Context, businessID, jobID, owner, message string) error
 	renderGeneric(ctx context.Context, document *models.Document, job *models.DocumentRenderJob) error
 	claimFinal(
 		ctx context.Context,
 		businessID, jobID string,
 		sourceVersion int,
+		owner string,
+		now, leaseUntil time.Time,
 	) (interfaces.FinalRenderClaimState, error)
 	loadFinalSnapshot(
 		ctx context.Context,
@@ -306,16 +321,20 @@ type previewRenderOperations interface {
 		ctx context.Context,
 		businessID, invoiceID, jobID string,
 		sourceVersion int,
+		owner string,
 		objectKey, filename string,
 	) (bool, error)
-	failFinal(ctx context.Context, businessID, jobID, message string) error
+	failFinal(ctx context.Context, businessID, jobID, owner, message string) error
 }
 
 type servicePreviewRenderOperations struct {
-	cfg *config.Config
-	svc *services.Container
-	log *logger.Logger
+	cfg   *config.Config
+	svc   *services.Container
+	log   *logger.Logger
+	owner string
 }
+
+func (o *servicePreviewRenderOperations) canonicalRenderLeaseOwner() string { return o.owner }
 
 func (o *servicePreviewRenderOperations) currentInvoiceVersion(
 	ctx context.Context,
@@ -335,8 +354,10 @@ func (o *servicePreviewRenderOperations) claimPreview(
 	ctx context.Context,
 	businessID, jobID string,
 	sourceVersion int,
+	owner string,
+	now, leaseUntil time.Time,
 ) (interfaces.PreviewRenderClaimState, error) {
-	return o.svc.Document.ClaimPreviewRender(ctx, businessID, jobID, sourceVersion)
+	return o.svc.Document.ClaimPreviewRender(ctx, businessID, jobID, sourceVersion, owner, now, leaseUntil)
 }
 
 func (o *servicePreviewRenderOperations) loadProfile(
@@ -372,15 +393,16 @@ func (o *servicePreviewRenderOperations) upload(
 
 func (o *servicePreviewRenderOperations) markObsolete(
 	ctx context.Context,
-	businessID, jobID string,
+	businessID, jobID, owner string,
 ) error {
-	return o.svc.Document.MarkPreviewRenderObsolete(ctx, businessID, jobID)
+	return o.svc.Document.ObsoletePreviewRender(ctx, businessID, jobID, owner)
 }
 
 func (o *servicePreviewRenderOperations) complete(
 	ctx context.Context,
 	businessID, jobID string,
 	sourceVersion int,
+	owner string,
 	objectKey, filename string,
 ) (bool, error) {
 	return o.svc.Document.CompletePreviewRender(
@@ -388,6 +410,7 @@ func (o *servicePreviewRenderOperations) complete(
 		businessID,
 		jobID,
 		sourceVersion,
+		owner,
 		objectKey,
 		filename,
 	)
@@ -395,17 +418,19 @@ func (o *servicePreviewRenderOperations) complete(
 
 func (o *servicePreviewRenderOperations) fail(
 	ctx context.Context,
-	businessID, jobID, message string,
+	businessID, jobID, owner, message string,
 ) error {
-	return o.svc.Document.FailPreviewRender(ctx, businessID, jobID, message)
+	return o.svc.Document.FailPreviewRender(ctx, businessID, jobID, owner, message)
 }
 
 func (o *servicePreviewRenderOperations) claimFinal(
 	ctx context.Context,
 	businessID, jobID string,
 	sourceVersion int,
+	owner string,
+	now, leaseUntil time.Time,
 ) (interfaces.FinalRenderClaimState, error) {
-	return o.svc.Document.ClaimFinalRender(ctx, businessID, jobID, sourceVersion)
+	return o.svc.Document.ClaimFinalRender(ctx, businessID, jobID, sourceVersion, owner, now, leaseUntil)
 }
 
 func (o *servicePreviewRenderOperations) loadFinalSnapshot(
@@ -426,6 +451,7 @@ func (o *servicePreviewRenderOperations) completeFinal(
 	ctx context.Context,
 	businessID, invoiceID, jobID string,
 	sourceVersion int,
+	owner string,
 	objectKey, filename string,
 ) (bool, error) {
 	return o.svc.Document.CompleteFinalRender(
@@ -434,6 +460,7 @@ func (o *servicePreviewRenderOperations) completeFinal(
 		invoiceID,
 		jobID,
 		sourceVersion,
+		owner,
 		objectKey,
 		filename,
 	)
@@ -441,9 +468,9 @@ func (o *servicePreviewRenderOperations) completeFinal(
 
 func (o *servicePreviewRenderOperations) failFinal(
 	ctx context.Context,
-	businessID, jobID, message string,
+	businessID, jobID, owner, message string,
 ) error {
-	return o.svc.Document.FailFinalRender(ctx, businessID, jobID, message)
+	return o.svc.Document.FailFinalRender(ctx, businessID, jobID, owner, message)
 }
 
 func (o *servicePreviewRenderOperations) renderGeneric(
@@ -532,6 +559,10 @@ func processFinalRender(
 		return errors.New("final render job identity mismatch")
 	}
 	sourceVersion := *job.SourceInvoiceVersion
+	owner := operations.canonicalRenderLeaseOwner()
+	if owner == "" {
+		return errors.New("canonical render lease owner is required")
+	}
 	expectedObjectKey := path.Join(
 		"invoices",
 		document.BusinessID,
@@ -543,11 +574,15 @@ func processFinalRender(
 		return errors.New("final render object key mismatch")
 	}
 
+	claimNow := time.Now().UTC()
 	claimState, err := operations.claimFinal(
 		ctx,
 		document.BusinessID,
 		job.ID,
 		sourceVersion,
+		owner,
+		claimNow,
+		claimNow.Add(canonicalRenderLeaseDuration),
 	)
 	if err != nil {
 		return fmt.Errorf("claim final render: %w", err)
@@ -568,12 +603,12 @@ func processFinalRender(
 		document.ID,
 	)
 	if err != nil {
-		_ = operations.failFinal(ctx, document.BusinessID, job.ID, err.Error())
+		_ = operations.failFinal(ctx, document.BusinessID, job.ID, owner, err.Error())
 		return fmt.Errorf("load final invoice version: %w", err)
 	}
 	if currentVersion != sourceVersion {
 		err := errors.New("final render invoice version changed")
-		_ = operations.failFinal(ctx, document.BusinessID, job.ID, err.Error())
+		_ = operations.failFinal(ctx, document.BusinessID, job.ID, owner, err.Error())
 		return err
 	}
 
@@ -585,11 +620,11 @@ func processFinalRender(
 		sourceVersion,
 	)
 	if err != nil {
-		_ = operations.failFinal(ctx, document.BusinessID, job.ID, err.Error())
+		_ = operations.failFinal(ctx, document.BusinessID, job.ID, owner, err.Error())
 		return fmt.Errorf("load frozen final render snapshot: %w", err)
 	}
 	if err := validateFinalRenderSnapshot(frozen, document.BusinessID, document.ID); err != nil {
-		_ = operations.failFinal(ctx, document.BusinessID, job.ID, err.Error())
+		_ = operations.failFinal(ctx, document.BusinessID, job.ID, owner, err.Error())
 		return err
 	}
 
@@ -597,17 +632,17 @@ func processFinalRender(
 	if job.RenderProfileID != nil {
 		profile, err = operations.loadProfile(ctx, document.BusinessID, *job.RenderProfileID)
 		if err != nil {
-			_ = operations.failFinal(ctx, document.BusinessID, job.ID, err.Error())
+			_ = operations.failFinal(ctx, document.BusinessID, job.ID, owner, err.Error())
 			return fmt.Errorf("load frozen final render profile: %w", err)
 		}
 	}
 	content, filename, err := operations.renderFinal(ctx, frozen, profile)
 	if err != nil {
-		_ = operations.failFinal(ctx, document.BusinessID, job.ID, err.Error())
+		_ = operations.failFinal(ctx, document.BusinessID, job.ID, owner, err.Error())
 		return fmt.Errorf("render private invoice final: %w", err)
 	}
 	if err := operations.upload(ctx, job.ObjectKey, content); err != nil {
-		_ = operations.failFinal(ctx, document.BusinessID, job.ID, err.Error())
+		_ = operations.failFinal(ctx, document.BusinessID, job.ID, owner, err.Error())
 		return fmt.Errorf("upload private invoice final: %w", err)
 	}
 
@@ -617,12 +652,12 @@ func processFinalRender(
 		document.ID,
 	)
 	if err != nil {
-		_ = operations.failFinal(ctx, document.BusinessID, job.ID, err.Error())
+		_ = operations.failFinal(ctx, document.BusinessID, job.ID, owner, err.Error())
 		return fmt.Errorf("reload final invoice version: %w", err)
 	}
 	if currentVersion != sourceVersion {
 		err := errors.New("final render invoice version changed before completion")
-		_ = operations.failFinal(ctx, document.BusinessID, job.ID, err.Error())
+		_ = operations.failFinal(ctx, document.BusinessID, job.ID, owner, err.Error())
 		return err
 	}
 	if _, err := operations.completeFinal(
@@ -631,10 +666,11 @@ func processFinalRender(
 		document.ID,
 		job.ID,
 		sourceVersion,
+		owner,
 		job.ObjectKey,
 		filename,
 	); err != nil {
-		_ = operations.failFinal(ctx, document.BusinessID, job.ID, err.Error())
+		_ = operations.failFinal(ctx, document.BusinessID, job.ID, owner, err.Error())
 		return fmt.Errorf("complete private invoice final: %w", err)
 	}
 	return nil
@@ -680,6 +716,10 @@ func processPreviewRender(
 		return errors.New("preview render job identity mismatch")
 	}
 	sourceVersion := *job.SourceInvoiceVersion
+	owner := operations.canonicalRenderLeaseOwner()
+	if owner == "" {
+		return errors.New("canonical render lease owner is required")
+	}
 	expectedObjectKey := path.Join(
 		"invoices",
 		document.BusinessID,
@@ -696,22 +736,15 @@ func processPreviewRender(
 		return nil
 	}
 
-	currentVersion, err := operations.currentInvoiceVersion(
-		ctx,
-		document.BusinessID,
-		document.ID,
-	)
-	if err != nil {
-		return fmt.Errorf("load preview invoice version: %w", err)
-	}
-	if currentVersion != sourceVersion {
-		return operations.markObsolete(ctx, document.BusinessID, job.ID)
-	}
+	claimNow := time.Now().UTC()
 	claimState, err := operations.claimPreview(
 		ctx,
 		document.BusinessID,
 		job.ID,
 		sourceVersion,
+		owner,
+		claimNow,
+		claimNow.Add(canonicalRenderLeaseDuration),
 	)
 	if err != nil {
 		return fmt.Errorf("claim preview render: %w", err)
@@ -727,21 +760,34 @@ func processPreviewRender(
 		return fmt.Errorf("claim preview render returned unknown state %q", claimState)
 	}
 
+	currentVersion, err := operations.currentInvoiceVersion(
+		ctx,
+		document.BusinessID,
+		document.ID,
+	)
+	if err != nil {
+		_ = operations.fail(ctx, document.BusinessID, job.ID, owner, err.Error())
+		return fmt.Errorf("load preview invoice version: %w", err)
+	}
+	if currentVersion != sourceVersion {
+		return operations.markObsolete(ctx, document.BusinessID, job.ID, owner)
+	}
+
 	var profile *models.RenderProfile
 	if job.RenderProfileID != nil {
 		profile, err = operations.loadProfile(ctx, document.BusinessID, *job.RenderProfileID)
 		if err != nil {
-			_ = operations.fail(ctx, document.BusinessID, job.ID, err.Error())
+			_ = operations.fail(ctx, document.BusinessID, job.ID, owner, err.Error())
 			return fmt.Errorf("load frozen preview render profile: %w", err)
 		}
 	}
 	content, filename, err := operations.render(ctx, document, profile)
 	if err != nil {
-		_ = operations.fail(ctx, document.BusinessID, job.ID, err.Error())
+		_ = operations.fail(ctx, document.BusinessID, job.ID, owner, err.Error())
 		return fmt.Errorf("render private invoice preview: %w", err)
 	}
 	if err := operations.upload(ctx, job.ObjectKey, content); err != nil {
-		_ = operations.fail(ctx, document.BusinessID, job.ID, err.Error())
+		_ = operations.fail(ctx, document.BusinessID, job.ID, owner, err.Error())
 		return fmt.Errorf("upload private invoice preview: %w", err)
 	}
 
@@ -751,21 +797,22 @@ func processPreviewRender(
 		document.ID,
 	)
 	if err != nil {
-		_ = operations.fail(ctx, document.BusinessID, job.ID, err.Error())
+		_ = operations.fail(ctx, document.BusinessID, job.ID, owner, err.Error())
 		return fmt.Errorf("reload preview invoice version: %w", err)
 	}
 	if currentVersion != sourceVersion {
-		return operations.markObsolete(ctx, document.BusinessID, job.ID)
+		return operations.markObsolete(ctx, document.BusinessID, job.ID, owner)
 	}
 	if _, err := operations.complete(
 		ctx,
 		document.BusinessID,
 		job.ID,
 		sourceVersion,
+		owner,
 		job.ObjectKey,
 		filename,
 	); err != nil {
-		_ = operations.fail(ctx, document.BusinessID, job.ID, err.Error())
+		_ = operations.fail(ctx, document.BusinessID, job.ID, owner, err.Error())
 		return fmt.Errorf("complete private invoice preview: %w", err)
 	}
 	return nil

@@ -2,6 +2,7 @@ package interfaces
 
 import (
 	"context"
+	"time"
 
 	"invoice-backend/internal/invoiceresolution"
 	"invoice-backend/internal/models"
@@ -187,13 +188,16 @@ type PreviewRenderRepository interface {
 		ctx context.Context,
 		businessID, jobID string,
 		sourceVersion int,
+		owner string,
+		now, leaseUntil time.Time,
 	) (PreviewRenderClaimState, error)
-	MarkPreviewRenderObsolete(ctx context.Context, businessID, jobID string) error
-	FailPreviewRender(ctx context.Context, businessID, jobID, errorMessage string) error
+	ObsoletePreviewRender(ctx context.Context, businessID, jobID, owner string) error
+	FailPreviewRender(ctx context.Context, businessID, jobID, owner, errorMessage string) error
 	CompletePreviewRender(
 		ctx context.Context,
 		businessID, jobID string,
 		sourceVersion int,
+		owner string,
 		objectKey, filename string,
 	) (bool, error)
 }
@@ -220,17 +224,20 @@ type FinalRenderRepository interface {
 		ctx context.Context,
 		businessID, jobID string,
 		sourceVersion int,
+		owner string,
+		now, leaseUntil time.Time,
 	) (FinalRenderClaimState, error)
 	LoadFinalRenderSnapshot(
 		ctx context.Context,
 		businessID, invoiceID, jobID string,
 		sourceVersion int,
 	) (*models.Document, error)
-	FailFinalRender(ctx context.Context, businessID, jobID, errorMessage string) error
+	FailFinalRender(ctx context.Context, businessID, jobID, owner, errorMessage string) error
 	CompleteFinalRender(
 		ctx context.Context,
 		businessID, invoiceID, jobID string,
 		sourceVersion int,
+		owner string,
 		objectKey, filename string,
 	) (bool, error)
 }

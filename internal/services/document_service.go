@@ -1349,44 +1349,47 @@ func (s *DocumentService) FailRenderJob(ctx context.Context, businessID, jobID, 
 	return s.repo.UpdateRenderJob(ctx, job)
 }
 
-func (s *DocumentService) MarkPreviewRenderObsolete(
+func (s *DocumentService) ObsoletePreviewRender(
 	ctx context.Context,
-	businessID, jobID string,
+	businessID, jobID, owner string,
 ) error {
 	repository, ok := s.repo.(interfaces.PreviewRenderRepository)
 	if !ok {
 		return errors.New("preview render repository is not configured")
 	}
-	return repository.MarkPreviewRenderObsolete(ctx, businessID, jobID)
+	return repository.ObsoletePreviewRender(ctx, businessID, jobID, owner)
 }
 
 func (s *DocumentService) ClaimPreviewRender(
 	ctx context.Context,
 	businessID, jobID string,
 	sourceVersion int,
+	owner string,
+	now, leaseUntil time.Time,
 ) (interfaces.PreviewRenderClaimState, error) {
 	repository, ok := s.repo.(interfaces.PreviewRenderRepository)
 	if !ok {
 		return "", errors.New("preview render repository is not configured")
 	}
-	return repository.ClaimPreviewRender(ctx, businessID, jobID, sourceVersion)
+	return repository.ClaimPreviewRender(ctx, businessID, jobID, sourceVersion, owner, now, leaseUntil)
 }
 
 func (s *DocumentService) FailPreviewRender(
 	ctx context.Context,
-	businessID, jobID, errorMessage string,
+	businessID, jobID, owner, errorMessage string,
 ) error {
 	repository, ok := s.repo.(interfaces.PreviewRenderRepository)
 	if !ok {
 		return errors.New("preview render repository is not configured")
 	}
-	return repository.FailPreviewRender(ctx, businessID, jobID, errorMessage)
+	return repository.FailPreviewRender(ctx, businessID, jobID, owner, errorMessage)
 }
 
 func (s *DocumentService) CompletePreviewRender(
 	ctx context.Context,
 	businessID, jobID string,
 	sourceVersion int,
+	owner string,
 	objectKey, filename string,
 ) (bool, error) {
 	repository, ok := s.repo.(interfaces.PreviewRenderRepository)
@@ -1398,6 +1401,7 @@ func (s *DocumentService) CompletePreviewRender(
 		businessID,
 		jobID,
 		sourceVersion,
+		owner,
 		objectKey,
 		filename,
 	)
@@ -1407,12 +1411,14 @@ func (s *DocumentService) ClaimFinalRender(
 	ctx context.Context,
 	businessID, jobID string,
 	sourceVersion int,
+	owner string,
+	now, leaseUntil time.Time,
 ) (interfaces.FinalRenderClaimState, error) {
 	repository, ok := s.repo.(interfaces.FinalRenderRepository)
 	if !ok {
 		return "", errors.New("final render repository is not configured")
 	}
-	return repository.ClaimFinalRender(ctx, businessID, jobID, sourceVersion)
+	return repository.ClaimFinalRender(ctx, businessID, jobID, sourceVersion, owner, now, leaseUntil)
 }
 
 func (s *DocumentService) LoadFinalRenderSnapshot(
@@ -1435,19 +1441,20 @@ func (s *DocumentService) LoadFinalRenderSnapshot(
 
 func (s *DocumentService) FailFinalRender(
 	ctx context.Context,
-	businessID, jobID, errorMessage string,
+	businessID, jobID, owner, errorMessage string,
 ) error {
 	repository, ok := s.repo.(interfaces.FinalRenderRepository)
 	if !ok {
 		return errors.New("final render repository is not configured")
 	}
-	return repository.FailFinalRender(ctx, businessID, jobID, errorMessage)
+	return repository.FailFinalRender(ctx, businessID, jobID, owner, errorMessage)
 }
 
 func (s *DocumentService) CompleteFinalRender(
 	ctx context.Context,
 	businessID, invoiceID, jobID string,
 	sourceVersion int,
+	owner string,
 	objectKey, filename string,
 ) (bool, error) {
 	repository, ok := s.repo.(interfaces.FinalRenderRepository)
@@ -1460,6 +1467,7 @@ func (s *DocumentService) CompleteFinalRender(
 		invoiceID,
 		jobID,
 		sourceVersion,
+		owner,
 		objectKey,
 		filename,
 	)

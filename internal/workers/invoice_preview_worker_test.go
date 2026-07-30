@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"invoice-backend/internal/config"
 	"invoice-backend/internal/models"
@@ -25,6 +26,10 @@ type queueMessageDocumentRepository struct {
 	claimState interfaces.PreviewRenderClaimState
 }
 
+func (*queueMessageDocumentRepository) ClaimFinalRender(context.Context, string, string, int, string, time.Time, time.Time) (interfaces.FinalRenderClaimState, error) {
+	return interfaces.FinalRenderClaimed, nil
+}
+
 func (r *queueMessageDocumentRepository) GetByIDInternal(context.Context, string) (*models.Document, error) {
 	return r.document, nil
 }
@@ -34,19 +39,21 @@ func (r *queueMessageDocumentRepository) GetRenderJob(context.Context, string, s
 }
 
 func (r *queueMessageDocumentRepository) ClaimPreviewRender(
-	context.Context,
-	string,
-	string,
-	int,
+	_ context.Context,
+	_, _ string,
+	_ int,
+	_ string,
+	_ time.Time,
+	_ time.Time,
 ) (interfaces.PreviewRenderClaimState, error) {
 	return r.claimState, nil
 }
 
-func (*queueMessageDocumentRepository) MarkPreviewRenderObsolete(context.Context, string, string) error {
+func (*queueMessageDocumentRepository) ObsoletePreviewRender(context.Context, string, string, string) error {
 	return nil
 }
 
-func (*queueMessageDocumentRepository) FailPreviewRender(context.Context, string, string, string) error {
+func (*queueMessageDocumentRepository) FailPreviewRender(context.Context, string, string, string, string) error {
 	return nil
 }
 
@@ -55,6 +62,7 @@ func (*queueMessageDocumentRepository) CompletePreviewRender(
 	string,
 	string,
 	int,
+	string,
 	string,
 	string,
 ) (bool, error) {
@@ -71,6 +79,9 @@ func (r *queueMessageInvoiceRepository) GetByIDInternal(context.Context, string)
 }
 
 type fakePreviewRenderOperations struct {
+	owner               string
+	claimOwner          string
+	completeOwner       string
 	invoiceVersions     []int
 	versionCalls        int
 	profileID           string
@@ -96,6 +107,13 @@ type fakePreviewRenderOperations struct {
 	uploadedContent     []byte
 }
 
+func (f *fakePreviewRenderOperations) canonicalRenderLeaseOwner() string {
+	if f.owner == "" {
+		return "test-render-owner"
+	}
+	return f.owner
+}
+
 func (f *fakePreviewRenderOperations) currentInvoiceVersion(context.Context, string, string) (int, error) {
 	if f.versionCalls >= len(f.invoiceVersions) {
 		return 0, errors.New("unexpected invoice version lookup")
@@ -106,11 +124,14 @@ func (f *fakePreviewRenderOperations) currentInvoiceVersion(context.Context, str
 }
 
 func (f *fakePreviewRenderOperations) claimPreview(
-	context.Context,
-	string,
-	string,
-	int,
+	_ context.Context,
+	_, _ string,
+	_ int,
+	owner string,
+	_ time.Time,
+	_ time.Time,
 ) (interfaces.PreviewRenderClaimState, error) {
+	f.claimOwner = owner
 	f.processing = true
 	if f.claimState != "" {
 		return f.claimState, nil
@@ -154,7 +175,7 @@ func (f *fakePreviewRenderOperations) upload(_ context.Context, key string, cont
 	return nil
 }
 
-func (f *fakePreviewRenderOperations) markObsolete(context.Context, string, string) error {
+func (f *fakePreviewRenderOperations) markObsolete(context.Context, string, string, string) error {
 	f.obsolete = true
 	return nil
 }
@@ -163,8 +184,10 @@ func (f *fakePreviewRenderOperations) complete(
 	_ context.Context,
 	_, _ string,
 	sourceVersion int,
+	owner string,
 	objectKey, filename string,
 ) (bool, error) {
+	f.completeOwner = owner
 	f.completeVersion = sourceVersion
 	f.completeKey = objectKey
 	f.completeName = filename
@@ -172,7 +195,22 @@ func (f *fakePreviewRenderOperations) complete(
 	return true, nil
 }
 
-func (f *fakePreviewRenderOperations) fail(context.Context, string, string, string) error {
+func TestProcessPreviewRenderPropagatesExactLeaseOwner(t *testing.T) {
+	document, job, version := validPreviewWorkerFixture()
+	operations := &fakePreviewRenderOperations{
+		owner:           "sqs-message-id-123",
+		invoiceVersions: []int{version, version},
+	}
+
+	if err := processPreviewRender(context.Background(), document, job, operations); err != nil {
+		t.Fatalf("process preview: %v", err)
+	}
+	if operations.claimOwner != operations.owner || operations.completeOwner != operations.owner {
+		t.Fatalf("claim/complete owner = %q/%q, want %q", operations.claimOwner, operations.completeOwner, operations.owner)
+	}
+}
+
+func (f *fakePreviewRenderOperations) fail(context.Context, string, string, string, string) error {
 	return nil
 }
 
@@ -190,6 +228,9 @@ func (f *fakePreviewRenderOperations) claimFinal(
 	string,
 	string,
 	int,
+	string,
+	time.Time,
+	time.Time,
 ) (interfaces.FinalRenderClaimState, error) {
 	if f.finalClaimState != "" {
 		return f.finalClaimState, nil
@@ -215,12 +256,13 @@ func (f *fakePreviewRenderOperations) completeFinal(
 	int,
 	string,
 	string,
+	string,
 ) (bool, error) {
 	f.finalCompleted = true
 	return true, nil
 }
 
-func (f *fakePreviewRenderOperations) failFinal(context.Context, string, string, string) error {
+func (f *fakePreviewRenderOperations) failFinal(context.Context, string, string, string, string) error {
 	f.finalFailed = true
 	return nil
 }
@@ -276,7 +318,7 @@ func TestProcessPreviewRenderMarksChangedInvoiceObsoleteBeforeRendering(t *testi
 	if !operations.obsolete {
 		t.Fatal("stale preview must be marked obsolete")
 	}
-	if operations.processing || operations.rendered || operations.uploadKey != "" || operations.completed {
+	if !operations.processing || operations.rendered || operations.uploadKey != "" || operations.completed {
 		t.Fatalf("stale preview performed work: %#v", operations)
 	}
 }
@@ -311,8 +353,8 @@ func TestProcessPreviewRenderReturnsRetryableErrorWhenJobAlreadyProcessing(t *te
 	if operations.rendered || operations.uploadKey != "" || operations.completed || operations.obsolete {
 		t.Fatalf("processing duplicate performed work: %#v", operations)
 	}
-	if operations.versionCalls != 1 {
-		t.Fatalf("version calls = %d, want one pre-claim check", operations.versionCalls)
+	if operations.versionCalls != 0 {
+		t.Fatalf("version calls = %d, want zero before duplicate claim result", operations.versionCalls)
 	}
 }
 

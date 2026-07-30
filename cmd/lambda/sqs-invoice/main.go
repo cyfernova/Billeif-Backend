@@ -37,7 +37,7 @@ func handleSQSEvent(ctx context.Context, event events.SQSEvent) (events.SQSEvent
 	}
 	failures := make([]events.SQSBatchItemFailure, 0)
 	for _, record := range event.Records {
-		if err := workers.ProcessInvoiceQueueMessage(ctx, invoiceRT.Config, invoiceRT.Svcs, invoiceRT.Log, record.Body); err != nil {
+		if err := workers.ProcessInvoiceQueueMessageWithOwner(ctx, invoiceRT.Config, invoiceRT.Svcs, invoiceRT.Log, record.Body, record.MessageId); err != nil {
 			invoiceRT.Log.Error("failed to process invoice queue record", "message_id", record.MessageId, "error", err)
 			failures = append(failures, events.SQSBatchItemFailure{ItemIdentifier: record.MessageId})
 		}
