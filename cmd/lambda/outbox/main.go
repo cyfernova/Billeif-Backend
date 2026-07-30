@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -27,7 +30,10 @@ type dispatcherRunner interface {
 }
 
 type lambdaHandler struct {
-	dispatcher dispatcherRunner
+	dispatcher   dispatcherRunner
+	metricWriter io.Writer
+	environment  string
+	now          func() time.Time
 }
 
 func (h lambdaHandler) Handle(ctx context.Context) (outbox.DispatchResult, error) {
@@ -38,7 +44,52 @@ func (h lambdaHandler) Handle(ctx context.Context) (outbox.DispatchResult, error
 	if !ok || strings.TrimSpace(lambdaContext.AwsRequestID) == "" {
 		return outbox.DispatchResult{}, errors.New("Lambda request ID is required")
 	}
-	return h.dispatcher.Dispatch(ctx, lambdaContext.AwsRequestID)
+	result, dispatchErr := h.dispatcher.Dispatch(ctx, lambdaContext.AwsRequestID)
+	if h.metricWriter == nil || (dispatchErr != nil && result.Claimed == 0) {
+		return result, dispatchErr
+	}
+	now := h.now
+	if now == nil {
+		now = time.Now
+	}
+	metricErr := emitOldestPendingAgeMetric(
+		h.metricWriter,
+		h.environment,
+		result.OldestPendingAgeSeconds,
+		now().UTC(),
+	)
+	return result, errors.Join(dispatchErr, metricErr)
+}
+
+func emitOldestPendingAgeMetric(
+	writer io.Writer,
+	environment string,
+	ageSeconds int64,
+	now time.Time,
+) error {
+	metric := map[string]any{
+		"_aws": map[string]any{
+			"Timestamp": now.UnixMilli(),
+			"CloudWatchMetrics": []any{
+				map[string]any{
+					"Namespace":  "Billeif/Outbox",
+					"Dimensions": [][]string{{"Environment"}},
+					"Metrics": []any{
+						map[string]any{
+							"Name": "OldestPendingAgeSeconds",
+							"Unit": "Seconds",
+						},
+					},
+				},
+			},
+		},
+		"Environment":             strings.TrimSpace(environment),
+		"OldestPendingAgeSeconds": ageSeconds,
+	}
+	if err := json.NewEncoder(writer).Encode(metric); err != nil {
+		return fmt.Errorf("emit outbox age metric: %w", err)
+	}
+	return nil
 }
 
 type databasePool interface {
@@ -114,7 +165,12 @@ func newOutboxHandler(ctx context.Context) (*lambdaHandler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("initialize outbox dispatcher: %w", err)
 	}
-	return &lambdaHandler{dispatcher: dispatcher}, nil
+	return &lambdaHandler{
+		dispatcher:   dispatcher,
+		metricWriter: os.Stdout,
+		environment:  cfg.Environment,
+		now:          time.Now,
+	}, nil
 }
 
 var (

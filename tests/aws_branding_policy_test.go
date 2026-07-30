@@ -559,6 +559,7 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_cloudwatch_metric_alarm.lambda_ses_feedback_duration",
 		"aws_cloudwatch_metric_alarm.lambda_ses_feedback_errors",
 		"aws_cloudwatch_metric_alarm.lambda_ses_feedback_throttles",
+		"aws_cloudwatch_metric_alarm.outbox_oldest_pending_age",
 		"aws_cloudwatch_metric_alarm.rds_connections_high",
 		"aws_cloudwatch_metric_alarm.rds_cpu_credits_low",
 		"aws_cloudwatch_metric_alarm.rds_memory_low",

@@ -81,7 +81,11 @@ func (p *dispatcherPublisherFake) Publish(_ context.Context, event *models.Outbo
 func TestDispatcherClaimsBoundedLeaseAndCompletesPublishedEvents(t *testing.T) {
 	now := time.Date(2026, time.July, 30, 12, 0, 0, 0, time.UTC)
 	store := &dispatcherStoreFake{
-		events:      []*models.OutboxEvent{{ID: "event-1", PublishAttempts: 1}},
+		events: []*models.OutboxEvent{{
+			ID:              "event-1",
+			PublishAttempts: 1,
+			CreatedAt:       now.Add(-7 * time.Minute),
+		}},
 		completeErr: map[string]error{},
 		retryErr:    map[string]error{},
 	}
@@ -101,7 +105,8 @@ func TestDispatcherClaimsBoundedLeaseAndCompletesPublishedEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dispatch: %v", err)
 	}
-	if result.Claimed != 1 || result.Published != 1 || result.Retried != 0 {
+	if result.Claimed != 1 || result.Published != 1 || result.Retried != 0 ||
+		result.OldestPendingAgeSeconds != 420 {
 		t.Fatalf("result = %#v", result)
 	}
 	if store.claimOwner != "request-123" || !store.claimNow.Equal(now) ||
@@ -120,6 +125,39 @@ func TestDispatcherClaimsBoundedLeaseAndCompletesPublishedEvents(t *testing.T) {
 	if len(store.completed) != 1 || store.completed[0] != "event-1@request-123" ||
 		len(store.retried) != 0 {
 		t.Fatalf("completed/retried = %#v/%#v", store.completed, store.retried)
+	}
+}
+
+func TestDispatcherReportsOldestClaimedEventAgeWithoutGoingNegative(t *testing.T) {
+	now := time.Date(2026, time.July, 30, 12, 0, 0, 0, time.UTC)
+	store := &dispatcherStoreFake{
+		events: []*models.OutboxEvent{
+			{ID: "newer", CreatedAt: now.Add(-30 * time.Second)},
+			{ID: "oldest", CreatedAt: now.Add(-10 * time.Minute)},
+			{ID: "future-clock-skew", CreatedAt: now.Add(time.Minute)},
+		},
+		completeErr: map[string]error{},
+		retryErr:    map[string]error{},
+	}
+	dispatcher, err := NewDispatcher(
+		store,
+		&dispatcherPublisherFake{failures: map[string]error{}},
+		DispatcherOptions{
+			EventTypes: InvoiceRenderEventTypes(),
+			Now:        func() time.Time { return now },
+		},
+	)
+	if err != nil {
+		t.Fatalf("new dispatcher: %v", err)
+	}
+
+	result, err := dispatcher.Dispatch(context.Background(), "request-age")
+
+	if err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if result.OldestPendingAgeSeconds != 600 {
+		t.Fatalf("oldest pending age = %d, want 600", result.OldestPendingAgeSeconds)
 	}
 }
 

@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -23,8 +26,19 @@ func (d *recordingDispatcher) Dispatch(_ context.Context, owner string) (outbox.
 }
 
 func TestHandlerUsesLambdaRequestIDAsLeaseOwner(t *testing.T) {
-	dispatcher := &recordingDispatcher{result: outbox.DispatchResult{Claimed: 2, Published: 2}}
-	handler := lambdaHandler{dispatcher: dispatcher}
+	dispatcher := &recordingDispatcher{result: outbox.DispatchResult{
+		Claimed:                 2,
+		Published:               2,
+		OldestPendingAgeSeconds: 420,
+	}}
+	var metricOutput bytes.Buffer
+	now := time.Date(2026, time.July, 30, 12, 0, 0, 0, time.UTC)
+	handler := lambdaHandler{
+		dispatcher:   dispatcher,
+		metricWriter: &metricOutput,
+		environment:  "test",
+		now:          func() time.Time { return now },
+	}
 	ctx := lambdacontext.NewContext(context.Background(), &lambdacontext.LambdaContext{
 		AwsRequestID: "billeif-request-123",
 	})
@@ -40,6 +54,18 @@ func TestHandlerUsesLambdaRequestIDAsLeaseOwner(t *testing.T) {
 	if result.Published != 2 {
 		t.Fatalf("dispatch result = %#v", result)
 	}
+	var metric map[string]any
+	if err := json.Unmarshal(metricOutput.Bytes(), &metric); err != nil {
+		t.Fatalf("decode EMF metric: %v\n%s", err, metricOutput.String())
+	}
+	if metric["Environment"] != "test" ||
+		metric["OldestPendingAgeSeconds"] != float64(420) {
+		t.Fatalf("metric = %#v", metric)
+	}
+	awsMetadata, ok := metric["_aws"].(map[string]any)
+	if !ok || awsMetadata["Timestamp"] != float64(now.UnixMilli()) {
+		t.Fatalf("metric metadata = %#v", awsMetadata)
+	}
 }
 
 func TestHandlerRejectsMissingLambdaRequestID(t *testing.T) {
@@ -49,6 +75,27 @@ func TestHandlerRejectsMissingLambdaRequestID(t *testing.T) {
 
 	if err == nil || !strings.Contains(err.Error(), "request ID") {
 		t.Fatalf("missing request ID error = %v", err)
+	}
+}
+
+func TestHandlerDoesNotPublishHealthyAgeWhenClaimFails(t *testing.T) {
+	var metricOutput bytes.Buffer
+	handler := lambdaHandler{
+		dispatcher:   &recordingDispatcher{err: errors.New("claim unavailable")},
+		metricWriter: &metricOutput,
+		environment:  "test",
+	}
+	ctx := lambdacontext.NewContext(context.Background(), &lambdacontext.LambdaContext{
+		AwsRequestID: "billeif-request-claim-failure",
+	})
+
+	_, err := handler.Handle(ctx)
+
+	if err == nil || !strings.Contains(err.Error(), "claim unavailable") {
+		t.Fatalf("claim failure error = %v", err)
+	}
+	if metricOutput.Len() != 0 {
+		t.Fatalf("claim failure emitted a healthy age metric: %s", metricOutput.String())
 	}
 }
 

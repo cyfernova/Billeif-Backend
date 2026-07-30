@@ -446,6 +446,26 @@ resource "aws_cloudwatch_metric_alarm" "rds_cpu_credits_low" {
   }
 }
 
+resource "aws_cloudwatch_metric_alarm" "outbox_oldest_pending_age" {
+  alarm_name          = "${local.resource_prefix}-outbox-oldest-pending-age"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "OldestPendingAgeSeconds"
+  namespace           = "Billeif/Outbox"
+  period              = 300
+  statistic           = "Maximum"
+  threshold           = 300
+  treat_missing_data  = "breaching"
+  alarm_description   = "Billeif outbox oldest pending event is more than five minutes old"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    Environment = var.environment
+  }
+}
+
 resource "aws_cloudwatch_dashboard" "main" {
   dashboard_name = "${local.resource_prefix}-dashboard"
 

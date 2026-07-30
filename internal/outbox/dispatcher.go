@@ -41,9 +41,10 @@ type DispatcherOptions struct {
 }
 
 type DispatchResult struct {
-	Claimed   int `json:"claimed"`
-	Published int `json:"published"`
-	Retried   int `json:"retried"`
+	Claimed                 int   `json:"claimed"`
+	Published               int   `json:"published"`
+	Retried                 int   `json:"retried"`
+	OldestPendingAgeSeconds int64 `json:"oldest_pending_age_seconds"`
 }
 
 type Dispatcher struct {
@@ -116,7 +117,10 @@ func (d *Dispatcher) Dispatch(ctx context.Context, owner string) (DispatchResult
 		return DispatchResult{}, fmt.Errorf("claim outbox events: %w", err)
 	}
 
-	result := DispatchResult{Claimed: len(events)}
+	result := DispatchResult{
+		Claimed:                 len(events),
+		OldestPendingAgeSeconds: oldestPendingAgeSeconds(events, now),
+	}
 	var dispatchErrors []error
 	for _, event := range events {
 		if event == nil {
@@ -149,6 +153,20 @@ func (d *Dispatcher) Dispatch(ctx context.Context, owner string) (DispatchResult
 		result.Published++
 	}
 	return result, errors.Join(dispatchErrors...)
+}
+
+func oldestPendingAgeSeconds(events []*models.OutboxEvent, now time.Time) int64 {
+	var oldestAge time.Duration
+	for _, event := range events {
+		if event == nil || event.CreatedAt.IsZero() {
+			continue
+		}
+		age := now.Sub(event.CreatedAt.UTC())
+		if age > oldestAge {
+			oldestAge = age
+		}
+	}
+	return int64(oldestAge / time.Second)
 }
 
 func InvoiceRenderEventTypes() []string {

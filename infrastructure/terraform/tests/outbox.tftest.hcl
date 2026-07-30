@@ -604,4 +604,16 @@ run "standard_resolution_operational_alarms_use_two_of_three" {
     )
     error_message = "RDS connections, CPU, memory, storage, and burst credits must use explicit two-of-three monitoring."
   }
+
+  assert {
+    condition = (
+      aws_cloudwatch_metric_alarm.outbox_oldest_pending_age.metric_name == "OldestPendingAgeSeconds" &&
+      aws_cloudwatch_metric_alarm.outbox_oldest_pending_age.namespace == "Billeif/Outbox" &&
+      aws_cloudwatch_metric_alarm.outbox_oldest_pending_age.threshold == 300 &&
+      aws_cloudwatch_metric_alarm.outbox_oldest_pending_age.evaluation_periods == 3 &&
+      aws_cloudwatch_metric_alarm.outbox_oldest_pending_age.datapoints_to_alarm == 2 &&
+      aws_cloudwatch_metric_alarm.outbox_oldest_pending_age.treat_missing_data == "breaching"
+    )
+    error_message = "The Billeif outbox oldest-pending-age metric must alarm after two of three five-minute breaches and fail closed when metrics disappear."
+  }
 }
