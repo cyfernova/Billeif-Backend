@@ -375,6 +375,26 @@ func TestCanonicalRenderDoesNotCompleteWhenPublishFails(t *testing.T) {
 	}
 }
 
+func TestFinalRenderChecksumMismatchDoesNotComplete(t *testing.T) {
+	document, job, version := validPreviewWorkerFixture()
+	job.Kind = models.RenderKindFinal
+	job.ObjectKey = fmt.Sprintf("invoices/%s/%s/v%d/final.pdf", document.BusinessID, document.ID, version)
+	operations := &fakePreviewRenderOperations{
+		owner:           "receive-after-profile-change",
+		invoiceVersions: []int{version},
+		finalSnapshot:   validFinalRenderSnapshot(document),
+		uploadError:     services.ErrConditionalWriteContentMismatch,
+	}
+
+	err := processDocumentRenderJob(context.Background(), document, job, version, operations)
+	if !errors.Is(err, services.ErrConditionalWriteContentMismatch) {
+		t.Fatalf("checksum mismatch error = %v, want content mismatch", err)
+	}
+	if operations.finalCompleted || !operations.finalFailed {
+		t.Fatalf("checksum mismatch completion/failure = %t/%t, want false/true", operations.finalCompleted, operations.finalFailed)
+	}
+}
+
 func TestProcessDocumentRenderJobNoOpsObsoleteFinalDuplicate(t *testing.T) {
 	document, job, version := validPreviewWorkerFixture()
 	job.Kind = models.RenderKindFinal
