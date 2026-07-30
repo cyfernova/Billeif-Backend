@@ -343,6 +343,43 @@ func (r *documentRepository) GetRenderJob(ctx context.Context, businessID, jobID
 	return &job, err
 }
 
+func (r *documentRepository) GetInvoiceRenderJob(
+	ctx context.Context,
+	businessID, invoiceID, jobID string,
+) (*models.DocumentRenderJob, error) {
+	var job models.DocumentRenderJob
+	err := r.db.WithContext(ctx).
+		Where("id = ? AND invoice_id = ? AND business_id = ? AND deleted_at IS NULL", jobID, invoiceID, businessID).
+		First(&job).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, interfaces.ErrInvoiceRenderNotFound
+	}
+	return &job, err
+}
+
+func (r *documentRepository) GetCompletedFinalRenderJob(
+	ctx context.Context,
+	businessID, invoiceID string,
+	sourceVersion int,
+) (*models.DocumentRenderJob, error) {
+	var job models.DocumentRenderJob
+	err := r.db.WithContext(ctx).
+		Where(
+			"business_id = ? AND invoice_id = ? AND kind = ? AND source_invoice_version = ? AND status = ? AND object_key <> '' AND deleted_at IS NULL",
+			businessID,
+			invoiceID,
+			models.RenderKindFinal,
+			sourceVersion,
+			models.RenderJobStatusCompleted,
+		).
+		Order("completed_at DESC, created_at DESC").
+		First(&job).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, interfaces.ErrInvoiceRenderNotFound
+	}
+	return &job, err
+}
+
 func (r *documentRepository) GetLatestRenderJob(ctx context.Context, documentID string) (*models.DocumentRenderJob, error) {
 	var job models.DocumentRenderJob
 	err := r.db.WithContext(ctx).

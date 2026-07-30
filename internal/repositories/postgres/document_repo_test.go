@@ -29,6 +29,72 @@ func expectCanonicalRenderClaim(
 	mock.ExpectCommit()
 }
 
+func TestDocumentRepositoryGetInvoiceRenderJobScopesByTenantInvoiceAndJob(t *testing.T) {
+	invoiceRepository, mock, closeDatabase := newStrictIssueSQLMockRepository(t)
+	defer closeDatabase()
+	repository := &documentRepository{db: invoiceRepository.db}
+	businessID, invoiceID, jobID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+
+	mock.ExpectQuery(`SELECT \* FROM "document_render_jobs".*id = \$1 AND invoice_id = \$2 AND business_id = \$3 AND deleted_at IS NULL.*LIMIT \$4`).
+		WithArgs(jobID, invoiceID, businessID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "invoice_id", "business_id", "kind", "source_invoice_version", "status",
+		}).AddRow(jobID, invoiceID, businessID, models.RenderKindPreview, 3, models.RenderJobStatusQueued))
+
+	job, err := repository.GetInvoiceRenderJob(context.Background(), businessID, invoiceID, jobID)
+	if err != nil {
+		t.Fatalf("GetInvoiceRenderJob() error = %v", err)
+	}
+	if job.ID != jobID || job.InvoiceID == nil || *job.InvoiceID != invoiceID || job.BusinessID != businessID {
+		t.Fatalf("GetInvoiceRenderJob() = %#v, want exact tenant invoice job", job)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations: %v", err)
+	}
+}
+
+func TestDocumentRepositoryGetCompletedFinalRenderJobScopesByTenantInvoiceAndVersion(t *testing.T) {
+	invoiceRepository, mock, closeDatabase := newStrictIssueSQLMockRepository(t)
+	defer closeDatabase()
+	repository := &documentRepository{db: invoiceRepository.db}
+	businessID, invoiceID, jobID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+
+	mock.ExpectQuery(`SELECT \* FROM "document_render_jobs".*business_id = \$1 AND invoice_id = \$2 AND kind = \$3 AND source_invoice_version = \$4 AND status = \$5 AND object_key <> '' AND deleted_at IS NULL.*ORDER BY completed_at DESC, created_at DESC.*LIMIT \$6`).
+		WithArgs(businessID, invoiceID, models.RenderKindFinal, 7, models.RenderJobStatusCompleted, 1).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "invoice_id", "business_id", "kind", "source_invoice_version", "object_key", "status",
+		}).AddRow(jobID, invoiceID, businessID, models.RenderKindFinal, 7, "invoices/final.pdf", models.RenderJobStatusCompleted))
+
+	job, err := repository.GetCompletedFinalRenderJob(context.Background(), businessID, invoiceID, 7)
+	if err != nil {
+		t.Fatalf("GetCompletedFinalRenderJob() error = %v", err)
+	}
+	if job.ID != jobID || job.SourceInvoiceVersion == nil || *job.SourceInvoiceVersion != 7 {
+		t.Fatalf("GetCompletedFinalRenderJob() = %#v, want current completed final render", job)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations: %v", err)
+	}
+}
+
+func TestDocumentRepositoryGetCompletedFinalRenderJobRequiresNonemptyObjectKey(t *testing.T) {
+	invoiceRepository, mock, closeDatabase := newStrictIssueSQLMockRepository(t)
+	defer closeDatabase()
+	repository := &documentRepository{db: invoiceRepository.db}
+	businessID, invoiceID := uuid.NewString(), uuid.NewString()
+
+	mock.ExpectQuery(`SELECT \* FROM "document_render_jobs".*business_id = \$1 AND invoice_id = \$2 AND kind = \$3 AND source_invoice_version = \$4 AND status = \$5 AND object_key <> '' AND deleted_at IS NULL.*LIMIT \$6`).
+		WithArgs(businessID, invoiceID, models.RenderKindFinal, 7, models.RenderJobStatusCompleted, 1).
+		WillReturnError(gorm.ErrRecordNotFound)
+
+	if _, err := repository.GetCompletedFinalRenderJob(context.Background(), businessID, invoiceID, 7); !errors.Is(err, interfaces.ErrInvoiceRenderNotFound) {
+		t.Fatalf("GetCompletedFinalRenderJob() error = %v, want ErrInvoiceRenderNotFound", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations: %v", err)
+	}
+}
+
 func TestDocumentRepositoryClaimPreviewRenderReclaimsExpiredLeaseForNewOwner(t *testing.T) {
 	invoiceRepository, mock, closeDatabase := newStrictIssueSQLMockRepository(t)
 	defer closeDatabase()

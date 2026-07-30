@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -39,6 +40,58 @@ const (
 	issueActivityInsertSQL    = `INSERT INTO "activity_logs".*"business_id".*"actor_id".*"request_id".*"ip_address".*"entity_type".*"entity_id".*"action".*"snapshot".*RETURNING "id"`
 	issueCompletionSQL        = `UPDATE "api_idempotency_keys" SET .*"result_id".*"result_type".*"status".*WHERE business_id = \$[0-9]+ AND command = \$[0-9]+ AND idempotency_key = \$[0-9]+ AND request_hash = \$[0-9]+ AND status = \$[0-9]+`
 )
+
+func TestInvoiceRepositoryNotFoundReadsReturnTypedSentinel(t *testing.T) {
+	for _, fixture := range []struct {
+		name   string
+		query  string
+		args   []driver.Value
+		invoke func(*invoiceRepository) error
+	}{
+		{
+			name:  "tenant ID",
+			query: `SELECT \* FROM "invoices".*id = \$1 AND business_id = \$2 AND deleted_at IS NULL.*LIMIT \$3`,
+			args:  []driver.Value{"invoice-id", "business-id", 1},
+			invoke: func(repository *invoiceRepository) error {
+				_, err := repository.GetByID(context.Background(), "invoice-id", "business-id")
+				return err
+			},
+		},
+		{
+			name:  "internal ID",
+			query: `SELECT \* FROM "invoices".*id = \$1 AND deleted_at IS NULL.*LIMIT \$2`,
+			args:  []driver.Value{"invoice-id", 1},
+			invoke: func(repository *invoiceRepository) error {
+				_, err := repository.GetByIDInternal(context.Background(), "invoice-id")
+				return err
+			},
+		},
+		{
+			name:  "invoice number",
+			query: `SELECT \* FROM "invoices".*business_id = \$1 AND invoice_no = \$2 AND deleted_at IS NULL.*LIMIT \$3`,
+			args:  []driver.Value{"business-id", "INV-1", 1},
+			invoke: func(repository *invoiceRepository) error {
+				_, err := repository.GetByInvoiceNo(context.Background(), "business-id", "INV-1")
+				return err
+			},
+		},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			repository, mock, closeDatabase := newStrictIssueSQLMockRepository(t)
+			defer closeDatabase()
+			mock.ExpectQuery(fixture.query).
+				WithArgs(fixture.args...).
+				WillReturnError(gorm.ErrRecordNotFound)
+
+			if err := fixture.invoke(repository); !errors.Is(err, interfaces.ErrInvoiceNotFound) {
+				t.Fatalf("read error = %v, want ErrInvoiceNotFound", err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatalf("SQL expectations: %v", err)
+			}
+		})
+	}
+}
 
 func TestNewInvoiceIssueActivitySnapshotsCompleteIssuedInvoice(t *testing.T) {
 	command, invoice, _ := strictIssueFixture()

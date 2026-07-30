@@ -2,10 +2,16 @@ package interfaces
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"invoice-backend/internal/invoiceresolution"
 	"invoice-backend/internal/models"
+)
+
+var (
+	ErrInvoiceNotFound       = errors.New("invoice not found")
+	ErrInvoiceRenderNotFound = errors.New("invoice render not found")
 )
 
 type UserRepository interface {
@@ -181,6 +187,11 @@ type DocumentRepository interface {
 	UpdateRenderJob(ctx context.Context, job *models.DocumentRenderJob) error
 	CreateRevision(ctx context.Context, revision *models.DocumentRevision) error
 	ListRevisions(ctx context.Context, businessID, documentID string, page, limit int) ([]*models.DocumentRevision, int64, error)
+}
+
+type InvoiceRenderReadRepository interface {
+	GetInvoiceRenderJob(ctx context.Context, businessID, invoiceID, jobID string) (*models.DocumentRenderJob, error)
+	GetCompletedFinalRenderJob(ctx context.Context, businessID, invoiceID string, sourceVersion int) (*models.DocumentRenderJob, error)
 }
 
 type PreviewRenderRepository interface {

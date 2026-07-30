@@ -6,6 +6,7 @@ import (
 	"invoice-backend/internal/invoiceissue"
 	"invoice-backend/internal/invoiceresolution"
 	"invoice-backend/internal/models"
+	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/internal/services"
 	"invoice-backend/internal/utils"
 	"invoice-backend/pkg/logger"
@@ -451,6 +452,49 @@ func (h *InvoiceHandler) Delete(c *gin.Context) {
 	c.JSON(http.StatusNoContent, nil)
 }
 
+// GetRenderStatus returns the status of one invoice render job.
+// @Summary Get invoice render status
+// @Description Returns a safe status projection for an invoice render job.
+// @Tags Invoices
+// @Produce json
+// @Security BearerAuth
+// @Param invoice_id path string true "Invoice ID"
+// @Param render_job_id path string true "Render job ID"
+// @Success 200 {object} services.InvoiceRenderStatus
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /invoices/{invoice_id}/renders/{render_job_id} [get]
+func (h *InvoiceHandler) GetRenderStatus(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("invoice_handler").With("operation", "get_render_status")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	invoiceID := c.Param("id")
+	renderJobID := c.Param("render_job_id")
+	status, err := h.svc.GetRenderStatusByBusiness(
+		c.Request.Context(),
+		businessID,
+		invoiceID,
+		renderJobID,
+	)
+	if err != nil {
+		log.Error("failed to get invoice render status", "error", err, "invoice_id", invoiceID, "render_job_id", renderJobID)
+		var invalidPayload *idempotency.InvalidPayloadError
+		switch {
+		case errors.As(err, &invalidPayload):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid invoice render request"})
+		case errors.Is(err, interfaces.ErrInvoiceRenderNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": "render job not found"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "invoice render status unavailable"})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, status)
+}
+
 // GetPDF returns a presigned URL for the invoice PDF
 // @Summary Get invoice PDF
 // @Description Returns a presigned S3 URL to download the invoice in PDF format.
@@ -458,8 +502,11 @@ func (h *InvoiceHandler) Delete(c *gin.Context) {
 // @Produce json
 // @Security BearerAuth
 // @Param id path string true "Invoice ID"
-// @Success 200 {object} map[string]string
+// @Success 200 {object} services.InvoicePDFDownload
+// @Failure 400 {object} map[string]string
 // @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
 // @Router /invoices/{id}/pdf [get]
 func (h *InvoiceHandler) GetPDF(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("invoice_handler").With("operation", "get_pdf")
@@ -468,19 +515,25 @@ func (h *InvoiceHandler) GetPDF(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
-	url, err := h.svc.GetPDFURLByBusiness(c.Request.Context(), businessID, id)
+	download, err := h.svc.GetPDFDownloadByBusiness(c.Request.Context(), businessID, id)
 	if err != nil {
 		log.Error("failed to get invoice PDF URL", "error", err, "invoice_id", id)
-		if isNotFoundErr(err) {
+		var invalidPayload *idempotency.InvalidPayloadError
+		switch {
+		case errors.As(err, &invalidPayload):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid invoice request"})
+		case errors.Is(err, services.ErrInvoicePDFNotReady):
+			c.JSON(http.StatusConflict, gin.H{"error": "invoice PDF is not ready"})
+		case errors.Is(err, interfaces.ErrInvoiceNotFound):
 			c.JSON(http.StatusNotFound, gin.H{"error": "invoice not found"})
-			return
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "invoice PDF unavailable"})
 		}
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
 	log.Debug("invoice PDF URL fetched", "invoice_id", id)
 
-	c.JSON(http.StatusOK, gin.H{"pdf_url": url})
+	c.JSON(http.StatusOK, download)
 }
 
 func (h *InvoiceHandler) GenerateEInvoice(c *gin.Context) {

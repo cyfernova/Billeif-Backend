@@ -25,6 +25,24 @@ type InvoiceEmailSender interface {
 	SendEmail(ctx context.Context, to, subject, body string) error
 }
 
+type InvoicePDFPresigner interface {
+	GeneratePresignedDownloadURL(ctx context.Context, bucket, key string, expiresIn int64) (string, error)
+}
+
+type InvoiceServiceOption func(*InvoiceService)
+
+func WithInvoiceRenderReadRepository(reader interfaces.InvoiceRenderReadRepository) InvoiceServiceOption {
+	return func(service *InvoiceService) {
+		service.invoiceRenders = reader
+	}
+}
+
+func WithInvoicePDFPresigner(presigner InvoicePDFPresigner) InvoiceServiceOption {
+	return func(service *InvoiceService) {
+		service.pdfPresigner = presigner
+	}
+}
+
 type InvoiceService struct {
 	db           *gorm.DB
 	cfg          *config.Config
@@ -36,6 +54,9 @@ type InvoiceService struct {
 	s3           *S3Service
 	email        InvoiceEmailSender
 	log          *logger.Logger
+
+	invoiceRenders interfaces.InvoiceRenderReadRepository
+	pdfPresigner   InvoicePDFPresigner
 
 	immediateOutboxPublisher ImmediateOutboxPublisher
 }
@@ -52,8 +73,9 @@ func NewInvoiceService(
 	s3 *S3Service,
 	email InvoiceEmailSender,
 	log *logger.Logger,
+	options ...InvoiceServiceOption,
 ) *InvoiceService {
-	return &InvoiceService{
+	service := &InvoiceService{
 		db:           db,
 		cfg:          cfg,
 		repo:         repo,
@@ -65,6 +87,14 @@ func NewInvoiceService(
 		email:        email,
 		log:          log,
 	}
+	if documents != nil {
+		service.invoiceRenders, _ = documents.repo.(interfaces.InvoiceRenderReadRepository)
+	}
+	service.pdfPresigner = s3
+	for _, option := range options {
+		option(service)
+	}
+	return service
 }
 
 type CreateInvoiceItemInput struct {
@@ -811,6 +841,148 @@ func (s *InvoiceService) SendByBusiness(ctx context.Context, businessID, id stri
 	subject := fmt.Sprintf("Invoice %s", models.StringValue(invoice.InvoiceNo))
 	body := fmt.Sprintf("Please find attached invoice %s for amount %s%.2f", models.StringValue(invoice.InvoiceNo), invoice.Currency, invoice.Total)
 	return s.email.SendEmail(ctx, customer.Email, subject, body)
+}
+
+var ErrInvoicePDFNotReady = errors.New("invoice PDF is not ready")
+
+type InvoiceRenderStatus struct {
+	ID                   string            `json:"id"`
+	InvoiceID            string            `json:"invoice_id"`
+	Kind                 models.RenderKind `json:"kind"`
+	SourceInvoiceVersion int               `json:"source_invoice_version"`
+	Status               string            `json:"status"`
+	CreatedAt            time.Time         `json:"created_at"`
+	UpdatedAt            time.Time         `json:"updated_at"`
+	CompletedAt          *time.Time        `json:"completed_at"`
+}
+
+type InvoicePDFDownload struct {
+	DownloadURL string    `json:"download_url"`
+	ExpiresAt   time.Time `json:"expires_at"`
+}
+
+func (s *InvoiceService) GetRenderStatusByBusiness(
+	ctx context.Context,
+	businessID, invoiceID, renderJobID string,
+) (*InvoiceRenderStatus, error) {
+	canonicalBusinessID, canonicalInvoiceID, canonicalJobID, err := canonicalInvoiceRenderIDs(
+		businessID,
+		invoiceID,
+		renderJobID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if s.invoiceRenders == nil {
+		return nil, errors.New("invoice render reader is not configured")
+	}
+	job, err := s.invoiceRenders.GetInvoiceRenderJob(
+		ctx,
+		canonicalBusinessID,
+		canonicalInvoiceID,
+		canonicalJobID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if job == nil || job.ID != canonicalJobID || job.BusinessID != canonicalBusinessID ||
+		job.InvoiceID == nil || *job.InvoiceID != canonicalInvoiceID {
+		return nil, interfaces.ErrInvoiceRenderNotFound
+	}
+	sourceVersion := 0
+	if job.SourceInvoiceVersion != nil {
+		sourceVersion = *job.SourceInvoiceVersion
+	}
+	return &InvoiceRenderStatus{
+		ID:                   job.ID,
+		InvoiceID:            canonicalInvoiceID,
+		Kind:                 job.Kind,
+		SourceInvoiceVersion: sourceVersion,
+		Status:               job.Status,
+		CreatedAt:            job.CreatedAt,
+		UpdatedAt:            job.UpdatedAt,
+		CompletedAt:          job.CompletedAt,
+	}, nil
+}
+
+func (s *InvoiceService) GetPDFDownloadByBusiness(
+	ctx context.Context,
+	businessID, invoiceID string,
+) (*InvoicePDFDownload, error) {
+	canonicalBusinessID, canonicalInvoiceID, _, err := canonicalInvoiceRenderIDs(
+		businessID,
+		invoiceID,
+		uuid.Nil.String(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	invoice, err := s.GetByBusiness(ctx, canonicalBusinessID, canonicalInvoiceID)
+	if err != nil {
+		return nil, err
+	}
+	if s.invoiceRenders == nil {
+		return nil, errors.New("invoice render reader is not configured")
+	}
+	job, err := s.invoiceRenders.GetCompletedFinalRenderJob(
+		ctx,
+		canonicalBusinessID,
+		canonicalInvoiceID,
+		invoice.Version,
+	)
+	if err != nil {
+		if errors.Is(err, interfaces.ErrInvoiceRenderNotFound) {
+			return nil, ErrInvoicePDFNotReady
+		}
+		return nil, err
+	}
+	if job == nil || job.BusinessID != canonicalBusinessID ||
+		job.InvoiceID == nil || *job.InvoiceID != canonicalInvoiceID ||
+		job.Kind != models.RenderKindFinal ||
+		job.SourceInvoiceVersion == nil || *job.SourceInvoiceVersion != invoice.Version ||
+		job.Status != models.RenderJobStatusCompleted ||
+		strings.TrimSpace(job.ObjectKey) == "" {
+		return nil, ErrInvoicePDFNotReady
+	}
+	if s.pdfPresigner == nil || s.cfg == nil || strings.TrimSpace(s.cfg.S3.BucketInvoices) == "" {
+		return nil, errors.New("invoice PDF presigner is not configured")
+	}
+	const expirySeconds int64 = 300
+	issuedAt := time.Now().UTC()
+	url, err := s.pdfPresigner.GeneratePresignedDownloadURL(
+		ctx,
+		s.cfg.S3.BucketInvoices,
+		job.ObjectKey,
+		expirySeconds,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(url) == "" {
+		return nil, errors.New("invoice PDF presigner returned an empty URL")
+	}
+	return &InvoicePDFDownload{
+		DownloadURL: url,
+		ExpiresAt:   issuedAt.Add(time.Duration(expirySeconds) * time.Second),
+	}, nil
+}
+
+func canonicalInvoiceRenderIDs(
+	businessID, invoiceID, renderJobID string,
+) (string, string, string, error) {
+	parsedBusinessID, err := uuid.Parse(strings.TrimSpace(businessID))
+	if err != nil {
+		return "", "", "", &idempotency.InvalidPayloadError{}
+	}
+	parsedInvoiceID, err := uuid.Parse(strings.TrimSpace(invoiceID))
+	if err != nil {
+		return "", "", "", &idempotency.InvalidPayloadError{}
+	}
+	parsedJobID, err := uuid.Parse(strings.TrimSpace(renderJobID))
+	if err != nil {
+		return "", "", "", &idempotency.InvalidPayloadError{}
+	}
+	return parsedBusinessID.String(), parsedInvoiceID.String(), parsedJobID.String(), nil
 }
 
 func (s *InvoiceService) GetPDFURLByBusiness(ctx context.Context, businessID, invoiceID string) (string, error) {

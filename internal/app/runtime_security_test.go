@@ -82,6 +82,7 @@ func TestInvoiceAndDocumentRoutesRequireDocumentPermissions(t *testing.T) {
 		`invoices.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Invoice.Create)`,
 		`invoices.POST("/:id/previews", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), wafUserHeavyRL, h.Invoice.Preview)`,
 		`invoices.PATCH("/:id/draft", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Invoice.UpdateDraft)`,
+		`invoices.GET("/:id/renders/:render_job_id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.GetRenderStatus)`,
 		`invoices.GET("/:id/pdf", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.GetPDF)`,
 		`documents.POST("/merge", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserHeavyRL, h.DocumentUtility.Merge)`,
 		`documents.GET("/:id/history", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.DocumentUtility.History)`,
@@ -91,6 +92,44 @@ func TestInvoiceAndDocumentRoutesRequireDocumentPermissions(t *testing.T) {
 	for _, fragment := range requiredFragments {
 		if !strings.Contains(routes, fragment) {
 			t.Fatalf("document route is missing required permission gate: %s", fragment)
+		}
+	}
+}
+
+func TestEveryInvoiceReadRouteRequiresDocumentExportPermission(t *testing.T) {
+	source, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatalf("read runtime routes: %v", err)
+	}
+	expected := map[string]bool{
+		`invoices.GET("",`:                            false,
+		`invoices.GET("/:id",`:                        false,
+		`invoices.GET("/:id/renders/:render_job_id",`: false,
+		`invoices.GET("/:id/pdf",`:                    false,
+	}
+	for _, line := range strings.Split(string(source), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "invoices.GET(") {
+			continue
+		}
+		if !strings.Contains(line, "services.PermissionDocumentsExport") {
+			t.Fatalf("invoice read route lacks PermissionDocumentsExport: %s", line)
+		}
+		matched := false
+		for prefix := range expected {
+			if strings.HasPrefix(line, prefix) {
+				expected[prefix] = true
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			t.Fatalf("unclassified invoice read route: %s", line)
+		}
+	}
+	for prefix, found := range expected {
+		if !found {
+			t.Fatalf("expected classified invoice read route is missing: %s", prefix)
 		}
 	}
 }
