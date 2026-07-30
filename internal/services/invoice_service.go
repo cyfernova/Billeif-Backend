@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path"
 	"strings"
@@ -217,6 +218,20 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 	if err != nil {
 		return nil, err
 	}
+	replay, err := s.repo.ReplayCompletedDraft(
+		ctx,
+		input.BusinessID,
+		"invoice.create",
+		input.IdempotencyKey,
+		requestHash,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if replay != nil && replay.Invoice != nil {
+		hydrateInvoiceEditorFields(replay.Invoice)
+		return replay.Invoice, nil
+	}
 	if s.businessRepo == nil {
 		return nil, fmt.Errorf("business repository is not configured")
 	}
@@ -270,10 +285,15 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 		Lines:       lineReferences,
 	})
 	if err != nil {
-		return nil, err
+		var missing *invoiceresolution.MissingReferenceError
+		var invalid *invoiceresolution.InvalidReferenceError
+		if errors.As(err, &missing) || errors.As(err, &invalid) {
+			return nil, err
+		}
+		return nil, &invoiceresolution.UnavailableError{}
 	}
 	if len(resolvedLines) != len(input.Items) {
-		return nil, fmt.Errorf("invoice line resolver returned %d snapshots for %d lines", len(resolvedLines), len(input.Items))
+		return nil, &invoiceresolution.UnavailableError{}
 	}
 
 	var subtotal, discountTotal, taxTotal float64
@@ -294,7 +314,11 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 		if cessRate <= 0 {
 			cessRate = resolved.CessRate
 		}
-		itemSubtotal := (item.Quantity * unitPrice) - item.Discount
+		itemGross := item.Quantity * unitPrice
+		if item.Discount < 0 || item.Discount > itemGross {
+			return nil, &idempotency.InvalidPayloadError{}
+		}
+		itemSubtotal := itemGross - item.Discount
 		itemTax := itemSubtotal * (item.TaxRate / 100)
 		itemCess := itemSubtotal * (cessRate / 100)
 		subtotal += itemSubtotal

@@ -113,6 +113,7 @@ type CanonicalInvoiceIssuer interface {
 type CanonicalInvoiceRepository interface {
 	InvoiceRepository
 	invoiceresolution.Resolver
+	ReplayCompletedDraft(ctx context.Context, businessID, command, idempotencyKey, requestHash string) (*AtomicInvoiceDraftResult, error)
 	CreateDraftAtomic(ctx context.Context, command AtomicInvoiceDraft) (*AtomicInvoiceDraftResult, error)
 }
 

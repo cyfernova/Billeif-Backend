@@ -34,6 +34,12 @@ func (e *InvalidReferenceError) Error() string {
 	return fmt.Sprintf("invalid %s reference %s: %s", e.Kind, e.ID, e.Reason)
 }
 
+type UnavailableError struct{}
+
+func (*UnavailableError) Error() string {
+	return "invoice line resolution is temporarily unavailable"
+}
+
 type LineReference struct {
 	ProductID   string
 	VariantID   string

@@ -2,8 +2,10 @@ package postgres
 
 import (
 	"context"
+	"database/sql/driver"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -77,6 +79,106 @@ func TestInvoiceRepositoryResolveInvoiceLinesUsesSameBoundedQueriesForOneAndLarg
 				t.Fatalf("bounded/deduplicated SQL expectations: %v", err)
 			}
 		})
+	}
+}
+
+func TestInvoiceRepositoryResolveInvoiceLinesUsesFixedQueriesForLargeDistinctIdentifierSet(t *testing.T) {
+	repository, mock, closeDatabase := newStrictInvoiceResolverRepository(t)
+	defer closeDatabase()
+
+	const lineCount = 80
+	businessID := uuid.NewString()
+	productIDs := make([]string, lineCount)
+	variantIDs := make([]string, lineCount)
+	warehouseIDs := make([]string, lineCount)
+	catalogueIDs := make([]string, lineCount)
+	priceListIDs := make([]string, lineCount)
+	productRows := sqlmock.NewRows([]string{
+		"id", "business_id", "name", "sku", "price", "mrp", "hsn_sac_code", "uqc_code", "unit", "default_cess_rate",
+	})
+	variantRows := sqlmock.NewRows([]string{
+		"id", "business_id", "product_id", "name", "sku", "price", "mrp", "default_cess_rate",
+	})
+	warehouseRows := sqlmock.NewRows([]string{"id", "business_id", "name"})
+	catalogueRows := sqlmock.NewRows([]string{
+		"id", "business_id", "product_id", "warehouse_id", "is_visible", "is_active", "price_override", "price_list_id",
+	})
+	priceListRows := sqlmock.NewRows([]string{"id", "business_id", "is_active"})
+	priceItemRows := sqlmock.NewRows([]string{
+		"id", "price_list_id", "product_id", "variant_id", "price", "mrp", "cess_rate", "updated_at",
+	})
+	for index := 0; index < lineCount; index++ {
+		productIDs[index] = deterministicResolverUUID(1, index)
+		variantIDs[index] = deterministicResolverUUID(101, index)
+		warehouseIDs[index] = deterministicResolverUUID(201, index)
+		catalogueIDs[index] = deterministicResolverUUID(301, index)
+		priceListIDs[index] = deterministicResolverUUID(401, index)
+		productRows.AddRow(productIDs[index], businessID, fmt.Sprintf("Product %d", index), fmt.Sprintf("P-%d", index), 10, 11, "1001", "PCS", "PCS", 1)
+		variantRows.AddRow(variantIDs[index], businessID, productIDs[index], fmt.Sprintf("Variant %d", index), fmt.Sprintf("V-%d", index), 20, 21, 2)
+		warehouseRows.AddRow(warehouseIDs[index], businessID, fmt.Sprintf("Warehouse %d", index))
+		catalogueRows.AddRow(catalogueIDs[index], businessID, productIDs[index], warehouseIDs[index], true, true, 30, priceListIDs[index])
+		priceListRows.AddRow(priceListIDs[index], businessID, true)
+		priceItemRows.AddRow(
+			deterministicResolverUUID(501, index),
+			priceListIDs[index],
+			nil,
+			variantIDs[index],
+			float64(100+index),
+			float64(110+index),
+			3,
+			time.Date(2026, 1, 1, 0, 0, index, 0, time.UTC),
+		)
+	}
+
+	mock.ExpectQuery(resolveProductsSQL).
+		WithArgs(withBusinessID(businessID, productIDs)...).
+		WillReturnRows(productRows)
+	mock.ExpectQuery(resolveVariantsSQL).
+		WithArgs(withBusinessID(businessID, variantIDs)...).
+		WillReturnRows(variantRows)
+	mock.ExpectQuery(resolveWarehousesSQL).
+		WithArgs(withBusinessID(businessID, warehouseIDs)...).
+		WillReturnRows(warehouseRows)
+	mock.ExpectQuery(resolveCatalogsSQL).
+		WithArgs(withBusinessAndIDs(businessID, productIDs, warehouseIDs)...).
+		WillReturnRows(catalogueRows)
+	mock.ExpectQuery(resolvePriceListsSQL).
+		WithArgs(withBusinessID(businessID, priceListIDs)...).
+		WillReturnRows(priceListRows)
+	mock.ExpectQuery(resolvePriceItemsSQL).
+		WithArgs(withIDs(priceListIDs, productIDs, variantIDs)...).
+		WillReturnRows(priceItemRows)
+
+	lines := make([]invoiceresolution.LineReference, lineCount)
+	for index := range lines {
+		sourceIndex := lineCount - index - 1
+		lines[index] = invoiceresolution.LineReference{
+			ProductID:   productIDs[sourceIndex],
+			VariantID:   variantIDs[sourceIndex],
+			WarehouseID: warehouseIDs[sourceIndex],
+		}
+	}
+	snapshots, err := repository.ResolveInvoiceLines(context.Background(), invoiceresolution.Request{
+		BusinessID: businessID,
+		Lines:      lines,
+	})
+
+	if err != nil {
+		t.Fatalf("resolve distinct lines: %v", err)
+	}
+	for index, snapshot := range snapshots {
+		sourceIndex := lineCount - index - 1
+		if snapshot.ProductID != productIDs[sourceIndex] ||
+			snapshot.VariantID != variantIDs[sourceIndex] ||
+			snapshot.WarehouseID != warehouseIDs[sourceIndex] ||
+			snapshot.CatalogueID != catalogueIDs[sourceIndex] ||
+			snapshot.PriceListID != priceListIDs[sourceIndex] ||
+			snapshot.UnitPrice != float64(100+sourceIndex) {
+			t.Fatalf("snapshot %d = %#v, want source index %d", index, snapshot, sourceIndex)
+		}
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("fixed distinct-identifier SQL expectations: %v", err)
 	}
 }
 
@@ -252,6 +354,99 @@ func TestInvoiceRepositoryResolveInvoiceLinesFreeTextUsesNoQueries(t *testing.T)
 	}
 }
 
+func TestInvoiceRepositoryResolveInvoiceLinesWrapsEveryDatabaseStageWithContext(t *testing.T) {
+	businessID := uuid.NewString()
+	productID := uuid.NewString()
+	variantID := uuid.NewString()
+	warehouseID := uuid.NewString()
+	priceListID := uuid.NewString()
+	injected := errors.New("injected resolver database failure")
+	fixtures := []struct {
+		name    string
+		stage   string
+		request invoiceresolution.Request
+		arrange func(sqlmock.Sqlmock)
+	}{
+		{
+			name: "products", stage: "resolve invoice products",
+			request: invoiceresolution.Request{BusinessID: businessID, Lines: []invoiceresolution.LineReference{{ProductID: productID}}},
+			arrange: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(resolveProductsSQL).WithArgs(businessID, productID).WillReturnError(injected)
+			},
+		},
+		{
+			name: "variants", stage: "resolve invoice variants",
+			request: invoiceresolution.Request{BusinessID: businessID, Lines: []invoiceresolution.LineReference{{ProductID: productID, VariantID: variantID}}},
+			arrange: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(resolveProductsSQL).WithArgs(businessID, productID).
+					WillReturnRows(sqlmock.NewRows([]string{"id", "business_id"}).AddRow(productID, businessID))
+				mock.ExpectQuery(resolveVariantsSQL).WithArgs(businessID, variantID).WillReturnError(injected)
+			},
+		},
+		{
+			name: "warehouses", stage: "resolve invoice warehouses",
+			request: invoiceresolution.Request{BusinessID: businessID, Lines: []invoiceresolution.LineReference{{ProductID: productID, WarehouseID: warehouseID}}},
+			arrange: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(resolveProductsSQL).WithArgs(businessID, productID).
+					WillReturnRows(sqlmock.NewRows([]string{"id", "business_id"}).AddRow(productID, businessID))
+				mock.ExpectQuery(resolveWarehousesSQL).WithArgs(businessID, warehouseID).WillReturnError(injected)
+			},
+		},
+		{
+			name: "catalogues", stage: "resolve invoice catalogues",
+			request: invoiceresolution.Request{BusinessID: businessID, Lines: []invoiceresolution.LineReference{{ProductID: productID, WarehouseID: warehouseID}}},
+			arrange: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(resolveProductsSQL).WithArgs(businessID, productID).
+					WillReturnRows(sqlmock.NewRows([]string{"id", "business_id"}).AddRow(productID, businessID))
+				mock.ExpectQuery(resolveWarehousesSQL).WithArgs(businessID, warehouseID).
+					WillReturnRows(sqlmock.NewRows([]string{"id", "business_id"}).AddRow(warehouseID, businessID))
+				mock.ExpectQuery(resolveCatalogsSQL).WithArgs(businessID, productID, warehouseID).WillReturnError(injected)
+			},
+		},
+		{
+			name: "price lists", stage: "resolve invoice price lists",
+			request: invoiceresolution.Request{BusinessID: businessID, PriceListID: priceListID, Lines: []invoiceresolution.LineReference{{}}},
+			arrange: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(resolvePriceListsSQL).WithArgs(businessID, priceListID).WillReturnError(injected)
+			},
+		},
+		{
+			name: "price-list items", stage: "resolve invoice price-list items",
+			request: invoiceresolution.Request{
+				BusinessID: businessID, PriceListID: priceListID,
+				Lines: []invoiceresolution.LineReference{{ProductID: productID}},
+			},
+			arrange: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(resolveProductsSQL).WithArgs(businessID, productID).
+					WillReturnRows(sqlmock.NewRows([]string{"id", "business_id"}).AddRow(productID, businessID))
+				mock.ExpectQuery(resolvePriceListsSQL).WithArgs(businessID, priceListID).
+					WillReturnRows(sqlmock.NewRows([]string{"id", "business_id", "is_active"}).AddRow(priceListID, businessID, true))
+				mock.ExpectQuery(`SELECT .* FROM "price_list_items"`).WithArgs(priceListID, productID).WillReturnError(injected)
+			},
+		},
+	}
+
+	for _, fixture := range fixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			repository, mock, closeDatabase := newStrictInvoiceResolverRepository(t)
+			defer closeDatabase()
+			fixture.arrange(mock)
+
+			snapshots, err := repository.ResolveInvoiceLines(context.Background(), fixture.request)
+
+			if snapshots != nil || err == nil {
+				t.Fatalf("snapshots/error = %#v/%v, want nil/contextual error", snapshots, err)
+			}
+			if !strings.Contains(err.Error(), fixture.stage) || !errors.Is(err, injected) {
+				t.Fatalf("error = %T %v, want context %q wrapping injected cause", err, err, fixture.stage)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatalf("SQL expectations: %v", err)
+			}
+		})
+	}
+}
+
 func newStrictInvoiceResolverRepository(t *testing.T) (*invoiceRepository, sqlmock.Sqlmock, func()) {
 	t.Helper()
 	sqlDatabase, mock, err := sqlmock.New()
@@ -302,4 +497,34 @@ func expectCompleteResolutionQueries(
 		WithArgs(priceListID, productID, variantID).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "price_list_id", "product_id", "variant_id", "price", "mrp", "cess_rate", "updated_at"}).
 			AddRow(uuid.NewString(), priceListID, productID, variantID, 125.0, 130.0, 2.0, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)))
+}
+
+func deterministicResolverUUID(offset, index int) string {
+	return fmt.Sprintf("00000000-0000-0000-0000-%012d", offset+index)
+}
+
+func withBusinessID(businessID string, ids []string) []driver.Value {
+	values := []driver.Value{businessID}
+	for _, id := range ids {
+		values = append(values, id)
+	}
+	return values
+}
+
+func withBusinessAndIDs(businessID string, idGroups ...[]string) []driver.Value {
+	values := []driver.Value{businessID}
+	return appendDriverIDs(values, idGroups...)
+}
+
+func withIDs(idGroups ...[]string) []driver.Value {
+	return appendDriverIDs(nil, idGroups...)
+}
+
+func appendDriverIDs(values []driver.Value, idGroups ...[]string) []driver.Value {
+	for _, ids := range idGroups {
+		for _, id := range ids {
+			values = append(values, id)
+		}
+	}
+	return values
 }

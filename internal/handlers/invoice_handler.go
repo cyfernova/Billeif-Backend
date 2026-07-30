@@ -4,6 +4,7 @@ import (
 	"errors"
 	"invoice-backend/internal/idempotency"
 	"invoice-backend/internal/invoiceissue"
+	"invoice-backend/internal/invoiceresolution"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/services"
 	"invoice-backend/internal/utils"
@@ -38,6 +39,7 @@ func NewInvoiceHandler(svc *services.InvoiceService, compliance *services.TaxCom
 // @Failure 400 {object} map[string]string
 // @Failure 409 {object} map[string]string
 // @Failure 500 {object} map[string]string
+// @Failure 503 {object} map[string]string
 // @Router /invoices [post]
 func (h *InvoiceHandler) Create(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("invoice_handler").With("operation", "create")
@@ -87,6 +89,10 @@ func invoiceCreateErrorStatus(err error) int {
 	var inProgress *idempotency.InProgressError
 	if errors.As(err, &inProgress) {
 		return http.StatusConflict
+	}
+	var resolverUnavailable *invoiceresolution.UnavailableError
+	if errors.As(err, &resolverUnavailable) {
+		return http.StatusServiceUnavailable
 	}
 	return http.StatusInternalServerError
 }

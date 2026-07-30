@@ -92,6 +92,16 @@ func (m *MockInvoiceRepository) CreateDraftAtomic(ctx context.Context, command i
 	return &interfaces.AtomicInvoiceDraftResult{Invoice: command.Invoice}, nil
 }
 
+func (m *MockInvoiceRepository) ReplayCompletedDraft(
+	context.Context,
+	string,
+	string,
+	string,
+	string,
+) (*interfaces.AtomicInvoiceDraftResult, error) {
+	return nil, nil
+}
+
 func (m *MockInvoiceRepository) ResolveInvoiceLines(
 	_ context.Context,
 	request invoiceresolution.Request,

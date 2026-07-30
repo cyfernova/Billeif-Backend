@@ -35,6 +35,40 @@ func (e *atomicInvoicePersistenceError) Unwrap() error {
 	return e.cause
 }
 
+func (r *invoiceRepository) ReplayCompletedDraft(
+	ctx context.Context,
+	businessID, command, idempotencyKey, requestHash string,
+) (*interfaces.AtomicInvoiceDraftResult, error) {
+	var existing models.APIIdempotencyKey
+	err := r.db.WithContext(ctx).
+		Where(
+			"business_id = ? AND command = ? AND idempotency_key = ?",
+			businessID,
+			command,
+			idempotencyKey,
+		).
+		First(&existing).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, atomicStageError("idempotency replay lookup", err)
+	}
+	if existing.RequestHash != requestHash {
+		return nil, &idempotency.ConflictError{}
+	}
+	if existing.Status != models.IdempotencyStatusCompleted ||
+		existing.ResultType == nil || *existing.ResultType != "invoice" ||
+		existing.ResultID == nil {
+		return nil, nil
+	}
+	invoice, err := r.getReplayInvoice(ctx, *existing.ResultID, businessID)
+	if err != nil {
+		return nil, atomicStageError("idempotency result replay", err)
+	}
+	return &interfaces.AtomicInvoiceDraftResult{Invoice: invoice, Replayed: true}, nil
+}
+
 func (r *invoiceRepository) CreateDraftAtomic(ctx context.Context, command interfaces.AtomicInvoiceDraft) (*interfaces.AtomicInvoiceDraftResult, error) {
 	if err := validateAtomicInvoiceDraft(command); err != nil {
 		return nil, atomicStageError("command validation", err)

@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -23,6 +24,7 @@ type atomicInvoiceRepositoryFake struct {
 	last       interfaces.AtomicInvoiceDraft
 	err        error
 
+	replayChecks        int
 	resolutionCalls     int
 	lastResolution      invoiceresolution.Request
 	resolutionSnapshots []invoiceresolution.LineSnapshot
@@ -54,6 +56,30 @@ func (r *atomicInvoiceRepositoryFake) CreateDraftAtomic(ctx context.Context, com
 	r.last = command
 	r.entries[scope] = atomicInvoiceEntry{hash: command.RequestHash, invoice: cloneInvoiceForAtomicTest(command.Invoice)}
 	return &interfaces.AtomicInvoiceDraftResult{Invoice: command.Invoice}, nil
+}
+
+func (r *atomicInvoiceRepositoryFake) ReplayCompletedDraft(
+	ctx context.Context,
+	businessID, command, idempotencyKey, requestHash string,
+) (*interfaces.AtomicInvoiceDraftResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.replayChecks++
+	scope := businessID + "/" + command + "/" + idempotencyKey
+	existing, ok := r.entries[scope]
+	if !ok {
+		return nil, nil
+	}
+	if existing.hash != requestHash {
+		return nil, &idempotency.ConflictError{}
+	}
+	return &interfaces.AtomicInvoiceDraftResult{
+		Invoice:  cloneInvoiceForAtomicTest(existing.invoice),
+		Replayed: true,
+	}, nil
 }
 
 func (r *atomicInvoiceRepositoryFake) ResolveInvoiceLines(
@@ -215,10 +241,21 @@ func TestInvoiceServiceCreatePersistsCanonicalDraftProjectionAtomically(t *testi
 	if invoice.ID == "" || invoice.InvoiceNo != nil || invoice.IssuedAt != nil || invoice.Version != 1 || invoice.Status != models.InvoiceStatusDraft {
 		t.Fatalf("invalid draft lifecycle: %#v", invoice)
 	}
+	if repo.replayChecks != 1 || repo.resolutionCalls != 1 || repo.executions != 1 {
+		t.Fatalf(
+			"first execution replay/resolution/atomic counts = %d/%d/%d, want 1/1/1",
+			repo.replayChecks,
+			repo.resolutionCalls,
+			repo.executions,
+		)
+	}
 	if invoice.SellerSnapshot.Name != "Acme Seller" || invoice.BuyerSnapshot.Name != "Buyer Ltd" {
 		t.Fatalf("legal party snapshots = seller %#v buyer %#v", invoice.SellerSnapshot, invoice.BuyerSnapshot)
 	}
 	command := repo.last
+	if command.RequestHash == "" {
+		t.Fatal("first atomic execution did not carry the raw canonical request hash")
+	}
 	if command.Invoice != invoice {
 		t.Fatal("atomic command did not persist the production invoice instance")
 	}
@@ -418,6 +455,48 @@ func TestInvoiceServiceCreateRejectsResolutionFailureBeforeAtomicCreate(t *testi
 	}
 }
 
+func TestInvoiceServiceCreateSanitizesResolverInfrastructureFailure(t *testing.T) {
+	service, repo, input, ctx := newAtomicInvoiceServiceFixture(t)
+	repo.resolutionErr = errors.New("dial tcp db.internal:5432: credential detail")
+
+	invoice, err := service.Create(ctx, input)
+
+	if invoice != nil {
+		t.Fatalf("invoice = %#v, want nil", invoice)
+	}
+	var unavailable *invoiceresolution.UnavailableError
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("error = %T %v, want typed resolver unavailable", err, err)
+	}
+	if strings.Contains(err.Error(), "db.internal") || strings.Contains(err.Error(), "credential") {
+		t.Fatalf("resolver infrastructure detail leaked: %v", err)
+	}
+	if repo.executions != 0 {
+		t.Fatalf("atomic executions = %d, want 0", repo.executions)
+	}
+}
+
+func TestInvoiceServiceCreateSanitizesResolverContractFailure(t *testing.T) {
+	service, repo, input, ctx := newAtomicInvoiceServiceFixture(t)
+	repo.resolutionSnapshots = []invoiceresolution.LineSnapshot{}
+
+	invoice, err := service.Create(ctx, input)
+
+	if invoice != nil {
+		t.Fatalf("invoice = %#v, want nil", invoice)
+	}
+	var unavailable *invoiceresolution.UnavailableError
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("error = %T %v, want typed resolver unavailable", err, err)
+	}
+	if strings.Contains(err.Error(), "0 snapshots") {
+		t.Fatalf("resolver contract detail leaked: %v", err)
+	}
+	if repo.executions != 0 {
+		t.Fatalf("atomic executions = %d, want 0", repo.executions)
+	}
+}
+
 func TestInvoiceServiceCreateKeepsExplicitLinePricingOverResolvedDefaults(t *testing.T) {
 	service, repo, input, ctx := newAtomicInvoiceServiceFixture(t)
 	input.Items[0].UnitPrice = 77
@@ -500,12 +579,39 @@ func TestInvoiceServiceCreateSnapshotsDiscountInInvoiceAndDocument(t *testing.T)
 	}
 }
 
+func TestInvoiceServiceCreateRejectsDiscountAboveResolvedGrossAtSharedCanonicalBoundary(t *testing.T) {
+	service, repo, input, ctx := newAtomicInvoiceServiceFixture(t)
+	input.Items[0].ProductID = uuid.NewString()
+	input.Items[0].UnitPrice = 0
+	input.Items[0].Quantity = 2
+	input.Items[0].Discount = 201
+	repo.resolutionSnapshots = []invoiceresolution.LineSnapshot{{
+		ProductID: input.Items[0].ProductID,
+		UnitPrice: 100,
+	}}
+
+	invoice, err := service.Create(ctx, input)
+
+	if invoice != nil {
+		t.Fatalf("invoice = %#v, want nil", invoice)
+	}
+	var invalid *idempotency.InvalidPayloadError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("error = %T %v, want sanitized invalid payload", err, err)
+	}
+	if repo.executions != 0 {
+		t.Fatalf("atomic executions = %d, want 0", repo.executions)
+	}
+}
+
 func TestInvoiceServiceCreateReplaysSameKeyAndConflictsOnChangedPayload(t *testing.T) {
 	service, repo, input, ctx := newAtomicInvoiceServiceFixture(t)
 	first, err := service.Create(ctx, input)
 	if err != nil {
 		t.Fatalf("first create: %v", err)
 	}
+	initialResolutionCalls := repo.resolutionCalls
+	repo.resolutionErr = errors.New("catalog changed after completed request")
 	replay, err := service.Create(ctx, input)
 	if err != nil {
 		t.Fatalf("replay create: %v", err)
@@ -515,6 +621,9 @@ func TestInvoiceServiceCreateReplaysSameKeyAndConflictsOnChangedPayload(t *testi
 	}
 	if repo.executions != 1 {
 		t.Fatalf("atomic executions = %d, want 1", repo.executions)
+	}
+	if repo.resolutionCalls != initialResolutionCalls {
+		t.Fatalf("resolution calls = %d, want unchanged %d on completed replay", repo.resolutionCalls, initialResolutionCalls)
 	}
 
 	changed := input
@@ -529,6 +638,9 @@ func TestInvoiceServiceCreateReplaysSameKeyAndConflictsOnChangedPayload(t *testi
 	}
 	if repo.executions != 1 {
 		t.Fatalf("atomic executions after conflict = %d, want 1", repo.executions)
+	}
+	if repo.resolutionCalls != initialResolutionCalls {
+		t.Fatalf("resolution calls after conflict = %d, want unchanged %d", repo.resolutionCalls, initialResolutionCalls)
 	}
 }
 

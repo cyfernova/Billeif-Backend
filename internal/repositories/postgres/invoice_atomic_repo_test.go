@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"invoice-backend/internal/idempotency"
 	"invoice-backend/internal/invoiceprojection"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
@@ -180,6 +181,93 @@ func TestInvoiceRepositoryCreateDraftAtomicReplaysStoredReferenceWhenInvoiceIsNo
 	}
 	if result == nil || result.Invoice == nil || result.Invoice.ID != resultID || !result.Replayed {
 		t.Fatalf("replay result = %#v, want stored invoice reference %s", result, resultID)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations: %v", err)
+	}
+}
+
+func TestInvoiceRepositoryReplayCompletedDraftUsesRawRequestIdentityBeforeResolution(t *testing.T) {
+	repository, mock, closeDatabase := newAtomicSQLMockRepository(t)
+	defer closeDatabase()
+	command := atomicRepositoryTestCommand()
+	resultType := "invoice"
+	resultID := uuid.NewString()
+
+	mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{
+		"business_id",
+		"command",
+		"idempotency_key",
+		"request_hash",
+		"status",
+		"result_type",
+		"result_id",
+	}).AddRow(
+		command.BusinessID,
+		command.Command,
+		command.IdempotencyKey,
+		command.RequestHash,
+		models.IdempotencyStatusCompleted,
+		resultType,
+		resultID,
+	))
+	mock.ExpectQuery("").WillReturnRows(
+		sqlmock.NewRows([]string{"id", "business_id"}).AddRow(resultID, command.BusinessID),
+	)
+	mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{"id", "invoice_id"}))
+
+	result, err := repository.ReplayCompletedDraft(
+		context.Background(),
+		command.BusinessID,
+		command.Command,
+		command.IdempotencyKey,
+		command.RequestHash,
+	)
+
+	if err != nil {
+		t.Fatalf("pre-resolution replay: %v", err)
+	}
+	if result == nil || !result.Replayed || result.Invoice == nil || result.Invoice.ID != resultID {
+		t.Fatalf("replay result = %#v, want completed invoice %s", result, resultID)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations: %v", err)
+	}
+}
+
+func TestInvoiceRepositoryReplayCompletedDraftRejectsChangedRawPayload(t *testing.T) {
+	repository, mock, closeDatabase := newAtomicSQLMockRepository(t)
+	defer closeDatabase()
+	command := atomicRepositoryTestCommand()
+
+	mock.ExpectQuery("").WillReturnRows(sqlmock.NewRows([]string{
+		"business_id",
+		"command",
+		"idempotency_key",
+		"request_hash",
+		"status",
+	}).AddRow(
+		command.BusinessID,
+		command.Command,
+		command.IdempotencyKey,
+		strings.Repeat("b", 64),
+		models.IdempotencyStatusCompleted,
+	))
+
+	result, err := repository.ReplayCompletedDraft(
+		context.Background(),
+		command.BusinessID,
+		command.Command,
+		command.IdempotencyKey,
+		command.RequestHash,
+	)
+
+	if result != nil {
+		t.Fatalf("result = %#v, want nil", result)
+	}
+	var conflict *idempotency.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("error = %T %v, want changed raw payload conflict", err, err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("SQL expectations: %v", err)

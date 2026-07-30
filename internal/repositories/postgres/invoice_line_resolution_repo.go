@@ -30,7 +30,7 @@ func (r *invoiceRepository) ResolveInvoiceLines(
 			Where("business_id = ? AND id IN ?", request.BusinessID, productIDs).
 			Order("id ASC").
 			Find(&loaded).Error; err != nil {
-			return nil, err
+			return nil, fmt.Errorf("resolve invoice products: %w", err)
 		}
 		for _, product := range loaded {
 			products[product.ID] = product
@@ -50,7 +50,7 @@ func (r *invoiceRepository) ResolveInvoiceLines(
 			Where("business_id = ? AND id IN ?", request.BusinessID, variantIDs).
 			Order("id ASC").
 			Find(&loaded).Error; err != nil {
-			return nil, err
+			return nil, fmt.Errorf("resolve invoice variants: %w", err)
 		}
 		for _, variant := range loaded {
 			variants[variant.ID] = variant
@@ -70,7 +70,7 @@ func (r *invoiceRepository) ResolveInvoiceLines(
 			Where("business_id = ? AND id IN ?", request.BusinessID, warehouseIDs).
 			Order("id ASC").
 			Find(&loaded).Error; err != nil {
-			return nil, err
+			return nil, fmt.Errorf("resolve invoice warehouses: %w", err)
 		}
 		for _, warehouse := range loaded {
 			warehouses[warehouse.ID] = warehouse
@@ -95,7 +95,7 @@ func (r *invoiceRepository) ResolveInvoiceLines(
 			).
 			Order("id ASC").
 			Find(&loaded).Error; err != nil {
-			return nil, err
+			return nil, fmt.Errorf("resolve invoice catalogues: %w", err)
 		}
 		for _, catalogue := range loaded {
 			catalogues[catalogueKey(catalogue.ProductID, catalogue.WarehouseID)] = catalogue
@@ -142,7 +142,7 @@ func (r *invoiceRepository) ResolveInvoiceLines(
 			Where("business_id = ? AND id IN ? AND is_active = TRUE", request.BusinessID, priceListIDs).
 			Order("id ASC").
 			Find(&loaded).Error; err != nil {
-			return nil, err
+			return nil, fmt.Errorf("resolve invoice price lists: %w", err)
 		}
 		for _, priceList := range loaded {
 			priceLists[priceList.ID] = priceList
@@ -168,7 +168,7 @@ func (r *invoiceRepository) ResolveInvoiceLines(
 			query = query.Where("variant_id IN ?", variantIDs)
 		}
 		if err := query.Order("updated_at DESC, id ASC").Find(&loaded).Error; err != nil {
-			return nil, err
+			return nil, fmt.Errorf("resolve invoice price-list items: %w", err)
 		}
 		for _, item := range loaded {
 			productID := pointerValue(item.ProductID)
