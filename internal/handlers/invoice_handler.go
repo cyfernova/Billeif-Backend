@@ -3,12 +3,12 @@ package handlers
 import (
 	"errors"
 	"invoice-backend/internal/idempotency"
+	"invoice-backend/internal/invoicecursor"
 	"invoice-backend/internal/invoiceissue"
 	"invoice-backend/internal/invoiceresolution"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/internal/services"
-	"invoice-backend/internal/utils"
 	"invoice-backend/pkg/logger"
 	"net/http"
 	"strconv"
@@ -20,11 +20,26 @@ import (
 type InvoiceHandler struct {
 	svc        *services.InvoiceService
 	compliance *services.TaxComplianceService
+	cursor     InvoiceCursorCodec
 	log        *logger.Logger
 }
 
-func NewInvoiceHandler(svc *services.InvoiceService, compliance *services.TaxComplianceService, log *logger.Logger) *InvoiceHandler {
-	return &InvoiceHandler{svc: svc, compliance: compliance, log: log}
+type InvoiceCursorCodec interface {
+	Encode(businessID string, position invoicecursor.Position) (string, error)
+	Decode(token, expectedBusinessID string) (invoicecursor.Position, error)
+}
+
+func NewInvoiceHandler(
+	svc *services.InvoiceService,
+	compliance *services.TaxComplianceService,
+	log *logger.Logger,
+	cursorCodecs ...InvoiceCursorCodec,
+) *InvoiceHandler {
+	var cursor InvoiceCursorCodec
+	if len(cursorCodecs) != 0 {
+		cursor = cursorCodecs[0]
+	}
+	return &InvoiceHandler{svc: svc, compliance: compliance, cursor: cursor, log: log}
 }
 
 // Create creates a new invoice
@@ -292,10 +307,9 @@ func (h *InvoiceHandler) Get(c *gin.Context) {
 // @Tags Invoices
 // @Produce json
 // @Security BearerAuth
-// @Param business_id query string true "Business ID"
-// @Param page query int false "Page number" default(1)
-// @Param limit query int false "Page size" default(10)
-// @Success 200 {object} map[string]interface{}
+// @Param limit query int false "Page size (default 20, maximum 100)"
+// @Param cursor query string false "Opaque continuation cursor"
+// @Success 200 {object} InvoiceListResponse
 // @Failure 400 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /invoices [get]
@@ -305,23 +319,86 @@ func (h *InvoiceHandler) List(c *gin.Context) {
 	if !ok {
 		return
 	}
-
-	page, limit := utils.ParsePagination(c)
-
-	invoices, total, err := h.svc.List(c.Request.Context(), businessID, page, limit)
-	if err != nil {
-		log.Error("failed to list invoices", "error", err, "business_id", businessID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if _, supplied := c.GetQuery("page"); supplied {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "page pagination is not supported"})
 		return
 	}
-	log.Debug("invoices listed", "business_id", businessID, "count", len(invoices), "total", total)
 
-	c.JSON(http.StatusOK, gin.H{
-		"data":  invoices,
-		"total": total,
-		"page":  page,
-		"limit": limit,
+	limit, ok := parseInvoiceListLimit(c.Query("limit"))
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid limit"})
+		return
+	}
+	if h.cursor == nil {
+		log.Error("invoice cursor codec is unavailable")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list invoices"})
+		return
+	}
+	var position *invoicecursor.Position
+	if token, supplied := c.GetQuery("cursor"); supplied {
+		decoded, err := h.cursor.Decode(token, businessID)
+		if err != nil {
+			if errors.Is(err, invoicecursor.ErrInvalidCursor) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cursor"})
+				return
+			}
+			log.Error("failed to decode invoice cursor", "error", err, "business_id", businessID)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list invoices"})
+			return
+		}
+		position = &decoded
+	}
+
+	invoices, hasMore, err := h.svc.List(c.Request.Context(), businessID, position, limit)
+	if err != nil {
+		log.Error("failed to list invoices", "error", err, "business_id", businessID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list invoices"})
+		return
+	}
+	var nextCursor *string
+	if hasMore && len(invoices) != 0 {
+		last := invoices[len(invoices)-1]
+		encoded, err := h.cursor.Encode(businessID, invoicecursor.Position{
+			CreatedAt: last.CreatedAt,
+			ID:        last.ID,
+		})
+		if err != nil {
+			log.Error("failed to encode invoice cursor", "error", err, "business_id", businessID)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list invoices"})
+			return
+		}
+		nextCursor = &encoded
+	}
+	log.Debug("invoices listed", "business_id", businessID, "count", len(invoices), "has_more", hasMore)
+
+	c.JSON(http.StatusOK, InvoiceListResponse{
+		Items:      invoices,
+		NextCursor: nextCursor,
 	})
+}
+
+type InvoiceListResponse struct {
+	Items      []*models.Invoice `json:"items"`
+	NextCursor *string           `json:"next_cursor"`
+}
+
+func parseInvoiceListLimit(raw string) (int, bool) {
+	if raw == "" {
+		return 20, true
+	}
+	for _, digit := range raw {
+		if digit < '0' || digit > '9' {
+			return 0, false
+		}
+	}
+	limit, err := strconv.Atoi(raw)
+	if err != nil || limit <= 0 {
+		return 0, false
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	return limit, true
 }
 
 // Update updates an invoice

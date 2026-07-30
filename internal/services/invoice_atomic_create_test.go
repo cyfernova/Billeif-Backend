@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"invoice-backend/internal/idempotency"
+	"invoice-backend/internal/invoicecursor"
 	"invoice-backend/internal/invoiceresolution"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
@@ -114,8 +115,8 @@ func (r *atomicInvoiceRepositoryFake) GetByIDInternal(ctx context.Context, id st
 func (r *atomicInvoiceRepositoryFake) GetByInvoiceNo(ctx context.Context, businessID, invoiceNo string) (*models.Invoice, error) {
 	return nil, errors.New("not implemented")
 }
-func (r *atomicInvoiceRepositoryFake) GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.Invoice, int64, error) {
-	return nil, 0, errors.New("not implemented")
+func (r *atomicInvoiceRepositoryFake) ListByCursor(context.Context, string, *invoicecursor.Position, int) ([]*models.Invoice, bool, error) {
+	return nil, false, errors.New("not implemented")
 }
 func (r *atomicInvoiceRepositoryFake) GetItems(ctx context.Context, invoiceID string) ([]*models.InvoiceItem, error) {
 	return nil, errors.New("not implemented")

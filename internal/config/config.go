@@ -130,6 +130,7 @@ type SecretIdentifiers struct {
 	GSTProvider          string `mapstructure:"GST_PROVIDER"`
 	Deepgram             string `mapstructure:"DEEPGRAM"`
 	DeepSeek             string `mapstructure:"DEEPSEEK"`
+	InvoiceCursorHMAC    string `mapstructure:"INVOICE_CURSOR_HMAC"`
 }
 
 type WebSocketConfig struct {
@@ -325,6 +326,7 @@ func LoadForProfile(profile Profile) (*Config, error) {
 	_ = viper.BindEnv("SECRETS.GST_PROVIDER", "GST_PROVIDER_SECRET_ARN")
 	_ = viper.BindEnv("SECRETS.DEEPGRAM", "DEEPGRAM_SECRET_ARN")
 	_ = viper.BindEnv("SECRETS.DEEPSEEK", "DEEPSEEK_SECRET_ARN")
+	_ = viper.BindEnv("SECRETS.INVOICE_CURSOR_HMAC", "INVOICE_CURSOR_HMAC_SECRET_ARN")
 	_ = viper.BindEnv("WEBSOCKET.API_ENDPOINT", "WEBSOCKET_API_ENDPOINT")
 	_ = viper.BindEnv("WEBSOCKET.CONNECTIONS_TABLE", "WEBSOCKET_CONNECTIONS_TABLE")
 	_ = viper.BindEnv("COGNITO.USER_POOL_ID", "COGNITO_USER_POOL_ID")
@@ -488,6 +490,7 @@ func applyFlatEnvFileFallbacks(cfg *Config) {
 	setIfEmpty(&cfg.Secrets.GSTProvider, "GST_PROVIDER_SECRET_ARN")
 	setIfEmpty(&cfg.Secrets.Deepgram, "DEEPGRAM_SECRET_ARN")
 	setIfEmpty(&cfg.Secrets.DeepSeek, "DEEPSEEK_SECRET_ARN")
+	setIfEmpty(&cfg.Secrets.InvoiceCursorHMAC, "INVOICE_CURSOR_HMAC_SECRET_ARN")
 
 	setIfEmpty(&cfg.Cognito.UserPoolID, "COGNITO_USER_POOL_ID")
 	setIfEmpty(&cfg.Cognito.ClientID, "COGNITO_CLIENT_ID")

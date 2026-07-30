@@ -101,6 +101,10 @@ locals {
     DEEPSEEK_SECRET_ARN              = aws_secretsmanager_secret.deepseek.arn
   })
 
+  http_cursor_secret_env = {
+    INVOICE_CURSOR_HMAC_SECRET_ARN = aws_secretsmanager_secret.billeif_invoice_cursor_hmac.arn
+  }
+
   worker_secret_env = {
     invoice = merge(local.database_runtime_env, {
       CREDENTIAL_ENCRYPTION_SECRET_ARN = aws_secretsmanager_secret.credential_encryption.arn
@@ -319,7 +323,7 @@ resource "aws_lambda_function" "sqs_ses_feedback" {
 
 resource "aws_lambda_function" "api_http" {
   function_name     = "${local.resource_prefix}-api-http"
-  role              = aws_iam_role.lambda_exec.arn
+  role              = aws_iam_role.lambda_http_exec.arn
   runtime           = "provided.al2023"
   handler           = "bootstrap"
   architectures     = ["arm64"]
@@ -337,7 +341,7 @@ resource "aws_lambda_function" "api_http" {
   }
 
   environment {
-    variables = merge(local.common_lambda_env, local.http_secret_env, {
+    variables = merge(local.common_lambda_env, local.http_secret_env, local.http_cursor_secret_env, {
       WEBSOCKET_API_ENDPOINT = local.websocket_api_invoke_url
       SERVER_BASE_URL        = local.rest_api_invoke_url
     })
@@ -355,7 +359,13 @@ resource "aws_lambda_function" "api_http" {
     }
   }
 
-  depends_on = [aws_cloudwatch_log_group.lambda_api_http]
+  depends_on = [
+    aws_cloudwatch_log_group.lambda_api_http,
+    aws_iam_role_policy.lambda_http_app,
+    aws_iam_role_policy.invoice_cursor_http,
+    aws_iam_role_policy_attachment.lambda_http_basic,
+    aws_iam_role_policy_attachment.lambda_http_vpc_access,
+  ]
 }
 
 resource "aws_lambda_function" "a2a_stream" {

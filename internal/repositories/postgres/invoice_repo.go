@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"invoice-backend/internal/idempotency"
+	"invoice-backend/internal/invoicecursor"
 	"invoice-backend/internal/invoiceissue"
 	"invoice-backend/internal/models"
 	interfaces "invoice-backend/internal/repositories/interfaces"
@@ -300,28 +301,39 @@ func (r *invoiceRepository) GetByInvoiceNo(ctx context.Context, businessID, invo
 	return &invoice, err
 }
 
-func (r *invoiceRepository) GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.Invoice, int64, error) {
+func (r *invoiceRepository) ListByCursor(
+	ctx context.Context,
+	businessID string,
+	cursor *invoicecursor.Position,
+	limit int,
+) ([]*models.Invoice, bool, error) {
 	var invoices []models.Invoice
-	var total int64
-
-	offset := (page - 1) * limit
-
-	query := r.db.WithContext(ctx).Model(&models.Invoice{}).Where("business_id = ? AND deleted_at IS NULL", businessID).Order("created_at DESC")
-
-	if err := query.Count(&total).Error; err != nil {
-		return nil, 0, err
+	query := r.db.WithContext(ctx).
+		Where("business_id = ? AND deleted_at IS NULL", businessID)
+	if cursor != nil {
+		query = query.Where(
+			"(created_at < ?) OR (created_at = ? AND id < ?)",
+			cursor.CreatedAt,
+			cursor.CreatedAt,
+			cursor.ID,
+		)
+	}
+	if err := query.
+		Order("created_at DESC, id DESC").
+		Limit(limit + 1).
+		Find(&invoices).Error; err != nil {
+		return nil, false, err
 	}
 
-	if err := query.Offset(offset).Limit(limit).Find(&invoices).Error; err != nil {
-		return nil, 0, err
+	hasMore := len(invoices) > limit
+	if hasMore {
+		invoices = invoices[:limit]
 	}
-
 	result := make([]*models.Invoice, len(invoices))
 	for i := range invoices {
 		result[i] = &invoices[i]
 	}
-
-	return result, total, nil
+	return result, hasMore, nil
 }
 
 func (r *invoiceRepository) GetItems(ctx context.Context, invoiceID string) ([]*models.InvoiceItem, error) {

@@ -78,13 +78,28 @@ resource "aws_iam_role" "lambda_exec" {
   assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
 }
 
+resource "aws_iam_role" "lambda_http_exec" {
+  name               = "${local.resource_prefix}-lambda-http-exec-role"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
+}
+
 resource "aws_iam_role_policy_attachment" "lambda_basic" {
   role       = aws_iam_role.lambda_exec.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
+resource "aws_iam_role_policy_attachment" "lambda_http_basic" {
+  role       = aws_iam_role.lambda_http_exec.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
 resource "aws_iam_role_policy_attachment" "lambda_vpc_access" {
   role       = aws_iam_role.lambda_exec.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_http_vpc_access" {
+  role       = aws_iam_role.lambda_http_exec.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
 }
 
@@ -577,6 +592,61 @@ resource "aws_iam_role_policy" "lambda_app" {
   name   = "${local.resource_prefix}-lambda-app-policy"
   role   = aws_iam_role.lambda_exec.id
   policy = data.aws_iam_policy_document.lambda_app.json
+}
+
+resource "aws_iam_role_policy" "lambda_http_app" {
+  name   = "${local.resource_prefix}-lambda-http-app-policy"
+  role   = aws_iam_role.lambda_http_exec.id
+  policy = data.aws_iam_policy_document.lambda_app.json
+}
+
+data "aws_iam_policy_document" "invoice_cursor_http" {
+  statement {
+    sid    = "InvoiceCursorSecret"
+    effect = "Allow"
+    actions = [
+      "secretsmanager:DescribeSecret",
+      "secretsmanager:GetSecretValue"
+    ]
+    resources = [aws_secretsmanager_secret.billeif_invoice_cursor_hmac.arn]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["true"]
+    }
+  }
+
+  statement {
+    sid       = "InvoiceCursorKMSDecrypt"
+    effect    = "Allow"
+    actions   = ["kms:Decrypt"]
+    resources = [aws_kms_key.application_secrets.arn]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["true"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["secretsmanager.${var.aws_region}.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:EncryptionContext:SecretARN"
+      values   = [aws_secretsmanager_secret.billeif_invoice_cursor_hmac.arn]
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "invoice_cursor_http" {
+  name   = "${local.resource_prefix}-invoice-cursor-http-policy"
+  role   = aws_iam_role.lambda_http_exec.id
+  policy = data.aws_iam_policy_document.invoice_cursor_http.json
 }
 
 data "aws_iam_policy_document" "lambda_worker_app" {

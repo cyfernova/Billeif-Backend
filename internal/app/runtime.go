@@ -123,6 +123,14 @@ func Initialize(ctx context.Context, opts InitializeOptions) (*Runtime, error) {
 		log.Sync()
 		return nil, fmt.Errorf("initialize runtime resolver: %w", err)
 	}
+	var invoiceCursor handlers.InvoiceCursorCodec
+	if opts.Profile == config.ProfileHTTP && strings.TrimSpace(cfg.Secrets.InvoiceCursorHMAC) != "" {
+		invoiceCursor, err = resolver.InvoiceCursorCodec(ctx, cfg.Secrets.InvoiceCursorHMAC)
+		if err != nil {
+			log.Sync()
+			return nil, fmt.Errorf("initialize invoice cursor codec: %w", err)
+		}
+	}
 	db, err := initDatabase(cfg, resolver, log)
 	if err != nil {
 		log.Sync()
@@ -131,7 +139,7 @@ func Initialize(ctx context.Context, opts InitializeOptions) (*Runtime, error) {
 
 	repos := initRepositories(db)
 	svcs := initServices(cfg, db, repos, awsClients, resolver, log)
-	h := handlers.New(svcs, &handlers.Repositories{AP2: repos.AP2}, cfg, log)
+	h := handlers.New(svcs, &handlers.Repositories{AP2: repos.AP2}, cfg, log, invoiceCursor)
 	router := setupRouter(cfg, svcs, h, log)
 
 	rt := &Runtime{

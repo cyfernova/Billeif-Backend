@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"invoice-backend/internal/invoicecursor"
 	"invoice-backend/internal/invoiceresolution"
 	"invoice-backend/internal/models"
 )
@@ -68,7 +69,7 @@ type InvoiceRepository interface {
 	// GetByIDInternal fetches by ID without tenant scoping. Only for trusted internal callers (workers).
 	GetByIDInternal(ctx context.Context, id string) (*models.Invoice, error)
 	GetByInvoiceNo(ctx context.Context, businessID, invoiceNo string) (*models.Invoice, error)
-	GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.Invoice, int64, error)
+	ListByCursor(ctx context.Context, businessID string, cursor *invoicecursor.Position, limit int) ([]*models.Invoice, bool, error)
 	GetItems(ctx context.Context, invoiceID string) ([]*models.InvoiceItem, error)
 	Update(ctx context.Context, invoice *models.Invoice) error
 	UpdateStatus(ctx context.Context, invoiceID string, status string) error

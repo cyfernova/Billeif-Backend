@@ -562,11 +562,14 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_cloudwatch_metric_alarm.ses_feedback_queue_age",
 		"aws_iam_role.database_migrator",
 		"aws_iam_role.email_delivery",
+		"aws_iam_role.lambda_http_exec",
 		"aws_iam_role.ses_feedback",
 		"aws_iam_role.outbox_dispatcher",
 		"aws_iam_role.outbox_scheduler",
 		"aws_iam_role_policy.database_migrator",
 		"aws_iam_role_policy.email_delivery",
+		"aws_iam_role_policy.invoice_cursor_http",
+		"aws_iam_role_policy.lambda_http_app",
 		"aws_iam_role_policy.ses_feedback",
 		"aws_iam_role_policy.outbox_dispatcher",
 		"aws_iam_role_policy.outbox_scheduler",
@@ -574,6 +577,8 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_iam_role_policy_attachment.outbox_dispatcher_vpc_access",
 		"aws_iam_role_policy_attachment.email_delivery_basic",
 		"aws_iam_role_policy_attachment.email_delivery_vpc_access",
+		"aws_iam_role_policy_attachment.lambda_http_basic",
+		"aws_iam_role_policy_attachment.lambda_http_vpc_access",
 		"aws_iam_role_policy_attachment.ses_feedback_basic",
 		"aws_iam_role_policy_attachment.ses_feedback_vpc_access",
 		"aws_lambda_event_source_mapping.email_delivery_queue",
@@ -584,6 +589,7 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_lambda_function.sqs_ses_feedback",
 		"aws_lambda_invocation.database_migrations",
 		"aws_scheduler_schedule.outbox_dispatcher",
+		"aws_secretsmanager_secret.billeif_invoice_cursor_hmac",
 		"aws_security_group.database_migrator",
 		"aws_sns_topic_policy.ses_events",
 		"aws_sns_topic_subscription.ses_feedback",
@@ -616,7 +622,7 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 	)
 	assertExactManifest(t, "Terraform output keys", terraformOutputKeys(t), wantOutputs)
 	wantEnvironment := removeManifestEntry(manifestLines(preTaskEnvironmentManifest), "SQS_PAYMENT_QUEUE")
-	wantEnvironment = append(wantEnvironment, "SES_SENDING_ACCOUNT_ID")
+	wantEnvironment = append(wantEnvironment, "INVOICE_CURSOR_HMAC_SECRET_ARN", "SES_SENDING_ACCOUNT_ID")
 	assertExactManifest(t, "Terraform environment keys", terraformEnvironmentKeys(t), wantEnvironment)
 
 	providers := readTerraformFile(t, "providers.tf")

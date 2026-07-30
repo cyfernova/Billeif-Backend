@@ -52,6 +52,22 @@ mock_provider "aws" {
   }
 
   override_resource {
+    target          = aws_iam_role.lambda_exec
+    override_during = plan
+    values = {
+      arn = "arn:aws:iam::123456789012:role/billeif-lambda-exec"
+    }
+  }
+
+  override_resource {
+    target          = aws_iam_role.lambda_http_exec
+    override_during = plan
+    values = {
+      arn = "arn:aws:iam::123456789012:role/billeif-lambda-http-exec"
+    }
+  }
+
+  override_resource {
     target          = aws_db_instance.main
     override_during = plan
     values = {
@@ -123,6 +139,14 @@ mock_provider "aws" {
     override_during = plan
     values = {
       arn = "arn:aws:secretsmanager:ap-south-1:123456789012:secret:deepseek"
+    }
+  }
+
+  override_resource {
+    target          = aws_secretsmanager_secret.billeif_invoice_cursor_hmac
+    override_during = plan
+    values = {
+      arn = "arn:aws:secretsmanager:ap-south-1:123456789012:secret:billeif-invoice-cursor-hmac"
     }
   }
 }
@@ -235,6 +259,7 @@ run "secret_metadata_rds_lambda_iam_and_output" {
     condition = (
       length(distinct([
         aws_secretsmanager_secret.credential_encryption.name,
+        aws_secretsmanager_secret.billeif_invoice_cursor_hmac.name,
         aws_secretsmanager_secret.razorpay.name,
         aws_secretsmanager_secret.legacy_jwt.name,
         aws_secretsmanager_secret.google_oauth.name,
@@ -246,9 +271,10 @@ run "secret_metadata_rds_lambda_iam_and_output" {
         aws_secretsmanager_secret.gst_provider.name,
         aws_secretsmanager_secret.deepgram.name,
         aws_secretsmanager_secret.deepseek.name
-      ])) == 12 &&
+      ])) == 13 &&
       alltrue([
         aws_secretsmanager_secret.credential_encryption.kms_key_id == aws_kms_key.application_secrets.arn,
+        aws_secretsmanager_secret.billeif_invoice_cursor_hmac.kms_key_id == aws_kms_key.application_secrets.arn,
         aws_secretsmanager_secret.razorpay.kms_key_id == aws_kms_key.application_secrets.arn,
         aws_secretsmanager_secret.legacy_jwt.kms_key_id == aws_kms_key.application_secrets.arn,
         aws_secretsmanager_secret.google_oauth.kms_key_id == aws_kms_key.application_secrets.arn,
@@ -279,6 +305,7 @@ run "secret_metadata_rds_lambda_iam_and_output" {
         "EXA_SECRET_ARN",
         "GST_LOOKUP_SECRET_ARN",
         "GST_PROVIDER_SECRET_ARN",
+        "INVOICE_CURSOR_HMAC_SECRET_ARN",
         "LLM_SECRET_ARN",
         "RAZORPAY_SECRET_ARN",
         "DEEPGRAM_SECRET_ARN",
@@ -515,6 +542,67 @@ run "billeif_branding_defaults_and_public_url_inputs" {
       local.ses_verified_identity_arn == "arn:aws:ses:ap-south-1:123456789012:identity/billeif.example"
     )
     error_message = "Representative AWS resources and the SES contract must use Billeif project/environment naming."
+  }
+
+  assert {
+    condition = (
+      aws_secretsmanager_secret.billeif_invoice_cursor_hmac.name == "/billeif/preview/application/billeif-invoice-cursor-hmac" &&
+      aws_secretsmanager_secret.billeif_invoice_cursor_hmac.kms_key_id == aws_kms_key.application_secrets.arn &&
+      aws_secretsmanager_secret.billeif_invoice_cursor_hmac.recovery_window_in_days == 7
+    )
+    error_message = "The Billeif invoice cursor secret must be metadata-only under the application KMS key and recovery convention."
+  }
+
+  assert {
+    condition = (
+      aws_lambda_function.api_http.role == aws_iam_role.lambda_http_exec.arn &&
+      aws_lambda_function.a2a_stream.role == aws_iam_role.lambda_exec.arn &&
+      aws_lambda_function.api_http.environment[0].variables["INVOICE_CURSOR_HMAC_SECRET_ARN"] == aws_secretsmanager_secret.billeif_invoice_cursor_hmac.arn &&
+      !contains(keys(aws_lambda_function.a2a_stream.environment[0].variables), "INVOICE_CURSOR_HMAC_SECRET_ARN") &&
+      !contains(keys(aws_lambda_function.sqs_invoice.environment[0].variables), "INVOICE_CURSOR_HMAC_SECRET_ARN") &&
+      !contains(keys(aws_lambda_function.sqs_gst.environment[0].variables), "INVOICE_CURSOR_HMAC_SECRET_ARN") &&
+      !contains(keys(aws_lambda_function.sqs_bargaining.environment[0].variables), "INVOICE_CURSOR_HMAC_SECRET_ARN") &&
+      !contains(keys(aws_lambda_function.sqs_email_delivery.environment[0].variables), "INVOICE_CURSOR_HMAC_SECRET_ARN") &&
+      !contains(keys(aws_lambda_function.sqs_ses_feedback.environment[0].variables), "INVOICE_CURSOR_HMAC_SECRET_ARN") &&
+      !contains(keys(aws_lambda_function.outbox_dispatcher.environment[0].variables), "INVOICE_CURSOR_HMAC_SECRET_ARN") &&
+      !contains(keys(aws_lambda_function.ws_handler.environment[0].variables), "INVOICE_CURSOR_HMAC_SECRET_ARN") &&
+      !contains(keys(aws_lambda_function.voice_session.environment[0].variables), "INVOICE_CURSOR_HMAC_SECRET_ARN")
+    )
+    error_message = "Only the dedicated Billeif HTTP runtime may receive the invoice cursor secret ARN."
+  }
+
+  assert {
+    condition = (
+      length([
+        for statement in data.aws_iam_policy_document.invoice_cursor_http.statement : statement
+        if statement.sid == "InvoiceCursorSecret" &&
+        length(statement.actions) == 2 &&
+        contains(statement.actions, "secretsmanager:GetSecretValue") &&
+        contains(statement.actions, "secretsmanager:DescribeSecret") &&
+        length(statement.resources) == 1 &&
+        contains(statement.resources, aws_secretsmanager_secret.billeif_invoice_cursor_hmac.arn)
+      ]) == 1 &&
+      length([
+        for statement in data.aws_iam_policy_document.invoice_cursor_http.statement : statement
+        if statement.sid == "InvoiceCursorKMSDecrypt" &&
+        length(statement.actions) == 1 &&
+        contains(statement.actions, "kms:Decrypt") &&
+        length(statement.resources) == 1 &&
+        contains(statement.resources, aws_kms_key.application_secrets.arn) &&
+        length([
+          for condition in statement.condition : condition
+          if condition.variable == "kms:ViaService" &&
+          contains(condition.values, "secretsmanager.ap-south-1.amazonaws.com")
+        ]) == 1 &&
+        length([
+          for condition in statement.condition : condition
+          if condition.variable == "kms:EncryptionContext:SecretARN" &&
+          length(condition.values) == 1 &&
+          contains(condition.values, aws_secretsmanager_secret.billeif_invoice_cursor_hmac.arn)
+        ]) == 1
+      ]) == 1
+    )
+    error_message = "The dedicated HTTP cursor policy must scope Secrets Manager and KMS access to the Billeif cursor secret."
   }
 
   assert {

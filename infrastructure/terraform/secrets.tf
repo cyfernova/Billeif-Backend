@@ -86,6 +86,13 @@ resource "aws_secretsmanager_secret" "credential_encryption" {
   recovery_window_in_days = 7
 }
 
+resource "aws_secretsmanager_secret" "billeif_invoice_cursor_hmac" {
+  name                    = "/${var.project_name}/${var.environment}/application/billeif-invoice-cursor-hmac"
+  description             = "Billeif invoice cursor HMAC key metadata"
+  kms_key_id              = aws_kms_key.application_secrets.arn
+  recovery_window_in_days = 7
+}
+
 resource "aws_secretsmanager_secret" "razorpay" {
   name                    = "/${var.project_name}/${var.environment}/providers/razorpay"
   description             = "Razorpay credential metadata"

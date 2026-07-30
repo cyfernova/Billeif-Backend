@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"invoice-backend/internal/invoicecursor"
 	"invoice-backend/internal/invoiceresolution"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
@@ -52,9 +53,9 @@ func (m *MockInvoiceRepository) GetByInvoiceNo(ctx context.Context, businessID, 
 	return args.Get(0).(*models.Invoice), args.Error(1)
 }
 
-func (m *MockInvoiceRepository) GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.Invoice, int64, error) {
-	args := m.Called(ctx, businessID, page, limit)
-	return args.Get(0).([]*models.Invoice), args.Get(1).(int64), args.Error(2)
+func (m *MockInvoiceRepository) ListByCursor(ctx context.Context, businessID string, cursor *invoicecursor.Position, limit int) ([]*models.Invoice, bool, error) {
+	args := m.Called(ctx, businessID, cursor, limit)
+	return args.Get(0).([]*models.Invoice), args.Bool(1), args.Error(2)
 }
 
 func (m *MockInvoiceRepository) GetItems(ctx context.Context, invoiceID string) ([]*models.InvoiceItem, error) {
@@ -565,7 +566,6 @@ func TestInvoiceService_List_Success(t *testing.T) {
 
 	ctx := services.ContextWithActor(context.Background(), services.ActorContext{UserID: uuid.NewString()})
 	businessID := "business-123"
-	page := 1
 	limit := 10
 
 	expectedInvoices := []*models.Invoice{
@@ -573,13 +573,13 @@ func TestInvoiceService_List_Success(t *testing.T) {
 		{ID: "invoice-2", BusinessID: businessID, Total: 200.00},
 	}
 
-	mockRepo.On("GetByBusinessID", ctx, businessID, page, limit).Return(expectedInvoices, int64(2), nil)
+	mockRepo.On("ListByCursor", ctx, businessID, (*invoicecursor.Position)(nil), limit).Return(expectedInvoices, true, nil)
 
-	invoices, total, err := svc.List(ctx, businessID, page, limit)
+	invoices, hasMore, err := svc.List(ctx, businessID, nil, limit)
 
 	assert.NoError(t, err)
 	assert.Len(t, invoices, 2)
-	assert.Equal(t, int64(2), total)
+	assert.True(t, hasMore)
 	mockRepo.AssertExpectations(t)
 }
 

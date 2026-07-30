@@ -205,6 +205,7 @@ func TestHTTPProfileRequiresVoiceProviderIdentifiersWhileRoutesExposeRealtimeVoi
 	cfg.LLM.ExaAPIKey = "exa-key"
 	cfg.GSTLookup.APIKey = "gst-lookup-key"
 	cfg.GST.APIToken = "gst-provider-token"
+	cfg.Secrets.InvoiceCursorHMAC = "cursor-secret"
 
 	err := ValidateForProfile(cfg, ProfileHTTP)
 	if err == nil || !strings.Contains(err.Error(), "DEEPGRAM_SECRET_ARN") {

@@ -305,7 +305,6 @@ type PaymentInvoiceRepositoryTestable interface {
 	GetByID(ctx context.Context, id, businessID string) (*models.Invoice, error)
 	GetByIDInternal(ctx context.Context, id string) (*models.Invoice, error)
 	GetByInvoiceNo(ctx context.Context, businessID, invoiceNo string) (*models.Invoice, error)
-	GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.Invoice, int64, error)
 	GetItems(ctx context.Context, invoiceID string) ([]*models.InvoiceItem, error)
 	Update(ctx context.Context, invoice *models.Invoice) error
 	UpdateStatus(ctx context.Context, invoiceID string, status string) error

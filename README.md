@@ -75,6 +75,11 @@ make infra-apply         # package Lambda artifacts and apply Terraform changes
 
 Worker queues use a shared SQS visibility timeout sized for the 60 second worker Lambda timeout plus batching window. If you change worker Lambda timeouts, update the queue timeout together.
 
+Before enabling the HTTP API after Terraform creates the Billeif invoice cursor
+secret metadata, seed its raw scalar `SecretString` with at least 32 bytes
+through the approved out-of-band `asm-exec` workflow. Terraform intentionally
+does not create or retain this value.
+
 ### India SMS OTP Setup
 
 India phone authentication requires AWS End User Messaging SMS registration and DLT-approved values before Terraform apply. Set these Terraform variables through `terraform.tfvars`, `*.auto.tfvars`, or `TF_VAR_*` environment variables:

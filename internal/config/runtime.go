@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"invoice-backend/internal/invoicecursor"
+
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
@@ -205,6 +207,27 @@ func (r *RuntimeResolver) ResolveProvider(ctx context.Context, cfg *Config, kind
 	return &resolved, nil
 }
 
+func (r *RuntimeResolver) InvoiceCursorCodec(ctx context.Context, identifier string) (*invoicecursor.Codec, error) {
+	if strings.TrimSpace(identifier) == "" {
+		return nil, &ConfigurationError{Resource: "invoice cursor secret identifier", Reason: "identifier is required"}
+	}
+	if r == nil || r.secrets == nil {
+		return nil, &ConfigurationError{Resource: "Secrets Manager resolver", Reason: "resolver is required"}
+	}
+	key, err := r.secrets.String(ctx, identifier)
+	if err != nil {
+		return nil, err
+	}
+	codec, err := invoicecursor.NewCodec([]byte(key))
+	if err != nil {
+		return nil, &ConfigurationError{
+			Resource: "invoice cursor secret",
+			Reason:   "SecretString must be a raw scalar of at least 32 bytes",
+		}
+	}
+	return codec, nil
+}
+
 // ResolveRuntime remains as a compatibility boundary for local/server callers.
 // Lambda entrypoints retain RuntimeResolver directly through app.Runtime.
 func ResolveRuntime(ctx context.Context, cfg *Config, clients RuntimeResolvers) error {
@@ -332,6 +355,7 @@ func (c *Config) configuredSecretIdentifiers() []string {
 		c.Secrets.GSTProvider,
 		c.Secrets.Deepgram,
 		c.Secrets.DeepSeek,
+		c.Secrets.InvoiceCursorHMAC,
 	})
 }
 

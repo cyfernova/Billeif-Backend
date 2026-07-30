@@ -7617,24 +7617,15 @@ const docTemplate = `{
                 "summary": "List invoices",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Business ID",
-                        "name": "business_id",
-                        "in": "query",
-                        "required": true
-                    },
-                    {
                         "type": "integer",
-                        "default": 1,
-                        "description": "Page number",
-                        "name": "page",
+                        "description": "Page size (default 20, maximum 100)",
+                        "name": "limit",
                         "in": "query"
                     },
                     {
-                        "type": "integer",
-                        "default": 10,
-                        "description": "Page size",
-                        "name": "limit",
+                        "type": "string",
+                        "description": "Opaque continuation cursor",
+                        "name": "cursor",
                         "in": "query"
                     }
                 ],
@@ -7642,8 +7633,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/handlers.InvoiceListResponse"
                         }
                     },
                     "400": {
@@ -17400,6 +17390,20 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "payment_mandate_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.InvoiceListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.Invoice"
+                    }
+                },
+                "next_cursor": {
                     "type": "string"
                 }
             }

@@ -11,6 +11,7 @@ import (
 	"invoice-backend/internal/config"
 	"invoice-backend/internal/gst"
 	"invoice-backend/internal/idempotency"
+	"invoice-backend/internal/invoicecursor"
 	"invoice-backend/internal/invoiceresolution"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
@@ -528,15 +529,20 @@ func (s *InvoiceService) GetForWorker(ctx context.Context, id string) (*models.I
 	return invoice, nil
 }
 
-func (s *InvoiceService) List(ctx context.Context, businessID string, page, limit int) ([]*models.Invoice, int64, error) {
-	invoices, total, err := s.repo.GetByBusinessID(ctx, businessID, page, limit)
+func (s *InvoiceService) List(
+	ctx context.Context,
+	businessID string,
+	cursor *invoicecursor.Position,
+	limit int,
+) ([]*models.Invoice, bool, error) {
+	invoices, hasMore, err := s.repo.ListByCursor(ctx, businessID, cursor, limit)
 	if err != nil {
-		return nil, 0, err
+		return nil, false, err
 	}
 	for _, invoice := range invoices {
 		hydrateInvoiceEditorFields(invoice)
 	}
-	return invoices, total, nil
+	return invoices, hasMore, nil
 }
 
 type UpdateInvoiceInput struct {

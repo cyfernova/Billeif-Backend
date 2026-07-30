@@ -85,11 +85,6 @@ func (m *MockInvoiceRepositoryPayment) GetByInvoiceNo(ctx context.Context, busin
 	return args.Get(0).(*models.Invoice), args.Error(1)
 }
 
-func (m *MockInvoiceRepositoryPayment) GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.Invoice, int64, error) {
-	args := m.Called(ctx, businessID, page, limit)
-	return args.Get(0).([]*models.Invoice), args.Get(1).(int64), args.Error(2)
-}
-
 func (m *MockInvoiceRepositoryPayment) GetItems(ctx context.Context, invoiceID string) ([]*models.InvoiceItem, error) {
 	args := m.Called(ctx, invoiceID)
 	if args.Get(0) == nil {

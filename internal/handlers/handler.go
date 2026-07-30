@@ -70,8 +70,18 @@ type Handler struct {
 	MCP             *MCPHandler
 }
 
-func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log *logger.Logger) *Handler {
+func New(
+	svcs *services.Container,
+	repos *Repositories,
+	cfg *config.Config,
+	log *logger.Logger,
+	cursorCodecs ...InvoiceCursorCodec,
+) *Handler {
 	log = log.Named("handlers")
+	var cursor InvoiceCursorCodec
+	if len(cursorCodecs) != 0 {
+		cursor = cursorCodecs[0]
+	}
 
 	// Create WebSocket hub
 	wsHub := websocket.NewHub(log)
@@ -103,7 +113,7 @@ func New(svcs *services.Container, repos *Repositories, cfg *config.Config, log 
 		Journal:         NewJournalHandler(svcs.Journal, log),
 		RenderProfile:   NewRenderProfileHandler(svcs.Document, log),
 		Shipment:        NewShipmentHandler(svcs.Shipping, svcs.Document, log),
-		Invoice:         NewInvoiceHandler(svcs.Invoice, svcs.TaxCompliance, log),
+		Invoice:         NewInvoiceHandler(svcs.Invoice, svcs.TaxCompliance, log, cursor),
 		BillingOps:      NewBillingOpsHandler(svcs.BillingOps, log),
 		Payment:         NewPaymentHandler(svcs.Payment, log),
 		RazorpayPayment: NewRazorpayPaymentHandler(svcs.RazorpayPayment, log),

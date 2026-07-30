@@ -29,6 +29,9 @@ func ValidateForProfile(cfg *Config, profile Profile) error {
 			return err
 		}
 		if isProductionEnv(cfg.Environment) {
+			if profile != ProfileA2A && strings.TrimSpace(cfg.Secrets.InvoiceCursorHMAC) == "" {
+				return fmt.Errorf("INVOICE_CURSOR_HMAC_SECRET_ARN is required")
+			}
 			if err := requireProviderIdentifier(cfg.Secrets.Exa, cfg.LLM.ExaAPIKey, "EXA_SECRET_ARN"); err != nil {
 				return err
 			}
