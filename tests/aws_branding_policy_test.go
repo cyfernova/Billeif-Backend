@@ -612,6 +612,8 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_cloudwatch_log_group.lambda_outbox_dispatcher",
 		"aws_cloudwatch_log_group.lambda_sqs_email_delivery",
 		"aws_cloudwatch_log_group.lambda_sqs_ses_feedback",
+		"aws_cloudwatch_metric_alarm.http_api_5xx",
+		"aws_cloudwatch_metric_alarm.http_api_latency",
 		"aws_cloudwatch_metric_alarm.lambda_api_duration",
 		"aws_cloudwatch_metric_alarm.lambda_api_throttles",
 		"aws_cloudwatch_metric_alarm.lambda_email_delivery_duration",

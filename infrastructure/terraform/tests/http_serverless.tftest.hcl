@@ -10,7 +10,7 @@ mock_provider "aws" {
 
   mock_resource "aws_lambda_invocation" {
     defaults = {
-      result = "{\"status\":\"applied\",\"version\":45,\"latest_version\":45,\"dirty\":false,\"manifest_checksum\":\"be1d51afbbb4e42563b767d03efc375a71fb7027f54d089bbf71792c62814452\"}"
+      result = "{\"status\":\"applied\",\"version\":46,\"latest_version\":46,\"dirty\":false,\"manifest_checksum\":\"c8ee4f07d7b006e5fed9890e052d1f567a11a65c1c9460c31387d343ed4a1602\"}"
     }
   }
 
@@ -124,6 +124,8 @@ variables {
   db_allowed_cidr                    = "10.0.0.0/24"
   enable_application                 = true
   enable_lambda_reserved_concurrency = true
+  alert_email                        = "alerts@example.com"
+  alert_email_subscription_confirmed = true
 }
 
 run "ordinary_http_uses_payload_v1_with_bounded_execution" {
@@ -164,6 +166,24 @@ run "ordinary_http_uses_payload_v1_with_bounded_execution" {
       strcontains(aws_apigatewayv2_stage.http.access_log_settings[0].format, "$context.routeKey")
     )
     error_message = "The HTTP API stage must auto-deploy with standard metrics only and 14-day structured access logs."
+  }
+
+  assert {
+    condition = (
+      aws_cloudwatch_metric_alarm.http_api_5xx.metric_name == "5xx" &&
+      aws_cloudwatch_metric_alarm.http_api_5xx.namespace == "AWS/ApiGateway" &&
+      aws_cloudwatch_metric_alarm.http_api_5xx.dimensions.ApiId == aws_apigatewayv2_api.http.id &&
+      aws_cloudwatch_metric_alarm.http_api_5xx.dimensions.Stage == aws_apigatewayv2_stage.http.name &&
+      aws_cloudwatch_metric_alarm.http_api_5xx.evaluation_periods == 3 &&
+      aws_cloudwatch_metric_alarm.http_api_5xx.datapoints_to_alarm == 2 &&
+      aws_cloudwatch_metric_alarm.http_api_5xx.treat_missing_data == "notBreaching" &&
+      aws_cloudwatch_metric_alarm.http_api_latency.metric_name == "Latency" &&
+      aws_cloudwatch_metric_alarm.http_api_latency.extended_statistic == "p95" &&
+      aws_cloudwatch_metric_alarm.http_api_latency.threshold == 1500 &&
+      aws_cloudwatch_metric_alarm.http_api_latency.evaluation_periods == 3 &&
+      aws_cloudwatch_metric_alarm.http_api_latency.datapoints_to_alarm == 2
+    )
+    error_message = "Billeif HTTP API handled 5xx responses and stage p95 latency must have standard two-of-three alarms."
   }
 }
 

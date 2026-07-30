@@ -73,6 +73,48 @@ resource "aws_cloudwatch_metric_alarm" "lambda_api_duration" {
   }
 }
 
+resource "aws_cloudwatch_metric_alarm" "http_api_5xx" {
+  alarm_name          = "${local.resource_prefix}-http-api-5xx"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "5xx"
+  namespace           = "AWS/ApiGateway"
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif HTTP API is returning handled or integration 5xx responses"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    ApiId = aws_apigatewayv2_api.http.id
+    Stage = aws_apigatewayv2_stage.http.name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "http_api_latency" {
+  alarm_name          = "${local.resource_prefix}-http-api-latency-p95"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "Latency"
+  namespace           = "AWS/ApiGateway"
+  period              = 60
+  extended_statistic  = "p95"
+  threshold           = 1500
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif HTTP API stage p95 latency exceeds the 1.5-second launch SLO"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    ApiId = aws_apigatewayv2_api.http.id
+    Stage = aws_apigatewayv2_stage.http.name
+  }
+}
+
 locals {
   worker_queue_names = {
     invoice        = aws_sqs_queue.invoice_processing.name
