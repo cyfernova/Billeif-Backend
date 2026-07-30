@@ -103,13 +103,17 @@ func renderDocumentPDF(ctx context.Context, svc *services.Container, document *m
 	theme := resolveRenderTheme(profile)
 	visibility := parseVisibilityConfig(profile)
 
-	business, err := svc.Business.Get(ctx, document.BusinessID)
-	if err != nil {
-		return nil, "", err
-	}
-	party, err := resolveRenderParty(ctx, svc, document, labels)
-	if err != nil {
-		return nil, "", err
+	business, party, frozenParties := frozenRenderParties(document, labels)
+	if !frozenParties {
+		var err error
+		business, err = svc.Business.Get(ctx, document.BusinessID)
+		if err != nil {
+			return nil, "", err
+		}
+		party, err = resolveRenderParty(ctx, svc, document, labels)
+		if err != nil {
+			return nil, "", err
+		}
 	}
 
 	pageSize := "A4"
@@ -527,6 +531,60 @@ func resolveRenderParty(ctx context.Context, svc *services.Container, document *
 	}
 
 	return party, nil
+}
+
+func frozenRenderParties(
+	document *models.Document,
+	labels *localeLabels,
+) (*models.BusinessProfile, renderParty, bool) {
+	if document == nil || strings.TrimSpace(document.SourceLinkage) == "" {
+		return nil, renderParty{}, false
+	}
+	var source struct {
+		Seller models.PartySnapshot `json:"seller_snapshot"`
+		Buyer  models.PartySnapshot `json:"buyer_snapshot"`
+	}
+	if err := json.Unmarshal([]byte(document.SourceLinkage), &source); err != nil ||
+		source.Seller.IsEmpty() || source.Buyer.IsEmpty() {
+		return nil, renderParty{}, false
+	}
+	sellerTaxID := firstNonEmptyRenderValue(source.Seller.GSTIN, source.Seller.TaxID)
+	buyerTaxID := firstNonEmptyRenderValue(source.Buyer.GSTIN, source.Buyer.TaxID)
+	business := &models.BusinessProfile{
+		ID:         document.BusinessID,
+		Name:       source.Seller.Name,
+		Email:      source.Seller.Email,
+		Phone:      source.Seller.Phone,
+		Address:    source.Seller.Address,
+		City:       source.Seller.City,
+		State:      source.Seller.State,
+		Country:    source.Seller.Country,
+		PostalCode: source.Seller.PostalCode,
+		TaxID:      sellerTaxID,
+		GSTIN:      source.Seller.GSTIN,
+	}
+	party := renderParty{
+		label: labels.party,
+		name:  source.Buyer.Name,
+		email: source.Buyer.Email,
+		phone: source.Buyer.Phone,
+		taxID: buyerTaxID,
+		address: compactLines([]string{
+			source.Buyer.Address,
+			joinCityLine(source.Buyer.City, source.Buyer.State, source.Buyer.PostalCode),
+			source.Buyer.Country,
+		}),
+	}
+	return business, party, true
+}
+
+func firstNonEmptyRenderValue(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func loadDocumentFont(pdf *gofpdf.Fpdf, profile *models.RenderProfile, locale string) string {

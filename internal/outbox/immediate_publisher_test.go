@@ -3,6 +3,7 @@ package outbox
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -50,14 +51,11 @@ func (m *publishedMarkerFake) MarkOutboxPublished(
 	return m.err
 }
 
-func TestImmediatePublisherSendsStoredPayloadThenMarksExactEvent(t *testing.T) {
+func TestImmediatePublisherSendsMappedMessageThenMarksExactEvent(t *testing.T) {
 	sender := &sqsSenderFake{}
 	marker := &publishedMarkerFake{}
 	publisher := NewImmediatePublisher("invoice-queue-url", sender, marker)
-	event := &models.OutboxEvent{
-		ID:      uuid.NewString(),
-		Payload: `{"type":"generate_document_pdf","render_job_id":"job-1"}`,
-	}
+	event, invoiceID, renderJobID := validIssuedOutboxEvent()
 
 	err := publisher.TryPublish(context.Background(), event)
 
@@ -65,9 +63,17 @@ func TestImmediatePublisherSendsStoredPayloadThenMarksExactEvent(t *testing.T) {
 		t.Fatalf("publish: %v", err)
 	}
 	if sender.calls != 1 || sender.input == nil ||
-		aws.ToString(sender.input.QueueUrl) != "invoice-queue-url" ||
-		aws.ToString(sender.input.MessageBody) != event.Payload {
+		aws.ToString(sender.input.QueueUrl) != "invoice-queue-url" {
 		t.Fatalf("send input = %#v", sender.input)
+	}
+	wantMessage := fmt.Sprintf(
+		`{"type":"generate_document_pdf","invoice_id":%q,"document_id":%q,"invoice_version":8,"render_job_id":%q}`,
+		invoiceID,
+		invoiceID,
+		renderJobID,
+	)
+	if aws.ToString(sender.input.MessageBody) != wantMessage {
+		t.Fatalf("message body = %s, want %s", aws.ToString(sender.input.MessageBody), wantMessage)
 	}
 	if marker.calls != 1 || marker.eventID != event.ID || marker.published.IsZero() {
 		t.Fatalf("marker calls/event/time = %d/%q/%v", marker.calls, marker.eventID, marker.published)
@@ -78,10 +84,9 @@ func TestImmediatePublisherSendFailureLeavesEventPending(t *testing.T) {
 	sender := &sqsSenderFake{err: errors.New("send failed")}
 	marker := &publishedMarkerFake{}
 	publisher := NewImmediatePublisher("invoice-queue-url", sender, marker)
+	event, _, _ := validPreviewOutboxEvent()
 
-	err := publisher.TryPublish(context.Background(), &models.OutboxEvent{
-		ID: uuid.NewString(), Payload: `{"type":"generate_document_pdf"}`,
-	})
+	err := publisher.TryPublish(context.Background(), event)
 
 	if err == nil {
 		t.Fatal("send failure returned nil")
@@ -95,17 +100,37 @@ func TestImmediatePublisherMarkFailureRemainsRecoverable(t *testing.T) {
 	sender := &sqsSenderFake{}
 	marker := &publishedMarkerFake{err: errors.New("mark failed")}
 	publisher := NewImmediatePublisher("invoice-queue-url", sender, marker)
-	eventID := uuid.NewString()
+	event, _, _ := validPreviewOutboxEvent()
 
-	err := publisher.TryPublish(context.Background(), &models.OutboxEvent{
-		ID: eventID, Payload: `{"type":"generate_document_pdf"}`,
-	})
+	err := publisher.TryPublish(context.Background(), event)
 
 	if err == nil {
 		t.Fatal("mark failure returned nil")
 	}
-	if sender.calls != 1 || marker.calls != 1 || marker.eventID != eventID {
+	err = publisher.TryPublish(context.Background(), event)
+	if err == nil {
+		t.Fatal("duplicate mark failure returned nil")
+	}
+	if sender.calls != 2 || marker.calls != 2 || marker.eventID != event.ID {
 		t.Fatalf("send/mark/event = %d/%d/%q", sender.calls, marker.calls, marker.eventID)
+	}
+}
+
+func TestImmediatePublisherMappingFailureDoesNotSendOrMark(t *testing.T) {
+	sender := &sqsSenderFake{}
+	marker := &publishedMarkerFake{}
+	publisher := NewImmediatePublisher("invoice-queue-url", sender, marker)
+	event, _, _ := validIssuedOutboxEvent()
+	event.AggregateID = uuid.NewString()
+
+	err := publisher.TryPublish(context.Background(), event)
+
+	var mappingError *InvoiceEventMappingError
+	if !errors.As(err, &mappingError) {
+		t.Fatalf("publish error = %T %v, want typed mapping error", err, err)
+	}
+	if sender.calls != 0 || marker.calls != 0 {
+		t.Fatalf("map failure send/mark calls = %d/%d, want 0/0", sender.calls, marker.calls)
 	}
 }
 

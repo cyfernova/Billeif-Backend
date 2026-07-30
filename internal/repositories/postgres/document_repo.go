@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -411,6 +412,228 @@ func (r *documentRepository) ClaimPreviewRender(
 	default:
 		return "", fmt.Errorf("preview render job was not claimable from status %q", job.Status)
 	}
+}
+
+func (r *documentRepository) ClaimFinalRender(
+	ctx context.Context,
+	businessID, jobID string,
+	sourceVersion int,
+) (interfaces.FinalRenderClaimState, error) {
+	if businessID == "" || jobID == "" || sourceVersion < 1 {
+		return "", errors.New("claim final render requires exact job identity")
+	}
+	result := r.db.WithContext(ctx).
+		Model(&models.DocumentRenderJob{}).
+		Where(
+			"id = ? AND business_id = ? AND kind = ? AND source_invoice_version = ? AND status IN ? AND deleted_at IS NULL",
+			jobID,
+			businessID,
+			models.RenderKindFinal,
+			sourceVersion,
+			[]string{models.RenderJobStatusQueued, models.RenderJobStatusFailed},
+		).
+		Updates(map[string]interface{}{
+			"status":           models.RenderJobStatusProcessing,
+			"attempts":         gorm.Expr("attempts + 1"),
+			"error_message":    "",
+			"completed_at":     nil,
+			"lease_owner":      nil,
+			"lease_expires_at": nil,
+		})
+	if result.Error != nil {
+		return "", fmt.Errorf("claim final render job: %w", result.Error)
+	}
+	if result.RowsAffected == 1 {
+		return interfaces.FinalRenderClaimed, nil
+	}
+
+	var job models.DocumentRenderJob
+	if err := r.db.WithContext(ctx).
+		Select("id", "business_id", "kind", "source_invoice_version", "status").
+		Where(
+			"id = ? AND business_id = ? AND kind = ? AND deleted_at IS NULL",
+			jobID,
+			businessID,
+			models.RenderKindFinal,
+		).
+		First(&job).Error; err != nil {
+		return "", fmt.Errorf("load unclaimed final render job: %w", err)
+	}
+	if job.SourceInvoiceVersion == nil || *job.SourceInvoiceVersion != sourceVersion {
+		return "", errors.New("final render source version mismatch")
+	}
+	switch job.Status {
+	case models.RenderJobStatusProcessing:
+		return interfaces.FinalRenderAlreadyProcessing, nil
+	case models.RenderJobStatusCompleted:
+		return interfaces.FinalRenderAlreadyCompleted, nil
+	default:
+		return "", fmt.Errorf("final render job was not claimable from status %q", job.Status)
+	}
+}
+
+func (r *documentRepository) LoadFinalRenderSnapshot(
+	ctx context.Context,
+	businessID, invoiceID, jobID string,
+	sourceVersion int,
+) (*models.Document, error) {
+	if businessID == "" || invoiceID == "" || jobID == "" || sourceVersion < 1 {
+		return nil, errors.New("load final render snapshot requires exact identity")
+	}
+	var revision models.DocumentRevision
+	if err := r.db.WithContext(ctx).
+		Where(
+			"business_id = ? AND document_id = ? AND action = ? AND metadata ->> 'render_job_id' = ? AND CAST(metadata ->> 'source_invoice_version' AS INTEGER) = ? AND deleted_at IS NULL",
+			businessID,
+			invoiceID,
+			"final_render_snapshot",
+			jobID,
+			sourceVersion,
+		).
+		Order("created_at DESC").
+		First(&revision).Error; err != nil {
+		return nil, fmt.Errorf("load final render snapshot: %w", err)
+	}
+	var document models.Document
+	if err := json.Unmarshal([]byte(revision.Snapshot), &document); err != nil {
+		return nil, errors.New("decode final render snapshot")
+	}
+	if document.ID != invoiceID || document.BusinessID != businessID {
+		return nil, errors.New("final render snapshot identity mismatch")
+	}
+	return &document, nil
+}
+
+func (r *documentRepository) FailFinalRender(
+	ctx context.Context,
+	businessID, jobID, errorMessage string,
+) error {
+	if businessID == "" || jobID == "" {
+		return errors.New("fail final render requires exact job identity")
+	}
+	result := r.db.WithContext(ctx).
+		Model(&models.DocumentRenderJob{}).
+		Where(
+			"id = ? AND business_id = ? AND kind = ? AND status = ? AND deleted_at IS NULL",
+			jobID,
+			businessID,
+			models.RenderKindFinal,
+			models.RenderJobStatusProcessing,
+		).
+		Updates(map[string]interface{}{
+			"status":           models.RenderJobStatusFailed,
+			"error_message":    errorMessage,
+			"completed_at":     nil,
+			"lease_owner":      nil,
+			"lease_expires_at": nil,
+		})
+	if result.Error != nil {
+		return fmt.Errorf("fail final render job: %w", result.Error)
+	}
+	if result.RowsAffected == 1 {
+		return nil
+	}
+
+	var job models.DocumentRenderJob
+	if err := r.db.WithContext(ctx).
+		Select("id", "business_id", "kind", "status").
+		Where(
+			"id = ? AND business_id = ? AND kind = ? AND deleted_at IS NULL",
+			jobID,
+			businessID,
+			models.RenderKindFinal,
+		).
+		First(&job).Error; err != nil {
+		return fmt.Errorf("load unfailed final render job: %w", err)
+	}
+	switch job.Status {
+	case models.RenderJobStatusFailed, models.RenderJobStatusCompleted:
+		return nil
+	default:
+		return fmt.Errorf("final render job was not fail-safe from status %q", job.Status)
+	}
+}
+
+func (r *documentRepository) CompleteFinalRender(
+	ctx context.Context,
+	businessID, invoiceID, jobID string,
+	sourceVersion int,
+	objectKey, filename string,
+) (bool, error) {
+	if businessID == "" || invoiceID == "" || jobID == "" ||
+		sourceVersion < 1 || objectKey == "" || filename == "" {
+		return false, errors.New("complete final render requires exact job identity")
+	}
+	completed := false
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var job models.DocumentRenderJob
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where(
+				"id = ? AND business_id = ? AND kind = ? AND deleted_at IS NULL",
+				jobID,
+				businessID,
+				models.RenderKindFinal,
+			).
+			First(&job).Error; err != nil {
+			return fmt.Errorf("load final render job: %w", err)
+		}
+		if job.SourceInvoiceVersion == nil ||
+			*job.SourceInvoiceVersion != sourceVersion ||
+			job.ObjectKey != objectKey ||
+			job.InvoiceID == nil || *job.InvoiceID != invoiceID ||
+			job.DocumentID == nil || *job.DocumentID != invoiceID {
+			return errors.New("final render job identity mismatch")
+		}
+		if job.Status == models.RenderJobStatusCompleted {
+			return nil
+		}
+		if job.Status != models.RenderJobStatusProcessing {
+			return fmt.Errorf("final render job cannot complete from status %q", job.Status)
+		}
+
+		var invoice models.Invoice
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Select("version").
+			Where(
+				"id = ? AND business_id = ? AND deleted_at IS NULL",
+				invoiceID,
+				businessID,
+			).
+			First(&invoice).Error; err != nil {
+			return fmt.Errorf("load final render invoice version: %w", err)
+		}
+		if invoice.Version != sourceVersion {
+			return errors.New("final render invoice version changed")
+		}
+
+		now := time.Now().UTC()
+		result := tx.Model(&models.DocumentRenderJob{}).
+			Where(
+				"id = ? AND business_id = ? AND kind = ? AND status = ? AND deleted_at IS NULL",
+				jobID,
+				businessID,
+				models.RenderKindFinal,
+				models.RenderJobStatusProcessing,
+			).
+			Updates(map[string]interface{}{
+				"status":           models.RenderJobStatusCompleted,
+				"output_url":       "",
+				"output_filename":  filename,
+				"error_message":    "",
+				"completed_at":     now,
+				"lease_owner":      nil,
+				"lease_expires_at": nil,
+			})
+		if result.Error != nil {
+			return fmt.Errorf("complete final render job: %w", result.Error)
+		}
+		if result.RowsAffected != 1 {
+			return errors.New("final render completion compare-and-swap failed")
+		}
+		completed = true
+		return nil
+	})
+	return completed, err
 }
 
 func (r *documentRepository) MarkPreviewRenderObsolete(

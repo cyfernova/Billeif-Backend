@@ -43,6 +43,7 @@ func (r *invoiceRepository) IssueDraftAtomic(
 
 	var issuedInvoice *models.Invoice
 	var finalRender *models.DocumentRenderJob
+	var outboxEvent *models.OutboxEvent
 	var replayInvoiceID string
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		claimed, replayID, err := claimInvoiceIssueIdempotency(tx, command)
@@ -116,6 +117,15 @@ func (r *invoiceRepository) IssueDraftAtomic(
 		}
 		if (command.DocumentType == invoiceissue.DocumentTypeBillOfSupply) != document.BillOfSupply {
 			return &invoiceissue.InvalidLifecycleError{Reason: "document type does not match legal projection"}
+		}
+		renderProfileID, err := resolveInvoicePreviewProfile(
+			tx,
+			command.BusinessID,
+			&invoice,
+			&document,
+		)
+		if err != nil {
+			return issueStageError("render profile", err)
 		}
 
 		var nextNumber int
@@ -193,13 +203,19 @@ func (r *invoiceRepository) IssueDraftAtomic(
 		if updateDocument.RowsAffected != 1 {
 			return issueStageError("document projection", errors.New("draft projection was not updated"))
 		}
+		document.Status = models.DocumentStatusIssued
+		document.DraftState = models.DocumentDraftStateFinal
+		document.SerialNumber = invoiceNumber
+		document.IssueDate = invoice.InvoiceDate
+		document.SourceLinkage = string(sourceJSON)
+		document.UpdatedAt = issuedAt
 
 		finalRender = &models.DocumentRenderJob{
 			ID:                   uuid.NewString(),
 			DocumentID:           &invoice.ID,
 			InvoiceID:            &invoice.ID,
 			BusinessID:           invoice.BusinessID,
-			RenderProfileID:      invoice.RenderProfileID,
+			RenderProfileID:      renderProfileID,
 			Kind:                 models.RenderKindFinal,
 			SourceInvoiceVersion: &invoice.Version,
 			ObjectKey:            fmt.Sprintf("invoices/%s/%s/v%d/final.pdf", invoice.BusinessID, invoice.ID, invoice.Version),
@@ -210,6 +226,13 @@ func (r *invoiceRepository) IssueDraftAtomic(
 		}
 		if err := tx.Create(finalRender).Error; err != nil {
 			return issueStageError("final render", err)
+		}
+		finalRevision, err := newInvoiceFinalRenderRevision(&document, finalRender)
+		if err != nil {
+			return issueStageError("final render snapshot", err)
+		}
+		if err := tx.Create(finalRevision).Error; err != nil {
+			return issueStageError("final render snapshot", err)
 		}
 
 		payload, err := json.Marshal(map[string]interface{}{
@@ -223,7 +246,7 @@ func (r *invoiceRepository) IssueDraftAtomic(
 		if err != nil {
 			return issueStageError("outbox event", err)
 		}
-		event := &models.OutboxEvent{
+		outboxEvent = &models.OutboxEvent{
 			ID:            uuid.NewString(),
 			BusinessID:    invoice.BusinessID,
 			AggregateType: "invoice",
@@ -232,7 +255,7 @@ func (r *invoiceRepository) IssueDraftAtomic(
 			Payload:       string(payload),
 			AvailableAt:   issuedAt,
 		}
-		if err := tx.Create(event).Error; err != nil {
+		if err := tx.Create(outboxEvent).Error; err != nil {
 			return issueStageError("outbox event", err)
 		}
 		activity := newInvoiceIssueActivity(command, &invoice, invoiceNumber, finalRender.ID)
@@ -258,7 +281,39 @@ func (r *invoiceRepository) IssueDraftAtomic(
 		}
 		return &interfaces.AtomicInvoiceIssueResult{Invoice: invoice, FinalRender: render, Replayed: true}, nil
 	}
-	return &interfaces.AtomicInvoiceIssueResult{Invoice: issuedInvoice, FinalRender: finalRender}, nil
+	return &interfaces.AtomicInvoiceIssueResult{
+		Invoice:     issuedInvoice,
+		FinalRender: finalRender,
+		OutboxEvent: outboxEvent,
+	}, nil
+}
+
+func newInvoiceFinalRenderRevision(
+	document *models.Document,
+	job *models.DocumentRenderJob,
+) (*models.DocumentRevision, error) {
+	if document == nil || job == nil || job.SourceInvoiceVersion == nil {
+		return nil, errors.New("final render snapshot identity is required")
+	}
+	snapshot, err := json.Marshal(document)
+	if err != nil {
+		return nil, err
+	}
+	metadata, err := json.Marshal(map[string]interface{}{
+		"render_job_id":          job.ID,
+		"source_invoice_version": *job.SourceInvoiceVersion,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &models.DocumentRevision{
+		ID:         uuid.NewString(),
+		DocumentID: document.ID,
+		BusinessID: document.BusinessID,
+		Action:     "final_render_snapshot",
+		Snapshot:   string(snapshot),
+		Metadata:   string(metadata),
+	}, nil
 }
 
 func newInvoiceIssueActivity(

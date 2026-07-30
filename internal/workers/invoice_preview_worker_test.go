@@ -70,20 +70,25 @@ func (r *queueMessageInvoiceRepository) GetByIDInternal(context.Context, string)
 }
 
 type fakePreviewRenderOperations struct {
-	invoiceVersions []int
-	versionCalls    int
-	profileID       string
-	rendered        bool
-	processing      bool
-	obsolete        bool
-	claimState      interfaces.PreviewRenderClaimState
-	uploadKey       string
-	completeVersion int
-	completeKey     string
-	completeName    string
-	completed       bool
-	genericError    error
-	genericRendered bool
+	invoiceVersions  []int
+	versionCalls     int
+	profileID        string
+	rendered         bool
+	processing       bool
+	obsolete         bool
+	claimState       interfaces.PreviewRenderClaimState
+	uploadKey        string
+	completeVersion  int
+	completeKey      string
+	completeName     string
+	completed        bool
+	genericError     error
+	genericRendered  bool
+	finalClaimState  interfaces.FinalRenderClaimState
+	finalSnapshot    *models.Document
+	finalCompleted   bool
+	finalFailed      bool
+	renderedDocument *models.Document
 }
 
 func (f *fakePreviewRenderOperations) currentInvoiceVersion(context.Context, string, string) (int, error) {
@@ -114,11 +119,12 @@ func (f *fakePreviewRenderOperations) loadProfile(_ context.Context, _ string, p
 }
 
 func (f *fakePreviewRenderOperations) render(
-	context.Context,
-	*models.Document,
-	*models.RenderProfile,
+	_ context.Context,
+	document *models.Document,
+	_ *models.RenderProfile,
 ) ([]byte, string, error) {
 	f.rendered = true
+	f.renderedDocument = document
 	return []byte("private preview"), "invoice-preview.pdf", nil
 }
 
@@ -156,6 +162,46 @@ func (f *fakePreviewRenderOperations) renderGeneric(
 ) error {
 	f.genericRendered = true
 	return f.genericError
+}
+
+func (f *fakePreviewRenderOperations) claimFinal(
+	context.Context,
+	string,
+	string,
+	int,
+) (interfaces.FinalRenderClaimState, error) {
+	if f.finalClaimState != "" {
+		return f.finalClaimState, nil
+	}
+	return interfaces.FinalRenderClaimed, nil
+}
+
+func (f *fakePreviewRenderOperations) loadFinalSnapshot(
+	context.Context,
+	string,
+	string,
+	string,
+	int,
+) (*models.Document, error) {
+	return f.finalSnapshot, nil
+}
+
+func (f *fakePreviewRenderOperations) completeFinal(
+	context.Context,
+	string,
+	string,
+	string,
+	int,
+	string,
+	string,
+) (bool, error) {
+	f.finalCompleted = true
+	return true, nil
+}
+
+func (f *fakePreviewRenderOperations) failFinal(context.Context, string, string, string) error {
+	f.finalFailed = true
+	return nil
 }
 
 func TestProcessPreviewRenderUsesFrozenProfileAndExactPrivateObjectKey(t *testing.T) {
@@ -334,7 +380,7 @@ func TestProcessPreviewRenderTreatsCompletedAndObsoleteClaimsAsSuccessfulNoOps(t
 	}
 }
 
-func TestProcessDocumentRenderJobRejectsFinalKindWithTypedError(t *testing.T) {
+func TestProcessDocumentRenderJobRejectsMalformedFinalIdentity(t *testing.T) {
 	document, job, version := validPreviewWorkerFixture()
 	job.Kind = models.RenderKindFinal
 	operations := &fakePreviewRenderOperations{}
@@ -346,12 +392,146 @@ func TestProcessDocumentRenderJobRejectsFinalKindWithTypedError(t *testing.T) {
 		version,
 		operations,
 	)
-	var unsupported *UnsupportedFinalRenderError
-	if !errors.As(err, &unsupported) {
-		t.Fatalf("final render error = %T %v, want typed unsupported-final error", err, err)
+	if err == nil {
+		t.Fatal("malformed final render identity succeeded")
 	}
 	if operations.versionCalls != 0 || operations.processing || operations.rendered {
-		t.Fatalf("unsupported final render performed preview work: %#v", operations)
+		t.Fatalf("malformed final render performed work: %#v", operations)
+	}
+}
+
+func TestProcessDocumentRenderJobRendersCanonicalFinalFromFrozenPrivateSnapshot(t *testing.T) {
+	document, job, version := validPreviewWorkerFixture()
+	job.Kind = models.RenderKindFinal
+	job.ObjectKey = fmt.Sprintf(
+		"invoices/%s/%s/v%d/final.pdf",
+		document.BusinessID,
+		document.ID,
+		version,
+	)
+	profileID := uuid.NewString()
+	job.RenderProfileID = &profileID
+	frozen := &models.Document{
+		ID:            document.ID,
+		BusinessID:    document.BusinessID,
+		Status:        models.DocumentStatusIssued,
+		DraftState:    models.DocumentDraftStateFinal,
+		SerialNumber:  "INV/26-27/000001",
+		SourceLinkage: `{"seller_snapshot":{"name":"Frozen Seller"},"buyer_snapshot":{"name":"Frozen Buyer"}}`,
+		Lines: []*models.DocumentLine{{
+			ID:          uuid.NewString(),
+			DocumentID:  document.ID,
+			Description: "Frozen issued line",
+		}},
+	}
+	operations := &fakePreviewRenderOperations{
+		invoiceVersions: []int{version, version},
+		finalSnapshot:   frozen,
+	}
+
+	err := processDocumentRenderJob(context.Background(), document, job, version, operations)
+
+	if err != nil {
+		t.Fatalf("process canonical final: %v", err)
+	}
+	if operations.renderedDocument != frozen || operations.uploadKey != job.ObjectKey ||
+		!operations.finalCompleted || operations.finalFailed {
+		t.Fatalf("final render workflow state: %#v", operations)
+	}
+	if operations.profileID != profileID {
+		t.Fatalf("final profile = %q, want frozen %q", operations.profileID, profileID)
+	}
+}
+
+func TestProcessDocumentRenderJobReturnsRetryableErrorForProcessingFinalDuplicate(t *testing.T) {
+	document, job, version := validPreviewWorkerFixture()
+	job.Kind = models.RenderKindFinal
+	job.ObjectKey = fmt.Sprintf(
+		"invoices/%s/%s/v%d/final.pdf",
+		document.BusinessID,
+		document.ID,
+		version,
+	)
+	operations := &fakePreviewRenderOperations{
+		invoiceVersions: []int{version},
+		finalClaimState: interfaces.FinalRenderAlreadyProcessing,
+	}
+
+	err := processDocumentRenderJob(context.Background(), document, job, version, operations)
+
+	var retryable *FinalRenderInProgressError
+	if !errors.As(err, &retryable) || !retryable.Retryable() {
+		t.Fatalf("processing final error = %T %v, want typed retryable", err, err)
+	}
+	if operations.rendered || operations.finalCompleted {
+		t.Fatalf("processing duplicate performed work: %#v", operations)
+	}
+}
+
+func TestProcessDocumentRenderJobNoOpsCompletedFinalDuplicate(t *testing.T) {
+	document, job, version := validPreviewWorkerFixture()
+	job.Kind = models.RenderKindFinal
+	job.ObjectKey = fmt.Sprintf(
+		"invoices/%s/%s/v%d/final.pdf",
+		document.BusinessID,
+		document.ID,
+		version,
+	)
+	operations := &fakePreviewRenderOperations{
+		invoiceVersions: []int{version},
+		finalClaimState: interfaces.FinalRenderAlreadyCompleted,
+	}
+
+	if err := processDocumentRenderJob(context.Background(), document, job, version, operations); err != nil {
+		t.Fatalf("completed final duplicate: %v", err)
+	}
+	if operations.rendered || operations.finalCompleted {
+		t.Fatalf("completed duplicate performed work: %#v", operations)
+	}
+}
+
+func TestProcessDocumentRenderJobFailsFinalOnVersionDriftBeforeAndAfterRender(t *testing.T) {
+	tests := []struct {
+		name     string
+		versions []int
+		rendered bool
+	}{
+		{name: "before render", versions: []int{4}, rendered: false},
+		{name: "before completion", versions: []int{3, 4}, rendered: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			document, job, version := validPreviewWorkerFixture()
+			job.Kind = models.RenderKindFinal
+			job.ObjectKey = fmt.Sprintf(
+				"invoices/%s/%s/v%d/final.pdf",
+				document.BusinessID,
+				document.ID,
+				version,
+			)
+			frozen := &models.Document{
+				ID:            document.ID,
+				BusinessID:    document.BusinessID,
+				Status:        models.DocumentStatusIssued,
+				DraftState:    models.DocumentDraftStateFinal,
+				SerialNumber:  "INV/26-27/000001",
+				SourceLinkage: `{"seller_snapshot":{"name":"Frozen Seller"},"buyer_snapshot":{"name":"Frozen Buyer"}}`,
+				Lines:         []*models.DocumentLine{{Description: "Frozen line"}},
+			}
+			operations := &fakePreviewRenderOperations{
+				invoiceVersions: test.versions,
+				finalSnapshot:   frozen,
+			}
+
+			err := processDocumentRenderJob(context.Background(), document, job, version, operations)
+
+			if err == nil || !operations.finalFailed || operations.finalCompleted {
+				t.Fatalf("version drift result/error = %#v/%v", operations, err)
+			}
+			if operations.rendered != test.rendered {
+				t.Fatalf("rendered = %v, want %v", operations.rendered, test.rendered)
+			}
+		})
 	}
 }
 
@@ -433,6 +613,13 @@ func TestProcessDocumentRenderJobRejectsMalformedOrVersionMismatchedPreview(t *t
 			expectedVersion: 3,
 			mutate: func(job *models.DocumentRenderJob) {
 				job.SourceInvoiceVersion = nil
+			},
+		},
+		{
+			name:            "partial canonical metadata without message version",
+			expectedVersion: 0,
+			mutate: func(job *models.DocumentRenderJob) {
+				job.InvoiceID = nil
 			},
 		},
 	}

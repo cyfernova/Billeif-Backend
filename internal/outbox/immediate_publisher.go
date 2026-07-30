@@ -48,9 +48,13 @@ func (p *ImmediatePublisher) TryPublish(ctx context.Context, event *models.Outbo
 		event == nil || event.ID == "" || event.Payload == "" {
 		return errors.New("immediate outbox publisher is not configured")
 	}
+	message, err := MapInvoiceEventToSQSMessage(event)
+	if err != nil {
+		return err
+	}
 	if _, err := p.sender.SendMessage(ctx, &sqs.SendMessageInput{
 		QueueUrl:    aws.String(p.queueURL),
-		MessageBody: aws.String(event.Payload),
+		MessageBody: aws.String(string(message)),
 	}); err != nil {
 		return fmt.Errorf("send outbox event: %w", err)
 	}

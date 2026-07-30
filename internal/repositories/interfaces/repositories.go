@@ -103,6 +103,7 @@ type AtomicInvoiceIssue struct {
 type AtomicInvoiceIssueResult struct {
 	Invoice     *models.Invoice
 	FinalRender *models.DocumentRenderJob
+	OutboxEvent *models.OutboxEvent
 	Replayed    bool
 }
 
@@ -205,6 +206,34 @@ const (
 	PreviewRenderAlreadyCompleted  PreviewRenderClaimState = "completed"
 	PreviewRenderAlreadyObsolete   PreviewRenderClaimState = "obsolete"
 )
+
+type FinalRenderClaimState string
+
+const (
+	FinalRenderClaimed           FinalRenderClaimState = "claimed"
+	FinalRenderAlreadyProcessing FinalRenderClaimState = "processing"
+	FinalRenderAlreadyCompleted  FinalRenderClaimState = "completed"
+)
+
+type FinalRenderRepository interface {
+	ClaimFinalRender(
+		ctx context.Context,
+		businessID, jobID string,
+		sourceVersion int,
+	) (FinalRenderClaimState, error)
+	LoadFinalRenderSnapshot(
+		ctx context.Context,
+		businessID, invoiceID, jobID string,
+		sourceVersion int,
+	) (*models.Document, error)
+	FailFinalRender(ctx context.Context, businessID, jobID, errorMessage string) error
+	CompleteFinalRender(
+		ctx context.Context,
+		businessID, invoiceID, jobID string,
+		sourceVersion int,
+		objectKey, filename string,
+	) (bool, error)
+}
 
 type LedgerRepository interface {
 	Create(ctx context.Context, entry *models.LedgerEntry) error

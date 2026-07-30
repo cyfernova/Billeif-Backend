@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"invoice-backend/internal/idempotency"
 	"invoice-backend/internal/models"
@@ -32,10 +33,9 @@ type canonicalInvoiceIssuePayload struct {
 	DocumentType    string `json:"document_type"`
 	Series          string `json:"series"`
 	ActorID         string `json:"actor_id"`
-	ActorRole       string `json:"actor_role"`
-	RequestID       string `json:"request_id"`
-	IPAddress       string `json:"ip_address"`
 }
+
+const invoiceIssueImmediatePublishTimeout = 2 * time.Second
 
 func (s *InvoiceService) IssueByBusiness(
 	ctx context.Context,
@@ -43,13 +43,27 @@ func (s *InvoiceService) IssueByBusiness(
 	input IssueInvoiceInput,
 ) (*IssueInvoiceResult, error) {
 	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
-	if _, err := uuid.Parse(input.IdempotencyKey); err != nil {
+	idempotencyUUID, err := uuid.Parse(input.IdempotencyKey)
+	if err != nil {
 		return nil, &idempotency.InvalidKeyError{}
 	}
+	businessUUID, err := uuid.Parse(strings.TrimSpace(businessID))
+	if err != nil {
+		return nil, &idempotency.InvalidPayloadError{}
+	}
+	invoiceUUID, err := uuid.Parse(strings.TrimSpace(invoiceID))
+	if err != nil {
+		return nil, &idempotency.InvalidPayloadError{}
+	}
 	actor := actorFromContext(ctx)
-	if _, err := uuid.Parse(actor.UserID); err != nil {
+	actorUUID, err := uuid.Parse(strings.TrimSpace(actor.UserID))
+	if err != nil {
 		return nil, fmt.Errorf("invoice issue actor is required")
 	}
+	input.IdempotencyKey = idempotencyUUID.String()
+	businessID = businessUUID.String()
+	invoiceID = invoiceUUID.String()
+	actor.UserID = actorUUID.String()
 	issuer, ok := s.repo.(interfaces.CanonicalInvoiceIssuer)
 	if !ok {
 		return nil, fmt.Errorf("canonical invoice issuer is not configured")
@@ -61,9 +75,6 @@ func (s *InvoiceService) IssueByBusiness(
 		DocumentType:    input.DocumentType,
 		Series:          input.Series,
 		ActorID:         actor.UserID,
-		ActorRole:       actor.Role,
-		RequestID:       actor.RequestID,
-		IPAddress:       actor.IPAddress,
 	})
 	if err != nil {
 		return nil, err
@@ -87,6 +98,18 @@ func (s *InvoiceService) IssueByBusiness(
 	}
 	if result == nil || result.Invoice == nil || result.FinalRender == nil {
 		return nil, fmt.Errorf("failed to issue invoice: atomic repository returned incomplete result")
+	}
+	if !result.Replayed && result.OutboxEvent != nil && s.immediateOutboxPublisher != nil {
+		publishContext, cancel := context.WithTimeout(ctx, invoiceIssueImmediatePublishTimeout)
+		defer cancel()
+		if err := s.immediateOutboxPublisher.TryPublish(publishContext, result.OutboxEvent); err != nil {
+			s.log.Warn(
+				"immediate invoice issue publication failed; event remains pending",
+				"invoice_id", invoiceID,
+				"outbox_event_id", result.OutboxEvent.ID,
+				"error", err,
+			)
+		}
 	}
 	hydrateInvoiceEditorFields(result.Invoice)
 	return &IssueInvoiceResult{

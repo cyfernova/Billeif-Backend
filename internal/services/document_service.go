@@ -1403,6 +1403,68 @@ func (s *DocumentService) CompletePreviewRender(
 	)
 }
 
+func (s *DocumentService) ClaimFinalRender(
+	ctx context.Context,
+	businessID, jobID string,
+	sourceVersion int,
+) (interfaces.FinalRenderClaimState, error) {
+	repository, ok := s.repo.(interfaces.FinalRenderRepository)
+	if !ok {
+		return "", errors.New("final render repository is not configured")
+	}
+	return repository.ClaimFinalRender(ctx, businessID, jobID, sourceVersion)
+}
+
+func (s *DocumentService) LoadFinalRenderSnapshot(
+	ctx context.Context,
+	businessID, invoiceID, jobID string,
+	sourceVersion int,
+) (*models.Document, error) {
+	repository, ok := s.repo.(interfaces.FinalRenderRepository)
+	if !ok {
+		return nil, errors.New("final render repository is not configured")
+	}
+	return repository.LoadFinalRenderSnapshot(
+		ctx,
+		businessID,
+		invoiceID,
+		jobID,
+		sourceVersion,
+	)
+}
+
+func (s *DocumentService) FailFinalRender(
+	ctx context.Context,
+	businessID, jobID, errorMessage string,
+) error {
+	repository, ok := s.repo.(interfaces.FinalRenderRepository)
+	if !ok {
+		return errors.New("final render repository is not configured")
+	}
+	return repository.FailFinalRender(ctx, businessID, jobID, errorMessage)
+}
+
+func (s *DocumentService) CompleteFinalRender(
+	ctx context.Context,
+	businessID, invoiceID, jobID string,
+	sourceVersion int,
+	objectKey, filename string,
+) (bool, error) {
+	repository, ok := s.repo.(interfaces.FinalRenderRepository)
+	if !ok {
+		return false, errors.New("final render repository is not configured")
+	}
+	return repository.CompleteFinalRender(
+		ctx,
+		businessID,
+		invoiceID,
+		jobID,
+		sourceVersion,
+		objectKey,
+		filename,
+	)
+}
+
 func (s *DocumentService) applyPostCreateSideEffects(ctx context.Context, document *models.Document) error {
 	if err := s.inventory.ApplyDocument(ctx, document); err != nil {
 		return err

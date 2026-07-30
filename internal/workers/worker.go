@@ -225,12 +225,16 @@ func (e *PreviewRenderInProgressError) Retryable() bool {
 	return true
 }
 
-type UnsupportedFinalRenderError struct {
+type FinalRenderInProgressError struct {
 	JobID string
 }
 
-func (e *UnsupportedFinalRenderError) Error() string {
-	return fmt.Sprintf("final render job %q is not supported by this worker", e.JobID)
+func (e *FinalRenderInProgressError) Error() string {
+	return fmt.Sprintf("final render job %q is already processing", e.JobID)
+}
+
+func (e *FinalRenderInProgressError) Retryable() bool {
+	return true
 }
 
 func processDocumentRenderJob(
@@ -262,7 +266,7 @@ func processDocumentRenderJob(
 		}
 		return processPreviewRender(ctx, document, job, operations)
 	case models.RenderKindFinal:
-		return &UnsupportedFinalRenderError{JobID: job.ID}
+		return processFinalRender(ctx, document, job, expectedInvoiceVersion, operations)
 	default:
 		return fmt.Errorf("unsupported render job kind %q", job.Kind)
 	}
@@ -287,6 +291,23 @@ type previewRenderOperations interface {
 	) (bool, error)
 	fail(ctx context.Context, businessID, jobID, message string) error
 	renderGeneric(ctx context.Context, document *models.Document, job *models.DocumentRenderJob) error
+	claimFinal(
+		ctx context.Context,
+		businessID, jobID string,
+		sourceVersion int,
+	) (interfaces.FinalRenderClaimState, error)
+	loadFinalSnapshot(
+		ctx context.Context,
+		businessID, invoiceID, jobID string,
+		sourceVersion int,
+	) (*models.Document, error)
+	completeFinal(
+		ctx context.Context,
+		businessID, invoiceID, jobID string,
+		sourceVersion int,
+		objectKey, filename string,
+	) (bool, error)
+	failFinal(ctx context.Context, businessID, jobID, message string) error
 }
 
 type servicePreviewRenderOperations struct {
@@ -370,6 +391,52 @@ func (o *servicePreviewRenderOperations) fail(
 	return o.svc.Document.FailPreviewRender(ctx, businessID, jobID, message)
 }
 
+func (o *servicePreviewRenderOperations) claimFinal(
+	ctx context.Context,
+	businessID, jobID string,
+	sourceVersion int,
+) (interfaces.FinalRenderClaimState, error) {
+	return o.svc.Document.ClaimFinalRender(ctx, businessID, jobID, sourceVersion)
+}
+
+func (o *servicePreviewRenderOperations) loadFinalSnapshot(
+	ctx context.Context,
+	businessID, invoiceID, jobID string,
+	sourceVersion int,
+) (*models.Document, error) {
+	return o.svc.Document.LoadFinalRenderSnapshot(
+		ctx,
+		businessID,
+		invoiceID,
+		jobID,
+		sourceVersion,
+	)
+}
+
+func (o *servicePreviewRenderOperations) completeFinal(
+	ctx context.Context,
+	businessID, invoiceID, jobID string,
+	sourceVersion int,
+	objectKey, filename string,
+) (bool, error) {
+	return o.svc.Document.CompleteFinalRender(
+		ctx,
+		businessID,
+		invoiceID,
+		jobID,
+		sourceVersion,
+		objectKey,
+		filename,
+	)
+}
+
+func (o *servicePreviewRenderOperations) failFinal(
+	ctx context.Context,
+	businessID, jobID, message string,
+) error {
+	return o.svc.Document.FailFinalRender(ctx, businessID, jobID, message)
+}
+
 func (o *servicePreviewRenderOperations) renderGeneric(
 	ctx context.Context,
 	document *models.Document,
@@ -432,6 +499,158 @@ func (o *servicePreviewRenderOperations) renderGeneric(
 				err,
 			)
 		}
+	}
+	return nil
+}
+
+func processFinalRender(
+	ctx context.Context,
+	document *models.Document,
+	job *models.DocumentRenderJob,
+	expectedInvoiceVersion int,
+	operations previewRenderOperations,
+) error {
+	if document == nil || job == nil || operations == nil ||
+		document.ID == "" || document.BusinessID == "" ||
+		job.ID == "" || job.BusinessID != document.BusinessID ||
+		job.Kind != models.RenderKindFinal ||
+		job.DocumentID == nil || *job.DocumentID != document.ID ||
+		job.InvoiceID == nil || *job.InvoiceID != document.ID ||
+		job.SourceInvoiceVersion == nil ||
+		*job.SourceInvoiceVersion < 1 ||
+		expectedInvoiceVersion < 1 ||
+		*job.SourceInvoiceVersion != expectedInvoiceVersion {
+		return errors.New("final render job identity mismatch")
+	}
+	sourceVersion := *job.SourceInvoiceVersion
+	expectedObjectKey := path.Join(
+		"invoices",
+		document.BusinessID,
+		document.ID,
+		fmt.Sprintf("v%d", sourceVersion),
+		"final.pdf",
+	)
+	if job.ObjectKey != expectedObjectKey {
+		return errors.New("final render object key mismatch")
+	}
+
+	claimState, err := operations.claimFinal(
+		ctx,
+		document.BusinessID,
+		job.ID,
+		sourceVersion,
+	)
+	if err != nil {
+		return fmt.Errorf("claim final render: %w", err)
+	}
+	switch claimState {
+	case interfaces.FinalRenderClaimed:
+	case interfaces.FinalRenderAlreadyProcessing:
+		return &FinalRenderInProgressError{JobID: job.ID}
+	case interfaces.FinalRenderAlreadyCompleted:
+		return nil
+	default:
+		return fmt.Errorf("claim final render returned unknown state %q", claimState)
+	}
+
+	currentVersion, err := operations.currentInvoiceVersion(
+		ctx,
+		document.BusinessID,
+		document.ID,
+	)
+	if err != nil {
+		_ = operations.failFinal(ctx, document.BusinessID, job.ID, err.Error())
+		return fmt.Errorf("load final invoice version: %w", err)
+	}
+	if currentVersion != sourceVersion {
+		err := errors.New("final render invoice version changed")
+		_ = operations.failFinal(ctx, document.BusinessID, job.ID, err.Error())
+		return err
+	}
+
+	frozen, err := operations.loadFinalSnapshot(
+		ctx,
+		document.BusinessID,
+		document.ID,
+		job.ID,
+		sourceVersion,
+	)
+	if err != nil {
+		_ = operations.failFinal(ctx, document.BusinessID, job.ID, err.Error())
+		return fmt.Errorf("load frozen final render snapshot: %w", err)
+	}
+	if err := validateFinalRenderSnapshot(frozen, document.BusinessID, document.ID); err != nil {
+		_ = operations.failFinal(ctx, document.BusinessID, job.ID, err.Error())
+		return err
+	}
+
+	var profile *models.RenderProfile
+	if job.RenderProfileID != nil {
+		profile, err = operations.loadProfile(ctx, document.BusinessID, *job.RenderProfileID)
+		if err != nil {
+			_ = operations.failFinal(ctx, document.BusinessID, job.ID, err.Error())
+			return fmt.Errorf("load frozen final render profile: %w", err)
+		}
+	}
+	content, filename, err := operations.render(ctx, frozen, profile)
+	if err != nil {
+		_ = operations.failFinal(ctx, document.BusinessID, job.ID, err.Error())
+		return fmt.Errorf("render private invoice final: %w", err)
+	}
+	if err := operations.upload(ctx, job.ObjectKey, content); err != nil {
+		_ = operations.failFinal(ctx, document.BusinessID, job.ID, err.Error())
+		return fmt.Errorf("upload private invoice final: %w", err)
+	}
+
+	currentVersion, err = operations.currentInvoiceVersion(
+		ctx,
+		document.BusinessID,
+		document.ID,
+	)
+	if err != nil {
+		_ = operations.failFinal(ctx, document.BusinessID, job.ID, err.Error())
+		return fmt.Errorf("reload final invoice version: %w", err)
+	}
+	if currentVersion != sourceVersion {
+		err := errors.New("final render invoice version changed before completion")
+		_ = operations.failFinal(ctx, document.BusinessID, job.ID, err.Error())
+		return err
+	}
+	if _, err := operations.completeFinal(
+		ctx,
+		document.BusinessID,
+		document.ID,
+		job.ID,
+		sourceVersion,
+		job.ObjectKey,
+		filename,
+	); err != nil {
+		_ = operations.failFinal(ctx, document.BusinessID, job.ID, err.Error())
+		return fmt.Errorf("complete private invoice final: %w", err)
+	}
+	return nil
+}
+
+func validateFinalRenderSnapshot(
+	document *models.Document,
+	businessID, invoiceID string,
+) error {
+	if document == nil ||
+		document.ID != invoiceID ||
+		document.BusinessID != businessID ||
+		document.Status != models.DocumentStatusIssued ||
+		document.DraftState != models.DocumentDraftStateFinal ||
+		document.SerialNumber == "" ||
+		len(document.Lines) == 0 {
+		return errors.New("final render snapshot identity mismatch")
+	}
+	var source struct {
+		Seller models.PartySnapshot `json:"seller_snapshot"`
+		Buyer  models.PartySnapshot `json:"buyer_snapshot"`
+	}
+	if err := json.Unmarshal([]byte(document.SourceLinkage), &source); err != nil ||
+		source.Seller.IsEmpty() || source.Buyer.IsEmpty() {
+		return errors.New("final render snapshot party identity mismatch")
 	}
 	return nil
 }

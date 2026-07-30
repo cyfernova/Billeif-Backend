@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"invoice-backend/internal/models"
@@ -81,7 +82,88 @@ func TestInvoiceServiceIssueBuildsCanonicalTrustedCommand(t *testing.T) {
 	}
 }
 
-func TestInvoiceServiceIssueValidatesKeyActorAndAllHashedSemantics(t *testing.T) {
+func TestInvoiceServiceIssuePublishesOnlyNewCommittedOutboxEvent(t *testing.T) {
+	businessID := uuid.NewString()
+	invoiceID := uuid.NewString()
+	version := 2
+	event := &models.OutboxEvent{ID: uuid.NewString(), BusinessID: businessID}
+	finalRender := &models.DocumentRenderJob{ID: uuid.NewString(), Kind: models.RenderKindFinal}
+	input := IssueInvoiceInput{
+		IdempotencyKey:  uuid.NewString(),
+		ExpectedVersion: version,
+		DocumentType:    "tax_invoice",
+		Series:          "INV",
+	}
+	ctx := ContextWithActor(context.Background(), ActorContext{UserID: uuid.NewString()})
+
+	t.Run("new issue", func(t *testing.T) {
+		repository := &issueInvoiceRepositoryFake{
+			atomicInvoiceRepositoryFake: &atomicInvoiceRepositoryFake{entries: make(map[string]atomicInvoiceEntry)},
+			result: &interfaces.AtomicInvoiceIssueResult{
+				Invoice:     &models.Invoice{ID: invoiceID, BusinessID: businessID, Version: version + 1},
+				FinalRender: finalRender,
+				OutboxEvent: event,
+			},
+		}
+		publisher := &immediateOutboxPublisherFake{}
+		service := NewInvoiceService(nil, nil, repository, nil, nil, nil, nil, nil, nil, nil, logger.New()).
+			WithImmediateOutboxPublisher(publisher)
+
+		result, err := service.IssueByBusiness(ctx, businessID, invoiceID, input)
+
+		if err != nil || result == nil || result.Replayed {
+			t.Fatalf("new issue result/error = %#v/%v", result, err)
+		}
+		if publisher.calls != 1 || publisher.event != event || !publisher.hadDeadline {
+			t.Fatalf("publisher calls/event/deadline = %d/%#v/%v", publisher.calls, publisher.event, publisher.hadDeadline)
+		}
+	})
+
+	t.Run("publication failure remains accepted", func(t *testing.T) {
+		repository := &issueInvoiceRepositoryFake{
+			atomicInvoiceRepositoryFake: &atomicInvoiceRepositoryFake{entries: make(map[string]atomicInvoiceEntry)},
+			result: &interfaces.AtomicInvoiceIssueResult{
+				Invoice:     &models.Invoice{ID: invoiceID, BusinessID: businessID, Version: version + 1},
+				FinalRender: finalRender,
+				OutboxEvent: event,
+			},
+		}
+		publisher := &immediateOutboxPublisherFake{err: errors.New("send unavailable")}
+		service := NewInvoiceService(nil, nil, repository, nil, nil, nil, nil, nil, nil, nil, logger.New()).
+			WithImmediateOutboxPublisher(publisher)
+
+		result, err := service.IssueByBusiness(ctx, businessID, invoiceID, input)
+
+		if err != nil || result == nil {
+			t.Fatalf("publication failure result/error = %#v/%v, want accepted issue", result, err)
+		}
+	})
+
+	t.Run("replay", func(t *testing.T) {
+		repository := &issueInvoiceRepositoryFake{
+			atomicInvoiceRepositoryFake: &atomicInvoiceRepositoryFake{entries: make(map[string]atomicInvoiceEntry)},
+			result: &interfaces.AtomicInvoiceIssueResult{
+				Invoice:     &models.Invoice{ID: invoiceID, BusinessID: businessID, Version: version + 1},
+				FinalRender: finalRender,
+				Replayed:    true,
+			},
+		}
+		publisher := &immediateOutboxPublisherFake{}
+		service := NewInvoiceService(nil, nil, repository, nil, nil, nil, nil, nil, nil, nil, logger.New()).
+			WithImmediateOutboxPublisher(publisher)
+
+		result, err := service.IssueByBusiness(ctx, businessID, invoiceID, input)
+
+		if err != nil || result == nil || !result.Replayed {
+			t.Fatalf("replay result/error = %#v/%v", result, err)
+		}
+		if publisher.calls != 0 {
+			t.Fatalf("replay publisher calls = %d, want 0", publisher.calls)
+		}
+	})
+}
+
+func TestInvoiceServiceIssueValidatesKeyActorAndStableHashedSemantics(t *testing.T) {
 	repo := &issueInvoiceRepositoryFake{
 		atomicInvoiceRepositoryFake: &atomicInvoiceRepositoryFake{entries: make(map[string]atomicInvoiceEntry)},
 		result: &interfaces.AtomicInvoiceIssueResult{
@@ -132,15 +214,56 @@ func TestInvoiceServiceIssueValidatesKeyActorAndAllHashedSemantics(t *testing.T)
 	actorMutations := []ActorContext{
 		{UserID: actorID, Role: "accountant", RequestID: "request-changed", IPAddress: "127.0.0.1"},
 		{UserID: actorID, Role: "accountant", RequestID: "request-base", IPAddress: "127.0.0.2"},
+		{UserID: actorID, Role: "admin", RequestID: "request-base", IPAddress: "127.0.0.1"},
 	}
 	for _, mutation := range actorMutations {
 		mutatedContext := ContextWithActor(context.Background(), mutation)
 		if _, err := service.IssueByBusiness(mutatedContext, businessID, invoiceID, base); err != nil {
 			t.Fatalf("actor-metadata mutation issue: %v", err)
 		}
-		if repo.lastIssue.RequestHash == baseHash {
-			t.Fatalf("persisted actor metadata was omitted from canonical hash: %#v", mutation)
+		if repo.lastIssue.RequestHash != baseHash {
+			t.Fatalf("transient request metadata changed canonical hash: %#v", mutation)
 		}
+	}
+}
+
+func TestInvoiceServiceIssueCanonicalizesUUIDIdentity(t *testing.T) {
+	businessID := uuid.NewString()
+	invoiceID := uuid.NewString()
+	actorID := uuid.NewString()
+	key := uuid.NewString()
+	repository := &issueInvoiceRepositoryFake{
+		atomicInvoiceRepositoryFake: &atomicInvoiceRepositoryFake{entries: make(map[string]atomicInvoiceEntry)},
+		result: &interfaces.AtomicInvoiceIssueResult{
+			Invoice:     &models.Invoice{ID: invoiceID, BusinessID: businessID, Version: 2},
+			FinalRender: &models.DocumentRenderJob{ID: uuid.NewString(), Kind: models.RenderKindFinal},
+		},
+	}
+	service := NewInvoiceService(nil, nil, repository, nil, nil, nil, nil, nil, nil, nil, logger.New())
+	ctx := ContextWithActor(context.Background(), ActorContext{
+		UserID: " " + strings.ToUpper(actorID) + " ",
+	})
+
+	_, err := service.IssueByBusiness(
+		ctx,
+		" "+strings.ToUpper(businessID)+" ",
+		" "+strings.ToUpper(invoiceID)+" ",
+		IssueInvoiceInput{
+			IdempotencyKey:  " " + strings.ToUpper(key) + " ",
+			ExpectedVersion: 1,
+			DocumentType:    "tax_invoice",
+			Series:          "INV",
+		},
+	)
+
+	if err != nil {
+		t.Fatalf("canonical issue: %v", err)
+	}
+	if repository.lastIssue.BusinessID != businessID ||
+		repository.lastIssue.InvoiceID != invoiceID ||
+		repository.lastIssue.ActorID != actorID ||
+		repository.lastIssue.IdempotencyKey != key {
+		t.Fatalf("canonical command identity = %#v", repository.lastIssue)
 	}
 }
 

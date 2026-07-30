@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	issueStageCount = 7
+	issueStageCount = 8
 
 	issueClaimSQL         = `INSERT INTO "api_idempotency_keys".*"business_id".*"command".*"idempotency_key".*"request_hash".*"status".*ON CONFLICT \("business_id","command","idempotency_key"\) DO NOTHING.*RETURNING "id"`
 	issueReplayLookupSQL  = `SELECT \* FROM "api_idempotency_keys".*business_id = \$1 AND command = \$2 AND idempotency_key = \$3.*LIMIT \$4`
@@ -34,6 +34,7 @@ const (
 	issueInvoiceUpdateSQL     = `UPDATE "invoices" SET .*"invoice_no".*"status".*"version".*WHERE \(id = \$[0-9]+ AND business_id = \$[0-9]+ AND version = \$[0-9]+ AND status = \$[0-9]+ AND deleted_at IS NULL\).*"invoices"."deleted_at" IS NULL`
 	issueDocumentUpdateSQL    = `UPDATE "documents" SET .*"draft_state".*"serial_number".*"source_linkage".*"status".*WHERE \(id = \$[0-9]+ AND business_id = \$[0-9]+ AND status = \$[0-9]+ AND deleted_at IS NULL\).*"documents"."deleted_at" IS NULL`
 	issueFinalRenderInsertSQL = `INSERT INTO "document_render_jobs".*"document_id".*"invoice_id".*"business_id".*"kind".*"source_invoice_version".*"object_key".*"output_url".*RETURNING "id"`
+	issueFinalRevisionSQL     = `INSERT INTO "document_revisions".*"document_id".*"business_id".*"action".*"snapshot".*"metadata".*RETURNING "id"`
 	issueOutboxInsertSQL      = `INSERT INTO "outbox_events".*"business_id".*"aggregate_type".*"aggregate_id".*"event_type".*"payload".*"available_at".*RETURNING "id"`
 	issueActivityInsertSQL    = `INSERT INTO "activity_logs".*"business_id".*"actor_id".*"request_id".*"ip_address".*"entity_type".*"entity_id".*"action".*"snapshot".*RETURNING "id"`
 	issueCompletionSQL        = `UPDATE "api_idempotency_keys" SET .*"result_id".*"result_type".*"status".*WHERE business_id = \$[0-9]+ AND command = \$[0-9]+ AND idempotency_key = \$[0-9]+ AND request_hash = \$[0-9]+ AND status = \$[0-9]+`
@@ -57,6 +58,60 @@ func TestNewInvoiceIssueActivitySnapshotsCompleteIssuedInvoice(t *testing.T) {
 	}
 	if activity.RequestID != command.RequestID || activity.IPAddress != command.IPAddress {
 		t.Fatalf("activity request metadata = %#v", activity)
+	}
+}
+
+func TestNewInvoiceFinalRenderRevisionFreezesIssuedDocumentAndLines(t *testing.T) {
+	_, invoice, document := strictIssueFixture()
+	renderJobID := uuid.NewString()
+	sourceVersion := invoice.Version + 1
+	document.Status = models.DocumentStatusIssued
+	document.DraftState = models.DocumentDraftStateFinal
+	document.SerialNumber = "INV/26-27/000001"
+	document.PaidAmount = 0
+	document.BalanceDue = 100
+	document.SourceLinkage = `{"seller_snapshot":{"name":"Frozen Seller"},"buyer_snapshot":{"name":"Frozen Buyer"}}`
+	job := &models.DocumentRenderJob{
+		ID:                   renderJobID,
+		BusinessID:           document.BusinessID,
+		DocumentID:           models.StringPointer(document.ID),
+		InvoiceID:            models.StringPointer(document.ID),
+		Kind:                 models.RenderKindFinal,
+		SourceInvoiceVersion: &sourceVersion,
+	}
+
+	revision, err := newInvoiceFinalRenderRevision(document, job)
+	if err != nil {
+		t.Fatalf("build final render revision: %v", err)
+	}
+
+	document.Status = models.DocumentStatusSent
+	document.PaidAmount = 100
+	document.BalanceDue = 0
+	document.Lines[0].Description = "mutated after issue"
+	now := time.Now()
+	document.SignedAt = &now
+
+	var frozen models.Document
+	if err := json.Unmarshal([]byte(revision.Snapshot), &frozen); err != nil {
+		t.Fatalf("decode frozen document: %v", err)
+	}
+	if frozen.Status != models.DocumentStatusIssued || frozen.PaidAmount != 0 ||
+		frozen.BalanceDue != 100 || frozen.SignedAt != nil ||
+		len(frozen.Lines) != 1 || frozen.Lines[0].Description != "Canonical item" {
+		t.Fatalf("frozen render input changed with live document: %#v", frozen)
+	}
+	var metadata struct {
+		RenderJobID          string `json:"render_job_id"`
+		SourceInvoiceVersion int    `json:"source_invoice_version"`
+	}
+	if err := json.Unmarshal([]byte(revision.Metadata), &metadata); err != nil {
+		t.Fatalf("decode revision metadata: %v", err)
+	}
+	if revision.Action != "final_render_snapshot" ||
+		metadata.RenderJobID != renderJobID ||
+		metadata.SourceInvoiceVersion != sourceVersion {
+		t.Fatalf("revision identity = %#v metadata=%#v", revision, metadata)
 	}
 }
 
@@ -92,7 +147,7 @@ func TestInvoiceRepositoryIssueDraftAtomicPersistsOneLegalResult(t *testing.T) {
 	defer closeDatabase()
 	command, invoice, document := strictIssueFixture()
 
-	expectStrictIssueTransactionPrefix(t, mock, invoice, document)
+	defaultProfileID := expectStrictIssueTransactionPrefix(t, mock, invoice, document)
 	for stage := 0; stage < issueStageCount; stage++ {
 		expectSuccessfulIssueStage(mock, stage)
 	}
@@ -103,8 +158,8 @@ func TestInvoiceRepositoryIssueDraftAtomicPersistsOneLegalResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("issue draft: %v", err)
 	}
-	if result == nil || result.Invoice == nil || result.FinalRender == nil {
-		t.Fatalf("result = %#v, want invoice and render", result)
+	if result == nil || result.Invoice == nil || result.FinalRender == nil || result.OutboxEvent == nil {
+		t.Fatalf("result = %#v, want invoice, render, and new outbox event", result)
 	}
 	if len(result.Invoice.Items) != 1 || result.Invoice.Items[0].ID != invoice.Items[0].ID {
 		t.Fatalf("first issue items = %#v, want locked canonical items", result.Invoice.Items)
@@ -118,9 +173,15 @@ func TestInvoiceRepositoryIssueDraftAtomicPersistsOneLegalResult(t *testing.T) {
 		result.FinalRender.SourceInvoiceVersion == nil ||
 		*result.FinalRender.SourceInvoiceVersion != command.ExpectedVersion+1 ||
 		result.FinalRender.OutputURL != "" ||
+		result.FinalRender.RenderProfileID == nil ||
+		*result.FinalRender.RenderProfileID != defaultProfileID ||
 		!strings.Contains(result.FinalRender.ObjectKey, command.BusinessID) ||
 		!strings.Contains(result.FinalRender.ObjectKey, command.InvoiceID) {
 		t.Fatalf("final render = %#v", result.FinalRender)
+	}
+	if result.OutboxEvent.EventType != "invoice.issued.v1" ||
+		result.OutboxEvent.AggregateID != command.InvoiceID {
+		t.Fatalf("issued outbox event = %#v", result.OutboxEvent)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("SQL expectations: %v", err)
@@ -224,7 +285,7 @@ func TestInvoiceRepositoryIssueDraftAtomicReplaysCompletedResultAndRejectsChange
 
 		result, err := repository.IssueDraftAtomic(context.Background(), command)
 
-		if err != nil || result == nil || !result.Replayed ||
+		if err != nil || result == nil || !result.Replayed || result.OutboxEvent != nil ||
 			result.Invoice == nil || result.Invoice.ID != command.InvoiceID ||
 			len(result.Invoice.Items) != 1 || result.Invoice.Items[0].ID != itemID ||
 			result.FinalRender == nil || result.FinalRender.SourceInvoiceVersion == nil ||
@@ -270,6 +331,7 @@ func TestInvoiceRepositoryIssueDraftAtomicRollsBackEveryIssuanceStage(t *testing
 		{name: "invoice update"},
 		{name: "document projection"},
 		{name: "final render", queryStep: true},
+		{name: "final render snapshot", queryStep: true},
 		{name: "outbox event", queryStep: true},
 		{name: "activity", queryStep: true},
 		{name: "idempotency completion"},
@@ -356,12 +418,15 @@ func expectSuccessfulIssueStage(mock sqlmock.Sqlmock, index int) {
 		mock.ExpectQuery(issueFinalRenderInsertSQL).
 			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(uuid.NewString()))
 	case 4:
-		mock.ExpectQuery(issueOutboxInsertSQL).
+		mock.ExpectQuery(issueFinalRevisionSQL).
 			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(uuid.NewString()))
 	case 5:
-		mock.ExpectQuery(issueActivityInsertSQL).
+		mock.ExpectQuery(issueOutboxInsertSQL).
 			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(uuid.NewString()))
 	case 6:
+		mock.ExpectQuery(issueActivityInsertSQL).
+			WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(uuid.NewString()))
+	case 7:
 		mock.ExpectExec(issueCompletionSQL).WillReturnResult(sqlmock.NewResult(0, 1))
 	}
 }
@@ -372,6 +437,7 @@ func expectFailedIssueStage(mock sqlmock.Sqlmock, index int, queryStep bool) {
 		issueInvoiceUpdateSQL,
 		issueDocumentUpdateSQL,
 		issueFinalRenderInsertSQL,
+		issueFinalRevisionSQL,
 		issueOutboxInsertSQL,
 		issueActivityInsertSQL,
 		issueCompletionSQL,
@@ -454,7 +520,7 @@ func expectStrictIssueTransactionPrefix(
 	mock sqlmock.Sqlmock,
 	invoice *models.Invoice,
 	document *models.Document,
-) {
+) string {
 	t.Helper()
 	expectStrictIssueClaim(mock)
 	expectStrictLockedInvoice(t, mock, invoice)
@@ -463,6 +529,10 @@ func expectStrictIssueTransactionPrefix(
 		WillReturnRows(sqlmock.NewRows([]string{"timezone"}).AddRow("Asia/Kolkata"))
 	expectStrictLockedDocument(mock, document)
 	expectStrictDocumentLines(mock, document.Lines)
+	defaultProfileID := uuid.NewString()
+	mock.ExpectQuery(`SELECT \* FROM "render_profiles".*business_id = \$1 AND is_default = \$2 AND deleted_at IS NULL.*LIMIT \$3`).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(defaultProfileID))
+	return defaultProfileID
 }
 
 func expectStrictLockedInvoice(t *testing.T, mock sqlmock.Sqlmock, invoice *models.Invoice) {
