@@ -153,12 +153,21 @@ func handleWebSocket(ctx context.Context, req events.APIGatewayWebsocketProxyReq
 		return events.APIGatewayProxyResponse{StatusCode: 200, Body: "disconnected"}, nil
 
 	case services.VoiceActionStart:
+		if response, disabled := voicePilotDisabledResponse(voiceCfg); disabled {
+			return response, nil
+		}
 		return handleVoiceStart(ctx, connectionID, req)
 
 	case services.VoiceActionAudio:
+		if response, disabled := voicePilotDisabledResponse(voiceCfg); disabled {
+			return response, nil
+		}
 		return handleVoiceAudio(ctx, connectionID, req)
 
 	case services.VoiceActionControl:
+		if response, disabled := voicePilotDisabledResponse(voiceCfg); disabled {
+			return response, nil
+		}
 		return handleVoiceControl(ctx, connectionID, req)
 
 	case "$default":
@@ -168,6 +177,13 @@ func handleWebSocket(ctx context.Context, req events.APIGatewayWebsocketProxyReq
 	default:
 		return events.APIGatewayProxyResponse{StatusCode: 200, Body: "ok"}, nil
 	}
+}
+
+func voicePilotDisabledResponse(cfg *config.LambdaVoiceConfig) (events.APIGatewayProxyResponse, bool) {
+	if cfg != nil && cfg.Enabled {
+		return events.APIGatewayProxyResponse{}, false
+	}
+	return events.APIGatewayProxyResponse{StatusCode: 503, Body: "voice pilot is disabled"}, true
 }
 
 func parseClaims(token string) (*middleware.CognitoClaims, error) {

@@ -550,6 +550,7 @@ resource "aws_lambda_function" "ws_handler" {
     variables = merge(local.common_lambda_env, local.database_runtime_env, {
       AWS_ENDPOINT                       = ""
       WEBSOCKET_API_ENDPOINT             = local.websocket_management_api_endpoint
+      VOICE_ENABLED                      = tostring(var.enable_voice)
       VOICE_SESSION_WORKER_FUNCTION_NAME = aws_lambda_function.voice_session.function_name
     })
   }
@@ -580,7 +581,7 @@ resource "aws_lambda_function" "voice_session" {
   memory_size      = var.voice_session_lambda_memory_size
   timeout          = var.voice_session_lambda_timeout_seconds
 
-  reserved_concurrent_executions = var.enable_application ? (var.enable_lambda_reserved_concurrency ? var.voice_session_reserved_concurrency : null) : 0
+  reserved_concurrent_executions = var.enable_application && var.enable_voice ? var.voice_session_reserved_concurrency : 0
 
   tags = {
     MigrationChecksum = local.application_migration_checksum
@@ -591,11 +592,6 @@ resource "aws_lambda_function" "voice_session" {
       AWS_ENDPOINT           = ""
       WEBSOCKET_API_ENDPOINT = local.websocket_management_api_endpoint
     })
-  }
-
-  vpc_config {
-    subnet_ids         = aws_subnet.private[*].id
-    security_group_ids = [aws_security_group.lambda.id]
   }
 
   lifecycle {

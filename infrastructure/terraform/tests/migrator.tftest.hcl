@@ -168,6 +168,7 @@ run "foundation_migrates_while_application_is_fail_closed" {
       aws_lambda_function.sqs_bargaining.reserved_concurrent_executions == 0 &&
       aws_lambda_function.ws_handler.reserved_concurrent_executions == 0 &&
       aws_lambda_function.voice_session.reserved_concurrent_executions == 0 &&
+      length(aws_lambda_function.voice_session.vpc_config) == 0 &&
       aws_lambda_function.custom_sms_sender.reserved_concurrent_executions == 0 &&
       aws_lambda_function.outbox_dispatcher.reserved_concurrent_executions == 0 &&
       aws_scheduler_schedule.outbox_dispatcher.state == "DISABLED"
@@ -368,6 +369,7 @@ run "reviewed_enablement_activates_stable_application_resources_after_migration"
       aws_lambda_function.sqs_gst.reserved_concurrent_executions == 2 &&
       aws_lambda_function.sqs_bargaining.reserved_concurrent_executions == 5 &&
       aws_lambda_function.ws_handler.reserved_concurrent_executions == 5 &&
+      aws_lambda_function.voice_session.reserved_concurrent_executions == 0 &&
       aws_lambda_function.outbox_dispatcher.reserved_concurrent_executions == 1 &&
       aws_scheduler_schedule.outbox_dispatcher.state == "ENABLED"
     )
@@ -409,5 +411,41 @@ run "reviewed_enablement_activates_stable_application_resources_after_migration"
       toset(keys(aws_iam_role.lambda_worker_exec)) == toset(["invoice", "gst", "bargaining"])
     )
     error_message = "The enabled plan must not recreate the removed payment worker artifact, environment, or IAM instance."
+  }
+}
+
+run "voice_pilot_is_explicit_outside_vpc_and_hard_capped" {
+  command = plan
+
+  variables {
+    enable_application                 = true
+    enable_voice                       = true
+    alert_email                        = "alerts@example.com"
+    alert_email_subscription_confirmed = true
+  }
+
+  assert {
+    condition = (
+      aws_lambda_function.voice_session.reserved_concurrent_executions == 5 &&
+      aws_lambda_function.voice_session.timeout == 900 &&
+      length(aws_lambda_function.voice_session.vpc_config) == 0 &&
+      aws_lambda_function.voice_session.environment[0].variables.VOICE_WS_MAX_SESSION_SECONDS == "900" &&
+      aws_lambda_function.voice_session.environment[0].variables.VOICE_WS_MAX_CONCURRENT_SESSIONS_PER_USER == "1" &&
+      aws_lambda_function.voice_session.environment[0].variables.VOICE_WS_EVENT_POLL_INTERVAL_MS == "250" &&
+      aws_lambda_function.ws_handler.environment[0].variables.VOICE_ENABLED == "true"
+    )
+    error_message = "Explicit Billeif voice pilot mode must stay outside the VPC and enforce one session per user, five globally, 900 seconds, and 250 ms polling."
+  }
+
+  assert {
+    condition = (
+      length(aws_cloudwatch_metric_alarm.voice_active_sessions) == 1 &&
+      aws_cloudwatch_metric_alarm.voice_active_sessions[0].metric_name == "ConcurrentExecutions" &&
+      aws_cloudwatch_metric_alarm.voice_active_sessions[0].threshold == 5 &&
+      aws_cloudwatch_metric_alarm.voice_active_sessions[0].evaluation_periods == 3 &&
+      aws_cloudwatch_metric_alarm.voice_active_sessions[0].datapoints_to_alarm == 2 &&
+      aws_cloudwatch_metric_alarm.voice_active_sessions[0].treat_missing_data == "notBreaching"
+    )
+    error_message = "Enabled Billeif voice pilot sessions must have an explicit two-of-three global-cap alarm."
   }
 }

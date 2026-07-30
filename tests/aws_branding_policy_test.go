@@ -117,6 +117,7 @@ aws_cloudwatch_metric_alarm.lambda_ws_errors
 aws_cloudwatch_metric_alarm.rds_cpu_high
 aws_cloudwatch_metric_alarm.rds_storage_low
 aws_cloudwatch_metric_alarm.threat_detection
+aws_cloudwatch_metric_alarm.voice_active_sessions
 aws_cognito_user_group.accountant
 aws_cognito_user_group.admin
 aws_cognito_user_group.viewer
@@ -701,7 +702,7 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 	)
 	assertExactManifest(t, "Terraform output keys", terraformOutputKeys(t), wantOutputs)
 	wantEnvironment := removeManifestEntry(manifestLines(preTaskEnvironmentManifest), "SQS_PAYMENT_QUEUE")
-	wantEnvironment = append(wantEnvironment, "INVOICE_CURSOR_HMAC_SECRET_ARN", "SES_SENDING_ACCOUNT_ID")
+	wantEnvironment = append(wantEnvironment, "INVOICE_CURSOR_HMAC_SECRET_ARN", "SES_SENDING_ACCOUNT_ID", "VOICE_ENABLED")
 	assertExactManifest(t, "Terraform environment keys", terraformEnvironmentKeys(t), wantEnvironment)
 
 	providers := readTerraformFile(t, "providers.tf")

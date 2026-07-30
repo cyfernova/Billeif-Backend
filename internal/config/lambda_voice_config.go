@@ -13,6 +13,7 @@ import (
 )
 
 type LambdaVoiceConfig struct {
+	Enabled                     bool
 	Environment                 string
 	LogLevel                    string
 	LogFormat                   string
@@ -34,6 +35,7 @@ type LambdaVoiceConfig struct {
 func LoadLambdaVoiceConfig(requireWorkerFunction bool) (*LambdaVoiceConfig, error) {
 	region := requireEnv("AWS_REGION")
 	cfg := &LambdaVoiceConfig{
+		Enabled:     boolEnv("VOICE_ENABLED"),
 		Environment: requireEnv("ENVIRONMENT"),
 		LogLevel:    requireEnv("LOG_LEVEL"),
 		LogFormat:   requireEnv("LOG_FORMAT"),

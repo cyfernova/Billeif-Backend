@@ -185,6 +185,12 @@ variable "enable_application" {
   default     = false
 }
 
+variable "enable_voice" {
+  description = "Activate the explicitly reviewed Billeif realtime voice pilot after ordinary application enablement."
+  type        = bool
+  default     = false
+}
+
 variable "migration_lambda_artifact_path" {
   description = "Optional path to the packaged database migration Lambda artifact."
   type        = string
@@ -465,9 +471,14 @@ variable "mcp_server_url" {
 }
 
 variable "voice_ws_max_session_seconds" {
-  description = "Maximum realtime voice session duration"
+  description = "Maximum Billeif pilot voice session duration"
   type        = number
-  default     = 3600
+  default     = 900
+
+  validation {
+    condition     = var.voice_ws_max_session_seconds == 900
+    error_message = "voice_ws_max_session_seconds is fixed at the 900-second Billeif pilot cap."
+  }
 }
 
 variable "voice_ws_ping_interval_seconds" {
@@ -489,15 +500,25 @@ variable "voice_ws_max_frame_bytes" {
 }
 
 variable "voice_ws_max_concurrent_sessions_per_user" {
-  description = "Maximum concurrent realtime voice sessions per authenticated user"
+  description = "Maximum concurrent Billeif pilot voice sessions per authenticated user"
   type        = number
-  default     = 3
+  default     = 1
+
+  validation {
+    condition     = var.voice_ws_max_concurrent_sessions_per_user == 1
+    error_message = "voice_ws_max_concurrent_sessions_per_user is fixed at one for the Billeif pilot."
+  }
 }
 
 variable "voice_ws_event_poll_interval_ms" {
-  description = "Realtime voice Lambda worker DynamoDB event poll interval"
+  description = "Billeif pilot voice Lambda worker DynamoDB event poll interval"
   type        = number
   default     = 250
+
+  validation {
+    condition     = var.voice_ws_event_poll_interval_ms == 250
+    error_message = "voice_ws_event_poll_interval_ms is fixed at 250ms for the Billeif pilot."
+  }
 }
 
 variable "voice_ws_event_ttl_seconds" {
@@ -570,13 +591,23 @@ variable "voice_session_lambda_memory_size" {
 }
 
 variable "voice_session_lambda_timeout_seconds" {
-  description = "Timeout for realtime voice session worker Lambda"
+  description = "Timeout for the Billeif pilot realtime voice session worker Lambda"
   type        = number
   default     = 900
+
+  validation {
+    condition     = var.voice_session_lambda_timeout_seconds == 900
+    error_message = "voice_session_lambda_timeout_seconds is fixed at the 900-second Billeif pilot cap."
+  }
 }
 
 variable "voice_session_reserved_concurrency" {
-  description = "Reserved concurrency for realtime voice session worker when reserved concurrency is enabled"
+  description = "Hard reserved-concurrency cap for the explicitly enabled Billeif realtime voice pilot"
   type        = number
   default     = 5
+
+  validation {
+    condition     = var.voice_session_reserved_concurrency == 5
+    error_message = "voice_session_reserved_concurrency is fixed at five for the Billeif pilot."
+  }
 }

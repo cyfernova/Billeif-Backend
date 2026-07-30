@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"invoice-backend/internal/config"
 	"invoice-backend/internal/middleware"
 	"invoice-backend/internal/services"
 	"invoice-backend/pkg/logger"
@@ -49,6 +50,21 @@ func TestDecodeWebSocketBodyRejectsInvalidBase64(t *testing.T) {
 	}, &payload)
 	if err == nil {
 		t.Fatal("expected invalid base64 to fail")
+	}
+}
+
+func TestVoicePilotDisabledResponseFailsClosed(t *testing.T) {
+	response, disabled := voicePilotDisabledResponse(&config.LambdaVoiceConfig{Enabled: false})
+	if !disabled {
+		t.Fatal("expected disabled voice pilot to fail closed")
+	}
+	if response.StatusCode != 503 || response.Body != "voice pilot is disabled" {
+		t.Fatalf("unexpected disabled response: status=%d body=%q", response.StatusCode, response.Body)
+	}
+
+	_, disabled = voicePilotDisabledResponse(&config.LambdaVoiceConfig{Enabled: true})
+	if disabled {
+		t.Fatal("expected enabled voice pilot to continue")
 	}
 }
 
