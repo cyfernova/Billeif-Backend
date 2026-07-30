@@ -85,8 +85,7 @@ func (r *invoiceRepository) CreateDeliveryAtomic(
 			}
 			return deliveryStageError("invoice lock", err)
 		}
-		if invoice.Status != models.InvoiceStatusIssued || invoice.InvoiceNo == nil ||
-			invoice.IssuedAt == nil || finalJob.InvoiceID == nil ||
+		if !invoiceHasDeliverableIssuanceFacts(&invoice) || finalJob.InvoiceID == nil ||
 			*finalJob.InvoiceID != invoice.ID || finalJob.SourceInvoiceVersion == nil ||
 			*finalJob.SourceInvoiceVersion != invoice.Version {
 			return interfaces.ErrInvoiceNotDeliverable
@@ -149,6 +148,18 @@ func (r *invoiceRepository) CreateDeliveryAtomic(
 		return nil
 	})
 	return result, err
+}
+
+func invoiceHasDeliverableIssuanceFacts(invoice *models.Invoice) bool {
+	if invoice == nil || invoice.InvoiceNo == nil || invoice.IssuedAt == nil {
+		return false
+	}
+	switch invoice.Status {
+	case models.InvoiceStatusDraft, models.InvoiceStatusVoid, models.InvoiceStatusCanceled:
+		return false
+	default:
+		return true
+	}
 }
 
 func (r *invoiceRepository) GetInvoiceDelivery(

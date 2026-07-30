@@ -126,6 +126,41 @@ func TestInvoiceRepositoryCreateDeliveryAtomicQueuesCompletedFinalRenderWithOutb
 	}
 }
 
+func TestInvoiceRepositoryCreateDeliveryAtomicAllowsIssuedSettlementAndDeliveryStates(t *testing.T) {
+	for _, status := range []string{
+		models.InvoiceStatusIssued,
+		models.InvoiceStatusSent,
+		models.InvoiceStatusPartiallyPaid,
+		models.InvoiceStatusPaid,
+		models.InvoiceStatusOverdue,
+	} {
+		t.Run(status, func(t *testing.T) {
+			repository, mock, closeDatabase := newStrictIssueSQLMockRepository(t)
+			defer closeDatabase()
+			command, invoice, job := deliveryRepositoryFixture(models.RenderJobStatusProcessing)
+			invoice.Status = status
+			expectDeliveryClaim(mock, command, true)
+			expectDeliveryLocks(mock, command, invoice, job)
+			mock.ExpectQuery(deliveryInsertSQL).
+				WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(uuid.NewString()))
+			mock.ExpectQuery(deliveryActivitySQL).
+				WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(uuid.NewString()))
+			mock.ExpectExec(deliveryCompleteSQL).WillReturnResult(sqlmock.NewResult(0, 1))
+			mock.ExpectCommit()
+
+			result, err := repository.CreateDeliveryAtomic(context.Background(), command)
+
+			if err != nil || result == nil || result.Delivery == nil ||
+				result.Delivery.Status != models.EmailDeliveryStatusWaitingForRender {
+				t.Fatalf("%s delivery result/error = %#v/%v, want waiting delivery", status, result, err)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatalf("SQL expectations: %v", err)
+			}
+		})
+	}
+}
+
 func TestInvoiceRepositoryCreateDeliveryAtomicReplaysAndRejectsChangedRequest(t *testing.T) {
 	t.Run("replay", func(t *testing.T) {
 		repository, mock, closeDatabase := newStrictIssueSQLMockRepository(t)
@@ -209,6 +244,18 @@ func TestInvoiceRepositoryCreateDeliveryAtomicRejectsInvalidLifecycleAndRenderId
 	}{
 		{name: "draft invoice", mutate: func(invoice *models.Invoice, _ *models.DocumentRenderJob) {
 			invoice.Status = models.InvoiceStatusDraft
+		}},
+		{name: "canceled invoice", mutate: func(invoice *models.Invoice, _ *models.DocumentRenderJob) {
+			invoice.Status = models.InvoiceStatusCanceled
+		}},
+		{name: "void invoice", mutate: func(invoice *models.Invoice, _ *models.DocumentRenderJob) {
+			invoice.Status = models.InvoiceStatusVoid
+		}},
+		{name: "missing invoice number", mutate: func(invoice *models.Invoice, _ *models.DocumentRenderJob) {
+			invoice.InvoiceNo = nil
+		}},
+		{name: "missing issued timestamp", mutate: func(invoice *models.Invoice, _ *models.DocumentRenderJob) {
+			invoice.IssuedAt = nil
 		}},
 		{name: "stale render version", mutate: func(invoice *models.Invoice, job *models.DocumentRenderJob) {
 			version := invoice.Version - 1
@@ -355,6 +402,14 @@ func expectDeliveryLocks(
 	invoice *models.Invoice,
 	job *models.DocumentRenderJob,
 ) {
+	var invoiceNumber interface{}
+	if invoice.InvoiceNo != nil {
+		invoiceNumber = *invoice.InvoiceNo
+	}
+	var issuedAt interface{}
+	if invoice.IssuedAt != nil {
+		issuedAt = *invoice.IssuedAt
+	}
 	mock.ExpectQuery(deliveryJobLockSQL).
 		WithArgs(command.BusinessID, command.InvoiceID, models.RenderKindFinal, 1).
 		WillReturnRows(sqlmock.NewRows([]string{
@@ -369,7 +424,7 @@ func expectDeliveryLocks(
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "business_id", "invoice_no", "issued_at", "status", "version",
 		}).AddRow(
-			invoice.ID, invoice.BusinessID, *invoice.InvoiceNo, *invoice.IssuedAt,
+			invoice.ID, invoice.BusinessID, invoiceNumber, issuedAt,
 			invoice.Status, invoice.Version,
 		))
 }
