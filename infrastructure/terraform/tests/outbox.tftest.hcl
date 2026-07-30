@@ -534,3 +534,28 @@ run "active_worker_queues_are_retained_redriven_and_cost_capped" {
     error_message = "Every active queue must have its own partial-batch worker capped at two concurrent invocations; bargaining processes one round in a 60-second invocation."
   }
 }
+
+run "monthly_budget_warns_at_actual_and_forecast_thresholds" {
+  command = plan
+
+  variables {
+    alert_email = "alerts@example.com"
+  }
+
+  assert {
+    condition = (
+      aws_budgets_budget.monthly_cost.name == "${local.resource_prefix}-monthly-cost" &&
+      aws_budgets_budget.monthly_cost.budget_type == "COST" &&
+      aws_budgets_budget.monthly_cost.limit_amount == "125" &&
+      aws_budgets_budget.monthly_cost.limit_unit == "USD" &&
+      aws_budgets_budget.monthly_cost.time_unit == "MONTHLY" &&
+      length(aws_budgets_budget.monthly_cost.notification) == 4 &&
+      contains([for notification in aws_budgets_budget.monthly_cost.notification : "${notification.notification_type}:${notification.threshold}"], "ACTUAL:50") &&
+      contains([for notification in aws_budgets_budget.monthly_cost.notification : "${notification.notification_type}:${notification.threshold}"], "ACTUAL:80") &&
+      contains([for notification in aws_budgets_budget.monthly_cost.notification : "${notification.notification_type}:${notification.threshold}"], "ACTUAL:100") &&
+      contains([for notification in aws_budgets_budget.monthly_cost.notification : "${notification.notification_type}:${notification.threshold}"], "FORECASTED:100") &&
+      alltrue([for notification in aws_budgets_budget.monthly_cost.notification : notification.comparison_operator == "GREATER_THAN" && notification.threshold_type == "PERCENTAGE" && contains(notification.subscriber_email_addresses, var.alert_email)])
+    )
+    error_message = "Billeif must have a $125 monthly cost budget with actual 50/80/100 percent and forecasted 100 percent email alerts."
+  }
+}
