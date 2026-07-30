@@ -209,7 +209,7 @@ func generateDocumentPDF(
 		document,
 		job,
 		expectedInvoiceVersion,
-		&servicePreviewRenderOperations{cfg: cfg, svc: svc},
+		&servicePreviewRenderOperations{cfg: cfg, svc: svc, log: log},
 	)
 }
 
@@ -245,6 +245,16 @@ func processDocumentRenderJob(
 	}
 	switch job.Kind {
 	case models.RenderKindPreview:
+		isGenericDocumentRender := expectedInvoiceVersion == 0 &&
+			job.InvoiceID == nil &&
+			job.SourceInvoiceVersion == nil &&
+			job.ObjectKey == ""
+		if isGenericDocumentRender {
+			if operations == nil {
+				return errors.New("generic document renderer is not configured")
+			}
+			return operations.renderGeneric(ctx, document, job)
+		}
 		if expectedInvoiceVersion < 1 ||
 			job.SourceInvoiceVersion == nil ||
 			*job.SourceInvoiceVersion != expectedInvoiceVersion {
@@ -276,11 +286,13 @@ type previewRenderOperations interface {
 		objectKey, filename string,
 	) (bool, error)
 	fail(ctx context.Context, businessID, jobID, message string) error
+	renderGeneric(ctx context.Context, document *models.Document, job *models.DocumentRenderJob) error
 }
 
 type servicePreviewRenderOperations struct {
 	cfg *config.Config
 	svc *services.Container
+	log *logger.Logger
 }
 
 func (o *servicePreviewRenderOperations) currentInvoiceVersion(
@@ -356,6 +368,72 @@ func (o *servicePreviewRenderOperations) fail(
 	businessID, jobID, message string,
 ) error {
 	return o.svc.Document.FailPreviewRender(ctx, businessID, jobID, message)
+}
+
+func (o *servicePreviewRenderOperations) renderGeneric(
+	ctx context.Context,
+	document *models.Document,
+	job *models.DocumentRenderJob,
+) error {
+	if err := o.svc.Document.MarkRenderJobProcessing(ctx, document.BusinessID, job.ID); err != nil {
+		o.log.Warn(
+			"failed to mark render job processing",
+			"document_id",
+			document.ID,
+			"render_job_id",
+			job.ID,
+			"error",
+			err,
+		)
+	}
+
+	profile, err := resolveRenderProfile(ctx, o.svc, document, job.ID)
+	if err != nil {
+		_ = o.svc.Document.FailRenderJob(ctx, document.BusinessID, job.ID, err.Error())
+		return err
+	}
+
+	pdfContent, filename, err := renderDocumentPDF(ctx, o.svc, document, profile)
+	if err != nil {
+		_ = o.svc.Document.FailRenderJob(ctx, document.BusinessID, job.ID, err.Error())
+		return err
+	}
+
+	key := path.Join("documents", document.ID, filename)
+	if err := o.svc.S3.Upload(
+		ctx,
+		o.cfg.S3.BucketInvoices,
+		key,
+		pdfContent,
+		"application/pdf",
+	); err != nil {
+		_ = o.svc.Document.FailRenderJob(ctx, document.BusinessID, job.ID, err.Error())
+		return err
+	}
+
+	pdfURL := o.svc.S3.GetObjectURL(o.cfg.S3.BucketInvoices, key)
+	if err := o.svc.Document.UpdateRenderedPDF(
+		ctx,
+		document.ID,
+		job.ID,
+		pdfURL,
+		filename,
+	); err != nil {
+		_ = o.svc.Document.FailRenderJob(ctx, document.BusinessID, job.ID, err.Error())
+		return err
+	}
+	if document.DocumentType == models.DocumentTypeSalesInvoice {
+		if err := o.svc.Invoice.UpdatePDFUrl(ctx, document.ID, pdfURL); err != nil {
+			o.log.Warn(
+				"failed to sync rendered sales invoice PDF to legacy invoice",
+				"document_id",
+				document.ID,
+				"error",
+				err,
+			)
+		}
+	}
+	return nil
 }
 
 func processPreviewRender(

@@ -2,6 +2,7 @@ package workers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -81,6 +82,8 @@ type fakePreviewRenderOperations struct {
 	completeKey     string
 	completeName    string
 	completed       bool
+	genericError    error
+	genericRendered bool
 }
 
 func (f *fakePreviewRenderOperations) currentInvoiceVersion(context.Context, string, string) (int, error) {
@@ -144,6 +147,15 @@ func (f *fakePreviewRenderOperations) complete(
 
 func (f *fakePreviewRenderOperations) fail(context.Context, string, string, string) error {
 	return nil
+}
+
+func (f *fakePreviewRenderOperations) renderGeneric(
+	context.Context,
+	*models.Document,
+	*models.DocumentRenderJob,
+) error {
+	f.genericRendered = true
+	return f.genericError
 }
 
 func TestProcessPreviewRenderUsesFrozenProfileAndExactPrivateObjectKey(t *testing.T) {
@@ -340,6 +352,71 @@ func TestProcessDocumentRenderJobRejectsFinalKindWithTypedError(t *testing.T) {
 	}
 	if operations.versionCalls != 0 || operations.processing || operations.rendered {
 		t.Fatalf("unsupported final render performed preview work: %#v", operations)
+	}
+}
+
+func TestProcessDocumentRenderJobRoutesCanonicalPreviewToPrivateRenderer(t *testing.T) {
+	document, job, version := validPreviewWorkerFixture()
+	legacyRendererReached := errors.New("legacy generic renderer reached")
+	operations := &fakePreviewRenderOperations{
+		invoiceVersions: []int{version, version},
+		genericError:    legacyRendererReached,
+	}
+
+	if err := processDocumentRenderJob(
+		context.Background(),
+		document,
+		job,
+		version,
+		operations,
+	); err != nil {
+		t.Fatalf("process canonical preview: %v", err)
+	}
+	if operations.genericRendered {
+		t.Fatal("canonical preview entered legacy generic renderer")
+	}
+	if !operations.rendered || !operations.completed || operations.uploadKey != job.ObjectKey {
+		t.Fatalf("canonical preview workflow state: %#v", operations)
+	}
+}
+
+func TestProcessDocumentRenderJobRoutesRequestRenderGenericShapeToLegacyRenderer(t *testing.T) {
+	businessID := uuid.NewString()
+	documentID := uuid.NewString()
+	jobID := uuid.NewString()
+	document := &models.Document{ID: documentID, BusinessID: businessID}
+	job := &models.DocumentRenderJob{
+		ID:         jobID,
+		DocumentID: models.StringPointer(documentID),
+		BusinessID: businessID,
+		Kind:       models.RenderKindPreview,
+		Status:     models.RenderJobStatusQueued,
+	}
+	var envelope InvoiceMessage
+	body := fmt.Sprintf(
+		`{"type":"generate_document_pdf","document_id":%q,"render_job_id":%q}`,
+		documentID,
+		jobID,
+	)
+	if err := json.Unmarshal([]byte(body), &envelope); err != nil {
+		t.Fatalf("decode RequestRenderByBusiness-shaped envelope: %v", err)
+	}
+	legacyRendererReached := errors.New("legacy generic renderer reached")
+	operations := &fakePreviewRenderOperations{genericError: legacyRendererReached}
+
+	err := processDocumentRenderJob(
+		context.Background(),
+		document,
+		job,
+		envelope.InvoiceVersion,
+		operations,
+	)
+
+	if !errors.Is(err, legacyRendererReached) || !operations.genericRendered {
+		t.Fatalf("generic render result = %T %v, want legacy renderer sentinel", err, err)
+	}
+	if operations.versionCalls != 0 || operations.processing || operations.rendered {
+		t.Fatalf("generic job entered canonical preview path: %#v", operations)
 	}
 }
 
