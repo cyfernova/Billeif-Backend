@@ -259,6 +259,10 @@ func TestInvoiceRepositoryIssueDraftAtomicReturnsTypedLifecycleErrors(t *testing
 			assert: func(err error) bool { var target *invoiceissue.AlreadyIssuedError; return errors.As(err, &target) },
 		},
 		{
+			name: "already issued takes precedence over stale version", version: 2, status: models.InvoiceStatusIssued, seller: `{"name":"Seller"}`, buyer: `{"name":"Buyer"}`,
+			assert: func(err error) bool { var target *invoiceissue.AlreadyIssuedError; return errors.As(err, &target) },
+		},
+		{
 			name: "missing seller snapshot", version: 1, status: models.InvoiceStatusDraft, seller: `{}`, buyer: `{"name":"Buyer"}`,
 			assert: func(err error) bool { var target *invoiceissue.InvalidLifecycleError; return errors.As(err, &target) },
 		},

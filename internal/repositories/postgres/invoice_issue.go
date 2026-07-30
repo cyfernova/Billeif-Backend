@@ -64,11 +64,11 @@ func (r *invoiceRepository) IssueDraftAtomic(
 			}
 			return issueStageError("invoice lock", err)
 		}
-		if invoice.Version != command.ExpectedVersion {
-			return &invoiceissue.StaleVersionError{Expected: command.ExpectedVersion, Actual: invoice.Version}
-		}
 		if invoice.Status != models.InvoiceStatusDraft || invoice.InvoiceNo != nil || invoice.IssuedAt != nil {
 			return &invoiceissue.AlreadyIssuedError{}
+		}
+		if invoice.Version != command.ExpectedVersion {
+			return &invoiceissue.StaleVersionError{Expected: command.ExpectedVersion, Actual: invoice.Version}
 		}
 		if invoice.SellerSnapshot.IsEmpty() || invoice.BuyerSnapshot.IsEmpty() {
 			return &invoiceissue.InvalidLifecycleError{Reason: "legal party snapshots are required"}

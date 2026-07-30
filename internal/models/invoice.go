@@ -68,13 +68,13 @@ func (p PartySnapshot) IsEmpty() bool {
 
 type Invoice struct {
 	ID                   string                 `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
-	BusinessID           string                 `gorm:"not null;index" json:"business_id" validate:"required,uuid"`
+	BusinessID           string                 `gorm:"not null;index;uniqueIndex:idx_business_invoice,priority:1" json:"business_id" validate:"required,uuid"`
 	CustomerID           *string                `gorm:"index" json:"customer_id,omitempty" validate:"omitempty,uuid"`
 	Version              int                    `gorm:"not null;default:1" json:"version"`
 	ProjectID            *string                `gorm:"index" json:"project_id,omitempty" validate:"omitempty,uuid"`
 	PriceListID          *string                `gorm:"index" json:"price_list_id,omitempty" validate:"omitempty,uuid"`
 	RenderProfileID      *string                `gorm:"index" json:"render_profile_id,omitempty" validate:"omitempty,uuid"`
-	InvoiceNo            *string                `gorm:"uniqueIndex:idx_business_invoice;size:50" json:"invoice_no,omitempty" validate:"omitempty,max=50"`
+	InvoiceNo            *string                `gorm:"uniqueIndex:idx_business_invoice,priority:2;size:50" json:"invoice_no,omitempty" validate:"omitempty,max=50"`
 	Origin               InvoiceOrigin          `gorm:"not null;size:24;default:'conversion'" json:"origin"`
 	IssuedAt             *time.Time             `json:"issued_at,omitempty"`
 	SellerSnapshot       PartySnapshot          `gorm:"serializer:json;type:jsonb;not null;default:'{}'" json:"seller_snapshot"`

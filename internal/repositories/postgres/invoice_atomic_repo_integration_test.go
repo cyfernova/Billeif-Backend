@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -90,10 +91,12 @@ func TestInvoiceRepositoryCreateDraftAtomicPostgresConcurrencyAndRollback(t *tes
 	if err := database.AutoMigrate(
 		&models.APIIdempotencyKey{},
 		&models.DocumentSequence{},
+		&models.RenderProfile{},
 		&models.Invoice{},
 		&models.InvoiceItem{},
 		&models.Document{},
 		&models.DocumentLine{},
+		&models.DocumentRevision{},
 		&models.ActivityLog{},
 		&models.OutboxEvent{},
 		&models.DocumentRenderJob{},
@@ -104,8 +107,10 @@ func TestInvoiceRepositoryCreateDraftAtomicPostgresConcurrencyAndRollback(t *tes
 	for _, statement := range []string{
 		`ALTER TABLE api_idempotency_keys ALTER COLUMN business_id TYPE UUID USING business_id::uuid`,
 		`ALTER TABLE document_sequences ALTER COLUMN business_id TYPE UUID USING business_id::uuid`,
+		`ALTER TABLE render_profiles ALTER COLUMN business_id TYPE UUID USING business_id::uuid`,
 		`ALTER TABLE invoices ALTER COLUMN business_id TYPE UUID USING business_id::uuid, ALTER COLUMN customer_id TYPE UUID USING customer_id::uuid`,
 		`ALTER TABLE documents ALTER COLUMN business_id TYPE UUID USING business_id::uuid`,
+		`ALTER TABLE document_revisions ALTER COLUMN business_id TYPE UUID USING business_id::uuid, ALTER COLUMN document_id TYPE UUID USING document_id::uuid`,
 		`ALTER TABLE activity_logs ALTER COLUMN business_id TYPE UUID USING business_id::uuid`,
 		`ALTER TABLE outbox_events ALTER COLUMN business_id TYPE UUID USING business_id::uuid`,
 		`ALTER TABLE document_render_jobs ALTER COLUMN business_id TYPE UUID USING business_id::uuid, ALTER COLUMN document_id TYPE UUID USING document_id::uuid, ALTER COLUMN invoice_id TYPE UUID USING invoice_id::uuid`,
@@ -118,9 +123,12 @@ func TestInvoiceRepositoryCreateDraftAtomicPostgresConcurrencyAndRollback(t *tes
 	for _, statement := range []string{
 		`ALTER TABLE api_idempotency_keys ADD CONSTRAINT fk_atomic_idempotency_business FOREIGN KEY (business_id) REFERENCES business_profiles(id) ON DELETE CASCADE`,
 		`ALTER TABLE document_sequences ADD CONSTRAINT fk_atomic_sequence_business FOREIGN KEY (business_id) REFERENCES business_profiles(id) ON DELETE CASCADE`,
+		`ALTER TABLE render_profiles ADD CONSTRAINT fk_atomic_render_profile_business FOREIGN KEY (business_id) REFERENCES business_profiles(id) ON DELETE CASCADE`,
 		`ALTER TABLE invoices ADD CONSTRAINT fk_atomic_invoice_business FOREIGN KEY (business_id) REFERENCES business_profiles(id) ON DELETE CASCADE`,
 		`ALTER TABLE invoices ADD CONSTRAINT fk_atomic_invoice_customer FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE RESTRICT`,
 		`ALTER TABLE documents ADD CONSTRAINT fk_atomic_document_business FOREIGN KEY (business_id) REFERENCES business_profiles(id) ON DELETE CASCADE`,
+		`ALTER TABLE document_revisions ADD CONSTRAINT fk_atomic_revision_business FOREIGN KEY (business_id) REFERENCES business_profiles(id) ON DELETE CASCADE`,
+		`ALTER TABLE document_revisions ADD CONSTRAINT fk_atomic_revision_document FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE`,
 		`ALTER TABLE activity_logs ADD CONSTRAINT fk_atomic_activity_business FOREIGN KEY (business_id) REFERENCES business_profiles(id) ON DELETE CASCADE`,
 		`ALTER TABLE outbox_events ADD CONSTRAINT fk_atomic_outbox_business FOREIGN KEY (business_id) REFERENCES business_profiles(id) ON DELETE CASCADE`,
 		`ALTER TABLE document_render_jobs ADD CONSTRAINT fk_atomic_render_business FOREIGN KEY (business_id) REFERENCES business_profiles(id) ON DELETE CASCADE`,
@@ -392,12 +400,16 @@ func TestInvoiceRepositoryCreateDraftAtomicPostgresConcurrencyAndRollback(t *tes
 		First(&persistedDocument).Error; err != nil {
 		t.Fatalf("load issued document: %v", err)
 	}
+	var sourceLinkage map[string]interface{}
+	if err := json.Unmarshal([]byte(persistedDocument.SourceLinkage), &sourceLinkage); err != nil {
+		t.Fatalf("decode persisted legal source linkage: %v", err)
+	}
 	if persistedDocument.SerialNumber != issuedNumber ||
 		persistedDocument.Status != models.DocumentStatusIssued ||
 		persistedDocument.DraftState != models.DocumentDraftStateFinal ||
-		!strings.Contains(persistedDocument.SourceLinkage, `"source_invoice_version":2`) ||
-		!strings.Contains(persistedDocument.SourceLinkage, `"seller_snapshot"`) ||
-		!strings.Contains(persistedDocument.SourceLinkage, `"buyer_snapshot"`) {
+		sourceLinkage["source_invoice_version"] != float64(2) ||
+		sourceLinkage["seller_snapshot"] == nil ||
+		sourceLinkage["buyer_snapshot"] == nil {
 		t.Fatalf("persisted legal document projection = %#v", persistedDocument)
 	}
 	differentKey := issueCommand
