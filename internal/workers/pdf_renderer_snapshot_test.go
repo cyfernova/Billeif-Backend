@@ -1,6 +1,7 @@
 package workers
 
 import (
+	"bytes"
 	"context"
 	"testing"
 	"time"
@@ -74,6 +75,25 @@ func TestFinalSnapshotRendererDoesNotQueryLiveCompliance(t *testing.T) {
 	}
 	if queries.count != 0 {
 		t.Fatalf("final snapshot render executed %d live compliance queries, want zero", queries.count)
+	}
+}
+
+func TestFinalSnapshotRendererProducesStableBytesAcrossRetries(t *testing.T) {
+	svc, _ := complianceCountingRenderContainer(t)
+	document := frozenFinalRenderDocument()
+
+	first, _, err := renderFinalDocumentPDF(context.Background(), svc, document, nil)
+	if err != nil {
+		t.Fatalf("render first final snapshot: %v", err)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	second, _, err := renderFinalDocumentPDF(context.Background(), svc, document, nil)
+	if err != nil {
+		t.Fatalf("render retried final snapshot: %v", err)
+	}
+
+	if !bytes.Equal(first, second) {
+		t.Fatal("final snapshot bytes changed across retries")
 	}
 }
 

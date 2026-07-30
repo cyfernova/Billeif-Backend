@@ -136,6 +136,15 @@ func renderDocumentPDFWithLiveCompliance(
 	}
 
 	pdf := gofpdf.New("P", "mm", pageSize, "")
+	if !includeLiveCompliance {
+		snapshotTime := document.IssueDate.UTC()
+		if snapshotTime.IsZero() {
+			snapshotTime = time.Unix(0, 0).UTC()
+		}
+		pdf.SetCatalogSort(true)
+		pdf.SetCreationDate(snapshotTime)
+		pdf.SetModificationDate(snapshotTime)
+	}
 	fontFamily := loadDocumentFont(pdf, profile, document.Locale)
 	if profile != nil && profile.PasswordProtected {
 		var permissions byte
