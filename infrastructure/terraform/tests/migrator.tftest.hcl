@@ -180,7 +180,7 @@ run "foundation_migrates_while_application_is_fail_closed" {
       length(aws_lambda_event_source_mapping.invoice_queue) == 0 &&
       length(aws_lambda_event_source_mapping.gst_queue) == 0 &&
       length(aws_lambda_event_source_mapping.bargaining_queue) == 0 &&
-      length(aws_lambda_permission.allow_rest_api_http) == 0 &&
+      length(aws_lambda_permission.allow_http_api_http) == 0 &&
       length(aws_lambda_permission.allow_rest_a2a_stream) == 0 &&
       length(aws_lambda_permission.allow_websocket_lambda) == 0 &&
       length(aws_lambda_permission.cognito_phone_custom_sms) == 0
@@ -313,7 +313,7 @@ run "reviewed_enablement_activates_stable_application_resources_after_migration"
       length(aws_lambda_event_source_mapping.invoice_queue) == 1 &&
       length(aws_lambda_event_source_mapping.gst_queue) == 1 &&
       length(aws_lambda_event_source_mapping.bargaining_queue) == 1 &&
-      length(aws_lambda_permission.allow_rest_api_http) == 1 &&
+      length(aws_lambda_permission.allow_http_api_http) == 1 &&
       length(aws_lambda_permission.allow_rest_a2a_stream) == 1 &&
       length(aws_lambda_permission.allow_websocket_lambda) == 1 &&
       length(aws_lambda_permission.cognito_phone_custom_sms) == 1

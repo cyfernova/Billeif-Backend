@@ -43,6 +43,17 @@ mock_provider "aws" {
   }
 
   override_resource {
+    target          = aws_apigatewayv2_api.http
+    override_during = plan
+    values = {
+      id            = "test-http-api"
+      api_endpoint  = "https://test-http-api.execute-api.ap-south-1.amazonaws.com"
+      execution_arn = "arn:aws:execute-api:ap-south-1:123456789012:test-http-api"
+      protocol_type = "HTTP"
+    }
+  }
+
+  override_resource {
     target          = aws_kms_key.application_secrets
     override_during = plan
     values = {

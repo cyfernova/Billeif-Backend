@@ -94,11 +94,11 @@ build-lambda: build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice
 
 build-lambda-http: ## Build HTTP API Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/http
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(LAMBDA_BUILD_DIR)/http/bootstrap ./cmd/lambda/http
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o $(LAMBDA_BUILD_DIR)/http/bootstrap ./cmd/lambda/http
 
 build-lambda-a2a-stream: ## Build A2A stream Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/a2a-stream
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(LAMBDA_BUILD_DIR)/a2a-stream/bootstrap ./cmd/lambda/a2a-stream
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o $(LAMBDA_BUILD_DIR)/a2a-stream/bootstrap ./cmd/lambda/a2a-stream
 
 build-lambda-sqs-invoice: ## Build invoice SQS Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/sqs-invoice

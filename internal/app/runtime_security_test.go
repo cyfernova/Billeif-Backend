@@ -295,10 +295,14 @@ func TestInventoryRoutesRequireInventoryAndReportPermissions(t *testing.T) {
 	}
 }
 
-func TestTerraformAddsGatewayAuthLoggingAndLeastPrivilegeBoundaries(t *testing.T) {
-	apiGateway, err := os.ReadFile("../../infrastructure/terraform/api_gateway_rest.tf")
+func TestTerraformAddsGatewayLoggingAndLeastPrivilegeBoundaries(t *testing.T) {
+	restGateway, err := os.ReadFile("../../infrastructure/terraform/api_gateway_rest.tf")
 	if err != nil {
 		t.Fatalf("read REST API Gateway terraform: %v", err)
+	}
+	httpGateway, err := os.ReadFile("../../infrastructure/terraform/api_gateway_http.tf")
+	if err != nil {
+		t.Fatalf("read HTTP API Gateway terraform: %v", err)
 	}
 	iam, err := os.ReadFile("../../infrastructure/terraform/iam.tf")
 	if err != nil {
@@ -313,18 +317,25 @@ func TestTerraformAddsGatewayAuthLoggingAndLeastPrivilegeBoundaries(t *testing.T
 		source    string
 		fragments []string
 	}{
-		"api gateway": {
-			source: string(apiGateway),
+		"HTTP api gateway": {
+			source: string(httpGateway),
 			fragments: []string{
-				`resource "aws_api_gateway_authorizer" "cognito"`,
-				`authorization = "COGNITO_USER_POOLS"`,
-				`public_auth_direct_paths`,
-				`resource "aws_api_gateway_method" "api_v1_auth_public_post"`,
-				`resource "aws_api_gateway_method" "api_v1_auth_phone_logout_post"`,
-				`resource "aws_api_gateway_method" "api_v1_auth_google_options"`,
+				`resource "aws_apigatewayv2_api" "http"`,
+				`payload_format_version = "1.0"`,
+				`route_key          = "$default"`,
+				`authorization_type = "NONE"`,
 				`access_log_settings`,
 				`throttling_burst_limit`,
 				`throttling_rate_limit`,
+			},
+		},
+		"REST api gateway": {
+			source: string(restGateway),
+			fragments: []string{
+				`resource "aws_api_gateway_authorizer" "cognito"`,
+				`response_transfer_mode  = "STREAM"`,
+				`metrics_enabled        = false`,
+				`access_log_settings`,
 			},
 		},
 		"iam": {

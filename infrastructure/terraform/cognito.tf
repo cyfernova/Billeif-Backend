@@ -1,5 +1,5 @@
 locals {
-  swagger_oauth_redirect_url = "${local.rest_api_invoke_url}/swagger/oauth2-redirect.html"
+  swagger_oauth_redirect_url = "${local.http_api_invoke_url}/swagger/oauth2-redirect.html"
   cognito_callback_urls      = distinct(concat([local.swagger_oauth_redirect_url], var.cognito_additional_callback_urls))
   cognito_logout_urls        = distinct(var.cognito_additional_logout_urls)
 }

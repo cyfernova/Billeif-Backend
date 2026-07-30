@@ -33,8 +33,13 @@ output "rds_tunnel_instance_id" {
   value       = try(aws_instance.rds_tunnel[0].id, "")
 }
 
+output "http_api_url" {
+  description = "Ordinary HTTP API invoke URL"
+  value       = aws_apigatewayv2_stage.http.invoke_url
+}
+
 output "rest_api_url" {
-  description = "REST API invoke URL"
+  description = "A2A response-streaming REST API invoke URL"
   value       = aws_api_gateway_stage.main.invoke_url
 }
 
@@ -195,7 +200,7 @@ output "razorpay_secret_arn" {
 
 output "razorpay_webhook_url" {
   description = "Public Razorpay webhook endpoint URL"
-  value       = "${local.rest_api_invoke_url}/api/v1/webhooks/razorpay"
+  value       = "${local.http_api_invoke_url}/api/v1/webhooks/razorpay"
 }
 
 output "websocket_connections_table" {

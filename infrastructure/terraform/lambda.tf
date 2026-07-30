@@ -1,6 +1,7 @@
 locals {
   # Construct invoke URLs from API IDs to avoid circular dependencies
   # (lambdas need stage URL, but stages depend on lambdas via deployments).
+  http_api_invoke_url               = "https://${aws_apigatewayv2_api.http.id}.execute-api.${var.aws_region}.amazonaws.com/${var.environment}"
   rest_api_invoke_url               = "https://${aws_api_gateway_rest_api.main.id}.execute-api.${var.aws_region}.amazonaws.com/${var.environment}"
   websocket_api_invoke_url          = "wss://${aws_apigatewayv2_api.websocket.id}.execute-api.${var.aws_region}.amazonaws.com/${var.environment}"
   websocket_management_api_endpoint = "https://${aws_apigatewayv2_api.websocket.id}.execute-api.${var.aws_region}.amazonaws.com/${var.environment}"
@@ -37,7 +38,7 @@ locals {
     DATABASE_PORT                             = tostring(var.db_port)
     DATABASE_NAME                             = var.db_name
     DATABASE_SSL_MODE                         = "require"
-    ALLOWED_ORIGINS                           = local.rest_api_invoke_url
+    ALLOWED_ORIGINS                           = local.http_api_invoke_url
     S3_BUCKET_LOGOS                           = aws_s3_bucket.business_logos.id
     S3_BUCKET_INVOICES                        = aws_s3_bucket.invoices_pdf.id
     S3_BUCKET_PRODUCTS                        = aws_s3_bucket.product_images.id
@@ -332,7 +333,7 @@ resource "aws_lambda_function" "api_http" {
   s3_object_version = aws_s3_object.api_http_lambda_artifact.version_id
   source_code_hash  = local.lambda_artifact_hashes.api_http
   memory_size       = 1024
-  timeout           = 500
+  timeout           = 28
 
   reserved_concurrent_executions = var.enable_application ? (var.enable_lambda_reserved_concurrency ? 10 : null) : 0
 
@@ -343,7 +344,7 @@ resource "aws_lambda_function" "api_http" {
   environment {
     variables = merge(local.common_lambda_env, local.http_secret_env, local.http_cursor_secret_env, {
       WEBSOCKET_API_ENDPOINT = local.websocket_api_invoke_url
-      SERVER_BASE_URL        = local.rest_api_invoke_url
+      SERVER_BASE_URL        = local.http_api_invoke_url
     })
   }
 
