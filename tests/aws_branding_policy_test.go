@@ -478,6 +478,37 @@ func TestSESFeedbackSubscriptionWaitsForSourceAndRedriveQueuePolicies(t *testing
 	}
 }
 
+func TestNATReadinessAndShutdownOrderingAreExplicit(t *testing.T) {
+	nat := readTerraformFile(t, "nat_egress.tf")
+	migrations := readTerraformFile(t, "migrations.tf")
+	lambdas := readTerraformFile(t, "lambda.tf")
+
+	for _, required := range []string{
+		`resource "aws_ssm_association" "nat_bootstrap_ready"`,
+		`association_name = "${local.resource_prefix}-nat-bootstrap-ready"`,
+		`wait_for_success_timeout_seconds = 600`,
+		`key    = "tag:BilleifNatTarget"`,
+		`cloud-init status --wait`,
+		`systemctl is-active --quiet billeif-nat.service`,
+		`resource "aws_ec2_instance_state" "nat_running"`,
+		`resource "aws_ssm_association" "nat_activation_ready"`,
+		`resource "aws_ec2_instance_state" "nat_stopped"`,
+		`aws_lambda_event_source_mapping.invoice_queue,`,
+		`aws_lambda_permission.allow_http_api_http,`,
+		`aws_scheduler_schedule.outbox_dispatcher`,
+	} {
+		if !strings.Contains(nat, required) {
+			t.Errorf("NAT readiness or shutdown dependency contract is missing %q", required)
+		}
+	}
+	if !strings.Contains(migrations, `aws_ssm_association.nat_bootstrap_ready`) {
+		t.Error("database migration must depend on verified NAT bootstrap readiness")
+	}
+	if got := strings.Count(lambdas, `aws_ssm_association.nat_activation_ready,`); got != 10 {
+		t.Errorf("all ten application Lambda resources must wait for NAT activation readiness; got %d", got)
+	}
+}
+
 func terraformVariableHasDefault(source, variable string) bool {
 	start := strings.Index(source, `variable "`+variable+`"`)
 	if start == -1 {
@@ -636,6 +667,8 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_db_proxy.main",
 		"aws_db_proxy_default_target_group.main",
 		"aws_db_proxy_target.main",
+		"aws_ec2_instance_state.nat_running",
+		"aws_ec2_instance_state.nat_stopped",
 		"aws_eip.nat_instance",
 		"aws_eip_association.nat_instance",
 		"aws_iam_instance_profile.nat_instance",
@@ -696,6 +729,8 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_sqs_queue_redrive_allow_policy.ses_feedback_dlq",
 		"aws_sqs_queue_redrive_policy.email_delivery",
 		"aws_sqs_queue_redrive_policy.ses_feedback",
+		"aws_ssm_association.nat_activation_ready",
+		"aws_ssm_association.nat_bootstrap_ready",
 		"aws_subnet.database",
 		"aws_vpc_endpoint.dynamodb",
 		"aws_vpc_endpoint.s3",
@@ -1043,6 +1078,7 @@ var stableAWSNameAttributeAllowlist = map[string][]string{
 	"aws_ses_event_destination.name":                            {"local.resource_prefix"},
 	"aws_sns_topic.name":                                        {"local.resource_prefix"},
 	"aws_sqs_queue.name":                                        {"local.resource_prefix"},
+	"aws_ssm_association.name":                                  {`"AWS-RunShellScript"`},
 	"aws_ssm_parameter.name":                                    {"local.db_host_ssm_parameter_name"},
 }
 

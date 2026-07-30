@@ -180,6 +180,11 @@ run "nat_instance_is_the_cost_capped_default" {
       length(aws_eip.nat_instance) == 1 &&
       length(aws_eip.nat) == 0 &&
       length(aws_eip_association.nat_instance) == 1 &&
+      length(aws_ssm_association.nat_bootstrap_ready) == 1 &&
+      length(aws_ssm_association.nat_activation_ready) == 0 &&
+      length(aws_ec2_instance_state.nat_running) == 0 &&
+      length(aws_ec2_instance_state.nat_stopped) == 1 &&
+      aws_ec2_instance_state.nat_stopped[0].state == "stopped" &&
       aws_eip_association.nat_instance[0].allocation_id == aws_eip.nat_instance[0].id &&
       aws_route.private_default_egress.network_interface_id == aws_instance.nat[0].primary_network_interface_id &&
       aws_route.private_default_egress.nat_gateway_id == null
@@ -199,7 +204,8 @@ run "nat_instance_is_the_cost_capped_default" {
       aws_instance.nat[0].metadata_options[0].http_tokens == "required" &&
       aws_instance.nat[0].credit_specification[0].cpu_credits == "standard" &&
       aws_instance.nat[0].root_block_device[0].encrypted == true &&
-      aws_instance.nat[0].root_block_device[0].volume_type == "gp3"
+      aws_instance.nat[0].root_block_device[0].volume_type == "gp3" &&
+      aws_instance.nat[0].tags.BilleifNatTarget == local.resource_prefix
     )
     error_message = "The Billeif NAT instance must be hardened Arm64 t4g.micro compute with encrypted gp3 and standard CPU credits."
   }
@@ -245,6 +251,19 @@ run "nat_instance_is_the_cost_capped_default" {
     )
     error_message = "The Billeif NAT instance must be SSM-managed without SSH."
   }
+
+  assert {
+    condition = (
+      aws_ssm_association.nat_bootstrap_ready[0].association_name == "${local.resource_prefix}-nat-bootstrap-ready" &&
+      aws_ssm_association.nat_bootstrap_ready[0].name == "AWS-RunShellScript" &&
+      aws_ssm_association.nat_bootstrap_ready[0].wait_for_success_timeout_seconds == 600 &&
+      aws_ssm_association.nat_bootstrap_ready[0].targets[0].key == "tag:BilleifNatTarget" &&
+      toset(aws_ssm_association.nat_bootstrap_ready[0].targets[0].values) == toset([local.resource_prefix]) &&
+      strcontains(aws_ssm_association.nat_bootstrap_ready[0].parameters.commands, "billeif-nat.service") &&
+      strcontains(aws_ssm_association.nat_bootstrap_ready[0].parameters.commands, "net.ipv4.ip_forward")
+    )
+    error_message = "The Billeif migration must wait at no extra cost for SSM to verify NAT forwarding readiness."
+  }
 }
 
 run "managed_nat_is_an_explicit_opt_in" {
@@ -278,9 +297,39 @@ run "managed_nat_is_an_explicit_opt_in" {
       length(aws_eip.nat) == 1 &&
       aws_nat_gateway.main[0].allocation_id == aws_eip.nat[0].id &&
       length(aws_eip_association.nat_instance) == 0 &&
+      length(aws_ssm_association.nat_bootstrap_ready) == 0 &&
+      length(aws_ssm_association.nat_activation_ready) == 0 &&
+      length(aws_ec2_instance_state.nat_running) == 0 &&
+      length(aws_ec2_instance_state.nat_stopped) == 0 &&
       aws_route.private_default_egress.nat_gateway_id == aws_nat_gateway.main[0].id
     )
     error_message = "Managed NAT must replace, not duplicate, Billeif NAT-instance egress when explicitly selected."
+  }
+}
+
+run "application_activation_starts_the_nat_instance" {
+  command = plan
+
+  variables {
+    enable_application                 = true
+    enable_lambda_reserved_concurrency = true
+    alert_email                        = "alerts@billeif.example"
+    alert_email_subscription_confirmed = true
+  }
+
+  assert {
+    condition = (
+      length(aws_ssm_association.nat_bootstrap_ready) == 1 &&
+      length(aws_ssm_association.nat_activation_ready) == 1 &&
+      aws_ssm_association.nat_activation_ready[0].association_name == "${local.resource_prefix}-nat-activation-ready" &&
+      aws_ssm_association.nat_activation_ready[0].wait_for_success_timeout_seconds == 600 &&
+      aws_ssm_association.nat_activation_ready[0].targets[0].key == "tag:BilleifNatTarget" &&
+      toset(aws_ssm_association.nat_activation_ready[0].targets[0].values) == toset([local.resource_prefix]) &&
+      length(aws_ec2_instance_state.nat_running) == 1 &&
+      aws_ec2_instance_state.nat_running[0].state == "running" &&
+      length(aws_ec2_instance_state.nat_stopped) == 0
+    )
+    error_message = "Billeif application activation must start the cost-capped NAT instance before runtime traffic is enabled."
   }
 }
 

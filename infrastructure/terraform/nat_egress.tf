@@ -127,7 +127,8 @@ resource "aws_instance" "nat" {
   }
 
   tags = {
-    Name = "${local.resource_prefix}-nat-instance"
+    Name             = "${local.resource_prefix}-nat-instance"
+    BilleifNatTarget = local.resource_prefix
   }
 
   depends_on = [
@@ -162,6 +163,82 @@ resource "aws_route" "private_default_egress" {
   depends_on = [
     aws_eip_association.nat_instance,
     aws_nat_gateway.main
+  ]
+}
+
+resource "aws_ssm_association" "nat_bootstrap_ready" {
+  count            = local.nat_instance_enabled ? 1 : 0
+  name             = "AWS-RunShellScript"
+  association_name = "${local.resource_prefix}-nat-bootstrap-ready"
+  parameters = {
+    commands = "cloud-init status --wait && systemctl is-active --quiet billeif-nat.service && test \"$(sysctl -n net.ipv4.ip_forward)\" = \"1\""
+  }
+  wait_for_success_timeout_seconds = 600
+
+  targets {
+    key    = "tag:BilleifNatTarget"
+    values = [local.resource_prefix]
+  }
+
+  depends_on = [
+    aws_eip_association.nat_instance,
+    aws_iam_role_policy_attachment.nat_instance_ssm
+  ]
+}
+
+resource "aws_ec2_instance_state" "nat_running" {
+  count       = local.nat_instance_enabled && var.enable_application ? 1 : 0
+  instance_id = aws_instance.nat[0].id
+  state       = "running"
+
+  depends_on = [aws_lambda_invocation.database_migrations]
+}
+
+resource "aws_ssm_association" "nat_activation_ready" {
+  count            = local.nat_instance_enabled && var.enable_application ? 1 : 0
+  name             = "AWS-RunShellScript"
+  association_name = "${local.resource_prefix}-nat-activation-ready"
+  parameters = {
+    commands = "systemctl is-active --quiet billeif-nat.service && test \"$(sysctl -n net.ipv4.ip_forward)\" = \"1\""
+  }
+  wait_for_success_timeout_seconds = 600
+
+  targets {
+    key    = "tag:BilleifNatTarget"
+    values = [local.resource_prefix]
+  }
+
+  depends_on = [aws_ec2_instance_state.nat_running]
+}
+
+resource "aws_ec2_instance_state" "nat_stopped" {
+  count       = local.nat_instance_enabled && !var.enable_application ? 1 : 0
+  instance_id = aws_instance.nat[0].id
+  state       = "stopped"
+
+  depends_on = [
+    aws_lambda_invocation.database_migrations,
+    aws_lambda_function.outbox_dispatcher,
+    aws_lambda_function.sqs_email_delivery,
+    aws_lambda_function.sqs_ses_feedback,
+    aws_lambda_function.api_http,
+    aws_lambda_function.a2a_stream,
+    aws_lambda_function.sqs_invoice,
+    aws_lambda_function.sqs_gst,
+    aws_lambda_function.sqs_bargaining,
+    aws_lambda_function.ws_handler,
+    aws_lambda_function.voice_session,
+    aws_lambda_function.custom_sms_sender,
+    aws_lambda_event_source_mapping.invoice_queue,
+    aws_lambda_event_source_mapping.gst_queue,
+    aws_lambda_event_source_mapping.bargaining_queue,
+    aws_lambda_event_source_mapping.email_delivery_queue,
+    aws_lambda_event_source_mapping.ses_feedback_queue,
+    aws_lambda_permission.allow_http_api_http,
+    aws_lambda_permission.allow_rest_a2a_stream,
+    aws_lambda_permission.allow_websocket_lambda,
+    aws_lambda_permission.cognito_phone_custom_sms,
+    aws_scheduler_schedule.outbox_dispatcher
   ]
 }
 

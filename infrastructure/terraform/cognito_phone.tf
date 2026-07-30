@@ -196,7 +196,11 @@ resource "aws_lambda_function" "custom_sms_sender" {
     }
   }
 
-  depends_on = [aws_cloudwatch_log_group.cognito_phone_custom_sms]
+  depends_on = [
+    aws_ssm_association.nat_activation_ready,
+    aws_nat_gateway.main,
+    aws_cloudwatch_log_group.cognito_phone_custom_sms,
+  ]
 }
 
 resource "aws_cognito_user_pool" "phone" {

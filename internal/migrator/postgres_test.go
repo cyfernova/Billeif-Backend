@@ -5,10 +5,61 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"invoice-backend/internal/config"
 	migrationbundle "invoice-backend/migrations"
+
+	"github.com/DATA-DOG/go-sqlmock"
 )
+
+type recordingMigrationPool struct {
+	maxOpen     int
+	maxIdle     int
+	maxIdleTime time.Duration
+	maxLifetime time.Duration
+}
+
+func (p *recordingMigrationPool) SetMaxOpenConns(value int)              { p.maxOpen = value }
+func (p *recordingMigrationPool) SetMaxIdleConns(value int)              { p.maxIdle = value }
+func (p *recordingMigrationPool) SetConnMaxIdleTime(value time.Duration) { p.maxIdleTime = value }
+func (p *recordingMigrationPool) SetConnMaxLifetime(value time.Duration) { p.maxLifetime = value }
+
+func TestConfigureMigrationDatabasePoolIsSerialAndBounded(t *testing.T) {
+	pool := &recordingMigrationPool{}
+	configureMigrationDatabasePool(pool)
+
+	if pool.maxOpen != 1 || pool.maxIdle != 0 {
+		t.Fatalf("migration pool open/idle = %d/%d, want 1/0", pool.maxOpen, pool.maxIdle)
+	}
+	if pool.maxIdleTime != 2*time.Minute || pool.maxLifetime != 10*time.Minute {
+		t.Fatalf("migration pool idle/lifetime = %v/%v, want 2m/10m", pool.maxIdleTime, pool.maxLifetime)
+	}
+}
+
+func TestOpenGORMPostgresUsesTheExistingConnection(t *testing.T) {
+	sqlDatabase, mock, err := sqlmock.New(sqlmock.MonitorPingsOption(true))
+	if err != nil {
+		t.Fatalf("sqlmock.New() error = %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDatabase.Close() })
+	mock.ExpectPing()
+
+	gormDatabase, err := openGORMPostgres(sqlDatabase)
+	if err != nil {
+		t.Fatalf("openGORMPostgres() error = %v", err)
+	}
+	underlying, err := gormDatabase.DB()
+	if err != nil {
+		t.Fatalf("gorm DB() error = %v", err)
+	}
+	if underlying != sqlDatabase {
+		t.Fatal("GORM migration connection did not preserve the existing bounded SQL pool")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("GORM connection expectations: %v", err)
+	}
+}
 
 func TestPostgresURLPreservesCredentialAndIdentifierBoundaries(t *testing.T) {
 	rawURL, err := postgresURL(config.DatabaseCredentials{

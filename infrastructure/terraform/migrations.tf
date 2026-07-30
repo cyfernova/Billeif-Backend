@@ -166,6 +166,11 @@ resource "aws_lambda_invocation" "database_migrations" {
       error_message = "Database migration invocation must return the expected checksum and a clean migration state."
     }
   }
+
+  depends_on = [
+    aws_route.private_default_egress,
+    aws_ssm_association.nat_bootstrap_ready
+  ]
 }
 
 locals {

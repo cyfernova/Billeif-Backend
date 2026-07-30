@@ -8,13 +8,17 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"invoice-backend/internal/config"
 
 	"github.com/golang-migrate/migrate/v4"
-	"github.com/golang-migrate/migrate/v4/database/postgres"
+	migratepostgres "github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	_ "github.com/lib/pq"
+	gormpostgres "gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 var ErrInvalidDatabaseConfig = errors.New("invalid migration database configuration")
@@ -37,7 +41,21 @@ func OpenPostgres(bundle fs.FS, bundleRoot string, credentials config.DatabaseCr
 		_ = sourceDriver.Close()
 		return nil, ErrOpenDatabase
 	}
-	databaseDriver, err := postgres.WithInstance(database, &postgres.Config{})
+	configureMigrationDatabasePool(database)
+
+	gormDatabase, err := openGORMPostgres(database)
+	if err != nil {
+		_ = sourceDriver.Close()
+		_ = database.Close()
+		return nil, ErrOpenDatabase
+	}
+	underlyingDatabase, err := gormDatabase.DB()
+	if err != nil {
+		_ = sourceDriver.Close()
+		_ = database.Close()
+		return nil, ErrOpenDatabase
+	}
+	databaseDriver, err := migratepostgres.WithInstance(underlyingDatabase, &migratepostgres.Config{})
 	if err != nil {
 		_ = sourceDriver.Close()
 		_ = database.Close()
@@ -50,6 +68,27 @@ func OpenPostgres(bundle fs.FS, bundleRoot string, credentials config.DatabaseCr
 		return nil, ErrOpenDatabase
 	}
 	return &postgresRunner{migrate: instance}, nil
+}
+
+type migrationDatabasePool interface {
+	SetMaxOpenConns(int)
+	SetMaxIdleConns(int)
+	SetConnMaxIdleTime(time.Duration)
+	SetConnMaxLifetime(time.Duration)
+}
+
+func configureMigrationDatabasePool(database migrationDatabasePool) {
+	database.SetMaxOpenConns(1)
+	database.SetMaxIdleConns(0)
+	database.SetConnMaxIdleTime(2 * time.Minute)
+	database.SetConnMaxLifetime(10 * time.Minute)
+}
+
+func openGORMPostgres(database *sql.DB) (*gorm.DB, error) {
+	return gorm.Open(gormpostgres.New(gormpostgres.Config{
+		Conn:                 database,
+		PreferSimpleProtocol: true,
+	}), &gorm.Config{Logger: gormlogger.Discard})
 }
 
 func postgresURL(credentials config.DatabaseCredentials) (string, error) {

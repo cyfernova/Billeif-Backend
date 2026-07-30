@@ -213,6 +213,8 @@ resource "aws_lambda_function" "outbox_dispatcher" {
   }
 
   depends_on = [
+    aws_ssm_association.nat_activation_ready,
+    aws_nat_gateway.main,
     aws_cloudwatch_log_group.lambda_outbox_dispatcher,
     aws_iam_role_policy.outbox_dispatcher,
     aws_ssm_parameter.db_host,
@@ -265,6 +267,8 @@ resource "aws_lambda_function" "sqs_email_delivery" {
   }
 
   depends_on = [
+    aws_ssm_association.nat_activation_ready,
+    aws_nat_gateway.main,
     aws_cloudwatch_log_group.lambda_sqs_email_delivery,
     aws_iam_role_policy.email_delivery,
     aws_ssm_parameter.db_host,
@@ -316,6 +320,8 @@ resource "aws_lambda_function" "sqs_ses_feedback" {
   }
 
   depends_on = [
+    aws_ssm_association.nat_activation_ready,
+    aws_nat_gateway.main,
     aws_cloudwatch_log_group.lambda_sqs_ses_feedback,
     aws_iam_role_policy.ses_feedback,
     aws_ssm_parameter.db_host,
@@ -361,6 +367,8 @@ resource "aws_lambda_function" "api_http" {
   }
 
   depends_on = [
+    aws_ssm_association.nat_activation_ready,
+    aws_nat_gateway.main,
     aws_cloudwatch_log_group.lambda_api_http,
     aws_iam_role_policy.lambda_http_app,
     aws_iam_role_policy.invoice_cursor_http,
@@ -405,7 +413,11 @@ resource "aws_lambda_function" "a2a_stream" {
     }
   }
 
-  depends_on = [aws_cloudwatch_log_group.lambda_a2a_stream]
+  depends_on = [
+    aws_ssm_association.nat_activation_ready,
+    aws_nat_gateway.main,
+    aws_cloudwatch_log_group.lambda_a2a_stream,
+  ]
 }
 
 resource "aws_lambda_function" "sqs_invoice" {
@@ -443,7 +455,11 @@ resource "aws_lambda_function" "sqs_invoice" {
     }
   }
 
-  depends_on = [aws_cloudwatch_log_group.lambda_sqs_invoice]
+  depends_on = [
+    aws_ssm_association.nat_activation_ready,
+    aws_nat_gateway.main,
+    aws_cloudwatch_log_group.lambda_sqs_invoice,
+  ]
 }
 
 resource "aws_lambda_function" "sqs_gst" {
@@ -481,7 +497,11 @@ resource "aws_lambda_function" "sqs_gst" {
     }
   }
 
-  depends_on = [aws_cloudwatch_log_group.lambda_sqs_gst]
+  depends_on = [
+    aws_ssm_association.nat_activation_ready,
+    aws_nat_gateway.main,
+    aws_cloudwatch_log_group.lambda_sqs_gst,
+  ]
 }
 
 resource "aws_cloudwatch_log_group" "lambda_sqs_bargaining" {
@@ -526,7 +546,11 @@ resource "aws_lambda_function" "sqs_bargaining" {
     }
   }
 
-  depends_on = [aws_cloudwatch_log_group.lambda_sqs_bargaining]
+  depends_on = [
+    aws_ssm_association.nat_activation_ready,
+    aws_nat_gateway.main,
+    aws_cloudwatch_log_group.lambda_sqs_bargaining,
+  ]
 }
 
 resource "aws_lambda_function" "ws_handler" {
@@ -567,7 +591,11 @@ resource "aws_lambda_function" "ws_handler" {
     }
   }
 
-  depends_on = [aws_cloudwatch_log_group.lambda_ws_handler]
+  depends_on = [
+    aws_ssm_association.nat_activation_ready,
+    aws_nat_gateway.main,
+    aws_cloudwatch_log_group.lambda_ws_handler,
+  ]
 }
 
 resource "aws_lambda_function" "voice_session" {
@@ -601,7 +629,11 @@ resource "aws_lambda_function" "voice_session" {
     }
   }
 
-  depends_on = [aws_cloudwatch_log_group.lambda_voice_session]
+  depends_on = [
+    aws_ssm_association.nat_activation_ready,
+    aws_nat_gateway.main,
+    aws_cloudwatch_log_group.lambda_voice_session,
+  ]
 }
 
 resource "aws_lambda_event_source_mapping" "invoice_queue" {
