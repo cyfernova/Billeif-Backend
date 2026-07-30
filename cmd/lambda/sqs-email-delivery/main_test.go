@@ -72,6 +72,24 @@ func TestDecodeDeliveryMessageRejectsUnknownAndTrailingJSON(t *testing.T) {
 	}
 }
 
+func TestHandlerRejectsMissingSQSMessageIDForWholeInvocation(t *testing.T) {
+	handler := emailDeliveryHandler{worker: &recordingDeliveryProcessor{}}
+	ctx := lambdacontext.NewContext(context.Background(), &lambdacontext.LambdaContext{
+		AwsRequestID: "billeif-request-1",
+	})
+
+	response, err := handler.Handle(ctx, events.SQSEvent{Records: []events.SQSMessage{
+		{Body: validSQSEmailDeliveryRecord("ignored").Body},
+	}})
+
+	if err == nil {
+		t.Fatal("missing MessageId returned nil error")
+	}
+	if len(response.BatchItemFailures) != 0 {
+		t.Fatalf("missing MessageId emitted invalid partial failure: %#v", response)
+	}
+}
+
 func validSQSEmailDeliveryRecord(messageID string) events.SQSMessage {
 	return events.SQSMessage{
 		MessageId: messageID,

@@ -363,8 +363,7 @@ data "aws_iam_policy_document" "lambda_app" {
     resources = [
       local.ses_verified_identity_arn,
       aws_sns_topic.alerts.arn,
-      aws_sns_topic.low_stock_alerts.arn,
-      aws_sns_topic.ses_events.arn
+      aws_sns_topic.low_stock_alerts.arn
     ]
   }
 

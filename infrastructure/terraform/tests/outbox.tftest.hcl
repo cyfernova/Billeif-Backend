@@ -70,6 +70,30 @@ mock_provider "aws" {
   }
 
   override_resource {
+    target          = aws_sns_topic.alerts
+    override_during = plan
+    values = {
+      arn = "arn:aws:sns:ap-south-1:123456789012:billeif-test-test-alerts"
+    }
+  }
+
+  override_resource {
+    target          = aws_sns_topic.low_stock_alerts
+    override_during = plan
+    values = {
+      arn = "arn:aws:sns:ap-south-1:123456789012:billeif-test-test-low-stock-alerts"
+    }
+  }
+
+  override_resource {
+    target          = aws_sns_topic.ses_events
+    override_during = plan
+    values = {
+      arn = "arn:aws:sns:ap-south-1:123456789012:billeif-test-test-ses-email-events"
+    }
+  }
+
+  override_resource {
     target          = aws_sqs_queue.email_delivery
     override_during = plan
     values = {
@@ -270,6 +294,7 @@ run "email_delivery_worker_is_cost_capped_and_least_privilege" {
       length([for statement in data.aws_iam_policy_document.email_delivery.statement : statement if statement.sid == "EmailDeliverySES" && length(statement.actions) == 1 && contains(statement.actions, "ses:SendRawEmail") && length(statement.resources) == 2]) == 1 &&
       length([for statement in data.aws_iam_policy_document.email_delivery.statement : statement if statement.sid == "EmailDeliveryQueue" && !contains(statement.actions, "sqs:SendMessage") && length(statement.resources) == 1 && contains(statement.resources, aws_sqs_queue.email_delivery.arn)]) == 1 &&
       length([for statement in data.aws_iam_policy_document.lambda_app.statement : statement if statement.sid == "EmailDeliveryQueueSend" && length(statement.actions) == 1 && contains(statement.actions, "sqs:SendMessage") && length(statement.resources) == 1 && contains(statement.resources, aws_sqs_queue.email_delivery.arn)]) == 1 &&
+      length([for statement in data.aws_iam_policy_document.lambda_app.statement : statement if statement.sid == "SESAndSNS" && contains(statement.actions, "sns:Publish") && contains(statement.resources, aws_sns_topic.alerts.arn) && contains(statement.resources, aws_sns_topic.low_stock_alerts.arn) && !contains(statement.resources, aws_sns_topic.ses_events.arn)]) == 1 &&
       toset(aws_ses_event_destination.to_sns.matching_types) == toset(["bounce", "complaint", "delivery"])
     )
     error_message = "The email delivery role must only read final PDFs, receive its queue, and call SES SendRawEmail."

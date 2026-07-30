@@ -18,8 +18,10 @@ import (
 type deliveryRepositoryFake struct {
 	claim         *ClaimedDelivery
 	claimErr      error
+	claimErrs     []error
 	verifyErr     error
 	markFailedErr error
+	markSentErr   error
 	claimed       int
 	verified      int
 	sent          int
@@ -29,6 +31,9 @@ type deliveryRepositoryFake struct {
 
 func (r *deliveryRepositoryFake) Claim(_ context.Context, _ DeliveryMessage, _ string, _, _ time.Time) (*ClaimedDelivery, error) {
 	r.claimed++
+	if r.claimed <= len(r.claimErrs) && r.claimErrs[r.claimed-1] != nil {
+		return nil, r.claimErrs[r.claimed-1]
+	}
 	return r.claim, r.claimErr
 }
 func (r *deliveryRepositoryFake) VerifyLease(context.Context, string, string, time.Time) error {
@@ -38,7 +43,7 @@ func (r *deliveryRepositoryFake) VerifyLease(context.Context, string, string, ti
 func (r *deliveryRepositoryFake) MarkSent(_ context.Context, _, _, messageID, _, _ string, _ time.Time) error {
 	r.sent++
 	r.messageID = messageID
-	return nil
+	return r.markSentErr
 }
 func (r *deliveryRepositoryFake) MarkFailed(context.Context, string, string, string, time.Time) error {
 	r.failed++
@@ -64,6 +69,7 @@ func (g *objectGetterFake) GetObject(
 type rawEmailSenderFake struct {
 	input *ses.SendRawEmailInput
 	err   error
+	calls int
 }
 
 func (s *rawEmailSenderFake) SendRawEmail(
@@ -71,11 +77,45 @@ func (s *rawEmailSenderFake) SendRawEmail(
 	input *ses.SendRawEmailInput,
 	_ ...func(*ses.Options),
 ) (*ses.SendRawEmailOutput, error) {
+	s.calls++
 	s.input = input
 	if s.err != nil {
 		return nil, s.err
 	}
 	return &ses.SendRawEmailOutput{MessageId: aws.String("ses-message-1")}, nil
+}
+
+func TestWorkerMarkSentFailureAfterSESAcceptanceIsRetryableAndCanDuplicate(t *testing.T) {
+	message, claim := validDeliveryWork()
+	repository := &deliveryRepositoryFake{
+		claim: claim, markSentErr: errors.New("database commit unavailable"),
+	}
+	email := &rawEmailSenderFake{}
+	worker, err := NewWorker(WorkerOptions{
+		Repository: repository,
+		Objects:    &objectGetterFake{body: []byte("%PDF-1.7\ninvoice")},
+		Email:      email,
+		Bucket:     "bucket", SenderEmail: "billing@example.com",
+		ConfigurationSet: "Billeif-prod-ses-events",
+	})
+	if err != nil {
+		t.Fatalf("new worker: %v", err)
+	}
+
+	firstErr := worker.Process(context.Background(), message, "owner-1")
+	secondErr := worker.Process(context.Background(), message, "owner-2-after-expiry")
+
+	for index, processErr := range []error{firstErr, secondErr} {
+		if processErr == nil || !strings.Contains(processErr.Error(), "commit sent delivery") {
+			t.Fatalf("attempt %d error = %v, want retryable MarkSent failure", index+1, processErr)
+		}
+	}
+	if email.calls != 2 || repository.sent != 2 {
+		t.Fatalf("SES/MarkSent calls = %d/%d, want 2/2 demonstrating retry duplicate window", email.calls, repository.sent)
+	}
+	if repository.failed != 0 {
+		t.Fatalf("failed transitions = %d, want 0 after SES acceptance", repository.failed)
+	}
 }
 
 func TestWorkerSendsClaimedFinalPDFAndCommitsProviderMessageID(t *testing.T) {
@@ -176,6 +216,45 @@ func TestWorkerInvalidPDFMarksFailedAndReturnsRetryableError(t *testing.T) {
 	}
 }
 
+func TestWorkerRejectsCrossIdentityClaimBeforeS3OrSES(t *testing.T) {
+	message, baseClaim := validDeliveryWork()
+	tests := []struct {
+		name   string
+		mutate func(*ClaimedDelivery)
+	}{
+		{name: "business", mutate: func(claim *ClaimedDelivery) { claim.BusinessID = uuid.NewString() }},
+		{name: "invoice", mutate: func(claim *ClaimedDelivery) { claim.InvoiceID = uuid.NewString() }},
+		{name: "render", mutate: func(claim *ClaimedDelivery) { claim.RenderJobID = uuid.NewString() }},
+		{name: "delivery", mutate: func(claim *ClaimedDelivery) { claim.DeliveryID = uuid.NewString() }},
+		{name: "object key", mutate: func(claim *ClaimedDelivery) { claim.ObjectKey = "invoices/other/final.pdf" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			claim := *baseClaim
+			test.mutate(&claim)
+			repository := &deliveryRepositoryFake{claim: &claim}
+			email := &rawEmailSenderFake{}
+			worker, err := NewWorker(WorkerOptions{
+				Repository: repository, Objects: &objectGetterFake{body: []byte("%PDF-1.7\ninvoice")},
+				Email: email, Bucket: "bucket", SenderEmail: "billing@example.com",
+				ConfigurationSet: "Billeif-prod-ses-events",
+			})
+			if err != nil {
+				t.Fatalf("new worker: %v", err)
+			}
+
+			err = worker.Process(context.Background(), message, "owner")
+
+			if !errors.Is(err, ErrDeliveryMalformed) {
+				t.Fatalf("process error = %v, want malformed claim", err)
+			}
+			if email.calls != 0 || repository.failed != 1 {
+				t.Fatalf("SES/failed = %d/%d, want 0/1", email.calls, repository.failed)
+			}
+		})
+	}
+}
+
 func TestWorkerTreatsTerminalDeliveryAsSuccessfulNoOp(t *testing.T) {
 	message, _ := validDeliveryWork()
 	repository := &deliveryRepositoryFake{claimErr: ErrDeliveryTerminal}
@@ -190,6 +269,35 @@ func TestWorkerTreatsTerminalDeliveryAsSuccessfulNoOp(t *testing.T) {
 
 	if err := worker.Process(context.Background(), message, "owner"); err != nil {
 		t.Fatalf("terminal no-op: %v", err)
+	}
+}
+
+func TestWorkerDuplicateSQSAfterSentTransitionIsSuccessfulNoOp(t *testing.T) {
+	message, claim := validDeliveryWork()
+	repository := &deliveryRepositoryFake{
+		claim: claim, claimErrs: []error{nil, ErrDeliveryTerminal},
+	}
+	email := &rawEmailSenderFake{}
+	worker, err := NewWorker(WorkerOptions{
+		Repository: repository,
+		Objects:    &objectGetterFake{body: []byte("%PDF-1.7\ninvoice")},
+		Email:      email,
+		Bucket:     "bucket", SenderEmail: "billing@example.com",
+		ConfigurationSet: "Billeif-prod-ses-events",
+	})
+	if err != nil {
+		t.Fatalf("new worker: %v", err)
+	}
+
+	if err := worker.Process(context.Background(), message, "owner-1"); err != nil {
+		t.Fatalf("first process: %v", err)
+	}
+	if err := worker.Process(context.Background(), message, "owner-2"); err != nil {
+		t.Fatalf("terminal duplicate: %v", err)
+	}
+
+	if email.calls != 1 || repository.sent != 1 || repository.claimed != 2 {
+		t.Fatalf("SES/sent/claims = %d/%d/%d, want 1/1/2", email.calls, repository.sent, repository.claimed)
 	}
 }
 

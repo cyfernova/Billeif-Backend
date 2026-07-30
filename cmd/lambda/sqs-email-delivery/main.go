@@ -53,9 +53,10 @@ func (h emailDeliveryHandler) Handle(
 	}
 	for _, record := range event.Records {
 		if strings.TrimSpace(record.MessageId) == "" {
-			response.BatchItemFailures = append(response.BatchItemFailures, events.SQSBatchItemFailure{})
-			continue
+			return events.SQSEventResponse{}, errors.New("SQS message ID is required")
 		}
+	}
+	for _, record := range event.Records {
 		message, err := decodeDeliveryMessage(record.Body)
 		if err == nil {
 			messageContext, cancel := boundedMessageContext(ctx)
