@@ -107,7 +107,9 @@ func newOutboxHandler(ctx context.Context) (*lambdaHandler, error) {
 		cfg.SQS.InvoiceQueue,
 		sqs.NewFromConfig(awsCfg),
 	)
-	dispatcher, err := outbox.NewDispatcher(repository, publisher, outbox.DispatcherOptions{})
+	dispatcher, err := outbox.NewDispatcher(repository, publisher, outbox.DispatcherOptions{
+		EventTypes: outbox.InvoiceRenderEventTypes(),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize outbox dispatcher: %w", err)
 	}

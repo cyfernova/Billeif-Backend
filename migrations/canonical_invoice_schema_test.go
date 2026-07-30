@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	canonicalInvoiceMigrationVersion = 44
+	canonicalInvoiceMigrationVersion = 45
 	releasedManifestPrefixDigest     = "e7c51b8069e0785e8d2881a4eb06070c3899107ad55a72166e86e26a7979e936"
 )
 
@@ -121,6 +121,24 @@ func TestCanonicalInvoiceMigrationRequiresDeterministicIdempotencyStates(t *test
 	requireSQLFragments(t, body,
 		"status = 'in_progress' AND result_type IS NULL AND result_id IS NULL AND completed_at IS NULL",
 		"status = 'completed' AND result_type IS NOT NULL AND result_id IS NOT NULL AND completed_at IS NOT NULL",
+	)
+}
+
+func TestInvoiceDeliveryMigrationExtendsExistingDeliveryLifecycle(t *testing.T) {
+	up := migrationSQL(t, "000045_extend_invoice_deliveries.up.sql")
+	requireSQLFragments(t, up,
+		"DROP CONSTRAINT IF EXISTS email_deliveries_status_check",
+		"'waiting_for_render'",
+		"'bounced'",
+		"'complained'",
+		"CREATE UNIQUE INDEX idx_email_deliveries_provider_message_unique",
+		"WHERE provider_message_id IS NOT NULL AND provider_message_id <> ''",
+	)
+	down := migrationSQL(t, "000045_extend_invoice_deliveries.down.sql")
+	requireSQLFragments(t, down,
+		"DROP INDEX IF EXISTS idx_email_deliveries_provider_message_unique",
+		"WHEN status = 'waiting_for_render' THEN 'failed'",
+		"WHEN status IN ('bounced', 'complained') THEN 'failed'",
 	)
 }
 

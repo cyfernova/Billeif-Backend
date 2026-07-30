@@ -11,29 +11,32 @@ import (
 )
 
 type dispatcherStoreFake struct {
-	events      []*models.OutboxEvent
-	claimErr    error
-	claimOwner  string
-	claimNow    time.Time
-	claimUntil  time.Time
-	claimLimit  int
-	completed   []string
-	retried     []string
-	retryAt     map[string]time.Time
-	completeErr map[string]error
-	retryErr    map[string]error
+	events          []*models.OutboxEvent
+	claimErr        error
+	claimOwner      string
+	claimNow        time.Time
+	claimUntil      time.Time
+	claimLimit      int
+	claimEventTypes []string
+	completed       []string
+	retried         []string
+	retryAt         map[string]time.Time
+	completeErr     map[string]error
+	retryErr        map[string]error
 }
 
 func (s *dispatcherStoreFake) ClaimOutboxEvents(
 	_ context.Context,
 	owner string,
 	now, leaseUntil time.Time,
+	eventTypes []string,
 	limit int,
 ) ([]*models.OutboxEvent, error) {
 	s.claimOwner = owner
 	s.claimNow = now
 	s.claimUntil = leaseUntil
 	s.claimLimit = limit
+	s.claimEventTypes = append([]string(nil), eventTypes...)
 	return s.events, s.claimErr
 }
 
@@ -86,6 +89,7 @@ func TestDispatcherClaimsBoundedLeaseAndCompletesPublishedEvents(t *testing.T) {
 	dispatcher, err := NewDispatcher(store, publisher, DispatcherOptions{
 		BatchSize:     25,
 		LeaseDuration: 2 * time.Minute,
+		EventTypes:    InvoiceRenderEventTypes(),
 		Now:           func() time.Time { return now },
 	})
 	if err != nil {
@@ -101,7 +105,10 @@ func TestDispatcherClaimsBoundedLeaseAndCompletesPublishedEvents(t *testing.T) {
 		t.Fatalf("result = %#v", result)
 	}
 	if store.claimOwner != "request-123" || !store.claimNow.Equal(now) ||
-		!store.claimUntil.Equal(now.Add(2*time.Minute)) || store.claimLimit != 25 {
+		!store.claimUntil.Equal(now.Add(2*time.Minute)) || store.claimLimit != 25 ||
+		len(store.claimEventTypes) != 2 ||
+		store.claimEventTypes[0] != invoicePreviewRequestedEvent ||
+		store.claimEventTypes[1] != invoiceIssuedEvent {
 		t.Fatalf(
 			"claim owner/now/until/limit = %q/%v/%v/%d",
 			store.claimOwner,
@@ -132,6 +139,7 @@ func TestDispatcherContinuesAfterPublishFailureAndSchedulesDeterministicBackoff(
 	dispatcher, err := NewDispatcher(store, publisher, DispatcherOptions{
 		BatchSize:     10,
 		LeaseDuration: time.Minute,
+		EventTypes:    InvoiceRenderEventTypes(),
 		Now:           func() time.Time { return now },
 	})
 	if err != nil {
@@ -168,7 +176,7 @@ func TestDispatcherCapsBackoffAtOneHourAndReportsRetryCASFailure(t *testing.T) {
 		"failed": errors.New("SQS unavailable"),
 	}}
 	dispatcher, err := NewDispatcher(store, publisher, DispatcherOptions{
-		Now: func() time.Time { return now },
+		Now: func() time.Time { return now }, EventTypes: InvoiceRenderEventTypes(),
 	})
 	if err != nil {
 		t.Fatalf("new dispatcher: %v", err)
@@ -190,13 +198,17 @@ func TestDispatcherCapsBackoffAtOneHourAndReportsRetryCASFailure(t *testing.T) {
 func TestDispatcherRejectsInvalidDependenciesAndOwner(t *testing.T) {
 	store := &dispatcherStoreFake{}
 	publisher := &dispatcherPublisherFake{}
-	if _, err := NewDispatcher(nil, publisher, DispatcherOptions{}); err == nil {
+	options := DispatcherOptions{EventTypes: InvoiceRenderEventTypes()}
+	if _, err := NewDispatcher(nil, publisher, options); err == nil {
 		t.Fatal("nil store accepted")
 	}
-	if _, err := NewDispatcher(store, nil, DispatcherOptions{}); err == nil {
+	if _, err := NewDispatcher(store, nil, options); err == nil {
 		t.Fatal("nil publisher accepted")
 	}
-	dispatcher, err := NewDispatcher(store, publisher, DispatcherOptions{})
+	if _, err := NewDispatcher(store, publisher, DispatcherOptions{}); err == nil {
+		t.Fatal("empty event family accepted")
+	}
+	dispatcher, err := NewDispatcher(store, publisher, options)
 	if err != nil {
 		t.Fatalf("new dispatcher: %v", err)
 	}

@@ -161,6 +161,26 @@ func TestMapInvoiceEventToSQSMessageRejectsInvalidStoredEvents(t *testing.T) {
 	}
 }
 
+func TestInvoiceRenderMapperRejectsDeliveryEventBeforeSQS(t *testing.T) {
+	deliveryID := uuid.NewString()
+	event := &models.OutboxEvent{
+		ID: uuid.NewString(), BusinessID: uuid.NewString(),
+		AggregateType: "email_delivery", AggregateID: deliveryID,
+		EventType: "invoice.delivery.requested.v1",
+		Payload: fmt.Sprintf(
+			`{"schema_version":1,"delivery_id":%q,"invoice_id":%q,"render_job_id":%q}`,
+			deliveryID, uuid.NewString(), uuid.NewString(),
+		),
+	}
+
+	message, err := MapInvoiceEventToSQSMessage(event)
+
+	var mappingError *InvoiceEventMappingError
+	if message != nil || !errors.As(err, &mappingError) {
+		t.Fatalf("delivery render mapping = %s/%T %v, want fail closed", message, err, err)
+	}
+}
+
 func validPreviewOutboxEvent() (*models.OutboxEvent, string, string) {
 	invoiceID := uuid.NewString()
 	renderJobID := uuid.NewString()

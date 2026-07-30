@@ -24,6 +24,7 @@ func (r *OutboxRepository) ClaimOutboxEvents(
 	ctx context.Context,
 	owner string,
 	now, leaseUntil time.Time,
+	eventTypes []string,
 	limit int,
 ) ([]*models.OutboxEvent, error) {
 	owner = strings.TrimSpace(owner)
@@ -39,6 +40,14 @@ func (r *OutboxRepository) ClaimOutboxEvents(
 	if limit < 1 || limit > 100 {
 		return nil, errors.New("outbox claim limit must be between 1 and 100")
 	}
+	if len(eventTypes) == 0 {
+		return nil, errors.New("outbox claim event types are required")
+	}
+	for _, eventType := range eventTypes {
+		if strings.TrimSpace(eventType) == "" {
+			return nil, errors.New("outbox claim event types must not be blank")
+		}
+	}
 
 	const query = `
 WITH ready AS (
@@ -47,6 +56,7 @@ WITH ready AS (
 	WHERE published_at IS NULL
 		AND available_at <= ?
 		AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
+		AND event_type IN ?
 	ORDER BY available_at, created_at, id
 	LIMIT ?
 	FOR UPDATE SKIP LOCKED
@@ -61,7 +71,7 @@ RETURNING events.*`
 
 	var events []*models.OutboxEvent
 	if err := r.db.WithContext(ctx).
-		Raw(query, now, now, limit, owner, leaseUntil).
+		Raw(query, now, now, eventTypes, limit, owner, leaseUntil).
 		Scan(&events).Error; err != nil {
 		return nil, fmt.Errorf("claim outbox events: %w", err)
 	}

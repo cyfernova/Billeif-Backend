@@ -42,3 +42,4 @@
 000042_add_invoice_draft_persistence
 000043_add_llm_chat_history
 000044_canonical_invoice_foundations
+000045_extend_invoice_deliveries

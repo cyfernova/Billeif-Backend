@@ -84,6 +84,8 @@ func TestInvoiceAndDocumentRoutesRequireDocumentPermissions(t *testing.T) {
 		`invoices.PATCH("/:id/draft", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Invoice.UpdateDraft)`,
 		`invoices.GET("/:id/renders/:render_job_id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.GetRenderStatus)`,
 		`invoices.GET("/:id/pdf", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.GetPDF)`,
+		`invoices.POST("/:id/deliveries", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Invoice.Deliver)`,
+		`invoices.GET("/:id/deliveries/:delivery_id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.GetDeliveryStatus)`,
 		`documents.POST("/merge", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserHeavyRL, h.DocumentUtility.Merge)`,
 		`documents.GET("/:id/history", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.DocumentUtility.History)`,
 		`documents.POST("/:id/einvoice", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserHeavyRL, h.DocumentUtility.GenerateEInvoice)`,
@@ -102,10 +104,11 @@ func TestEveryInvoiceReadRouteRequiresDocumentExportPermission(t *testing.T) {
 		t.Fatalf("read runtime routes: %v", err)
 	}
 	expected := map[string]bool{
-		`invoices.GET("",`:                            false,
-		`invoices.GET("/:id",`:                        false,
-		`invoices.GET("/:id/renders/:render_job_id",`: false,
-		`invoices.GET("/:id/pdf",`:                    false,
+		`invoices.GET("",`:                             false,
+		`invoices.GET("/:id",`:                         false,
+		`invoices.GET("/:id/renders/:render_job_id",`:  false,
+		`invoices.GET("/:id/pdf",`:                     false,
+		`invoices.GET("/:id/deliveries/:delivery_id",`: false,
 	}
 	for _, line := range strings.Split(string(source), "\n") {
 		line = strings.TrimSpace(line)

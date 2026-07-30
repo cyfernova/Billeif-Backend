@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 )
 
-const claimOutboxSQL = `WITH ready AS .*SELECT id.*FROM outbox_events.*published_at IS NULL.*available_at <= \$[0-9]+.*lease_expires_at IS NULL OR lease_expires_at <= \$[0-9]+.*ORDER BY available_at, created_at, id.*LIMIT \$[0-9]+.*FOR UPDATE SKIP LOCKED.*UPDATE outbox_events AS events.*publish_attempts = events.publish_attempts \+ 1.*RETURNING events\.\*`
+const claimOutboxSQL = `WITH ready AS .*SELECT id.*FROM outbox_events.*published_at IS NULL.*available_at <= \$[0-9]+.*lease_expires_at IS NULL OR lease_expires_at <= \$[0-9]+.*event_type IN \(\$[0-9]+,\$[0-9]+\).*ORDER BY available_at, created_at, id.*LIMIT \$[0-9]+.*FOR UPDATE SKIP LOCKED.*UPDATE outbox_events AS events.*publish_attempts = events.publish_attempts \+ 1.*RETURNING events\.\*`
 
 func TestOutboxRepositoryClaimUsesOrderedSkipLockedLeaseAndIncrementsAttempts(t *testing.T) {
 	invoiceRepository, mock, closeDatabase := newStrictIssueSQLMockRepository(t)
@@ -23,7 +23,7 @@ func TestOutboxRepositoryClaimUsesOrderedSkipLockedLeaseAndIncrementsAttempts(t 
 	businessID := uuid.NewString()
 
 	mock.ExpectQuery(claimOutboxSQL).
-		WithArgs(now, now, 25, "owner-1", leaseUntil).
+		WithArgs(now, now, "invoice.preview.requested.v1", "invoice.issued.v1", 25, "owner-1", leaseUntil).
 		WillReturnRows(outboxClaimRows().
 			AddRow(
 				eventID,
@@ -45,6 +45,7 @@ func TestOutboxRepositoryClaimUsesOrderedSkipLockedLeaseAndIncrementsAttempts(t 
 		"owner-1",
 		now,
 		leaseUntil,
+		[]string{"invoice.preview.requested.v1", "invoice.issued.v1"},
 		25,
 	)
 
@@ -54,6 +55,31 @@ func TestOutboxRepositoryClaimUsesOrderedSkipLockedLeaseAndIncrementsAttempts(t 
 	if len(events) != 1 || events[0].ID != eventID || events[0].PublishAttempts != 4 ||
 		events[0].LeaseOwner == nil || *events[0].LeaseOwner != "owner-1" {
 		t.Fatalf("claimed events = %#v", events)
+	}
+}
+
+func TestOutboxRepositoryRenderClaimExcludesDeliveryEventsWithoutMutation(t *testing.T) {
+	invoiceRepository, mock, closeDatabase := newStrictIssueSQLMockRepository(t)
+	defer closeDatabase()
+	repository := &OutboxRepository{db: invoiceRepository.db}
+	now := time.Date(2026, time.July, 30, 12, 0, 0, 0, time.UTC)
+	leaseUntil := now.Add(2 * time.Minute)
+	mock.ExpectQuery(claimOutboxSQL).
+		WithArgs(
+			now, now, "invoice.preview.requested.v1", "invoice.issued.v1",
+			25, "render-owner", leaseUntil,
+		).
+		WillReturnRows(outboxClaimRows())
+
+	events, err := repository.ClaimOutboxEvents(
+		context.Background(), "render-owner", now, leaseUntil,
+		[]string{"invoice.preview.requested.v1", "invoice.issued.v1"}, 25,
+	)
+	if err != nil || len(events) != 0 {
+		t.Fatalf("render claim events/error = %#v/%v, want delivery left pending", events, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations: %v", err)
 	}
 }
 
@@ -67,7 +93,7 @@ func TestOutboxRepositoryConcurrentClaimsCanReturnDisjointSkipLockedRows(t *test
 		defer closeDatabase()
 		repositories = append(repositories, &OutboxRepository{db: invoiceRepository.db})
 		mock.ExpectQuery(claimOutboxSQL).
-			WithArgs(now, now, 1, owner, leaseUntil).
+			WithArgs(now, now, "invoice.preview.requested.v1", "invoice.issued.v1", 1, owner, leaseUntil).
 			WillReturnRows(outboxClaimRows().
 				AddRow(
 					eventIDs[index],
@@ -99,6 +125,7 @@ func TestOutboxRepositoryConcurrentClaimsCanReturnDisjointSkipLockedRows(t *test
 				owner,
 				now,
 				leaseUntil,
+				[]string{"invoice.preview.requested.v1", "invoice.issued.v1"},
 				1,
 			)
 			if err != nil {

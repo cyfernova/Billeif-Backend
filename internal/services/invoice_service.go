@@ -43,6 +43,12 @@ func WithInvoicePDFPresigner(presigner InvoicePDFPresigner) InvoiceServiceOption
 	}
 }
 
+func WithInvoiceDeliveryRepository(repository interfaces.InvoiceDeliveryRepository) InvoiceServiceOption {
+	return func(service *InvoiceService) {
+		service.invoiceDeliveries = repository
+	}
+}
+
 type InvoiceService struct {
 	db           *gorm.DB
 	cfg          *config.Config
@@ -55,8 +61,9 @@ type InvoiceService struct {
 	email        InvoiceEmailSender
 	log          *logger.Logger
 
-	invoiceRenders interfaces.InvoiceRenderReadRepository
-	pdfPresigner   InvoicePDFPresigner
+	invoiceRenders    interfaces.InvoiceRenderReadRepository
+	invoiceDeliveries interfaces.InvoiceDeliveryRepository
+	pdfPresigner      InvoicePDFPresigner
 
 	immediateOutboxPublisher ImmediateOutboxPublisher
 }
@@ -87,6 +94,7 @@ func NewInvoiceService(
 		email:        email,
 		log:          log,
 	}
+	service.invoiceDeliveries, _ = repo.(interfaces.InvoiceDeliveryRepository)
 	if documents != nil {
 		service.invoiceRenders, _ = documents.repo.(interfaces.InvoiceRenderReadRepository)
 	}

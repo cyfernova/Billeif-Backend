@@ -10,8 +10,10 @@ import (
 )
 
 var (
-	ErrInvoiceNotFound       = errors.New("invoice not found")
-	ErrInvoiceRenderNotFound = errors.New("invoice render not found")
+	ErrInvoiceNotFound         = errors.New("invoice not found")
+	ErrInvoiceRenderNotFound   = errors.New("invoice render not found")
+	ErrInvoiceDeliveryNotFound = errors.New("invoice delivery not found")
+	ErrInvoiceNotDeliverable   = errors.New("invoice is not deliverable")
 )
 
 type UserRepository interface {
@@ -130,6 +132,30 @@ type AtomicInvoicePreviewResult struct {
 	RenderJob   *models.DocumentRenderJob
 	OutboxEvent *models.OutboxEvent
 	Replayed    bool
+}
+
+type AtomicInvoiceDelivery struct {
+	BusinessID     string
+	InvoiceID      string
+	Command        string
+	IdempotencyKey string
+	RequestHash    string
+	Recipient      string
+	ActorID        string
+	ActorRole      string
+	RequestID      string
+	IPAddress      string
+}
+
+type AtomicInvoiceDeliveryResult struct {
+	Delivery    *models.EmailDelivery
+	OutboxEvent *models.OutboxEvent
+	Replayed    bool
+}
+
+type InvoiceDeliveryRepository interface {
+	CreateDeliveryAtomic(ctx context.Context, command AtomicInvoiceDelivery) (*AtomicInvoiceDeliveryResult, error)
+	GetInvoiceDelivery(ctx context.Context, businessID, invoiceID, deliveryID string) (*models.EmailDelivery, error)
 }
 
 type CanonicalInvoiceIssuer interface {

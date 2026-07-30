@@ -536,6 +536,103 @@ func (h *InvoiceHandler) GetPDF(c *gin.Context) {
 	c.JSON(http.StatusOK, download)
 }
 
+// Deliver queues canonical invoice email delivery after its final render is ready.
+// @Summary Deliver invoice
+// @Description Creates an idempotent invoice email delivery request.
+// @Tags Invoices
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Invoice ID"
+// @Param Idempotency-Key header string true "UUID idempotency key"
+// @Param input body services.DeliverInvoiceInput true "Delivery recipient"
+// @Success 202 {object} services.DeliverInvoiceResult
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /invoices/{id}/deliveries [post]
+func (h *InvoiceHandler) Deliver(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	idempotencyKey, ok := requireIdempotencyKey(c)
+	if !ok {
+		return
+	}
+	var input services.DeliverInvoiceInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid invoice delivery request"})
+		return
+	}
+	input.IdempotencyKey = idempotencyKey
+	requestContextWithActor(c)
+	result, err := h.svc.DeliverByBusiness(
+		c.Request.Context(), businessID, c.Param("id"), input,
+	)
+	if err != nil {
+		status, message := invoiceDeliveryErrorResponse(err)
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+	c.JSON(http.StatusAccepted, result)
+}
+
+// GetDeliveryStatus returns a safe projection of an invoice delivery attempt.
+// @Summary Get invoice delivery status
+// @Description Returns tenant-scoped invoice delivery status without provider or lease details.
+// @Tags Invoices
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Invoice ID"
+// @Param delivery_id path string true "Delivery ID"
+// @Success 200 {object} services.InvoiceDeliveryStatus
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /invoices/{id}/deliveries/{delivery_id} [get]
+func (h *InvoiceHandler) GetDeliveryStatus(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	status, err := h.svc.GetDeliveryStatusByBusiness(
+		c.Request.Context(), businessID, c.Param("id"), c.Param("delivery_id"),
+	)
+	if err != nil {
+		var invalidPayload *idempotency.InvalidPayloadError
+		switch {
+		case errors.As(err, &invalidPayload):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid invoice delivery request"})
+		case errors.Is(err, interfaces.ErrInvoiceDeliveryNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": "invoice delivery not found"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "invoice delivery status unavailable"})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, status)
+}
+
+func invoiceDeliveryErrorResponse(err error) (int, string) {
+	var invalidKey *idempotency.InvalidKeyError
+	var invalidPayload *idempotency.InvalidPayloadError
+	if errors.As(err, &invalidKey) || errors.As(err, &invalidPayload) {
+		return http.StatusBadRequest, "invalid invoice delivery request"
+	}
+	if errors.Is(err, interfaces.ErrInvoiceNotFound) {
+		return http.StatusNotFound, "invoice not found"
+	}
+	var conflict *idempotency.ConflictError
+	var inProgress *idempotency.InProgressError
+	if errors.Is(err, interfaces.ErrInvoiceNotDeliverable) ||
+		errors.As(err, &conflict) || errors.As(err, &inProgress) {
+		return http.StatusConflict, "invoice delivery conflicts with current state"
+	}
+	return http.StatusInternalServerError, "invoice delivery unavailable"
+}
+
 func (h *InvoiceHandler) GenerateEInvoice(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {

@@ -368,6 +368,10 @@ func TestDocumentRepositoryFinalLeaseLifecycleRejectsOwnerAAfterOwnerBReclaim(t 
 	mock.ExpectExec(`UPDATE "document_render_jobs" SET .*"status"=\$7.*WHERE .*id = \$9 AND business_id = \$10 AND kind = \$11 AND status = \$12 AND lease_owner = \$13 AND deleted_at IS NULL`).
 		WithArgs(sqlmock.AnyArg(), "", nil, nil, "final.pdf", "", models.RenderJobStatusCompleted, sqlmock.AnyArg(), jobID, businessID, models.RenderKindFinal, models.RenderJobStatusProcessing, ownerB).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`UPDATE email_deliveries.*RETURNING id, business_id, invoice_id, render_job_id, recipient`).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "business_id", "invoice_id", "render_job_id", "recipient",
+		}))
 	mock.ExpectCommit()
 	completed, err := repository.CompleteFinalRender(context.Background(), businessID, invoiceID, jobID, version, ownerB, objectKey, "final.pdf")
 	if err != nil || !completed {
@@ -675,6 +679,10 @@ func TestDocumentRepositoryCompleteFinalRenderRechecksInvoiceVersionAtomically(t
 		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(version))
 	mock.ExpectExec(`UPDATE "document_render_jobs" SET .*"output_filename".*"output_url".*"status".*WHERE .*id = \$[0-9]+ AND business_id = \$[0-9]+ AND kind = \$[0-9]+ AND status = \$[0-9]+`).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`UPDATE email_deliveries.*RETURNING id, business_id, invoice_id, render_job_id, recipient`).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "business_id", "invoice_id", "render_job_id", "recipient",
+		}))
 	mock.ExpectCommit()
 
 	completed, err := repository.CompleteFinalRender(
@@ -690,6 +698,56 @@ func TestDocumentRepositoryCompleteFinalRenderRechecksInvoiceVersionAtomically(t
 
 	if err != nil || !completed {
 		t.Fatalf("complete final result/error = %t/%v, want completed", completed, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations: %v", err)
+	}
+}
+
+func TestDocumentRepositoryCompleteFinalRenderWakesOnlyWaitingDeliveriesWithOutbox(t *testing.T) {
+	invoiceRepository, mock, closeDatabase := newStrictIssueSQLMockRepository(t)
+	defer closeDatabase()
+	repository := &documentRepository{db: invoiceRepository.db}
+	businessID, invoiceID, jobID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	deliveryID := uuid.NewString()
+	version := 5
+	objectKey := "invoices/" + businessID + "/" + invoiceID + "/v5/final.pdf"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT \* FROM "document_render_jobs".*id = \$1 AND business_id = \$2 AND kind = \$3 AND status = \$4 AND lease_owner = \$5 AND deleted_at IS NULL.*FOR UPDATE`).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "document_id", "invoice_id", "business_id", "kind",
+			"source_invoice_version", "object_key", "status",
+		}).AddRow(
+			jobID, invoiceID, invoiceID, businessID, models.RenderKindFinal,
+			version, objectKey, models.RenderJobStatusProcessing,
+		))
+	mock.ExpectQuery(`SELECT "version" FROM "invoices".*FOR UPDATE`).
+		WillReturnRows(sqlmock.NewRows([]string{"version"}).AddRow(version))
+	mock.ExpectExec(`UPDATE "document_render_jobs" SET .*"status".*WHERE .*lease_owner`).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(`UPDATE email_deliveries.*SET status = \$1.*WHERE business_id = \$[0-9]+.*invoice_id = \$[0-9]+.*render_job_id = \$[0-9]+.*status = \$[0-9]+.*deleted_at IS NULL.*RETURNING id, business_id, invoice_id, render_job_id, recipient`).
+		WithArgs(
+			models.EmailDeliveryStatusQueued,
+			sqlmock.AnyArg(),
+			businessID,
+			invoiceID,
+			jobID,
+			models.EmailDeliveryStatusWaitingForRender,
+		).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "business_id", "invoice_id", "render_job_id", "recipient",
+		}).AddRow(deliveryID, businessID, invoiceID, jobID, "buyer@example.com"))
+	mock.ExpectQuery(`INSERT INTO "outbox_events".*"aggregate_type".*"aggregate_id".*"event_type".*"payload".*RETURNING "id"`).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(uuid.NewString()))
+	mock.ExpectCommit()
+
+	completed, err := repository.CompleteFinalRender(
+		context.Background(), businessID, invoiceID, jobID, version,
+		"test-owner", objectKey, "invoice-final.pdf",
+	)
+	if err != nil || !completed {
+		t.Fatalf("complete/wake result = %t/%v", completed, err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("SQL expectations: %v", err)

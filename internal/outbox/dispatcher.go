@@ -22,6 +22,7 @@ type DispatchStore interface {
 		ctx context.Context,
 		owner string,
 		now, leaseUntil time.Time,
+		eventTypes []string,
 		limit int,
 	) ([]*models.OutboxEvent, error)
 	CompleteOutboxEvent(ctx context.Context, eventID, owner string, publishedAt time.Time) error
@@ -35,6 +36,7 @@ type EventPublisher interface {
 type DispatcherOptions struct {
 	BatchSize     int
 	LeaseDuration time.Duration
+	EventTypes    []string
 	Now           func() time.Time
 }
 
@@ -49,6 +51,7 @@ type Dispatcher struct {
 	publisher     EventPublisher
 	batchSize     int
 	leaseDuration time.Duration
+	eventTypes    []string
 	now           func() time.Time
 }
 
@@ -77,6 +80,10 @@ func NewDispatcher(
 	if leaseDuration <= 0 {
 		return nil, errors.New("outbox lease duration must be positive")
 	}
+	eventTypes, err := validateEventTypes(options.EventTypes)
+	if err != nil {
+		return nil, err
+	}
 	now := options.Now
 	if now == nil {
 		now = time.Now
@@ -86,6 +93,7 @@ func NewDispatcher(
 		publisher:     publisher,
 		batchSize:     batchSize,
 		leaseDuration: leaseDuration,
+		eventTypes:    eventTypes,
 		now:           now,
 	}, nil
 }
@@ -101,6 +109,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, owner string) (DispatchResult
 		owner,
 		now,
 		now.Add(d.leaseDuration),
+		d.eventTypes,
 		d.batchSize,
 	)
 	if err != nil {
@@ -140,6 +149,30 @@ func (d *Dispatcher) Dispatch(ctx context.Context, owner string) (DispatchResult
 		result.Published++
 	}
 	return result, errors.Join(dispatchErrors...)
+}
+
+func InvoiceRenderEventTypes() []string {
+	return []string{invoicePreviewRequestedEvent, invoiceIssuedEvent}
+}
+
+func validateEventTypes(values []string) ([]string, error) {
+	if len(values) == 0 {
+		return nil, errors.New("outbox event types are required")
+	}
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil, errors.New("outbox event type must not be blank")
+		}
+		if _, exists := seen[value]; exists {
+			return nil, errors.New("outbox event types must be unique")
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result, nil
 }
 
 func outboxRetryDelay(attempts int) time.Duration {

@@ -310,6 +310,72 @@ func TestInvoiceRepositoryCreateDraftAtomicPostgresConcurrencyAndRollback(t *tes
 	if issuedActivityCount != 1 {
 		t.Fatalf("issue activity count = %d, want 1", issuedActivityCount)
 	}
+
+	deliveryCommand := interfaces.AtomicInvoiceDelivery{
+		BusinessID: firstCommand.BusinessID, InvoiceID: resultID,
+		Command: "invoice.delivery.create.v1", IdempotencyKey: uuid.NewString(),
+		RequestHash: strings.Repeat("d", 64), Recipient: "buyer@example.com",
+		ActorID: uuid.NewString(), ActorRole: "accountant",
+	}
+	renderRepository := &documentRepository{db: database}
+	claimNow := time.Now().UTC()
+	claimState, err := renderRepository.ClaimFinalRender(
+		context.Background(), firstCommand.BusinessID, finalRenderID, 2,
+		"integration-render-owner", claimNow, claimNow.Add(2*time.Minute),
+	)
+	if err != nil || claimState != interfaces.FinalRenderClaimed {
+		t.Fatalf("claim final render before delivery race = %q/%v", claimState, err)
+	}
+	deliveryResults := make(chan *interfaces.AtomicInvoiceDeliveryResult, 1)
+	deliveryRaceErrors := make(chan error, 2)
+	var deliveryRace sync.WaitGroup
+	deliveryRace.Add(2)
+	go func() {
+		defer deliveryRace.Done()
+		result, createErr := repository.CreateDeliveryAtomic(context.Background(), deliveryCommand)
+		deliveryResults <- result
+		deliveryRaceErrors <- createErr
+	}()
+	go func() {
+		defer deliveryRace.Done()
+		_, completeErr := renderRepository.CompleteFinalRender(
+			context.Background(), firstCommand.BusinessID, resultID, finalRenderID, 2,
+			"integration-render-owner",
+			"invoices/"+firstCommand.BusinessID+"/"+resultID+"/v2/final.pdf",
+			"invoice-final.pdf",
+		)
+		deliveryRaceErrors <- completeErr
+	}()
+	deliveryRace.Wait()
+	close(deliveryResults)
+	close(deliveryRaceErrors)
+	for raceErr := range deliveryRaceErrors {
+		if raceErr != nil {
+			t.Fatalf("delivery versus final completion race: %v", raceErr)
+		}
+	}
+	deliveryResult := <-deliveryResults
+	if deliveryResult == nil || deliveryResult.Delivery == nil {
+		t.Fatalf("delivery race result = %#v", deliveryResult)
+	}
+	var persistedDelivery models.EmailDelivery
+	if err := database.Where("id = ?", deliveryResult.Delivery.ID).First(&persistedDelivery).Error; err != nil {
+		t.Fatalf("load raced delivery: %v", err)
+	}
+	if persistedDelivery.Status != models.EmailDeliveryStatusQueued {
+		t.Fatalf("raced delivery status = %q, want queued", persistedDelivery.Status)
+	}
+	var deliveryEventCount int64
+	if err := database.Model(&models.OutboxEvent{}).
+		Where("aggregate_type = ? AND aggregate_id = ? AND event_type = ?",
+			"email_delivery", persistedDelivery.ID, invoiceDeliveryRequestedEvent).
+		Count(&deliveryEventCount).Error; err != nil {
+		t.Fatalf("count raced delivery events: %v", err)
+	}
+	if deliveryEventCount != 1 {
+		t.Fatalf("raced delivery outbox count = %d, want 1", deliveryEventCount)
+	}
+
 	var persistedInvoice models.Invoice
 	if err := database.Where("id = ? AND business_id = ?", resultID, firstCommand.BusinessID).
 		First(&persistedInvoice).Error; err != nil {

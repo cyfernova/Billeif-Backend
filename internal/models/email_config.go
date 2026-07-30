@@ -17,11 +17,14 @@ const (
 )
 
 const (
-	EmailDeliveryStatusQueued     = "queued"
-	EmailDeliveryStatusProcessing = "processing"
-	EmailDeliveryStatusSent       = "sent"
-	EmailDeliveryStatusDelivered  = "delivered"
-	EmailDeliveryStatusFailed     = "failed"
+	EmailDeliveryStatusWaitingForRender = "waiting_for_render"
+	EmailDeliveryStatusQueued           = "queued"
+	EmailDeliveryStatusProcessing       = "processing"
+	EmailDeliveryStatusSent             = "sent"
+	EmailDeliveryStatusDelivered        = "delivered"
+	EmailDeliveryStatusFailed           = "failed"
+	EmailDeliveryStatusBounced          = "bounced"
+	EmailDeliveryStatusComplained       = "complained"
 )
 
 type EmailAccount struct {

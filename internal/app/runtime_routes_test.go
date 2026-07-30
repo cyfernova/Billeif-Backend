@@ -77,4 +77,10 @@ func TestLegacyInvoiceSendRouteIsNotRegistered(t *testing.T) {
 	if !routes["GET /api/v1/invoices/:id/renders/:render_job_id"] {
 		t.Fatal("tenant-scoped invoice render status route must be registered")
 	}
+	if !routes["POST /api/v1/invoices/:id/deliveries"] {
+		t.Fatal("canonical invoice delivery route must be registered")
+	}
+	if !routes["GET /api/v1/invoices/:id/deliveries/:delivery_id"] {
+		t.Fatal("tenant-scoped invoice delivery status route must be registered")
+	}
 }

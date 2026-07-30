@@ -709,10 +709,55 @@ func (r *documentRepository) CompleteFinalRender(
 		if result.RowsAffected != 1 {
 			return errors.New("final render completion compare-and-swap failed")
 		}
+		waiting, err := queueWaitingInvoiceDeliveries(
+			tx, businessID, invoiceID, jobID, now,
+		)
+		if err != nil {
+			return err
+		}
+		for index := range waiting {
+			event, err := newInvoiceDeliveryOutboxEvent(&waiting[index], now)
+			if err != nil {
+				return fmt.Errorf("build waiting delivery outbox event: %w", err)
+			}
+			if err := tx.Create(event).Error; err != nil {
+				return fmt.Errorf("create waiting delivery outbox event: %w", err)
+			}
+		}
 		completed = true
 		return nil
 	})
 	return completed, err
+}
+
+func queueWaitingInvoiceDeliveries(
+	tx *gorm.DB,
+	businessID, invoiceID, jobID string,
+	now time.Time,
+) ([]models.EmailDelivery, error) {
+	const query = `
+UPDATE email_deliveries
+SET status = ?,
+	updated_at = ?
+WHERE business_id = ?
+	AND invoice_id = ?
+	AND render_job_id = ?
+	AND status = ?
+	AND deleted_at IS NULL
+RETURNING id, business_id, invoice_id, render_job_id, recipient`
+	var deliveries []models.EmailDelivery
+	if err := tx.Raw(
+		query,
+		models.EmailDeliveryStatusQueued,
+		now,
+		businessID,
+		invoiceID,
+		jobID,
+		models.EmailDeliveryStatusWaitingForRender,
+	).Scan(&deliveries).Error; err != nil {
+		return nil, fmt.Errorf("queue waiting invoice deliveries: %w", err)
+	}
+	return deliveries, nil
 }
 
 func (r *documentRepository) ObsoletePreviewRender(
