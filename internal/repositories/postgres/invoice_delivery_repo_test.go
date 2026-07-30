@@ -251,6 +251,9 @@ func TestInvoiceRepositoryCreateDeliveryAtomicRejectsInvalidLifecycleAndRenderId
 		{name: "void invoice", mutate: func(invoice *models.Invoice, _ *models.DocumentRenderJob) {
 			invoice.Status = models.InvoiceStatusVoid
 		}},
+		{name: "unknown invoice status", mutate: func(invoice *models.Invoice, _ *models.DocumentRenderJob) {
+			invoice.Status = "future_state"
+		}},
 		{name: "missing invoice number", mutate: func(invoice *models.Invoice, _ *models.DocumentRenderJob) {
 			invoice.InvoiceNo = nil
 		}},

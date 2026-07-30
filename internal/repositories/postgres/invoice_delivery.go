@@ -155,10 +155,14 @@ func invoiceHasDeliverableIssuanceFacts(invoice *models.Invoice) bool {
 		return false
 	}
 	switch invoice.Status {
-	case models.InvoiceStatusDraft, models.InvoiceStatusVoid, models.InvoiceStatusCanceled:
-		return false
-	default:
+	case models.InvoiceStatusIssued,
+		models.InvoiceStatusSent,
+		models.InvoiceStatusPartiallyPaid,
+		models.InvoiceStatusPaid,
+		models.InvoiceStatusOverdue:
 		return true
+	default:
+		return false
 	}
 }
 
