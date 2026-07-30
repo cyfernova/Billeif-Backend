@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"invoice-backend/internal/models"
+	"invoice-backend/internal/repositories/interfaces"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
@@ -41,7 +42,7 @@ func TestDocumentRepositoryUpdateRejectsStaleDraftBeforeReplacingLines(t *testin
 	}
 }
 
-func TestDocumentRepositoryClaimPreviewRenderUsesCASAndIncrementsAttempts(t *testing.T) {
+func TestDocumentRepositoryClaimPreviewRenderReclaimsFailedRedeliveryAndIncrementsAttempts(t *testing.T) {
 	invoiceRepository, mock, closeDatabase := newStrictIssueSQLMockRepository(t)
 	defer closeDatabase()
 	repository := &documentRepository{db: invoiceRepository.db}
@@ -54,41 +55,66 @@ func TestDocumentRepositoryClaimPreviewRenderUsesCASAndIncrementsAttempts(t *tes
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	claimed, err := repository.ClaimPreviewRender(context.Background(), businessID, jobID, version)
+	state, err := repository.ClaimPreviewRender(context.Background(), businessID, jobID, version)
 
-	if err != nil || !claimed {
-		t.Fatalf("claim result/error = %t/%v, want claimed", claimed, err)
+	if err != nil || state != interfaces.PreviewRenderClaimed {
+		t.Fatalf("claim state/error = %q/%v, want claimed", state, err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("SQL expectations: %v", err)
 	}
 }
 
-func TestDocumentRepositoryClaimPreviewRenderDoesNotRegressTerminalJob(t *testing.T) {
-	invoiceRepository, mock, closeDatabase := newStrictIssueSQLMockRepository(t)
-	defer closeDatabase()
-	repository := &documentRepository{db: invoiceRepository.db}
-	businessID := uuid.NewString()
-	jobID := uuid.NewString()
-	version := 5
-
-	mock.ExpectBegin()
-	mock.ExpectExec(`UPDATE "document_render_jobs" SET .*WHERE .*status IN \(\$[0-9]+,\$[0-9]+\)`).
-		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectCommit()
-	mock.ExpectQuery(`SELECT "id","business_id","kind","source_invoice_version","status" FROM "document_render_jobs".*id = \$1 AND business_id = \$2 AND kind = \$3 AND deleted_at IS NULL.*LIMIT \$4`).
-		WithArgs(jobID, businessID, models.RenderKindPreview, 1).
-		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "business_id", "kind", "source_invoice_version", "status",
-		}).AddRow(jobID, businessID, models.RenderKindPreview, version, models.RenderJobStatusCompleted))
-
-	claimed, err := repository.ClaimPreviewRender(context.Background(), businessID, jobID, version)
-
-	if err != nil || claimed {
-		t.Fatalf("claim result/error = %t/%v, want terminal no-op", claimed, err)
+func TestDocumentRepositoryClaimPreviewRenderDistinguishesExistingStates(t *testing.T) {
+	tests := []struct {
+		name      string
+		jobStatus string
+		wantState interfaces.PreviewRenderClaimState
+	}{
+		{
+			name:      "processing",
+			jobStatus: models.RenderJobStatusProcessing,
+			wantState: interfaces.PreviewRenderAlreadyProcessing,
+		},
+		{
+			name:      "completed",
+			jobStatus: models.RenderJobStatusCompleted,
+			wantState: interfaces.PreviewRenderAlreadyCompleted,
+		},
+		{
+			name:      "obsolete",
+			jobStatus: models.RenderJobStatusObsolete,
+			wantState: interfaces.PreviewRenderAlreadyObsolete,
+		},
 	}
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("SQL expectations: %v", err)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			invoiceRepository, mock, closeDatabase := newStrictIssueSQLMockRepository(t)
+			defer closeDatabase()
+			repository := &documentRepository{db: invoiceRepository.db}
+			businessID := uuid.NewString()
+			jobID := uuid.NewString()
+			version := 5
+
+			mock.ExpectBegin()
+			mock.ExpectExec(`UPDATE "document_render_jobs" SET .*WHERE .*status IN \(\$[0-9]+,\$[0-9]+\)`).
+				WillReturnResult(sqlmock.NewResult(0, 0))
+			mock.ExpectCommit()
+			mock.ExpectQuery(`SELECT "id","business_id","kind","source_invoice_version","status" FROM "document_render_jobs".*id = \$1 AND business_id = \$2 AND kind = \$3 AND deleted_at IS NULL.*LIMIT \$4`).
+				WithArgs(jobID, businessID, models.RenderKindPreview, 1).
+				WillReturnRows(sqlmock.NewRows([]string{
+					"id", "business_id", "kind", "source_invoice_version", "status",
+				}).AddRow(jobID, businessID, models.RenderKindPreview, version, test.jobStatus))
+
+			state, err := repository.ClaimPreviewRender(context.Background(), businessID, jobID, version)
+
+			if err != nil || state != test.wantState {
+				t.Fatalf("claim state/error = %q/%v, want %q", state, err, test.wantState)
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatalf("SQL expectations: %v", err)
+			}
+		})
 	}
 }
 

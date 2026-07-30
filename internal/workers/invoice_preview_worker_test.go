@@ -3,12 +3,70 @@ package workers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
+	"invoice-backend/internal/config"
 	"invoice-backend/internal/models"
+	"invoice-backend/internal/repositories/interfaces"
+	"invoice-backend/internal/services"
+	"invoice-backend/pkg/awsclients"
+	"invoice-backend/pkg/logger"
 
 	"github.com/google/uuid"
 )
+
+type queueMessageDocumentRepository struct {
+	interfaces.DocumentRepository
+	document   *models.Document
+	job        *models.DocumentRenderJob
+	claimState interfaces.PreviewRenderClaimState
+}
+
+func (r *queueMessageDocumentRepository) GetByIDInternal(context.Context, string) (*models.Document, error) {
+	return r.document, nil
+}
+
+func (r *queueMessageDocumentRepository) GetRenderJob(context.Context, string, string) (*models.DocumentRenderJob, error) {
+	return r.job, nil
+}
+
+func (r *queueMessageDocumentRepository) ClaimPreviewRender(
+	context.Context,
+	string,
+	string,
+	int,
+) (interfaces.PreviewRenderClaimState, error) {
+	return r.claimState, nil
+}
+
+func (*queueMessageDocumentRepository) MarkPreviewRenderObsolete(context.Context, string, string) error {
+	return nil
+}
+
+func (*queueMessageDocumentRepository) FailPreviewRender(context.Context, string, string, string) error {
+	return nil
+}
+
+func (*queueMessageDocumentRepository) CompletePreviewRender(
+	context.Context,
+	string,
+	string,
+	int,
+	string,
+	string,
+) (bool, error) {
+	return true, nil
+}
+
+type queueMessageInvoiceRepository struct {
+	interfaces.CanonicalInvoiceRepository
+	invoice *models.Invoice
+}
+
+func (r *queueMessageInvoiceRepository) GetByIDInternal(context.Context, string) (*models.Invoice, error) {
+	return r.invoice, nil
+}
 
 type fakePreviewRenderOperations struct {
 	invoiceVersions []int
@@ -17,7 +75,7 @@ type fakePreviewRenderOperations struct {
 	rendered        bool
 	processing      bool
 	obsolete        bool
-	claimResult     *bool
+	claimState      interfaces.PreviewRenderClaimState
 	uploadKey       string
 	completeVersion int
 	completeKey     string
@@ -34,12 +92,17 @@ func (f *fakePreviewRenderOperations) currentInvoiceVersion(context.Context, str
 	return version, nil
 }
 
-func (f *fakePreviewRenderOperations) claimPreview(context.Context, string, string, int) (bool, error) {
+func (f *fakePreviewRenderOperations) claimPreview(
+	context.Context,
+	string,
+	string,
+	int,
+) (interfaces.PreviewRenderClaimState, error) {
 	f.processing = true
-	if f.claimResult != nil {
-		return *f.claimResult, nil
+	if f.claimState != "" {
+		return f.claimState, nil
 	}
-	return true, nil
+	return interfaces.PreviewRenderClaimed, nil
 }
 
 func (f *fakePreviewRenderOperations) loadProfile(_ context.Context, _ string, profileID string) (*models.RenderProfile, error) {
@@ -154,22 +217,169 @@ func TestProcessPreviewRenderRechecksVersionBeforeCompletion(t *testing.T) {
 	}
 }
 
-func TestProcessPreviewRenderNoOpsWhenDuplicateDidNotClaimJob(t *testing.T) {
+func TestProcessPreviewRenderReturnsRetryableErrorWhenJobAlreadyProcessing(t *testing.T) {
 	document, job, version := validPreviewWorkerFixture()
-	notClaimed := false
 	operations := &fakePreviewRenderOperations{
 		invoiceVersions: []int{version},
-		claimResult:     &notClaimed,
+		claimState:      interfaces.PreviewRenderAlreadyProcessing,
 	}
 
-	if err := processPreviewRender(context.Background(), document, job, operations); err != nil {
-		t.Fatalf("process duplicate preview: %v", err)
+	err := processPreviewRender(context.Background(), document, job, operations)
+	var retryable *PreviewRenderInProgressError
+	if !errors.As(err, &retryable) || !retryable.Retryable() {
+		t.Fatalf("process duplicate error = %T %v, want typed retryable error", err, err)
 	}
 	if operations.rendered || operations.uploadKey != "" || operations.completed || operations.obsolete {
-		t.Fatalf("unclaimed duplicate performed work: %#v", operations)
+		t.Fatalf("processing duplicate performed work: %#v", operations)
 	}
 	if operations.versionCalls != 1 {
 		t.Fatalf("version calls = %d, want one pre-claim check", operations.versionCalls)
+	}
+}
+
+func TestProcessInvoiceQueueMessageReturnsRetryableErrorForProcessingPreview(t *testing.T) {
+	document, job, version := validPreviewWorkerFixture()
+	cfg := &config.Config{}
+	log := logger.NewWithEnv("test")
+	awsCfg := &awsclients.Config{}
+	documentService := services.NewDocumentService(
+		nil,
+		cfg,
+		&queueMessageDocumentRepository{
+			document:   document,
+			job:        job,
+			claimState: interfaces.PreviewRenderAlreadyProcessing,
+		},
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		awsCfg,
+		log,
+	)
+	invoiceService := services.NewInvoiceService(
+		nil,
+		cfg,
+		&queueMessageInvoiceRepository{invoice: &models.Invoice{
+			ID:         document.ID,
+			BusinessID: document.BusinessID,
+			Version:    version,
+		}},
+		nil,
+		nil,
+		nil,
+		documentService,
+		awsCfg,
+		nil,
+		nil,
+		log,
+	)
+	container := &services.Container{
+		Document: documentService,
+		Invoice:  invoiceService,
+	}
+	body := fmt.Sprintf(
+		`{"type":"generate_document_pdf","document_id":%q,"render_job_id":%q,"invoice_version":%d}`,
+		document.ID,
+		job.ID,
+		version,
+	)
+
+	err := ProcessInvoiceQueueMessage(context.Background(), cfg, container, log, body)
+
+	var retryable *PreviewRenderInProgressError
+	if !errors.As(err, &retryable) || !retryable.Retryable() {
+		t.Fatalf("queue processing error = %T %v, want typed retryable error", err, err)
+	}
+}
+
+func TestProcessPreviewRenderTreatsCompletedAndObsoleteClaimsAsSuccessfulNoOps(t *testing.T) {
+	tests := []struct {
+		name       string
+		claimState interfaces.PreviewRenderClaimState
+	}{
+		{name: "completed", claimState: interfaces.PreviewRenderAlreadyCompleted},
+		{name: "obsolete", claimState: interfaces.PreviewRenderAlreadyObsolete},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			document, job, version := validPreviewWorkerFixture()
+			operations := &fakePreviewRenderOperations{
+				invoiceVersions: []int{version},
+				claimState:      test.claimState,
+			}
+
+			if err := processPreviewRender(context.Background(), document, job, operations); err != nil {
+				t.Fatalf("process terminal duplicate: %v", err)
+			}
+			if operations.rendered || operations.uploadKey != "" || operations.completed || operations.obsolete {
+				t.Fatalf("terminal duplicate performed work: %#v", operations)
+			}
+		})
+	}
+}
+
+func TestProcessDocumentRenderJobRejectsFinalKindWithTypedError(t *testing.T) {
+	document, job, version := validPreviewWorkerFixture()
+	job.Kind = models.RenderKindFinal
+	operations := &fakePreviewRenderOperations{}
+
+	err := processDocumentRenderJob(
+		context.Background(),
+		document,
+		job,
+		version,
+		operations,
+	)
+	var unsupported *UnsupportedFinalRenderError
+	if !errors.As(err, &unsupported) {
+		t.Fatalf("final render error = %T %v, want typed unsupported-final error", err, err)
+	}
+	if operations.versionCalls != 0 || operations.processing || operations.rendered {
+		t.Fatalf("unsupported final render performed preview work: %#v", operations)
+	}
+}
+
+func TestProcessDocumentRenderJobRejectsMalformedOrVersionMismatchedPreview(t *testing.T) {
+	tests := []struct {
+		name            string
+		expectedVersion int
+		mutate          func(*models.DocumentRenderJob)
+	}{
+		{name: "missing message version", expectedVersion: 0},
+		{name: "mismatched message version", expectedVersion: 4},
+		{
+			name:            "missing job version",
+			expectedVersion: 3,
+			mutate: func(job *models.DocumentRenderJob) {
+				job.SourceInvoiceVersion = nil
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			document, job, _ := validPreviewWorkerFixture()
+			if test.mutate != nil {
+				test.mutate(job)
+			}
+			operations := &fakePreviewRenderOperations{}
+
+			if err := processDocumentRenderJob(
+				context.Background(),
+				document,
+				job,
+				test.expectedVersion,
+				operations,
+			); err == nil {
+				t.Fatal("malformed preview must fail closed")
+			}
+			if operations.versionCalls != 0 || operations.processing || operations.rendered {
+				t.Fatalf("malformed preview performed work: %#v", operations)
+			}
+		})
 	}
 }
 

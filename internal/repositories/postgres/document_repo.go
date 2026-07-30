@@ -357,9 +357,9 @@ func (r *documentRepository) ClaimPreviewRender(
 	ctx context.Context,
 	businessID, jobID string,
 	sourceVersion int,
-) (bool, error) {
+) (interfaces.PreviewRenderClaimState, error) {
 	if businessID == "" || jobID == "" || sourceVersion < 1 {
-		return false, errors.New("claim preview render requires exact job identity")
+		return "", errors.New("claim preview render requires exact job identity")
 	}
 	result := r.db.WithContext(ctx).
 		Model(&models.DocumentRenderJob{}).
@@ -380,10 +380,10 @@ func (r *documentRepository) ClaimPreviewRender(
 			"lease_expires_at": nil,
 		})
 	if result.Error != nil {
-		return false, fmt.Errorf("claim preview render job: %w", result.Error)
+		return "", fmt.Errorf("claim preview render job: %w", result.Error)
 	}
 	if result.RowsAffected == 1 {
-		return true, nil
+		return interfaces.PreviewRenderClaimed, nil
 	}
 
 	var job models.DocumentRenderJob
@@ -396,18 +396,20 @@ func (r *documentRepository) ClaimPreviewRender(
 			models.RenderKindPreview,
 		).
 		First(&job).Error; err != nil {
-		return false, fmt.Errorf("load unclaimed preview render job: %w", err)
+		return "", fmt.Errorf("load unclaimed preview render job: %w", err)
 	}
 	if job.SourceInvoiceVersion == nil || *job.SourceInvoiceVersion != sourceVersion {
-		return false, errors.New("preview render source version mismatch")
+		return "", errors.New("preview render source version mismatch")
 	}
 	switch job.Status {
-	case models.RenderJobStatusProcessing,
-		models.RenderJobStatusCompleted,
-		models.RenderJobStatusObsolete:
-		return false, nil
+	case models.RenderJobStatusProcessing:
+		return interfaces.PreviewRenderAlreadyProcessing, nil
+	case models.RenderJobStatusCompleted:
+		return interfaces.PreviewRenderAlreadyCompleted, nil
+	case models.RenderJobStatusObsolete:
+		return interfaces.PreviewRenderAlreadyObsolete, nil
 	default:
-		return false, fmt.Errorf("preview render job was not claimable from status %q", job.Status)
+		return "", fmt.Errorf("preview render job was not claimable from status %q", job.Status)
 	}
 }
 

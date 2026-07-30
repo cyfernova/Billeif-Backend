@@ -11,6 +11,7 @@ import (
 
 	"invoice-backend/internal/config"
 	"invoice-backend/internal/models"
+	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/internal/services"
 	"invoice-backend/pkg/awsclients"
 	"invoice-backend/pkg/logger"
@@ -199,67 +200,71 @@ func generateDocumentPDF(
 		return err
 	}
 
-	job, jobErr := svc.Document.GetRenderJobByBusiness(ctx, document.BusinessID, renderJobID)
-	isCanonicalPreview := jobErr == nil &&
-		job.Kind == models.RenderKindPreview &&
-		job.InvoiceID != nil &&
-		job.SourceInvoiceVersion != nil &&
-		job.ObjectKey != ""
-	if expectedInvoiceVersion > 0 {
-		if jobErr != nil {
-			return fmt.Errorf("load exact preview render job: %w", jobErr)
-		}
-		if !isCanonicalPreview || *job.SourceInvoiceVersion != expectedInvoiceVersion {
+	job, err := svc.Document.GetRenderJobByBusiness(ctx, document.BusinessID, renderJobID)
+	if err != nil {
+		return fmt.Errorf("load exact render job: %w", err)
+	}
+	return processDocumentRenderJob(
+		ctx,
+		document,
+		job,
+		expectedInvoiceVersion,
+		&servicePreviewRenderOperations{cfg: cfg, svc: svc},
+	)
+}
+
+type PreviewRenderInProgressError struct {
+	JobID string
+}
+
+func (e *PreviewRenderInProgressError) Error() string {
+	return fmt.Sprintf("preview render job %q is already processing", e.JobID)
+}
+
+func (e *PreviewRenderInProgressError) Retryable() bool {
+	return true
+}
+
+type UnsupportedFinalRenderError struct {
+	JobID string
+}
+
+func (e *UnsupportedFinalRenderError) Error() string {
+	return fmt.Sprintf("final render job %q is not supported by this worker", e.JobID)
+}
+
+func processDocumentRenderJob(
+	ctx context.Context,
+	document *models.Document,
+	job *models.DocumentRenderJob,
+	expectedInvoiceVersion int,
+	operations previewRenderOperations,
+) error {
+	if document == nil || job == nil {
+		return errors.New("render job and document are required")
+	}
+	switch job.Kind {
+	case models.RenderKindPreview:
+		if expectedInvoiceVersion < 1 ||
+			job.SourceInvoiceVersion == nil ||
+			*job.SourceInvoiceVersion != expectedInvoiceVersion {
 			return errors.New("preview render message does not match exact versioned job")
 		}
+		return processPreviewRender(ctx, document, job, operations)
+	case models.RenderKindFinal:
+		return &UnsupportedFinalRenderError{JobID: job.ID}
+	default:
+		return fmt.Errorf("unsupported render job kind %q", job.Kind)
 	}
-	if isCanonicalPreview {
-		return processPreviewRender(
-			ctx,
-			document,
-			job,
-			&servicePreviewRenderOperations{cfg: cfg, svc: svc},
-		)
-	}
-
-	if err := svc.Document.MarkRenderJobProcessing(ctx, document.BusinessID, renderJobID); err != nil {
-		log.Warn("failed to mark render job processing", "document_id", documentID, "render_job_id", renderJobID, "error", err)
-	}
-
-	profile, err := resolveRenderProfile(ctx, svc, document, renderJobID)
-	if err != nil {
-		_ = svc.Document.FailRenderJob(ctx, document.BusinessID, renderJobID, err.Error())
-		return err
-	}
-
-	pdfContent, filename, err := renderDocumentPDF(ctx, svc, document, profile)
-	if err != nil {
-		_ = svc.Document.FailRenderJob(ctx, document.BusinessID, renderJobID, err.Error())
-		return err
-	}
-
-	key := path.Join("documents", document.ID, filename)
-	if err := svc.S3.Upload(ctx, cfg.S3.BucketInvoices, key, pdfContent, "application/pdf"); err != nil {
-		_ = svc.Document.FailRenderJob(ctx, document.BusinessID, renderJobID, err.Error())
-		return err
-	}
-
-	pdfURL := svc.S3.GetObjectURL(cfg.S3.BucketInvoices, key)
-	if err := svc.Document.UpdateRenderedPDF(ctx, document.ID, renderJobID, pdfURL, filename); err != nil {
-		_ = svc.Document.FailRenderJob(ctx, document.BusinessID, renderJobID, err.Error())
-		return err
-	}
-	if document.DocumentType == models.DocumentTypeSalesInvoice {
-		if err := svc.Invoice.UpdatePDFUrl(ctx, document.ID, pdfURL); err != nil {
-			log.Warn("failed to sync rendered sales invoice PDF to legacy invoice", "document_id", document.ID, "error", err)
-		}
-	}
-	return nil
 }
 
 type previewRenderOperations interface {
 	currentInvoiceVersion(ctx context.Context, businessID, invoiceID string) (int, error)
-	claimPreview(ctx context.Context, businessID, jobID string, sourceVersion int) (bool, error)
+	claimPreview(
+		ctx context.Context,
+		businessID, jobID string,
+		sourceVersion int,
+	) (interfaces.PreviewRenderClaimState, error)
 	loadProfile(ctx context.Context, businessID, profileID string) (*models.RenderProfile, error)
 	render(ctx context.Context, document *models.Document, profile *models.RenderProfile) ([]byte, string, error)
 	upload(ctx context.Context, key string, content []byte) error
@@ -296,7 +301,7 @@ func (o *servicePreviewRenderOperations) claimPreview(
 	ctx context.Context,
 	businessID, jobID string,
 	sourceVersion int,
-) (bool, error) {
+) (interfaces.PreviewRenderClaimState, error) {
 	return o.svc.Document.ClaimPreviewRender(ctx, businessID, jobID, sourceVersion)
 }
 
@@ -396,7 +401,7 @@ func processPreviewRender(
 	if currentVersion != sourceVersion {
 		return operations.markObsolete(ctx, document.BusinessID, job.ID)
 	}
-	claimed, err := operations.claimPreview(
+	claimState, err := operations.claimPreview(
 		ctx,
 		document.BusinessID,
 		job.ID,
@@ -405,8 +410,15 @@ func processPreviewRender(
 	if err != nil {
 		return fmt.Errorf("claim preview render: %w", err)
 	}
-	if !claimed {
+	switch claimState {
+	case interfaces.PreviewRenderClaimed:
+	case interfaces.PreviewRenderAlreadyProcessing:
+		return &PreviewRenderInProgressError{JobID: job.ID}
+	case interfaces.PreviewRenderAlreadyCompleted,
+		interfaces.PreviewRenderAlreadyObsolete:
 		return nil
+	default:
+		return fmt.Errorf("claim preview render returned unknown state %q", claimState)
 	}
 
 	var profile *models.RenderProfile

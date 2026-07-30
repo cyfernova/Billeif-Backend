@@ -186,7 +186,7 @@ type PreviewRenderRepository interface {
 		ctx context.Context,
 		businessID, jobID string,
 		sourceVersion int,
-	) (bool, error)
+	) (PreviewRenderClaimState, error)
 	MarkPreviewRenderObsolete(ctx context.Context, businessID, jobID string) error
 	FailPreviewRender(ctx context.Context, businessID, jobID, errorMessage string) error
 	CompletePreviewRender(
@@ -196,6 +196,15 @@ type PreviewRenderRepository interface {
 		objectKey, filename string,
 	) (bool, error)
 }
+
+type PreviewRenderClaimState string
+
+const (
+	PreviewRenderClaimed           PreviewRenderClaimState = "claimed"
+	PreviewRenderAlreadyProcessing PreviewRenderClaimState = "processing"
+	PreviewRenderAlreadyCompleted  PreviewRenderClaimState = "completed"
+	PreviewRenderAlreadyObsolete   PreviewRenderClaimState = "obsolete"
+)
 
 type LedgerRepository interface {
 	Create(ctx context.Context, entry *models.LedgerEntry) error

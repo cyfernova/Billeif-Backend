@@ -1364,10 +1364,10 @@ func (s *DocumentService) ClaimPreviewRender(
 	ctx context.Context,
 	businessID, jobID string,
 	sourceVersion int,
-) (bool, error) {
+) (interfaces.PreviewRenderClaimState, error) {
 	repository, ok := s.repo.(interfaces.PreviewRenderRepository)
 	if !ok {
-		return false, errors.New("preview render repository is not configured")
+		return "", errors.New("preview render repository is not configured")
 	}
 	return repository.ClaimPreviewRender(ctx, businessID, jobID, sourceVersion)
 }
