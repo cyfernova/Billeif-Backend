@@ -3,6 +3,7 @@ package workers
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -158,7 +159,17 @@ func renderDocumentPDFWithLiveCompliance(
 		if userPassword == "" {
 			userPassword = sanitizeFilename(document.SerialNumber)
 		}
-		pdf.SetProtection(permissions, userPassword, "")
+		ownerPassword := ""
+		if !includeLiveCompliance {
+			ownerKey := sha256.Sum256([]byte(strings.Join([]string{
+				document.BusinessID,
+				document.ID,
+				document.SerialNumber,
+				userPassword,
+			}, "\x00")))
+			ownerPassword = fmt.Sprintf("%x", ownerKey)
+		}
+		pdf.SetProtection(permissions, userPassword, ownerPassword)
 	}
 
 	pdf.SetMargins(theme.marginLeft, theme.marginTop, theme.marginRight)

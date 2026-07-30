@@ -97,6 +97,29 @@ func TestFinalSnapshotRendererProducesStableBytesAcrossRetries(t *testing.T) {
 	}
 }
 
+func TestFinalSnapshotRendererProducesStablePasswordProtectedBytesAcrossRetries(t *testing.T) {
+	svc, _ := complianceCountingRenderContainer(t)
+	document := frozenFinalRenderDocument()
+	profile := &models.RenderProfile{
+		PasswordProtected: true,
+		Password:          "stable-user-password",
+		PrintAllowed:      true,
+	}
+
+	first, _, err := renderFinalDocumentPDF(context.Background(), svc, document, profile)
+	if err != nil {
+		t.Fatalf("render first protected final snapshot: %v", err)
+	}
+	second, _, err := renderFinalDocumentPDF(context.Background(), svc, document, profile)
+	if err != nil {
+		t.Fatalf("render retried protected final snapshot: %v", err)
+	}
+
+	if !bytes.Equal(first, second) {
+		t.Fatal("password-protected final snapshot bytes changed across retries")
+	}
+}
+
 func TestPreviewAndGenericRendererStillQueryLiveCompliance(t *testing.T) {
 	svc, queries := complianceCountingRenderContainer(t)
 	document := frozenFinalRenderDocument()
