@@ -19,8 +19,8 @@ mock_provider "aws" {
   override_data {
     target = data.aws_caller_identity.current
     values = {
-      account_id = "123456789012"
-      arn        = "arn:aws:iam::123456789012:user/terraform-test"
+      account_id = "928282274753"
+      arn        = "arn:aws:iam::928282274753:user/terraform-test"
       user_id    = "AIDATEST1234567890"
     }
   }
@@ -38,7 +38,7 @@ mock_provider "aws" {
     values = {
       id               = "test-rest-api"
       root_resource_id = "test-root-resource"
-      execution_arn    = "arn:aws:execute-api:ap-south-1:123456789012:test-rest-api"
+      execution_arn    = "arn:aws:execute-api:ap-south-1:928282274753:test-rest-api"
     }
   }
 
@@ -48,7 +48,7 @@ mock_provider "aws" {
     values = {
       id            = "test-http-api"
       api_endpoint  = "https://test-http-api.execute-api.ap-south-1.amazonaws.com"
-      execution_arn = "arn:aws:execute-api:ap-south-1:123456789012:test-http-api"
+      execution_arn = "arn:aws:execute-api:ap-south-1:928282274753:test-http-api"
       protocol_type = "HTTP"
     }
   }
@@ -57,7 +57,7 @@ mock_provider "aws" {
     target          = aws_kms_key.application_secrets
     override_during = plan
     values = {
-      arn    = "arn:aws:kms:ap-south-1:123456789012:key/application-secrets"
+      arn    = "arn:aws:kms:ap-south-1:928282274753:key/application-secrets"
       key_id = "application-secrets"
     }
   }
@@ -66,7 +66,7 @@ mock_provider "aws" {
     target          = aws_iam_role.lambda_exec
     override_during = plan
     values = {
-      arn = "arn:aws:iam::123456789012:role/billeif-lambda-exec"
+      arn = "arn:aws:iam::928282274753:role/billeif-lambda-exec"
     }
   }
 
@@ -74,7 +74,7 @@ mock_provider "aws" {
     target          = aws_iam_role.lambda_http_exec
     override_during = plan
     values = {
-      arn = "arn:aws:iam::123456789012:role/billeif-lambda-http-exec"
+      arn = "arn:aws:iam::928282274753:role/billeif-lambda-http-exec"
     }
   }
 
@@ -83,8 +83,8 @@ mock_provider "aws" {
     override_during = plan
     values = {
       master_user_secret = [{
-        kms_key_id = "arn:aws:kms:ap-south-1:123456789012:key/application-secrets"
-        secret_arn = "arn:aws:secretsmanager:ap-south-1:123456789012:secret:rds-managed"
+        kms_key_id = "arn:aws:kms:ap-south-1:928282274753:key/application-secrets"
+        secret_arn = "arn:aws:secretsmanager:ap-south-1:928282274753:secret:rds-managed"
       }]
     }
   }
@@ -93,7 +93,7 @@ mock_provider "aws" {
     target          = aws_secretsmanager_secret.credential_encryption
     override_during = plan
     values = {
-      arn = "arn:aws:secretsmanager:ap-south-1:123456789012:secret:credential-encryption"
+      arn = "arn:aws:secretsmanager:ap-south-1:928282274753:secret:credential-encryption"
     }
   }
 
@@ -101,7 +101,7 @@ mock_provider "aws" {
     target          = aws_secretsmanager_secret.razorpay
     override_during = plan
     values = {
-      arn = "arn:aws:secretsmanager:ap-south-1:123456789012:secret:razorpay"
+      arn = "arn:aws:secretsmanager:ap-south-1:928282274753:secret:razorpay"
     }
   }
 
@@ -109,7 +109,7 @@ mock_provider "aws" {
     target          = aws_secretsmanager_secret.llm
     override_during = plan
     values = {
-      arn = "arn:aws:secretsmanager:ap-south-1:123456789012:secret:llm"
+      arn = "arn:aws:secretsmanager:ap-south-1:928282274753:secret:llm"
     }
   }
 
@@ -117,7 +117,7 @@ mock_provider "aws" {
     target          = aws_secretsmanager_secret.exa
     override_during = plan
     values = {
-      arn = "arn:aws:secretsmanager:ap-south-1:123456789012:secret:exa"
+      arn = "arn:aws:secretsmanager:ap-south-1:928282274753:secret:exa"
     }
   }
 
@@ -125,7 +125,7 @@ mock_provider "aws" {
     target          = aws_secretsmanager_secret.gst_lookup
     override_during = plan
     values = {
-      arn = "arn:aws:secretsmanager:ap-south-1:123456789012:secret:gst-lookup"
+      arn = "arn:aws:secretsmanager:ap-south-1:928282274753:secret:gst-lookup"
     }
   }
 
@@ -133,7 +133,7 @@ mock_provider "aws" {
     target          = aws_secretsmanager_secret.gst_provider
     override_during = plan
     values = {
-      arn = "arn:aws:secretsmanager:ap-south-1:123456789012:secret:gst-provider"
+      arn = "arn:aws:secretsmanager:ap-south-1:928282274753:secret:gst-provider"
     }
   }
 
@@ -141,7 +141,7 @@ mock_provider "aws" {
     target          = aws_secretsmanager_secret.deepgram
     override_during = plan
     values = {
-      arn = "arn:aws:secretsmanager:ap-south-1:123456789012:secret:deepgram"
+      arn = "arn:aws:secretsmanager:ap-south-1:928282274753:secret:deepgram"
     }
   }
 
@@ -149,7 +149,7 @@ mock_provider "aws" {
     target          = aws_secretsmanager_secret.deepseek
     override_during = plan
     values = {
-      arn = "arn:aws:secretsmanager:ap-south-1:123456789012:secret:deepseek"
+      arn = "arn:aws:secretsmanager:ap-south-1:928282274753:secret:deepseek"
     }
   }
 
@@ -157,7 +157,7 @@ mock_provider "aws" {
     target          = aws_secretsmanager_secret.billeif_invoice_cursor_hmac
     override_during = plan
     values = {
-      arn = "arn:aws:secretsmanager:ap-south-1:123456789012:secret:billeif-invoice-cursor-hmac"
+      arn = "arn:aws:secretsmanager:ap-south-1:928282274753:secret:billeif-invoice-cursor-hmac"
     }
   }
 }
@@ -239,7 +239,7 @@ run "secret_metadata_rds_lambda_iam_and_output" {
   variables {
     project_name          = "billeif-test"
     environment           = "test"
-    aws_region            = "us-east-1"
+    aws_region            = "ap-south-1"
     lambda_artifact_dir   = "tests/fixtures/lambda"
     llm_api_url           = "https://llm.example.test/chat/completions"
     llm_model             = "test-model"
@@ -353,7 +353,7 @@ run "secret_metadata_rds_lambda_iam_and_output" {
         if condition.variable == "kms:ViaService" &&
         condition.test == "StringEquals" &&
         length(condition.values) == 1 &&
-        contains(condition.values, "secretsmanager.us-east-1.amazonaws.com")
+        contains(condition.values, "secretsmanager.ap-south-1.amazonaws.com")
       ]) == 1 &&
       length([
         for condition in statement.condition : condition
@@ -421,7 +421,7 @@ run "secret_metadata_rds_lambda_iam_and_output" {
             for condition in statement.condition : condition
             if condition.variable == "kms:ViaService" &&
             condition.test == "StringEquals" &&
-            contains(condition.values, "secretsmanager.us-east-1.amazonaws.com")
+            contains(condition.values, "secretsmanager.ap-south-1.amazonaws.com")
           ]) == 1
         ]) == 1,
         length([
@@ -431,7 +431,7 @@ run "secret_metadata_rds_lambda_iam_and_output" {
             for condition in statement.condition : condition
             if condition.variable == "kms:ViaService" &&
             condition.test == "StringEquals" &&
-            contains(condition.values, "secretsmanager.us-east-1.amazonaws.com")
+            contains(condition.values, "secretsmanager.ap-south-1.amazonaws.com")
           ]) == 1
         ]) == 1
       ],
@@ -444,7 +444,7 @@ run "secret_metadata_rds_lambda_iam_and_output" {
             for condition in statement.condition : condition
             if condition.variable == "kms:ViaService" &&
             condition.test == "StringEquals" &&
-            contains(condition.values, "secretsmanager.us-east-1.amazonaws.com")
+            contains(condition.values, "secretsmanager.ap-south-1.amazonaws.com")
           ]) == 1
         ]) == 1
       ]
@@ -468,7 +468,7 @@ run "secret_metadata_rds_lambda_iam_and_output" {
         length([
           for condition in statement.condition : condition
           if condition.variable == "kms:ViaService" &&
-          contains(condition.values, "secretsmanager.us-east-1.amazonaws.com")
+          contains(condition.values, "secretsmanager.ap-south-1.amazonaws.com")
         ]) == 1
       ]) == 1
     )
@@ -490,20 +490,20 @@ run "secret_metadata_rds_lambda_iam_and_output" {
         for principal in statement.principals : principal
         if principal.type == "AWS" &&
         toset(principal.identifiers) == toset([
-          "arn:aws:iam::123456789012:root"
+          "arn:aws:iam::928282274753:root"
         ])
       ]) == 1 &&
       length([
         for condition in statement.condition : condition
         if condition.test == "StringEquals" &&
         condition.variable == "kms:CallerAccount" &&
-        toset(condition.values) == toset(["123456789012"])
+        toset(condition.values) == toset(["928282274753"])
       ]) == 1 &&
       length([
         for condition in statement.condition : condition
         if condition.test == "StringEquals" &&
         condition.variable == "kms:ViaService" &&
-        toset(condition.values) == toset(["rds.us-east-1.amazonaws.com"])
+        toset(condition.values) == toset(["rds.ap-south-1.amazonaws.com"])
       ]) == 1 &&
       length([
         for condition in statement.condition : condition
@@ -557,7 +557,7 @@ run "billeif_branding_defaults_and_public_url_inputs" {
 
   assert {
     condition = (
-      local.cognito_hosted_ui_domain_prefix == "billeif-preview-123456789012" &&
+      local.cognito_hosted_ui_domain_prefix == "billeif-preview-928282274753" &&
       can(regex("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", local.cognito_hosted_ui_domain_prefix)) &&
       length(local.cognito_hosted_ui_domain_prefix) <= 63
     )
@@ -585,7 +585,7 @@ run "billeif_branding_defaults_and_public_url_inputs" {
       aws_lambda_function.api_http.function_name == "billeif-preview-api-http" &&
       aws_cloudwatch_log_group.lambda_api_http.name == "/aws/lambda/billeif-preview-api-http" &&
       aws_db_instance.main.identifier == "billeif-preview-postgres" &&
-      aws_s3_bucket.business_logos.bucket == "billeif-preview-123456789012-business-logos" &&
+      aws_s3_bucket.business_logos.bucket == "billeif-preview-928282274753-business-logos" &&
       aws_apigatewayv2_api.websocket.name == "billeif-preview-websocket" &&
       aws_dynamodb_table.voice_sessions.name == "billeif-preview-voice-sessions" &&
       aws_lambda_function.voice_session.function_name == "billeif-preview-voice-session" &&
@@ -597,7 +597,7 @@ run "billeif_branding_defaults_and_public_url_inputs" {
       aws_vpc_endpoint.s3.tags.Name == "billeif-preview-s3-gateway-endpoint" &&
       aws_vpc_endpoint.dynamodb.tags.Name == "billeif-preview-dynamodb-gateway-endpoint" &&
       aws_cloudwatch_metric_alarm.nat_system_status[0].alarm_name == "billeif-preview-nat-system-status" &&
-      local.ses_verified_identity_arn == "arn:aws:ses:ap-south-1:123456789012:identity/billeif.example"
+      local.ses_verified_identity_arn == "arn:aws:ses:ap-south-1:928282274753:identity/billeif.example"
     )
     error_message = "Representative AWS resources and the SES contract must use Billeif project/environment naming."
   }
@@ -831,7 +831,7 @@ run "ses_email_identity_uses_caller_supplied_arn" {
   }
 
   assert {
-    condition     = local.ses_verified_identity_arn == "arn:aws:ses:ap-south-1:123456789012:identity/billing@billeif.example"
+    condition     = local.ses_verified_identity_arn == "arn:aws:ses:ap-south-1:928282274753:identity/billing@billeif.example"
     error_message = "An already-verified SES email identity must be referenced directly in IAM."
   }
 }
@@ -868,7 +868,7 @@ run "ses_email_identity_allows_case_insensitive_domain" {
   }
 
   assert {
-    condition     = local.ses_verified_identity_arn == "arn:aws:ses:ap-south-1:123456789012:identity/Billing@Billeif.example"
+    condition     = local.ses_verified_identity_arn == "arn:aws:ses:ap-south-1:928282274753:identity/Billing@Billeif.example"
     error_message = "An SES email identity ARN must retain the validated caller-supplied identity exactly."
   }
 }

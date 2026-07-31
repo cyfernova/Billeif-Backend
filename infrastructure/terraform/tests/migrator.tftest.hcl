@@ -17,8 +17,8 @@ mock_provider "aws" {
   override_data {
     target = data.aws_caller_identity.current
     values = {
-      account_id = "123456789012"
-      arn        = "arn:aws:iam::123456789012:user/terraform-test"
+      account_id = "928282274753"
+      arn        = "arn:aws:iam::928282274753:user/terraform-test"
       user_id    = "AIDATEST1234567890"
     }
   }
@@ -36,7 +36,7 @@ mock_provider "aws" {
     values = {
       id               = "test-rest-api"
       root_resource_id = "test-root-resource"
-      execution_arn    = "arn:aws:execute-api:ap-south-1:123456789012:test-rest-api"
+      execution_arn    = "arn:aws:execute-api:ap-south-1:928282274753:test-rest-api"
     }
   }
 
@@ -44,7 +44,7 @@ mock_provider "aws" {
     target          = aws_kms_key.application_secrets
     override_during = plan
     values = {
-      arn    = "arn:aws:kms:ap-south-1:123456789012:key/application-secrets"
+      arn    = "arn:aws:kms:ap-south-1:928282274753:key/application-secrets"
       key_id = "application-secrets"
     }
   }
@@ -55,8 +55,8 @@ mock_provider "aws" {
     values = {
       address = "database.internal"
       master_user_secret = [{
-        kms_key_id = "arn:aws:kms:ap-south-1:123456789012:key/application-secrets"
-        secret_arn = "arn:aws:secretsmanager:ap-south-1:123456789012:secret:rds-managed"
+        kms_key_id = "arn:aws:kms:ap-south-1:928282274753:key/application-secrets"
+        secret_arn = "arn:aws:secretsmanager:ap-south-1:928282274753:secret:rds-managed"
       }]
     }
   }

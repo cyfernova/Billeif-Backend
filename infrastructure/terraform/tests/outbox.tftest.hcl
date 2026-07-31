@@ -17,8 +17,8 @@ mock_provider "aws" {
   override_data {
     target = data.aws_caller_identity.current
     values = {
-      account_id = "123456789012"
-      arn        = "arn:aws:iam::123456789012:user/terraform-test"
+      account_id = "928282274753"
+      arn        = "arn:aws:iam::928282274753:user/terraform-test"
       user_id    = "AIDATEST1234567890"
     }
   }
@@ -36,7 +36,7 @@ mock_provider "aws" {
     values = {
       id               = "test-rest-api"
       root_resource_id = "test-root-resource"
-      execution_arn    = "arn:aws:execute-api:ap-south-1:123456789012:test-rest-api"
+      execution_arn    = "arn:aws:execute-api:ap-south-1:928282274753:test-rest-api"
     }
   }
 
@@ -44,7 +44,7 @@ mock_provider "aws" {
     target          = aws_kms_key.application_secrets
     override_during = plan
     values = {
-      arn    = "arn:aws:kms:ap-south-1:123456789012:key/application-secrets"
+      arn    = "arn:aws:kms:ap-south-1:928282274753:key/application-secrets"
       key_id = "application-secrets"
     }
   }
@@ -54,8 +54,8 @@ mock_provider "aws" {
     override_during = plan
     values = {
       master_user_secret = [{
-        kms_key_id = "arn:aws:kms:ap-south-1:123456789012:key/application-secrets"
-        secret_arn = "arn:aws:secretsmanager:ap-south-1:123456789012:secret:rds-managed"
+        kms_key_id = "arn:aws:kms:ap-south-1:928282274753:key/application-secrets"
+        secret_arn = "arn:aws:secretsmanager:ap-south-1:928282274753:secret:rds-managed"
       }]
     }
   }
@@ -64,8 +64,8 @@ mock_provider "aws" {
     target          = aws_sqs_queue.invoice_processing
     override_during = plan
     values = {
-      arn = "arn:aws:sqs:ap-south-1:123456789012:billeif-test-test-invoice-processing-queue"
-      url = "https://sqs.ap-south-1.amazonaws.com/123456789012/billeif-test-test-invoice-processing-queue"
+      arn = "arn:aws:sqs:ap-south-1:928282274753:billeif-test-test-invoice-processing-queue"
+      url = "https://sqs.ap-south-1.amazonaws.com/928282274753/billeif-test-test-invoice-processing-queue"
     }
   }
 
@@ -73,8 +73,8 @@ mock_provider "aws" {
     target          = aws_sqs_queue.invoice_processing_dlq
     override_during = plan
     values = {
-      arn = "arn:aws:sqs:ap-south-1:123456789012:billeif-test-test-invoice-processing-dlq"
-      id  = "https://sqs.ap-south-1.amazonaws.com/123456789012/billeif-test-test-invoice-processing-dlq"
+      arn = "arn:aws:sqs:ap-south-1:928282274753:billeif-test-test-invoice-processing-dlq"
+      id  = "https://sqs.ap-south-1.amazonaws.com/928282274753/billeif-test-test-invoice-processing-dlq"
     }
   }
 
@@ -82,9 +82,9 @@ mock_provider "aws" {
     target          = aws_sqs_queue.gst_processing
     override_during = plan
     values = {
-      arn = "arn:aws:sqs:ap-south-1:123456789012:billeif-test-test-gst-processing-queue"
-      id  = "https://sqs.ap-south-1.amazonaws.com/123456789012/billeif-test-test-gst-processing-queue"
-      url = "https://sqs.ap-south-1.amazonaws.com/123456789012/billeif-test-test-gst-processing-queue"
+      arn = "arn:aws:sqs:ap-south-1:928282274753:billeif-test-test-gst-processing-queue"
+      id  = "https://sqs.ap-south-1.amazonaws.com/928282274753/billeif-test-test-gst-processing-queue"
+      url = "https://sqs.ap-south-1.amazonaws.com/928282274753/billeif-test-test-gst-processing-queue"
     }
   }
 
@@ -92,8 +92,8 @@ mock_provider "aws" {
     target          = aws_sqs_queue.gst_processing_dlq
     override_during = plan
     values = {
-      arn = "arn:aws:sqs:ap-south-1:123456789012:billeif-test-test-gst-processing-dlq"
-      id  = "https://sqs.ap-south-1.amazonaws.com/123456789012/billeif-test-test-gst-processing-dlq"
+      arn = "arn:aws:sqs:ap-south-1:928282274753:billeif-test-test-gst-processing-dlq"
+      id  = "https://sqs.ap-south-1.amazonaws.com/928282274753/billeif-test-test-gst-processing-dlq"
     }
   }
 
@@ -101,9 +101,9 @@ mock_provider "aws" {
     target          = aws_sqs_queue.bargaining_negotiation
     override_during = plan
     values = {
-      arn = "arn:aws:sqs:ap-south-1:123456789012:billeif-test-test-bargaining-negotiation-queue"
-      id  = "https://sqs.ap-south-1.amazonaws.com/123456789012/billeif-test-test-bargaining-negotiation-queue"
-      url = "https://sqs.ap-south-1.amazonaws.com/123456789012/billeif-test-test-bargaining-negotiation-queue"
+      arn = "arn:aws:sqs:ap-south-1:928282274753:billeif-test-test-bargaining-negotiation-queue"
+      id  = "https://sqs.ap-south-1.amazonaws.com/928282274753/billeif-test-test-bargaining-negotiation-queue"
+      url = "https://sqs.ap-south-1.amazonaws.com/928282274753/billeif-test-test-bargaining-negotiation-queue"
     }
   }
 
@@ -111,8 +111,8 @@ mock_provider "aws" {
     target          = aws_sqs_queue.bargaining_negotiation_dlq
     override_during = plan
     values = {
-      arn = "arn:aws:sqs:ap-south-1:123456789012:billeif-test-test-bargaining-negotiation-dlq"
-      id  = "https://sqs.ap-south-1.amazonaws.com/123456789012/billeif-test-test-bargaining-negotiation-dlq"
+      arn = "arn:aws:sqs:ap-south-1:928282274753:billeif-test-test-bargaining-negotiation-dlq"
+      id  = "https://sqs.ap-south-1.amazonaws.com/928282274753/billeif-test-test-bargaining-negotiation-dlq"
     }
   }
 
@@ -120,7 +120,7 @@ mock_provider "aws" {
     target          = aws_sns_topic.alerts
     override_during = plan
     values = {
-      arn = "arn:aws:sns:ap-south-1:123456789012:billeif-test-test-alerts"
+      arn = "arn:aws:sns:ap-south-1:928282274753:billeif-test-test-alerts"
     }
   }
 
@@ -128,7 +128,7 @@ mock_provider "aws" {
     target          = aws_sns_topic.low_stock_alerts
     override_during = plan
     values = {
-      arn = "arn:aws:sns:ap-south-1:123456789012:billeif-test-test-low-stock-alerts"
+      arn = "arn:aws:sns:ap-south-1:928282274753:billeif-test-test-low-stock-alerts"
     }
   }
 
@@ -136,7 +136,7 @@ mock_provider "aws" {
     target          = aws_sns_topic.ses_events
     override_during = plan
     values = {
-      arn = "arn:aws:sns:ap-south-1:123456789012:billeif-test-test-ses-email-events"
+      arn = "arn:aws:sns:ap-south-1:928282274753:billeif-test-test-ses-email-events"
     }
   }
 
@@ -144,8 +144,8 @@ mock_provider "aws" {
     target          = aws_sqs_queue.email_delivery
     override_during = plan
     values = {
-      arn  = "arn:aws:sqs:ap-south-1:123456789012:billeif-test-test-email-delivery-queue"
-      url  = "https://sqs.ap-south-1.amazonaws.com/123456789012/billeif-test-test-email-delivery-queue"
+      arn  = "arn:aws:sqs:ap-south-1:928282274753:billeif-test-test-email-delivery-queue"
+      url  = "https://sqs.ap-south-1.amazonaws.com/928282274753/billeif-test-test-email-delivery-queue"
       name = "billeif-test-test-email-delivery-queue"
     }
   }
@@ -154,8 +154,8 @@ mock_provider "aws" {
     target          = aws_sqs_queue.email_delivery_dlq
     override_during = plan
     values = {
-      arn  = "arn:aws:sqs:ap-south-1:123456789012:billeif-test-test-email-delivery-dlq"
-      url  = "https://sqs.ap-south-1.amazonaws.com/123456789012/billeif-test-test-email-delivery-dlq"
+      arn  = "arn:aws:sqs:ap-south-1:928282274753:billeif-test-test-email-delivery-dlq"
+      url  = "https://sqs.ap-south-1.amazonaws.com/928282274753/billeif-test-test-email-delivery-dlq"
       name = "billeif-test-test-email-delivery-dlq"
     }
   }
@@ -164,8 +164,8 @@ mock_provider "aws" {
     target          = aws_sqs_queue.ses_feedback
     override_during = plan
     values = {
-      arn  = "arn:aws:sqs:ap-south-1:123456789012:billeif-test-test-ses-feedback-queue"
-      url  = "https://sqs.ap-south-1.amazonaws.com/123456789012/billeif-test-test-ses-feedback-queue"
+      arn  = "arn:aws:sqs:ap-south-1:928282274753:billeif-test-test-ses-feedback-queue"
+      url  = "https://sqs.ap-south-1.amazonaws.com/928282274753/billeif-test-test-ses-feedback-queue"
       name = "billeif-test-test-ses-feedback-queue"
     }
   }
@@ -174,8 +174,8 @@ mock_provider "aws" {
     target          = aws_sqs_queue.ses_feedback_dlq
     override_during = plan
     values = {
-      arn  = "arn:aws:sqs:ap-south-1:123456789012:billeif-test-test-ses-feedback-dlq"
-      url  = "https://sqs.ap-south-1.amazonaws.com/123456789012/billeif-test-test-ses-feedback-dlq"
+      arn  = "arn:aws:sqs:ap-south-1:928282274753:billeif-test-test-ses-feedback-dlq"
+      url  = "https://sqs.ap-south-1.amazonaws.com/928282274753/billeif-test-test-ses-feedback-dlq"
       name = "billeif-test-test-ses-feedback-dlq"
     }
   }
@@ -184,7 +184,7 @@ mock_provider "aws" {
     target          = aws_lambda_function.outbox_dispatcher
     override_during = plan
     values = {
-      arn = "arn:aws:lambda:ap-south-1:123456789012:function:billeif-test-test-outbox-dispatcher"
+      arn = "arn:aws:lambda:ap-south-1:928282274753:function:billeif-test-test-outbox-dispatcher"
     }
   }
 
@@ -192,7 +192,7 @@ mock_provider "aws" {
     target          = aws_iam_role.outbox_scheduler
     override_during = plan
     values = {
-      arn = "arn:aws:iam::123456789012:role/billeif-test-test-outbox-scheduler-exec-role"
+      arn = "arn:aws:iam::928282274753:role/billeif-test-test-outbox-scheduler-exec-role"
     }
   }
 
@@ -200,7 +200,7 @@ mock_provider "aws" {
     target          = aws_sqs_queue.outbox_dispatcher_scheduler_dlq
     override_during = plan
     values = {
-      arn = "arn:aws:sqs:ap-south-1:123456789012:billeif-test-test-outbox-dispatcher-scheduler-dlq"
+      arn = "arn:aws:sqs:ap-south-1:928282274753:billeif-test-test-outbox-dispatcher-scheduler-dlq"
     }
   }
 

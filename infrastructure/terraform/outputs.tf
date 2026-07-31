@@ -3,6 +3,11 @@ output "vpc_id" {
   value       = aws_vpc.main.id
 }
 
+output "github_actions_deployment_role_arn" {
+  description = "Billeif GitHub Actions OIDC deployment role ARN."
+  value       = local.github_actions_deployment_role_arn
+}
+
 output "public_subnet_ids" {
   description = "Public subnet IDs"
   value       = aws_subnet.public[*].id
