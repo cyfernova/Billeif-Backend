@@ -207,9 +207,14 @@ run "mumbai_defaults_and_oidc_profile" {
     condition     = var.aws_profile == "default"
     error_message = "The AWS provider profile must default to the local default profile."
   }
+
+  assert {
+    condition     = var.use_ambient_aws_credentials == false
+    error_message = "Local Terraform runs must use the configured AWS profile by default."
+  }
 }
 
-run "aws_profile_accepts_null_for_oidc" {
+run "ambient_aws_credentials_are_explicit_for_oidc" {
   command = plan
 
   variables {
@@ -223,13 +228,13 @@ run "aws_profile_accepts_null_for_oidc" {
     ses_verified_identity = "billeif.example"
     ses_sender_email      = "notifications@billeif.example"
 
-    aws_profile     = null
-    db_allowed_cidr = "10.0.0.0/24"
+    use_ambient_aws_credentials = true
+    db_allowed_cidr             = "10.0.0.0/24"
   }
 
   assert {
-    condition     = var.aws_profile == null
-    error_message = "The AWS profile must accept null so CI can use OIDC credentials."
+    condition     = var.use_ambient_aws_credentials == true
+    error_message = "OIDC must explicitly select ambient AWS credentials instead of a named profile."
   }
 }
 

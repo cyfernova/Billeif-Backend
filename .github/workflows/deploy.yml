@@ -141,6 +141,7 @@ jobs:
       TF_VAR_enable_background_processing: ${{ vars.ENABLE_BACKGROUND_PROCESSING == 'true' && 'true' || 'false' }}
       TF_VAR_enable_voice: ${{ vars.ENABLE_VOICE == 'true' && 'true' || 'false' }}
       TF_VAR_enable_rds_tunnel: "false"
+      TF_VAR_use_ambient_aws_credentials: "true"
       TF_VAR_llm_api_url: ${{ vars.LLM_API_URL != '' && vars.LLM_API_URL || 'https://api.deepseek.com/chat/completions' }}
       TF_VAR_llm_model: ${{ vars.LLM_MODEL != '' && vars.LLM_MODEL || 'deepseek-v4-flash' }}
       TF_VAR_deepseek_base_url: ${{ vars.DEEPSEEK_BASE_URL != '' && vars.DEEPSEEK_BASE_URL || 'https://api.deepseek.com' }}
@@ -214,11 +215,7 @@ jobs:
             -backend-config="dynamodb_table=${TF_STATE_LOCK_TABLE}"
 
       - name: Terraform plan
-        env:
-          TF_VAR_aws_profile: "null"
         run: terraform -chdir="${TERRAFORM_DIR}" plan -input=false -out=tfplan
 
       - name: Terraform apply
-        env:
-          TF_VAR_aws_profile: "null"
         run: terraform -chdir="${TERRAFORM_DIR}" apply -input=false -auto-approve tfplan

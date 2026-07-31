@@ -5,10 +5,16 @@ variable "aws_region" {
 }
 
 variable "aws_profile" {
-  description = "AWS shared configuration profile for local Terraform runs; set to null for OIDC."
+  description = "AWS shared configuration profile for local Terraform runs. Ignored when use_ambient_aws_credentials is true."
   type        = string
   nullable    = true
   default     = "default"
+}
+
+variable "use_ambient_aws_credentials" {
+  description = "Use ambient AWS credentials, such as GitHub Actions OIDC, instead of an AWS shared configuration profile."
+  type        = bool
+  default     = false
 }
 
 variable "project_name" {

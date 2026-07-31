@@ -55,9 +55,7 @@ func TestDeployWorkflowLaunchSafetyPolicy(t *testing.T) {
 	requireScalar(t, deployPermissions, "id-token", "write")
 	requireTerraformVersion(t, deploy, "1.13.5")
 	requireOIDCOnlyDeploy(t, deploy)
-	if !hasNullProfileEnvironment(deploy) {
-		t.Fatal("deploy must set TF_VAR_aws_profile to Terraform null for OIDC credentials")
-	}
+	requireAmbientAWSCredentials(t, deploy)
 	requireDeployTerraformInputs(t, root, deploy)
 }
 
@@ -376,20 +374,40 @@ func requireOIDCOnlyDeploy(t *testing.T, deploy *yaml.Node) {
 	}
 }
 
-func hasNullProfileEnvironment(deploy *yaml.Node) bool {
+func requireAmbientAWSCredentials(t *testing.T, deploy *yaml.Node) {
+	t.Helper()
+	deployEnv := requiredMap(t, deploy, "env")
+	if got := requiredScalar(t, deployEnv, "TF_VAR_use_ambient_aws_credentials"); got != "true" {
+		t.Fatalf("deploy must set TF_VAR_use_ambient_aws_credentials=true, got %q", got)
+	}
+	if mappingValue(deployEnv, "TF_VAR_aws_profile") != nil {
+		t.Fatal("deploy must not emit TF_VAR_aws_profile when using ambient OIDC credentials")
+	}
+
 	steps := mappingValue(deploy, "steps")
 	if steps == nil {
-		return false
+		t.Fatal("deploy must define Terraform plan and apply steps")
 	}
+	seenPlan, seenSavedPlanApply := false, false
 	for _, step := range steps.Content {
+		run := mappingValue(step, "run")
+		if run == nil {
+			continue
+		}
 		env := mappingValue(step, "env")
-		if env != nil {
-			if profile := mappingValue(env, "TF_VAR_aws_profile"); profile != nil && profile.Value == "null" {
-				return true
-			}
+		if env != nil && mappingValue(env, "TF_VAR_aws_profile") != nil {
+			t.Fatal("deploy Terraform steps must not emit TF_VAR_aws_profile")
+		}
+		if strings.Contains(run.Value, " plan ") && strings.Contains(run.Value, "-out=tfplan") {
+			seenPlan = true
+		}
+		if strings.Contains(run.Value, " apply ") && strings.Contains(run.Value, "tfplan") {
+			seenSavedPlanApply = true
 		}
 	}
-	return false
+	if !seenPlan || !seenSavedPlanApply {
+		t.Fatal("ambient credentials must apply to both Terraform plan and saved-plan apply")
+	}
 }
 
 func containsNodeValue(node *yaml.Node, want string) bool {
