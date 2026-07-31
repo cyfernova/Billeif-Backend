@@ -22,19 +22,6 @@ env:
   TERRAFORM_DIR: infrastructure/terraform
   AWS_REGION: ${{ vars.AWS_REGION != '' && vars.AWS_REGION || 'ap-south-1' }}
   TF_BACKEND_KEY: ${{ vars.TF_STATE_KEY != '' && vars.TF_STATE_KEY || 'billeif/dev/terraform.tfstate' }}
-  TF_VAR_alert_email: ${{ vars.ALERT_EMAIL != '' && vars.ALERT_EMAIL || 'anjishnu@cyfernova.in' }}
-  TF_VAR_alert_email_subscription_confirmed: ${{ vars.ALERT_EMAIL_SUBSCRIPTION_CONFIRMED == 'true' && 'true' || 'false' }}
-  TF_VAR_db_allowed_cidr: "127.0.0.1/32"
-  TF_VAR_enable_application: ${{ vars.ENABLE_APPLICATION == 'true' && 'true' || 'false' }}
-  TF_VAR_enable_background_processing: ${{ vars.ENABLE_BACKGROUND_PROCESSING == 'true' && 'true' || 'false' }}
-  TF_VAR_enable_voice: ${{ vars.ENABLE_VOICE == 'true' && 'true' || 'false' }}
-  TF_VAR_enable_rds_tunnel: "false"
-  TF_VAR_llm_api_url: ${{ vars.LLM_API_URL != '' && vars.LLM_API_URL || 'https://api.deepseek.com/chat/completions' }}
-  TF_VAR_llm_model: ${{ vars.LLM_MODEL != '' && vars.LLM_MODEL || 'deepseek-v4-flash' }}
-  TF_VAR_deepseek_base_url: ${{ vars.DEEPSEEK_BASE_URL != '' && vars.DEEPSEEK_BASE_URL || 'https://api.deepseek.com' }}
-  TF_VAR_deepseek_model: ${{ vars.DEEPSEEK_MODEL != '' && vars.DEEPSEEK_MODEL || 'deepseek-v4-flash' }}
-  TF_VAR_ses_verified_identity: ${{ vars.SES_VERIFIED_IDENTITY != '' && vars.SES_VERIFIED_IDENTITY || 'anjishnu@cyfernova.in' }}
-  TF_VAR_ses_sender_email: ${{ vars.SES_SENDER_EMAIL != '' && vars.SES_SENDER_EMAIL || 'anjishnu@cyfernova.in' }}
 
 jobs:
   secret-scan:
@@ -146,6 +133,20 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    env:
+      TF_VAR_alert_email: ${{ vars.ALERT_EMAIL != '' && vars.ALERT_EMAIL || 'anjishnu@cyfernova.in' }}
+      TF_VAR_alert_email_subscription_confirmed: ${{ vars.ALERT_EMAIL_SUBSCRIPTION_CONFIRMED == 'true' && 'true' || 'false' }}
+      TF_VAR_db_allowed_cidr: "127.0.0.1/32"
+      TF_VAR_enable_application: ${{ vars.ENABLE_APPLICATION == 'true' && 'true' || 'false' }}
+      TF_VAR_enable_background_processing: ${{ vars.ENABLE_BACKGROUND_PROCESSING == 'true' && 'true' || 'false' }}
+      TF_VAR_enable_voice: ${{ vars.ENABLE_VOICE == 'true' && 'true' || 'false' }}
+      TF_VAR_enable_rds_tunnel: "false"
+      TF_VAR_llm_api_url: ${{ vars.LLM_API_URL != '' && vars.LLM_API_URL || 'https://api.deepseek.com/chat/completions' }}
+      TF_VAR_llm_model: ${{ vars.LLM_MODEL != '' && vars.LLM_MODEL || 'deepseek-v4-flash' }}
+      TF_VAR_deepseek_base_url: ${{ vars.DEEPSEEK_BASE_URL != '' && vars.DEEPSEEK_BASE_URL || 'https://api.deepseek.com' }}
+      TF_VAR_deepseek_model: ${{ vars.DEEPSEEK_MODEL != '' && vars.DEEPSEEK_MODEL || 'deepseek-v4-flash' }}
+      TF_VAR_ses_verified_identity: ${{ vars.SES_VERIFIED_IDENTITY != '' && vars.SES_VERIFIED_IDENTITY || 'anjishnu@cyfernova.in' }}
+      TF_VAR_ses_sender_email: ${{ vars.SES_SENDER_EMAIL != '' && vars.SES_SENDER_EMAIL || 'anjishnu@cyfernova.in' }}
 
     steps:
       - name: Checkout code

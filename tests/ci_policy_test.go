@@ -34,8 +34,8 @@ func TestDeployWorkflowLaunchSafetyPolicy(t *testing.T) {
 
 	jobs := requiredMap(t, root, "jobs")
 	verify := requiredMap(t, jobs, "verify")
-	if env := mappingValue(verify, "env"); env != nil && containsSecretTerraformVariable(env) {
-		t.Fatal("verification job must not expose secret Terraform variables")
+	if env := mappingValue(verify, "env"); env != nil && containsTerraformVariable(env) {
+		t.Fatal("verification job must not inherit deployment Terraform variables")
 	}
 
 	secretScan := requiredMap(t, jobs, "secret-scan")
@@ -64,7 +64,9 @@ func TestDeployWorkflowLaunchSafetyPolicy(t *testing.T) {
 func TestDeployWorkflowBackgroundProcessingDefaultsToDisabled(t *testing.T) {
 	workflow := loadWorkflow(t)
 	root := documentRoot(t, workflow)
-	env := requiredMap(t, root, "env")
+	jobs := requiredMap(t, root, "jobs")
+	deploy := requiredMap(t, jobs, "deploy")
+	env := requiredMap(t, deploy, "env")
 
 	const want = "${{ vars.ENABLE_BACKGROUND_PROCESSING == 'true' && 'true' || 'false' }}"
 	if got := requiredScalar(t, env, "TF_VAR_enable_background_processing"); got != want {
@@ -315,6 +317,26 @@ func containsSecretTerraformVariable(node *yaml.Node) bool {
 	}
 	for _, child := range node.Content {
 		if containsSecretTerraformVariable(child) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsTerraformVariable(node *yaml.Node) bool {
+	if node == nil {
+		return false
+	}
+	if node.Kind == yaml.MappingNode {
+		for index := 0; index < len(node.Content); index += 2 {
+			key, value := node.Content[index], node.Content[index+1]
+			if strings.HasPrefix(key.Value, "TF_VAR_") || containsTerraformVariable(value) {
+				return true
+			}
+		}
+	}
+	for _, child := range node.Content {
+		if containsTerraformVariable(child) {
 			return true
 		}
 	}
