@@ -246,11 +246,15 @@ func requireTerraformVersion(t *testing.T, job *yaml.Node, want string) {
 			continue
 		}
 		with := mappingValue(step, "with")
-		if with != nil && mappingValue(with, "terraform_version") != nil && mappingValue(with, "terraform_version").Value == want {
+		if with != nil &&
+			mappingValue(with, "terraform_version") != nil &&
+			mappingValue(with, "terraform_version").Value == want &&
+			mappingValue(with, "terraform_wrapper") != nil &&
+			mappingValue(with, "terraform_wrapper").Value == "false" {
 			return
 		}
 	}
-	t.Fatalf("Terraform job must use Terraform %s", want)
+	t.Fatalf("Terraform job must use Terraform %s with the stdout wrapper disabled", want)
 }
 
 func requireTerraformTest(t *testing.T, job *yaml.Node) {

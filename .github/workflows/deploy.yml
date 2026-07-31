@@ -116,6 +116,7 @@ jobs:
         uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: 1.13.5
+          terraform_wrapper: false
 
       - name: Run Go tests
         run: go test ./...
@@ -170,6 +171,7 @@ jobs:
         uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: 1.13.5
+          terraform_wrapper: false
 
       - name: Check deployment configuration
         env:
