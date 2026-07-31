@@ -2,6 +2,9 @@ locals {
   swagger_oauth_redirect_url = "${local.http_api_invoke_url}/swagger/oauth2-redirect.html"
   cognito_callback_urls      = distinct(concat([local.swagger_oauth_redirect_url], var.cognito_additional_callback_urls))
   cognito_logout_urls        = distinct(var.cognito_additional_logout_urls)
+
+  google_oauth_client_id_reference     = "{{resolve:secretsmanager:${aws_secretsmanager_secret.google_oauth.arn}:SecretString:client_id}}"
+  google_oauth_client_secret_reference = "{{resolve:secretsmanager:${aws_secretsmanager_secret.google_oauth.arn}:SecretString:client_secret}}"
 }
 
 resource "aws_cognito_user_pool" "main" {
@@ -62,7 +65,7 @@ resource "aws_cognito_user_pool_client" "main" {
   enable_token_revocation       = true
 
   # OAuth configuration for Google Sign-In
-  supported_identity_providers         = ["COGNITO"]
+  supported_identity_providers         = ["COGNITO", "Google"]
   callback_urls                        = local.cognito_callback_urls
   logout_urls                          = local.cognito_logout_urls
   allowed_oauth_flows_user_pool_client = true
@@ -73,6 +76,45 @@ resource "aws_cognito_user_pool_client" "main" {
     access_token  = "hours"
     id_token      = "hours"
     refresh_token = "days"
+  }
+
+  depends_on = [aws_cloudformation_stack.google_cognito_identity_provider]
+}
+
+resource "aws_cloudformation_stack" "google_cognito_identity_provider" {
+  name = "${local.resource_prefix}-google-cognito-identity-provider"
+
+  template_body = jsonencode({
+    AWSTemplateFormatVersion = "2010-09-09"
+    Description              = "Billeif Google identity provider for the Cognito user pool"
+    Resources = {
+      GoogleIdentityProvider = {
+        Type = "AWS::Cognito::UserPoolIdentityProvider"
+        Properties = {
+          ProviderName = "Google"
+          ProviderType = "Google"
+          UserPoolId   = aws_cognito_user_pool.main.id
+          ProviderDetails = {
+            authorize_scopes = "openid email profile"
+            client_id        = local.google_oauth_client_id_reference
+            client_secret    = local.google_oauth_client_secret_reference
+          }
+          AttributeMapping = {
+            email          = "email"
+            email_verified = "email_verified"
+            family_name    = "family_name"
+            given_name     = "given_name"
+            name           = "name"
+            picture        = "picture"
+            username       = "sub"
+          }
+        }
+      }
+    }
+  })
+
+  tags = {
+    Name = "${local.resource_prefix}-google-cognito-identity-provider"
   }
 }
 

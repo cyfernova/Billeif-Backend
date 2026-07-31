@@ -43,6 +43,14 @@ mock_provider "aws" {
   }
 
   override_resource {
+    target          = aws_cognito_user_pool.main
+    override_during = plan
+    values = {
+      id = "ap-south-1_TESTPOOL"
+    }
+  }
+
+  override_resource {
     target          = aws_apigatewayv2_api.http
     override_during = plan
     values = {
@@ -102,6 +110,14 @@ mock_provider "aws" {
     override_during = plan
     values = {
       arn = "arn:aws:secretsmanager:ap-south-1:928282274753:secret:razorpay"
+    }
+  }
+
+  override_resource {
+    target          = aws_secretsmanager_secret.google_oauth
+    override_during = plan
+    values = {
+      arn = "arn:aws:secretsmanager:ap-south-1:928282274753:secret:/billeif-test/test/providers/google-oauth-test"
     }
   }
 
@@ -212,6 +228,34 @@ run "mumbai_defaults_and_oidc_profile" {
     condition     = var.use_ambient_aws_credentials == false
     error_message = "Local Terraform runs must use the configured AWS profile by default."
   }
+
+  assert {
+    condition     = toset(aws_cognito_user_pool_client.main.supported_identity_providers) == toset(["COGNITO", "Google"])
+    error_message = "The Cognito web client must offer exactly its native and Google identity providers."
+  }
+
+  assert {
+    condition = (
+      jsondecode(aws_cloudformation_stack.google_cognito_identity_provider.template_body).Resources.GoogleIdentityProvider.Type == "AWS::Cognito::UserPoolIdentityProvider" &&
+      jsondecode(aws_cloudformation_stack.google_cognito_identity_provider.template_body).Resources.GoogleIdentityProvider.Properties.ProviderName == "Google" &&
+      jsondecode(aws_cloudformation_stack.google_cognito_identity_provider.template_body).Resources.GoogleIdentityProvider.Properties.ProviderType == "Google" &&
+      jsondecode(aws_cloudformation_stack.google_cognito_identity_provider.template_body).Resources.GoogleIdentityProvider.Properties.UserPoolId == "ap-south-1_TESTPOOL" &&
+      jsondecode(aws_cloudformation_stack.google_cognito_identity_provider.template_body).Resources.GoogleIdentityProvider.Properties.ProviderDetails.authorize_scopes == "openid email profile" &&
+      try(length(keys(jsondecode(aws_cloudformation_stack.google_cognito_identity_provider.template_body).Parameters)), 0) == 0 &&
+      jsondecode(aws_cloudformation_stack.google_cognito_identity_provider.template_body).Resources.GoogleIdentityProvider.Properties.ProviderDetails.client_id == "{{resolve:secretsmanager:arn:aws:secretsmanager:ap-south-1:928282274753:secret:/billeif-test/test/providers/google-oauth-test:SecretString:client_id}}" &&
+      jsondecode(aws_cloudformation_stack.google_cognito_identity_provider.template_body).Resources.GoogleIdentityProvider.Properties.ProviderDetails.client_secret == "{{resolve:secretsmanager:arn:aws:secretsmanager:ap-south-1:928282274753:secret:/billeif-test/test/providers/google-oauth-test:SecretString:client_secret}}" &&
+      jsondecode(aws_cloudformation_stack.google_cognito_identity_provider.template_body).Resources.GoogleIdentityProvider.Properties.AttributeMapping == {
+        email          = "email"
+        email_verified = "email_verified"
+        family_name    = "family_name"
+        given_name     = "given_name"
+        name           = "name"
+        picture        = "picture"
+        username       = "sub"
+      }
+    )
+    error_message = "The Google identity provider must resolve its credentials from the KMS-encrypted Secrets Manager JSON keys at deployment time."
+  }
 }
 
 run "ambient_aws_credentials_are_explicit_for_oidc" {
@@ -305,6 +349,11 @@ run "secret_metadata_rds_lambda_iam_and_output" {
       ])
     )
     error_message = "Unrelated application/provider credentials must use separated secret containers."
+  }
+
+  assert {
+    condition     = aws_secretsmanager_secret.google_oauth.name == "/billeif-test/test/providers/google-oauth"
+    error_message = "The Google OAuth metadata must use the Billeif project/environment secret path."
   }
 
   assert {

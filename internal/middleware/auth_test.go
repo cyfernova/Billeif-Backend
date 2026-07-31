@@ -134,8 +134,9 @@ func TestAuth_DefaultRequiresAccessToken_AndGooglePathAllowsID(t *testing.T) {
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 			Audience:  []string{"primary-client-id"},
 		},
-		TokenUse: "id",
-		Email:    "primary@example.com",
+		TokenUse:      "id",
+		Email:         "primary@example.com",
+		EmailVerified: true,
 	})
 
 	t.Run("default auth rejects id token", func(t *testing.T) {
@@ -154,7 +155,9 @@ func TestAuth_DefaultRequiresAccessToken_AndGooglePathAllowsID(t *testing.T) {
 	t.Run("id-only auth accepts id token", func(t *testing.T) {
 		router := gin.New()
 		router.Use(AuthWithTokenUse(cfg, logger.New(), TokenUseID))
-		router.POST("/auth/google", func(c *gin.Context) { c.Status(http.StatusOK) })
+		router.POST("/auth/google", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{"email_verified": GetEmailVerified(c)})
+		})
 
 		req := httptest.NewRequest(http.MethodPost, "/auth/google", nil)
 		req.Header.Set("Authorization", "Bearer "+idToken)
@@ -162,6 +165,9 @@ func TestAuth_DefaultRequiresAccessToken_AndGooglePathAllowsID(t *testing.T) {
 		router.ServeHTTP(rec, req)
 
 		require.Equal(t, http.StatusOK, rec.Code)
+		var body map[string]bool
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		assert.True(t, body["email_verified"])
 	})
 }
 

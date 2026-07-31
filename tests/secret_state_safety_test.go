@@ -31,9 +31,22 @@ func TestTerraformAndShellDoNotCarrySecretValues(t *testing.T) {
 		regexp.MustCompile(`(?m)type\s*=\s*"SecureString"`),
 		regexp.MustCompile(`(?m)^\s*password\s*=`),
 		regexp.MustCompile(`(?m)variable\s+"(db_password|credential_encryption_key|jwt_secret|razorpay_key_id|razorpay_key_secret|razorpay_webhook_secret|google_client_id|google_client_secret|fcm_api_key|apns_private_key|apns_certificate|llm_api_key|exa_api_key|gst_lookup_api_key|deepgram_api_key|deepseek_api_key)"`),
+		regexp.MustCompile(`(?m)resource\s+"aws_cognito_identity_provider"`),
 	} {
 		if match := forbidden.FindString(source); match != "" {
 			t.Fatalf("Terraform secret-state safety violation matched %q", match)
+		}
+	}
+
+	for _, required := range []string{
+		`resource "aws_cloudformation_stack" "google_cognito_identity_provider"`,
+		`Type = "AWS::Cognito::UserPoolIdentityProvider"`,
+		`{{resolve:secretsmanager:${aws_secretsmanager_secret.google_oauth.arn}:SecretString:client_id}}`,
+		`{{resolve:secretsmanager:${aws_secretsmanager_secret.google_oauth.arn}:SecretString:client_secret}}`,
+		`depends_on = [aws_cloudformation_stack.google_cognito_identity_provider]`,
+	} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("Terraform Google identity provider is missing secret-safe behavior %q", required)
 		}
 	}
 
