@@ -41,6 +41,7 @@ func TestDeployWorkflowLaunchSafetyPolicy(t *testing.T) {
 	secretScan := requiredMap(t, jobs, "secret-scan")
 	requireSecretScan(t, secretScan)
 	requireTerraformVersion(t, verify, "1.13.5")
+	requireTerraformInitBeforeGoTests(t, verify)
 	requireTerraformTest(t, verify)
 
 	deploy := requiredMap(t, jobs, "deploy")
@@ -269,6 +270,32 @@ func requireTerraformTest(t *testing.T, job *yaml.Node) {
 		}
 	}
 	t.Fatal("verification job must execute terraform test")
+}
+
+func requireTerraformInitBeforeGoTests(t *testing.T, job *yaml.Node) {
+	t.Helper()
+	steps := mappingValue(job, "steps")
+	if steps == nil || steps.Kind != yaml.SequenceNode {
+		t.Fatal("Terraform verification job must have steps")
+	}
+
+	initIndex := -1
+	goTestIndex := -1
+	for index, step := range steps.Content {
+		run := mappingValue(step, "run")
+		if run == nil {
+			continue
+		}
+		if strings.Contains(run.Value, `terraform -chdir="${TERRAFORM_DIR}" init -backend=false`) {
+			initIndex = index
+		}
+		if strings.Contains(run.Value, "go test ./...") {
+			goTestIndex = index
+		}
+	}
+	if initIndex < 0 || goTestIndex < 0 || initIndex >= goTestIndex {
+		t.Fatal("verification must initialize Terraform without a backend before Go policy tests execute mocked Terraform")
+	}
 }
 
 func containsSecretTerraformVariable(node *yaml.Node) bool {

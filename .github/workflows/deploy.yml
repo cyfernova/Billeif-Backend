@@ -118,6 +118,9 @@ jobs:
           terraform_version: 1.13.5
           terraform_wrapper: false
 
+      - name: Initialize Terraform without backend
+        run: terraform -chdir="${TERRAFORM_DIR}" init -backend=false -input=false
+
       - name: Run Go tests
         run: go test ./...
 
@@ -126,9 +129,6 @@ jobs:
 
       - name: Check Terraform formatting
         run: terraform -chdir="${TERRAFORM_DIR}" fmt -check -recursive
-
-      - name: Initialize Terraform without backend
-        run: terraform -chdir="${TERRAFORM_DIR}" init -backend=false -input=false
 
       - name: Validate Terraform
         run: terraform -chdir="${TERRAFORM_DIR}" validate
