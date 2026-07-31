@@ -711,8 +711,8 @@ run "standard_resolution_operational_alarms_use_two_of_three" {
       aws_cloudwatch_metric_alarm.outbox_oldest_pending_age.threshold == 300 &&
       aws_cloudwatch_metric_alarm.outbox_oldest_pending_age.evaluation_periods == 3 &&
       aws_cloudwatch_metric_alarm.outbox_oldest_pending_age.datapoints_to_alarm == 2 &&
-      aws_cloudwatch_metric_alarm.outbox_oldest_pending_age.treat_missing_data == "breaching"
+      aws_cloudwatch_metric_alarm.outbox_oldest_pending_age.treat_missing_data == "notBreaching"
     )
-    error_message = "The Billeif outbox oldest-pending-age metric must alarm after two of three five-minute breaches and fail closed when metrics disappear."
+    error_message = "The Billeif outbox oldest-pending-age metric must alarm after two of three five-minute breaches without treating an empty outbox as a failure."
   }
 }

@@ -498,7 +498,7 @@ resource "aws_cloudwatch_metric_alarm" "outbox_oldest_pending_age" {
   period              = 300
   statistic           = "Maximum"
   threshold           = 300
-  treat_missing_data  = local.background_processing_enabled ? "breaching" : "notBreaching"
+  treat_missing_data  = "notBreaching"
   alarm_description   = "Billeif outbox oldest pending event is more than five minutes old"
   alarm_actions       = [aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]
