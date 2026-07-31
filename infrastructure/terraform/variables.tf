@@ -266,7 +266,7 @@ variable "cognito_domain_prefix" {
 variable "cognito_additional_callback_urls" {
   description = "Explicit Cognito callback URLs to allow in addition to Swagger OAuth redirect."
   type        = list(string)
-  default     = []
+  default     = ["billeif://callback"]
 
   validation {
     condition = alltrue([
@@ -280,7 +280,7 @@ variable "cognito_additional_callback_urls" {
 variable "cognito_additional_logout_urls" {
   description = "Explicit Cognito logout URLs to allow."
   type        = list(string)
-  default     = []
+  default     = ["billeif://logout"]
 
   validation {
     condition = alltrue([

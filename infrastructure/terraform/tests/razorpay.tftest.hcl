@@ -677,6 +677,30 @@ run "billeif_branding_defaults_and_public_url_inputs" {
   }
 }
 
+run "billeif_mobile_redirects_are_enabled_by_default" {
+  command = plan
+
+  variables {
+    environment           = "preview"
+    lambda_artifact_dir   = "tests/fixtures/lambda"
+    llm_api_url           = "https://llm.example.test/chat/completions"
+    llm_model             = "test-model"
+    deepseek_base_url     = "https://voice-llm.example.test/v1"
+    deepseek_model        = "voice-test-model"
+    db_allowed_cidr       = "10.0.0.0/24"
+    ses_verified_identity = "billeif.example"
+    ses_sender_email      = "notifications@billeif.example"
+  }
+
+  assert {
+    condition = (
+      contains(aws_cognito_user_pool_client.main.callback_urls, "billeif://callback") &&
+      contains(aws_cognito_user_pool_client.main.logout_urls, "billeif://logout")
+    )
+    error_message = "The Cognito app client must allow the Billeif native callback and logout URLs by default."
+  }
+}
+
 run "billeif_cognito_domain_override_is_constrained" {
   command = plan
 

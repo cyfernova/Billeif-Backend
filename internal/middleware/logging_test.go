@@ -131,7 +131,7 @@ func TestThreatDetectionLogsAndAnnotatesRequest(t *testing.T) {
 }
 
 func TestThreatDetectionIgnoresNormalRequests(t *testing.T) {
-	categories, severity := detectRequestThreats(http.MethodGet, "/api/v1/vendors", "page=1", "invoiceappv2/1 CFNetwork/3860.500.112 Darwin/25.5.0")
+	categories, severity := detectRequestThreats(http.MethodGet, "/api/v1/vendors", "page=1", "billeif/1 CFNetwork/3860.500.112 Darwin/25.5.0")
 	if len(categories) != 0 {
 		t.Fatalf("expected no categories, got %v", categories)
 	}
