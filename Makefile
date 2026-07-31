@@ -7,10 +7,11 @@ export
 
 LAMBDA_BUILD_DIR := .build/lambda
 TERRAFORM_DIR := infrastructure/terraform
-TF_BACKEND_BUCKET ?= billeif-tfstate-830283279729
-TF_BACKEND_REGION ?= us-east-1
+AWS_PROFILE ?= default
+TF_BACKEND_BUCKET ?= billeif-terraform-state-928282274753-ap-south-1
+TF_BACKEND_REGION ?= ap-south-1
 TF_BACKEND_LOCK_TABLE ?= billeif-terraform-state-lock
-TF_BACKEND_KEY ?= terraform.tfstate
+TF_BACKEND_KEY ?= billeif/dev/terraform.tfstate
 RDS_LOCAL_PORT ?= 15432
 TF_VAR_india_sms_sender_id ?= $(INDIA_SMS_SENDER_ID)
 TF_VAR_india_dlt_entity_id ?= $(INDIA_DLT_ENTITY_ID)
@@ -53,14 +54,15 @@ help:
 # Infrastructure targets
 infra-backend-init: ## Create S3 bucket and DynamoDB table for Terraform backend
 	@echo "Creating S3 bucket for Terraform state..."
-	aws s3 mb s3://$(TF_BACKEND_BUCKET) --region $(TF_BACKEND_REGION) || true
-	aws s3api put-bucket-versioning --bucket $(TF_BACKEND_BUCKET) --versioning-configuration Status=Enabled --region $(TF_BACKEND_REGION)
+	aws s3 mb s3://$(TF_BACKEND_BUCKET) --profile $(AWS_PROFILE) --region $(TF_BACKEND_REGION) || true
+	aws s3api put-bucket-versioning --bucket $(TF_BACKEND_BUCKET) --versioning-configuration Status=Enabled --profile $(AWS_PROFILE) --region $(TF_BACKEND_REGION)
 	@echo "Creating DynamoDB table for state locking..."
 	aws dynamodb create-table \
 		--table-name $(TF_BACKEND_LOCK_TABLE) \
 		--attribute-definitions AttributeName=LockID,AttributeType=S \
 		--key-schema AttributeName=LockID,KeyType=HASH \
 		--billing-mode PAY_PER_REQUEST \
+		--profile $(AWS_PROFILE) \
 		--region $(TF_BACKEND_REGION) || true
 	@echo "Backend resources created!"
 
@@ -102,7 +104,7 @@ build-lambda-a2a-stream: ## Build A2A stream Lambda bootstrap binary
 
 build-lambda-sqs-invoice: ## Build invoice SQS Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/sqs-invoice
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(LAMBDA_BUILD_DIR)/sqs-invoice/bootstrap ./cmd/lambda/sqs-invoice
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o $(LAMBDA_BUILD_DIR)/sqs-invoice/bootstrap ./cmd/lambda/sqs-invoice
 
 build-lambda-sqs-email-delivery: ## Build stripped ARM64 Billeif email delivery Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/sqs-email-delivery
@@ -114,19 +116,19 @@ build-lambda-sqs-ses-feedback: ## Build stripped ARM64 Billeif SES feedback Lamb
 
 build-lambda-sqs-gst: ## Build GST SQS Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/sqs-gst
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(LAMBDA_BUILD_DIR)/sqs-gst/bootstrap ./cmd/lambda/sqs-gst
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o $(LAMBDA_BUILD_DIR)/sqs-gst/bootstrap ./cmd/lambda/sqs-gst
 
 build-lambda-sqs-bargaining: ## Build bargaining SQS Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/sqs-bargaining
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(LAMBDA_BUILD_DIR)/sqs-bargaining/bootstrap ./cmd/lambda/sqs-bargaining
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o $(LAMBDA_BUILD_DIR)/sqs-bargaining/bootstrap ./cmd/lambda/sqs-bargaining
 
 build-lambda-ws: ## Build WebSocket Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/ws
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(LAMBDA_BUILD_DIR)/ws/bootstrap ./cmd/lambda/ws
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o $(LAMBDA_BUILD_DIR)/ws/bootstrap ./cmd/lambda/ws
 
 build-lambda-voice-session: ## Build realtime voice session Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/voice-session
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o $(LAMBDA_BUILD_DIR)/voice-session/bootstrap ./cmd/lambda/voice-session
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o $(LAMBDA_BUILD_DIR)/voice-session/bootstrap ./cmd/lambda/voice-session
 
 build-lambda-outbox: ## Build stripped ARM64 Billeif outbox dispatcher Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/outbox
@@ -143,14 +145,31 @@ build-lambda-custom-sms-sender: ## Build the Node.js custom SMS sender Lambda pa
 	cd $(LAMBDA_BUILD_DIR)/custom-sms-sender && pnpm install --prod --frozen-lockfile
 
 package-lambda: build-lambda build-lambda-custom-sms-sender package-lambda-email-delivery package-lambda-ses-feedback package-lambda-outbox package-lambda-migrator ## Package Lambda artifacts into zip files
-	cd $(LAMBDA_BUILD_DIR)/http && zip -q -r ../http.zip bootstrap
-	cd $(LAMBDA_BUILD_DIR)/a2a-stream && zip -q -r ../a2a-stream.zip bootstrap
-	cd $(LAMBDA_BUILD_DIR)/sqs-invoice && zip -q -r ../sqs-invoice.zip bootstrap
-	cd $(LAMBDA_BUILD_DIR)/sqs-gst && zip -q -r ../sqs-gst.zip bootstrap
-	cd $(LAMBDA_BUILD_DIR)/sqs-bargaining && zip -q -r ../sqs-bargaining.zip bootstrap
-	cd $(LAMBDA_BUILD_DIR)/ws && zip -q -r ../ws.zip bootstrap
-	cd $(LAMBDA_BUILD_DIR)/voice-session && zip -q -r ../voice-session.zip bootstrap
-	cd $(LAMBDA_BUILD_DIR)/custom-sms-sender && zip -q -r ../custom-sms-sender.zip .
+	rm -f $(LAMBDA_BUILD_DIR)/http.zip
+	TZ=UTC touch -t 198001010000 $(LAMBDA_BUILD_DIR)/http/bootstrap
+	cd $(LAMBDA_BUILD_DIR)/http && TZ=UTC zip -q -X -j ../http.zip bootstrap
+	rm -f $(LAMBDA_BUILD_DIR)/a2a-stream.zip
+	TZ=UTC touch -t 198001010000 $(LAMBDA_BUILD_DIR)/a2a-stream/bootstrap
+	cd $(LAMBDA_BUILD_DIR)/a2a-stream && TZ=UTC zip -q -X -j ../a2a-stream.zip bootstrap
+	rm -f $(LAMBDA_BUILD_DIR)/sqs-invoice.zip
+	TZ=UTC touch -t 198001010000 $(LAMBDA_BUILD_DIR)/sqs-invoice/bootstrap
+	cd $(LAMBDA_BUILD_DIR)/sqs-invoice && TZ=UTC zip -q -X -j ../sqs-invoice.zip bootstrap
+	rm -f $(LAMBDA_BUILD_DIR)/sqs-gst.zip
+	TZ=UTC touch -t 198001010000 $(LAMBDA_BUILD_DIR)/sqs-gst/bootstrap
+	cd $(LAMBDA_BUILD_DIR)/sqs-gst && TZ=UTC zip -q -X -j ../sqs-gst.zip bootstrap
+	rm -f $(LAMBDA_BUILD_DIR)/sqs-bargaining.zip
+	TZ=UTC touch -t 198001010000 $(LAMBDA_BUILD_DIR)/sqs-bargaining/bootstrap
+	cd $(LAMBDA_BUILD_DIR)/sqs-bargaining && TZ=UTC zip -q -X -j ../sqs-bargaining.zip bootstrap
+	rm -f $(LAMBDA_BUILD_DIR)/ws.zip
+	TZ=UTC touch -t 198001010000 $(LAMBDA_BUILD_DIR)/ws/bootstrap
+	cd $(LAMBDA_BUILD_DIR)/ws && TZ=UTC zip -q -X -j ../ws.zip bootstrap
+	rm -f $(LAMBDA_BUILD_DIR)/voice-session.zip
+	TZ=UTC touch -t 198001010000 $(LAMBDA_BUILD_DIR)/voice-session/bootstrap
+	cd $(LAMBDA_BUILD_DIR)/voice-session && TZ=UTC zip -q -X -j ../voice-session.zip bootstrap
+	rm -f $(LAMBDA_BUILD_DIR)/custom-sms-sender.zip
+	rm -f $(LAMBDA_BUILD_DIR)/custom-sms-sender/node_modules/.modules.yaml $(LAMBDA_BUILD_DIR)/custom-sms-sender/node_modules/.pnpm-workspace-state-v1.json
+	find $(LAMBDA_BUILD_DIR)/custom-sms-sender -exec touch -t 198001010000 {} +
+	cd $(LAMBDA_BUILD_DIR)/custom-sms-sender && find -L . -type f -print | LC_ALL=C sort | TZ=UTC zip -q -X ../custom-sms-sender.zip -@
 
 package-lambda-outbox: build-lambda-outbox ## Package the Billeif outbox Lambda deterministically
 	rm -f $(LAMBDA_BUILD_DIR)/outbox.zip
@@ -203,6 +222,7 @@ rds-tunnel: ## Forward localhost:RDS_LOCAL_PORT to private RDS through SSM
 	fi; \
 	echo "Forwarding 127.0.0.1:$(RDS_LOCAL_PORT) -> $$RDS_HOST:$$RDS_PORT via $$TARGET_ID"; \
 	aws ssm start-session \
+		--profile $(AWS_PROFILE) \
 		--region $(TF_BACKEND_REGION) \
 		--target "$$TARGET_ID" \
 		--document-name AWS-StartPortForwardingSessionToRemoteHost \

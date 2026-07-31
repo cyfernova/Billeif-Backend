@@ -135,16 +135,17 @@ run "foundation_migrates_while_application_is_fail_closed" {
 
   assert {
     condition = (
-      length(keys(aws_lambda_function.database_migrator.environment[0].variables)) == 5 &&
+      aws_lambda_function.database_migrator.environment[0].variables["ENVIRONMENT"] == var.environment &&
+      length(keys(aws_lambda_function.database_migrator.environment[0].variables)) == 6 &&
       alltrue([
         for key in keys(aws_lambda_function.database_migrator.environment[0].variables) :
         contains([
           "DATABASE_HOST_SSM_PARAM", "DATABASE_SECRET_ARN",
-          "DATABASE_PORT", "DATABASE_NAME", "DATABASE_SSL_MODE"
+          "DATABASE_PORT", "DATABASE_NAME", "DATABASE_SSL_MODE", "ENVIRONMENT"
         ], key)
       ])
     )
-    error_message = "The migration Lambda environment must contain identifiers and non-secret database configuration only."
+    error_message = "The migration Lambda environment must contain the runtime profile environment plus identifiers and non-secret database configuration only."
   }
 
   assert {
@@ -292,6 +293,7 @@ run "database_beta_profile_is_isolated_protected_and_proxy_optional" {
   assert {
     condition = (
       aws_db_instance.main.allocated_storage == 20 &&
+      aws_db_instance.main.engine_version == "18.4" &&
       aws_db_instance.main.max_allocated_storage == 100 &&
       aws_db_instance.main.storage_type == "gp3" &&
       aws_db_instance.main.backup_retention_period == 7 &&
@@ -318,10 +320,9 @@ run "database_beta_profile_is_isolated_protected_and_proxy_optional" {
       toset([for ingress in aws_security_group.rds.ingress : ingress.description]) == toset([
         "PostgreSQL from Lambda",
         "PostgreSQL from database migrator",
-        "PostgreSQL from Billeif RDS tunnel",
       ])
     )
-    error_message = "RDS ingress must be limited to Billeif Lambda, migrator, and tunnel security groups."
+    error_message = "Default RDS ingress must be limited to Billeif Lambda and migrator security groups."
   }
 }
 
@@ -345,10 +346,33 @@ run "rds_proxy_is_opt_in_and_uses_billeif_private_networking" {
       toset([for ingress in aws_security_group.lambda.ingress : ingress.description]) == toset([
         "Billeif RDS Proxy from Lambda",
         "Billeif RDS Proxy from database migrator",
-        "Billeif RDS Proxy from RDS tunnel",
       ])
     )
     error_message = "The optional Billeif RDS Proxy must remain private, require TLS, and accept only the approved Billeif database clients."
+  }
+}
+
+run "rds_tunnel_is_an_explicit_opt_in" {
+  command = plan
+
+  variables {
+    enable_rds_proxy  = true
+    enable_rds_tunnel = true
+  }
+
+  assert {
+    condition = (
+      length(aws_instance.rds_tunnel) == 1 &&
+      contains(
+        [for ingress in aws_security_group.rds.ingress : ingress.description],
+        "PostgreSQL from Billeif RDS tunnel",
+      ) &&
+      contains(
+        [for ingress in aws_security_group.lambda.ingress : ingress.description],
+        "Billeif RDS Proxy from RDS tunnel",
+      )
+    )
+    error_message = "The Billeif RDS tunnel and its database ingress rules must exist only when explicitly enabled."
   }
 }
 

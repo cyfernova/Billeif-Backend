@@ -373,6 +373,7 @@ run "outbox_dispatcher_schedule_enables_only_with_application" {
 
   variables {
     enable_application                 = true
+    enable_lambda_reserved_concurrency = true
     alert_email                        = "alerts@example.com"
     alert_email_subscription_confirmed = true
   }
@@ -383,6 +384,61 @@ run "outbox_dispatcher_schedule_enables_only_with_application" {
       aws_scheduler_schedule.outbox_dispatcher.state == "ENABLED"
     )
     error_message = "Reviewed application enablement must release exactly one dispatcher execution and enable its schedule."
+  }
+}
+
+run "low_quota_activation_keeps_request_paths_unreserved_and_background_off" {
+  command = plan
+
+  variables {
+    enable_application                 = true
+    enable_background_processing       = false
+    enable_lambda_reserved_concurrency = false
+    alert_email                        = "alerts@example.com"
+    alert_email_subscription_confirmed = true
+  }
+
+  assert {
+    condition = (
+      aws_lambda_function.api_http.reserved_concurrent_executions == null &&
+      aws_lambda_function.a2a_stream.reserved_concurrent_executions == null &&
+      aws_lambda_function.ws_handler.reserved_concurrent_executions == null &&
+      aws_lambda_function.custom_sms_sender.reserved_concurrent_executions == null &&
+      aws_lambda_function.database_migrator.reserved_concurrent_executions == null &&
+      aws_lambda_function.voice_session.reserved_concurrent_executions == 0 &&
+      aws_lambda_function.outbox_dispatcher.reserved_concurrent_executions == 0 &&
+      aws_lambda_function.sqs_invoice.reserved_concurrent_executions == 0 &&
+      aws_lambda_function.sqs_gst.reserved_concurrent_executions == 0 &&
+      aws_lambda_function.sqs_bargaining.reserved_concurrent_executions == 0 &&
+      aws_lambda_function.sqs_email_delivery.reserved_concurrent_executions == 0 &&
+      aws_lambda_function.sqs_ses_feedback.reserved_concurrent_executions == 0
+    )
+    error_message = "Low-quota activation must leave request handlers and migrations in the shared pool while hard-throttling voice and background workers."
+  }
+
+  assert {
+    condition = (
+      length(aws_lambda_event_source_mapping.invoice_queue) == 0 &&
+      length(aws_lambda_event_source_mapping.gst_queue) == 0 &&
+      length(aws_lambda_event_source_mapping.bargaining_queue) == 0 &&
+      length(aws_lambda_event_source_mapping.email_delivery_queue) == 0 &&
+      length(aws_lambda_event_source_mapping.ses_feedback_queue) == 0 &&
+      aws_scheduler_schedule.outbox_dispatcher.state == "DISABLED" &&
+      aws_cloudwatch_metric_alarm.outbox_oldest_pending_age.treat_missing_data == "notBreaching"
+    )
+    error_message = "Low-quota activation must keep every background trigger disabled and avoid alarming on missing outbox telemetry."
+  }
+
+  assert {
+    condition = (
+      aws_apigatewayv2_stage.http.default_route_settings[0].throttling_rate_limit == 2 &&
+      aws_apigatewayv2_stage.http.default_route_settings[0].throttling_burst_limit == 2 &&
+      aws_api_gateway_method_settings.main.settings[0].throttling_rate_limit == 2 &&
+      aws_api_gateway_method_settings.main.settings[0].throttling_burst_limit == 2 &&
+      aws_apigatewayv2_stage.websocket_default.default_route_settings[0].throttling_rate_limit == 2 &&
+      aws_apigatewayv2_stage.websocket_default.default_route_settings[0].throttling_burst_limit == 2
+    )
+    error_message = "Low-quota activation must cap HTTP, REST, and WebSocket default routes at two requests and two burst capacity."
   }
 }
 
@@ -591,6 +647,13 @@ run "application_enablement_requires_confirmed_alert_subscription" {
 
 run "standard_resolution_operational_alarms_use_two_of_three" {
   command = plan
+
+  variables {
+    enable_application                 = true
+    enable_background_processing       = true
+    alert_email                        = "alerts@example.com"
+    alert_email_subscription_confirmed = true
+  }
 
   assert {
     condition = (

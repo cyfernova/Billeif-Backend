@@ -1,0 +1,11 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Synthetic API-key fixtures used by configuration and Terraform policy tests"
+paths = [
+  '''^infrastructure/terraform/tests/http_serverless\.tftest\.hcl$''',
+  '''^infrastructure/terraform/tests/razorpay\.tftest\.hcl$''',
+  '''^internal/config/config_test\.go$''',
+  '''^internal/config/invoice_cursor_test\.go$''',
+]

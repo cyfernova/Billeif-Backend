@@ -45,8 +45,8 @@ func TestDeployWorkflowLaunchSafetyPolicy(t *testing.T) {
 
 	deploy := requiredMap(t, jobs, "deploy")
 	deployIf := requiredScalar(t, deploy, "if")
-	if !strings.Contains(deployIf, "github.event_name != 'pull_request'") {
-		t.Fatalf("deploy must remain disabled for pull requests, got if: %q", deployIf)
+	if deployIf != "github.event_name == 'workflow_dispatch'" {
+		t.Fatalf("deploy must require explicit workflow dispatch until the OIDC role is configured, got if: %q", deployIf)
 	}
 
 	deployPermissions := requiredMap(t, deploy, "permissions")
@@ -56,6 +56,45 @@ func TestDeployWorkflowLaunchSafetyPolicy(t *testing.T) {
 	requireOIDCOnlyDeploy(t, deploy)
 	if !hasNullProfileEnvironment(deploy) {
 		t.Fatal("deploy must set TF_VAR_aws_profile to Terraform null for OIDC credentials")
+	}
+	requireDeployTerraformInputs(t, root, deploy)
+}
+
+func TestDeployWorkflowBackgroundProcessingDefaultsToDisabled(t *testing.T) {
+	workflow := loadWorkflow(t)
+	root := documentRoot(t, workflow)
+	env := requiredMap(t, root, "env")
+
+	const want = "${{ vars.ENABLE_BACKGROUND_PROCESSING == 'true' && 'true' || 'false' }}"
+	if got := requiredScalar(t, env, "TF_VAR_enable_background_processing"); got != want {
+		t.Fatalf("TF_VAR_enable_background_processing = %q, want strict ENABLE_BACKGROUND_PROCESSING mapping %q", got, want)
+	}
+}
+
+func requireDeployTerraformInputs(t *testing.T, root, deploy *yaml.Node) {
+	t.Helper()
+	required := []string{
+		"TF_VAR_alert_email",
+		"TF_VAR_alert_email_subscription_confirmed",
+		"TF_VAR_db_allowed_cidr",
+		"TF_VAR_enable_application",
+		"TF_VAR_llm_api_url",
+		"TF_VAR_llm_model",
+		"TF_VAR_deepseek_base_url",
+		"TF_VAR_deepseek_model",
+		"TF_VAR_ses_verified_identity",
+		"TF_VAR_ses_sender_email",
+	}
+	rootEnv := mappingValue(root, "env")
+	deployEnv := mappingValue(deploy, "env")
+	for _, name := range required {
+		value := mappingValue(deployEnv, name)
+		if value == nil {
+			value = mappingValue(rootEnv, name)
+		}
+		if value == nil || strings.TrimSpace(value.Value) == "" {
+			t.Fatalf("deploy must map required Terraform input %s", name)
+		}
 	}
 }
 
@@ -153,7 +192,7 @@ func requireSecretScan(t *testing.T, job *yaml.Node) {
 	}
 
 	checkoutWithFullHistory := false
-	explicitFullHistoryScan := false
+	explicitIntroducedCommitScan := false
 	checksum := regexp.MustCompile(`^[0-9a-f]{64}$`)
 	for _, step := range steps.Content {
 		if step.Kind != yaml.MappingNode {
@@ -176,19 +215,22 @@ func requireSecretScan(t *testing.T, job *yaml.Node) {
 			continue
 		}
 		script := run.Value
-		explicitFullHistoryScan = strings.Contains(script, "github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}") &&
+		explicitIntroducedCommitScan = strings.Contains(script, "github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}") &&
 			strings.Contains(script, "sha256sum --check") &&
 			strings.Contains(script, "gitleaks detect") &&
 			strings.Contains(script, "--source .") &&
-			strings.Contains(script, `--log-opts="--all"`) &&
+			strings.Contains(script, `--log-opts="${scan_range}"`) &&
+			strings.Contains(script, "GITHUB_EVENT_NAME") &&
+			strings.Contains(script, "GITHUB_BASE_REF") &&
+			strings.Contains(script, ".gitleaks.toml") &&
 			strings.Contains(script, "--redact") &&
 			strings.Contains(script, "--exit-code 1")
 	}
 	if !checkoutWithFullHistory {
 		t.Fatal("secret-scan must check out full Git history with fetch-depth: 0")
 	}
-	if !explicitFullHistoryScan {
-		t.Fatal("secret-scan must checksum a pinned Gitleaks release and explicitly scan --log-opts=\"--all\"")
+	if !explicitIntroducedCommitScan {
+		t.Fatal("secret-scan must checksum a pinned Gitleaks release and scan only commits introduced by the event")
 	}
 }
 

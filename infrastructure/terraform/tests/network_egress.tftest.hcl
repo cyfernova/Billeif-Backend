@@ -158,7 +158,6 @@ variables {
   ses_verified_identity          = "billeif.example"
   ses_sender_email               = "notifications@billeif.example"
   db_allowed_cidr                = "10.0.0.0/24"
-  enable_rds_tunnel              = false
 }
 
 run "nat_instance_is_the_cost_capped_default" {
@@ -184,6 +183,7 @@ run "nat_instance_is_the_cost_capped_default" {
       length(aws_ssm_association.nat_activation_ready) == 0 &&
       length(aws_ec2_instance_state.nat_running) == 0 &&
       length(aws_ec2_instance_state.nat_stopped) == 1 &&
+      length(aws_instance.rds_tunnel) == 0 &&
       aws_ec2_instance_state.nat_stopped[0].state == "stopped" &&
       aws_eip_association.nat_instance[0].allocation_id == aws_eip.nat_instance[0].id &&
       aws_route.private_default_egress.network_interface_id == aws_instance.nat[0].primary_network_interface_id &&
@@ -197,17 +197,26 @@ run "nat_instance_is_the_cost_capped_default" {
       aws_instance.nat[0].instance_type == "t4g.micro" &&
       aws_instance.nat[0].ami == data.aws_ami.billeif_nat_instance[0].id &&
       aws_instance.nat[0].source_dest_check == false &&
-      aws_instance.nat[0].subnet_id == aws_subnet.public[0].id &&
+      aws_instance.nat[0].subnet_id == aws_subnet.public[1].id &&
       aws_instance.nat[0].associate_public_ip_address == false &&
+      aws_instance.nat[0].user_data_replace_on_change == false &&
       aws_instance.nat[0].monitoring == false &&
       aws_instance.nat[0].metadata_options[0].http_endpoint == "enabled" &&
       aws_instance.nat[0].metadata_options[0].http_tokens == "required" &&
       aws_instance.nat[0].credit_specification[0].cpu_credits == "standard" &&
       aws_instance.nat[0].root_block_device[0].encrypted == true &&
       aws_instance.nat[0].root_block_device[0].volume_type == "gp3" &&
-      aws_instance.nat[0].tags.BilleifNatTarget == local.resource_prefix
+      aws_instance.nat[0].tags.BilleifNatTarget == local.nat_instance_readiness_target
     )
     error_message = "The Billeif NAT instance must be hardened Arm64 t4g.micro compute with encrypted gp3 and standard CPU credits."
+  }
+
+  assert {
+    condition = alltrue([
+      for subnet in aws_subnet.public :
+      subnet.map_public_ip_on_launch == false
+    ])
+    error_message = "Billeif public subnets must not auto-assign public IPv4 addresses; explicitly managed EIPs provide public reachability."
   }
 
   assert {
@@ -233,8 +242,11 @@ run "nat_instance_is_the_cost_capped_default" {
   assert {
     condition = (
       strcontains(aws_instance.nat[0].user_data, "net.ipv4.ip_forward=1") &&
-      strcontains(aws_instance.nat[0].user_data, "iptables -t nat") &&
+      strcontains(aws_instance.nat[0].user_data, "-t nat -C POSTROUTING") &&
       strcontains(aws_instance.nat[0].user_data, "MASQUERADE") &&
+      strcontains(aws_instance.nat[0].user_data, "while iptables -w 5 -C FORWARD") &&
+      strcontains(aws_instance.nat[0].user_data, "iptables -w 5 -I FORWARD 1") &&
+      strcontains(aws_instance.nat[0].user_data, "iptables-save >/etc/sysconfig/iptables") &&
       strcontains(aws_instance.nat[0].user_data, "for attempt in {1..20}") &&
       strcontains(aws_instance.nat[0].user_data, "systemctl enable --now iptables") &&
       strcontains(aws_instance.nat[0].user_data, "billeif-nat-watchdog.timer") &&
@@ -258,11 +270,90 @@ run "nat_instance_is_the_cost_capped_default" {
       aws_ssm_association.nat_bootstrap_ready[0].name == "AWS-RunShellScript" &&
       aws_ssm_association.nat_bootstrap_ready[0].wait_for_success_timeout_seconds == 600 &&
       aws_ssm_association.nat_bootstrap_ready[0].targets[0].key == "tag:BilleifNatTarget" &&
-      toset(aws_ssm_association.nat_bootstrap_ready[0].targets[0].values) == toset([local.resource_prefix]) &&
+      toset(aws_ssm_association.nat_bootstrap_ready[0].targets[0].values) == toset([local.nat_instance_readiness_target]) &&
+      strcontains(aws_ssm_association.nat_bootstrap_ready[0].parameters.commands, "base64 --decode") &&
+      strcontains(aws_ssm_association.nat_bootstrap_ready[0].parameters.commands, "/usr/local/sbin/billeif-nat-configure") &&
+      strcontains(aws_ssm_association.nat_bootstrap_ready[0].parameters.commands, "systemctl reset-failed billeif-nat.service") &&
+      strcontains(aws_ssm_association.nat_bootstrap_ready[0].parameters.commands, "systemctl restart billeif-nat.service") &&
       strcontains(aws_ssm_association.nat_bootstrap_ready[0].parameters.commands, "billeif-nat.service") &&
       strcontains(aws_ssm_association.nat_bootstrap_ready[0].parameters.commands, "net.ipv4.ip_forward")
     )
     error_message = "The Billeif migration must wait at no extra cost for SSM to verify NAT forwarding readiness."
+  }
+}
+
+run "large_lambda_artifacts_use_versioned_s3_delivery" {
+  command = plan
+
+  override_resource {
+    target          = aws_s3_bucket.lambda_artifacts
+    override_during = plan
+    values = {
+      id = "billeif-test-lambda-artifacts"
+    }
+  }
+
+  override_resource {
+    target          = aws_s3_object.sqs_invoice_lambda_artifact
+    override_during = plan
+    values = {
+      version_id = "invoice-version"
+    }
+  }
+
+  override_resource {
+    target          = aws_s3_object.sqs_gst_lambda_artifact
+    override_during = plan
+    values = {
+      version_id = "gst-version"
+    }
+  }
+
+  override_resource {
+    target          = aws_s3_object.ws_lambda_artifact
+    override_during = plan
+    values = {
+      version_id = "ws-version"
+    }
+  }
+
+  override_resource {
+    target          = aws_s3_object.custom_sms_sender_lambda_artifact
+    override_during = plan
+    values = {
+      version_id = "custom-sms-version"
+    }
+  }
+
+  assert {
+    condition = alltrue([
+      for function in [
+        aws_lambda_function.sqs_invoice,
+        aws_lambda_function.sqs_gst,
+        aws_lambda_function.ws_handler,
+        aws_lambda_function.custom_sms_sender,
+      ] :
+      function.filename == null &&
+      function.s3_bucket == aws_s3_bucket.lambda_artifacts.id &&
+      function.s3_key != null &&
+      function.s3_object_version != null
+    ])
+    error_message = "Large Billeif Lambda artifacts must be delivered through the private versioned artifact bucket instead of inline CreateFunction uploads."
+  }
+
+  assert {
+    condition = alltrue([
+      for artifact in [
+        aws_s3_object.sqs_invoice_lambda_artifact,
+        aws_s3_object.sqs_gst_lambda_artifact,
+        aws_s3_object.ws_lambda_artifact,
+        aws_s3_object.custom_sms_sender_lambda_artifact,
+      ] :
+      artifact.bucket == aws_s3_bucket.lambda_artifacts.id &&
+      artifact.server_side_encryption == "AES256" &&
+      startswith(artifact.key, "lambda/")
+    ])
+    error_message = "Each large Billeif Lambda ZIP must be staged as an encrypted content-addressed S3 object."
   }
 }
 
@@ -324,7 +415,11 @@ run "application_activation_starts_the_nat_instance" {
       aws_ssm_association.nat_activation_ready[0].association_name == "${local.resource_prefix}-nat-activation-ready" &&
       aws_ssm_association.nat_activation_ready[0].wait_for_success_timeout_seconds == 600 &&
       aws_ssm_association.nat_activation_ready[0].targets[0].key == "tag:BilleifNatTarget" &&
-      toset(aws_ssm_association.nat_activation_ready[0].targets[0].values) == toset([local.resource_prefix]) &&
+      toset(aws_ssm_association.nat_activation_ready[0].targets[0].values) == toset([local.nat_instance_readiness_target]) &&
+      strcontains(aws_ssm_association.nat_activation_ready[0].parameters.commands, "base64 --decode") &&
+      strcontains(aws_ssm_association.nat_activation_ready[0].parameters.commands, "/usr/local/sbin/billeif-nat-configure") &&
+      strcontains(aws_ssm_association.nat_activation_ready[0].parameters.commands, "systemctl reset-failed billeif-nat.service") &&
+      strcontains(aws_ssm_association.nat_activation_ready[0].parameters.commands, "systemctl restart billeif-nat.service") &&
       length(aws_ec2_instance_state.nat_running) == 1 &&
       aws_ec2_instance_state.nat_running[0].state == "running" &&
       length(aws_ec2_instance_state.nat_stopped) == 0

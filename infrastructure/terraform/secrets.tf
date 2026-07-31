@@ -61,6 +61,41 @@ data "aws_iam_policy_document" "application_secrets_kms" {
       values   = ["secretsmanager.${var.aws_region}.amazonaws.com"]
     }
   }
+
+  statement {
+    sid    = "RDSManagedMasterSecretUse"
+    effect = "Allow"
+    actions = [
+      "kms:CreateGrant",
+      "kms:Decrypt",
+      "kms:DescribeKey",
+      "kms:GenerateDataKey"
+    ]
+    resources = ["*"]
+
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+    }
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["true"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:CallerAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["rds.${var.aws_region}.amazonaws.com"]
+    }
+  }
 }
 
 resource "aws_kms_key" "application_secrets" {

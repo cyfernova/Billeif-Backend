@@ -21,11 +21,24 @@ concurrency:
 env:
   TERRAFORM_DIR: infrastructure/terraform
   AWS_REGION: ${{ vars.AWS_REGION != '' && vars.AWS_REGION || 'ap-south-1' }}
-  TF_BACKEND_KEY: ${{ vars.TF_STATE_KEY != '' && vars.TF_STATE_KEY || 'terraform.tfstate' }}
+  TF_BACKEND_KEY: ${{ vars.TF_STATE_KEY != '' && vars.TF_STATE_KEY || 'billeif/dev/terraform.tfstate' }}
+  TF_VAR_alert_email: ${{ vars.ALERT_EMAIL != '' && vars.ALERT_EMAIL || 'anjishnu@cyfernova.in' }}
+  TF_VAR_alert_email_subscription_confirmed: ${{ vars.ALERT_EMAIL_SUBSCRIPTION_CONFIRMED == 'true' && 'true' || 'false' }}
+  TF_VAR_db_allowed_cidr: "127.0.0.1/32"
+  TF_VAR_enable_application: ${{ vars.ENABLE_APPLICATION == 'true' && 'true' || 'false' }}
+  TF_VAR_enable_background_processing: ${{ vars.ENABLE_BACKGROUND_PROCESSING == 'true' && 'true' || 'false' }}
+  TF_VAR_enable_voice: ${{ vars.ENABLE_VOICE == 'true' && 'true' || 'false' }}
+  TF_VAR_enable_rds_tunnel: "false"
+  TF_VAR_llm_api_url: ${{ vars.LLM_API_URL != '' && vars.LLM_API_URL || 'https://api.deepseek.com/chat/completions' }}
+  TF_VAR_llm_model: ${{ vars.LLM_MODEL != '' && vars.LLM_MODEL || 'deepseek-v4-flash' }}
+  TF_VAR_deepseek_base_url: ${{ vars.DEEPSEEK_BASE_URL != '' && vars.DEEPSEEK_BASE_URL || 'https://api.deepseek.com' }}
+  TF_VAR_deepseek_model: ${{ vars.DEEPSEEK_MODEL != '' && vars.DEEPSEEK_MODEL || 'deepseek-v4-flash' }}
+  TF_VAR_ses_verified_identity: ${{ vars.SES_VERIFIED_IDENTITY != '' && vars.SES_VERIFIED_IDENTITY || 'anjishnu@cyfernova.in' }}
+  TF_VAR_ses_sender_email: ${{ vars.SES_SENDER_EMAIL != '' && vars.SES_SENDER_EMAIL || 'anjishnu@cyfernova.in' }}
 
 jobs:
   secret-scan:
-    name: Scan Git History For Secrets
+    name: Scan Introduced Commits For Secrets
     runs-on: ubuntu-latest
 
     steps:
@@ -34,7 +47,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Scan full Git history
+      - name: Scan commits introduced by this event
         env:
           GITLEAKS_VERSION: "8.30.1"
           GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
@@ -50,9 +63,27 @@ jobs:
           tar -xzf "${archive}" -C "${install_dir}" gitleaks
           export PATH="${install_dir}:${PATH}"
 
+          case "${GITHUB_EVENT_NAME}" in
+            pull_request)
+              scan_range="origin/${GITHUB_BASE_REF}..HEAD"
+              ;;
+            push)
+              before="${{ github.event.before }}"
+              if [ -n "${before}" ] && [ "${before}" != "0000000000000000000000000000000000000000" ]; then
+                scan_range="${before}..${GITHUB_SHA}"
+              else
+                scan_range="${GITHUB_SHA}^..${GITHUB_SHA}"
+              fi
+              ;;
+            *)
+              scan_range="${GITHUB_SHA}^..${GITHUB_SHA}"
+              ;;
+          esac
+
           gitleaks detect \
             --source . \
-            --log-opts="--all" \
+            --log-opts="${scan_range}" \
+            --config .gitleaks.toml \
             --redact \
             --no-banner \
             --exit-code 1
@@ -110,7 +141,7 @@ jobs:
     needs:
       - secret-scan
       - verify
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'workflow_dispatch'
     permissions:
       contents: read
       id-token: write

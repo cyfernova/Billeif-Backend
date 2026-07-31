@@ -477,6 +477,46 @@ run "secret_metadata_rds_lambda_iam_and_output" {
 
   assert {
     condition = length([
+      for statement in data.aws_iam_policy_document.application_secrets_kms.statement : statement
+      if statement.sid == "RDSManagedMasterSecretUse" &&
+      toset(statement.actions) == toset([
+        "kms:CreateGrant",
+        "kms:Decrypt",
+        "kms:DescribeKey",
+        "kms:GenerateDataKey"
+      ]) &&
+      length(statement.principals) == 1 &&
+      length([
+        for principal in statement.principals : principal
+        if principal.type == "AWS" &&
+        toset(principal.identifiers) == toset([
+          "arn:aws:iam::123456789012:root"
+        ])
+      ]) == 1 &&
+      length([
+        for condition in statement.condition : condition
+        if condition.test == "StringEquals" &&
+        condition.variable == "kms:CallerAccount" &&
+        toset(condition.values) == toset(["123456789012"])
+      ]) == 1 &&
+      length([
+        for condition in statement.condition : condition
+        if condition.test == "StringEquals" &&
+        condition.variable == "kms:ViaService" &&
+        toset(condition.values) == toset(["rds.us-east-1.amazonaws.com"])
+      ]) == 1 &&
+      length([
+        for condition in statement.condition : condition
+        if condition.test == "Bool" &&
+        condition.variable == "aws:SecureTransport" &&
+        toset(condition.values) == toset(["true"])
+      ]) == 1
+    ]) == 1
+    error_message = "The account caller must have only the exact KMS permissions needed to create an RDS-managed master secret, restricted to same-account RDS service use."
+  }
+
+  assert {
+    condition = length([
       for statement in data.aws_iam_policy_document.lambda_app.statement : statement
       if statement.sid == "SSMAccess" &&
       length(statement.actions) == 1 &&

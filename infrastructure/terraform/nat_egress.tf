@@ -1,5 +1,18 @@
 locals {
-  nat_instance_enabled = var.egress_mode == "nat_instance"
+  nat_instance_enabled          = var.egress_mode == "nat_instance"
+  nat_instance_readiness_target = "${local.resource_prefix}-${var.availability_zones[1]}"
+  nat_instance_forwarding_script = templatefile("${path.module}/templates/nat-instance-forwarding.sh.tftpl", {
+    vpc_cidr = var.vpc_cidr
+  })
+  nat_instance_forwarding_script_base64 = base64encode(local.nat_instance_forwarding_script)
+  nat_instance_forwarding_converge_command = join(" && ", [
+    "printf '%s' '${local.nat_instance_forwarding_script_base64}' | base64 --decode >/usr/local/sbin/billeif-nat-configure",
+    "chmod 0755 /usr/local/sbin/billeif-nat-configure",
+    "systemctl reset-failed billeif-nat.service",
+    "systemctl restart billeif-nat.service",
+    "systemctl is-active --quiet billeif-nat.service",
+    "test \"$(sysctl -n net.ipv4.ip_forward)\" = \"1\""
+  ])
   private_subnet_cidrs = [
     for index in range(length(var.availability_zones)) :
     cidrsubnet(var.vpc_cidr, 4, index + length(var.availability_zones))
@@ -96,16 +109,16 @@ resource "aws_instance" "nat" {
   count                       = local.nat_instance_enabled ? 1 : 0
   ami                         = data.aws_ami.billeif_nat_instance[0].id
   instance_type               = "t4g.micro"
-  subnet_id                   = aws_subnet.public[0].id
+  subnet_id                   = aws_subnet.public[1].id
   associate_public_ip_address = false
   source_dest_check           = false
   monitoring                  = false
   iam_instance_profile        = aws_iam_instance_profile.nat_instance[0].name
   vpc_security_group_ids      = [aws_security_group.nat_instance[0].id]
   user_data = templatefile("${path.module}/templates/nat-instance-user-data.sh.tftpl", {
-    vpc_cidr = var.vpc_cidr
+    forwarding_script = local.nat_instance_forwarding_script
   })
-  user_data_replace_on_change = true
+  user_data_replace_on_change = false
 
   metadata_options {
     http_endpoint               = "enabled"
@@ -126,9 +139,16 @@ resource "aws_instance" "nat" {
     delete_on_termination = true
   }
 
+  lifecycle {
+    ignore_changes = [
+      associate_public_ip_address,
+      user_data
+    ]
+  }
+
   tags = {
     Name             = "${local.resource_prefix}-nat-instance"
-    BilleifNatTarget = local.resource_prefix
+    BilleifNatTarget = local.nat_instance_readiness_target
   }
 
   depends_on = [
@@ -171,13 +191,13 @@ resource "aws_ssm_association" "nat_bootstrap_ready" {
   name             = "AWS-RunShellScript"
   association_name = "${local.resource_prefix}-nat-bootstrap-ready"
   parameters = {
-    commands = "cloud-init status --wait && systemctl is-active --quiet billeif-nat.service && test \"$(sysctl -n net.ipv4.ip_forward)\" = \"1\""
+    commands = "cloud-init status --wait && ${local.nat_instance_forwarding_converge_command}"
   }
   wait_for_success_timeout_seconds = 600
 
   targets {
     key    = "tag:BilleifNatTarget"
-    values = [local.resource_prefix]
+    values = [local.nat_instance_readiness_target]
   }
 
   depends_on = [
@@ -199,13 +219,13 @@ resource "aws_ssm_association" "nat_activation_ready" {
   name             = "AWS-RunShellScript"
   association_name = "${local.resource_prefix}-nat-activation-ready"
   parameters = {
-    commands = "systemctl is-active --quiet billeif-nat.service && test \"$(sysctl -n net.ipv4.ip_forward)\" = \"1\""
+    commands = local.nat_instance_forwarding_converge_command
   }
   wait_for_success_timeout_seconds = 600
 
   targets {
     key    = "tag:BilleifNatTarget"
-    values = [local.resource_prefix]
+    values = [local.nat_instance_readiness_target]
   }
 
   depends_on = [aws_ec2_instance_state.nat_running]

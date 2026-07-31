@@ -16,20 +16,7 @@ net.ipv4.ip_forward=1
 SYSCTL
 
 cat >/usr/local/sbin/billeif-nat-configure <<'SCRIPT'
-#!/bin/bash
-set -euo pipefail
-
-PUBLIC_INTERFACE="$(ip -o route show to default | awk '{print $5; exit}')"
-test -n "$PUBLIC_INTERFACE"
-
-sysctl --system
-iptables -t nat -C POSTROUTING -s '${vpc_cidr}' -o "$PUBLIC_INTERFACE" -j MASQUERADE 2>/dev/null ||
-  iptables -t nat -A POSTROUTING -s '${vpc_cidr}' -o "$PUBLIC_INTERFACE" -j MASQUERADE
-iptables -C FORWARD -s '${vpc_cidr}' -o "$PUBLIC_INTERFACE" -j ACCEPT 2>/dev/null ||
-  iptables -A FORWARD -s '${vpc_cidr}' -o "$PUBLIC_INTERFACE" -j ACCEPT
-iptables -C FORWARD -d '${vpc_cidr}' -i "$PUBLIC_INTERFACE" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null ||
-  iptables -A FORWARD -d '${vpc_cidr}' -i "$PUBLIC_INTERFACE" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-iptables-save >/etc/sysconfig/iptables
+${forwarding_script}
 SCRIPT
 chmod 0755 /usr/local/sbin/billeif-nat-configure
 

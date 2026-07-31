@@ -113,10 +113,11 @@ resource "aws_lambda_function" "database_migrator" {
   memory_size      = 256
   timeout          = 900
 
-  reserved_concurrent_executions = 1
+  reserved_concurrent_executions = var.enable_lambda_reserved_concurrency ? 1 : null
 
   environment {
     variables = {
+      ENVIRONMENT             = var.environment
       DATABASE_HOST_SSM_PARAM = local.db_host_ssm_parameter_name
       DATABASE_SECRET_ARN     = aws_db_instance.main.master_user_secret[0].secret_arn
       DATABASE_PORT           = tostring(var.db_port)

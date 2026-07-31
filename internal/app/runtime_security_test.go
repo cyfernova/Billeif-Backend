@@ -349,8 +349,8 @@ func TestTerraformAddsGatewayLoggingAndLeastPrivilegeBoundaries(t *testing.T) {
 		"lambda": {
 			source: string(lambda),
 			fragments: []string{
-				`role             = aws_iam_role.lambda_worker_exec["invoice"].arn`,
-				`role             = aws_iam_role.lambda_websocket_exec.arn`,
+				`aws_iam_role.lambda_worker_exec["invoice"].arn`,
+				`aws_iam_role.lambda_websocket_exec.arn`,
 				`DATABASE_SECRET_ARN`,
 				`CREDENTIAL_ENCRYPTION_SECRET_ARN`,
 				`RAZORPAY_SECRET_ARN`,

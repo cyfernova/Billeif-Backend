@@ -60,6 +60,7 @@ func proxyWithRequestDeadline(
 	req events.APIGatewayProxyRequest,
 	proxy requestProxy,
 ) (events.APIGatewayProxyResponse, error) {
+	req = stripHTTPAPIStagePrefix(req)
 	if isRESTOwnedStreamingRequest(req) {
 		return events.APIGatewayProxyResponse{StatusCode: 404}, nil
 	}
@@ -67,6 +68,22 @@ func proxyWithRequestDeadline(
 	requestCtx, cancel := context.WithTimeout(ctx, ordinaryRequestTimeout)
 	defer cancel()
 	return proxy(requestCtx, req)
+}
+
+func stripHTTPAPIStagePrefix(req events.APIGatewayProxyRequest) events.APIGatewayProxyRequest {
+	stage := strings.TrimSpace(req.RequestContext.Stage)
+	if stage == "" || stage == "$default" {
+		return req
+	}
+
+	stagePrefix := "/" + stage
+	switch {
+	case req.Path == stagePrefix:
+		req.Path = "/"
+	case strings.HasPrefix(req.Path, stagePrefix+"/"):
+		req.Path = strings.TrimPrefix(req.Path, stagePrefix)
+	}
+	return req
 }
 
 func isRESTOwnedStreamingRequest(req events.APIGatewayProxyRequest) bool {

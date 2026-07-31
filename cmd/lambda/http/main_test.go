@@ -2,11 +2,73 @@ package main
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-lambda-go/events"
+	ginadapter "github.com/awslabs/aws-lambda-go-api-proxy/gin"
+	"github.com/gin-gonic/gin"
 )
+
+func TestProxyWithRequestDeadlineStripsHTTPAPIStageBeforeGinRouting(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/health", func(c *gin.Context) {
+		c.String(http.StatusOK, "We are live!")
+	})
+
+	response, err := proxyWithRequestDeadline(
+		context.Background(),
+		events.APIGatewayProxyRequest{
+			HTTPMethod: "GET",
+			Path:       "/dev/health",
+			RequestContext: events.APIGatewayProxyRequestContext{
+				DomainName: "api.example.com",
+				Stage:      "dev",
+			},
+		},
+		ginadapter.New(router).ProxyWithContext,
+	)
+	if err != nil {
+		t.Fatalf("proxy staged HTTP API request: %v", err)
+	}
+	if response.StatusCode != http.StatusOK || response.Body != "We are live!" {
+		t.Fatalf("response = %#v, want staged request routed to /health", response)
+	}
+}
+
+func TestStripHTTPAPIStagePrefixOnlyRemovesExactStageBoundary(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		path  string
+		stage string
+		want  string
+	}{
+		{name: "stage root", path: "/dev", stage: "dev", want: "/"},
+		{name: "nested route", path: "/dev/health", stage: "dev", want: "/health"},
+		{name: "similar prefix", path: "/development/health", stage: "dev", want: "/development/health"},
+		{name: "default stage", path: "/health", stage: "$default", want: "/health"},
+		{name: "blank stage", path: "/health", stage: "", want: "/health"},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			request := stripHTTPAPIStagePrefix(events.APIGatewayProxyRequest{
+				Path: test.path,
+				RequestContext: events.APIGatewayProxyRequestContext{
+					Stage: test.stage,
+				},
+			})
+			if request.Path != test.want {
+				t.Fatalf("path = %q, want %q", request.Path, test.want)
+			}
+		})
+	}
+}
 
 func TestProxyWithRequestDeadlineCapsOrdinaryRequestsAtTwentyFiveSeconds(t *testing.T) {
 	request := events.APIGatewayProxyRequest{
@@ -140,6 +202,13 @@ func TestProxyWithRequestDeadlineRejectsRESTOwnedStreamingRoutes(t *testing.T) {
 		{HTTPMethod: "POST", Path: "/api/v1/a2a/message:stream"},
 		{HTTPMethod: "GET", Path: "/api/v1/a2a/tasks/task-123/subscribe"},
 		{HTTPMethod: "GET", Path: "/api/v1/a2a/tasks/task-123:subscribe"},
+		{
+			HTTPMethod: "POST",
+			Path:       "/dev/api/v1/a2a/message:stream",
+			RequestContext: events.APIGatewayProxyRequestContext{
+				Stage: "dev",
+			},
+		},
 	}
 	for _, request := range tests {
 		request := request

@@ -147,8 +147,8 @@ resource "aws_api_gateway_method_settings" "main" {
     logging_level          = "ERROR"
     metrics_enabled        = false
     data_trace_enabled     = false
-    throttling_burst_limit = 100
-    throttling_rate_limit  = 50
+    throttling_burst_limit = var.enable_lambda_reserved_concurrency ? 100 : 2
+    throttling_rate_limit  = var.enable_lambda_reserved_concurrency ? 50 : 2
   }
 }
 

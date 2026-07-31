@@ -79,6 +79,11 @@ resource "aws_apigatewayv2_stage" "websocket_default" {
   auto_deploy   = false
   deployment_id = aws_apigatewayv2_deployment.websocket.id
 
+  default_route_settings {
+    throttling_burst_limit = var.enable_lambda_reserved_concurrency ? 100 : 2
+    throttling_rate_limit  = var.enable_lambda_reserved_concurrency ? 50 : 2
+  }
+
   access_log_settings {
     destination_arn = aws_cloudwatch_log_group.websocket_api_access.arn
     format = jsonencode({

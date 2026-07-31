@@ -48,7 +48,7 @@ resource "aws_scheduler_schedule" "outbox_dispatcher" {
   description                  = "${local.resource_prefix} Billeif outbox dispatcher schedule"
   schedule_expression          = "rate(1 minute)"
   schedule_expression_timezone = "UTC"
-  state                        = var.enable_application ? "ENABLED" : "DISABLED"
+  state                        = local.background_processing_enabled ? "ENABLED" : "DISABLED"
 
   flexible_time_window {
     mode = "OFF"

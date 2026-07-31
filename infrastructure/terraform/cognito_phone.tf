@@ -145,16 +145,18 @@ resource "aws_cloudwatch_log_group" "cognito_phone_custom_sms" {
 }
 
 resource "aws_lambda_function" "custom_sms_sender" {
-  provider         = aws.ap_south_1
-  function_name    = "${local.resource_prefix}-cognito-phone-custom-sms"
-  role             = aws_iam_role.cognito_phone_custom_sms.arn
-  runtime          = "nodejs20.x"
-  handler          = "index.handler"
-  architectures    = ["arm64"]
-  filename         = local.lambda_artifacts.custom_sms_sender
-  source_code_hash = local.lambda_artifact_hashes.custom_sms_sender
-  memory_size      = 256
-  timeout          = 15
+  provider          = aws.ap_south_1
+  function_name     = "${local.resource_prefix}-cognito-phone-custom-sms"
+  role              = aws_iam_role.cognito_phone_custom_sms.arn
+  runtime           = "nodejs20.x"
+  handler           = "index.handler"
+  architectures     = ["arm64"]
+  s3_bucket         = aws_s3_bucket.lambda_artifacts.id
+  s3_key            = aws_s3_object.custom_sms_sender_lambda_artifact.key
+  s3_object_version = aws_s3_object.custom_sms_sender_lambda_artifact.version_id
+  source_code_hash  = local.lambda_artifact_hashes.custom_sms_sender
+  memory_size       = 256
+  timeout           = 15
 
   reserved_concurrent_executions = var.enable_application ? (var.enable_lambda_reserved_concurrency ? 2 : null) : 0
 

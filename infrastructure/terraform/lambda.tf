@@ -1,4 +1,6 @@
 locals {
+  background_processing_enabled = var.enable_application && var.enable_background_processing
+
   # Construct invoke URLs from API IDs to avoid circular dependencies
   # (lambdas need stage URL, but stages depend on lambdas via deployments).
   http_api_invoke_url               = "https://${aws_apigatewayv2_api.http.id}.execute-api.${var.aws_region}.amazonaws.com/${var.environment}"
@@ -183,7 +185,7 @@ resource "aws_lambda_function" "outbox_dispatcher" {
   memory_size      = 256
   timeout          = 45
 
-  reserved_concurrent_executions = var.enable_application ? 1 : 0
+  reserved_concurrent_executions = local.background_processing_enabled ? (var.enable_lambda_reserved_concurrency ? 1 : null) : 0
 
   environment {
     variables = {
@@ -232,7 +234,7 @@ resource "aws_lambda_function" "sqs_email_delivery" {
   memory_size      = 512
   timeout          = 60
 
-  reserved_concurrent_executions = var.enable_application ? null : 0
+  reserved_concurrent_executions = local.background_processing_enabled ? null : 0
 
   tags = {
     MigrationChecksum = local.application_migration_checksum
@@ -286,7 +288,7 @@ resource "aws_lambda_function" "sqs_ses_feedback" {
   memory_size      = 256
   timeout          = 30
 
-  reserved_concurrent_executions = var.enable_application ? null : 0
+  reserved_concurrent_executions = local.background_processing_enabled ? null : 0
 
   tags = {
     MigrationChecksum = local.application_migration_checksum
@@ -421,17 +423,19 @@ resource "aws_lambda_function" "a2a_stream" {
 }
 
 resource "aws_lambda_function" "sqs_invoice" {
-  function_name    = "${local.resource_prefix}-sqs-invoice"
-  role             = aws_iam_role.lambda_worker_exec["invoice"].arn
-  runtime          = "provided.al2023"
-  handler          = "bootstrap"
-  architectures    = ["arm64"]
-  filename         = local.lambda_artifacts.sqs_invoice
-  source_code_hash = local.lambda_artifact_hashes.sqs_invoice
-  memory_size      = 512
-  timeout          = 60
+  function_name     = "${local.resource_prefix}-sqs-invoice"
+  role              = aws_iam_role.lambda_worker_exec["invoice"].arn
+  runtime           = "provided.al2023"
+  handler           = "bootstrap"
+  architectures     = ["arm64"]
+  s3_bucket         = aws_s3_bucket.lambda_artifacts.id
+  s3_key            = aws_s3_object.sqs_invoice_lambda_artifact.key
+  s3_object_version = aws_s3_object.sqs_invoice_lambda_artifact.version_id
+  source_code_hash  = local.lambda_artifact_hashes.sqs_invoice
+  memory_size       = 512
+  timeout           = 60
 
-  reserved_concurrent_executions = var.enable_application ? (var.enable_lambda_reserved_concurrency ? 2 : null) : 0
+  reserved_concurrent_executions = local.background_processing_enabled ? (var.enable_lambda_reserved_concurrency ? 2 : null) : 0
 
   tags = {
     MigrationChecksum = local.application_migration_checksum
@@ -463,17 +467,19 @@ resource "aws_lambda_function" "sqs_invoice" {
 }
 
 resource "aws_lambda_function" "sqs_gst" {
-  function_name    = "${local.resource_prefix}-sqs-gst"
-  role             = aws_iam_role.lambda_worker_exec["gst"].arn
-  runtime          = "provided.al2023"
-  handler          = "bootstrap"
-  architectures    = ["arm64"]
-  filename         = local.lambda_artifacts.sqs_gst
-  source_code_hash = local.lambda_artifact_hashes.sqs_gst
-  memory_size      = 512
-  timeout          = 60
+  function_name     = "${local.resource_prefix}-sqs-gst"
+  role              = aws_iam_role.lambda_worker_exec["gst"].arn
+  runtime           = "provided.al2023"
+  handler           = "bootstrap"
+  architectures     = ["arm64"]
+  s3_bucket         = aws_s3_bucket.lambda_artifacts.id
+  s3_key            = aws_s3_object.sqs_gst_lambda_artifact.key
+  s3_object_version = aws_s3_object.sqs_gst_lambda_artifact.version_id
+  source_code_hash  = local.lambda_artifact_hashes.sqs_gst
+  memory_size       = 512
+  timeout           = 60
 
-  reserved_concurrent_executions = var.enable_application ? (var.enable_lambda_reserved_concurrency ? 2 : null) : 0
+  reserved_concurrent_executions = local.background_processing_enabled ? (var.enable_lambda_reserved_concurrency ? 2 : null) : 0
 
   tags = {
     MigrationChecksum = local.application_migration_checksum
@@ -522,7 +528,7 @@ resource "aws_lambda_function" "sqs_bargaining" {
   memory_size       = 1024
   timeout           = 60
 
-  reserved_concurrent_executions = var.enable_application ? (var.enable_lambda_reserved_concurrency ? 5 : null) : 0
+  reserved_concurrent_executions = local.background_processing_enabled ? (var.enable_lambda_reserved_concurrency ? 5 : null) : 0
 
   tags = {
     MigrationChecksum = local.application_migration_checksum
@@ -554,15 +560,17 @@ resource "aws_lambda_function" "sqs_bargaining" {
 }
 
 resource "aws_lambda_function" "ws_handler" {
-  function_name    = "${local.resource_prefix}-ws-handler"
-  role             = aws_iam_role.lambda_websocket_exec.arn
-  runtime          = "provided.al2023"
-  handler          = "bootstrap"
-  architectures    = ["arm64"]
-  filename         = local.lambda_artifacts.ws_handler
-  source_code_hash = local.lambda_artifact_hashes.ws_handler
-  memory_size      = 256
-  timeout          = 15
+  function_name     = "${local.resource_prefix}-ws-handler"
+  role              = aws_iam_role.lambda_websocket_exec.arn
+  runtime           = "provided.al2023"
+  handler           = "bootstrap"
+  architectures     = ["arm64"]
+  s3_bucket         = aws_s3_bucket.lambda_artifacts.id
+  s3_key            = aws_s3_object.ws_lambda_artifact.key
+  s3_object_version = aws_s3_object.ws_lambda_artifact.version_id
+  source_code_hash  = local.lambda_artifact_hashes.ws_handler
+  memory_size       = 256
+  timeout           = 15
 
   reserved_concurrent_executions = var.enable_application ? (var.enable_lambda_reserved_concurrency ? 5 : null) : 0
 
@@ -637,7 +645,7 @@ resource "aws_lambda_function" "voice_session" {
 }
 
 resource "aws_lambda_event_source_mapping" "invoice_queue" {
-  count = var.enable_application ? 1 : 0
+  count = local.background_processing_enabled ? 1 : 0
 
   event_source_arn                   = aws_sqs_queue.invoice_processing.arn
   function_name                      = aws_lambda_function.sqs_invoice.arn
@@ -651,7 +659,7 @@ resource "aws_lambda_event_source_mapping" "invoice_queue" {
 }
 
 resource "aws_lambda_event_source_mapping" "gst_queue" {
-  count = var.enable_application ? 1 : 0
+  count = local.background_processing_enabled ? 1 : 0
 
   event_source_arn                   = aws_sqs_queue.gst_processing.arn
   function_name                      = aws_lambda_function.sqs_gst.arn
@@ -665,7 +673,7 @@ resource "aws_lambda_event_source_mapping" "gst_queue" {
 }
 
 resource "aws_lambda_event_source_mapping" "bargaining_queue" {
-  count = var.enable_application ? 1 : 0
+  count = local.background_processing_enabled ? 1 : 0
 
   event_source_arn                   = aws_sqs_queue.bargaining_negotiation.arn
   function_name                      = aws_lambda_function.sqs_bargaining.arn
@@ -679,7 +687,7 @@ resource "aws_lambda_event_source_mapping" "bargaining_queue" {
 }
 
 resource "aws_lambda_event_source_mapping" "email_delivery_queue" {
-  count = var.enable_application ? 1 : 0
+  count = local.background_processing_enabled ? 1 : 0
 
   event_source_arn                   = aws_sqs_queue.email_delivery.arn
   function_name                      = aws_lambda_function.sqs_email_delivery.arn
@@ -693,7 +701,7 @@ resource "aws_lambda_event_source_mapping" "email_delivery_queue" {
 }
 
 resource "aws_lambda_event_source_mapping" "ses_feedback_queue" {
-  count = var.enable_application ? 1 : 0
+  count = local.background_processing_enabled ? 1 : 0
 
   event_source_arn                   = aws_sqs_queue.ses_feedback.arn
   function_name                      = aws_lambda_function.sqs_ses_feedback.arn

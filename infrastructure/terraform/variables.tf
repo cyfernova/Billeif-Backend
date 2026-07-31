@@ -130,7 +130,7 @@ variable "db_publicly_accessible" {
 variable "enable_rds_tunnel" {
   description = "Create a private SSM-managed EC2 instance for local RDS port forwarding in non-production environments."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "db_multi_az" {
@@ -194,6 +194,12 @@ variable "enable_application" {
   description = "Activate ordinary application Lambda invocation paths after a reviewed successful migration deployment."
   type        = bool
   default     = false
+}
+
+variable "enable_background_processing" {
+  description = "Activate Billeif background workers, their SQS mappings, and the outbox dispatcher schedule after application enablement."
+  type        = bool
+  default     = true
 }
 
 variable "enable_voice" {
