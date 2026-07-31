@@ -38,6 +38,12 @@ TF_VAR_voice_ws_ping_interval_seconds ?= $(VOICE_WS_PING_INTERVAL_SECONDS)
 TF_VAR_voice_ws_write_timeout_seconds ?= $(VOICE_WS_WRITE_TIMEOUT_SECONDS)
 TF_VAR_voice_ws_max_frame_bytes ?= $(VOICE_WS_MAX_FRAME_BYTES)
 TF_VAR_voice_ws_max_concurrent_sessions_per_user ?= $(VOICE_WS_MAX_CONCURRENT_SESSIONS_PER_USER)
+ifneq ($(strip $(ENABLE_COGNITO_CUSTOM_DOMAIN_CUTOVER)),)
+TF_VAR_enable_cognito_custom_domain_cutover ?= $(ENABLE_COGNITO_CUSTOM_DOMAIN_CUTOVER)
+endif
+ifneq ($(strip $(ENABLE_COGNITO_CUSTOM_DOMAIN_PROVISIONING)),)
+TF_VAR_enable_cognito_custom_domain_provisioning ?= $(ENABLE_COGNITO_CUSTOM_DOMAIN_PROVISIONING)
+endif
 TF_INIT_BACKEND_ARGS := \
 	-backend-config=bucket=$(TF_BACKEND_BUCKET) \
 	-backend-config=region=$(TF_BACKEND_REGION) \

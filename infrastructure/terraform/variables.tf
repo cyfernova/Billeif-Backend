@@ -263,6 +263,18 @@ variable "cognito_domain_prefix" {
   }
 }
 
+variable "enable_cognito_custom_domain_provisioning" {
+  description = "Validate ACM and create the auth.billeif.com Cognito domain so its CloudFront target can be configured, while runtime consumers remain on the prefix domain."
+  type        = bool
+  default     = false
+}
+
+variable "enable_cognito_custom_domain_cutover" {
+  description = "Switch runtime consumers to the already provisioned auth.billeif.com domain only after DNS resolves and Google OAuth URLs are configured. Enabling cutover also implies provisioning."
+  type        = bool
+  default     = false
+}
+
 variable "cognito_additional_callback_urls" {
   description = "Explicit Cognito callback URLs to allow in addition to Swagger OAuth redirect."
   type        = list(string)

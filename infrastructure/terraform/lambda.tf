@@ -51,7 +51,7 @@ locals {
     SQS_BARGAINING_QUEUE                      = aws_sqs_queue.bargaining_negotiation.url
     COGNITO_USER_POOL_ID                      = aws_cognito_user_pool.main.id
     COGNITO_CLIENT_ID                         = aws_cognito_user_pool_client.main.id
-    COGNITO_DOMAIN                            = "${aws_cognito_user_pool_domain.main.domain}.auth.${var.aws_region}.amazoncognito.com"
+    COGNITO_DOMAIN                            = local.cognito_runtime_domain
     COGNITO_REGION                            = var.aws_region
     COGNITO_PHONE_USER_POOL_ID                = aws_cognito_user_pool.phone.id
     COGNITO_PHONE_CLIENT_ID                   = aws_cognito_user_pool_client.phone.id

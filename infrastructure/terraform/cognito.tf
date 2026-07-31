@@ -2,6 +2,13 @@ locals {
   swagger_oauth_redirect_url = "${local.http_api_invoke_url}/swagger/oauth2-redirect.html"
   cognito_callback_urls      = distinct(concat([local.swagger_oauth_redirect_url], var.cognito_additional_callback_urls))
   cognito_logout_urls        = distinct(var.cognito_additional_logout_urls)
+  cognito_custom_domain      = "auth.billeif.com"
+  cognito_prefix_domain      = "${local.cognito_hosted_ui_domain_prefix}.auth.${var.aws_region}.amazoncognito.com"
+  cognito_custom_domain_enabled = (
+    var.enable_cognito_custom_domain_provisioning ||
+    var.enable_cognito_custom_domain_cutover
+  )
+  cognito_runtime_domain = var.enable_cognito_custom_domain_cutover ? aws_cognito_user_pool_domain.custom[0].domain : local.cognito_prefix_domain
 
   google_oauth_client_id_reference     = "{{resolve:secretsmanager:${aws_secretsmanager_secret.google_oauth.arn}:SecretString:client_id}}"
   google_oauth_client_secret_reference = "{{resolve:secretsmanager:${aws_secretsmanager_secret.google_oauth.arn}:SecretString:client_secret}}"
@@ -168,4 +175,40 @@ resource "aws_cognito_user_pool_domain" "main" {
       error_message = "Generated AWS names must fit their service limits, and the Cognito hosted UI prefix must be a valid Billeif-branded 1-63 character prefix."
     }
   }
+}
+
+resource "aws_acm_certificate" "cognito_custom_domain" {
+  provider = aws.us_east_1
+
+  domain_name       = local.cognito_custom_domain
+  validation_method = "DNS"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_acm_certificate_validation" "cognito_custom_domain" {
+  provider = aws.us_east_1
+  count    = local.cognito_custom_domain_enabled ? 1 : 0
+
+  certificate_arn = aws_acm_certificate.cognito_custom_domain.arn
+}
+
+resource "aws_cognito_user_pool_domain" "custom" {
+  count = local.cognito_custom_domain_enabled ? 1 : 0
+
+  domain          = local.cognito_custom_domain
+  certificate_arn = aws_acm_certificate_validation.cognito_custom_domain[0].certificate_arn
+  user_pool_id    = aws_cognito_user_pool.main.id
+}
+
+moved {
+  from = aws_acm_certificate_validation.cognito_custom_domain
+  to   = aws_acm_certificate_validation.cognito_custom_domain[0]
+}
+
+moved {
+  from = aws_cognito_user_pool_domain.custom
+  to   = aws_cognito_user_pool_domain.custom[0]
 }

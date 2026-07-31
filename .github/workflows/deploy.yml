@@ -138,6 +138,8 @@ jobs:
       TF_VAR_alert_email_subscription_confirmed: ${{ vars.ALERT_EMAIL_SUBSCRIPTION_CONFIRMED == 'true' && 'true' || 'false' }}
       TF_VAR_db_allowed_cidr: "127.0.0.1/32"
       TF_VAR_enable_application: ${{ vars.ENABLE_APPLICATION == 'true' && 'true' || 'false' }}
+      TF_VAR_enable_cognito_custom_domain_provisioning: ${{ vars.ENABLE_COGNITO_CUSTOM_DOMAIN_PROVISIONING == 'true' && 'true' || 'false' }}
+      TF_VAR_enable_cognito_custom_domain_cutover: ${{ vars.ENABLE_COGNITO_CUSTOM_DOMAIN_CUTOVER == 'true' && 'true' || 'false' }}
       TF_VAR_enable_background_processing: ${{ vars.ENABLE_BACKGROUND_PROCESSING == 'true' && 'true' || 'false' }}
       TF_VAR_enable_voice: ${{ vars.ENABLE_VOICE == 'true' && 'true' || 'false' }}
       TF_VAR_enable_rds_tunnel: "false"

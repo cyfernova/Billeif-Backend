@@ -95,6 +95,18 @@ india_auth_message_template   = "Your Invoice Backend login code is {####}."
 
 Use the exact DLT-approved message text, including case, spaces, and punctuation. The `{####}` placeholder is replaced with the Cognito OTP at send time.
 
+### Cognito Custom Domain Rollout
+
+The custom hostname is fixed to `auth.billeif.com` and uses a certificate in `us-east-1`, as required by Cognito. Roll it out in three applies so runtime consumers never move before the required DNS targets are available:
+
+1. Apply with both custom-domain flags `false` (the default). Terraform creates the ACM certificate, keeps runtime consumers on the Cognito prefix domain, and outputs `cognito_custom_domain_acm_validation`.
+2. Add that validation CNAME at the authoritative DNS provider and wait for the ACM certificate to become issued.
+3. Set `ENABLE_COGNITO_CUSTOM_DOMAIN_PROVISIONING=true` for `make infra-plan` / `make infra-apply`, or set the matching GitHub repository variable. This apply validates ACM, creates the Cognito custom domain, and outputs its CloudFront target while runtime stays on the prefix domain.
+4. Create the `auth.billeif.com` CNAME to that CloudFront target, configure the Google OAuth origin and redirect output by Terraform, and verify both.
+5. Set `ENABLE_COGNITO_CUSTOM_DOMAIN_CUTOVER=true`. The final apply promotes runtime consumers to `auth.billeif.com`; enabling cutover also keeps provisioning enabled.
+
+Keep both inputs set after cutover. For a non-destructive routing rollback, keep provisioning `true` and set only cutover to `false`; runtime returns to the preserved AWS prefix while the custom-domain attachment remains ready. Set both flags to `false` only when intentionally removing the custom-domain attachment after rollback.
+
 ### Terraform Recovery After Partial Apply
 
 If `terraform apply` is interrupted while creating Lambdas, repair state before rerunning:

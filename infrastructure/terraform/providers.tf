@@ -37,3 +37,17 @@ provider "aws" {
     }
   }
 }
+
+provider "aws" {
+  alias   = "us_east_1"
+  region  = "us-east-1"
+  profile = var.use_ambient_aws_credentials ? null : var.aws_profile
+
+  default_tags {
+    tags = {
+      Project     = var.project_name
+      Environment = var.environment
+      ManagedBy   = "Terraform"
+    }
+  }
+}

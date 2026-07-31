@@ -154,8 +154,35 @@ output "cognito_region" {
 }
 
 output "cognito_domain" {
-  description = "AWS-generated hosted UI domain for the primary Cognito user pool. A fully branded hostname requires a separately owned custom DNS domain and ACM certificate."
-  value       = "${aws_cognito_user_pool_domain.main.domain}.auth.${var.aws_region}.amazoncognito.com"
+  description = "Active hosted UI domain used by Billeif runtime consumers."
+  value       = local.cognito_runtime_domain
+}
+
+output "cognito_custom_domain_acm_validation" {
+  description = "ACM DNS validation CNAME to create at the authoritative DNS provider for auth.billeif.com before enabling cutover."
+  value = {
+    name  = one(aws_acm_certificate.cognito_custom_domain.domain_validation_options).resource_record_name
+    type  = one(aws_acm_certificate.cognito_custom_domain.domain_validation_options).resource_record_type
+    value = one(aws_acm_certificate.cognito_custom_domain.domain_validation_options).resource_record_value
+  }
+}
+
+output "cognito_custom_domain_cloudfront_target" {
+  description = "Cognito CloudFront hostname for the auth.billeif.com CNAME after custom-domain provisioning; null during certificate-only staging."
+  value       = try(aws_cognito_user_pool_domain.custom[0].cloudfront_distribution, null)
+}
+
+output "cognito_prefix_domain" {
+  description = "Preserved AWS Cognito prefix domain for rollback if the custom domain becomes unavailable."
+  value       = local.cognito_prefix_domain
+}
+
+output "cognito_custom_domain_google_oauth" {
+  description = "Google OAuth settings required by the Billeif Cognito custom domain."
+  value = {
+    authorized_origin = "https://${local.cognito_custom_domain}"
+    redirect_uri      = "https://${local.cognito_custom_domain}/oauth2/idpresponse"
+  }
 }
 
 output "cognito_callback_urls" {

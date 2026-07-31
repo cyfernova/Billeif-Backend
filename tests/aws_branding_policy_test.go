@@ -634,6 +634,8 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		wantResources = removeManifestEntry(wantResources, removed)
 	}
 	wantResources = append(wantResources,
+		"aws_acm_certificate.cognito_custom_domain",
+		"aws_acm_certificate_validation.cognito_custom_domain",
 		"aws_apigatewayv2_api.http",
 		"aws_apigatewayv2_integration.http_lambda",
 		"aws_apigatewayv2_route.http_default",
@@ -665,6 +667,7 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_cloudwatch_metric_alarm.rds_memory_low",
 		"aws_cloudwatch_metric_alarm.worker_dlq_messages",
 		"aws_cloudwatch_metric_alarm.worker_queue_age",
+		"aws_cognito_user_pool_domain.custom",
 		"aws_db_proxy.main",
 		"aws_db_proxy_default_target_group.main",
 		"aws_db_proxy_target.main",
@@ -751,6 +754,10 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 	}
 	wantOutputs = append(
 		wantOutputs,
+		"cognito_custom_domain_acm_validation",
+		"cognito_custom_domain_cloudfront_target",
+		"cognito_custom_domain_google_oauth",
+		"cognito_prefix_domain",
 		"email_delivery_queue_url",
 		"http_api_url",
 		"lambda_sqs_email_delivery_arn",
@@ -1062,7 +1069,7 @@ var stableAWSNameAttributeAllowlist = map[string][]string{
 	"aws_cognito_user_group.name":                               {`"admin"`, `"accountant"`, `"viewer"`},
 	"aws_cognito_user_pool.name":                                {"local.cognito_"},
 	"aws_cognito_user_pool_client.name":                         {"local.cognito_"},
-	"aws_cognito_user_pool_domain.domain":                       {"local.cognito_hosted_ui_domain_prefix"},
+	"aws_cognito_user_pool_domain.domain":                       {"local.cognito_hosted_ui_domain_prefix", "local.cognito_custom_domain"},
 	"aws_db_instance.identifier":                                {"local.resource_prefix"},
 	"aws_db_proxy.name":                                         {"local.resource_prefix"},
 	"aws_db_subnet_group.name":                                  {"local.resource_prefix"},
@@ -1599,6 +1606,9 @@ var stableNameLocalDefinitionContracts = map[string]stableNameLocalDefinitionCon
 	"cognito_hosted_ui_domain_prefix": {
 		explicitValidatedOverrides: []string{"var.cognito_domain_prefix"},
 		derivedTokenSets:           [][]string{{`"billeif-`, "var.environment"}},
+	},
+	"cognito_custom_domain": {
+		derivedTokenSets: [][]string{{`"auth.billeif.com"`}},
 	},
 	"phone_auth_cooldown_table_name": {
 		explicitValidatedOverrides: []string{"var.phone_auth_cooldown_table_name"},

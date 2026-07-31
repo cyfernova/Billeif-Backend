@@ -72,6 +72,24 @@ func TestDeployWorkflowBackgroundProcessingDefaultsToDisabled(t *testing.T) {
 	}
 }
 
+func TestDeployWorkflowCognitoCustomDomainUsesStrictPromotionInputs(t *testing.T) {
+	workflow := loadWorkflow(t)
+	root := documentRoot(t, workflow)
+	jobs := requiredMap(t, root, "jobs")
+	deploy := requiredMap(t, jobs, "deploy")
+	env := requiredMap(t, deploy, "env")
+
+	wants := map[string]string{
+		"TF_VAR_enable_cognito_custom_domain_provisioning": "${{ vars.ENABLE_COGNITO_CUSTOM_DOMAIN_PROVISIONING == 'true' && 'true' || 'false' }}",
+		"TF_VAR_enable_cognito_custom_domain_cutover":      "${{ vars.ENABLE_COGNITO_CUSTOM_DOMAIN_CUTOVER == 'true' && 'true' || 'false' }}",
+	}
+	for name, want := range wants {
+		if got := requiredScalar(t, env, name); got != want {
+			t.Fatalf("%s = %q, want strict repository-variable mapping %q", name, got, want)
+		}
+	}
+}
+
 func requireDeployTerraformInputs(t *testing.T, root, deploy *yaml.Node) {
 	t.Helper()
 	required := []string{
@@ -79,6 +97,8 @@ func requireDeployTerraformInputs(t *testing.T, root, deploy *yaml.Node) {
 		"TF_VAR_alert_email_subscription_confirmed",
 		"TF_VAR_db_allowed_cidr",
 		"TF_VAR_enable_application",
+		"TF_VAR_enable_cognito_custom_domain_provisioning",
+		"TF_VAR_enable_cognito_custom_domain_cutover",
 		"TF_VAR_llm_api_url",
 		"TF_VAR_llm_model",
 		"TF_VAR_deepseek_base_url",
