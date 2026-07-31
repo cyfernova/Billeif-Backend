@@ -234,6 +234,11 @@ mock_provider "aws" {
   override_during = plan
 }
 
+mock_provider "aws" {
+  alias           = "us_east_1"
+  override_during = plan
+}
+
 variables {
   project_name                   = "billeif-test"
   environment                    = "test"
@@ -431,14 +436,14 @@ run "low_quota_activation_keeps_request_paths_unreserved_and_background_off" {
 
   assert {
     condition = (
-      aws_apigatewayv2_stage.http.default_route_settings[0].throttling_rate_limit == 2 &&
-      aws_apigatewayv2_stage.http.default_route_settings[0].throttling_burst_limit == 2 &&
-      aws_api_gateway_method_settings.main.settings[0].throttling_rate_limit == 2 &&
-      aws_api_gateway_method_settings.main.settings[0].throttling_burst_limit == 2 &&
-      aws_apigatewayv2_stage.websocket_default.default_route_settings[0].throttling_rate_limit == 2 &&
-      aws_apigatewayv2_stage.websocket_default.default_route_settings[0].throttling_burst_limit == 2
+      aws_apigatewayv2_stage.http.default_route_settings[0].throttling_rate_limit == 10 &&
+      aws_apigatewayv2_stage.http.default_route_settings[0].throttling_burst_limit == 20 &&
+      aws_api_gateway_method_settings.main.settings[0].throttling_rate_limit == 10 &&
+      aws_api_gateway_method_settings.main.settings[0].throttling_burst_limit == 20 &&
+      aws_apigatewayv2_stage.websocket_default.default_route_settings[0].throttling_rate_limit == 10 &&
+      aws_apigatewayv2_stage.websocket_default.default_route_settings[0].throttling_burst_limit == 20
     )
-    error_message = "Low-quota activation must cap HTTP, REST, and WebSocket default routes at two requests and two burst capacity."
+    error_message = "Low-quota activation must cap HTTP, REST, and WebSocket routes at ten requests per second with a twenty-request startup burst."
   }
 }
 

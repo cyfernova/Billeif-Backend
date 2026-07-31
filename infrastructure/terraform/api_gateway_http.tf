@@ -1,3 +1,8 @@
+locals {
+  api_gateway_throttling_burst_limit = var.enable_lambda_reserved_concurrency ? 100 : 20
+  api_gateway_throttling_rate_limit  = var.enable_lambda_reserved_concurrency ? 50 : 10
+}
+
 resource "aws_apigatewayv2_api" "http" {
   name          = "${local.resource_prefix}-http-api"
   protocol_type = "HTTP"
@@ -32,8 +37,8 @@ resource "aws_apigatewayv2_stage" "http" {
 
   default_route_settings {
     detailed_metrics_enabled = false
-    throttling_burst_limit   = var.enable_lambda_reserved_concurrency ? 100 : 2
-    throttling_rate_limit    = var.enable_lambda_reserved_concurrency ? 50 : 2
+    throttling_burst_limit   = local.api_gateway_throttling_burst_limit
+    throttling_rate_limit    = local.api_gateway_throttling_rate_limit
   }
 
   access_log_settings {

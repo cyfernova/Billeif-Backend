@@ -110,6 +110,11 @@ mock_provider "aws" {
   override_during = plan
 }
 
+mock_provider "aws" {
+  alias           = "us_east_1"
+  override_during = plan
+}
+
 variables {
   project_name                       = "billeif-test"
   environment                        = "test"
@@ -199,5 +204,34 @@ run "rest_api_is_streaming_only_without_detailed_metrics" {
       can(jsondecode(aws_api_gateway_stage.main.access_log_settings[0].format))
     )
     error_message = "REST must retain exactly the streaming integrations, standard service metrics, and 14-day structured access logs."
+  }
+}
+
+run "launch_safe_throttling_allows_mobile_startup_bursts" {
+  command = plan
+
+  variables {
+    enable_lambda_reserved_concurrency = false
+  }
+
+  assert {
+    condition = (
+      aws_apigatewayv2_stage.http.default_route_settings[0].throttling_burst_limit == 20 &&
+      aws_apigatewayv2_stage.http.default_route_settings[0].throttling_rate_limit == 10 &&
+      aws_api_gateway_method_settings.main.settings[0].throttling_burst_limit == 20 &&
+      aws_api_gateway_method_settings.main.settings[0].throttling_rate_limit == 10 &&
+      aws_apigatewayv2_stage.websocket_default.default_route_settings[0].throttling_burst_limit == 20 &&
+      aws_apigatewayv2_stage.websocket_default.default_route_settings[0].throttling_rate_limit == 10
+    )
+    error_message = "Launch-safe API Gateway throttling must absorb a normal mobile startup burst while retaining a low steady-state cost cap."
+  }
+
+  assert {
+    condition = (
+      contains(split(",", aws_lambda_function.api_http.environment[0].variables["ALLOWED_ORIGINS"]), "https://billeif.com") &&
+      contains(split(",", aws_lambda_function.api_http.environment[0].variables["ALLOWED_ORIGINS"]), "https://www.billeif.com") &&
+      contains(split(",", aws_lambda_function.api_http.environment[0].variables["ALLOWED_ORIGINS"]), local.http_api_invoke_url)
+    )
+    error_message = "The application Lambda must allow both Billeif website origins and its invoke URL without using wildcard CORS."
   }
 }

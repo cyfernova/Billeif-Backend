@@ -40,7 +40,7 @@ locals {
     DATABASE_PORT                             = tostring(var.db_port)
     DATABASE_NAME                             = var.db_name
     DATABASE_SSL_MODE                         = "require"
-    ALLOWED_ORIGINS                           = local.http_api_invoke_url
+    ALLOWED_ORIGINS                           = join(",", distinct(concat([local.http_api_invoke_url], var.allowed_origins)))
     S3_BUCKET_LOGOS                           = aws_s3_bucket.business_logos.id
     S3_BUCKET_INVOICES                        = aws_s3_bucket.invoices_pdf.id
     S3_BUCKET_PRODUCTS                        = aws_s3_bucket.product_images.id

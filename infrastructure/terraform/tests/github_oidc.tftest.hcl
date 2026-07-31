@@ -44,6 +44,11 @@ mock_provider "aws" {
   override_during = plan
 }
 
+mock_provider "aws" {
+  alias           = "us_east_1"
+  override_during = plan
+}
+
 variables {
   project_name                   = "billeif"
   environment                    = "dev"

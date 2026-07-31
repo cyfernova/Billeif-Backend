@@ -44,6 +44,20 @@ variable "environment" {
   }
 }
 
+variable "allowed_origins" {
+  description = "Exact HTTPS origins allowed to call the Billeif API from browsers."
+  type        = list(string)
+  default     = ["https://billeif.com", "https://www.billeif.com"]
+
+  validation {
+    condition = alltrue([
+      for origin in var.allowed_origins :
+      origin == trimspace(origin) && can(regex("^https://[^/]+$", origin))
+    ])
+    error_message = "allowed_origins must contain exact HTTPS origins without paths or surrounding whitespace."
+  }
+}
+
 variable "user_pool_name" {
   description = "Optional Billeif web Cognito User Pool name override."
   type        = string

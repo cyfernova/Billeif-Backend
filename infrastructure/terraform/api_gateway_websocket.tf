@@ -80,8 +80,8 @@ resource "aws_apigatewayv2_stage" "websocket_default" {
   deployment_id = aws_apigatewayv2_deployment.websocket.id
 
   default_route_settings {
-    throttling_burst_limit = var.enable_lambda_reserved_concurrency ? 100 : 2
-    throttling_rate_limit  = var.enable_lambda_reserved_concurrency ? 50 : 2
+    throttling_burst_limit = local.api_gateway_throttling_burst_limit
+    throttling_rate_limit  = local.api_gateway_throttling_rate_limit
   }
 
   access_log_settings {
