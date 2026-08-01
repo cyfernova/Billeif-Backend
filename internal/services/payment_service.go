@@ -88,7 +88,7 @@ func (s *PaymentService) Create(ctx context.Context, businessID string, input Cr
 			now := time.Now()
 			invoice.PaidAt = &now
 		} else {
-			invoice.Status = "partial"
+			invoice.Status = models.InvoiceStatusPartiallyPaid
 		}
 
 		if err := tx.Save(invoice).Error; err != nil {
@@ -201,7 +201,7 @@ func (s *PaymentService) UpdateByBusiness(ctx context.Context, businessID, id st
 		case invoice.PaidAmount >= invoice.Total:
 			invoice.Status = "paid"
 		case invoice.PaidAmount > 0:
-			invoice.Status = "partial"
+			invoice.Status = models.InvoiceStatusPartiallyPaid
 		default:
 			invoice.Status = "sent"
 		}
@@ -305,7 +305,6 @@ type PaymentInvoiceRepositoryTestable interface {
 	GetByID(ctx context.Context, id, businessID string) (*models.Invoice, error)
 	GetByIDInternal(ctx context.Context, id string) (*models.Invoice, error)
 	GetByInvoiceNo(ctx context.Context, businessID, invoiceNo string) (*models.Invoice, error)
-	GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.Invoice, int64, error)
 	GetItems(ctx context.Context, invoiceID string) ([]*models.InvoiceItem, error)
 	Update(ctx context.Context, invoice *models.Invoice) error
 	UpdateStatus(ctx context.Context, invoiceID string, status string) error
@@ -374,7 +373,7 @@ func (s *PaymentServiceTestable) Create(ctx context.Context, businessID string, 
 		now := time.Now()
 		invoice.PaidAt = &now
 	} else {
-		invoice.Status = "partial"
+		invoice.Status = models.InvoiceStatusPartiallyPaid
 	}
 
 	if err := s.invoiceRepo.Update(ctx, invoice); err != nil {
@@ -461,7 +460,7 @@ func (s *PaymentService) createPaymentJournal(ctx context.Context, payment *mode
 	}
 
 	_, err := s.journals.CreateByBusiness(ctx, invoice.BusinessID, CreateJournalInput{
-		Name:        fmt.Sprintf("Payment %s", invoice.InvoiceNo),
+		Name:        fmt.Sprintf("Payment %s", models.StringValue(invoice.InvoiceNo)),
 		Reference:   coalesceString(payment.Reference, payment.ID),
 		ProjectID:   normalizeProjectID(derefString(payment.ProjectID)),
 		PostingDate: payment.PaymentDate,
@@ -474,7 +473,7 @@ func (s *PaymentService) createPaymentJournal(ctx context.Context, payment *mode
 				EntryType:   "debit",
 				Amount:      payment.Amount,
 				Currency:    payment.Currency,
-				Description: fmt.Sprintf("Receipt for invoice %s", invoice.InvoiceNo),
+				Description: fmt.Sprintf("Receipt for invoice %s", models.StringValue(invoice.InvoiceNo)),
 				DocumentID:  &documentID,
 				Metadata:    metadata,
 			},
@@ -484,7 +483,7 @@ func (s *PaymentService) createPaymentJournal(ctx context.Context, payment *mode
 				EntryType:   "credit",
 				Amount:      payment.Amount,
 				Currency:    payment.Currency,
-				Description: fmt.Sprintf("Settlement for invoice %s", invoice.InvoiceNo),
+				Description: fmt.Sprintf("Settlement for invoice %s", models.StringValue(invoice.InvoiceNo)),
 				DocumentID:  &documentID,
 				Metadata:    metadata,
 			},

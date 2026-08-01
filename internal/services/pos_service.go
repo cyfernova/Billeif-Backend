@@ -7,9 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"invoice-backend/internal/idempotency"
 	"invoice-backend/internal/models"
 	"invoice-backend/pkg/logger"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -113,15 +115,17 @@ type POSService struct {
 	db           *gorm.DB
 	documents    *DocumentService
 	barcode      *BarcodeService
+	inventory    *InventoryService
 	entitlements *EntitlementService
 	log          *logger.Logger
 }
 
-func NewPOSService(db *gorm.DB, documents *DocumentService, barcode *BarcodeService, entitlements *EntitlementService, log *logger.Logger) *POSService {
+func NewPOSService(db *gorm.DB, documents *DocumentService, barcode *BarcodeService, inventory *InventoryService, entitlements *EntitlementService, log *logger.Logger) *POSService {
 	return &POSService{
 		db:           db,
 		documents:    documents,
 		barcode:      barcode,
+		inventory:    inventory,
 		entitlements: entitlements,
 		log:          log,
 	}
@@ -164,6 +168,10 @@ func (s *POSService) CreateSession(ctx context.Context, businessID, userID strin
 			}
 		}
 	}
+	warehouseID := posStringValue(session.WarehouseID)
+	if err := s.authorizeWarehouse(ctx, userID, businessID, warehouseID, warehousePermissionMoveStock); err != nil {
+		return nil, err
+	}
 
 	if err := s.db.WithContext(ctx).Create(session).Error; err != nil {
 		return nil, err
@@ -171,7 +179,7 @@ func (s *POSService) CreateSession(ctx context.Context, businessID, userID strin
 	return session, nil
 }
 
-func (s *POSService) ListSessions(ctx context.Context, businessID string, page, limit int, status string) ([]models.POSSession, int64, error) {
+func (s *POSService) ListSessions(ctx context.Context, businessID, userID string, page, limit int, status string) ([]models.POSSession, int64, error) {
 	if err := s.entitlements.EnsureFeature(ctx, businessID, FeaturePOS); err != nil {
 		return nil, 0, err
 	}
@@ -195,7 +203,7 @@ func (s *POSService) ListSessions(ctx context.Context, businessID string, page, 
 
 	baseQuery := s.db.WithContext(ctx).
 		Model(&models.POSSession{}).
-		Where("business_id = ? AND deleted_at IS NULL", businessID)
+		Where("business_id = ? AND user_id = ? AND deleted_at IS NULL", businessID, userID)
 	if normalizedStatus != "" {
 		baseQuery = baseQuery.Where("status = ?", normalizedStatus)
 	}
@@ -217,8 +225,11 @@ func (s *POSService) ListSessions(ctx context.Context, businessID string, page, 
 	return sessions, total, nil
 }
 
-func (s *POSService) SearchCatalog(ctx context.Context, businessID, query, warehouseID string, limit int) ([]POSCatalogSearchResult, error) {
+func (s *POSService) SearchCatalog(ctx context.Context, businessID, userID, query, warehouseID string, limit int) ([]POSCatalogSearchResult, error) {
 	if err := s.entitlements.EnsureFeature(ctx, businessID, FeaturePOS); err != nil {
+		return nil, err
+	}
+	if err := s.authorizeWarehouse(ctx, userID, businessID, warehouseID, warehousePermissionViewCatalog); err != nil {
 		return nil, err
 	}
 	if limit <= 0 || limit > 50 {
@@ -304,12 +315,15 @@ func (s *POSService) SearchCatalog(ctx context.Context, businessID, query, wareh
 	return results, nil
 }
 
-func (s *POSService) ScanItem(ctx context.Context, businessID, sessionID string, input ScanPOSItemInput) (*models.POSSession, POSSessionCart, error) {
+func (s *POSService) ScanItem(ctx context.Context, businessID, userID, sessionID string, input ScanPOSItemInput) (*models.POSSession, POSSessionCart, error) {
 	if err := s.entitlements.EnsureFeature(ctx, businessID, FeaturePOS); err != nil {
 		return nil, POSSessionCart{}, err
 	}
-	session, err := s.getSession(ctx, businessID, sessionID)
+	session, err := s.getSession(ctx, businessID, userID, sessionID)
 	if err != nil {
+		return nil, POSSessionCart{}, err
+	}
+	if err := s.authorizeWarehouse(ctx, userID, businessID, posStringValue(session.WarehouseID), warehousePermissionMoveStock); err != nil {
 		return nil, POSSessionCart{}, err
 	}
 	lookup, err := s.barcode.Lookup(ctx, businessID, input.Code)
@@ -348,12 +362,15 @@ func (s *POSService) ScanItem(ctx context.Context, businessID, sessionID string,
 	return session, cart, nil
 }
 
-func (s *POSService) Checkout(ctx context.Context, businessID, sessionID, idempotencyKey string, input CheckoutPOSCartInput) (*models.Document, error) {
+func (s *POSService) Checkout(ctx context.Context, businessID, userID, sessionID, idempotencyKey string, input CheckoutPOSCartInput) (*models.Document, error) {
 	if err := s.entitlements.EnsureFeature(ctx, businessID, FeaturePOS); err != nil {
 		return nil, err
 	}
-	session, err := s.getSession(ctx, businessID, sessionID)
+	session, err := s.getSession(ctx, businessID, userID, sessionID)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.authorizeWarehouse(ctx, userID, businessID, posStringValue(session.WarehouseID), warehousePermissionMoveStock); err != nil {
 		return nil, err
 	}
 	if session.LastCheckedOutDocumentID != nil && idempotencyKey != "" {
@@ -369,9 +386,9 @@ func (s *POSService) Checkout(ctx context.Context, businessID, sessionID, idempo
 		return nil, err
 	}
 
-	lines := make([]CreateDocumentLineInput, 0, len(cart.Items))
+	items := make([]CreateInvoiceItemInput, 0, len(cart.Items))
 	for _, item := range cart.Items {
-		lines = append(lines, CreateDocumentLineInput{
+		items = append(items, CreateInvoiceItemInput{
 			ProductID:    item.ProductID,
 			VariantID:    item.VariantID,
 			Description:  item.Description,
@@ -381,47 +398,17 @@ func (s *POSService) Checkout(ctx context.Context, businessID, sessionID, idempo
 			TaxRate:      item.TaxRate,
 			CessRate:     item.CessRate,
 			HSNSACCode:   item.HSNSACCode,
-			UQCCode:      item.UQCCode,
-			Unit:         item.Unit,
+			Unit:         firstNonEmpty(item.Unit, item.UQCCode),
 			WarehouseID:  posStringValue(session.WarehouseID),
 			CustomFields: item.Metadata,
 		})
 	}
 
-	partyType := firstNonEmpty(input.PartyType, models.DocumentPartyTypeManual)
-	createInput := CreateDocumentInput{
-		PartyID:             input.PartyID,
-		PartyType:           partyType,
-		Status:              firstNonEmpty(input.Status, models.DocumentStatusIssued),
-		DraftState:          models.DocumentDraftStateFinal,
-		TaxMode:             firstNonEmpty(input.TaxMode, models.DocumentTaxModeNonGST),
-		GSTTreatment:        firstNonEmpty(input.GSTTreatment, models.DocumentGSTTreatmentRegular),
-		PlaceOfSupply:       input.PlaceOfSupply,
-		PartyGSTIN:          input.PartyGSTIN,
-		PartyPAN:            input.PartyPAN,
-		PartyStateCode:      input.PartyStateCode,
-		SupplyType:          "sale",
-		IssueDate:           time.Now().UTC(),
-		Currency:            firstNonEmpty(session.Currency, "INR"),
-		Locale:              "en-IN",
-		Direction:           models.DocumentDirectionOutward,
-		GenerateEInvoice:    input.GenerateEInvoice,
-		GenerateEWayBill:    input.GenerateEWayBill,
-		ReverseCharge:       input.ReverseCharge,
-		ReverseChargeReason: input.ReverseChargeReason,
-		DispatchFrom:        input.DispatchFrom,
-		DispatchTo:          input.DispatchTo,
-		DistanceKM:          input.DistanceKM,
-		Transporter:         input.Transporter,
-		Vehicle:             input.Vehicle,
-		Notes:               coalesceString(input.Notes, fmt.Sprintf("POS checkout from session %s", session.ID)),
-		ExtraFields: map[string]interface{}{
-			"source":      coalesceString(input.Source, "pos"),
-			"pos_session": session.ID,
-		},
-		Lines: lines,
+	createInput, err := canonicalPOSCheckoutInput(session, idempotencyKey, input, items)
+	if err != nil {
+		return nil, err
 	}
-	document, err := s.documents.CreateByType(ctx, businessID, models.DocumentTypeSalesInvoice, createInput)
+	document, err := s.documents.createPOSSalesInvoice(ctx, businessID, createInput)
 	if err != nil {
 		return nil, err
 	}
@@ -440,14 +427,106 @@ func (s *POSService) Checkout(ctx context.Context, businessID, sessionID, idempo
 	return document, nil
 }
 
-func (s *POSService) CloseSession(ctx context.Context, businessID, sessionID string) (*models.POSSession, error) {
+func canonicalPOSCheckoutInput(session *models.POSSession, idempotencyKey string, input CheckoutPOSCartInput, items []CreateInvoiceItemInput) (CreateInvoiceInput, error) {
+	if session == nil {
+		return CreateInvoiceInput{}, &idempotency.InvalidPayloadError{}
+	}
+	partyType := firstNonEmpty(input.PartyType, models.DocumentPartyTypeManual)
+	if partyType != models.DocumentPartyTypeManual && partyType != models.DocumentPartyTypeCustomer {
+		return CreateInvoiceInput{}, &idempotency.InvalidPayloadError{}
+	}
+	partyID := strings.TrimSpace(input.PartyID)
+	hasPartyID := partyID != ""
+	if (partyType == models.DocumentPartyTypeCustomer) != hasPartyID {
+		return CreateInvoiceInput{}, &idempotency.InvalidPayloadError{}
+	}
+	if partyType == models.DocumentPartyTypeCustomer {
+		parsedPartyID, err := uuid.Parse(partyID)
+		if err != nil || parsedPartyID.String() != partyID {
+			return CreateInvoiceInput{}, &idempotency.InvalidPayloadError{}
+		}
+	}
+	status := firstNonEmpty(input.Status, models.DocumentStatusIssued)
+	if status != models.DocumentStatusIssued && status != models.DocumentStatusDraft {
+		return CreateInvoiceInput{}, &idempotency.InvalidPayloadError{}
+	}
+	gstTreatment, err := canonicalPOSGSTTreatment(
+		firstNonEmpty(input.TaxMode, models.DocumentTaxModeNonGST),
+		firstNonEmpty(input.GSTTreatment, models.DocumentGSTTreatmentRegular),
+	)
+	if err != nil {
+		return CreateInvoiceInput{}, err
+	}
+
+	buyerSnapshot := models.PartySnapshot{}
+	if partyID == "" {
+		buyerSnapshot = models.PartySnapshot{
+			Name:  "Counter sale",
+			TaxID: input.PartyPAN,
+			GSTIN: input.PartyGSTIN,
+		}
+	}
+	source := coalesceString(input.Source, "pos")
+	return CreateInvoiceInput{
+		IdempotencyKey: idempotencyKey,
+		Origin:         models.InvoiceOriginPOS,
+		CustomerID:     partyID,
+		BuyerSnapshot:  buyerSnapshot,
+		Currency:       firstNonEmpty(session.Currency, "INR"),
+		Notes:          coalesceString(input.Notes, fmt.Sprintf("POS checkout from session %s", session.ID)),
+		TaxProfile: TaxProfileInput{
+			GSTTreatment:          gstTreatment,
+			PlaceOfSupply:         input.PlaceOfSupply,
+			SupplyType:            "sale",
+			CounterpartyGSTIN:     input.PartyGSTIN,
+			CounterpartyPAN:       input.PartyPAN,
+			CounterpartyStateCode: input.PartyStateCode,
+			GenerateEInvoice:      input.GenerateEInvoice,
+			GenerateEWayBill:      input.GenerateEWayBill,
+			ReverseCharge:         input.ReverseCharge,
+			ReverseChargeReason:   input.ReverseChargeReason,
+			DispatchFrom:          input.DispatchFrom,
+			DispatchTo:            input.DispatchTo,
+			DistanceKM:            input.DistanceKM,
+			Transporter:           input.Transporter,
+			Vehicle:               input.Vehicle,
+			SourceLinkage: map[string]interface{}{
+				"source":      source,
+				"pos_session": session.ID,
+			},
+		},
+		Items: items,
+	}, nil
+}
+
+func canonicalPOSGSTTreatment(taxMode, gstTreatment string) (string, error) {
+	switch taxMode {
+	case models.DocumentTaxModeNonGST:
+		if gstTreatment == models.DocumentGSTTreatmentComposition || gstTreatment == models.DocumentGSTTreatmentExempt {
+			return gstTreatment, nil
+		}
+		return models.DocumentGSTTreatmentExempt, nil
+	case models.DocumentTaxModeGST:
+		if gstTreatment == models.DocumentGSTTreatmentComposition || gstTreatment == models.DocumentGSTTreatmentExempt {
+			return "", &idempotency.InvalidPayloadError{}
+		}
+		return gstTreatment, nil
+	default:
+		return "", &idempotency.InvalidPayloadError{}
+	}
+}
+
+func (s *POSService) CloseSession(ctx context.Context, businessID, userID, sessionID string) (*models.POSSession, error) {
 	if err := s.entitlements.EnsureFeature(ctx, businessID, FeaturePOS); err != nil {
 		return nil, err
 	}
 	var session models.POSSession
 	if err := s.db.WithContext(ctx).
-		Where("id = ? AND business_id = ? AND deleted_at IS NULL", sessionID, businessID).
+		Where("id = ? AND business_id = ? AND user_id = ? AND deleted_at IS NULL", sessionID, businessID, userID).
 		First(&session).Error; err != nil {
+		return nil, err
+	}
+	if err := s.authorizeWarehouse(ctx, userID, businessID, posStringValue(session.WarehouseID), warehousePermissionMoveStock); err != nil {
 		return nil, err
 	}
 	if session.Status != posSessionStatusClosed {
@@ -498,10 +577,10 @@ func (s *POSService) GetThermalReceipt(ctx context.Context, businessID, document
 	}, nil
 }
 
-func (s *POSService) getSession(ctx context.Context, businessID, sessionID string) (*models.POSSession, error) {
+func (s *POSService) getSession(ctx context.Context, businessID, userID, sessionID string) (*models.POSSession, error) {
 	var session models.POSSession
 	if err := s.db.WithContext(ctx).
-		Where("id = ? AND business_id = ? AND deleted_at IS NULL", sessionID, businessID).
+		Where("id = ? AND business_id = ? AND user_id = ? AND deleted_at IS NULL", sessionID, businessID, userID).
 		First(&session).Error; err != nil {
 		return nil, err
 	}
@@ -509,6 +588,16 @@ func (s *POSService) getSession(ctx context.Context, businessID, sessionID strin
 		return nil, fmt.Errorf("pos session is closed")
 	}
 	return &session, nil
+}
+
+func (s *POSService) authorizeWarehouse(ctx context.Context, userID, businessID, warehouseID, permission string) error {
+	if strings.TrimSpace(warehouseID) == "" {
+		return fmt.Errorf("POS warehouse is required")
+	}
+	if s.inventory == nil || !s.inventory.UserHasWarehouseAccess(ctx, userID, businessID, warehouseID, permission) {
+		return fmt.Errorf("access denied to POS warehouse")
+	}
+	return nil
 }
 
 func (s *POSService) lookupToCartLine(_ context.Context, _ string, lookup map[string]interface{}) (POSSessionCartLine, error) {

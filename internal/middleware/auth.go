@@ -151,16 +151,17 @@ func parseRSAPublicKey(k JWK) (*rsa.PublicKey, error) {
 
 type CognitoClaims struct {
 	jwt.RegisteredClaims
-	Email       string   `json:"email"`
-	PhoneNumber string   `json:"phone_number"`
-	Username    string   `json:"cognito:username"`
-	Groups      []string `json:"cognito:groups"`
-	TokenUse    string   `json:"token_use"`
-	ClientID    string   `json:"client_id"`
-	BusinessID  string   `json:"custom:businessId"`
-	Role        string   `json:"custom:role"`
-	Picture     string   `json:"picture"`
-	Name        string   `json:"name"`
+	Email         string   `json:"email"`
+	EmailVerified bool     `json:"email_verified"`
+	PhoneNumber   string   `json:"phone_number"`
+	Username      string   `json:"cognito:username"`
+	Groups        []string `json:"cognito:groups"`
+	TokenUse      string   `json:"token_use"`
+	ClientID      string   `json:"client_id"`
+	BusinessID    string   `json:"custom:businessId"`
+	Role          string   `json:"custom:role"`
+	Picture       string   `json:"picture"`
+	Name          string   `json:"name"`
 }
 
 type cognitoPool struct {
@@ -237,6 +238,7 @@ func AuthWithTokenUse(cfg config.CognitoConfig, log *logger.Logger, allowedToken
 
 		c.Set("user_id", claims.Subject)
 		c.Set("email", claims.Email)
+		c.Set("email_verified", claims.EmailVerified)
 		c.Set("phone_number", claims.PhoneNumber)
 		c.Set("username", claims.Username)
 		c.Set("groups", claims.Groups)
@@ -272,6 +274,13 @@ func GetEmail(c *gin.Context) string {
 		return email.(string)
 	}
 	return ""
+}
+
+func GetEmailVerified(c *gin.Context) bool {
+	if emailVerified, exists := c.Get("email_verified"); exists {
+		return emailVerified.(bool)
+	}
+	return false
 }
 
 func GetBusinessID(c *gin.Context) string {

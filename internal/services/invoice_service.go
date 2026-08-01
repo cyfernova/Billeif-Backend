@@ -2,7 +2,7 @@ package services
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"path"
 	"strings"
@@ -10,54 +10,100 @@ import (
 
 	"invoice-backend/internal/config"
 	"invoice-backend/internal/gst"
+	"invoice-backend/internal/idempotency"
+	"invoice-backend/internal/invoicecursor"
+	"invoice-backend/internal/invoiceresolution"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/awsclients"
 	"invoice-backend/pkg/logger"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
+type InvoiceEmailSender interface {
+	SendEmail(ctx context.Context, to, subject, body string) error
+}
+
+type InvoicePDFPresigner interface {
+	GeneratePresignedDownloadURL(ctx context.Context, bucket, key string, expiresIn int64) (string, error)
+}
+
+type InvoiceServiceOption func(*InvoiceService)
+
+func WithInvoiceRenderReadRepository(reader interfaces.InvoiceRenderReadRepository) InvoiceServiceOption {
+	return func(service *InvoiceService) {
+		service.invoiceRenders = reader
+	}
+}
+
+func WithInvoicePDFPresigner(presigner InvoicePDFPresigner) InvoiceServiceOption {
+	return func(service *InvoiceService) {
+		service.pdfPresigner = presigner
+	}
+}
+
+func WithInvoiceDeliveryRepository(repository interfaces.InvoiceDeliveryRepository) InvoiceServiceOption {
+	return func(service *InvoiceService) {
+		service.invoiceDeliveries = repository
+	}
+}
+
 type InvoiceService struct {
 	db           *gorm.DB
 	cfg          *config.Config
-	repo         interfaces.InvoiceRepository
+	repo         interfaces.CanonicalInvoiceRepository
+	businessRepo interfaces.BusinessRepository
 	productRepo  interfaces.ProductRepository
 	customerRepo interfaces.CustomerRepository
 	documents    *DocumentService
-	sqs          *sqs.Client
 	s3           *S3Service
-	email        *EmailService
+	email        InvoiceEmailSender
 	log          *logger.Logger
+
+	invoiceRenders    interfaces.InvoiceRenderReadRepository
+	invoiceDeliveries interfaces.InvoiceDeliveryRepository
+	pdfPresigner      InvoicePDFPresigner
+
+	immediateOutboxPublisher ImmediateOutboxPublisher
 }
 
 func NewInvoiceService(
 	db *gorm.DB,
 	cfg *config.Config,
-	repo interfaces.InvoiceRepository,
+	repo interfaces.CanonicalInvoiceRepository,
+	businessRepo interfaces.BusinessRepository,
 	productRepo interfaces.ProductRepository,
 	customerRepo interfaces.CustomerRepository,
 	documents *DocumentService,
 	aws *awsclients.Config,
 	s3 *S3Service,
-	email *EmailService,
+	email InvoiceEmailSender,
 	log *logger.Logger,
+	options ...InvoiceServiceOption,
 ) *InvoiceService {
-	return &InvoiceService{
+	service := &InvoiceService{
 		db:           db,
 		cfg:          cfg,
 		repo:         repo,
+		businessRepo: businessRepo,
 		productRepo:  productRepo,
 		customerRepo: customerRepo,
 		documents:    documents,
-		sqs:          aws.SQS,
 		s3:           s3,
 		email:        email,
 		log:          log,
 	}
+	service.invoiceDeliveries, _ = repo.(interfaces.InvoiceDeliveryRepository)
+	if documents != nil {
+		service.invoiceRenders, _ = documents.repo.(interfaces.InvoiceRenderReadRepository)
+	}
+	service.pdfPresigner = s3
+	for _, option := range options {
+		option(service)
+	}
+	return service
 }
 
 type CreateInvoiceItemInput struct {
@@ -71,6 +117,7 @@ type CreateInvoiceItemInput struct {
 	FreeQuantity     float64                  `json:"free_quantity"`
 	UnitPrice        float64                  `json:"unit_price" binding:"gte=0"`
 	MRP              float64                  `json:"mrp"`
+	Discount         float64                  `json:"discount" binding:"gte=0"`
 	TaxRate          float64                  `json:"tax_rate"`
 	CessRate         float64                  `json:"cess_rate"`
 	CustomFields     map[string]interface{}   `json:"custom_fields,omitempty"`
@@ -81,7 +128,11 @@ type CreateInvoiceItemInput struct {
 
 type CreateInvoiceInput struct {
 	BusinessID           string                   `json:"business_id,omitempty"`
+	IdempotencyKey       string                   `json:"-"`
+	Origin               models.InvoiceOrigin     `json:"-"`
 	CustomerID           string                   `json:"customer_id" binding:"required,uuid"`
+	BuyerSnapshot        models.PartySnapshot     `json:"-"`
+	Currency             string                   `json:"-"`
 	ProjectID            string                   `json:"project_id,omitempty" binding:"omitempty,uuid"`
 	PriceListID          string                   `json:"price_list_id,omitempty"`
 	RenderProfileID      string                   `json:"render_profile_id,omitempty" binding:"omitempty,uuid"`
@@ -93,13 +144,110 @@ type CreateInvoiceInput struct {
 	TemplateOverride     map[string]interface{}   `json:"template_override,omitempty"`
 	CustomFields         map[string]interface{}   `json:"custom_fields,omitempty"`
 	AdditionalCharges    []map[string]interface{} `json:"additional_charges,omitempty"`
-	OriginSubscriptionID string                   `json:"origin_subscription_id,omitempty"`
-	OriginRunID          string                   `json:"origin_run_id,omitempty"`
+	OriginSubscriptionID string                   `json:"-"`
+	OriginRunID          string                   `json:"-"`
 	TaxProfile           TaxProfileInput          `json:"tax_profile"`
 	Items                []CreateInvoiceItemInput `json:"items" binding:"required,min=1,dive"`
 }
 
+type canonicalInvoiceCreatePayload struct {
+	BusinessID           string                   `json:"business_id"`
+	Origin               models.InvoiceOrigin     `json:"origin"`
+	CustomerID           string                   `json:"customer_id"`
+	BuyerSnapshot        models.PartySnapshot     `json:"buyer_snapshot"`
+	Currency             string                   `json:"currency"`
+	ProjectID            string                   `json:"project_id,omitempty"`
+	PriceListID          string                   `json:"price_list_id,omitempty"`
+	RenderProfileID      string                   `json:"render_profile_id,omitempty"`
+	InvoiceDate          time.Time                `json:"invoice_date"`
+	DueDate              time.Time                `json:"due_date"`
+	Notes                string                   `json:"notes"`
+	TermsAndConditions   string                   `json:"terms_and_conditions"`
+	PONumber             string                   `json:"po_number"`
+	TemplateOverride     map[string]interface{}   `json:"template_override,omitempty"`
+	CustomFields         map[string]interface{}   `json:"custom_fields,omitempty"`
+	AdditionalCharges    []map[string]interface{} `json:"additional_charges,omitempty"`
+	OriginSubscriptionID string                   `json:"origin_subscription_id"`
+	OriginRunID          string                   `json:"origin_run_id"`
+	TaxProfile           TaxProfileInput          `json:"tax_profile"`
+	Items                []CreateInvoiceItemInput `json:"items"`
+}
+
+func canonicalInvoiceCreateRequest(input CreateInvoiceInput) canonicalInvoiceCreatePayload {
+	return canonicalInvoiceCreatePayload{
+		BusinessID:           input.BusinessID,
+		Origin:               input.Origin,
+		CustomerID:           input.CustomerID,
+		BuyerSnapshot:        input.BuyerSnapshot,
+		Currency:             input.Currency,
+		ProjectID:            input.ProjectID,
+		PriceListID:          input.PriceListID,
+		RenderProfileID:      input.RenderProfileID,
+		InvoiceDate:          input.InvoiceDate,
+		DueDate:              input.DueDate,
+		Notes:                input.Notes,
+		TermsAndConditions:   input.TermsAndConditions,
+		PONumber:             input.PONumber,
+		TemplateOverride:     input.TemplateOverride,
+		CustomFields:         input.CustomFields,
+		AdditionalCharges:    input.AdditionalCharges,
+		OriginSubscriptionID: input.OriginSubscriptionID,
+		OriginRunID:          input.OriginRunID,
+		TaxProfile:           input.TaxProfile,
+		Items:                input.Items,
+	}
+}
+
+func normalizedInvoiceCreateOrigin(input CreateInvoiceInput) (models.InvoiceOrigin, error) {
+	hasSubscriptionOrigin := strings.TrimSpace(input.OriginSubscriptionID) != "" ||
+		strings.TrimSpace(input.OriginRunID) != ""
+	switch input.Origin {
+	case "":
+		if hasSubscriptionOrigin {
+			return models.InvoiceOriginSubscription, nil
+		}
+		return models.InvoiceOriginManual, nil
+	case models.InvoiceOriginManual:
+		if hasSubscriptionOrigin || !input.BuyerSnapshot.IsEmpty() {
+			return "", &idempotency.InvalidPayloadError{}
+		}
+		return input.Origin, nil
+	case models.InvoiceOriginPOS:
+		if hasSubscriptionOrigin ||
+			(strings.TrimSpace(input.CustomerID) != "" && !input.BuyerSnapshot.IsEmpty()) {
+			return "", &idempotency.InvalidPayloadError{}
+		}
+		return input.Origin, nil
+	case models.InvoiceOriginSubscription:
+		if !hasSubscriptionOrigin || !input.BuyerSnapshot.IsEmpty() {
+			return "", &idempotency.InvalidPayloadError{}
+		}
+		return input.Origin, nil
+	default:
+		return "", &idempotency.InvalidPayloadError{}
+	}
+}
+
+func firstInvoiceBuyerSnapshot(customer *models.Customer, trusted models.PartySnapshot) models.PartySnapshot {
+	if customer != nil {
+		return customerPartySnapshot(customer)
+	}
+	return trusted
+}
+
 func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (*models.Invoice, error) {
+	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
+	if _, err := uuid.Parse(input.IdempotencyKey); err != nil {
+		return nil, &idempotency.InvalidKeyError{}
+	}
+	origin, err := normalizedInvoiceCreateOrigin(input)
+	if err != nil {
+		return nil, err
+	}
+	input.Origin = origin
+	if s.repo == nil {
+		return nil, fmt.Errorf("canonical invoice repository is not configured")
+	}
 	if input.RenderProfileID != "" {
 		normalized, err := normalizeRenderProfileID(input.RenderProfileID)
 		if err != nil {
@@ -107,9 +255,43 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 		}
 		input.RenderProfileID = normalized
 	}
-	_, err := s.customerRepo.GetByID(ctx, input.CustomerID, input.BusinessID)
+	requestHash, err := idempotency.CanonicalHash(canonicalInvoiceCreateRequest(input))
 	if err != nil {
-		return nil, fmt.Errorf("customer not found: %w", err)
+		return nil, err
+	}
+	actor := actorFromContext(ctx)
+	if _, err := uuid.Parse(actor.UserID); err != nil {
+		return nil, fmt.Errorf("invoice create actor is required")
+	}
+	replay, err := s.repo.ReplayCompletedDraft(
+		ctx,
+		input.BusinessID,
+		"invoice.create",
+		input.IdempotencyKey,
+		requestHash,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if replay != nil && replay.Invoice != nil {
+		hydrateInvoiceEditorFields(replay.Invoice)
+		return replay.Invoice, nil
+	}
+	if s.businessRepo == nil {
+		return nil, fmt.Errorf("business repository is not configured")
+	}
+	business, err := s.businessRepo.GetByID(ctx, input.BusinessID)
+	if err != nil {
+		return nil, fmt.Errorf("business not found: %w", err)
+	}
+	var customer *models.Customer
+	if strings.TrimSpace(input.CustomerID) != "" {
+		customer, err = s.customerRepo.GetByID(ctx, input.CustomerID, input.BusinessID)
+		if err != nil {
+			return nil, fmt.Errorf("customer not found: %w", err)
+		}
+	} else if input.Origin != models.InvoiceOriginPOS || input.BuyerSnapshot.IsEmpty() {
+		return nil, &idempotency.InvalidPayloadError{}
 	}
 	if input.RenderProfileID != "" && s.documents != nil {
 		if _, err := s.documents.GetRenderProfileByBusiness(ctx, input.BusinessID, input.RenderProfileID); err != nil {
@@ -131,83 +313,117 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 		return nil, err
 	}
 
-	invoiceNo, err := s.generateInvoiceNumber(ctx, input.BusinessID)
-	if err != nil {
-		return nil, err
-	}
 	projectID := syncProjectIDFromTags(input.ProjectID, input.TaxProfile.ReportTags)
 	input.TaxProfile.ReportTags = mergeProjectIntoTags(input.TaxProfile.ReportTags, projectID)
 	customFields := mergeInvoiceEditorCustomFields(input.CustomFields, input.TermsAndConditions, input.PONumber, input.TemplateOverride)
+	lineReferences := make([]invoiceresolution.LineReference, len(input.Items))
+	for index, item := range input.Items {
+		lineReferences[index] = invoiceresolution.LineReference{
+			ProductID:   item.ProductID,
+			VariantID:   item.VariantID,
+			WarehouseID: item.WarehouseID,
+		}
+	}
+	resolvedLines, err := s.repo.ResolveInvoiceLines(ctx, invoiceresolution.Request{
+		BusinessID:  input.BusinessID,
+		PriceListID: pointerStringValue(priceListID),
+		Lines:       lineReferences,
+	})
+	if err != nil {
+		var missing *invoiceresolution.MissingReferenceError
+		var invalid *invoiceresolution.InvalidReferenceError
+		if errors.As(err, &missing) || errors.As(err, &invalid) {
+			return nil, err
+		}
+		return nil, &invoiceresolution.UnavailableError{}
+	}
+	if len(resolvedLines) != len(input.Items) {
+		return nil, &invoiceresolution.UnavailableError{}
+	}
 
-	var subtotal, taxTotal float64
+	var subtotal, discountTotal, taxTotal float64
 	var cessTotal float64
 	items := make([]*models.InvoiceItem, len(input.Items))
 
 	for i, item := range input.Items {
-		pricing, err := resolveLinePricing(ctx, s.db, s.productRepo, input.BusinessID, priceListID, item.ProductID, item.VariantID, stringPointer(item.WarehouseID))
-		if err != nil {
-			return nil, err
-		}
-		var product *models.Product
-		if item.ProductID != "" {
-			product, _ = s.productRepo.GetByID(ctx, item.ProductID, input.BusinessID)
-		}
+		resolved := resolvedLines[i]
 		unitPrice := item.UnitPrice
 		if unitPrice <= 0 {
-			unitPrice = pricing.UnitPrice
+			unitPrice = resolved.UnitPrice
 		}
 		mrp := item.MRP
 		if mrp <= 0 {
-			mrp = pricing.MRP
+			mrp = resolved.MRP
 		}
 		cessRate := item.CessRate
 		if cessRate <= 0 {
-			cessRate = pricing.CessRate
+			cessRate = resolved.CessRate
 		}
-		itemSubtotal := item.Quantity * unitPrice
+		itemGross := item.Quantity * unitPrice
+		if item.Discount < 0 || item.Discount > itemGross {
+			return nil, &idempotency.InvalidPayloadError{}
+		}
+		itemSubtotal := itemGross - item.Discount
 		itemTax := itemSubtotal * (item.TaxRate / 100)
 		itemCess := itemSubtotal * (cessRate / 100)
 		subtotal += itemSubtotal
+		discountTotal += item.Discount
 		taxTotal += itemTax
 		cessTotal += itemCess
 
 		var productID *string
-		if item.ProductID != "" {
-			productID = &item.ProductID
+		if resolved.ProductID != "" {
+			productID = &resolved.ProductID
 		}
 		var variantID *string
-		if item.VariantID != "" {
-			variantID = &item.VariantID
+		if resolved.VariantID != "" {
+			variantID = &resolved.VariantID
 		}
 		var warehouseID *string
-		if item.WarehouseID != "" {
-			warehouseID = &item.WarehouseID
-		}
-		legacyUnit := ""
-		if product != nil {
-			legacyUnit = firstNonEmpty(product.Unit, product.UQCCode)
+		if resolved.WarehouseID != "" {
+			warehouseID = &resolved.WarehouseID
 		}
 		hsnCode := item.HSNSACCode
-		if hsnCode == "" && product != nil {
-			hsnCode = product.HSNSACCode
+		if hsnCode == "" {
+			hsnCode = resolved.HSNSACCode
 		}
-		unit := gst.CanonicalSnapshotUQC(item.Unit, legacyUnit)
+		unit := gst.CanonicalSnapshotUQC(item.Unit, firstNonEmpty(resolved.Unit, resolved.UQCCode))
+		lineCustomFields := make(map[string]interface{}, len(item.CustomFields)+1)
+		for key, value := range item.CustomFields {
+			lineCustomFields[key] = value
+		}
+		if resolved.SKU != "" {
+			lineCustomFields["sku"] = resolved.SKU
+		}
+		delete(lineCustomFields, "pricing_provenance")
+		if resolved.CatalogueID != "" || resolved.PriceListID != "" {
+			provenance := map[string]interface{}{}
+			if resolved.CatalogueID != "" {
+				provenance["catalogue_id"] = resolved.CatalogueID
+			}
+			if resolved.PriceListID != "" {
+				provenance["price_list_id"] = resolved.PriceListID
+			}
+			lineCustomFields["pricing_provenance"] = provenance
+		}
 
 		items[i] = &models.InvoiceItem{
 			ProductID:        productID,
 			VariantID:        variantID,
 			WarehouseID:      warehouseID,
-			Description:      item.Description,
+			Description:      firstNonEmpty(item.Description, resolved.ProductName),
 			HSNSACCode:       hsnCode,
 			Unit:             unit,
+			SKU:              resolved.SKU,
 			Quantity:         item.Quantity,
 			FreeQuantity:     item.FreeQuantity,
 			UnitPrice:        unitPrice,
 			MRP:              mrp,
+			Discount:         item.Discount,
 			TaxRate:          item.TaxRate,
 			CessRate:         cessRate,
 			CessAmount:       itemCess,
-			CustomFields:     mustMarshalMap(item.CustomFields),
+			CustomFields:     mustMarshalMap(lineCustomFields),
 			ChargeSnapshot:   mustMarshalAny(item.ChargeSnapshot, "[]"),
 			BatchAllocations: mustMarshalBatchAllocations(item.BatchAllocations),
 			SerialIDs:        marshalStringSlice(item.SerialIDs),
@@ -220,16 +436,21 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 		invoiceDate = time.Now()
 	}
 	invoice := &models.Invoice{
+		ID:                uuid.NewString(),
 		BusinessID:        input.BusinessID,
-		CustomerID:        input.CustomerID,
+		CustomerID:        stringPointer(input.CustomerID),
 		ProjectID:         projectIDPointer(projectID),
 		PriceListID:       priceListID,
 		RenderProfileID:   stringPointer(input.RenderProfileID),
-		InvoiceNo:         invoiceNo,
-		Status:            "draft",
+		Status:            models.InvoiceStatusDraft,
+		Origin:            input.Origin,
+		Version:           1,
+		SellerSnapshot:    businessPartySnapshot(business),
+		BuyerSnapshot:     firstInvoiceBuyerSnapshot(customer, input.BuyerSnapshot),
 		InvoiceDate:       invoiceDate,
 		DueDate:           input.DueDate,
 		Subtotal:          subtotal,
+		Discount:          discountTotal,
 		Tax:               taxTotal + cessTotal,
 		Total:             subtotal + taxTotal + cessTotal,
 		BalanceDue:        subtotal + taxTotal + cessTotal,
@@ -237,7 +458,7 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 		CustomFields:      mustMarshalMap(customFields),
 		AdditionalCharges: mustMarshalAny(input.AdditionalCharges, "[]"),
 		TaxProfile:        mustMarshalMap(taxProfileToMap(input.TaxProfile)),
-		Currency:          "USD",
+		Currency:          defaultCurrency(firstNonEmpty(input.Currency, business.Currency)),
 		Items:             items,
 	}
 	if input.OriginSubscriptionID != "" {
@@ -247,52 +468,46 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 		invoice.OriginRunID = &input.OriginRunID
 	}
 
-	if err := s.repo.Create(ctx, invoice); err != nil {
+	for _, item := range invoice.Items {
+		item.ID = uuid.NewString()
+		item.InvoiceID = invoice.ID
+	}
+	document := invoiceDocumentProjection(invoice)
+	activity := &models.ActivityLog{
+		BusinessID: invoice.BusinessID,
+		ActorID:    actor.UserID,
+		ActorRole:  actor.Role,
+		RequestID:  actor.RequestID,
+		IPAddress:  actor.IPAddress,
+		EntityType: "invoice",
+		EntityID:   invoice.ID,
+		Action:     "created",
+		Snapshot:   mustMarshalAny(invoice, "{}"),
+		Diff:       "{}",
+		Metadata:   "{}",
+	}
+	result, err := s.repo.CreateDraftAtomic(ctx, interfaces.AtomicInvoiceDraft{
+		BusinessID:     invoice.BusinessID,
+		Command:        "invoice.create",
+		IdempotencyKey: input.IdempotencyKey,
+		RequestHash:    requestHash,
+		Invoice:        invoice,
+		Document:       document,
+		Activity:       activity,
+	})
+	if err != nil {
 		return nil, fmt.Errorf("failed to create invoice: %w", err)
 	}
-	hydrateInvoiceEditorFields(invoice)
-	if s.documents != nil {
-		if err := s.documents.MirrorLegacyInvoice(ctx, invoice); err != nil {
-			s.log.Error("failed to mirror invoice into documents", "invoice_id", invoice.ID, "error", err)
-		}
+	if result == nil || result.Invoice == nil {
+		return nil, fmt.Errorf("failed to create invoice: atomic repository returned no result")
 	}
-	_ = recordActivityLog(ctx, s.db, invoice.BusinessID, "invoice", invoice.ID, "created", "", invoice, nil, nil)
-
-	go s.queuePDFGeneration(invoice.ID)
-
-	return invoice, nil
+	hydrateInvoiceEditorFields(result.Invoice)
+	return result.Invoice, nil
 }
 
 func (s *InvoiceService) CreateByBusiness(ctx context.Context, businessID string, input CreateInvoiceInput) (*models.Invoice, error) {
 	input.BusinessID = businessID
 	return s.Create(ctx, input)
-}
-
-func (s *InvoiceService) generateInvoiceNumber(ctx context.Context, businessID string) (string, error) {
-	year := time.Now().Year()
-	prefix := fmt.Sprintf("INV-%d-", year)
-	return prefix + fmt.Sprintf("%06d", time.Now().UnixNano()%1000000), nil
-}
-
-func (s *InvoiceService) queuePDFGeneration(invoiceID string) {
-	ctx := context.Background()
-	message := map[string]string{
-		"type":       "generate_pdf",
-		"invoice_id": invoiceID,
-	}
-	body, err := json.Marshal(message)
-	if err != nil {
-		s.log.Error("failed to marshal PDF generation message", "invoice_id", invoiceID, "error", err)
-		return
-	}
-
-	_, err = s.sqs.SendMessage(ctx, &sqs.SendMessageInput{
-		QueueUrl:    aws.String(s.cfg.SQS.InvoiceQueue),
-		MessageBody: aws.String(string(body)),
-	})
-	if err != nil {
-		s.log.Error("failed to queue PDF generation", "invoice_id", invoiceID, "error", err)
-	}
 }
 
 func (s *InvoiceService) GetByBusiness(ctx context.Context, businessID, id string) (*models.Invoice, error) {
@@ -314,15 +529,20 @@ func (s *InvoiceService) GetForWorker(ctx context.Context, id string) (*models.I
 	return invoice, nil
 }
 
-func (s *InvoiceService) List(ctx context.Context, businessID string, page, limit int) ([]*models.Invoice, int64, error) {
-	invoices, total, err := s.repo.GetByBusinessID(ctx, businessID, page, limit)
+func (s *InvoiceService) List(
+	ctx context.Context,
+	businessID string,
+	cursor *invoicecursor.Position,
+	limit int,
+) ([]*models.Invoice, bool, error) {
+	invoices, hasMore, err := s.repo.ListByCursor(ctx, businessID, cursor, limit)
 	if err != nil {
-		return nil, 0, err
+		return nil, false, err
 	}
 	for _, invoice := range invoices {
 		hydrateInvoiceEditorFields(invoice)
 	}
-	return invoices, total, nil
+	return invoices, hasMore, nil
 }
 
 type UpdateInvoiceInput struct {
@@ -413,7 +633,27 @@ func (s *InvoiceService) UpdateByBusiness(ctx context.Context, businessID, id st
 	}
 	hydrateInvoiceEditorFields(invoice)
 
-	if err := s.repo.Update(ctx, invoice); err != nil {
+	if invoice.Status == models.InvoiceStatusDraft {
+		expectedVersion := invoice.Version
+		if expectedVersion < 1 {
+			expectedVersion = 1
+		}
+		updater, ok := s.repo.(interfaces.VersionedInvoiceDraftMetadataUpdater)
+		if !ok {
+			if s.db != nil {
+				return nil, fmt.Errorf("versioned draft metadata repository is not configured")
+			}
+			invoice.Version = expectedVersion + 1
+			if err := s.repo.Update(ctx, invoice); err != nil {
+				return nil, err
+			}
+		} else {
+			invoice.Version = expectedVersion + 1
+			if err := updater.UpdateDraftMetadataVersioned(ctx, invoice, expectedVersion); err != nil {
+				return nil, err
+			}
+		}
+	} else if err := s.repo.Update(ctx, invoice); err != nil {
 		return nil, err
 	}
 	if s.documents != nil {
@@ -588,7 +828,13 @@ func (s *InvoiceService) SendByBusiness(ctx context.Context, businessID, id stri
 		return err
 	}
 
-	customer, err := s.customerRepo.GetByID(ctx, invoice.CustomerID, businessID)
+	if invoice.Status == models.InvoiceStatusDraft || invoice.InvoiceNo == nil || invoice.IssuedAt == nil {
+		return models.ErrInvalidInvoiceLifecycle
+	}
+	if invoice.CustomerID == nil {
+		return models.ErrInvoiceCustomerRequired
+	}
+	customer, err := s.customerRepo.GetByID(ctx, *invoice.CustomerID, businessID)
 	if err != nil {
 		return err
 	}
@@ -606,9 +852,151 @@ func (s *InvoiceService) SendByBusiness(ctx context.Context, businessID, id stri
 	}
 	_ = recordActivityLog(ctx, s.db, businessID, "invoice", invoice.ID, "sent", "", invoice, nil, nil)
 
-	subject := fmt.Sprintf("Invoice %s", invoice.InvoiceNo)
-	body := fmt.Sprintf("Please find attached invoice %s for amount %s%.2f", invoice.InvoiceNo, invoice.Currency, invoice.Total)
+	subject := fmt.Sprintf("Invoice %s", models.StringValue(invoice.InvoiceNo))
+	body := fmt.Sprintf("Please find attached invoice %s for amount %s%.2f", models.StringValue(invoice.InvoiceNo), invoice.Currency, invoice.Total)
 	return s.email.SendEmail(ctx, customer.Email, subject, body)
+}
+
+var ErrInvoicePDFNotReady = errors.New("invoice PDF is not ready")
+
+type InvoiceRenderStatus struct {
+	ID                   string            `json:"id"`
+	InvoiceID            string            `json:"invoice_id"`
+	Kind                 models.RenderKind `json:"kind"`
+	SourceInvoiceVersion int               `json:"source_invoice_version"`
+	Status               string            `json:"status"`
+	CreatedAt            time.Time         `json:"created_at"`
+	UpdatedAt            time.Time         `json:"updated_at"`
+	CompletedAt          *time.Time        `json:"completed_at"`
+}
+
+type InvoicePDFDownload struct {
+	DownloadURL string    `json:"download_url"`
+	ExpiresAt   time.Time `json:"expires_at"`
+}
+
+func (s *InvoiceService) GetRenderStatusByBusiness(
+	ctx context.Context,
+	businessID, invoiceID, renderJobID string,
+) (*InvoiceRenderStatus, error) {
+	canonicalBusinessID, canonicalInvoiceID, canonicalJobID, err := canonicalInvoiceRenderIDs(
+		businessID,
+		invoiceID,
+		renderJobID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if s.invoiceRenders == nil {
+		return nil, errors.New("invoice render reader is not configured")
+	}
+	job, err := s.invoiceRenders.GetInvoiceRenderJob(
+		ctx,
+		canonicalBusinessID,
+		canonicalInvoiceID,
+		canonicalJobID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if job == nil || job.ID != canonicalJobID || job.BusinessID != canonicalBusinessID ||
+		job.InvoiceID == nil || *job.InvoiceID != canonicalInvoiceID {
+		return nil, interfaces.ErrInvoiceRenderNotFound
+	}
+	sourceVersion := 0
+	if job.SourceInvoiceVersion != nil {
+		sourceVersion = *job.SourceInvoiceVersion
+	}
+	return &InvoiceRenderStatus{
+		ID:                   job.ID,
+		InvoiceID:            canonicalInvoiceID,
+		Kind:                 job.Kind,
+		SourceInvoiceVersion: sourceVersion,
+		Status:               job.Status,
+		CreatedAt:            job.CreatedAt,
+		UpdatedAt:            job.UpdatedAt,
+		CompletedAt:          job.CompletedAt,
+	}, nil
+}
+
+func (s *InvoiceService) GetPDFDownloadByBusiness(
+	ctx context.Context,
+	businessID, invoiceID string,
+) (*InvoicePDFDownload, error) {
+	canonicalBusinessID, canonicalInvoiceID, _, err := canonicalInvoiceRenderIDs(
+		businessID,
+		invoiceID,
+		uuid.Nil.String(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	invoice, err := s.GetByBusiness(ctx, canonicalBusinessID, canonicalInvoiceID)
+	if err != nil {
+		return nil, err
+	}
+	if s.invoiceRenders == nil {
+		return nil, errors.New("invoice render reader is not configured")
+	}
+	job, err := s.invoiceRenders.GetCompletedFinalRenderJob(
+		ctx,
+		canonicalBusinessID,
+		canonicalInvoiceID,
+		invoice.Version,
+	)
+	if err != nil {
+		if errors.Is(err, interfaces.ErrInvoiceRenderNotFound) {
+			return nil, ErrInvoicePDFNotReady
+		}
+		return nil, err
+	}
+	if job == nil || job.BusinessID != canonicalBusinessID ||
+		job.InvoiceID == nil || *job.InvoiceID != canonicalInvoiceID ||
+		job.Kind != models.RenderKindFinal ||
+		job.SourceInvoiceVersion == nil || *job.SourceInvoiceVersion != invoice.Version ||
+		job.Status != models.RenderJobStatusCompleted ||
+		strings.TrimSpace(job.ObjectKey) == "" {
+		return nil, ErrInvoicePDFNotReady
+	}
+	if s.pdfPresigner == nil || s.cfg == nil || strings.TrimSpace(s.cfg.S3.BucketInvoices) == "" {
+		return nil, errors.New("invoice PDF presigner is not configured")
+	}
+	const expirySeconds int64 = 300
+	issuedAt := time.Now().UTC()
+	url, err := s.pdfPresigner.GeneratePresignedDownloadURL(
+		ctx,
+		s.cfg.S3.BucketInvoices,
+		job.ObjectKey,
+		expirySeconds,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(url) == "" {
+		return nil, errors.New("invoice PDF presigner returned an empty URL")
+	}
+	return &InvoicePDFDownload{
+		DownloadURL: url,
+		ExpiresAt:   issuedAt.Add(time.Duration(expirySeconds) * time.Second),
+	}, nil
+}
+
+func canonicalInvoiceRenderIDs(
+	businessID, invoiceID, renderJobID string,
+) (string, string, string, error) {
+	parsedBusinessID, err := uuid.Parse(strings.TrimSpace(businessID))
+	if err != nil {
+		return "", "", "", &idempotency.InvalidPayloadError{}
+	}
+	parsedInvoiceID, err := uuid.Parse(strings.TrimSpace(invoiceID))
+	if err != nil {
+		return "", "", "", &idempotency.InvalidPayloadError{}
+	}
+	parsedJobID, err := uuid.Parse(strings.TrimSpace(renderJobID))
+	if err != nil {
+		return "", "", "", &idempotency.InvalidPayloadError{}
+	}
+	return parsedBusinessID.String(), parsedInvoiceID.String(), parsedJobID.String(), nil
 }
 
 func (s *InvoiceService) GetPDFURLByBusiness(ctx context.Context, businessID, invoiceID string) (string, error) {
@@ -620,10 +1008,6 @@ func (s *InvoiceService) GetPDFURLByBusiness(ctx context.Context, businessID, in
 		return invoice.PDFURL, nil
 	}
 	return "", fmt.Errorf("PDF not yet generated")
-}
-
-func (s *InvoiceService) GetNextNumber(ctx context.Context, businessID string) (string, error) {
-	return s.generateInvoiceNumber(ctx, businessID)
 }
 
 // UpdatePDFUrl is called by the internal worker (no tenant context).
@@ -641,254 +1025,3 @@ func (s *InvoiceService) UpdatePDFUrl(ctx context.Context, invoiceID, pdfURL str
 }
 
 type Invoice = models.Invoice
-
-// InvoiceServiceTestable is a test-friendly version of InvoiceService
-type InvoiceServiceTestable struct {
-	cfg          *config.Config
-	repo         InvoiceRepositoryTestable
-	productRepo  interfaces.ProductRepository
-	customerRepo CustomerRepositoryTestable
-	sqs          SQSServiceTestable
-	s3           *S3Service
-	email        EmailServiceTestable
-	log          *logger.Logger
-}
-
-// InvoiceRepositoryTestable is the testable interface for InvoiceRepository
-type InvoiceRepositoryTestable interface {
-	Create(ctx context.Context, invoice *models.Invoice) error
-	GetByID(ctx context.Context, id, businessID string) (*models.Invoice, error)
-	GetByIDInternal(ctx context.Context, id string) (*models.Invoice, error)
-	GetByInvoiceNo(ctx context.Context, businessID, invoiceNo string) (*models.Invoice, error)
-	GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.Invoice, int64, error)
-	GetItems(ctx context.Context, invoiceID string) ([]*models.InvoiceItem, error)
-	Update(ctx context.Context, invoice *models.Invoice) error
-	UpdateStatus(ctx context.Context, invoiceID string, status string) error
-	UpdatePDFURL(ctx context.Context, invoiceID, pdfURL string) error
-	Delete(ctx context.Context, id string) error
-}
-
-// CustomerRepositoryTestable is the testable interface for CustomerRepository
-type CustomerRepositoryTestable interface {
-	Create(ctx context.Context, customer *models.Customer) error
-	GetByID(ctx context.Context, id, businessID string) (*models.Customer, error)
-	GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.Customer, int64, error)
-	Update(ctx context.Context, customer *models.Customer) error
-	Delete(ctx context.Context, id string) error
-}
-
-// SQSServiceTestable is the testable interface for SQS operations
-type SQSServiceTestable interface {
-	SendMessage(ctx context.Context, queueUrl string, message interface{}) error
-}
-
-// EmailServiceTestable is the testable interface for EmailService
-type EmailServiceTestable interface {
-	SendEmail(ctx context.Context, to, subject, body string) error
-}
-
-// NewInvoiceServiceForTesting creates an InvoiceServiceTestable for unit testing
-func NewInvoiceServiceForTesting(
-	repo InvoiceRepositoryTestable,
-	productRepo interfaces.ProductRepository,
-	customerRepo CustomerRepositoryTestable,
-	sqs SQSServiceTestable,
-	s3 *S3Service,
-	email EmailServiceTestable,
-	log *logger.Logger,
-) *InvoiceServiceTestable {
-	return &InvoiceServiceTestable{
-		cfg:          nil,
-		repo:         repo,
-		productRepo:  productRepo,
-		customerRepo: customerRepo,
-		sqs:          sqs,
-		s3:           s3,
-		email:        email,
-		log:          log,
-	}
-}
-
-// Create creates an invoice (testable version)
-func (s *InvoiceServiceTestable) Create(ctx context.Context, input CreateInvoiceInput) (*models.Invoice, error) {
-	if input.RenderProfileID != "" {
-		normalized, err := normalizeRenderProfileID(input.RenderProfileID)
-		if err != nil {
-			return nil, err
-		}
-		input.RenderProfileID = normalized
-	}
-	_, err := s.customerRepo.GetByID(ctx, input.CustomerID, input.BusinessID)
-	if err != nil {
-		return nil, fmt.Errorf("customer not found: %w", err)
-	}
-
-	invoiceNo, err := s.generateInvoiceNumber(ctx, input.BusinessID)
-	if err != nil {
-		return nil, err
-	}
-
-	var subtotal, taxTotal float64
-	items := make([]*models.InvoiceItem, len(input.Items))
-
-	for i, item := range input.Items {
-		itemSubtotal := item.Quantity * item.UnitPrice
-		itemTax := itemSubtotal * (item.TaxRate / 100)
-		subtotal += itemSubtotal
-		taxTotal += itemTax
-
-		var productID *string
-		if item.ProductID != "" {
-			productID = &item.ProductID
-		}
-
-		items[i] = &models.InvoiceItem{
-			ProductID:   productID,
-			Description: item.Description,
-			HSNSACCode:  item.HSNSACCode,
-			Unit:        gst.CanonicalSnapshotUQC(item.Unit, ""),
-			Quantity:    item.Quantity,
-			UnitPrice:   item.UnitPrice,
-			TaxRate:     item.TaxRate,
-			Total:       itemSubtotal + itemTax,
-		}
-	}
-
-	invoice := &models.Invoice{
-		BusinessID:      input.BusinessID,
-		CustomerID:      input.CustomerID,
-		RenderProfileID: stringPointer(input.RenderProfileID),
-		InvoiceNo:       invoiceNo,
-		Status:          "draft",
-		InvoiceDate:     time.Now(),
-		DueDate:         input.DueDate,
-		Subtotal:        subtotal,
-		Tax:             taxTotal,
-		Total:           subtotal + taxTotal,
-		BalanceDue:      subtotal + taxTotal,
-		Notes:           input.Notes,
-		Currency:        "USD",
-		Items:           items,
-	}
-
-	if err := s.repo.Create(ctx, invoice); err != nil {
-		return nil, fmt.Errorf("failed to create invoice: %w", err)
-	}
-
-	if s.sqs != nil {
-		_ = s.queuePDFGeneration(ctx, invoice.ID)
-	}
-
-	return invoice, nil
-}
-
-// GetByBusiness retrieves an invoice by business ID and invoice ID
-func (s *InvoiceServiceTestable) GetByBusiness(ctx context.Context, businessID, id string) (*models.Invoice, error) {
-	return s.repo.GetByID(ctx, id, businessID)
-}
-
-// List retrieves invoices for a business with pagination
-func (s *InvoiceServiceTestable) List(ctx context.Context, businessID string, page, limit int) ([]*models.Invoice, int64, error) {
-	return s.repo.GetByBusinessID(ctx, businessID, page, limit)
-}
-
-// UpdateByBusiness updates an invoice (testable version)
-func (s *InvoiceServiceTestable) UpdateByBusiness(ctx context.Context, businessID, id string, input UpdateInvoiceInput) (*models.Invoice, error) {
-	invoice, err := s.GetByBusiness(ctx, businessID, id)
-	if err != nil {
-		return nil, err
-	}
-
-	if !isInvoiceEditableStatus(invoice.Status) {
-		return nil, fmt.Errorf("cannot update invoice with status: %s", invoice.Status)
-	}
-
-	if !input.DueDate.IsZero() {
-		invoice.DueDate = input.DueDate
-	}
-	if input.Notes != "" {
-		invoice.Notes = input.Notes
-	}
-	if input.RenderProfileID != nil {
-		if strings.TrimSpace(*input.RenderProfileID) == "" {
-			invoice.RenderProfileID = nil
-		} else {
-			value, err := normalizeRenderProfileID(*input.RenderProfileID)
-			if err != nil {
-				return nil, err
-			}
-			invoice.RenderProfileID = &value
-		}
-	}
-
-	if err := s.repo.Update(ctx, invoice); err != nil {
-		return nil, err
-	}
-	return invoice, nil
-}
-
-// DeleteByBusiness deletes an invoice (testable version)
-func (s *InvoiceServiceTestable) DeleteByBusiness(ctx context.Context, businessID, id string) error {
-	invoice, err := s.GetByBusiness(ctx, businessID, id)
-	if err != nil {
-		return err
-	}
-	if invoice.Status != "draft" {
-		return fmt.Errorf("cannot delete invoice with status: %s", invoice.Status)
-	}
-	return s.repo.Delete(ctx, invoice.ID)
-}
-
-// SendByBusiness sends an invoice email (testable version)
-func (s *InvoiceServiceTestable) SendByBusiness(ctx context.Context, businessID, id string) error {
-	invoice, err := s.GetByBusiness(ctx, businessID, id)
-	if err != nil {
-		return err
-	}
-
-	customer, err := s.customerRepo.GetByID(ctx, invoice.CustomerID, businessID)
-	if err != nil {
-		return err
-	}
-
-	if err := s.repo.UpdateStatus(ctx, id, "sent"); err != nil {
-		return err
-	}
-
-	subject := fmt.Sprintf("Invoice %s", invoice.InvoiceNo)
-	body := fmt.Sprintf("Please find attached invoice %s for amount %s%.2f", invoice.InvoiceNo, invoice.Currency, invoice.Total)
-	return s.email.SendEmail(ctx, customer.Email, subject, body)
-}
-
-// GetPDFURLByBusiness gets the PDF URL for an invoice
-func (s *InvoiceServiceTestable) GetPDFURLByBusiness(ctx context.Context, businessID, invoiceID string) (string, error) {
-	invoice, err := s.GetByBusiness(ctx, businessID, invoiceID)
-	if err != nil {
-		return "", err
-	}
-	if invoice.PDFURL != "" {
-		return invoice.PDFURL, nil
-	}
-	return "", fmt.Errorf("PDF not yet generated")
-}
-
-// GetNextNumber generates the next invoice number
-func (s *InvoiceServiceTestable) GetNextNumber(ctx context.Context, businessID string) (string, error) {
-	return s.generateInvoiceNumber(ctx, businessID)
-}
-
-// queuePDFGeneration queues PDF generation (testable version)
-func (s *InvoiceServiceTestable) queuePDFGeneration(ctx context.Context, invoiceID string) error {
-	message := map[string]string{
-		"type":       "generate_pdf",
-		"invoice_id": invoiceID,
-	}
-	return s.sqs.SendMessage(ctx, "invoice-queue", message)
-}
-
-// generateInvoiceNumber generates a unique invoice number
-func (s *InvoiceServiceTestable) generateInvoiceNumber(ctx context.Context, businessID string) (string, error) {
-	year := time.Now().Year()
-	prefix := fmt.Sprintf("INV-%d-", year)
-	return prefix + fmt.Sprintf("%06d", time.Now().UnixNano()%1000000), nil
-}

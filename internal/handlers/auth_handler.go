@@ -505,16 +505,18 @@ func (h *AuthHandler) PhoneLogout(c *gin.Context) {
 func (h *AuthHandler) GoogleLogin(c *gin.Context) {
 	userId := middleware.GetUserID(c)
 	email := middleware.GetEmail(c)
+	emailVerified := middleware.GetEmailVerified(c)
 	name := middleware.GetName(c)
 	picture := middleware.GetPicture(c)
-	if userId == "" || email == "" {
-		h.log.Error("google login failed: missing user_id or email from token", "user_id", userId, "email", email)
+	if userId == "" || email == "" || !emailVerified {
+		h.log.Error("google login failed: invalid identity claims", "user_id", userId, "email", email, "email_verified", emailVerified)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token claims"})
 		return
 	}
 
 	input := services.SyncGoogleUserInput{
 		Email:             email,
+		EmailVerified:     emailVerified,
 		CognitoID:         userId,
 		Name:              name,
 		ProfilePictureURL: picture,

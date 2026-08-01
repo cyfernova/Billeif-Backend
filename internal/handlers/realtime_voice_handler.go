@@ -81,9 +81,19 @@ func (h *RealtimeVoiceHandler) Handle(c *gin.Context) {
 		UserID:         userID,
 		BusinessID:     businessID,
 		ConversationID: strings.TrimSpace(c.Query("conversation_id")),
+		AccessToken:    bearerTokenFromAuthorizationHeader(c.GetHeader("Authorization")),
 		Voice:          strings.TrimSpace(c.Query("voice")),
 		Language:       strings.TrimSpace(c.Query("language")),
 	})
+}
+
+func bearerTokenFromAuthorizationHeader(header string) string {
+	trimmed := strings.TrimSpace(header)
+	parts := strings.SplitN(trimmed, " ", 2)
+	if len(parts) == 2 && strings.EqualFold(parts[0], "bearer") {
+		return strings.TrimSpace(parts[1])
+	}
+	return trimmed
 }
 
 func firstNonEmpty(values ...string) string {

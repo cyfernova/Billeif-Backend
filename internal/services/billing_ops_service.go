@@ -34,6 +34,23 @@ type BillingOpsService struct {
 
 var ErrInvalidPartyGroupMember = errors.New("invalid party group member")
 
+func rejectInvoiceSubscriptionAutoSend(autoSend bool) error {
+	if !autoSend {
+		return nil
+	}
+	return fmt.Errorf("invoice subscription auto-send requires the issue and delivery workflow: %w", models.ErrInvalidInvoiceLifecycle)
+}
+
+func validateInvoiceSubscriptionGeneration(subscription *models.InvoiceSubscription) error {
+	if subscription.Status != models.InvoiceSubscriptionStatusActive {
+		return fmt.Errorf("invoice subscription is not active")
+	}
+	if err := rejectInvoiceSubscriptionAutoSend(subscription.AutoSend); err != nil {
+		return err
+	}
+	return nil
+}
+
 func NewBillingOpsService(
 	cfg *config.Config,
 	db *gorm.DB,
@@ -716,7 +733,7 @@ func (s *BillingOpsService) SignInvoice(ctx context.Context, businessID, invoice
 		BusinessID:         businessID,
 		InvoiceID:          &invoice.ID,
 		SignatureProfileID: profile.ID,
-		FileName:           fmt.Sprintf("signed-%s.pdf", strings.ToLower(invoice.InvoiceNo)),
+		FileName:           fmt.Sprintf("signed-%s.pdf", strings.ToLower(models.StringValue(invoice.InvoiceNo))),
 		FileKey:            path.Join("signed-documents", businessID, "invoices", invoice.ID, fmt.Sprintf("%d.pdf", now.UnixNano())),
 		SourcePDFURL:       invoice.PDFURL,
 		SignedPDFURL:       invoice.PDFURL,
@@ -1004,6 +1021,9 @@ type UpdateInvoiceSubscriptionInput struct {
 }
 
 func (s *BillingOpsService) CreateInvoiceSubscription(ctx context.Context, input CreateInvoiceSubscriptionInput) (*models.InvoiceSubscription, error) {
+	if err := rejectInvoiceSubscriptionAutoSend(input.AutoSend); err != nil {
+		return nil, err
+	}
 	if s.db == nil {
 		return nil, fmt.Errorf("database is not configured")
 	}
@@ -1135,6 +1155,11 @@ func (s *BillingOpsService) ListInvoiceSubscriptions(ctx context.Context, busine
 }
 
 func (s *BillingOpsService) UpdateInvoiceSubscription(ctx context.Context, businessID, id string, input UpdateInvoiceSubscriptionInput) (*models.InvoiceSubscription, error) {
+	if input.AutoSend != nil {
+		if err := rejectInvoiceSubscriptionAutoSend(*input.AutoSend); err != nil {
+			return nil, err
+		}
+	}
 	if s.db == nil {
 		return nil, fmt.Errorf("database is not configured")
 	}
@@ -1515,6 +1540,11 @@ func (s *BillingOpsService) DispatchDueInvoiceSubscriptions(ctx context.Context,
 		Find(&subscriptions).Error; err != nil {
 		return nil, err
 	}
+	for i := range subscriptions {
+		if err := rejectInvoiceSubscriptionAutoSend(subscriptions[i].AutoSend); err != nil {
+			return nil, fmt.Errorf("dispatch invoice subscription %s: %w", subscriptions[i].ID, err)
+		}
+	}
 	dispatched := make([]*models.InvoiceSubscriptionRun, 0, len(subscriptions))
 	for _, subscription := range subscriptions {
 		nextRunAt, err := cadenceNextRun(now, subscription.Cadence, subscription.Timezone)
@@ -1555,8 +1585,8 @@ func (s *BillingOpsService) GenerateInvoiceSubscriptionNow(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	if subscription.Status != models.InvoiceSubscriptionStatusActive {
-		return nil, fmt.Errorf("invoice subscription is not active")
+	if err := validateInvoiceSubscriptionGeneration(subscription); err != nil {
+		return nil, err
 	}
 	scheduledFor := time.Now().UTC()
 	run := &models.InvoiceSubscriptionRun{
@@ -1570,44 +1600,11 @@ func (s *BillingOpsService) GenerateInvoiceSubscriptionNow(ctx context.Context, 
 	if err := s.db.WithContext(ctx).Create(run).Error; err != nil {
 		return nil, err
 	}
-	items := make([]CreateInvoiceItemInput, 0, len(subscription.Lines))
-	for _, line := range subscription.Lines {
-		unitPrice := line.UnitPrice
-		mrp := line.MRP
-		cessRate := line.CessRate
-		if subscription.PricePolicy == models.InvoiceSubscriptionPricePolicyFollow {
-			pricing, err := resolveLinePricing(ctx, s.db, s.productRepo, businessID, subscription.PriceListID, pointerStringValue(line.ProductID), pointerStringValue(line.VariantID), line.WarehouseID)
-			if err != nil {
-				return nil, err
-			}
-			if pricing.UnitPrice > 0 {
-				unitPrice = pricing.UnitPrice
-			}
-			if pricing.MRP > 0 {
-				mrp = pricing.MRP
-			}
-			if pricing.CessRate > 0 {
-				cessRate = pricing.CessRate
-			}
-		}
-		items = append(items, CreateInvoiceItemInput{
-			ProductID:      pointerStringValue(line.ProductID),
-			VariantID:      pointerStringValue(line.VariantID),
-			WarehouseID:    pointerStringValue(line.WarehouseID),
-			Description:    line.Description,
-			Quantity:       line.Quantity,
-			FreeQuantity:   line.FreeQuantity,
-			UnitPrice:      unitPrice,
-			MRP:            mrp,
-			TaxRate:        line.TaxRate,
-			CessRate:       cessRate,
-			CustomFields:   unmarshalJSONMap(line.CustomFields),
-			ChargeSnapshot: readMapSliceString(line.AdditionalCharge),
-		})
-	}
+	items := invoiceSubscriptionCreateItems(subscription)
 	input := CreateInvoiceInput{
 		BusinessID:           businessID,
 		CustomerID:           subscription.CustomerID,
+		IdempotencyKey:       run.ID,
 		DueDate:              scheduledFor.AddDate(0, 0, 30),
 		Notes:                subscription.Notes,
 		Items:                items,
@@ -1622,9 +1619,6 @@ func (s *BillingOpsService) GenerateInvoiceSubscriptionNow(ctx context.Context, 
 			Where("id = ?", run.ID).
 			Updates(map[string]interface{}{"status": models.BulkJobStatusFailed, "last_error": lastError}).Error
 		return nil, err
-	}
-	if subscription.AutoSend {
-		_ = s.invoices.SendByBusiness(ctx, businessID, invoice.ID)
 	}
 	nextRunAt, cadenceErr := cadenceNextRun(scheduledFor, subscription.Cadence, subscription.Timezone)
 	if cadenceErr != nil {
@@ -1652,6 +1646,42 @@ func (s *BillingOpsService) GenerateInvoiceSubscriptionNow(ctx context.Context, 
 	}
 	_ = recordActivityLog(ctx, s.db, businessID, "invoice_subscription", subscription.ID, "generated", "", run, nil, map[string]interface{}{"invoice_id": invoice.ID})
 	return run, nil
+}
+
+func invoiceSubscriptionCreateItems(subscription *models.InvoiceSubscription) []CreateInvoiceItemInput {
+	if subscription == nil {
+		return nil
+	}
+	items := make([]CreateInvoiceItemInput, 0, len(subscription.Lines))
+	for _, line := range subscription.Lines {
+		if line == nil {
+			continue
+		}
+		unitPrice := line.UnitPrice
+		mrp := line.MRP
+		cessRate := line.CessRate
+		if subscription.PricePolicy == models.InvoiceSubscriptionPricePolicyFollow {
+			unitPrice = 0
+			mrp = 0
+			cessRate = 0
+		}
+		items = append(items, CreateInvoiceItemInput{
+			ProductID:      pointerStringValue(line.ProductID),
+			VariantID:      pointerStringValue(line.VariantID),
+			WarehouseID:    pointerStringValue(line.WarehouseID),
+			Description:    line.Description,
+			Quantity:       line.Quantity,
+			FreeQuantity:   line.FreeQuantity,
+			UnitPrice:      unitPrice,
+			MRP:            mrp,
+			Discount:       line.DiscountAmount,
+			TaxRate:        line.TaxRate,
+			CessRate:       cessRate,
+			CustomFields:   unmarshalJSONMap(line.CustomFields),
+			ChargeSnapshot: readMapSliceString(line.AdditionalCharge),
+		})
+	}
+	return items
 }
 
 func readMapSliceString(raw string) []map[string]interface{} {

@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -20,19 +21,35 @@ import (
 )
 
 type DocumentService struct {
-	db            *gorm.DB
-	cfg           *config.Config
-	repo          interfaces.DocumentRepository
-	businessRepo  interfaces.BusinessRepository
-	customerRepo  interfaces.CustomerRepository
-	vendorRepo    interfaces.VendorRepository
-	productRepo   interfaces.ProductRepository
-	inventory     *InventoryService
-	journals      *JournalService
-	shipping      *ShippingService
-	taxCompliance *TaxComplianceService
-	sqs           *sqs.Client
-	log           *logger.Logger
+	db                 *gorm.DB
+	cfg                *config.Config
+	repo               interfaces.DocumentRepository
+	businessRepo       interfaces.BusinessRepository
+	customerRepo       interfaces.CustomerRepository
+	vendorRepo         interfaces.VendorRepository
+	productRepo        interfaces.ProductRepository
+	inventory          *InventoryService
+	journals           *JournalService
+	shipping           *ShippingService
+	taxCompliance      *TaxComplianceService
+	salesInvoices      salesInvoiceDocumentCreator
+	salesInvoiceIssuer salesInvoiceDocumentIssuer
+	sqs                *sqs.Client
+	log                *logger.Logger
+}
+
+func (s *DocumentService) IssueSalesDocumentByBusiness(
+	ctx context.Context,
+	businessID, documentType, documentID string,
+	input IssueInvoiceInput,
+) (*IssueInvoiceResult, error) {
+	if documentType != models.DocumentTypeSalesInvoice {
+		return nil, fmt.Errorf("generic issuance is not supported for document type %q", documentType)
+	}
+	if s.salesInvoiceIssuer == nil {
+		return nil, fmt.Errorf("canonical sales invoice issuer is not configured")
+	}
+	return s.salesInvoiceIssuer.IssueSalesInvoiceDocument(ctx, businessID, documentID, input)
 }
 
 type CreateDocumentLineInput struct {
@@ -59,6 +76,7 @@ type CreateDocumentLineInput struct {
 
 type CreateDocumentInput struct {
 	BusinessID           string                    `json:"business_id,omitempty"`
+	IdempotencyKey       string                    `json:"-"`
 	BranchID             string                    `json:"branch_id,omitempty" binding:"omitempty,uuid"`
 	PartyID              string                    `json:"party_id"`
 	PartyType            string                    `json:"party_type"`
@@ -206,6 +224,12 @@ func (s *DocumentService) AttachTaxComplianceService(taxCompliance *TaxComplianc
 }
 
 func (s *DocumentService) CreateByType(ctx context.Context, businessID, documentType string, input CreateDocumentInput) (*models.Document, error) {
+	if documentType == models.DocumentTypeSalesInvoice {
+		if s.salesInvoices == nil {
+			return nil, fmt.Errorf("canonical sales invoice creator is not configured")
+		}
+		return s.salesInvoices.CreateSalesInvoiceDocument(ctx, businessID, input)
+	}
 	document, err := s.buildDocument(ctx, businessID, documentType, input)
 	if err != nil {
 		return nil, err
@@ -229,6 +253,13 @@ func (s *DocumentService) CreateByType(ctx context.Context, businessID, document
 	s.recordRevision(ctx, document, "created", nil)
 	_ = recordActivityLog(ctx, s.db, businessID, "document", document.ID, "created", "", document, nil, nil)
 	return document, nil
+}
+
+func (s *DocumentService) createPOSSalesInvoice(ctx context.Context, businessID string, input CreateInvoiceInput) (*models.Document, error) {
+	if s.salesInvoices == nil {
+		return nil, fmt.Errorf("canonical sales invoice creator is not configured")
+	}
+	return s.salesInvoices.createPOSSalesInvoiceDocument(ctx, businessID, input)
 }
 
 func (s *DocumentService) buildDocument(ctx context.Context, businessID, documentType string, input CreateDocumentInput) (*models.Document, error) {
@@ -621,7 +652,7 @@ func (s *DocumentService) UpdateByType(ctx context.Context, businessID, id, docu
 	existing.CessTotal = rebuilt.CessTotal
 	existing.Total = rebuilt.Total
 	existing.BalanceDue = rebuilt.Total - existing.PaidAmount
-	if err := s.repo.Update(ctx, existing); err != nil {
+	if err := s.repo.UpdateDraft(ctx, existing); err != nil {
 		return nil, err
 	}
 	if err := s.syncDocumentWithholdings(ctx, existing, input.Withholdings); err != nil {
@@ -935,7 +966,7 @@ func (s *DocumentService) RequestRenderByBusiness(ctx context.Context, businessI
 		return nil, err
 	}
 	job := &models.DocumentRenderJob{
-		DocumentID:      document.ID,
+		DocumentID:      models.StringPointer(document.ID),
 		BusinessID:      businessID,
 		Status:          models.RenderJobStatusQueued,
 		Locale:          coalesceString(input.Locale, document.Locale),
@@ -1126,7 +1157,7 @@ func (s *DocumentService) MirrorLegacyInvoice(ctx context.Context, invoice *mode
 	doc.BusinessID = invoice.BusinessID
 	doc.DocumentType = models.DocumentTypeSalesInvoice
 	doc.PartyType = models.DocumentPartyTypeCustomer
-	doc.PartyID = &invoice.CustomerID
+	doc.PartyID = invoice.CustomerID
 	doc.Status = legacyInvoiceStatusToDocument(invoice.Status)
 	doc.DraftState = models.DocumentDraftStateFinal
 	if invoice.Status == "draft" {
@@ -1137,7 +1168,7 @@ func (s *DocumentService) MirrorLegacyInvoice(ctx context.Context, invoice *mode
 		doc.TaxMode = models.DocumentTaxModeGST
 	}
 	doc.GSTTreatment = models.DocumentGSTTreatmentRegular
-	doc.SerialNumber = invoice.InvoiceNo
+	doc.SerialNumber = models.StringValue(invoice.InvoiceNo)
 	doc.IssueDate = invoice.InvoiceDate
 	doc.DueDate = &invoice.DueDate
 	doc.Currency = defaultCurrency(invoice.Currency)
@@ -1316,6 +1347,145 @@ func (s *DocumentService) FailRenderJob(ctx context.Context, businessID, jobID, 
 	job.ErrorMessage = errorMessage
 	job.CompletedAt = nil
 	return s.repo.UpdateRenderJob(ctx, job)
+}
+
+func (s *DocumentService) ObsoletePreviewRender(
+	ctx context.Context,
+	businessID, jobID, owner string,
+) error {
+	repository, ok := s.repo.(interfaces.PreviewRenderRepository)
+	if !ok {
+		return errors.New("preview render repository is not configured")
+	}
+	return repository.ObsoletePreviewRender(ctx, businessID, jobID, owner)
+}
+
+func (s *DocumentService) ClaimPreviewRender(
+	ctx context.Context,
+	businessID, jobID string,
+	sourceVersion int,
+	owner string,
+	now, leaseUntil time.Time,
+) (interfaces.PreviewRenderClaimState, error) {
+	repository, ok := s.repo.(interfaces.PreviewRenderRepository)
+	if !ok {
+		return "", errors.New("preview render repository is not configured")
+	}
+	return repository.ClaimPreviewRender(ctx, businessID, jobID, sourceVersion, owner, now, leaseUntil)
+}
+
+func (s *DocumentService) FailPreviewRender(
+	ctx context.Context,
+	businessID, jobID, owner, errorMessage string,
+) error {
+	repository, ok := s.repo.(interfaces.PreviewRenderRepository)
+	if !ok {
+		return errors.New("preview render repository is not configured")
+	}
+	return repository.FailPreviewRender(ctx, businessID, jobID, owner, errorMessage)
+}
+
+func (s *DocumentService) CompletePreviewRender(
+	ctx context.Context,
+	businessID, jobID string,
+	sourceVersion int,
+	owner string,
+	claimedObjectKey, selectedObjectKey, filename string,
+) (bool, error) {
+	repository, ok := s.repo.(interfaces.PreviewRenderRepository)
+	if !ok {
+		return false, errors.New("preview render repository is not configured")
+	}
+	return repository.CompletePreviewRender(
+		ctx,
+		businessID,
+		jobID,
+		sourceVersion,
+		owner,
+		claimedObjectKey,
+		selectedObjectKey,
+		filename,
+	)
+}
+
+func (s *DocumentService) VerifyRenderLease(
+	ctx context.Context,
+	businessID, jobID string,
+	kind models.RenderKind,
+	owner string,
+	now time.Time,
+) error {
+	repository, ok := s.repo.(interfaces.RenderLeaseRepository)
+	if !ok {
+		return errors.New("render lease repository is not configured")
+	}
+	return repository.VerifyRenderLease(ctx, businessID, jobID, kind, owner, now)
+}
+
+func (s *DocumentService) ClaimFinalRender(
+	ctx context.Context,
+	businessID, jobID string,
+	sourceVersion int,
+	owner string,
+	now, leaseUntil time.Time,
+) (interfaces.FinalRenderClaimState, error) {
+	repository, ok := s.repo.(interfaces.FinalRenderRepository)
+	if !ok {
+		return "", errors.New("final render repository is not configured")
+	}
+	return repository.ClaimFinalRender(ctx, businessID, jobID, sourceVersion, owner, now, leaseUntil)
+}
+
+func (s *DocumentService) LoadFinalRenderSnapshot(
+	ctx context.Context,
+	businessID, invoiceID, jobID string,
+	sourceVersion int,
+) (*models.Document, error) {
+	repository, ok := s.repo.(interfaces.FinalRenderRepository)
+	if !ok {
+		return nil, errors.New("final render repository is not configured")
+	}
+	return repository.LoadFinalRenderSnapshot(
+		ctx,
+		businessID,
+		invoiceID,
+		jobID,
+		sourceVersion,
+	)
+}
+
+func (s *DocumentService) FailFinalRender(
+	ctx context.Context,
+	businessID, jobID, owner, errorMessage string,
+) error {
+	repository, ok := s.repo.(interfaces.FinalRenderRepository)
+	if !ok {
+		return errors.New("final render repository is not configured")
+	}
+	return repository.FailFinalRender(ctx, businessID, jobID, owner, errorMessage)
+}
+
+func (s *DocumentService) CompleteFinalRender(
+	ctx context.Context,
+	businessID, invoiceID, jobID string,
+	sourceVersion int,
+	owner string,
+	objectKey, filename string,
+) (bool, error) {
+	repository, ok := s.repo.(interfaces.FinalRenderRepository)
+	if !ok {
+		return false, errors.New("final render repository is not configured")
+	}
+	return repository.CompleteFinalRender(
+		ctx,
+		businessID,
+		invoiceID,
+		jobID,
+		sourceVersion,
+		owner,
+		objectKey,
+		filename,
+	)
 }
 
 func (s *DocumentService) applyPostCreateSideEffects(ctx context.Context, document *models.Document) error {

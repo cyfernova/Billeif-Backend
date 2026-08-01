@@ -3,6 +3,8 @@ package services
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 type S3Service struct {
@@ -20,6 +23,8 @@ type S3Service struct {
 	client *s3.Client
 	log    *logger.Logger
 }
+
+var ErrConditionalWriteContentMismatch = errors.New("existing object content does not match conditional upload")
 
 func NewS3Service(cfg *config.Config, aws *awsclients.Config, log *logger.Logger) *S3Service {
 	return &S3Service{
@@ -82,6 +87,43 @@ func (s *S3Service) Upload(ctx context.Context, bucket, key string, data []byte,
 		return err
 	}
 	log.Info("S3 upload completed", "size_bytes", len(data), "duration_ms", time.Since(start).Milliseconds())
+	return err
+}
+
+// UploadIfAbsent creates an object without overwriting an existing key.
+// A precondition failure means another writer already created the object.
+func (s *S3Service) UploadIfAbsent(ctx context.Context, bucket, key string, data []byte, contentType string) error {
+	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:      aws.String(bucket),
+		Key:         aws.String(key),
+		Body:        bytes.NewReader(data),
+		ContentType: aws.String(contentType),
+		IfNoneMatch: aws.String("*"),
+	})
+	if err == nil {
+		return nil
+	}
+	var responseError *smithyhttp.ResponseError
+	if errors.As(err, &responseError) && responseError.HTTPStatusCode() == 412 {
+		result, getErr := s.client.GetObject(ctx, &s3.GetObjectInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
+		})
+		if getErr != nil {
+			return fmt.Errorf("verify existing conditional object: %w", getErr)
+		}
+		defer result.Body.Close()
+		existing, readErr := io.ReadAll(result.Body)
+		if readErr != nil {
+			return fmt.Errorf("read existing conditional object: %w", readErr)
+		}
+		candidateSum := sha256.Sum256(data)
+		existingSum := sha256.Sum256(existing)
+		if candidateSum != existingSum {
+			return ErrConditionalWriteContentMismatch
+		}
+		return nil
+	}
 	return err
 }
 

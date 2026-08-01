@@ -2,14 +2,19 @@ package unit
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
+	"invoice-backend/internal/invoicecursor"
+	"invoice-backend/internal/invoiceresolution"
 	"invoice-backend/internal/models"
+	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/internal/services"
 	"invoice-backend/pkg/logger"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -48,9 +53,9 @@ func (m *MockInvoiceRepository) GetByInvoiceNo(ctx context.Context, businessID, 
 	return args.Get(0).(*models.Invoice), args.Error(1)
 }
 
-func (m *MockInvoiceRepository) GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.Invoice, int64, error) {
-	args := m.Called(ctx, businessID, page, limit)
-	return args.Get(0).([]*models.Invoice), args.Get(1).(int64), args.Error(2)
+func (m *MockInvoiceRepository) ListByCursor(ctx context.Context, businessID string, cursor *invoicecursor.Position, limit int) ([]*models.Invoice, bool, error) {
+	args := m.Called(ctx, businessID, cursor, limit)
+	return args.Get(0).([]*models.Invoice), args.Bool(1), args.Error(2)
 }
 
 func (m *MockInvoiceRepository) GetItems(ctx context.Context, invoiceID string) ([]*models.InvoiceItem, error) {
@@ -79,6 +84,53 @@ func (m *MockInvoiceRepository) UpdatePDFURL(ctx context.Context, invoiceID, pdf
 func (m *MockInvoiceRepository) Delete(ctx context.Context, id string) error {
 	args := m.Called(ctx, id)
 	return args.Error(0)
+}
+
+func (m *MockInvoiceRepository) CreateDraftAtomic(ctx context.Context, command interfaces.AtomicInvoiceDraft) (*interfaces.AtomicInvoiceDraftResult, error) {
+	if err := m.Create(ctx, command.Invoice); err != nil {
+		return nil, err
+	}
+	return &interfaces.AtomicInvoiceDraftResult{Invoice: command.Invoice}, nil
+}
+
+func (m *MockInvoiceRepository) ReplayCompletedDraft(
+	context.Context,
+	string,
+	string,
+	string,
+	string,
+) (*interfaces.AtomicInvoiceDraftResult, error) {
+	return nil, nil
+}
+
+func (m *MockInvoiceRepository) ResolveInvoiceLines(
+	_ context.Context,
+	request invoiceresolution.Request,
+) ([]invoiceresolution.LineSnapshot, error) {
+	snapshots := make([]invoiceresolution.LineSnapshot, len(request.Lines))
+	for index, line := range request.Lines {
+		snapshots[index] = invoiceresolution.LineSnapshot{
+			ProductID: line.ProductID, VariantID: line.VariantID, WarehouseID: line.WarehouseID,
+		}
+	}
+	return snapshots, nil
+}
+
+type invoiceBusinessRepository struct{}
+
+func (invoiceBusinessRepository) Create(context.Context, *models.BusinessProfile) error { return nil }
+func (invoiceBusinessRepository) GetByID(_ context.Context, id string) (*models.BusinessProfile, error) {
+	return &models.BusinessProfile{
+		ID:       id,
+		Name:     "Test Business",
+		Email:    "business@example.com",
+		Currency: "USD",
+	}, nil
+}
+func (invoiceBusinessRepository) Update(context.Context, *models.BusinessProfile) error { return nil }
+func (invoiceBusinessRepository) Delete(context.Context, string) error                  { return nil }
+func (invoiceBusinessRepository) List(context.Context, string, int, int) ([]*models.BusinessProfile, int64, error) {
+	return nil, 0, nil
 }
 
 // MockCustomerRepository mocks the CustomerRepository interface
@@ -168,16 +220,6 @@ func (m *MockProductRepository) AdjustStock(ctx context.Context, productID strin
 	return args.Error(0)
 }
 
-// MockSQSService mocks the SQS service
-type MockSQSService struct {
-	mock.Mock
-}
-
-func (m *MockSQSService) SendMessage(ctx context.Context, queueUrl string, message interface{}) error {
-	args := m.Called(ctx, queueUrl, message)
-	return args.Error(0)
-}
-
 // MockEmailService mocks the Email service
 type MockEmailService struct {
 	mock.Mock
@@ -188,18 +230,27 @@ func (m *MockEmailService) SendEmail(ctx context.Context, to, subject, body stri
 	return args.Error(0)
 }
 
+func newInvoiceService(
+	repo *MockInvoiceRepository,
+	productRepo *MockProductRepository,
+	customerRepo *MockCustomerRepository,
+	email *MockEmailService,
+	log *logger.Logger,
+) *services.InvoiceService {
+	return services.NewInvoiceService(nil, nil, repo, invoiceBusinessRepository{}, productRepo, customerRepo, nil, nil, nil, email, log)
+}
+
 // TestCreateInvoice_Success tests successful invoice creation
 func TestInvoiceService_Create_Success(t *testing.T) {
 	mockRepo := new(MockInvoiceRepository)
 	mockCustomer := new(MockCustomerRepository)
 	mockProduct := new(MockProductRepository)
-	mockSQS := new(MockSQSService)
 	mockEmail := new(MockEmailService)
 	log := logger.New()
 
-	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+	svc := newInvoiceService(mockRepo, mockProduct, mockCustomer, mockEmail, log)
 
-	ctx := context.Background()
+	ctx := services.ContextWithActor(context.Background(), services.ActorContext{UserID: uuid.NewString()})
 	businessID := "business-123"
 	customerID := "customer-456"
 	dueDate := time.Now().Add(24 * time.Hour)
@@ -213,13 +264,13 @@ func TestInvoiceService_Create_Success(t *testing.T) {
 
 	mockCustomer.On("GetByID", ctx, customerID, businessID).Return(customer, nil)
 	mockRepo.On("Create", ctx, mock.AnythingOfType("*models.Invoice")).Return(nil)
-	mockSQS.On("SendMessage", ctx, "invoice-queue", mock.AnythingOfType("map[string]string")).Return(nil)
 
 	input := services.CreateInvoiceInput{
-		BusinessID: businessID,
-		CustomerID: customerID,
-		DueDate:    dueDate,
-		Notes:      "Test invoice",
+		BusinessID:     businessID,
+		CustomerID:     customerID,
+		IdempotencyKey: uuid.NewString(),
+		DueDate:        dueDate,
+		Notes:          "Test invoice",
 		Items: []services.CreateInvoiceItemInput{
 			{
 				Description: "Product A",
@@ -235,8 +286,10 @@ func TestInvoiceService_Create_Success(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, invoice)
 	assert.Equal(t, businessID, invoice.BusinessID)
-	assert.Equal(t, customerID, invoice.CustomerID)
+	assert.Equal(t, customerID, models.StringValue(invoice.CustomerID))
 	assert.Equal(t, "draft", invoice.Status)
+	assert.Equal(t, models.InvoiceOriginManual, invoice.Origin)
+	assert.Nil(t, invoice.InvoiceNo, "draft creation must not allocate an invoice number")
 	assert.Equal(t, 200.00, invoice.Subtotal) // 2 * 100
 	assert.Equal(t, 20.00, invoice.Tax)       // 200 * 10%
 	assert.Equal(t, 220.00, invoice.Total)    // 200 + 20
@@ -246,7 +299,58 @@ func TestInvoiceService_Create_Success(t *testing.T) {
 
 	mockCustomer.AssertExpectations(t)
 	mockRepo.AssertExpectations(t)
-	mockSQS.AssertExpectations(t)
+}
+
+func TestInvoiceService_Create_DerivesSubscriptionOriginFromRunMarkers(t *testing.T) {
+	mockRepo := new(MockInvoiceRepository)
+	mockCustomer := new(MockCustomerRepository)
+	mockProduct := new(MockProductRepository)
+	mockEmail := new(MockEmailService)
+	log := logger.New()
+	svc := newInvoiceService(mockRepo, mockProduct, mockCustomer, mockEmail, log)
+
+	ctx := services.ContextWithActor(context.Background(), services.ActorContext{UserID: uuid.NewString()})
+	customer := &models.Customer{ID: "customer-456", BusinessID: "business-123", Name: "Test Customer"}
+	mockCustomer.On("GetByID", ctx, customer.ID, customer.BusinessID).Return(customer, nil)
+	mockRepo.On("Create", ctx, mock.MatchedBy(func(invoice *models.Invoice) bool {
+		return invoice.Origin == models.InvoiceOriginSubscription &&
+			models.StringValue(invoice.OriginSubscriptionID) == "subscription-123" &&
+			models.StringValue(invoice.OriginRunID) == "run-456"
+	})).Return(nil)
+
+	invoice, err := svc.Create(ctx, services.CreateInvoiceInput{
+		BusinessID:           customer.BusinessID,
+		CustomerID:           customer.ID,
+		IdempotencyKey:       uuid.NewString(),
+		DueDate:              time.Now().Add(24 * time.Hour),
+		OriginSubscriptionID: "subscription-123",
+		OriginRunID:          "run-456",
+		Items: []services.CreateInvoiceItemInput{{
+			Description: "Subscription line",
+			Quantity:    1,
+			UnitPrice:   100,
+		}},
+	})
+
+	assert.NoError(t, err)
+	if assert.NotNil(t, invoice) {
+		assert.Equal(t, models.InvoiceOriginSubscription, invoice.Origin)
+	}
+	mockCustomer.AssertExpectations(t)
+	mockRepo.AssertExpectations(t)
+}
+
+func TestCreateInvoiceInput_IgnoresInternalSubscriptionMarkersFromPublicJSON(t *testing.T) {
+	var input services.CreateInvoiceInput
+	err := json.Unmarshal([]byte(`{
+		"customer_id": "customer-456",
+		"origin_subscription_id": "forged-subscription",
+		"origin_run_id": "forged-run"
+	}`), &input)
+
+	assert.NoError(t, err)
+	assert.Empty(t, input.OriginSubscriptionID)
+	assert.Empty(t, input.OriginRunID)
 }
 
 // TestCreateInvoice_CustomerNotFound tests invoice creation when customer is not found
@@ -254,22 +358,22 @@ func TestInvoiceService_Create_CustomerNotFound(t *testing.T) {
 	mockRepo := new(MockInvoiceRepository)
 	mockCustomer := new(MockCustomerRepository)
 	mockProduct := new(MockProductRepository)
-	mockSQS := new(MockSQSService)
 	mockEmail := new(MockEmailService)
 	log := logger.New()
 
-	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+	svc := newInvoiceService(mockRepo, mockProduct, mockCustomer, mockEmail, log)
 
-	ctx := context.Background()
+	ctx := services.ContextWithActor(context.Background(), services.ActorContext{UserID: uuid.NewString()})
 	businessID := "business-123"
 	customerID := "nonexistent-customer"
 
 	mockCustomer.On("GetByID", ctx, customerID, businessID).Return(nil, errors.New("customer not found"))
 
 	input := services.CreateInvoiceInput{
-		BusinessID: businessID,
-		CustomerID: customerID,
-		DueDate:    time.Now().Add(24 * time.Hour),
+		BusinessID:     businessID,
+		CustomerID:     customerID,
+		IdempotencyKey: uuid.NewString(),
+		DueDate:        time.Now().Add(24 * time.Hour),
 		Items: []services.CreateInvoiceItemInput{
 			{
 				Description: "Product A",
@@ -293,13 +397,12 @@ func TestInvoiceService_Create_MultipleItems(t *testing.T) {
 	mockRepo := new(MockInvoiceRepository)
 	mockCustomer := new(MockCustomerRepository)
 	mockProduct := new(MockProductRepository)
-	mockSQS := new(MockSQSService)
 	mockEmail := new(MockEmailService)
 	log := logger.New()
 
-	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+	svc := newInvoiceService(mockRepo, mockProduct, mockCustomer, mockEmail, log)
 
-	ctx := context.Background()
+	ctx := services.ContextWithActor(context.Background(), services.ActorContext{UserID: uuid.NewString()})
 	businessID := "business-123"
 	customerID := "customer-456"
 
@@ -311,12 +414,12 @@ func TestInvoiceService_Create_MultipleItems(t *testing.T) {
 
 	mockCustomer.On("GetByID", ctx, customerID, businessID).Return(customer, nil)
 	mockRepo.On("Create", ctx, mock.AnythingOfType("*models.Invoice")).Return(nil)
-	mockSQS.On("SendMessage", ctx, "invoice-queue", mock.AnythingOfType("map[string]string")).Return(nil)
 
 	input := services.CreateInvoiceInput{
-		BusinessID: businessID,
-		CustomerID: customerID,
-		DueDate:    time.Now().Add(24 * time.Hour),
+		BusinessID:     businessID,
+		CustomerID:     customerID,
+		IdempotencyKey: uuid.NewString(),
+		DueDate:        time.Now().Add(24 * time.Hour),
 		Items: []services.CreateInvoiceItemInput{
 			{
 				Description: "Product A",
@@ -344,7 +447,6 @@ func TestInvoiceService_Create_MultipleItems(t *testing.T) {
 
 	mockCustomer.AssertExpectations(t)
 	mockRepo.AssertExpectations(t)
-	mockSQS.AssertExpectations(t)
 }
 
 // TestCreateInvoice_ZeroTaxRate tests invoice creation with zero tax
@@ -352,13 +454,12 @@ func TestInvoiceService_Create_ZeroTaxRate(t *testing.T) {
 	mockRepo := new(MockInvoiceRepository)
 	mockCustomer := new(MockCustomerRepository)
 	mockProduct := new(MockProductRepository)
-	mockSQS := new(MockSQSService)
 	mockEmail := new(MockEmailService)
 	log := logger.New()
 
-	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+	svc := newInvoiceService(mockRepo, mockProduct, mockCustomer, mockEmail, log)
 
-	ctx := context.Background()
+	ctx := services.ContextWithActor(context.Background(), services.ActorContext{UserID: uuid.NewString()})
 	businessID := "business-123"
 	customerID := "customer-456"
 
@@ -370,12 +471,12 @@ func TestInvoiceService_Create_ZeroTaxRate(t *testing.T) {
 
 	mockCustomer.On("GetByID", ctx, customerID, businessID).Return(customer, nil)
 	mockRepo.On("Create", ctx, mock.AnythingOfType("*models.Invoice")).Return(nil)
-	mockSQS.On("SendMessage", ctx, "invoice-queue", mock.AnythingOfType("map[string]string")).Return(nil)
 
 	input := services.CreateInvoiceInput{
-		BusinessID: businessID,
-		CustomerID: customerID,
-		DueDate:    time.Now().Add(24 * time.Hour),
+		BusinessID:     businessID,
+		CustomerID:     customerID,
+		IdempotencyKey: uuid.NewString(),
+		DueDate:        time.Now().Add(24 * time.Hour),
 		Items: []services.CreateInvoiceItemInput{
 			{
 				Description: "Product A",
@@ -403,13 +504,12 @@ func TestInvoiceService_GetByBusiness_Success(t *testing.T) {
 	mockRepo := new(MockInvoiceRepository)
 	mockCustomer := new(MockCustomerRepository)
 	mockProduct := new(MockProductRepository)
-	mockSQS := new(MockSQSService)
 	mockEmail := new(MockEmailService)
 	log := logger.New()
 
-	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+	svc := newInvoiceService(mockRepo, mockProduct, mockCustomer, mockEmail, log)
 
-	ctx := context.Background()
+	ctx := services.ContextWithActor(context.Background(), services.ActorContext{UserID: uuid.NewString()})
 	businessID := "business-123"
 	invoiceID := "invoice-456"
 
@@ -436,13 +536,12 @@ func TestInvoiceService_GetByBusiness_NotFound(t *testing.T) {
 	mockRepo := new(MockInvoiceRepository)
 	mockCustomer := new(MockCustomerRepository)
 	mockProduct := new(MockProductRepository)
-	mockSQS := new(MockSQSService)
 	mockEmail := new(MockEmailService)
 	log := logger.New()
 
-	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+	svc := newInvoiceService(mockRepo, mockProduct, mockCustomer, mockEmail, log)
 
-	ctx := context.Background()
+	ctx := services.ContextWithActor(context.Background(), services.ActorContext{UserID: uuid.NewString()})
 	businessID := "business-123"
 	invoiceID := "nonexistent"
 
@@ -460,15 +559,13 @@ func TestInvoiceService_List_Success(t *testing.T) {
 	mockRepo := new(MockInvoiceRepository)
 	mockCustomer := new(MockCustomerRepository)
 	mockProduct := new(MockProductRepository)
-	mockSQS := new(MockSQSService)
 	mockEmail := new(MockEmailService)
 	log := logger.New()
 
-	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+	svc := newInvoiceService(mockRepo, mockProduct, mockCustomer, mockEmail, log)
 
-	ctx := context.Background()
+	ctx := services.ContextWithActor(context.Background(), services.ActorContext{UserID: uuid.NewString()})
 	businessID := "business-123"
-	page := 1
 	limit := 10
 
 	expectedInvoices := []*models.Invoice{
@@ -476,13 +573,13 @@ func TestInvoiceService_List_Success(t *testing.T) {
 		{ID: "invoice-2", BusinessID: businessID, Total: 200.00},
 	}
 
-	mockRepo.On("GetByBusinessID", ctx, businessID, page, limit).Return(expectedInvoices, int64(2), nil)
+	mockRepo.On("ListByCursor", ctx, businessID, (*invoicecursor.Position)(nil), limit).Return(expectedInvoices, true, nil)
 
-	invoices, total, err := svc.List(ctx, businessID, page, limit)
+	invoices, hasMore, err := svc.List(ctx, businessID, nil, limit)
 
 	assert.NoError(t, err)
 	assert.Len(t, invoices, 2)
-	assert.Equal(t, int64(2), total)
+	assert.True(t, hasMore)
 	mockRepo.AssertExpectations(t)
 }
 
@@ -491,13 +588,12 @@ func TestInvoiceService_UpdateByBusiness_Success(t *testing.T) {
 	mockRepo := new(MockInvoiceRepository)
 	mockCustomer := new(MockCustomerRepository)
 	mockProduct := new(MockProductRepository)
-	mockSQS := new(MockSQSService)
 	mockEmail := new(MockEmailService)
 	log := logger.New()
 
-	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+	svc := newInvoiceService(mockRepo, mockProduct, mockCustomer, mockEmail, log)
 
-	ctx := context.Background()
+	ctx := services.ContextWithActor(context.Background(), services.ActorContext{UserID: uuid.NewString()})
 	businessID := "business-123"
 	invoiceID := "invoice-456"
 
@@ -530,13 +626,12 @@ func TestInvoiceService_Create_WithRenderProfile(t *testing.T) {
 	mockRepo := new(MockInvoiceRepository)
 	mockCustomer := new(MockCustomerRepository)
 	mockProduct := new(MockProductRepository)
-	mockSQS := new(MockSQSService)
 	mockEmail := new(MockEmailService)
 	log := logger.New()
 
-	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+	svc := newInvoiceService(mockRepo, mockProduct, mockCustomer, mockEmail, log)
 
-	ctx := context.Background()
+	ctx := services.ContextWithActor(context.Background(), services.ActorContext{UserID: uuid.NewString()})
 	businessID := "business-123"
 	customerID := "customer-456"
 	renderProfileID := "11111111-1111-1111-1111-111111111111"
@@ -552,11 +647,11 @@ func TestInvoiceService_Create_WithRenderProfile(t *testing.T) {
 	mockRepo.On("Create", ctx, mock.MatchedBy(func(invoice *models.Invoice) bool {
 		return invoice.RenderProfileID != nil && *invoice.RenderProfileID == renderProfileID
 	})).Return(nil)
-	mockSQS.On("SendMessage", ctx, "invoice-queue", mock.AnythingOfType("map[string]string")).Return(nil)
 
 	input := services.CreateInvoiceInput{
 		BusinessID:      businessID,
 		CustomerID:      customerID,
+		IdempotencyKey:  uuid.NewString(),
 		RenderProfileID: renderProfileID,
 		DueDate:         time.Now().Add(24 * time.Hour),
 		Items: []services.CreateInvoiceItemInput{
@@ -578,26 +673,25 @@ func TestInvoiceService_Create_WithRenderProfile(t *testing.T) {
 	}
 	mockCustomer.AssertExpectations(t)
 	mockRepo.AssertExpectations(t)
-	mockSQS.AssertExpectations(t)
 }
 
 func TestInvoiceService_Create_WithInvalidRenderProfileID(t *testing.T) {
 	mockRepo := new(MockInvoiceRepository)
 	mockCustomer := new(MockCustomerRepository)
 	mockProduct := new(MockProductRepository)
-	mockSQS := new(MockSQSService)
 	mockEmail := new(MockEmailService)
 	log := logger.New()
 
-	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+	svc := newInvoiceService(mockRepo, mockProduct, mockCustomer, mockEmail, log)
 
-	ctx := context.Background()
+	ctx := services.ContextWithActor(context.Background(), services.ActorContext{UserID: uuid.NewString()})
 	businessID := "business-123"
 	customerID := "customer-456"
 
 	input := services.CreateInvoiceInput{
 		BusinessID:      businessID,
 		CustomerID:      customerID,
+		IdempotencyKey:  uuid.NewString(),
 		RenderProfileID: "not-a-uuid",
 		DueDate:         time.Now().Add(24 * time.Hour),
 		Items: []services.CreateInvoiceItemInput{
@@ -623,13 +717,12 @@ func TestInvoiceService_UpdateByBusiness_AllowsSentWithRenderProfile(t *testing.
 	mockRepo := new(MockInvoiceRepository)
 	mockCustomer := new(MockCustomerRepository)
 	mockProduct := new(MockProductRepository)
-	mockSQS := new(MockSQSService)
 	mockEmail := new(MockEmailService)
 	log := logger.New()
 
-	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+	svc := newInvoiceService(mockRepo, mockProduct, mockCustomer, mockEmail, log)
 
-	ctx := context.Background()
+	ctx := services.ContextWithActor(context.Background(), services.ActorContext{UserID: uuid.NewString()})
 	businessID := "business-123"
 	invoiceID := "invoice-456"
 	renderProfileID := "22222222-2222-2222-2222-222222222222"
@@ -665,13 +758,12 @@ func TestInvoiceService_UpdateByBusiness_RejectsInvalidRenderProfileID(t *testin
 	mockRepo := new(MockInvoiceRepository)
 	mockCustomer := new(MockCustomerRepository)
 	mockProduct := new(MockProductRepository)
-	mockSQS := new(MockSQSService)
 	mockEmail := new(MockEmailService)
 	log := logger.New()
 
-	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+	svc := newInvoiceService(mockRepo, mockProduct, mockCustomer, mockEmail, log)
 
-	ctx := context.Background()
+	ctx := services.ContextWithActor(context.Background(), services.ActorContext{UserID: uuid.NewString()})
 	businessID := "business-123"
 	invoiceID := "invoice-456"
 	invalidID := "render-profile"
@@ -702,13 +794,12 @@ func TestInvoiceService_UpdateByBusiness_InvalidStatus(t *testing.T) {
 	mockRepo := new(MockInvoiceRepository)
 	mockCustomer := new(MockCustomerRepository)
 	mockProduct := new(MockProductRepository)
-	mockSQS := new(MockSQSService)
 	mockEmail := new(MockEmailService)
 	log := logger.New()
 
-	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+	svc := newInvoiceService(mockRepo, mockProduct, mockCustomer, mockEmail, log)
 
-	ctx := context.Background()
+	ctx := services.ContextWithActor(context.Background(), services.ActorContext{UserID: uuid.NewString()})
 	businessID := "business-123"
 	invoiceID := "invoice-456"
 
@@ -738,13 +829,12 @@ func TestInvoiceService_DeleteByBusiness_Success(t *testing.T) {
 	mockRepo := new(MockInvoiceRepository)
 	mockCustomer := new(MockCustomerRepository)
 	mockProduct := new(MockProductRepository)
-	mockSQS := new(MockSQSService)
 	mockEmail := new(MockEmailService)
 	log := logger.New()
 
-	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+	svc := newInvoiceService(mockRepo, mockProduct, mockCustomer, mockEmail, log)
 
-	ctx := context.Background()
+	ctx := services.ContextWithActor(context.Background(), services.ActorContext{UserID: uuid.NewString()})
 	businessID := "business-123"
 	invoiceID := "invoice-456"
 
@@ -768,13 +858,12 @@ func TestInvoiceService_DeleteByBusiness_InvalidStatus(t *testing.T) {
 	mockRepo := new(MockInvoiceRepository)
 	mockCustomer := new(MockCustomerRepository)
 	mockProduct := new(MockProductRepository)
-	mockSQS := new(MockSQSService)
 	mockEmail := new(MockEmailService)
 	log := logger.New()
 
-	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+	svc := newInvoiceService(mockRepo, mockProduct, mockCustomer, mockEmail, log)
 
-	ctx := context.Background()
+	ctx := services.ContextWithActor(context.Background(), services.ActorContext{UserID: uuid.NewString()})
 	businessID := "business-123"
 	invoiceID := "invoice-456"
 
@@ -798,23 +887,24 @@ func TestInvoiceService_SendByBusiness_Success(t *testing.T) {
 	mockRepo := new(MockInvoiceRepository)
 	mockCustomer := new(MockCustomerRepository)
 	mockProduct := new(MockProductRepository)
-	mockSQS := new(MockSQSService)
 	mockEmail := new(MockEmailService)
 	log := logger.New()
 
-	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+	svc := newInvoiceService(mockRepo, mockProduct, mockCustomer, mockEmail, log)
 
-	ctx := context.Background()
+	ctx := services.ContextWithActor(context.Background(), services.ActorContext{UserID: uuid.NewString()})
 	businessID := "business-123"
 	invoiceID := "invoice-456"
 	customerID := "customer-789"
+	issuedAt := time.Now()
 
 	invoice := &models.Invoice{
 		ID:         invoiceID,
 		BusinessID: businessID,
-		CustomerID: customerID,
-		InvoiceNo:  "INV-2026-123456",
-		Status:     "draft",
+		CustomerID: models.StringPointer(customerID),
+		InvoiceNo:  models.StringPointer("INV-2026-123456"),
+		Status:     models.InvoiceStatusIssued,
+		IssuedAt:   &issuedAt,
 		Total:      100.00,
 		Currency:   "USD",
 	}
@@ -842,22 +932,24 @@ func TestInvoiceService_SendByBusiness_CustomerNotFound(t *testing.T) {
 	mockRepo := new(MockInvoiceRepository)
 	mockCustomer := new(MockCustomerRepository)
 	mockProduct := new(MockProductRepository)
-	mockSQS := new(MockSQSService)
 	mockEmail := new(MockEmailService)
 	log := logger.New()
 
-	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+	svc := newInvoiceService(mockRepo, mockProduct, mockCustomer, mockEmail, log)
 
-	ctx := context.Background()
+	ctx := services.ContextWithActor(context.Background(), services.ActorContext{UserID: uuid.NewString()})
 	businessID := "business-123"
 	invoiceID := "invoice-456"
 	customerID := "customer-789"
+	issuedAt := time.Now()
 
 	invoice := &models.Invoice{
 		ID:         invoiceID,
 		BusinessID: businessID,
-		CustomerID: customerID,
-		Status:     "draft",
+		CustomerID: models.StringPointer(customerID),
+		InvoiceNo:  models.StringPointer("INV-2026-123457"),
+		Status:     models.InvoiceStatusIssued,
+		IssuedAt:   &issuedAt,
 	}
 
 	mockRepo.On("GetByID", ctx, invoiceID, businessID).Return(invoice, nil)
@@ -871,18 +963,46 @@ func TestInvoiceService_SendByBusiness_CustomerNotFound(t *testing.T) {
 	mockCustomer.AssertExpectations(t)
 }
 
+func TestInvoiceService_SendByBusiness_RejectsUnissuedDraft(t *testing.T) {
+	mockRepo := new(MockInvoiceRepository)
+	mockCustomer := new(MockCustomerRepository)
+	mockProduct := new(MockProductRepository)
+	mockEmail := new(MockEmailService)
+	log := logger.New()
+
+	svc := newInvoiceService(mockRepo, mockProduct, mockCustomer, mockEmail, log)
+
+	ctx := services.ContextWithActor(context.Background(), services.ActorContext{UserID: uuid.NewString()})
+	businessID := "business-123"
+	invoiceID := "invoice-456"
+	invoice := &models.Invoice{
+		ID:         invoiceID,
+		BusinessID: businessID,
+		CustomerID: models.StringPointer("customer-789"),
+		Status:     models.InvoiceStatusDraft,
+	}
+
+	mockRepo.On("GetByID", ctx, invoiceID, businessID).Return(invoice, nil)
+
+	err := svc.SendByBusiness(ctx, businessID, invoiceID)
+
+	assert.ErrorIs(t, err, models.ErrInvalidInvoiceLifecycle)
+	mockCustomer.AssertNotCalled(t, "GetByID", mock.Anything, mock.Anything, mock.Anything)
+	mockRepo.AssertNotCalled(t, "UpdateStatus", mock.Anything, mock.Anything, mock.Anything)
+	mockEmail.AssertNotCalled(t, "SendEmail", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
 // TestGetPDFURLByBusiness_Success tests getting existing PDF URL
 func TestInvoiceService_GetPDFURLByBusiness_Success(t *testing.T) {
 	mockRepo := new(MockInvoiceRepository)
 	mockCustomer := new(MockCustomerRepository)
 	mockProduct := new(MockProductRepository)
-	mockSQS := new(MockSQSService)
 	mockEmail := new(MockEmailService)
 	log := logger.New()
 
-	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+	svc := newInvoiceService(mockRepo, mockProduct, mockCustomer, mockEmail, log)
 
-	ctx := context.Background()
+	ctx := services.ContextWithActor(context.Background(), services.ActorContext{UserID: uuid.NewString()})
 	businessID := "business-123"
 	invoiceID := "invoice-456"
 	pdfURL := "https://s3.example.com/invoices/test.pdf"
@@ -907,13 +1027,12 @@ func TestInvoiceService_GetPDFURLByBusiness_NotGenerated(t *testing.T) {
 	mockRepo := new(MockInvoiceRepository)
 	mockCustomer := new(MockCustomerRepository)
 	mockProduct := new(MockProductRepository)
-	mockSQS := new(MockSQSService)
 	mockEmail := new(MockEmailService)
 	log := logger.New()
 
-	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+	svc := newInvoiceService(mockRepo, mockProduct, mockCustomer, mockEmail, log)
 
-	ctx := context.Background()
+	ctx := services.ContextWithActor(context.Background(), services.ActorContext{UserID: uuid.NewString()})
 	businessID := "business-123"
 	invoiceID := "invoice-456"
 
@@ -933,60 +1052,17 @@ func TestInvoiceService_GetPDFURLByBusiness_NotGenerated(t *testing.T) {
 	mockRepo.AssertExpectations(t)
 }
 
-// TestGetNextNumber_Success tests generating next invoice number
-func TestInvoiceService_GetNextNumber_Success(t *testing.T) {
-	mockRepo := new(MockInvoiceRepository)
-	mockCustomer := new(MockCustomerRepository)
-	mockProduct := new(MockProductRepository)
-	mockSQS := new(MockSQSService)
-	mockEmail := new(MockEmailService)
-	log := logger.New()
-
-	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
-
-	ctx := context.Background()
-	businessID := "business-123"
-
-	invoiceNo, err := svc.GetNextNumber(ctx, businessID)
-
-	assert.NoError(t, err)
-	assert.NotEmpty(t, invoiceNo)
-	assert.Contains(t, invoiceNo, "INV-")
-	mockRepo.AssertExpectations(t)
-}
-
-// TestGenerateInvoiceNumber_Format tests invoice number format
-func TestInvoiceService_GenerateInvoiceNumber_Format(t *testing.T) {
-	mockRepo := new(MockInvoiceRepository)
-	mockCustomer := new(MockCustomerRepository)
-	mockProduct := new(MockProductRepository)
-	mockSQS := new(MockSQSService)
-	mockEmail := new(MockEmailService)
-	log := logger.New()
-
-	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
-
-	ctx := context.Background()
-	businessID := "business-123"
-
-	invoiceNo, err := svc.GetNextNumber(ctx, businessID)
-
-	assert.NoError(t, err)
-	assert.Regexp(t, "^INV-\\d{4}-\\d{6}$", invoiceNo)
-}
-
 // TestCreateInvoice_WithProductID tests invoice creation with product ID
 func TestInvoiceService_Create_WithProductID(t *testing.T) {
 	mockRepo := new(MockInvoiceRepository)
 	mockCustomer := new(MockCustomerRepository)
 	mockProduct := new(MockProductRepository)
-	mockSQS := new(MockSQSService)
 	mockEmail := new(MockEmailService)
 	log := logger.New()
 
-	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+	svc := newInvoiceService(mockRepo, mockProduct, mockCustomer, mockEmail, log)
 
-	ctx := context.Background()
+	ctx := services.ContextWithActor(context.Background(), services.ActorContext{UserID: uuid.NewString()})
 	businessID := "business-123"
 	customerID := "customer-456"
 	productID := "product-789"
@@ -998,13 +1074,18 @@ func TestInvoiceService_Create_WithProductID(t *testing.T) {
 	}
 
 	mockCustomer.On("GetByID", ctx, customerID, businessID).Return(customer, nil)
+	mockProduct.On("GetByID", ctx, productID, businessID).Return(&models.Product{
+		ID:         productID,
+		BusinessID: businessID,
+		Unit:       "PCS",
+	}, nil).Twice()
 	mockRepo.On("Create", ctx, mock.AnythingOfType("*models.Invoice")).Return(nil)
-	mockSQS.On("SendMessage", ctx, "invoice-queue", mock.AnythingOfType("map[string]string")).Return(nil)
 
 	input := services.CreateInvoiceInput{
-		BusinessID: businessID,
-		CustomerID: customerID,
-		DueDate:    time.Now().Add(24 * time.Hour),
+		BusinessID:     businessID,
+		CustomerID:     customerID,
+		IdempotencyKey: uuid.NewString(),
+		DueDate:        time.Now().Add(24 * time.Hour),
 		Items: []services.CreateInvoiceItemInput{
 			{
 				ProductID:   productID,
@@ -1026,7 +1107,6 @@ func TestInvoiceService_Create_WithProductID(t *testing.T) {
 
 	mockCustomer.AssertExpectations(t)
 	mockRepo.AssertExpectations(t)
-	mockSQS.AssertExpectations(t)
 }
 
 // TestCreateInvoice_RepositoryError tests handling of repository error
@@ -1034,13 +1114,12 @@ func TestInvoiceService_Create_RepositoryError(t *testing.T) {
 	mockRepo := new(MockInvoiceRepository)
 	mockCustomer := new(MockCustomerRepository)
 	mockProduct := new(MockProductRepository)
-	mockSQS := new(MockSQSService)
 	mockEmail := new(MockEmailService)
 	log := logger.New()
 
-	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+	svc := newInvoiceService(mockRepo, mockProduct, mockCustomer, mockEmail, log)
 
-	ctx := context.Background()
+	ctx := services.ContextWithActor(context.Background(), services.ActorContext{UserID: uuid.NewString()})
 	businessID := "business-123"
 	customerID := "customer-456"
 
@@ -1054,9 +1133,10 @@ func TestInvoiceService_Create_RepositoryError(t *testing.T) {
 	mockRepo.On("Create", ctx, mock.AnythingOfType("*models.Invoice")).Return(errors.New("database error"))
 
 	input := services.CreateInvoiceInput{
-		BusinessID: businessID,
-		CustomerID: customerID,
-		DueDate:    time.Now().Add(24 * time.Hour),
+		BusinessID:     businessID,
+		CustomerID:     customerID,
+		IdempotencyKey: uuid.NewString(),
+		DueDate:        time.Now().Add(24 * time.Hour),
 		Items: []services.CreateInvoiceItemInput{
 			{
 				Description: "Product A",
@@ -1080,13 +1160,12 @@ func TestInvoiceService_Create_SnapshotsUnitAndHSN(t *testing.T) {
 	mockRepo := new(MockInvoiceRepository)
 	mockCustomer := new(MockCustomerRepository)
 	mockProduct := new(MockProductRepository)
-	mockSQS := new(MockSQSService)
 	mockEmail := new(MockEmailService)
 	log := logger.New()
 
-	svc := services.NewInvoiceServiceForTesting(mockRepo, mockProduct, mockCustomer, mockSQS, nil, mockEmail, log)
+	svc := newInvoiceService(mockRepo, mockProduct, mockCustomer, mockEmail, log)
 
-	ctx := context.Background()
+	ctx := services.ContextWithActor(context.Background(), services.ActorContext{UserID: uuid.NewString()})
 	businessID := "business-123"
 	customerID := "customer-456"
 
@@ -1102,12 +1181,12 @@ func TestInvoiceService_Create_SnapshotsUnitAndHSN(t *testing.T) {
 			invoice.Items[0].Unit == "CBM" &&
 			invoice.Items[0].HSNSACCode == "1234"
 	})).Return(nil)
-	mockSQS.On("SendMessage", ctx, "invoice-queue", mock.AnythingOfType("map[string]string")).Return(nil)
 
 	invoice, err := svc.Create(ctx, services.CreateInvoiceInput{
-		BusinessID: businessID,
-		CustomerID: customerID,
-		DueDate:    time.Now().Add(24 * time.Hour),
+		BusinessID:     businessID,
+		CustomerID:     customerID,
+		IdempotencyKey: uuid.NewString(),
+		DueDate:        time.Now().Add(24 * time.Hour),
 		Items: []services.CreateInvoiceItemInput{
 			{
 				Description: "Concrete",
@@ -1127,5 +1206,4 @@ func TestInvoiceService_Create_SnapshotsUnitAndHSN(t *testing.T) {
 	assert.Equal(t, "1234", invoice.Items[0].HSNSACCode)
 	mockCustomer.AssertExpectations(t)
 	mockRepo.AssertExpectations(t)
-	mockSQS.AssertExpectations(t)
 }

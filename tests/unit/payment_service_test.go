@@ -85,11 +85,6 @@ func (m *MockInvoiceRepositoryPayment) GetByInvoiceNo(ctx context.Context, busin
 	return args.Get(0).(*models.Invoice), args.Error(1)
 }
 
-func (m *MockInvoiceRepositoryPayment) GetByBusinessID(ctx context.Context, businessID string, page, limit int) ([]*models.Invoice, int64, error) {
-	args := m.Called(ctx, businessID, page, limit)
-	return args.Get(0).([]*models.Invoice), args.Get(1).(int64), args.Error(2)
-}
-
 func (m *MockInvoiceRepositoryPayment) GetItems(ctx context.Context, invoiceID string) ([]*models.InvoiceItem, error) {
 	args := m.Called(ctx, invoiceID)
 	if args.Get(0) == nil {
@@ -226,7 +221,7 @@ func TestPaymentService_Create_PartialPayment(t *testing.T) {
 		PaidAmount: 300.00,
 		BalanceDue: 700.00,
 		Currency:   "USD",
-		Status:     "partial",
+		Status:     models.InvoiceStatusPartiallyPaid,
 	}
 
 	input := services.CreatePaymentInput{
@@ -238,7 +233,7 @@ func TestPaymentService_Create_PartialPayment(t *testing.T) {
 	mockInvoiceRepo.On("GetByID", ctx, invoiceID, businessID).Return(invoice, nil)
 	mockRepo.On("Create", ctx, mock.AnythingOfType("*models.Payment")).Return(nil)
 	mockInvoiceRepo.On("Update", ctx, mock.MatchedBy(func(i *models.Invoice) bool {
-		return i.Status == "partial" && i.PaidAmount == 500.00 && i.BalanceDue == 500.00
+		return i.Status == models.InvoiceStatusPartiallyPaid && i.PaidAmount == 500.00 && i.BalanceDue == 500.00
 	})).Return(nil)
 
 	payment, err := svc.Create(ctx, businessID, input)

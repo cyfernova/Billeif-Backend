@@ -114,28 +114,31 @@ type InventoryResetInput struct {
 }
 
 type InventoryTimelineFilter struct {
-	BusinessID  string
-	ProductID   string
-	VariantID   string
-	WarehouseID string
-	CategoryID  string
-	DateFrom    *time.Time
-	DateTo      *time.Time
-	Limit       int
+	BusinessID   string
+	ProductID    string
+	VariantID    string
+	WarehouseID  string
+	WarehouseIDs []string
+	CategoryID   string
+	DateFrom     *time.Time
+	DateTo       *time.Time
+	Limit        int
 }
 
 type InventoryValuationFilter struct {
-	BusinessID  string
-	ProductID   string
-	VariantID   string
-	WarehouseID string
-	CategoryID  string
-	At          *time.Time
+	BusinessID   string
+	ProductID    string
+	VariantID    string
+	WarehouseID  string
+	WarehouseIDs []string
+	CategoryID   string
+	At           *time.Time
 }
 
 type InventoryAlertFilter struct {
 	BusinessID       string
 	WarehouseID      string
+	WarehouseIDs     []string
 	VariantID        string
 	ProductID        string
 	IncludeExpiry    bool
@@ -246,7 +249,15 @@ func (s *InventoryService) ListWarehousesForUser(ctx context.Context, businessID
 		return nil, err
 	}
 	if total == 0 {
-		return s.ListWarehouses(ctx, businessID)
+		warehouses, err := s.loadWarehouses(ctx, businessID)
+		if err != nil {
+			return nil, err
+		}
+		result := s.filterWarehousesByBranchAccess(ctx, userID, businessID, warehouses)
+		if err := s.decorateWarehouseSummaries(ctx, businessID, result, userID, false); err != nil {
+			return nil, err
+		}
+		return result, nil
 	}
 
 	var rows []models.Warehouse
@@ -263,10 +274,21 @@ func (s *InventoryService) ListWarehousesForUser(ctx context.Context, businessID
 	for i := range rows {
 		result = append(result, &rows[i])
 	}
+	result = s.filterWarehousesByBranchAccess(ctx, userID, businessID, result)
 	if err := s.decorateWarehouseSummaries(ctx, businessID, result, userID, false); err != nil {
 		return nil, err
 	}
 	return result, nil
+}
+
+func (s *InventoryService) filterWarehousesByBranchAccess(ctx context.Context, userID, businessID string, warehouses []*models.Warehouse) []*models.Warehouse {
+	result := make([]*models.Warehouse, 0, len(warehouses))
+	for _, warehouse := range warehouses {
+		if s.userHasWarehouseBranchAccess(ctx, userID, businessID, warehouse) {
+			result = append(result, warehouse)
+		}
+	}
+	return result
 }
 
 func (s *InventoryService) loadWarehouses(ctx context.Context, businessID string) ([]*models.Warehouse, error) {
@@ -627,6 +649,9 @@ func (s *InventoryService) UserHasWarehouseAccess(ctx context.Context, userID, b
 	if err := s.db.WithContext(ctx).Where("id = ? AND business_id = ? AND deleted_at IS NULL", warehouseID, businessID).First(&warehouse).Error; err != nil {
 		return false
 	}
+	if !s.userHasWarehouseBranchAccess(ctx, userID, businessID, &warehouse) {
+		return false
+	}
 
 	var total int64
 	if err := s.db.WithContext(ctx).Model(&models.WarehousePermission{}).
@@ -656,6 +681,118 @@ func (s *InventoryService) UserHasWarehouseAccess(ctx context.Context, userID, b
 	default:
 		return permissionRow.CanViewCatalog
 	}
+}
+
+func (s *InventoryService) userHasWarehouseBranchAccess(ctx context.Context, userID, businessID string, warehouse *models.Warehouse) bool {
+	if warehouse == nil {
+		return false
+	}
+	var members []*models.TeamMember
+	if s.teamRepo != nil {
+		rows, err := s.teamRepo.GetByUserID(ctx, userID)
+		if err != nil {
+			return false
+		}
+		members = rows
+	} else if s.db != nil {
+		var rows []models.TeamMember
+		if err := s.db.WithContext(ctx).
+			Where("user_id = ? AND business_id = ? AND status = ? AND deleted_at IS NULL", userID, businessID, "active").
+			Find(&rows).Error; err != nil {
+			return false
+		}
+		for i := range rows {
+			members = append(members, &rows[i])
+		}
+	}
+
+	for _, member := range members {
+		if member == nil || member.BusinessID != businessID || !strings.EqualFold(member.Status, "active") {
+			continue
+		}
+		scopes := branchScopes(member.BranchScopeJSON)
+		if len(scopes) == 0 || containsStringValue(scopes, "*") {
+			return true
+		}
+		if warehouse.BranchID != nil && containsStringValue(scopes, *warehouse.BranchID) {
+			return true
+		}
+		return false
+	}
+	return false
+}
+
+func containsStringValue(values []string, candidate string) bool {
+	for _, value := range values {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *InventoryService) ReportWarehouseScope(ctx context.Context, userID, businessID string, branchIDs []string) (bool, []string, error) {
+	if userID == "" || businessID == "" {
+		return false, nil, fmt.Errorf("user and business scope are required")
+	}
+	if s.IsBusinessOwner(ctx, userID, businessID) && len(branchIDs) == 0 {
+		return true, nil, nil
+	}
+
+	var warehouses []models.Warehouse
+	query := s.db.WithContext(ctx).
+		Where("business_id = ? AND deleted_at IS NULL", businessID)
+	if len(branchIDs) > 0 {
+		query = query.Where("branch_id IN ?", branchIDs)
+	}
+	if err := query.Order("id ASC").Find(&warehouses).Error; err != nil {
+		return false, nil, err
+	}
+	if len(warehouses) == 0 {
+		return false, []string{}, nil
+	}
+
+	warehouseIDs := make([]string, 0, len(warehouses))
+	for i := range warehouses {
+		warehouseIDs = append(warehouseIDs, warehouses[i].ID)
+	}
+
+	type permissionCount struct {
+		WarehouseID string
+		Total       int64
+	}
+	var counts []permissionCount
+	if err := s.db.WithContext(ctx).
+		Model(&models.WarehousePermission{}).
+		Select("warehouse_id, COUNT(*) AS total").
+		Where("business_id = ? AND warehouse_id IN ? AND deleted_at IS NULL", businessID, warehouseIDs).
+		Group("warehouse_id").
+		Scan(&counts).Error; err != nil {
+		return false, nil, err
+	}
+	totalByWarehouse := make(map[string]int64, len(counts))
+	for _, count := range counts {
+		totalByWarehouse[count.WarehouseID] = count.Total
+	}
+
+	var userPermissions []models.WarehousePermission
+	if err := s.db.WithContext(ctx).
+		Where("business_id = ? AND warehouse_id IN ? AND user_id = ? AND deleted_at IS NULL", businessID, warehouseIDs, userID).
+		Find(&userPermissions).Error; err != nil {
+		return false, nil, err
+	}
+	canViewByWarehouse := make(map[string]bool, len(userPermissions))
+	for _, permission := range userPermissions {
+		canViewByWarehouse[permission.WarehouseID] = permission.CanViewReports
+	}
+
+	allowed := make([]string, 0, len(warehouseIDs))
+	for _, warehouseID := range warehouseIDs {
+		if totalByWarehouse[warehouseID] == 0 || canViewByWarehouse[warehouseID] {
+			allowed = append(allowed, warehouseID)
+		}
+	}
+	return len(branchIDs) == 0 && len(allowed) == len(warehouseIDs), allowed, nil
 }
 
 func (s *InventoryService) EnsureDefaultVariant(ctx context.Context, businessID string, product *models.Product) (*models.ProductVariant, error) {
@@ -909,6 +1046,11 @@ func (s *InventoryService) GetTimeline(ctx context.Context, filter InventoryTime
 	}
 	if filter.WarehouseID != "" {
 		query = query.Where("sm.warehouse_id = ? OR sm.source_warehouse_id = ?", filter.WarehouseID, filter.WarehouseID)
+	} else if filter.WarehouseIDs != nil {
+		if len(filter.WarehouseIDs) == 0 {
+			return []InventoryTimelineEntry{}, nil
+		}
+		query = query.Where("sm.warehouse_id IN ? OR sm.source_warehouse_id IN ?", filter.WarehouseIDs, filter.WarehouseIDs)
 	}
 	if filter.CategoryID != "" {
 		query = query.Where("p.category_id = ?", filter.CategoryID)
@@ -991,6 +1133,11 @@ func (s *InventoryService) GetValuation(ctx context.Context, filter InventoryVal
 		}
 		if filter.WarehouseID != "" {
 			query = query.Where("ib.warehouse_id = ?", filter.WarehouseID)
+		} else if filter.WarehouseIDs != nil {
+			if len(filter.WarehouseIDs) == 0 {
+				return []InventoryValuationRow{}, 0, nil
+			}
+			query = query.Where("ib.warehouse_id IN ?", filter.WarehouseIDs)
 		}
 		if filter.CategoryID != "" {
 			query = query.Where("p.category_id = ?", filter.CategoryID)
@@ -1006,13 +1153,14 @@ func (s *InventoryService) GetValuation(ctx context.Context, filter InventoryVal
 	}
 
 	timeline, err := s.GetTimeline(ctx, InventoryTimelineFilter{
-		BusinessID:  filter.BusinessID,
-		ProductID:   filter.ProductID,
-		VariantID:   filter.VariantID,
-		WarehouseID: filter.WarehouseID,
-		CategoryID:  filter.CategoryID,
-		DateTo:      filter.At,
-		Limit:       10000,
+		BusinessID:   filter.BusinessID,
+		ProductID:    filter.ProductID,
+		VariantID:    filter.VariantID,
+		WarehouseID:  filter.WarehouseID,
+		WarehouseIDs: filter.WarehouseIDs,
+		CategoryID:   filter.CategoryID,
+		DateTo:       filter.At,
+		Limit:        10000,
 	})
 	if err != nil {
 		return nil, 0, err
@@ -1082,10 +1230,11 @@ func (s *InventoryService) GetValuation(ctx context.Context, filter InventoryVal
 
 func (s *InventoryService) GetAlerts(ctx context.Context, filter InventoryAlertFilter) ([]InventoryAlert, error) {
 	valuationRows, _, err := s.GetValuation(ctx, InventoryValuationFilter{
-		BusinessID:  filter.BusinessID,
-		ProductID:   filter.ProductID,
-		VariantID:   filter.VariantID,
-		WarehouseID: filter.WarehouseID,
+		BusinessID:   filter.BusinessID,
+		ProductID:    filter.ProductID,
+		VariantID:    filter.VariantID,
+		WarehouseID:  filter.WarehouseID,
+		WarehouseIDs: filter.WarehouseIDs,
 	})
 	if err != nil {
 		return nil, err
@@ -1150,6 +1299,12 @@ func (s *InventoryService) GetAlerts(ctx context.Context, filter InventoryAlertF
 		if filter.VariantID != "" {
 			query = query.Where("pb.variant_id = ?", filter.VariantID)
 		}
+		if filter.WarehouseIDs != nil {
+			if len(filter.WarehouseIDs) == 0 {
+				return alerts, nil
+			}
+			query = query.Where("ib.warehouse_id IN ?", filter.WarehouseIDs)
+		}
 		if err := query.Scan(&rows).Error; err != nil {
 			return nil, err
 		}
@@ -1170,9 +1325,15 @@ func (s *InventoryService) GetAlerts(ctx context.Context, filter InventoryAlertF
 	return alerts, nil
 }
 
-func (s *InventoryService) ListBatches(ctx context.Context, businessID, productID, variantID string) ([]*models.ProductBatch, error) {
+func (s *InventoryService) ListBatches(ctx context.Context, businessID, productID, variantID string, warehouseIDs []string) ([]*models.ProductBatch, error) {
 	var batches []models.ProductBatch
 	query := s.db.WithContext(ctx).Where("business_id = ? AND deleted_at IS NULL", businessID).Order("expires_at ASC NULLS LAST, batch_number ASC")
+	if warehouseIDs != nil {
+		if len(warehouseIDs) == 0 {
+			return []*models.ProductBatch{}, nil
+		}
+		query = query.Where("EXISTS (SELECT 1 FROM inventory_balances ib WHERE ib.batch_id = product_batches.id AND ib.warehouse_id IN ? AND ib.deleted_at IS NULL)", warehouseIDs)
+	}
 	if productID != "" {
 		query = query.Where("product_id = ?", productID)
 	}
@@ -1189,9 +1350,15 @@ func (s *InventoryService) ListBatches(ctx context.Context, businessID, productI
 	return result, nil
 }
 
-func (s *InventoryService) ListSerials(ctx context.Context, businessID, productID, variantID string) ([]*models.ProductSerialNumber, error) {
+func (s *InventoryService) ListSerials(ctx context.Context, businessID, productID, variantID string, warehouseIDs []string) ([]*models.ProductSerialNumber, error) {
 	var serials []models.ProductSerialNumber
 	query := s.db.WithContext(ctx).Where("business_id = ? AND deleted_at IS NULL", businessID).Order("created_at DESC")
+	if warehouseIDs != nil {
+		if len(warehouseIDs) == 0 {
+			return []*models.ProductSerialNumber{}, nil
+		}
+		query = query.Where("warehouse_id IN ?", warehouseIDs)
+	}
 	if productID != "" {
 		query = query.Where("product_id = ?", productID)
 	}

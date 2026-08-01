@@ -1,0 +1,20 @@
+#!/bin/bash
+set -euo pipefail
+
+PUBLIC_INTERFACE="$(ip -o route show to default | awk '{print $5; exit}')"
+test -n "$PUBLIC_INTERFACE"
+
+sysctl --system
+iptables -w 5 -t nat -C POSTROUTING -s '${vpc_cidr}' -o "$PUBLIC_INTERFACE" -j MASQUERADE 2>/dev/null ||
+  iptables -w 5 -t nat -A POSTROUTING -s '${vpc_cidr}' -o "$PUBLIC_INTERFACE" -j MASQUERADE
+
+while iptables -w 5 -C FORWARD -s '${vpc_cidr}' -o "$PUBLIC_INTERFACE" -j ACCEPT 2>/dev/null; do
+  iptables -w 5 -D FORWARD -s '${vpc_cidr}' -o "$PUBLIC_INTERFACE" -j ACCEPT
+done
+while iptables -w 5 -C FORWARD -d '${vpc_cidr}' -i "$PUBLIC_INTERFACE" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null; do
+  iptables -w 5 -D FORWARD -d '${vpc_cidr}' -i "$PUBLIC_INTERFACE" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+done
+
+iptables -w 5 -I FORWARD 1 -d '${vpc_cidr}' -i "$PUBLIC_INTERFACE" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+iptables -w 5 -I FORWARD 1 -s '${vpc_cidr}' -o "$PUBLIC_INTERFACE" -j ACCEPT
+iptables-save >/etc/sysconfig/iptables

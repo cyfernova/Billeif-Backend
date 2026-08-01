@@ -1206,6 +1206,58 @@ func (r *ap2Repository) CreateBargainingRound(ctx context.Context, round *models
 	return r.db.WithContext(ctx).Create(round).Error
 }
 
+func (r *ap2Repository) ClaimBargainingRound(
+	ctx context.Context,
+	negotiationID string,
+	roundNumber int,
+	leaseOwner string,
+	now time.Time,
+	leaseExpiresAt time.Time,
+) (bool, error) {
+	var claimedOwner string
+	err := r.db.WithContext(ctx).Raw(`
+		INSERT INTO bargaining_round_claims (
+			negotiation_id,
+			round_number,
+			lease_owner,
+			lease_expires_at,
+			created_at,
+			updated_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT (negotiation_id, round_number) DO UPDATE
+		SET
+			lease_owner = EXCLUDED.lease_owner,
+			lease_expires_at = EXCLUDED.lease_expires_at,
+			updated_at = EXCLUDED.updated_at
+		WHERE bargaining_round_claims.completed_at IS NULL
+			AND bargaining_round_claims.lease_expires_at <= EXCLUDED.updated_at
+		RETURNING lease_owner
+	`, negotiationID, roundNumber, leaseOwner, leaseExpiresAt, now, now).Scan(&claimedOwner).Error
+	if err != nil {
+		return false, err
+	}
+	return claimedOwner == leaseOwner, nil
+}
+
+func (r *ap2Repository) CompleteBargainingRoundClaim(
+	ctx context.Context,
+	negotiationID string,
+	roundNumber int,
+	leaseOwner string,
+	completedAt time.Time,
+) (bool, error) {
+	result := r.db.WithContext(ctx).Exec(`
+		UPDATE bargaining_round_claims
+		SET completed_at = ?, updated_at = ?
+		WHERE negotiation_id = ?
+			AND round_number = ?
+			AND lease_owner = ?
+			AND completed_at IS NULL
+	`, completedAt, completedAt, negotiationID, roundNumber, leaseOwner)
+	return result.RowsAffected == 1, result.Error
+}
+
 func (r *ap2Repository) GetBargainingRounds(ctx context.Context, negotiationID string) ([]*models.BargainingRound, error) {
 	var rounds []models.BargainingRound
 	// Negotiations are bounded by max rounds, so returning the full history here is intentional.

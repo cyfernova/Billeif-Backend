@@ -249,7 +249,11 @@ func (h *InventoryHandler) CreateAdjustment(c *gin.Context) {
 	}
 	input.BusinessID = businessID
 	input.UserID = userID
-	if input.WarehouseID != "" && !h.hasWarehousePermission(c, businessID, input.WarehouseID, "move_stock") {
+	if input.WarehouseID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "warehouse_id is required"})
+		return
+	}
+	if !h.hasWarehousePermission(c, businessID, input.WarehouseID, "move_stock") {
 		return
 	}
 	balances, err := h.svc.RecordAdjustment(c.Request.Context(), input)
@@ -303,11 +307,16 @@ func (h *InventoryHandler) ListTransfers(c *gin.Context) {
 	if !ok {
 		return
 	}
+	warehouseIDs, ok := h.resolveReportWarehouseScope(c, businessID, "")
+	if !ok {
+		return
+	}
 	page := parseIntOrDefault(c.Query("page"), 1)
 	limit := parseIntOrDefault(c.Query("limit"), 20)
 	rows, err := h.svc.GetTimeline(c.Request.Context(), services.InventoryTimelineFilter{
-		BusinessID: businessID,
-		Limit:      page * limit,
+		BusinessID:   businessID,
+		WarehouseIDs: warehouseIDs,
+		Limit:        page * limit,
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -367,7 +376,11 @@ func (h *InventoryHandler) ResetStock(c *gin.Context) {
 	}
 	input.BusinessID = businessID
 	input.UserID = userID
-	if input.WarehouseID != "" && !h.hasWarehousePermission(c, businessID, input.WarehouseID, "move_stock") {
+	if input.WarehouseID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "warehouse_id is required"})
+		return
+	}
+	if !h.hasWarehousePermission(c, businessID, input.WarehouseID, "move_stock") {
 		return
 	}
 	if err := h.svc.ResetStock(c.Request.Context(), input); err != nil {
@@ -412,6 +425,10 @@ func (h *InventoryHandler) Timeline(c *gin.Context) {
 	if filter.WarehouseID != "" && !h.hasWarehousePermission(c, businessID, filter.WarehouseID, "view_reports") {
 		return
 	}
+	filter.WarehouseIDs, ok = h.resolveReportWarehouseScope(c, businessID, filter.WarehouseID)
+	if !ok {
+		return
+	}
 	rows, err := h.svc.GetTimeline(c.Request.Context(), filter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -449,6 +466,10 @@ func (h *InventoryHandler) Valuation(c *gin.Context) {
 	if filter.WarehouseID != "" && !h.hasWarehousePermission(c, businessID, filter.WarehouseID, "view_reports") {
 		return
 	}
+	filter.WarehouseIDs, ok = h.resolveReportWarehouseScope(c, businessID, filter.WarehouseID)
+	if !ok {
+		return
+	}
 	rows, total, err := h.svc.GetValuation(c.Request.Context(), filter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -482,6 +503,10 @@ func (h *InventoryHandler) Alerts(c *gin.Context) {
 	if filter.WarehouseID != "" && !h.hasWarehousePermission(c, businessID, filter.WarehouseID, "view_reports") {
 		return
 	}
+	filter.WarehouseIDs, ok = h.resolveReportWarehouseScope(c, businessID, filter.WarehouseID)
+	if !ok {
+		return
+	}
 	alerts, err := h.svc.GetAlerts(c.Request.Context(), filter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -504,7 +529,11 @@ func (h *InventoryHandler) ListBatches(c *gin.Context) {
 	if !ok {
 		return
 	}
-	batches, err := h.svc.ListBatches(c.Request.Context(), businessID, c.Query("product_id"), c.Query("variant_id"))
+	warehouseIDs, ok := h.resolveReportWarehouseScope(c, businessID, c.Query("warehouse_id"))
+	if !ok {
+		return
+	}
+	batches, err := h.svc.ListBatches(c.Request.Context(), businessID, c.Query("product_id"), c.Query("variant_id"), warehouseIDs)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -526,7 +555,11 @@ func (h *InventoryHandler) ListSerials(c *gin.Context) {
 	if !ok {
 		return
 	}
-	serials, err := h.svc.ListSerials(c.Request.Context(), businessID, c.Query("product_id"), c.Query("variant_id"))
+	warehouseIDs, ok := h.resolveReportWarehouseScope(c, businessID, c.Query("warehouse_id"))
+	if !ok {
+		return
+	}
+	serials, err := h.svc.ListSerials(c.Request.Context(), businessID, c.Query("product_id"), c.Query("variant_id"), warehouseIDs)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -677,6 +710,47 @@ func (h *InventoryHandler) hasWarehouseManagementAccess(c *gin.Context, business
 		return true
 	}
 	c.JSON(http.StatusForbidden, gin.H{"error": "access denied to manage this warehouse"})
+	return false
+}
+
+func (h *InventoryHandler) resolveReportWarehouseScope(c *gin.Context, businessID, requestedWarehouseID string) ([]string, bool) {
+	allBranches, branchIDs, scopeOK := middleware.GetValidatedBranchScope(c)
+	if !scopeOK {
+		c.JSON(http.StatusForbidden, gin.H{"error": "validated branch scope required"})
+		return nil, false
+	}
+	if allBranches {
+		branchIDs = nil
+	}
+	if middleware.GetRole(c) == "admin" && allBranches {
+		return nil, true
+	}
+	userID := middleware.GetUserID(c)
+	allWarehouses, allowedWarehouseIDs, err := h.svc.ReportWarehouseScope(c.Request.Context(), userID, businessID, branchIDs)
+	if err != nil {
+		h.log.Error("resolve inventory warehouse scope", "error", err, "business_id", businessID, "user_id", userID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve warehouse scope"})
+		return nil, false
+	}
+	if requestedWarehouseID == "" {
+		if allWarehouses {
+			return nil, true
+		}
+		return allowedWarehouseIDs, true
+	}
+	if allWarehouses || containsString(allowedWarehouseIDs, requestedWarehouseID) {
+		return []string{requestedWarehouseID}, true
+	}
+	c.JSON(http.StatusForbidden, gin.H{"error": "access denied to this warehouse"})
+	return nil, false
+}
+
+func containsString(values []string, candidate string) bool {
+	for _, value := range values {
+		if value == candidate {
+			return true
+		}
+	}
 	return false
 }
 

@@ -1,2 +1,0 @@
-ALTER TABLE agents ADD COLUMN IF NOT EXISTS price FLOAT DEFAULT 0;
-CREATE INDEX IF NOT EXISTS idx_agents_price ON agents (price);

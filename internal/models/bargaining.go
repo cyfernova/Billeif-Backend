@@ -34,9 +34,9 @@ func (bn *BargainingNegotiation) TableName() string {
 
 type BargainingRound struct {
 	ID               string    `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
-	NegotiationID    string    `gorm:"not null;index" json:"negotiation_id" validate:"required,uuid"`
+	NegotiationID    string    `gorm:"not null;index;uniqueIndex:idx_bargaining_rounds_negotiation_round_unique,priority:1" json:"negotiation_id" validate:"required,uuid"`
 	AgentID          string    `gorm:"not null;index" json:"agent_id" validate:"required,uuid"`
-	RoundNumber      int       `gorm:"not null" json:"round_number" validate:"required,gte=1"`
+	RoundNumber      int       `gorm:"not null;uniqueIndex:idx_bargaining_rounds_negotiation_round_unique,priority:2" json:"round_number" validate:"required,gte=1"`
 	ProposedAmount   float64   `gorm:"not null;type:decimal(15,2)" json:"proposed_amount" validate:"required,gte=0"`
 	PreviousAmount   float64   `gorm:"not null;type:decimal(15,2)" json:"previous_amount" validate:"required,gte=0"`
 	AgentType        string    `gorm:"not null;size:10" json:"agent_type" validate:"required,oneof=buyer seller"`

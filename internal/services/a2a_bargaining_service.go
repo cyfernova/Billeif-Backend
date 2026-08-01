@@ -425,7 +425,14 @@ func (s *A2ABargainingService) RunAutonomousNegotiation(ctx context.Context, ses
 	return nil
 }
 
-func (s *A2ABargainingService) RunAutonomousNegotiationRound(ctx context.Context, sessionID string) error {
+func (s *A2ABargainingService) RunAutonomousNegotiationRound(
+	ctx context.Context,
+	sessionID string,
+	expectedRound int,
+) error {
+	if expectedRound <= 0 {
+		return fmt.Errorf("invalid expected negotiation round: %d", expectedRound)
+	}
 	var session *A2ASession
 	s.sessionsLock.RLock()
 	session, exists := s.sessions[sessionID]
@@ -457,6 +464,22 @@ func (s *A2ABargainingService) RunAutonomousNegotiationRound(ctx context.Context
 	// Use DB state as source of truth for which rounds exist
 	dbRoundCount := len(rounds)
 	nextRound := dbRoundCount + 1
+	if nextRound > expectedRound {
+		s.log.Info(
+			"negotiation round already applied",
+			"session_id", sessionID,
+			"expected_round", expectedRound,
+			"db_next_round", nextRound,
+		)
+		return nil
+	}
+	if nextRound < expectedRound {
+		return fmt.Errorf(
+			"negotiation round out of order: expected=%d db_next=%d",
+			expectedRound,
+			nextRound,
+		)
+	}
 
 	if nextRound > session.MaxRounds {
 		session.Status = "expired"
@@ -499,6 +522,22 @@ func (s *A2ABargainingService) RunAutonomousNegotiationRound(ctx context.Context
 	if syncedNextRound != nextRound {
 		s.log.Info("round count updated from DB sync", "session_id", sessionID, "old_next_round", nextRound, "new_next_round", syncedNextRound, "db_rounds", latestNeg.Rounds)
 		nextRound = syncedNextRound
+	}
+	if nextRound > expectedRound {
+		s.log.Info(
+			"negotiation round applied during claim",
+			"session_id", sessionID,
+			"expected_round", expectedRound,
+			"db_next_round", nextRound,
+		)
+		return nil
+	}
+	if nextRound < expectedRound {
+		return fmt.Errorf(
+			"negotiation round changed out of order: expected=%d db_next=%d",
+			expectedRound,
+			nextRound,
+		)
 	}
 
 	// Determine which agent should act based on who went last
@@ -603,13 +642,92 @@ func (s *A2ABargainingService) RunAutonomousNegotiationRound(ctx context.Context
 	// Enqueue next round if not complete
 	if session.Round < session.MaxRounds && session.Status == "running" {
 		if err := s.EnqueueNegotiationRound(sessionID, session.DBNegotiationID, session.Round); err != nil {
-			s.log.Warn("failed to self-enqueue next round", "error", err, "session_id", sessionID, "round", session.Round)
-		} else {
-			s.log.Info("enqueued next round from service", "session_id", sessionID, "next_round", session.Round+1)
+			return fmt.Errorf(
+				"enqueue successor after bargaining round %d: %w",
+				session.Round,
+				err,
+			)
 		}
+		s.log.Info("enqueued next round from service", "session_id", sessionID, "next_round", session.Round+1)
 	}
 
 	return nil
+}
+
+func (s *A2ABargainingService) EnsureAutonomousNegotiationSuccessor(
+	ctx context.Context,
+	sessionID,
+	negotiationID string,
+	completedRound int,
+) error {
+	if sessionID == "" || negotiationID == "" || completedRound < 1 {
+		return fmt.Errorf("invalid bargaining successor recovery")
+	}
+	progress := s.GetSessionProgress(sessionID)
+	if progress == nil {
+		progress = s.GetSessionProgressByNegotiationID(ctx, negotiationID)
+	}
+	if progress == nil {
+		return fmt.Errorf(
+			"session not found while recovering bargaining successor: session_id=%s negotiation_id=%s",
+			sessionID,
+			negotiationID,
+		)
+	}
+	if progress.Round > completedRound {
+		return nil
+	}
+	if progress.Round < completedRound {
+		return fmt.Errorf(
+			"cannot recover future bargaining successor: completed_round=%d db_round=%d",
+			completedRound,
+			progress.Round,
+		)
+	}
+	if progress.Round >= progress.MaxRounds ||
+		progress.Status == "completed" ||
+		progress.Status == "accepted" ||
+		progress.Status == "rejected" ||
+		progress.Status == "expired" {
+		return nil
+	}
+	if progress.Status != "running" {
+		return fmt.Errorf(
+			"cannot recover bargaining successor from status %q",
+			progress.Status,
+		)
+	}
+	if err := s.EnqueueNegotiationRound(sessionID, negotiationID, completedRound); err != nil {
+		return fmt.Errorf("enqueue bargaining successor: %w", err)
+	}
+	return nil
+}
+
+func (s *A2ABargainingService) ClaimAutonomousNegotiationRound(
+	ctx context.Context,
+	negotiationID string,
+	roundNumber int,
+	leaseOwner string,
+	now time.Time,
+	leaseExpiresAt time.Time,
+) (bool, error) {
+	if negotiationID == "" || roundNumber < 1 || leaseOwner == "" || !leaseExpiresAt.After(now) {
+		return false, fmt.Errorf("invalid bargaining round claim")
+	}
+	return s.ap2Repo.ClaimBargainingRound(ctx, negotiationID, roundNumber, leaseOwner, now, leaseExpiresAt)
+}
+
+func (s *A2ABargainingService) CompleteAutonomousNegotiationRound(
+	ctx context.Context,
+	negotiationID string,
+	roundNumber int,
+	leaseOwner string,
+	completedAt time.Time,
+) (bool, error) {
+	if negotiationID == "" || roundNumber < 1 || leaseOwner == "" {
+		return false, fmt.Errorf("invalid bargaining round completion")
+	}
+	return s.ap2Repo.CompleteBargainingRoundClaim(ctx, negotiationID, roundNumber, leaseOwner, completedAt)
 }
 
 func (s *A2ABargainingService) recordLearning(negotiation *models.BargainingNegotiation, lastAgentID, lastAgentType, action string, rounds int) {

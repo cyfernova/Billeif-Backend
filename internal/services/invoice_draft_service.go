@@ -40,7 +40,7 @@ type UpdateInvoiceDraftLineInput struct {
 }
 
 type UpdateInvoiceDraftInput struct {
-	Version            int                           `json:"version" binding:"required"`
+	ExpectedVersion    int                           `json:"-"`
 	CustomerID         *string                       `json:"customer_id,omitempty"`
 	CustomerSnapshot   map[string]interface{}        `json:"customer_snapshot,omitempty"`
 	Document           map[string]interface{}        `json:"document,omitempty"`
@@ -114,15 +114,16 @@ func (s *InvoiceService) UpdateDraftByBusiness(ctx context.Context, businessID, 
 		if currentVersion <= 0 {
 			currentVersion = 1
 		}
-		if input.Version != currentVersion {
+		if input.ExpectedVersion != currentVersion {
 			return fmt.Errorf("invoice version conflict")
 		}
 
 		customerID := invoice.CustomerID
 		if input.CustomerID != nil && strings.TrimSpace(*input.CustomerID) != "" {
-			customerID = strings.TrimSpace(*input.CustomerID)
+			customerIDValue := strings.TrimSpace(*input.CustomerID)
+			customerID = &customerIDValue
 			if s.customerRepo != nil {
-				if _, err := s.customerRepo.GetByID(ctx, customerID, businessID); err != nil {
+				if _, err := s.customerRepo.GetByID(ctx, customerIDValue, businessID); err != nil {
 					return fmt.Errorf("customer not found: %w", err)
 				}
 			}

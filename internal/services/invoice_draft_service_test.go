@@ -64,12 +64,16 @@ func createInvoiceDraftTestSchema(t *testing.T, db *gorm.DB) {
 		`CREATE TABLE invoices (
 			id TEXT PRIMARY KEY,
 			business_id TEXT NOT NULL,
-			customer_id TEXT NOT NULL,
+			customer_id TEXT,
 			version INTEGER NOT NULL DEFAULT 1,
 			project_id TEXT,
 			price_list_id TEXT,
 			render_profile_id TEXT,
-			invoice_no TEXT NOT NULL,
+			invoice_no TEXT,
+			origin TEXT NOT NULL DEFAULT 'conversion',
+			issued_at DATETIME,
+			seller_snapshot TEXT NOT NULL DEFAULT '{}',
+			buyer_snapshot TEXT NOT NULL DEFAULT '{}',
 			invoice_date DATETIME NOT NULL,
 			due_date DATETIME,
 			status TEXT NOT NULL DEFAULT 'draft',
@@ -161,9 +165,9 @@ func seedDraftInvoice(t *testing.T, db *gorm.DB, businessID, customerID string, 
 	invoice := &models.Invoice{
 		ID:                invoiceID,
 		BusinessID:        businessID,
-		CustomerID:        customerID,
+		CustomerID:        models.StringPointer(customerID),
 		Version:           version,
-		InvoiceNo:         "DRAFT-001",
+		InvoiceNo:         models.StringPointer("DRAFT-001"),
 		Status:            status,
 		InvoiceDate:       time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC),
 		DueDate:           time.Date(2026, 5, 31, 0, 0, 0, 0, time.UTC),
@@ -206,8 +210,8 @@ func TestInvoiceService_UpdateDraftByBusiness_PersistsCustomerItemsAndRecalculat
 	})
 
 	updated, err := svc.UpdateDraftByBusiness(ctx, businessID, invoiceID, UpdateInvoiceDraftInput{
-		Version:    1,
-		CustomerID: &newCustomerID,
+		ExpectedVersion: 1,
+		CustomerID:      &newCustomerID,
 		CustomerSnapshot: map[string]interface{}{
 			"id":                newCustomerID,
 			"name":              "New Customer",
@@ -250,8 +254,8 @@ func TestInvoiceService_UpdateDraftByBusiness_PersistsCustomerItemsAndRecalculat
 	if updated.Version != 2 {
 		t.Fatalf("version = %d, want 2", updated.Version)
 	}
-	if updated.CustomerID != newCustomerID {
-		t.Fatalf("customer id = %q, want %q", updated.CustomerID, newCustomerID)
+	if updated.CustomerID == nil || *updated.CustomerID != newCustomerID {
+		t.Fatalf("customer id = %v, want %q", updated.CustomerID, newCustomerID)
 	}
 	if updated.Total != 1180 || updated.Tax != 180 || updated.Subtotal != 1000 {
 		t.Fatalf("totals = subtotal %.2f tax %.2f total %.2f, want 1000/180/1180", updated.Subtotal, updated.Tax, updated.Total)
@@ -285,8 +289,8 @@ func TestInvoiceService_UpdateDraftByBusiness_RejectsStaleVersion(t *testing.T) 
 	invoiceID := seedDraftInvoice(t, db, businessID, oldCustomerID, 3, "draft")
 
 	_, err := svc.UpdateDraftByBusiness(context.Background(), businessID, invoiceID, UpdateInvoiceDraftInput{
-		Version: 2,
-		Items:   []UpdateInvoiceDraftLineInput{{Description: "Item", Quantity: 1, UnitPricePaise: 10000}},
+		ExpectedVersion: 2,
+		Items:           []UpdateInvoiceDraftLineInput{{Description: "Item", Quantity: 1, UnitPricePaise: 10000}},
 	})
 	if err == nil || !strings.Contains(err.Error(), "version conflict") {
 		t.Fatalf("err = %v, want version conflict", err)
@@ -298,8 +302,8 @@ func TestInvoiceService_UpdateDraftByBusiness_RejectsNonDraft(t *testing.T) {
 	invoiceID := seedDraftInvoice(t, db, businessID, oldCustomerID, 1, "paid")
 
 	_, err := svc.UpdateDraftByBusiness(context.Background(), businessID, invoiceID, UpdateInvoiceDraftInput{
-		Version: 1,
-		Items:   []UpdateInvoiceDraftLineInput{{Description: "Item", Quantity: 1, UnitPricePaise: 10000}},
+		ExpectedVersion: 1,
+		Items:           []UpdateInvoiceDraftLineInput{{Description: "Item", Quantity: 1, UnitPricePaise: 10000}},
 	})
 	if err == nil || !strings.Contains(err.Error(), "only draft invoices") {
 		t.Fatalf("err = %v, want non-draft rejection", err)

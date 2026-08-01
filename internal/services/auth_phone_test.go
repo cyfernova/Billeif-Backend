@@ -290,14 +290,37 @@ func TestSyncGoogleUserRejectsPhonePreboundEmailRelink(t *testing.T) {
 	svc := newPhoneAuthService(t, repo, &mockCognitoClient{})
 
 	user, err := svc.SyncGoogleUser(context.Background(), SyncGoogleUserInput{
-		Email:     "victim@example.com",
-		CognitoID: "google-sub-1",
-		Name:      "Victim",
+		Email:         "victim@example.com",
+		EmailVerified: true,
+		CognitoID:     "google-sub-1",
+		Name:          "Victim",
 	})
 
 	require.Error(t, err)
 	assert.Nil(t, user)
 	assert.Contains(t, err.Error(), "cannot relink user across identity providers")
+}
+
+func TestSyncGoogleUserRejectsUnverifiedEmail(t *testing.T) {
+	t.Parallel()
+
+	repo := &mockUserRepo{
+		create: func(ctx context.Context, user *models.User) error {
+			t.Fatal("unverified Google email must not create or link a user")
+			return nil
+		},
+	}
+	svc := newPhoneAuthService(t, repo, &mockCognitoClient{})
+
+	user, err := svc.SyncGoogleUser(context.Background(), SyncGoogleUserInput{
+		Email:     "unverified@example.com",
+		CognitoID: "google-sub-unverified",
+		Name:      "Unverified User",
+	})
+
+	require.Error(t, err)
+	assert.Nil(t, user)
+	assert.Contains(t, err.Error(), "verified")
 }
 
 func TestSyncGoogleUserUsesEmailLocalPartWhenGoogleNameMissing(t *testing.T) {
@@ -314,8 +337,9 @@ func TestSyncGoogleUserUsesEmailLocalPartWhenGoogleNameMissing(t *testing.T) {
 	svc := newPhoneAuthService(t, repo, &mockCognitoClient{})
 
 	user, err := svc.SyncGoogleUser(context.Background(), SyncGoogleUserInput{
-		Email:     "new.google@example.com",
-		CognitoID: "google-sub-1",
+		Email:         "new.google@example.com",
+		EmailVerified: true,
+		CognitoID:     "google-sub-1",
 	})
 
 	require.NoError(t, err)

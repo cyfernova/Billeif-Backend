@@ -436,6 +436,12 @@ func (m *MockAP2Repository) GetBargainingRounds(ctx context.Context, negotiation
 func (m *MockAP2Repository) GetBargainingRoundsByAgent(ctx context.Context, agentID string, page, limit int) ([]*models.BargainingRound, int64, error) {
 	return nil, 0, nil
 }
+func (m *MockAP2Repository) ClaimBargainingRound(ctx context.Context, negotiationID string, roundNumber int, leaseOwner string, now, leaseExpiresAt time.Time) (bool, error) {
+	return false, nil
+}
+func (m *MockAP2Repository) CompleteBargainingRoundClaim(ctx context.Context, negotiationID string, roundNumber int, leaseOwner string, completedAt time.Time) (bool, error) {
+	return false, nil
+}
 
 // TestAgentDiscoveryService_RegisterAgent tests successful agent registration
 func TestAgentDiscoveryService_RegisterAgent(t *testing.T) {

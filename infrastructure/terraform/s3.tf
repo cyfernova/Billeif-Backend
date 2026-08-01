@@ -1,6 +1,6 @@
 # Locals for unique bucket naming
 locals {
-  bucket_prefix = "${var.project_name}-${var.environment}-${data.aws_caller_identity.current.account_id}"
+  bucket_prefix = "${local.resource_prefix}-${data.aws_caller_identity.current.account_id}"
 }
 
 # Business Logos Bucket
@@ -218,6 +218,7 @@ resource "aws_s3_object" "api_http_lambda_artifact" {
   source                 = local.lambda_artifacts.api_http
   source_hash            = local.lambda_artifact_hashes.api_http
   server_side_encryption = "AES256"
+  depends_on             = [aws_s3_bucket_versioning.lambda_artifacts]
 
   lifecycle {
     precondition {
@@ -233,11 +234,76 @@ resource "aws_s3_object" "sqs_bargaining_lambda_artifact" {
   source                 = local.lambda_artifacts.sqs_bargaining
   source_hash            = local.lambda_artifact_hashes.sqs_bargaining
   server_side_encryption = "AES256"
+  depends_on             = [aws_s3_bucket_versioning.lambda_artifacts]
 
   lifecycle {
     precondition {
       condition     = fileexists(local.lambda_artifacts.sqs_bargaining)
       error_message = "Missing Lambda artifact ${local.lambda_artifacts.sqs_bargaining}. Run make package-lambda from the repository root before running Terraform."
+    }
+  }
+}
+
+resource "aws_s3_object" "sqs_invoice_lambda_artifact" {
+  bucket                 = aws_s3_bucket.lambda_artifacts.id
+  key                    = "lambda/sqs-invoice-${local.lambda_artifact_hex_hashes.sqs_invoice}.zip"
+  source                 = local.lambda_artifacts.sqs_invoice
+  source_hash            = local.lambda_artifact_hashes.sqs_invoice
+  server_side_encryption = "AES256"
+  depends_on             = [aws_s3_bucket_versioning.lambda_artifacts]
+
+  lifecycle {
+    precondition {
+      condition     = fileexists(local.lambda_artifacts.sqs_invoice)
+      error_message = "Missing Lambda artifact ${local.lambda_artifacts.sqs_invoice}. Run make package-lambda from the repository root before running Terraform."
+    }
+  }
+}
+
+resource "aws_s3_object" "sqs_gst_lambda_artifact" {
+  bucket                 = aws_s3_bucket.lambda_artifacts.id
+  key                    = "lambda/sqs-gst-${local.lambda_artifact_hex_hashes.sqs_gst}.zip"
+  source                 = local.lambda_artifacts.sqs_gst
+  source_hash            = local.lambda_artifact_hashes.sqs_gst
+  server_side_encryption = "AES256"
+  depends_on             = [aws_s3_bucket_versioning.lambda_artifacts]
+
+  lifecycle {
+    precondition {
+      condition     = fileexists(local.lambda_artifacts.sqs_gst)
+      error_message = "Missing Lambda artifact ${local.lambda_artifacts.sqs_gst}. Run make package-lambda from the repository root before running Terraform."
+    }
+  }
+}
+
+resource "aws_s3_object" "ws_lambda_artifact" {
+  bucket                 = aws_s3_bucket.lambda_artifacts.id
+  key                    = "lambda/ws-${local.lambda_artifact_hex_hashes.ws_handler}.zip"
+  source                 = local.lambda_artifacts.ws_handler
+  source_hash            = local.lambda_artifact_hashes.ws_handler
+  server_side_encryption = "AES256"
+  depends_on             = [aws_s3_bucket_versioning.lambda_artifacts]
+
+  lifecycle {
+    precondition {
+      condition     = fileexists(local.lambda_artifacts.ws_handler)
+      error_message = "Missing Lambda artifact ${local.lambda_artifacts.ws_handler}. Run make package-lambda from the repository root before running Terraform."
+    }
+  }
+}
+
+resource "aws_s3_object" "custom_sms_sender_lambda_artifact" {
+  bucket                 = aws_s3_bucket.lambda_artifacts.id
+  key                    = "lambda/custom-sms-sender-${local.lambda_artifact_hex_hashes.custom_sms_sender}.zip"
+  source                 = local.lambda_artifacts.custom_sms_sender
+  source_hash            = local.lambda_artifact_hashes.custom_sms_sender
+  server_side_encryption = "AES256"
+  depends_on             = [aws_s3_bucket_versioning.lambda_artifacts]
+
+  lifecycle {
+    precondition {
+      condition     = fileexists(local.lambda_artifacts.custom_sms_sender)
+      error_message = "Missing Lambda artifact ${local.lambda_artifacts.custom_sms_sender}. Run make package-lambda from the repository root before running Terraform."
     }
   }
 }

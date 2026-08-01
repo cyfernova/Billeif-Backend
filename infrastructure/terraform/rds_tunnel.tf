@@ -39,7 +39,7 @@ data "aws_iam_policy_document" "rds_tunnel_assume_role" {
 
 resource "aws_iam_role" "rds_tunnel" {
   count              = local.rds_tunnel_enabled ? 1 : 0
-  name               = "${var.project_name}-rds-tunnel-role"
+  name               = "${local.resource_prefix}-rds-tunnel-role"
   assume_role_policy = data.aws_iam_policy_document.rds_tunnel_assume_role[0].json
 }
 
@@ -51,14 +51,14 @@ resource "aws_iam_role_policy_attachment" "rds_tunnel_ssm" {
 
 resource "aws_iam_instance_profile" "rds_tunnel" {
   count = local.rds_tunnel_enabled ? 1 : 0
-  name  = "${var.project_name}-rds-tunnel-profile"
+  name  = "${local.resource_prefix}-rds-tunnel-profile"
   role  = aws_iam_role.rds_tunnel[0].name
 }
 
 resource "aws_security_group" "rds_tunnel" {
   count       = local.rds_tunnel_enabled ? 1 : 0
-  name        = "${var.project_name}-rds-tunnel-sg"
-  description = "Outbound-only security group for SSM RDS tunnel host"
+  name        = "${local.resource_prefix}-rds-tunnel-sg"
+  description = "${local.resource_prefix} outbound-only security group for the SSM RDS tunnel host"
   vpc_id      = aws_vpc.main.id
 
   egress {
@@ -70,7 +70,7 @@ resource "aws_security_group" "rds_tunnel" {
   }
 
   tags = {
-    Name = "${var.project_name}-rds-tunnel-sg"
+    Name = "${local.resource_prefix}-rds-tunnel-sg"
   }
 }
 
@@ -89,11 +89,11 @@ resource "aws_instance" "rds_tunnel" {
   }
 
   tags = {
-    Name = "${var.project_name}-rds-tunnel"
+    Name = "${local.resource_prefix}-rds-tunnel"
   }
 
   depends_on = [
     aws_iam_role_policy_attachment.rds_tunnel_ssm,
-    aws_nat_gateway.main
+    aws_route.private_default_egress
   ]
 }

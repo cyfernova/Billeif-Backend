@@ -32,6 +32,10 @@ func ContextWithActor(ctx context.Context, actor ActorContext) context.Context {
 	return context.WithValue(ctx, actorContextKey{}, actor)
 }
 
+func ActorFromContext(ctx context.Context) ActorContext {
+	return actorFromContext(ctx)
+}
+
 func actorFromContext(ctx context.Context) ActorContext {
 	actor, _ := ctx.Value(actorContextKey{}).(ActorContext)
 	return actor

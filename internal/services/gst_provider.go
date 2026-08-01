@@ -140,6 +140,84 @@ func NewConfiguredGSTProvider(cfg *config.Config, log *logger.Logger) GSTProvide
 	}
 }
 
+func NewLazyConfiguredGSTProvider(cfg *config.Config, resolver ProviderConfigResolver, log *logger.Logger) GSTProvider {
+	if resolver == nil || cfg == nil || strings.TrimSpace(cfg.GST.BaseURL) == "" {
+		return NewConfiguredGSTProvider(cfg, log)
+	}
+	return &lazyConfiguredGSTProvider{cfg: cfg, resolver: resolver, log: log}
+}
+
+type lazyConfiguredGSTProvider struct {
+	cfg      *config.Config
+	resolver ProviderConfigResolver
+	log      *logger.Logger
+}
+
+func (p *lazyConfiguredGSTProvider) provider(ctx context.Context) (GSTProvider, error) {
+	resolved, err := p.resolver.ResolveProvider(ctx, p.cfg, config.SecretGSTProvider)
+	if err != nil {
+		return nil, err
+	}
+	return NewConfiguredGSTProvider(resolved, p.log), nil
+}
+
+func (p *lazyConfiguredGSTProvider) ValidateCredentials(ctx context.Context, account *GSTIntegrationAccountCredentials) error {
+	provider, err := p.provider(ctx)
+	if err != nil {
+		return err
+	}
+	return provider.ValidateCredentials(ctx, account)
+}
+func (p *lazyConfiguredGSTProvider) GenerateEInvoice(ctx context.Context, req GSTEInvoiceRequest) (*GSTEInvoiceResult, error) {
+	provider, err := p.provider(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return provider.GenerateEInvoice(ctx, req)
+}
+func (p *lazyConfiguredGSTProvider) CancelEInvoice(ctx context.Context, req GSTCancelEInvoiceRequest) (*GSTCancelEInvoiceResult, error) {
+	provider, err := p.provider(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return provider.CancelEInvoice(ctx, req)
+}
+func (p *lazyConfiguredGSTProvider) GenerateEWayBill(ctx context.Context, req GSTEWayBillRequest) (*GSTEWayBillResult, error) {
+	provider, err := p.provider(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return provider.GenerateEWayBill(ctx, req)
+}
+func (p *lazyConfiguredGSTProvider) UpdateEWayPartB(ctx context.Context, req GSTEWayPartBRequest) (*GSTEWayBillResult, error) {
+	provider, err := p.provider(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return provider.UpdateEWayPartB(ctx, req)
+}
+func (p *lazyConfiguredGSTProvider) InitiateMultiVehicle(ctx context.Context, req GSTMultiVehicleRequest) (*GSTMultiVehicleResult, error) {
+	provider, err := p.provider(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return provider.InitiateMultiVehicle(ctx, req)
+}
+func (p *lazyConfiguredGSTProvider) FetchEWayBillPDF(ctx context.Context, req GSTEWayBillPDFRequest) (*GSTEWayBillPDFResult, error) {
+	provider, err := p.provider(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return provider.FetchEWayBillPDF(ctx, req)
+}
+func (p *lazyConfiguredGSTProvider) FetchDistance(ctx context.Context, req GSTDistanceRequest) (*GSTDistanceResult, error) {
+	provider, err := p.provider(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return provider.FetchDistance(ctx, req)
+}
+
 type configuredGSTProvider struct {
 	cfg        *config.Config
 	httpClient *http.Client

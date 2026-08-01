@@ -1,8 +1,8 @@
 resource "aws_sns_topic" "alerts" {
-  name = "${var.project_name}-alerts"
+  name = "${local.resource_prefix}-alerts"
 
   tags = {
-    Name = "${var.project_name}-alerts"
+    Name = "${local.resource_prefix}-alerts"
   }
 }
 
@@ -14,15 +14,17 @@ resource "aws_sns_topic_subscription" "alerts_email" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "lambda_api_errors" {
-  alarm_name          = "${var.project_name}-lambda-api-errors"
+  alarm_name          = "${local.resource_prefix}-lambda-api-errors"
   comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 1
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
   metric_name         = "Errors"
   namespace           = "AWS/Lambda"
-  period              = 300
+  period              = 60
   statistic           = "Sum"
-  threshold           = 5
-  alarm_description   = "API Lambda error count is high"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif API Lambda is returning errors"
   alarm_actions       = [aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]
 
@@ -31,8 +33,151 @@ resource "aws_cloudwatch_metric_alarm" "lambda_api_errors" {
   }
 }
 
+resource "aws_cloudwatch_metric_alarm" "lambda_api_throttles" {
+  alarm_name          = "${local.resource_prefix}-lambda-api-throttles"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "Throttles"
+  namespace           = "AWS/Lambda"
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif API Lambda is being throttled"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    FunctionName = aws_lambda_function.api_http.function_name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "lambda_api_duration" {
+  alarm_name          = "${local.resource_prefix}-lambda-api-duration-p95"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "Duration"
+  namespace           = "AWS/Lambda"
+  period              = 60
+  extended_statistic  = "p95"
+  threshold           = 1500
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif API Lambda p95 duration exceeds the 1.5-second launch SLO"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    FunctionName = aws_lambda_function.api_http.function_name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "http_api_5xx" {
+  alarm_name          = "${local.resource_prefix}-http-api-5xx"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "5xx"
+  namespace           = "AWS/ApiGateway"
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif HTTP API is returning handled or integration 5xx responses"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    ApiId = aws_apigatewayv2_api.http.id
+    Stage = aws_apigatewayv2_stage.http.name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "http_api_latency" {
+  alarm_name          = "${local.resource_prefix}-http-api-latency-p95"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "Latency"
+  namespace           = "AWS/ApiGateway"
+  period              = 60
+  extended_statistic  = "p95"
+  threshold           = 1500
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif HTTP API stage p95 latency exceeds the 1.5-second launch SLO"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    ApiId = aws_apigatewayv2_api.http.id
+    Stage = aws_apigatewayv2_stage.http.name
+  }
+}
+
+locals {
+  worker_queue_names = {
+    invoice        = aws_sqs_queue.invoice_processing.name
+    gst            = aws_sqs_queue.gst_processing.name
+    bargaining     = aws_sqs_queue.bargaining_negotiation.name
+    email_delivery = aws_sqs_queue.email_delivery.name
+    ses_feedback   = aws_sqs_queue.ses_feedback.name
+  }
+  worker_dlq_names = {
+    invoice        = aws_sqs_queue.invoice_processing_dlq.name
+    gst            = aws_sqs_queue.gst_processing_dlq.name
+    bargaining     = aws_sqs_queue.bargaining_negotiation_dlq.name
+    email_delivery = aws_sqs_queue.email_delivery_dlq.name
+    ses_feedback   = aws_sqs_queue.ses_feedback_dlq.name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "worker_queue_age" {
+  for_each = local.worker_queue_names
+
+  alarm_name          = "${local.resource_prefix}-${replace(each.key, "_", "-")}-queue-age"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "ApproximateAgeOfOldestMessage"
+  namespace           = "AWS/SQS"
+  period              = 60
+  statistic           = "Maximum"
+  threshold           = 300
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif ${replace(each.key, "_", " ")} queue oldest message exceeds five minutes"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    QueueName = each.value
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "worker_dlq_messages" {
+  for_each = local.worker_dlq_names
+
+  alarm_name          = "${local.resource_prefix}-${replace(each.key, "_", "-")}-dlq-messages"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  namespace           = "AWS/SQS"
+  period              = 60
+  statistic           = "Maximum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif ${replace(each.key, "_", " ")} dead-letter queue has messages"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    QueueName = each.value
+  }
+}
+
 resource "aws_cloudwatch_metric_alarm" "lambda_ws_errors" {
-  alarm_name          = "${var.project_name}-lambda-ws-errors"
+  alarm_name          = "${local.resource_prefix}-lambda-ws-errors"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
   metric_name         = "Errors"
@@ -50,7 +195,7 @@ resource "aws_cloudwatch_metric_alarm" "lambda_ws_errors" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "lambda_invoice_errors" {
-  alarm_name          = "${var.project_name}-lambda-invoice-errors"
+  alarm_name          = "${local.resource_prefix}-lambda-invoice-errors"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
   metric_name         = "Errors"
@@ -67,26 +212,8 @@ resource "aws_cloudwatch_metric_alarm" "lambda_invoice_errors" {
   }
 }
 
-resource "aws_cloudwatch_metric_alarm" "lambda_payment_errors" {
-  alarm_name          = "${var.project_name}-lambda-payment-errors"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 1
-  metric_name         = "Errors"
-  namespace           = "AWS/Lambda"
-  period              = 300
-  statistic           = "Sum"
-  threshold           = 3
-  alarm_description   = "Payment worker Lambda error count is high"
-  alarm_actions       = [aws_sns_topic.alerts.arn]
-  ok_actions          = [aws_sns_topic.alerts.arn]
-
-  dimensions = {
-    FunctionName = aws_lambda_function.sqs_payment.function_name
-  }
-}
-
 resource "aws_cloudwatch_metric_alarm" "lambda_gst_errors" {
-  alarm_name          = "${var.project_name}-lambda-gst-errors"
+  alarm_name          = "${local.resource_prefix}-lambda-gst-errors"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
   metric_name         = "Errors"
@@ -103,6 +230,126 @@ resource "aws_cloudwatch_metric_alarm" "lambda_gst_errors" {
   }
 }
 
+resource "aws_cloudwatch_metric_alarm" "lambda_email_delivery_errors" {
+  alarm_name          = "${local.resource_prefix}-lambda-email-delivery-errors"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "Errors"
+  namespace           = "AWS/Lambda"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif email delivery Lambda is returning errors"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    FunctionName = aws_lambda_function.sqs_email_delivery.function_name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "lambda_email_delivery_throttles" {
+  alarm_name          = "${local.resource_prefix}-lambda-email-delivery-throttles"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "Throttles"
+  namespace           = "AWS/Lambda"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif email delivery Lambda is being throttled"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    FunctionName = aws_lambda_function.sqs_email_delivery.function_name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "lambda_email_delivery_duration" {
+  alarm_name          = "${local.resource_prefix}-lambda-email-delivery-duration"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "Duration"
+  namespace           = "AWS/Lambda"
+  period              = 300
+  extended_statistic  = "p95"
+  threshold           = 45000
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif email delivery Lambda p95 duration exceeds 45 seconds"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    FunctionName = aws_lambda_function.sqs_email_delivery.function_name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "lambda_ses_feedback_errors" {
+  alarm_name          = "${local.resource_prefix}-lambda-ses-feedback-errors"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "Errors"
+  namespace           = "AWS/Lambda"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif SES feedback Lambda is returning errors"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    FunctionName = aws_lambda_function.sqs_ses_feedback.function_name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "lambda_ses_feedback_throttles" {
+  alarm_name          = "${local.resource_prefix}-lambda-ses-feedback-throttles"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "Throttles"
+  namespace           = "AWS/Lambda"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif SES feedback Lambda is being throttled"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    FunctionName = aws_lambda_function.sqs_ses_feedback.function_name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "lambda_ses_feedback_duration" {
+  alarm_name          = "${local.resource_prefix}-lambda-ses-feedback-duration"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "Duration"
+  namespace           = "AWS/Lambda"
+  period              = 300
+  extended_statistic  = "p95"
+  threshold           = 25000
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif SES feedback Lambda p95 duration exceeds 25 seconds"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    FunctionName = aws_lambda_function.sqs_ses_feedback.function_name
+  }
+}
+
 locals {
   threat_detection_log_groups = {
     api_http   = aws_cloudwatch_log_group.lambda_api_http.name
@@ -113,23 +360,23 @@ locals {
 
 resource "aws_cloudwatch_log_metric_filter" "threat_detection" {
   for_each       = local.threat_detection_log_groups
-  name           = "${var.project_name}-${each.key}-threat-detection"
+  name           = "${local.resource_prefix}-${each.key}-threat-detection"
   log_group_name = each.value
   pattern        = "{ $.security_detection = true }"
 
   metric_transformation {
     name      = "ThreatDetectionCount"
-    namespace = "${var.project_name}/Security"
+    namespace = "${local.resource_prefix}/Security"
     value     = "1"
   }
 }
 
 resource "aws_cloudwatch_metric_alarm" "threat_detection" {
-  alarm_name          = "${var.project_name}-threat-detection"
+  alarm_name          = "${local.resource_prefix}-threat-detection"
   comparison_operator = "GreaterThanOrEqualToThreshold"
   evaluation_periods  = 1
   metric_name         = "ThreatDetectionCount"
-  namespace           = "${var.project_name}/Security"
+  namespace           = "${local.resource_prefix}/Security"
   period              = 300
   statistic           = "Sum"
   threshold           = 1
@@ -142,15 +389,17 @@ resource "aws_cloudwatch_metric_alarm" "threat_detection" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "rds_cpu_high" {
-  alarm_name          = "${var.project_name}-rds-cpu-high"
+  alarm_name          = "${local.resource_prefix}-rds-cpu-high"
   comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 2
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
   metric_name         = "CPUUtilization"
   namespace           = "AWS/RDS"
   period              = 300
   statistic           = "Average"
-  threshold           = 80
-  alarm_description   = "RDS CPU utilization is above 80%"
+  threshold           = 70
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif RDS CPU utilization is above the 70% launch gate"
   alarm_actions       = [aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]
 
@@ -160,14 +409,16 @@ resource "aws_cloudwatch_metric_alarm" "rds_cpu_high" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "rds_storage_low" {
-  alarm_name          = "${var.project_name}-rds-storage-low"
+  alarm_name          = "${local.resource_prefix}-rds-storage-low"
   comparison_operator = "LessThanThreshold"
-  evaluation_periods  = 1
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
   metric_name         = "FreeStorageSpace"
   namespace           = "AWS/RDS"
   period              = 300
   statistic           = "Average"
   threshold           = 2147483648 # 2 GB in bytes
+  treat_missing_data  = "breaching"
   alarm_description   = "RDS free storage is below 2GB"
   alarm_actions       = [aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]
@@ -177,8 +428,110 @@ resource "aws_cloudwatch_metric_alarm" "rds_storage_low" {
   }
 }
 
+resource "aws_cloudwatch_metric_alarm" "rds_connections_high" {
+  alarm_name          = "${local.resource_prefix}-rds-connections-high"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "DatabaseConnections"
+  namespace           = "AWS/RDS"
+  period              = 300
+  statistic           = "Maximum"
+  threshold           = 60
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif RDS database connections exceed the beta pool envelope"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    DBInstanceIdentifier = aws_db_instance.main.id
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "rds_memory_low" {
+  alarm_name          = "${local.resource_prefix}-rds-memory-low"
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "FreeableMemory"
+  namespace           = "AWS/RDS"
+  period              = 300
+  statistic           = "Average"
+  threshold           = 134217728
+  treat_missing_data  = "breaching"
+  alarm_description   = "Billeif RDS freeable memory is below 128 MiB"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    DBInstanceIdentifier = aws_db_instance.main.id
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "rds_cpu_credits_low" {
+  alarm_name          = "${local.resource_prefix}-rds-cpu-credits-low"
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "CPUCreditBalance"
+  namespace           = "AWS/RDS"
+  period              = 300
+  statistic           = "Minimum"
+  threshold           = 20
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif burstable RDS CPU credit balance is low"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    DBInstanceIdentifier = aws_db_instance.main.id
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "outbox_oldest_pending_age" {
+  alarm_name          = "${local.resource_prefix}-outbox-oldest-pending-age"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "OldestPendingAgeSeconds"
+  namespace           = "Billeif/Outbox"
+  period              = 300
+  statistic           = "Maximum"
+  threshold           = 300
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif outbox oldest pending event is more than five minutes old"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    Environment = var.environment
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "voice_active_sessions" {
+  count = var.enable_application && var.enable_voice ? 1 : 0
+
+  alarm_name          = "${local.resource_prefix}-voice-active-sessions"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "ConcurrentExecutions"
+  namespace           = "AWS/Lambda"
+  period              = 60
+  statistic           = "Maximum"
+  threshold           = var.voice_session_reserved_concurrency
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif pilot voice sessions reached the hard concurrency cap"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    FunctionName = aws_lambda_function.voice_session.function_name
+  }
+}
+
 resource "aws_cloudwatch_dashboard" "main" {
-  dashboard_name = "${var.project_name}-dashboard"
+  dashboard_name = "${local.resource_prefix}-dashboard"
 
   dashboard_body = jsonencode({
     widgets = [
@@ -194,7 +547,6 @@ resource "aws_cloudwatch_dashboard" "main" {
           metrics = [
             ["AWS/Lambda", "Invocations", "FunctionName", aws_lambda_function.api_http.function_name],
             [".", "Invocations", "FunctionName", aws_lambda_function.sqs_invoice.function_name],
-            [".", "Invocations", "FunctionName", aws_lambda_function.sqs_payment.function_name],
             [".", "Invocations", "FunctionName", aws_lambda_function.sqs_gst.function_name],
             [".", "Invocations", "FunctionName", aws_lambda_function.ws_handler.function_name]
           ]
@@ -214,7 +566,6 @@ resource "aws_cloudwatch_dashboard" "main" {
           metrics = [
             ["AWS/Lambda", "Errors", "FunctionName", aws_lambda_function.api_http.function_name],
             [".", "Errors", "FunctionName", aws_lambda_function.sqs_invoice.function_name],
-            [".", "Errors", "FunctionName", aws_lambda_function.sqs_payment.function_name],
             [".", "Errors", "FunctionName", aws_lambda_function.sqs_gst.function_name],
             [".", "Errors", "FunctionName", aws_lambda_function.ws_handler.function_name]
           ]

@@ -1136,6 +1136,7 @@ func (r *reportingRepository) buildInventoryBalanceBundle(def reporting.Definiti
 	}
 	clauses := []string{"ib.business_id = ?", "ib.deleted_at IS NULL"}
 	args := []interface{}{query.BusinessID}
+	clauses, args = appendWarehouseScope(clauses, args, "ib.warehouse_id", query)
 	if query.Filters.WarehouseID != "" {
 		clauses = append(clauses, "ib.warehouse_id = ?")
 		args = append(args, query.Filters.WarehouseID)
@@ -1186,6 +1187,7 @@ func (r *reportingRepository) buildInventoryBalanceBundle(def reporting.Definiti
 func (r *reportingRepository) buildLowStockBundle(query reporting.Query) (reportBundle, error) {
 	clauses := []string{"ib.business_id = ?", "ib.deleted_at IS NULL"}
 	args := []interface{}{query.BusinessID}
+	clauses, args = appendWarehouseScope(clauses, args, "ib.warehouse_id", query)
 	if query.Filters.WarehouseID != "" {
 		clauses = append(clauses, "ib.warehouse_id = ?")
 		args = append(args, query.Filters.WarehouseID)
@@ -1228,6 +1230,14 @@ func (r *reportingRepository) buildLowStockBundle(query reporting.Query) (report
 func (r *reportingRepository) buildStockMovementBundle(query reporting.Query) (reportBundle, error) {
 	clauses := []string{"sm.business_id = ?", "sm.deleted_at IS NULL"}
 	args := []interface{}{query.BusinessID}
+	if query.Filters.WarehouseScopeRestricted {
+		if len(query.Filters.AllowedWarehouseIDs) == 0 {
+			clauses = append(clauses, "1 = 0")
+		} else {
+			clauses = append(clauses, "(sm.warehouse_id IN ? OR sm.source_warehouse_id IN ?)")
+			args = append(args, query.Filters.AllowedWarehouseIDs, query.Filters.AllowedWarehouseIDs)
+		}
+	}
 	if query.Filters.DateFrom != nil {
 		clauses = append(clauses, "sm.recorded_at >= ?")
 		args = append(args, *query.Filters.DateFrom)
@@ -1292,6 +1302,14 @@ func (r *reportingRepository) buildStockMovementBundle(query reporting.Query) (r
 func (r *reportingRepository) buildBatchExpiryBundle(query reporting.Query) (reportBundle, error) {
 	clauses := []string{"pb.business_id = ?", "pb.deleted_at IS NULL", "pb.expires_at IS NOT NULL"}
 	args := []interface{}{query.BusinessID}
+	if query.Filters.WarehouseScopeRestricted {
+		if len(query.Filters.AllowedWarehouseIDs) == 0 {
+			clauses = append(clauses, "1 = 0")
+		} else {
+			clauses = append(clauses, "EXISTS (SELECT 1 FROM inventory_balances scope_ib WHERE scope_ib.batch_id = pb.id AND scope_ib.warehouse_id IN ? AND scope_ib.deleted_at IS NULL)")
+			args = append(args, query.Filters.AllowedWarehouseIDs)
+		}
+	}
 	if query.Filters.ProductID != "" {
 		clauses = append(clauses, "pb.product_id = ?")
 		args = append(args, query.Filters.ProductID)
@@ -1335,6 +1353,7 @@ func (r *reportingRepository) buildBatchExpiryBundle(query reporting.Query) (rep
 func (r *reportingRepository) buildSerialTrackingBundle(query reporting.Query) (reportBundle, error) {
 	clauses := []string{"psn.business_id = ?", "psn.deleted_at IS NULL"}
 	args := []interface{}{query.BusinessID}
+	clauses, args = appendWarehouseScope(clauses, args, "psn.warehouse_id", query)
 	if query.Filters.ProductID != "" {
 		clauses = append(clauses, "psn.product_id = ?")
 		args = append(args, query.Filters.ProductID)
@@ -1378,6 +1397,14 @@ func (r *reportingRepository) buildSerialTrackingBundle(query reporting.Query) (
 func (r *reportingRepository) buildWarehouseTransferBundle(query reporting.Query) (reportBundle, error) {
 	clauses := []string{"sm.business_id = ?", "sm.deleted_at IS NULL", "sm.transaction_type = 'transfer'"}
 	args := []interface{}{query.BusinessID}
+	if query.Filters.WarehouseScopeRestricted {
+		if len(query.Filters.AllowedWarehouseIDs) == 0 {
+			clauses = append(clauses, "1 = 0")
+		} else {
+			clauses = append(clauses, "(sm.warehouse_id IN ? OR sm.source_warehouse_id IN ?)")
+			args = append(args, query.Filters.AllowedWarehouseIDs, query.Filters.AllowedWarehouseIDs)
+		}
+	}
 	if query.Filters.DateFrom != nil {
 		clauses = append(clauses, "sm.recorded_at >= ?")
 		args = append(args, *query.Filters.DateFrom)
@@ -1430,6 +1457,7 @@ func (r *reportingRepository) buildWarehouseTransferBundle(query reporting.Query
 func buildDocumentFilters(alias string, docTypes []string, query reporting.Query, searchExpr string) (string, []interface{}) {
 	clauses := []string{fmt.Sprintf("%s.business_id = ?", alias), fmt.Sprintf("%s.deleted_at IS NULL", alias)}
 	args := []interface{}{query.BusinessID}
+	clauses, args = appendDocumentScope(clauses, args, alias, query)
 	if !query.Filters.IncludeCancelled {
 		clauses = append(clauses, fmt.Sprintf("%s.status <> 'cancelled'", alias))
 	}
@@ -1468,6 +1496,15 @@ func buildDocumentFilters(alias string, docTypes []string, query reporting.Query
 func buildDocumentLineFilters(docTypes []string, query reporting.Query) (string, []interface{}) {
 	clauses := []string{"d.business_id = ?", "d.deleted_at IS NULL"}
 	args := []interface{}{query.BusinessID}
+	clauses, args = appendDocumentScope(clauses, args, "d", query)
+	if query.Filters.WarehouseScopeRestricted {
+		if len(query.Filters.AllowedWarehouseIDs) == 0 {
+			clauses = append(clauses, "1 = 0")
+		} else {
+			clauses = append(clauses, "dl.warehouse_id IN ?")
+			args = append(args, query.Filters.AllowedWarehouseIDs)
+		}
+	}
 	if !query.Filters.IncludeCancelled {
 		clauses = append(clauses, "d.status <> 'cancelled'")
 	}
@@ -1517,6 +1554,38 @@ func buildDocumentLineFilters(docTypes []string, query reporting.Query) (string,
 		args = append(args, like, like, like)
 	}
 	return strings.Join(clauses, " AND "), args
+}
+
+func appendDocumentScope(clauses []string, args []interface{}, alias string, query reporting.Query) ([]string, []interface{}) {
+	if query.Filters.BranchScopeRestricted {
+		if len(query.Filters.AllowedBranchIDs) == 0 {
+			clauses = append(clauses, "1 = 0")
+		} else {
+			clauses = append(clauses, fmt.Sprintf("%s.branch_id IN ?", alias))
+			args = append(args, query.Filters.AllowedBranchIDs)
+		}
+	}
+	if query.Filters.WarehouseScopeRestricted {
+		if len(query.Filters.AllowedWarehouseIDs) == 0 {
+			clauses = append(clauses, "1 = 0")
+		} else {
+			clauses = append(clauses, fmt.Sprintf("EXISTS (SELECT 1 FROM document_lines scope_dl WHERE scope_dl.document_id = %s.id AND scope_dl.warehouse_id IN ? AND scope_dl.deleted_at IS NULL)", alias))
+			args = append(args, query.Filters.AllowedWarehouseIDs)
+		}
+	}
+	return clauses, args
+}
+
+func appendWarehouseScope(clauses []string, args []interface{}, warehouseExpression string, query reporting.Query) ([]string, []interface{}) {
+	if !query.Filters.WarehouseScopeRestricted {
+		return clauses, args
+	}
+	if len(query.Filters.AllowedWarehouseIDs) == 0 {
+		return append(clauses, "1 = 0"), args
+	}
+	clauses = append(clauses, warehouseExpression+" IN ?")
+	args = append(args, query.Filters.AllowedWarehouseIDs)
+	return clauses, args
 }
 
 func groupedEntityColumns(groupBy string) (string, string, string) {

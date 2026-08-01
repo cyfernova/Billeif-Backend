@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -22,7 +24,9 @@ import (
 	"invoice-backend/pkg/logger"
 	pkgsentry "invoice-backend/pkg/sentry"
 
+	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/gin-gonic/gin"
+	"github.com/lib/pq"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 	"github.com/swaggo/swag"
@@ -49,26 +53,28 @@ import (
 
 type InitializeOptions struct {
 	EnableWorker bool
+	Profile      config.Profile
 }
 
 type Runtime struct {
 	Config *config.Config
 
-	Log    *logger.Logger
-	DB     *gorm.DB
-	AWS    *awsclients.Config
-	Repos  *Repositories
-	Svcs   *services.Container
-	H      *handlers.Handler
-	Router *gin.Engine
-	Worker *workers.Worker
-	WAF    *middleware.WAFRateLimiter
+	Log     *logger.Logger
+	DB      *gorm.DB
+	AWS     *awsclients.Config
+	Repos   *Repositories
+	Svcs    *services.Container
+	H       *handlers.Handler
+	Router  *gin.Engine
+	Worker  *workers.Worker
+	WAF     *middleware.WAFRateLimiter
+	Secrets *config.RuntimeResolver
 }
 
 func Initialize(ctx context.Context, opts InitializeOptions) (*Runtime, error) {
 	bootstrapLog := logger.New().Named("bootstrap")
 
-	cfg, err := config.Load()
+	cfg, err := config.LoadForProfile(opts.Profile)
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
@@ -99,32 +105,53 @@ func Initialize(ctx context.Context, opts InitializeOptions) (*Runtime, error) {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	db, err := initDatabase(cfg, log)
-	if err != nil {
-		log.Sync()
-		return nil, fmt.Errorf("connect database: %w", err)
-	}
-
 	awsClients, err := awsclients.New(ctx, cfg.AWS, log.Named("awsclients"))
 	if err != nil {
 		log.Sync()
 		return nil, fmt.Errorf("initialize AWS clients: %w", err)
 	}
 
+	resolver, err := config.NewRuntimeResolver(config.RuntimeResolverOptions{
+		Clients: config.RuntimeResolvers{
+			Secrets: secretsmanager.NewFromConfig(awsClients.SDKConfig),
+			SSM:     awsClients.SSM,
+		},
+		SecretIdentifiers: cfg.SecretIdentifierValues(),
+		ParameterNames:    []string{cfg.SSM.DatabaseHostParam},
+	})
+	if err != nil {
+		log.Sync()
+		return nil, fmt.Errorf("initialize runtime resolver: %w", err)
+	}
+	var invoiceCursor handlers.InvoiceCursorCodec
+	if opts.Profile == config.ProfileHTTP && strings.TrimSpace(cfg.Secrets.InvoiceCursorHMAC) != "" {
+		invoiceCursor, err = resolver.InvoiceCursorCodec(ctx, cfg.Secrets.InvoiceCursorHMAC)
+		if err != nil {
+			log.Sync()
+			return nil, fmt.Errorf("initialize invoice cursor codec: %w", err)
+		}
+	}
+	db, err := initDatabase(cfg, resolver, log, opts.Profile)
+	if err != nil {
+		log.Sync()
+		return nil, fmt.Errorf("connect database: %w", err)
+	}
+
 	repos := initRepositories(db)
-	svcs := initServices(cfg, db, repos, awsClients, log)
-	h := handlers.New(svcs, &handlers.Repositories{AP2: repos.AP2}, cfg, log)
+	svcs := initServices(cfg, db, repos, awsClients, resolver, log)
+	h := handlers.New(svcs, &handlers.Repositories{AP2: repos.AP2}, cfg, log, invoiceCursor)
 	router := setupRouter(cfg, svcs, h, log)
 
 	rt := &Runtime{
-		Config: cfg,
-		Log:    log,
-		DB:     db,
-		AWS:    awsClients,
-		Repos:  repos,
-		Svcs:   svcs,
-		H:      h,
-		Router: router,
+		Config:  cfg,
+		Log:     log,
+		DB:      db,
+		AWS:     awsClients,
+		Repos:   repos,
+		Svcs:    svcs,
+		H:       h,
+		Router:  router,
+		Secrets: resolver,
 	}
 
 	// Initialize WAF rate limiter if enabled
@@ -145,28 +172,106 @@ func (r *Runtime) Close() {
 	if r.Worker != nil {
 		r.Worker.Stop()
 	}
+	if r.Svcs != nil && r.Svcs.Workflow != nil {
+		r.Svcs.Workflow.Stop()
+	}
+	if r.DB != nil {
+		if sqlDB, err := r.DB.DB(); err == nil {
+			_ = sqlDB.Close()
+		}
+	}
 	pkgsentry.Flush(2 * time.Second)
 	if r.Log != nil {
 		r.Log.Sync()
 	}
 }
 
-func initDatabase(cfg *config.Config, log *logger.Logger) (*gorm.DB, error) {
+type postgresConnectorFactory func(string) (driver.Connector, error)
+
+type refreshingPostgresConnector struct {
+	resolver *config.RuntimeResolver
+	cfg      *config.Config
+	factory  postgresConnectorFactory
+}
+
+func newRefreshingPostgresConnector(resolver *config.RuntimeResolver, cfg *config.Config, factory postgresConnectorFactory) driver.Connector {
+	return &refreshingPostgresConnector{resolver: resolver, cfg: cfg, factory: factory}
+}
+
+func (c *refreshingPostgresConnector) Connect(ctx context.Context) (driver.Conn, error) {
+	credentials, err := c.resolver.Database(ctx, c.cfg)
+	if err != nil {
+		return nil, err
+	}
+	connector, err := c.factory(postgresDataSourceName(credentials))
+	if err != nil {
+		return nil, &config.ConfigurationError{Resource: "database connection configuration", Reason: "invalid"}
+	}
+	return connector.Connect(ctx)
+}
+
+func (c *refreshingPostgresConnector) Driver() driver.Driver {
+	return &refreshingPostgresDriver{connector: c}
+}
+
+type refreshingPostgresDriver struct{ connector driver.Connector }
+
+func (d *refreshingPostgresDriver) Open(string) (driver.Conn, error) {
+	return d.connector.Connect(context.Background())
+}
+
+func postgresDataSourceName(credentials config.DatabaseCredentials) string {
+	return fmt.Sprintf(
+		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		quotePostgresValue(credentials.Host),
+		credentials.Port,
+		quotePostgresValue(credentials.User),
+		quotePostgresValue(credentials.Password),
+		quotePostgresValue(credentials.Name),
+		quotePostgresValue(credentials.SSLMode),
+	)
+}
+
+func quotePostgresValue(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, `'`, `\'`)
+	return "'" + value + "'"
+}
+
+type databasePool interface {
+	SetMaxOpenConns(int)
+	SetMaxIdleConns(int)
+	SetConnMaxIdleTime(time.Duration)
+	SetConnMaxLifetime(time.Duration)
+}
+
+func configureDatabasePool(pool databasePool, profile config.Profile) {
+	maxOpenConnections := 1
+	maxIdleConnections := 0
+	if profile == config.ProfileHTTP || profile == config.ProfileA2A {
+		maxOpenConnections = 2
+		maxIdleConnections = 1
+	}
+	pool.SetMaxOpenConns(maxOpenConnections)
+	pool.SetMaxIdleConns(maxIdleConnections)
+	pool.SetConnMaxIdleTime(2 * time.Minute)
+	pool.SetConnMaxLifetime(10 * time.Minute)
+}
+
+func initDatabase(cfg *config.Config, resolver *config.RuntimeResolver, log *logger.Logger, profile config.Profile) (*gorm.DB, error) {
 	gormLevel := "warn"
 	if strings.EqualFold(cfg.Logging.Level, "debug") || strings.EqualFold(cfg.Logging.Level, "info") {
 		gormLevel = cfg.Logging.Level
 	}
 
+	connector := newRefreshingPostgresConnector(resolver, cfg, func(dataSourceName string) (driver.Connector, error) {
+		return pq.NewConnector(dataSourceName)
+	})
+	sqlDB := sql.OpenDB(connector)
+	configureDatabasePool(sqlDB, profile)
+
 	return gorm.Open(postgres.New(postgres.Config{
-		DSN: fmt.Sprintf(
-			"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-			cfg.Database.Host,
-			cfg.Database.Port,
-			cfg.Database.User,
-			cfg.Database.Password,
-			cfg.Database.Name,
-			cfg.Database.SSLMode,
-		),
+		Conn:                 sqlDB,
 		PreferSimpleProtocol: true,
 	}), &gorm.Config{
 		Logger: logger.NewGORMLogger(log, logger.GORMOptions{
@@ -179,6 +284,10 @@ func initDatabase(cfg *config.Config, log *logger.Logger) (*gorm.DB, error) {
 	})
 }
 
+func OpenDatabase(cfg *config.Config, resolver *config.RuntimeResolver, log *logger.Logger) (*gorm.DB, error) {
+	return initDatabase(cfg, resolver, log, "")
+}
+
 type Repositories struct {
 	User         interfaces.UserRepository
 	Business     interfaces.BusinessRepository
@@ -189,7 +298,7 @@ type Repositories struct {
 	Journal      interfaces.JournalRepository
 	Inventory    interfaces.InventoryRepository
 	Shipping     interfaces.ShippingRepository
-	Invoice      interfaces.InvoiceRepository
+	Invoice      interfaces.CanonicalInvoiceRepository
 	Payment      interfaces.PaymentRepository
 	Ledger       interfaces.LedgerRepository
 	Reporting    interfaces.ReportingRepository
@@ -221,8 +330,8 @@ func initRepositories(db *gorm.DB) *Repositories {
 	}
 }
 
-func initServices(cfg *config.Config, db *gorm.DB, repos *Repositories, aws *awsclients.Config, log *logger.Logger) *services.Container {
-	return services.NewContainer(cfg, db, repos.User, repos.Business, repos.Customer, repos.Vendor,
+func initServices(cfg *config.Config, db *gorm.DB, repos *Repositories, aws *awsclients.Config, resolver services.ProviderConfigResolver, log *logger.Logger) *services.Container {
+	return services.NewContainer(cfg, resolver, db, repos.User, repos.Business, repos.Customer, repos.Vendor,
 		repos.Product, repos.Document, repos.Journal, repos.Inventory, repos.Shipping, repos.Invoice, repos.Payment, repos.Ledger, repos.Reporting, repos.Team,
 		repos.Webhook, repos.Subscription, repos.AP2, aws, log)
 }
@@ -394,7 +503,7 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 			dashboard := protected.Group("/dashboard")
 			{
-				dashboard.GET("/summary", h.Dashboard.Summary)
+				dashboard.GET("/summary", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Dashboard.Summary)
 			}
 
 			businesses := protected.Group("/business-profiles")
@@ -461,35 +570,35 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 			warehouses := protected.Group("/warehouses")
 			{
-				warehouses.GET("", h.Inventory.ListWarehouses)
-				warehouses.POST("", h.Inventory.CreateWarehouse)
-				warehouses.PUT("/:id", h.Inventory.UpdateWarehouse)
-				warehouses.DELETE("/:id", h.Inventory.DeleteWarehouse)
-				warehouses.POST("/:id/catalog", h.Inventory.UpsertCatalog)
-				warehouses.GET("/:id/permissions", h.Inventory.ListPermissions)
-				warehouses.POST("/:id/permissions", h.Inventory.UpsertPermissions)
+				warehouses.GET("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsView), h.Inventory.ListWarehouses)
+				warehouses.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), h.Inventory.CreateWarehouse)
+				warehouses.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), h.Inventory.UpdateWarehouse)
+				warehouses.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), h.Inventory.DeleteWarehouse)
+				warehouses.POST("/:id/catalog", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), h.Inventory.UpsertCatalog)
+				warehouses.GET("/:id/permissions", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), h.Inventory.ListPermissions)
+				warehouses.POST("/:id/permissions", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), h.Inventory.UpsertPermissions)
 			}
 
 			inventory := protected.Group("/inventory")
 			{
-				inventory.POST("/adjustments", h.Inventory.CreateAdjustment)
-				inventory.GET("/transfers", h.Inventory.ListTransfers)
-				inventory.POST("/transfers", h.Inventory.CreateTransfer)
-				inventory.POST("/transfers/:id/complete", h.Inventory.CompleteTransfer)
-				inventory.POST("/resets", h.Inventory.ResetStock)
-				inventory.GET("/timeline", h.Inventory.Timeline)
-				inventory.GET("/valuation", h.Inventory.Valuation)
-				inventory.GET("/alerts", h.Inventory.Alerts)
-				inventory.GET("/batches", h.Inventory.ListBatches)
-				inventory.GET("/serials", h.Inventory.ListSerials)
+				inventory.POST("/adjustments", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), h.Inventory.CreateAdjustment)
+				inventory.GET("/transfers", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Inventory.ListTransfers)
+				inventory.POST("/transfers", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), h.Inventory.CreateTransfer)
+				inventory.POST("/transfers/:id/complete", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), h.Inventory.CompleteTransfer)
+				inventory.POST("/resets", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), h.Inventory.ResetStock)
+				inventory.GET("/timeline", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Inventory.Timeline)
+				inventory.GET("/valuation", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Inventory.Valuation)
+				inventory.GET("/alerts", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Inventory.Alerts)
+				inventory.GET("/batches", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Inventory.ListBatches)
+				inventory.GET("/serials", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Inventory.ListSerials)
 			}
 
 			assemblies := protected.Group("/assemblies")
 			{
-				assemblies.GET("", h.Inventory.ListAssemblyRecipes)
-				assemblies.POST("", h.Inventory.CreateAssemblyRecipe)
-				assemblies.POST("/:id/build", h.Inventory.BuildAssembly)
-				assemblies.POST("/:id/disassemble", h.Inventory.DisassembleAssembly)
+				assemblies.GET("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsView), h.Inventory.ListAssemblyRecipes)
+				assemblies.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), h.Inventory.CreateAssemblyRecipe)
+				assemblies.POST("/:id/build", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), h.Inventory.BuildAssembly)
+				assemblies.POST("/:id/disassemble", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), h.Inventory.DisassembleAssembly)
 			}
 
 			barcodes := protected.Group("/barcodes")
@@ -505,13 +614,13 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 			registerDocumentResource := func(path string, handler *handlers.DocumentHandler) {
 				group := protected.Group(path)
-				group.GET("", handler.List)
-				group.GET("/:id", handler.Get)
-				group.POST("", handler.Create)
-				group.PUT("/:id", handler.Update)
-				group.DELETE("/:id", handler.Delete)
-				group.POST("/:id/cancel", handler.Cancel)
-				group.GET("/:id/pdf", handler.GetPDF)
+				group.GET("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), handler.List)
+				group.GET("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), handler.Get)
+				group.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), handler.Create)
+				group.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), handler.Update)
+				group.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), handler.Delete)
+				group.POST("/:id/cancel", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), handler.Cancel)
+				group.GET("/:id/pdf", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), handler.GetPDF)
 			}
 
 			registerDocumentResource("/purchases", h.Purchase)
@@ -529,17 +638,20 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 			invoices := protected.Group("/invoices")
 			{
-				invoices.GET("", h.Invoice.List)
-				invoices.GET("/:id", h.Invoice.Get)
-				invoices.POST("", wafUserWriteRL, h.Invoice.Create)
-				invoices.PATCH("/:id/draft", wafUserWriteRL, h.Invoice.UpdateDraft)
-				invoices.PUT("/:id", wafUserWriteRL, h.Invoice.Update)
-				invoices.DELETE("/:id", wafUserWriteRL, h.Invoice.Delete)
-				invoices.POST("/:id/send", wafUserWriteRL, h.Invoice.Send)
-				invoices.POST("/bulk-actions", wafUserHeavyRL, h.BillingOps.CreateInvoiceBulkAction)
-				invoices.GET("/:id/pdf", h.Invoice.GetPDF)
-				invoices.POST("/:id/einvoice", wafUserHeavyRL, h.Invoice.GenerateEInvoice)
-				invoices.GET("/next-number", h.Invoice.NextNumber)
+				invoices.GET("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.List)
+				invoices.GET("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.Get)
+				invoices.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Invoice.Create)
+				invoices.POST("/:id/issue", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Invoice.Issue)
+				invoices.POST("/:id/previews", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), wafUserHeavyRL, h.Invoice.Preview)
+				invoices.PATCH("/:id/draft", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Invoice.UpdateDraft)
+				invoices.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Invoice.Update)
+				invoices.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Invoice.Delete)
+				invoices.POST("/bulk-actions", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserHeavyRL, h.BillingOps.CreateInvoiceBulkAction)
+				invoices.GET("/:id/renders/:render_job_id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.GetRenderStatus)
+				invoices.GET("/:id/pdf", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.GetPDF)
+				invoices.POST("/:id/deliveries", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Invoice.Deliver)
+				invoices.GET("/:id/deliveries/:delivery_id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.GetDeliveryStatus)
+				invoices.POST("/:id/einvoice", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserHeavyRL, h.Invoice.GenerateEInvoice)
 			}
 
 			payments := protected.Group("/payments")
@@ -555,22 +667,22 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 			documents := protected.Group("/documents")
 			{
-				documents.POST("/merge", wafUserHeavyRL, h.DocumentUtility.Merge)
-				documents.POST("/bulk-actions", wafUserHeavyRL, h.BillingOps.CreateDocumentBulkAction)
-				documents.POST("/:id/convert", wafUserHeavyRL, h.DocumentUtility.Convert)
-				documents.POST("/:id/duplicate", wafUserHeavyRL, h.DocumentUtility.Duplicate)
-				documents.GET("/:id/history", h.DocumentUtility.History)
-				documents.GET("/:id/compliance", h.DocumentUtility.GetComplianceStatus)
-				documents.POST("/:id/einvoice", wafUserHeavyRL, h.DocumentUtility.GenerateEInvoice)
-				documents.GET("/:id/einvoice", h.DocumentUtility.GetEInvoice)
-				documents.POST("/:id/einvoice/cancel", wafUserHeavyRL, h.DocumentUtility.CancelEInvoice)
-				documents.POST("/:id/ewaybill", wafUserHeavyRL, h.DocumentUtility.GenerateEWayBill)
-				documents.GET("/:id/ewaybill", h.DocumentUtility.GetEWayBill)
-				documents.GET("/:id/ewaybill/pdf", h.DocumentUtility.GetEWayBillPDF)
-				documents.PATCH("/:id/ewaybill/part-b", wafUserHeavyRL, h.DocumentUtility.UpdateEWayPartB)
-				documents.POST("/:id/ewaybill/multi-vehicle", wafUserHeavyRL, h.DocumentUtility.InitiateMultiVehicle)
-				documents.POST("/:id/render", h.DocumentUtility.Render)
-				documents.GET("/:id/pdf", h.DocumentUtility.GetPDF)
+				documents.POST("/merge", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserHeavyRL, h.DocumentUtility.Merge)
+				documents.POST("/bulk-actions", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserHeavyRL, h.BillingOps.CreateDocumentBulkAction)
+				documents.POST("/:id/convert", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserHeavyRL, h.DocumentUtility.Convert)
+				documents.POST("/:id/duplicate", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserHeavyRL, h.DocumentUtility.Duplicate)
+				documents.GET("/:id/history", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.DocumentUtility.History)
+				documents.GET("/:id/compliance", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.DocumentUtility.GetComplianceStatus)
+				documents.POST("/:id/einvoice", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserHeavyRL, h.DocumentUtility.GenerateEInvoice)
+				documents.GET("/:id/einvoice", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.DocumentUtility.GetEInvoice)
+				documents.POST("/:id/einvoice/cancel", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserHeavyRL, h.DocumentUtility.CancelEInvoice)
+				documents.POST("/:id/ewaybill", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserHeavyRL, h.DocumentUtility.GenerateEWayBill)
+				documents.GET("/:id/ewaybill", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.DocumentUtility.GetEWayBill)
+				documents.GET("/:id/ewaybill/pdf", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.DocumentUtility.GetEWayBillPDF)
+				documents.PATCH("/:id/ewaybill/part-b", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserHeavyRL, h.DocumentUtility.UpdateEWayPartB)
+				documents.POST("/:id/ewaybill/multi-vehicle", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserHeavyRL, h.DocumentUtility.InitiateMultiVehicle)
+				documents.POST("/:id/render", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.DocumentUtility.Render)
+				documents.GET("/:id/pdf", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.DocumentUtility.GetPDF)
 			}
 
 			priceLists := protected.Group("/price-lists")
@@ -636,13 +748,13 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 			journals := protected.Group("/journals")
 			{
-				journals.GET("", h.Journal.List)
-				journals.GET("/:id", h.Journal.Get)
-				journals.POST("", wafUserWriteRL, h.Journal.Create)
-				journals.PUT("/:id", wafUserWriteRL, h.Journal.Update)
-				journals.DELETE("/:id", wafUserWriteRL, h.Journal.Delete)
-				journals.POST("/:id/post", wafUserWriteRL, h.Journal.Post)
-				journals.POST("/:id/reverse", wafUserWriteRL, h.Journal.Reverse)
+				journals.GET("", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Journal.List)
+				journals.GET("/:id", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Journal.Get)
+				journals.POST("", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Journal.Create)
+				journals.PUT("/:id", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Journal.Update)
+				journals.DELETE("/:id", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Journal.Delete)
+				journals.POST("/:id/post", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Journal.Post)
+				journals.POST("/:id/reverse", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Journal.Reverse)
 			}
 
 			renderProfiles := protected.Group("/render-profiles")
@@ -658,30 +770,30 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 			utils := protected.Group("/utils")
 			{
-				utils.POST("/gstin/:gstin/fetch", h.Tax.FetchGSTIN)
+				utils.POST("/gstin/:gstin/fetch", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Tax.FetchGSTIN)
 			}
 
 			tax := protected.Group("/tax")
 			{
-				tax.GET("/integrations", h.Tax.ListIntegrationAccounts)
-				tax.POST("/integrations", h.Tax.UpsertIntegrationAccount)
-				tax.PUT("/integrations/:id", h.Tax.UpsertIntegrationAccount)
-				tax.POST("/integrations/:id/validate", h.Tax.ValidateIntegrationAccount)
-				tax.POST("/gstr-2b/import", h.Tax.ImportGSTR2B)
-				tax.GET("/reports/:type", h.Tax.GetReport)
-				tax.POST("/reports/:type/export", h.Tax.ExportReport)
-				tax.GET("/report-runs/:id", h.Tax.GetReportRun)
+				tax.GET("/integrations", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionTaxIntegrationsManage), h.Tax.ListIntegrationAccounts)
+				tax.POST("/integrations", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionTaxIntegrationsManage), h.Tax.UpsertIntegrationAccount)
+				tax.PUT("/integrations/:id", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionTaxIntegrationsManage), h.Tax.UpsertIntegrationAccount)
+				tax.POST("/integrations/:id/validate", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionTaxIntegrationsManage), h.Tax.ValidateIntegrationAccount)
+				tax.POST("/gstr-2b/import", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), h.Tax.ImportGSTR2B)
+				tax.GET("/reports/:type", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Tax.GetReport)
+				tax.POST("/reports/:type/export", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsExport), h.Tax.ExportReport)
+				tax.GET("/report-runs/:id", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Tax.GetReportRun)
 			}
 
 			pos := protected.Group("/pos")
 			{
-				pos.POST("/sessions", h.POS.CreateSession)
-				pos.GET("/sessions", h.POS.ListSessions)
-				pos.POST("/sessions/:id/close", h.POS.CloseSession)
-				pos.GET("/catalog/search", h.POS.SearchCatalog)
-				pos.POST("/carts/:id/items/scan", h.POS.ScanItem)
-				pos.POST("/carts/:id/checkout", h.POS.Checkout)
-				pos.GET("/receipts/:documentID", h.POS.GetReceipt)
+				pos.POST("/sessions", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPOSOperate), h.POS.CreateSession)
+				pos.GET("/sessions", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPOSOperate), h.POS.ListSessions)
+				pos.POST("/sessions/:id/close", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPOSOperate), h.POS.CloseSession)
+				pos.GET("/catalog/search", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPOSOperate), h.POS.SearchCatalog)
+				pos.POST("/carts/:id/items/scan", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPOSOperate), h.POS.ScanItem)
+				pos.POST("/carts/:id/checkout", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPOSOperate), h.POS.Checkout)
+				pos.GET("/receipts/:documentID", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPOSOperate), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.POS.GetReceipt)
 			}
 
 			shipments := protected.Group("/shipments")
@@ -694,8 +806,8 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 			ledger := protected.Group("/ledger")
 			{
-				ledger.GET("", h.Ledger.List)
-				ledger.GET("/balance", h.Ledger.Balance)
+				ledger.GET("", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Ledger.List)
+				ledger.GET("/balance", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Ledger.Balance)
 			}
 
 			teams := protected.Group("/teams")

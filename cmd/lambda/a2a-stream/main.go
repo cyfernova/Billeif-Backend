@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"invoice-backend/internal/app"
+	"invoice-backend/internal/config"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/gin-gonic/gin"
@@ -293,7 +294,10 @@ type appRuntime struct {
 var streamRuntime appRuntime
 
 func (r *appRuntime) initialize() {
-	r.rt, r.err = app.Initialize(context.Background(), app.InitializeOptions{EnableWorker: false})
+	r.rt, r.err = app.Initialize(context.Background(), app.InitializeOptions{
+		EnableWorker: false,
+		Profile:      config.ProfileA2A,
+	})
 }
 
 func (r *appRuntime) get() (*app.Runtime, error) {

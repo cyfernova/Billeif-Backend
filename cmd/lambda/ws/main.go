@@ -9,8 +9,10 @@ import (
 	"sync"
 	"time"
 
+	"invoice-backend/internal/app"
 	"invoice-backend/internal/config"
 	"invoice-backend/internal/middleware"
+	postgresrepo "invoice-backend/internal/repositories/postgres"
 	"invoice-backend/internal/services"
 	"invoice-backend/pkg/awsclients"
 	"invoice-backend/pkg/logger"
@@ -20,12 +22,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awslambda "github.com/aws/aws-sdk-go-v2/service/lambda"
 	lambdatypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
+	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 )
 
 var (
 	wsInitOnce  sync.Once
 	wsCfg       *config.Config
 	wsSvc       *services.WebSocketConnectionService
+	wsAuthSvc   businessAccessChecker
 	voiceCfg    *config.LambdaVoiceConfig
 	voiceStore  *services.VoiceLambdaStore
 	voicePoster services.VoicePoster
@@ -33,6 +37,10 @@ var (
 	wsLog       *logger.Logger
 	wsInitErr   error
 )
+
+type businessAccessChecker interface {
+	UserHasBusinessAccess(ctx context.Context, userID, businessID string) bool
+}
 
 func initWSRuntime() {
 	lambdaVoiceCfg, err := config.LoadLambdaVoiceConfig(true)
@@ -48,9 +56,31 @@ func initWSRuntime() {
 		Format:      cfg.Logging.Format,
 	}).Named("ws_lambda")
 
+	appCfg, err := config.LoadForProfile(config.ProfileWebSocket)
+	if err != nil {
+		wsInitErr = fmt.Errorf("load app config for websocket auth: %w", err)
+		return
+	}
 	awsCfg, err := awsclients.New(context.Background(), cfg.AWS, log)
 	if err != nil {
 		wsInitErr = fmt.Errorf("init aws clients: %w", err)
+		return
+	}
+	resolver, err := config.NewRuntimeResolver(config.RuntimeResolverOptions{
+		Clients: config.RuntimeResolvers{
+			Secrets: secretsmanager.NewFromConfig(awsCfg.SDKConfig),
+			SSM:     awsCfg.SSM,
+		},
+		SecretIdentifiers: []string{appCfg.Secrets.Database},
+		ParameterNames:    []string{appCfg.SSM.DatabaseHostParam},
+	})
+	if err != nil {
+		wsInitErr = fmt.Errorf("initialize websocket credential resolver: %w", err)
+		return
+	}
+	authSvc, err := initWebSocketBusinessAuth(appCfg, resolver, log)
+	if err != nil {
+		wsInitErr = fmt.Errorf("initialize websocket business auth: %w", err)
 		return
 	}
 
@@ -73,6 +103,7 @@ func initWSRuntime() {
 
 	wsCfg = cfg
 	wsSvc = svc
+	wsAuthSvc = authSvc
 	voiceCfg = lambdaVoiceCfg
 	voiceStore = store
 	voicePoster = poster
@@ -100,17 +131,12 @@ func handleWebSocket(ctx context.Context, req events.APIGatewayWebsocketProxyReq
 			return events.APIGatewayProxyResponse{StatusCode: 401, Body: "invalid auth token"}, nil
 		}
 
-		requestedBusinessID := firstNonEmpty(req.QueryStringParameters["business_id"], req.Headers["business_id"], req.Headers["x-business-id"], claims.BusinessID)
-		if claims.BusinessID == "" {
-			wsLog.Warn("websocket connect missing business scope", "connection_id", connectionID, "user_id", claims.Subject)
-			return events.APIGatewayProxyResponse{StatusCode: 403, Body: "business scope required"}, nil
-		}
-		if requestedBusinessID != "" && requestedBusinessID != claims.BusinessID {
-			wsLog.Warn("websocket connect business mismatch", "connection_id", connectionID, "user_id", claims.Subject)
-			return events.APIGatewayProxyResponse{StatusCode: 403, Body: "business_id does not match authenticated scope"}, nil
+		businessID, response, ok := authorizeWebSocketBusinessScope(ctx, req, claims, connectionID)
+		if !ok {
+			return response, nil
 		}
 
-		if err := wsSvc.RegisterConnectionWithBusiness(ctx, connectionID, claims.Subject, claims.BusinessID); err != nil {
+		if err := wsSvc.RegisterConnectionWithBusiness(ctx, connectionID, claims.Subject, businessID); err != nil {
 			wsLog.Error("failed to register websocket connection", "connection_id", connectionID, "error", err)
 			return events.APIGatewayProxyResponse{StatusCode: 500, Body: "failed to register connection"}, nil
 		}
@@ -127,12 +153,21 @@ func handleWebSocket(ctx context.Context, req events.APIGatewayWebsocketProxyReq
 		return events.APIGatewayProxyResponse{StatusCode: 200, Body: "disconnected"}, nil
 
 	case services.VoiceActionStart:
+		if response, disabled := voicePilotDisabledResponse(voiceCfg); disabled {
+			return response, nil
+		}
 		return handleVoiceStart(ctx, connectionID, req)
 
 	case services.VoiceActionAudio:
+		if response, disabled := voicePilotDisabledResponse(voiceCfg); disabled {
+			return response, nil
+		}
 		return handleVoiceAudio(ctx, connectionID, req)
 
 	case services.VoiceActionControl:
+		if response, disabled := voicePilotDisabledResponse(voiceCfg); disabled {
+			return response, nil
+		}
 		return handleVoiceControl(ctx, connectionID, req)
 
 	case "$default":
@@ -144,11 +179,57 @@ func handleWebSocket(ctx context.Context, req events.APIGatewayWebsocketProxyReq
 	}
 }
 
+func voicePilotDisabledResponse(cfg *config.LambdaVoiceConfig) (events.APIGatewayProxyResponse, bool) {
+	if cfg != nil && cfg.Enabled {
+		return events.APIGatewayProxyResponse{}, false
+	}
+	return events.APIGatewayProxyResponse{StatusCode: 503, Body: "voice pilot is disabled"}, true
+}
+
 func parseClaims(token string) (*middleware.CognitoClaims, error) {
 	if strings.Contains(strings.ToLower(token), "bearer ") {
 		return middleware.ValidateCognitoAuthorization(wsCfg.Cognito, token)
 	}
 	return middleware.ValidateCognitoToken(wsCfg.Cognito, token)
+}
+
+func initWebSocketBusinessAuth(cfg *config.Config, resolver *config.RuntimeResolver, log *logger.Logger) (*services.BusinessAuthService, error) {
+	db, err := app.OpenDatabase(cfg, resolver, log)
+	if err != nil {
+		return nil, fmt.Errorf("connect database: %w", err)
+	}
+
+	return services.NewBusinessAuthService(
+		db,
+		postgresrepo.NewBusinessRepository(db),
+		postgresrepo.NewTeamMemberRepository(db),
+		log,
+	), nil
+}
+
+func authorizeWebSocketBusinessScope(ctx context.Context, req events.APIGatewayWebsocketProxyRequest, claims *middleware.CognitoClaims, connectionID string) (string, events.APIGatewayProxyResponse, bool) {
+	if claims == nil {
+		return "", events.APIGatewayProxyResponse{StatusCode: 401, Body: "invalid auth token"}, false
+	}
+
+	requestedBusinessID := firstNonEmpty(req.QueryStringParameters["business_id"], req.Headers["business_id"], req.Headers["x-business-id"], claims.BusinessID)
+	if requestedBusinessID == "" {
+		wsLog.Warn("websocket connect missing business scope", "connection_id", connectionID, "user_id", claims.Subject)
+		return "", events.APIGatewayProxyResponse{StatusCode: 403, Body: "business scope required"}, false
+	}
+	if claims.BusinessID != "" && requestedBusinessID != claims.BusinessID {
+		wsLog.Warn("websocket connect business mismatch", "connection_id", connectionID, "user_id", claims.Subject)
+		return "", events.APIGatewayProxyResponse{StatusCode: 403, Body: "business_id does not match authenticated scope"}, false
+	}
+	if wsAuthSvc == nil {
+		wsLog.Error("websocket business auth is not configured", "connection_id", connectionID, "user_id", claims.Subject)
+		return "", events.APIGatewayProxyResponse{StatusCode: 500, Body: "business authorization is not configured"}, false
+	}
+	if !wsAuthSvc.UserHasBusinessAccess(ctx, claims.Subject, requestedBusinessID) {
+		wsLog.Warn("websocket connect business access denied", "connection_id", connectionID, "user_id", claims.Subject, "business_id", requestedBusinessID)
+		return "", events.APIGatewayProxyResponse{StatusCode: 403, Body: "access denied to this business"}, false
+	}
+	return requestedBusinessID, events.APIGatewayProxyResponse{}, true
 }
 
 func extractAuthToken(req events.APIGatewayWebsocketProxyRequest) string {
@@ -179,6 +260,15 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+func stripBearerPrefix(token string) string {
+	trimmed := strings.TrimSpace(token)
+	parts := strings.SplitN(trimmed, " ", 2)
+	if len(parts) == 2 && strings.EqualFold(parts[0], "bearer") {
+		return strings.TrimSpace(parts[1])
+	}
+	return trimmed
+}
+
 func handleVoiceStart(ctx context.Context, connectionID string, req events.APIGatewayWebsocketProxyRequest) (events.APIGatewayProxyResponse, error) {
 	connection, err := wsSvc.GetConnection(ctx, connectionID)
 	if err != nil {
@@ -200,14 +290,35 @@ func handleVoiceStart(ctx context.Context, connectionID string, req events.APIGa
 	if connection.BusinessID == "" || start.BusinessID != connection.BusinessID {
 		return events.APIGatewayProxyResponse{StatusCode: 403, Body: "business_id does not match authenticated scope"}, nil
 	}
+	workerAccessToken := firstNonEmpty(start.AccessToken, extractAuthToken(req))
+	if workerAccessToken != "" {
+		workerClaims, err := parseClaims(workerAccessToken)
+		if err != nil || workerClaims.Subject != connection.UserID {
+			wsLog.Warn("voice start worker token rejected", "connection_id", connectionID, "user_id", connection.UserID)
+			return events.APIGatewayProxyResponse{StatusCode: 401, Body: "invalid voice access token"}, nil
+		}
+	}
+
+	if active, err := activeVoiceSessionForStart(ctx, connectionID, start.BusinessID); err != nil {
+		wsLog.Error("failed to check active voice session", "connection_id", connectionID, "error", err)
+		return events.APIGatewayProxyResponse{StatusCode: 500, Body: "failed to check active voice session"}, nil
+	} else if active != nil {
+		return respondToActiveVoiceSessionStart(ctx, connectionID, active), nil
+	}
 
 	session := services.NewVoiceLambdaSession(start, connectionID, connection.UserID, voiceCfg.VoiceRealtime.MaxSessionSeconds)
 	if err := voiceStore.CreateSession(ctx, session, voiceCfg.VoiceRealtime.MaxConcurrentSessionsPerUser); err != nil {
+		if active, activeErr := activeVoiceSessionForStart(ctx, connectionID, start.BusinessID); activeErr == nil && active != nil {
+			return respondToActiveVoiceSessionStart(ctx, connectionID, active), nil
+		}
 		_ = postVoiceError(ctx, connectionID, "voice_session_limit", err.Error())
 		return events.APIGatewayProxyResponse{StatusCode: 409, Body: "voice session could not be started"}, nil
 	}
 
-	payload, _ := json.Marshal(services.VoiceSessionWorkerRequest{SessionID: session.SessionID})
+	payload, _ := json.Marshal(services.VoiceSessionWorkerRequest{
+		SessionID:   session.SessionID,
+		AccessToken: stripBearerPrefix(workerAccessToken),
+	})
 	_, err = voiceLambda.Invoke(ctx, &awslambda.InvokeInput{
 		FunctionName:   aws.String(voiceCfg.SessionWorkerFunctionName),
 		InvocationType: lambdatypes.InvocationTypeEvent,
@@ -225,6 +336,53 @@ func handleVoiceStart(ctx context.Context, connectionID string, req events.APIGa
 		Data: map[string]string{"session_id": session.SessionID},
 	})
 	return events.APIGatewayProxyResponse{StatusCode: 200, Body: "voice session starting"}, nil
+}
+
+func activeVoiceSessionForStart(ctx context.Context, connectionID, businessID string) (*services.VoiceLambdaSession, error) {
+	session, err := voiceStore.FindActiveSessionByConnection(ctx, connectionID)
+	if err != nil || session == nil {
+		return nil, err
+	}
+	if session.ConnectionID != strings.TrimSpace(connectionID) || session.BusinessID != strings.TrimSpace(businessID) {
+		return nil, nil
+	}
+	if session.Status == services.VoiceSessionStatusClosed || session.Status == services.VoiceSessionStatusError {
+		_ = voiceStore.CompleteSession(ctx, session.SessionID, session.Status)
+		return nil, nil
+	}
+	return session, nil
+}
+
+func respondToActiveVoiceSessionStart(ctx context.Context, connectionID string, session *services.VoiceLambdaSession) events.APIGatewayProxyResponse {
+	if canReuseVoiceSessionForStart(session, connectionID, session.BusinessID) {
+		acknowledgeVoiceSessionStart(ctx, connectionID, session)
+		return events.APIGatewayProxyResponse{StatusCode: 200, Body: "voice session already active"}
+	}
+	if session.Status == services.VoiceSessionStatusStopping {
+		_ = postVoiceEvent(ctx, connectionID, services.RealtimeAppEvent{Type: services.VoiceOutboundSessionClosed})
+		return events.APIGatewayProxyResponse{StatusCode: 200, Body: "voice session stopping"}
+	}
+	return events.APIGatewayProxyResponse{StatusCode: 409, Body: "voice session is not reusable"}
+}
+
+func canReuseVoiceSessionForStart(session *services.VoiceLambdaSession, connectionID, businessID string) bool {
+	if session == nil {
+		return false
+	}
+	if session.ConnectionID != strings.TrimSpace(connectionID) || session.BusinessID != strings.TrimSpace(businessID) {
+		return false
+	}
+	return session.Status == services.VoiceSessionStatusStarting || session.Status == services.VoiceSessionStatusRunning
+}
+
+func acknowledgeVoiceSessionStart(ctx context.Context, connectionID string, session *services.VoiceLambdaSession) {
+	_ = postVoiceEvent(ctx, connectionID, services.RealtimeAppEvent{
+		Type: services.VoiceOutboundSessionStarted,
+		Data: map[string]string{"session_id": session.SessionID},
+	})
+	if session.Status == services.VoiceSessionStatusRunning {
+		_ = postVoiceEvent(ctx, connectionID, services.RealtimeAppEvent{Type: services.AppEventReady})
+	}
 }
 
 func handleVoiceAudio(ctx context.Context, connectionID string, req events.APIGatewayWebsocketProxyRequest) (events.APIGatewayProxyResponse, error) {

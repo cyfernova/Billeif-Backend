@@ -1,131 +1,179 @@
-# Database migrations
-# NOTE: This is a simplified migration approach. For production, use a proper
-# migration tool like golang-migrate or Flyway as part of your CI/CD pipeline.
+locals {
+  migration_manifest_path     = "${path.module}/../../migrations/manifest.sha256"
+  migration_artifact_path     = var.migration_lambda_artifact_path != "" ? var.migration_lambda_artifact_path : "${var.lambda_artifact_dir}/migrator.zip"
+  migration_manifest_checksum = filesha256(local.migration_manifest_path)
+  migration_artifact_checksum = fileexists(local.migration_artifact_path) ? filesha256(local.migration_artifact_path) : null
+  migration_artifact_hash     = fileexists(local.migration_artifact_path) ? filebase64sha256(local.migration_artifact_path) : null
+}
 
-resource "null_resource" "add_categories_column" {
-  triggers = {
-    migration_version = md5(templatefile("${path.module}/migrations/add_categories_column.sql", {}))
+resource "aws_cloudwatch_log_group" "database_migrator" {
+  name              = "/aws/lambda/${local.resource_prefix}-database-migrator"
+  retention_in_days = var.log_retention_days
+}
+
+resource "aws_iam_role" "database_migrator" {
+  name               = "${local.resource_prefix}-database-migrator-exec-role"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
+}
+
+data "aws_iam_policy_document" "database_migrator" {
+  statement {
+    sid       = "MigrationLogs"
+    effect    = "Allow"
+    actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+    resources = ["${aws_cloudwatch_log_group.database_migrator.arn}:*"]
   }
 
-  provisioner "local-exec" {
-    command = <<-EOT
-      echo "Running migration: Adding categories column to products table..."
-      PGPASSWORD="${var.db_password}" psql \
-        -h "${aws_db_instance.main.address}" \
-        -U "${var.db_username}" \
-        -d "${var.db_name}" \
-        -p "${var.db_port}" \
-        -c "ALTER TABLE products ADD COLUMN IF NOT EXISTS categories TEXT[] DEFAULT '{}';"
-      PGPASSWORD="${var.db_password}" psql \
-        -h "${aws_db_instance.main.address}" \
-        -U "${var.db_username}" \
-        -d "${var.db_name}" \
-        -p "${var.db_port}" \
-        -c "CREATE INDEX IF NOT EXISTS idx_products_categories ON products USING GIN (categories);"
-      echo "Migration completed successfully."
-    EOT
+  statement {
+    sid    = "MigrationVPC"
+    effect = "Allow"
+    actions = [
+      "ec2:CreateNetworkInterface",
+      "ec2:DescribeNetworkInterfaces",
+      "ec2:DescribeSubnets",
+      "ec2:DeleteNetworkInterface",
+      "ec2:AssignPrivateIpAddresses",
+      "ec2:UnassignPrivateIpAddresses"
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "MigrationParameters"
+    effect    = "Allow"
+    actions   = ["ssm:GetParameters"]
+    resources = [local.db_host_ssm_parameter_arn]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["true"]
+    }
+  }
+
+  statement {
+    sid    = "MigrationSecret"
+    effect = "Allow"
+    actions = [
+      "secretsmanager:DescribeSecret",
+      "secretsmanager:GetSecretValue"
+    ]
+    resources = [aws_db_instance.main.master_user_secret[0].secret_arn]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["true"]
+    }
+  }
+
+  statement {
+    sid    = "MigrationSecretKMS"
+    effect = "Allow"
+    actions = [
+      "kms:Decrypt",
+      "kms:DescribeKey"
+    ]
+    resources = [aws_kms_key.application_secrets.arn]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["true"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["secretsmanager.${var.aws_region}.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:EncryptionContext:SecretARN"
+      values   = [aws_db_instance.main.master_user_secret[0].secret_arn]
+    }
   }
 }
 
-resource "null_resource" "add_categories_to_agents" {
-  depends_on = [null_resource.add_categories_column]
-
-  triggers = {
-    migration_version = md5(templatefile("${path.module}/migrations/add_categories_to_agents.sql", {}))
-  }
-
-  provisioner "local-exec" {
-    command = <<-EOT
-      echo "Running migration: Adding categories column to agents table..."
-      PGPASSWORD="${var.db_password}" psql \
-        -h "${aws_db_instance.main.address}" \
-        -U "${var.db_username}" \
-        -d "${var.db_name}" \
-        -p "${var.db_port}" \
-        -c "ALTER TABLE agents ADD COLUMN IF NOT EXISTS categories TEXT[] DEFAULT '{}';"
-      PGPASSWORD="${var.db_password}" psql \
-        -h "${aws_db_instance.main.address}" \
-        -U "${var.db_username}" \
-        -d "${var.db_name}" \
-        -p "${var.db_port}" \
-        -c "CREATE INDEX IF NOT EXISTS idx_agents_categories ON agents USING GIN (categories);"
-      echo "Migration completed successfully."
-    EOT
-  }
+resource "aws_iam_role_policy" "database_migrator" {
+  name   = "${local.resource_prefix}-database-migrator-policy"
+  role   = aws_iam_role.database_migrator.id
+  policy = data.aws_iam_policy_document.database_migrator.json
 }
 
-resource "null_resource" "add_price_to_agents" {
-  depends_on = [null_resource.add_categories_to_agents]
+resource "aws_lambda_function" "database_migrator" {
+  function_name    = "${local.resource_prefix}-database-migrator"
+  role             = aws_iam_role.database_migrator.arn
+  runtime          = "provided.al2023"
+  handler          = "bootstrap"
+  architectures    = ["arm64"]
+  filename         = local.migration_artifact_path
+  source_code_hash = local.migration_artifact_hash
+  memory_size      = 256
+  timeout          = 900
 
-  triggers = {
-    migration_version = md5(templatefile("${path.module}/migrations/add_price_to_agents.sql", {}))
+  reserved_concurrent_executions = var.enable_lambda_reserved_concurrency ? 1 : null
+
+  environment {
+    variables = {
+      ENVIRONMENT             = var.environment
+      DATABASE_HOST_SSM_PARAM = local.db_host_ssm_parameter_name
+      DATABASE_SECRET_ARN     = aws_db_instance.main.master_user_secret[0].secret_arn
+      DATABASE_PORT           = tostring(var.db_port)
+      DATABASE_NAME           = var.db_name
+      DATABASE_SSL_MODE       = "require"
+    }
   }
 
-  provisioner "local-exec" {
-    command = <<-EOT
-      echo "Running migration: Adding price column to agents table..."
-      PGPASSWORD="${var.db_password}" psql \
-        -h "${aws_db_instance.main.address}" \
-        -U "${var.db_username}" \
-        -d "${var.db_name}" \
-        -p "${var.db_port}" \
-        -c "ALTER TABLE agents ADD COLUMN IF NOT EXISTS price FLOAT DEFAULT 0;"
-      PGPASSWORD="${var.db_password}" psql \
-        -h "${aws_db_instance.main.address}" \
-        -U "${var.db_username}" \
-        -d "${var.db_name}" \
-        -p "${var.db_port}" \
-        -c "CREATE INDEX IF NOT EXISTS idx_agents_price ON agents (price);"
-      echo "Migration completed successfully."
-    EOT
+  vpc_config {
+    subnet_ids         = aws_subnet.private[*].id
+    security_group_ids = [aws_security_group.database_migrator.id]
   }
+
+  lifecycle {
+    precondition {
+      condition     = fileexists(local.migration_artifact_path)
+      error_message = "Missing migration Lambda artifact ${local.migration_artifact_path}. Run make package-lambda-migrator from the repository root before running Terraform."
+    }
+  }
+
+  depends_on = [
+    aws_cloudwatch_log_group.database_migrator,
+    aws_iam_role_policy.database_migrator,
+    aws_ssm_parameter.db_host
+  ]
 }
 
-resource "null_resource" "add_session_id_to_bargaining_negotiations" {
-  depends_on = [null_resource.add_price_to_agents]
+resource "aws_lambda_invocation" "database_migrations" {
+  function_name   = aws_lambda_function.database_migrator.function_name
+  lifecycle_scope = "CREATE_ONLY"
+
+  input = jsonencode({
+    manifest_checksum = local.migration_manifest_checksum
+  })
 
   triggers = {
-    migration_version = md5(templatefile("${path.module}/migrations/add_session_id_to_bargaining_negotiations.sql", {}))
+    artifact_checksum = local.migration_artifact_checksum
+    manifest_checksum = local.migration_manifest_checksum
   }
 
-  provisioner "local-exec" {
-    command = <<-EOT
-      echo "Running migration: Adding session_id column to bargaining_negotiations..."
-      PGPASSWORD="${var.db_password}" psql \
-        -h "${aws_db_instance.main.address}" \
-        -U "${var.db_username}" \
-        -d "${var.db_name}" \
-        -p "${var.db_port}" \
-        -c "ALTER TABLE bargaining_negotiations ADD COLUMN IF NOT EXISTS session_id VARCHAR(100);"
-      PGPASSWORD="${var.db_password}" psql \
-        -h "${aws_db_instance.main.address}" \
-        -U "${var.db_username}" \
-        -d "${var.db_name}" \
-        -p "${var.db_port}" \
-        -c "CREATE INDEX IF NOT EXISTS idx_bargaining_negotiations_session_id ON bargaining_negotiations(session_id);"
-      echo "Migration completed successfully."
-    EOT
+  lifecycle {
+    postcondition {
+      condition = (
+        try(jsondecode(self.result).manifest_checksum, "") == local.migration_manifest_checksum &&
+        try(jsondecode(self.result).dirty, true) == false
+      )
+      error_message = "Database migration invocation must return the expected checksum and a clean migration state."
+    }
   }
+
+  depends_on = [
+    aws_route.private_default_egress,
+    aws_ssm_association.nat_bootstrap_ready
+  ]
 }
 
-resource "null_resource" "add_llm_chat_history" {
-  depends_on = [null_resource.add_session_id_to_bargaining_negotiations]
-
-  triggers = {
-    migration_version = md5(templatefile("${path.module}/migrations/add_llm_chat_history.sql", {}))
-  }
-
-  provisioner "local-exec" {
-    command = <<-EOT
-      echo "Running migration: Adding LLM chat history tables..."
-      PGPASSWORD="${var.db_password}" psql \
-        -h "${aws_db_instance.main.address}" \
-        -U "${var.db_username}" \
-        -d "${var.db_name}" \
-        -p "${var.db_port}" \
-        -v ON_ERROR_STOP=1 \
-        -f "${path.module}/migrations/add_llm_chat_history.sql"
-      echo "Migration completed successfully."
-    EOT
-  }
+locals {
+  application_migration_checksum = jsondecode(aws_lambda_invocation.database_migrations.result).manifest_checksum
 }

@@ -1,5 +1,5 @@
 resource "aws_apigatewayv2_api" "websocket" {
-  name                       = "${var.project_name}-websocket"
+  name                       = "${local.resource_prefix}-websocket"
   protocol_type              = "WEBSOCKET"
   route_selection_expression = "$request.body.action"
 }
@@ -69,7 +69,7 @@ resource "aws_apigatewayv2_deployment" "websocket" {
 }
 
 resource "aws_cloudwatch_log_group" "websocket_api_access" {
-  name              = "/aws/apigateway/${var.project_name}-websocket"
+  name              = "/aws/apigateway/${local.resource_prefix}-websocket"
   retention_in_days = var.log_retention_days
 }
 
@@ -78,6 +78,11 @@ resource "aws_apigatewayv2_stage" "websocket_default" {
   name          = var.environment
   auto_deploy   = false
   deployment_id = aws_apigatewayv2_deployment.websocket.id
+
+  default_route_settings {
+    throttling_burst_limit = local.api_gateway_throttling_burst_limit
+    throttling_rate_limit  = local.api_gateway_throttling_rate_limit
+  }
 
   access_log_settings {
     destination_arn = aws_cloudwatch_log_group.websocket_api_access.arn
@@ -100,6 +105,8 @@ resource "aws_apigatewayv2_stage" "websocket_default" {
 }
 
 resource "aws_lambda_permission" "allow_websocket_lambda" {
+  count = var.enable_application ? 1 : 0
+
   statement_id  = "AllowExecutionFromAPIGatewayWebSocket"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.ws_handler.function_name

@@ -1,31 +1,21 @@
 locals {
-  google_oauth_secret_name   = var.google_oauth_secret_name != "" ? var.google_oauth_secret_name : "/${var.project_name}/${var.environment}/cognito/google-auth"
-  swagger_oauth_redirect_url = "${local.rest_api_invoke_url}/swagger/oauth2-redirect.html"
+  swagger_oauth_redirect_url = "${local.http_api_invoke_url}/swagger/oauth2-redirect.html"
   cognito_callback_urls      = distinct(concat([local.swagger_oauth_redirect_url], var.cognito_additional_callback_urls))
   cognito_logout_urls        = distinct(var.cognito_additional_logout_urls)
-}
+  cognito_custom_domain      = "auth.billeif.com"
+  cognito_prefix_domain      = "${local.cognito_hosted_ui_domain_prefix}.auth.${var.aws_region}.amazoncognito.com"
+  cognito_custom_domain_enabled = (
+    var.enable_cognito_custom_domain_provisioning ||
+    var.enable_cognito_custom_domain_cutover
+  )
+  cognito_runtime_domain = var.enable_cognito_custom_domain_cutover ? aws_cognito_user_pool_domain.custom[0].domain : local.cognito_prefix_domain
 
-data "aws_secretsmanager_secret" "google_oauth" {
-  count = var.google_client_id == "" && var.google_client_secret == "" ? 1 : 0
-  name  = local.google_oauth_secret_name
-}
-
-data "aws_secretsmanager_secret_version" "google_oauth" {
-  count     = length(data.aws_secretsmanager_secret.google_oauth) > 0 ? 1 : 0
-  secret_id = data.aws_secretsmanager_secret.google_oauth[0].id
-}
-
-locals {
-  google_oauth_secret_sensitive  = length(data.aws_secretsmanager_secret_version.google_oauth) > 0 ? jsondecode(data.aws_secretsmanager_secret_version.google_oauth[0].secret_string) : {}
-  google_oauth_secret            = length(data.aws_secretsmanager_secret_version.google_oauth) > 0 ? jsondecode(nonsensitive(data.aws_secretsmanager_secret_version.google_oauth[0].secret_string)) : {}
-  google_client_id_resolved      = trimspace(var.google_client_id != "" ? var.google_client_id : try(local.google_oauth_secret.client_id, ""))
-  google_client_secret_resolved  = trimspace(var.google_client_secret != "" ? var.google_client_secret : try(local.google_oauth_secret.client_secret, ""))
-  google_client_id_sensitive     = var.google_client_id != "" ? sensitive(var.google_client_id) : try(local.google_oauth_secret_sensitive.client_id, sensitive(""))
-  google_client_secret_sensitive = var.google_client_secret != "" ? sensitive(var.google_client_secret) : try(local.google_oauth_secret_sensitive.client_secret, sensitive(""))
+  google_oauth_client_id_reference     = "{{resolve:secretsmanager:${aws_secretsmanager_secret.google_oauth.arn}:SecretString:client_id}}"
+  google_oauth_client_secret_reference = "{{resolve:secretsmanager:${aws_secretsmanager_secret.google_oauth.arn}:SecretString:client_secret}}"
 }
 
 resource "aws_cognito_user_pool" "main" {
-  name = var.user_pool_name
+  name = local.cognito_web_user_pool_name
 
   username_attributes      = ["email"]
   auto_verified_attributes = ["email"]
@@ -73,7 +63,7 @@ resource "aws_cognito_user_pool" "main" {
 }
 
 resource "aws_cognito_user_pool_client" "main" {
-  name         = var.client_name
+  name         = local.cognito_web_client_name
   user_pool_id = aws_cognito_user_pool.main.id
 
   explicit_auth_flows           = ["ALLOW_USER_PASSWORD_AUTH", "ALLOW_REFRESH_TOKEN_AUTH", "ALLOW_USER_SRP_AUTH", "ALLOW_ADMIN_USER_PASSWORD_AUTH"]
@@ -87,7 +77,7 @@ resource "aws_cognito_user_pool_client" "main" {
   logout_urls                          = local.cognito_logout_urls
   allowed_oauth_flows_user_pool_client = true
   allowed_oauth_flows                  = ["code"]
-  allowed_oauth_scopes                 = ["email", "openid", "profile", "aws.cognito.signin.user.admin"]
+  allowed_oauth_scopes                 = ["email", "openid", "profile", "aws.cognito.signin.user.admin", aws_cognito_resource_server.main.scope_identifiers[0]]
 
   token_validity_units {
     access_token  = "hours"
@@ -95,11 +85,54 @@ resource "aws_cognito_user_pool_client" "main" {
     refresh_token = "days"
   }
 
-  lifecycle {
-    precondition {
-      condition     = local.google_client_id_resolved != "" && local.google_client_secret_resolved != ""
-      error_message = "Google OAuth credentials are required. Store JSON with client_id and client_secret in AWS Secrets Manager secret ${local.google_oauth_secret_name} or provide the legacy google_client_id/google_client_secret variables."
+  depends_on = [aws_cloudformation_stack.google_cognito_identity_provider]
+}
+
+resource "aws_cloudformation_stack" "google_cognito_identity_provider" {
+  name = "${local.resource_prefix}-google-cognito-identity-provider"
+
+  template_body = jsonencode({
+    AWSTemplateFormatVersion = "2010-09-09"
+    Description              = "Billeif Google identity provider for the Cognito user pool"
+    Resources = {
+      GoogleIdentityProvider = {
+        Type = "AWS::Cognito::UserPoolIdentityProvider"
+        Properties = {
+          ProviderName = "Google"
+          ProviderType = "Google"
+          UserPoolId   = aws_cognito_user_pool.main.id
+          ProviderDetails = {
+            authorize_scopes = "openid email profile"
+            client_id        = local.google_oauth_client_id_reference
+            client_secret    = local.google_oauth_client_secret_reference
+          }
+          AttributeMapping = {
+            email          = "email"
+            email_verified = "email_verified"
+            family_name    = "family_name"
+            given_name     = "given_name"
+            name           = "name"
+            picture        = "picture"
+            username       = "sub"
+          }
+        }
+      }
     }
+  })
+
+  tags = {
+    Name = "${local.resource_prefix}-google-cognito-identity-provider"
+  }
+}
+
+resource "aws_cognito_resource_server" "main" {
+  identifier   = local.cognito_resource_server_id
+  name         = local.cognito_resource_server_name
+  user_pool_id = aws_cognito_user_pool.main.id
+
+  scope {
+    scope_name        = "access"
+    scope_description = "Billeif application API access"
   }
 }
 
@@ -126,41 +159,56 @@ resource "aws_cognito_user_group" "viewer" {
 
 # Cognito Domain for Hosted UI
 resource "aws_cognito_user_pool_domain" "main" {
-  domain       = var.cognito_domain_prefix
+  domain       = local.cognito_hosted_ui_domain_prefix
   user_pool_id = aws_cognito_user_pool.main.id
-}
-
-# Google Identity Provider
-resource "aws_cognito_identity_provider" "google" {
-  count = 1
-
-  user_pool_id  = aws_cognito_user_pool.main.id
-  provider_name = "Google"
-  provider_type = "Google"
-
-  provider_details = {
-    attributes_url                = "https://people.googleapis.com/v1/people/me?personFields="
-    attributes_url_add_attributes = "true"
-    authorize_url                 = "https://accounts.google.com/o/oauth2/v2/auth"
-    oidc_issuer                   = "https://accounts.google.com"
-    token_request_method          = "POST"
-    token_url                     = "https://www.googleapis.com/oauth2/v4/token"
-    client_id                     = local.google_client_id_sensitive
-    client_secret                 = local.google_client_secret_sensitive
-    authorize_scopes              = "profile email openid"
-  }
-
-  attribute_mapping = {
-    email    = "email"
-    username = "sub"
-    name     = "name"
-    picture  = "picture"
-  }
 
   lifecycle {
     precondition {
-      condition     = local.google_client_id_resolved != "" && local.google_client_secret_resolved != ""
-      error_message = "Google OAuth credentials are required. Store JSON with client_id and client_secret in AWS Secrets Manager secret ${local.google_oauth_secret_name} or provide the legacy google_client_id/google_client_secret variables."
+      condition = (
+        length(local.resource_prefix) <= 29 &&
+        can(regex("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$", local.cognito_hosted_ui_domain_prefix)) &&
+        strcontains(local.cognito_hosted_ui_domain_prefix, "billeif") &&
+        !strcontains(local.cognito_hosted_ui_domain_prefix, "aws") &&
+        !strcontains(local.cognito_hosted_ui_domain_prefix, "amazon") &&
+        !strcontains(local.cognito_hosted_ui_domain_prefix, "cognito")
+      )
+      error_message = "Generated AWS names must fit their service limits, and the Cognito hosted UI prefix must be a valid Billeif-branded 1-63 character prefix."
     }
   }
+}
+
+resource "aws_acm_certificate" "cognito_custom_domain" {
+  provider = aws.us_east_1
+
+  domain_name       = local.cognito_custom_domain
+  validation_method = "DNS"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_acm_certificate_validation" "cognito_custom_domain" {
+  provider = aws.us_east_1
+  count    = local.cognito_custom_domain_enabled ? 1 : 0
+
+  certificate_arn = aws_acm_certificate.cognito_custom_domain.arn
+}
+
+resource "aws_cognito_user_pool_domain" "custom" {
+  count = local.cognito_custom_domain_enabled ? 1 : 0
+
+  domain          = local.cognito_custom_domain
+  certificate_arn = aws_acm_certificate_validation.cognito_custom_domain[0].certificate_arn
+  user_pool_id    = aws_cognito_user_pool.main.id
+}
+
+moved {
+  from = aws_acm_certificate_validation.cognito_custom_domain
+  to   = aws_acm_certificate_validation.cognito_custom_domain[0]
+}
+
+moved {
+  from = aws_cognito_user_pool_domain.custom
+  to   = aws_cognito_user_pool_domain.custom[0]
 }

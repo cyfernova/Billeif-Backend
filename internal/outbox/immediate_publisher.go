@@ -1,0 +1,147 @@
+package outbox
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"invoice-backend/internal/models"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
+)
+
+type SQSSender interface {
+	SendMessage(
+		ctx context.Context,
+		input *sqs.SendMessageInput,
+		optFns ...func(*sqs.Options),
+	) (*sqs.SendMessageOutput, error)
+}
+
+type PublishedMarker interface {
+	MarkOutboxPublished(ctx context.Context, eventID string, publishedAt time.Time) error
+}
+
+type ImmediatePublisher struct {
+	publisher EventPublisher
+	marker    PublishedMarker
+}
+
+type SQSInvoicePublisher struct {
+	queueURL string
+	sender   SQSSender
+}
+
+type SQSOutboxPublisher struct {
+	invoiceQueueURL       string
+	emailDeliveryQueueURL string
+	sender                SQSSender
+}
+
+func NewImmediatePublisher(
+	queueURL string,
+	sender SQSSender,
+	marker PublishedMarker,
+) *ImmediatePublisher {
+	return &ImmediatePublisher{
+		publisher: NewSQSInvoicePublisher(queueURL, sender),
+		marker:    marker,
+	}
+}
+
+func NewRoutedImmediatePublisher(
+	invoiceQueueURL, emailDeliveryQueueURL string,
+	sender SQSSender,
+	marker PublishedMarker,
+) *ImmediatePublisher {
+	return &ImmediatePublisher{
+		publisher: NewSQSOutboxPublisher(invoiceQueueURL, emailDeliveryQueueURL, sender),
+		marker:    marker,
+	}
+}
+
+func NewSQSOutboxPublisher(
+	invoiceQueueURL, emailDeliveryQueueURL string,
+	sender SQSSender,
+) *SQSOutboxPublisher {
+	return &SQSOutboxPublisher{
+		invoiceQueueURL:       strings.TrimSpace(invoiceQueueURL),
+		emailDeliveryQueueURL: strings.TrimSpace(emailDeliveryQueueURL),
+		sender:                sender,
+	}
+}
+
+func (p *SQSOutboxPublisher) Publish(ctx context.Context, event *models.OutboxEvent) error {
+	if p == nil || p.sender == nil || event == nil {
+		return errors.New("SQS outbox publisher is not configured")
+	}
+	var (
+		queueURL string
+		message  []byte
+		err      error
+	)
+	switch event.EventType {
+	case invoicePreviewRequestedEvent, invoiceIssuedEvent:
+		queueURL = p.invoiceQueueURL
+		message, err = MapInvoiceEventToSQSMessage(event)
+	case invoiceDeliveryRequestedEvent:
+		queueURL = p.emailDeliveryQueueURL
+		message, err = MapEmailDeliveryEventToSQSMessage(event)
+	default:
+		return invoiceMappingError(event)
+	}
+	if err != nil {
+		return err
+	}
+	if queueURL == "" {
+		return errors.New("SQS outbox destination is not configured")
+	}
+	if _, err := p.sender.SendMessage(ctx, &sqs.SendMessageInput{
+		QueueUrl:    aws.String(queueURL),
+		MessageBody: aws.String(string(message)),
+	}); err != nil {
+		return fmt.Errorf("send outbox event: %w", err)
+	}
+	return nil
+}
+
+func (p *ImmediatePublisher) TryPublish(ctx context.Context, event *models.OutboxEvent) error {
+	if p == nil || p.publisher == nil || p.marker == nil {
+		return errors.New("immediate outbox publisher is not configured")
+	}
+	if err := p.publisher.Publish(ctx, event); err != nil {
+		return err
+	}
+	if err := p.marker.MarkOutboxPublished(ctx, event.ID, time.Now().UTC()); err != nil {
+		return fmt.Errorf("mark outbox event published: %w", err)
+	}
+	return nil
+}
+
+func NewSQSInvoicePublisher(queueURL string, sender SQSSender) *SQSInvoicePublisher {
+	return &SQSInvoicePublisher{
+		queueURL: strings.TrimSpace(queueURL),
+		sender:   sender,
+	}
+}
+
+func (p *SQSInvoicePublisher) Publish(ctx context.Context, event *models.OutboxEvent) error {
+	if p == nil || p.queueURL == "" || p.sender == nil ||
+		event == nil || event.ID == "" || event.Payload == "" {
+		return errors.New("SQS invoice outbox publisher is not configured")
+	}
+	message, err := MapInvoiceEventToSQSMessage(event)
+	if err != nil {
+		return err
+	}
+	if _, err := p.sender.SendMessage(ctx, &sqs.SendMessageInput{
+		QueueUrl:    aws.String(p.queueURL),
+		MessageBody: aws.String(string(message)),
+	}); err != nil {
+		return fmt.Errorf("send outbox event: %w", err)
+	}
+	return nil
+}

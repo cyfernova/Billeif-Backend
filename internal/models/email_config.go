@@ -17,10 +17,14 @@ const (
 )
 
 const (
-	EmailDeliveryStatusQueued    = "queued"
-	EmailDeliveryStatusSent      = "sent"
-	EmailDeliveryStatusDelivered = "delivered"
-	EmailDeliveryStatusFailed    = "failed"
+	EmailDeliveryStatusWaitingForRender = "waiting_for_render"
+	EmailDeliveryStatusQueued           = "queued"
+	EmailDeliveryStatusProcessing       = "processing"
+	EmailDeliveryStatusSent             = "sent"
+	EmailDeliveryStatusDelivered        = "delivered"
+	EmailDeliveryStatusFailed           = "failed"
+	EmailDeliveryStatusBounced          = "bounced"
+	EmailDeliveryStatusComplained       = "complained"
 )
 
 type EmailAccount struct {
@@ -55,12 +59,17 @@ type EmailDelivery struct {
 	ID                string         `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
 	BusinessID        string         `gorm:"not null;index" json:"business_id"`
 	EmailAccountID    *string        `gorm:"index" json:"email_account_id,omitempty"`
+	InvoiceID         *string        `gorm:"index" json:"invoice_id,omitempty"`
+	RenderJobID       *string        `gorm:"index" json:"render_job_id,omitempty"`
 	Recipient         string         `gorm:"size:255;index" json:"recipient,omitempty"`
 	Subject           string         `gorm:"size:255" json:"subject,omitempty"`
 	SourceEmail       string         `gorm:"size:255;index" json:"source_email,omitempty"`
 	Status            string         `gorm:"not null;size:40;default:'queued';index" json:"status"`
 	ProviderMessageID string         `gorm:"size:255" json:"provider_message_id,omitempty"`
 	ErrorMessage      string         `gorm:"type:text" json:"error_message,omitempty"`
+	Attempts          int            `gorm:"not null;default:0" json:"attempts"`
+	LeaseOwner        *string        `gorm:"size:255" json:"lease_owner,omitempty"`
+	LeaseExpiresAt    *time.Time     `json:"lease_expires_at,omitempty"`
 	Metadata          string         `gorm:"type:jsonb;default:'{}'" json:"metadata,omitempty"`
 	SentAt            *time.Time     `json:"sent_at,omitempty"`
 	DeliveredAt       *time.Time     `json:"delivered_at,omitempty"`

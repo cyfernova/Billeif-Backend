@@ -1,0 +1,71 @@
+package tests
+
+import (
+	"os/exec"
+	"strings"
+	"testing"
+)
+
+func TestOutboxLambdaBuildAndPackageAreSmallAndDeterministic(t *testing.T) {
+	command := exec.Command("make", "-n", "package-lambda-outbox")
+	command.Dir = ".."
+	body, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("render outbox package recipe: %v\n%s", err, body)
+	}
+	recipe := string(body)
+	for _, required := range []string{
+		"mkdir -p .build/lambda/outbox",
+		"GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags=\"-s -w -buildid=\" -o $(LAMBDA_BUILD_DIR)/outbox/bootstrap ./cmd/lambda/outbox",
+		"rm -f .build/lambda/outbox.zip",
+		"TZ=UTC touch -t 198001010000 .build/lambda/outbox/bootstrap",
+		"cd .build/lambda/outbox && TZ=UTC zip -q -X -j ../outbox.zip bootstrap",
+	} {
+		required = strings.ReplaceAll(required, "$(LAMBDA_BUILD_DIR)", ".build/lambda")
+		if !strings.Contains(recipe, required) {
+			t.Fatalf("outbox package recipe is missing behavior %q\n%s", required, recipe)
+		}
+	}
+}
+
+func TestEmailDeliveryLambdaBuildAndPackageAreSmallAndDeterministic(t *testing.T) {
+	command := exec.Command("make", "-n", "package-lambda-email-delivery")
+	command.Dir = ".."
+	body, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("render email delivery package recipe: %v\n%s", err, body)
+	}
+	recipe := string(body)
+	for _, required := range []string{
+		"mkdir -p .build/lambda/sqs-email-delivery",
+		"GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags=\"-s -w -buildid=\" -o .build/lambda/sqs-email-delivery/bootstrap ./cmd/lambda/sqs-email-delivery",
+		"rm -f .build/lambda/sqs-email-delivery.zip",
+		"TZ=UTC touch -t 198001010000 .build/lambda/sqs-email-delivery/bootstrap",
+		"cd .build/lambda/sqs-email-delivery && TZ=UTC zip -q -X -j ../sqs-email-delivery.zip bootstrap",
+	} {
+		if !strings.Contains(recipe, required) {
+			t.Fatalf("email delivery package recipe is missing behavior %q\n%s", required, recipe)
+		}
+	}
+}
+
+func TestSESFeedbackLambdaBuildAndPackageAreSmallAndDeterministic(t *testing.T) {
+	command := exec.Command("make", "-n", "package-lambda-ses-feedback")
+	command.Dir = ".."
+	body, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("render SES feedback package recipe: %v\n%s", err, body)
+	}
+	recipe := string(body)
+	for _, required := range []string{
+		"mkdir -p .build/lambda/sqs-ses-feedback",
+		"GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags=\"-s -w -buildid=\" -o .build/lambda/sqs-ses-feedback/bootstrap ./cmd/lambda/sqs-ses-feedback",
+		"rm -f .build/lambda/sqs-ses-feedback.zip",
+		"TZ=UTC touch -t 198001010000 .build/lambda/sqs-ses-feedback/bootstrap",
+		"cd .build/lambda/sqs-ses-feedback && TZ=UTC zip -q -X -j ../sqs-ses-feedback.zip bootstrap",
+	} {
+		if !strings.Contains(recipe, required) {
+			t.Fatalf("SES feedback package recipe is missing behavior %q\n%s", required, recipe)
+		}
+	}
+}

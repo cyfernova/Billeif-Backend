@@ -1,11 +1,18 @@
 package handlers
 
 import (
+	"errors"
+	"invoice-backend/internal/idempotency"
+	"invoice-backend/internal/invoicecursor"
+	"invoice-backend/internal/invoiceissue"
+	"invoice-backend/internal/invoiceresolution"
 	"invoice-backend/internal/models"
+	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/internal/services"
-	"invoice-backend/internal/utils"
 	"invoice-backend/pkg/logger"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -13,11 +20,26 @@ import (
 type InvoiceHandler struct {
 	svc        *services.InvoiceService
 	compliance *services.TaxComplianceService
+	cursor     InvoiceCursorCodec
 	log        *logger.Logger
 }
 
-func NewInvoiceHandler(svc *services.InvoiceService, compliance *services.TaxComplianceService, log *logger.Logger) *InvoiceHandler {
-	return &InvoiceHandler{svc: svc, compliance: compliance, log: log}
+type InvoiceCursorCodec interface {
+	Encode(businessID string, position invoicecursor.Position) (string, error)
+	Decode(token, expectedBusinessID string) (invoicecursor.Position, error)
+}
+
+func NewInvoiceHandler(
+	svc *services.InvoiceService,
+	compliance *services.TaxComplianceService,
+	log *logger.Logger,
+	cursorCodecs ...InvoiceCursorCodec,
+) *InvoiceHandler {
+	var cursor InvoiceCursorCodec
+	if len(cursorCodecs) != 0 {
+		cursor = cursorCodecs[0]
+	}
+	return &InvoiceHandler{svc: svc, compliance: compliance, cursor: cursor, log: log}
 }
 
 // Create creates a new invoice
@@ -27,14 +49,21 @@ func NewInvoiceHandler(svc *services.InvoiceService, compliance *services.TaxCom
 // @Accept json
 // @Produce json
 // @Security BearerAuth
+// @Param Idempotency-Key header string true "UUID idempotency key"
 // @Param input body services.CreateInvoiceInput true "Invoice details"
 // @Success 201 {object} models.Invoice
 // @Failure 400 {object} map[string]string
+// @Failure 409 {object} map[string]string
 // @Failure 500 {object} map[string]string
+// @Failure 503 {object} map[string]string
 // @Router /invoices [post]
 func (h *InvoiceHandler) Create(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("invoice_handler").With("operation", "create")
 	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	idempotencyKey, ok := requireIdempotencyKey(c)
 	if !ok {
 		return
 	}
@@ -45,18 +74,203 @@ func (h *InvoiceHandler) Create(c *gin.Context) {
 		return
 	}
 	input.BusinessID = businessID
+	input.IdempotencyKey = idempotencyKey
 	requestContextWithActor(c)
 
 	var invoice *models.Invoice
 	invoice, err := h.svc.CreateByBusiness(c.Request.Context(), businessID, input)
 	if err != nil {
 		log.Error("failed to create invoice", "error", err, "business_id", input.BusinessID, "customer_id", input.CustomerID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(invoiceCreateErrorStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 	log.Info("invoice created", "invoice_id", invoice.ID, "business_id", invoice.BusinessID, "invoice_no", invoice.InvoiceNo)
 
 	c.JSON(http.StatusCreated, invoice)
+}
+
+func invoiceCreateErrorStatus(err error) int {
+	var invalidPayload *idempotency.InvalidPayloadError
+	if errors.As(err, &invalidPayload) {
+		return http.StatusBadRequest
+	}
+	var invalidKey *idempotency.InvalidKeyError
+	if errors.As(err, &invalidKey) {
+		return http.StatusBadRequest
+	}
+	var conflict *idempotency.ConflictError
+	if errors.As(err, &conflict) {
+		return http.StatusConflict
+	}
+	var inProgress *idempotency.InProgressError
+	if errors.As(err, &inProgress) {
+		return http.StatusConflict
+	}
+	var resolverUnavailable *invoiceresolution.UnavailableError
+	if errors.As(err, &resolverUnavailable) {
+		return http.StatusServiceUnavailable
+	}
+	return http.StatusInternalServerError
+}
+
+// Issue freezes and numbers a canonical draft invoice.
+// @Summary Issue invoice
+// @Description Atomically assigns the legal invoice number, freezes the draft, and queues the final private render.
+// @Tags Invoices
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Invoice ID"
+// @Param Idempotency-Key header string true "UUID idempotency key"
+// @Param If-Match header string true "Expected invoice version"
+// @Param input body services.IssueInvoiceInput true "Issue details"
+// @Success 202 {object} services.IssueInvoiceResult
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /invoices/{id}/issue [post]
+func (h *InvoiceHandler) Issue(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	idempotencyKey, ok := requireIdempotencyKey(c)
+	if !ok {
+		return
+	}
+	expectedVersion, ok := requireInvoiceIfMatch(c)
+	if !ok {
+		return
+	}
+	var input services.IssueInvoiceInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	input.IdempotencyKey = idempotencyKey
+	input.ExpectedVersion = expectedVersion
+	requestContextWithActor(c)
+	result, err := h.svc.IssueByBusiness(c.Request.Context(), businessID, c.Param("id"), input)
+	if err != nil {
+		c.JSON(invoiceIssueErrorStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusAccepted, result)
+}
+
+func requireInvoiceIfMatch(c *gin.Context) (int, bool) {
+	value := strings.TrimSpace(c.GetHeader("If-Match"))
+	value = strings.TrimSpace(strings.Trim(value, `"`))
+	version, err := strconv.Atoi(value)
+	if err != nil || version < 1 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "If-Match expected invoice version is required"})
+		return 0, false
+	}
+	return version, true
+}
+
+func invoiceIssueErrorStatus(err error) int {
+	var invalidKey *idempotency.InvalidKeyError
+	var invalidPayload *idempotency.InvalidPayloadError
+	var invalidSeries *invoiceissue.InvalidSeriesError
+	var invalidDocumentType *invoiceissue.InvalidDocumentTypeError
+	var invalidLifecycle *invoiceissue.InvalidLifecycleError
+	var invalidTimezone *invoiceissue.InvalidTimezoneError
+	if errors.As(err, &invalidKey) ||
+		errors.As(err, &invalidPayload) ||
+		errors.As(err, &invalidSeries) ||
+		errors.As(err, &invalidDocumentType) ||
+		errors.As(err, &invalidLifecycle) ||
+		errors.As(err, &invalidTimezone) {
+		return http.StatusBadRequest
+	}
+	var notFound *invoiceissue.NotFoundError
+	if errors.As(err, &notFound) {
+		return http.StatusNotFound
+	}
+	var stale *invoiceissue.StaleVersionError
+	var alreadyIssued *invoiceissue.AlreadyIssuedError
+	var conflict *idempotency.ConflictError
+	var inProgress *idempotency.InProgressError
+	var exhausted *invoiceissue.SequenceExhaustedError
+	if errors.As(err, &stale) ||
+		errors.As(err, &alreadyIssued) ||
+		errors.As(err, &conflict) ||
+		errors.As(err, &inProgress) ||
+		errors.As(err, &exhausted) {
+		return http.StatusConflict
+	}
+	return http.StatusInternalServerError
+}
+
+// Preview queues a private PDF render for the current draft invoice version.
+// @Summary Preview invoice
+// @Description Atomically queues a private PDF preview for the current draft invoice version.
+// @Tags Invoices
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Invoice ID"
+// @Param Idempotency-Key header string true "UUID idempotency key"
+// @Success 202 {object} services.PreviewInvoiceResult
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /invoices/{id}/previews [post]
+func (h *InvoiceHandler) Preview(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	idempotencyKey, ok := requireIdempotencyKey(c)
+	if !ok {
+		return
+	}
+	requestContextWithActor(c)
+	result, err := h.svc.PreviewByBusiness(
+		c.Request.Context(),
+		businessID,
+		c.Param("id"),
+		services.PreviewInvoiceInput{IdempotencyKey: idempotencyKey},
+	)
+	if err != nil {
+		status, message := invoicePreviewErrorResponse(err)
+		h.log.Error(
+			"failed to request invoice preview",
+			"error", err,
+			"business_id", businessID,
+			"invoice_id", c.Param("id"),
+		)
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+	c.JSON(http.StatusAccepted, result)
+}
+
+func invoicePreviewErrorResponse(err error) (int, string) {
+	var invalidKey *idempotency.InvalidKeyError
+	if errors.As(err, &invalidKey) {
+		return http.StatusBadRequest, "a UUID idempotency key is required"
+	}
+	var invalidPayload *idempotency.InvalidPayloadError
+	var invalidLifecycle *invoiceissue.InvalidLifecycleError
+	if errors.As(err, &invalidPayload) || errors.As(err, &invalidLifecycle) {
+		return http.StatusBadRequest, "invalid invoice preview request"
+	}
+	var notFound *invoiceissue.NotFoundError
+	if errors.As(err, &notFound) {
+		return http.StatusNotFound, "invoice not found"
+	}
+	var conflict *idempotency.ConflictError
+	if errors.As(err, &conflict) {
+		return http.StatusConflict, "idempotency key conflicts with a different request"
+	}
+	var inProgress *idempotency.InProgressError
+	if errors.As(err, &inProgress) {
+		return http.StatusConflict, "idempotent request is still in progress"
+	}
+	return http.StatusInternalServerError, "invoice preview unavailable"
 }
 
 // Get retrieves an invoice by ID
@@ -93,10 +307,9 @@ func (h *InvoiceHandler) Get(c *gin.Context) {
 // @Tags Invoices
 // @Produce json
 // @Security BearerAuth
-// @Param business_id query string true "Business ID"
-// @Param page query int false "Page number" default(1)
-// @Param limit query int false "Page size" default(10)
-// @Success 200 {object} map[string]interface{}
+// @Param limit query int false "Page size (default 20, maximum 100)"
+// @Param cursor query string false "Opaque continuation cursor"
+// @Success 200 {object} InvoiceListResponse
 // @Failure 400 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /invoices [get]
@@ -106,23 +319,86 @@ func (h *InvoiceHandler) List(c *gin.Context) {
 	if !ok {
 		return
 	}
-
-	page, limit := utils.ParsePagination(c)
-
-	invoices, total, err := h.svc.List(c.Request.Context(), businessID, page, limit)
-	if err != nil {
-		log.Error("failed to list invoices", "error", err, "business_id", businessID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if _, supplied := c.GetQuery("page"); supplied {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "page pagination is not supported"})
 		return
 	}
-	log.Debug("invoices listed", "business_id", businessID, "count", len(invoices), "total", total)
 
-	c.JSON(http.StatusOK, gin.H{
-		"data":  invoices,
-		"total": total,
-		"page":  page,
-		"limit": limit,
+	limit, ok := parseInvoiceListLimit(c.Query("limit"))
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid limit"})
+		return
+	}
+	if h.cursor == nil {
+		log.Error("invoice cursor codec is unavailable")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list invoices"})
+		return
+	}
+	var position *invoicecursor.Position
+	if token, supplied := c.GetQuery("cursor"); supplied {
+		decoded, err := h.cursor.Decode(token, businessID)
+		if err != nil {
+			if errors.Is(err, invoicecursor.ErrInvalidCursor) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cursor"})
+				return
+			}
+			log.Error("failed to decode invoice cursor", "error", err, "business_id", businessID)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list invoices"})
+			return
+		}
+		position = &decoded
+	}
+
+	invoices, hasMore, err := h.svc.List(c.Request.Context(), businessID, position, limit)
+	if err != nil {
+		log.Error("failed to list invoices", "error", err, "business_id", businessID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list invoices"})
+		return
+	}
+	var nextCursor *string
+	if hasMore && len(invoices) != 0 {
+		last := invoices[len(invoices)-1]
+		encoded, err := h.cursor.Encode(businessID, invoicecursor.Position{
+			CreatedAt: last.CreatedAt,
+			ID:        last.ID,
+		})
+		if err != nil {
+			log.Error("failed to encode invoice cursor", "error", err, "business_id", businessID)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list invoices"})
+			return
+		}
+		nextCursor = &encoded
+	}
+	log.Debug("invoices listed", "business_id", businessID, "count", len(invoices), "has_more", hasMore)
+
+	c.JSON(http.StatusOK, InvoiceListResponse{
+		Items:      invoices,
+		NextCursor: nextCursor,
 	})
+}
+
+type InvoiceListResponse struct {
+	Items      []*models.Invoice `json:"items"`
+	NextCursor *string           `json:"next_cursor"`
+}
+
+func parseInvoiceListLimit(raw string) (int, bool) {
+	if raw == "" {
+		return 20, true
+	}
+	for _, digit := range raw {
+		if digit < '0' || digit > '9' {
+			return 0, false
+		}
+	}
+	limit, err := strconv.Atoi(raw)
+	if err != nil || limit <= 0 {
+		return 0, false
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	return limit, true
 }
 
 // Update updates an invoice
@@ -177,6 +453,7 @@ func (h *InvoiceHandler) Update(c *gin.Context) {
 // @Produce json
 // @Security BearerAuth
 // @Param id path string true "Invoice ID"
+// @Param If-Match header string true "Expected invoice version"
 // @Param input body services.UpdateInvoiceDraftInput true "Draft invoice updates"
 // @Success 200 {object} models.Invoice
 // @Failure 400 {object} map[string]string
@@ -189,6 +466,10 @@ func (h *InvoiceHandler) UpdateDraft(c *gin.Context) {
 	if !ok {
 		return
 	}
+	expectedVersion, ok := requireInvoiceIfMatch(c)
+	if !ok {
+		return
+	}
 	id := c.Param("id")
 	var input services.UpdateInvoiceDraftInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -196,6 +477,7 @@ func (h *InvoiceHandler) UpdateDraft(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	input.ExpectedVersion = expectedVersion
 	requestContextWithActor(c)
 
 	invoice, err := h.svc.UpdateDraftByBusiness(c.Request.Context(), businessID, id, input)
@@ -253,36 +535,47 @@ func (h *InvoiceHandler) Delete(c *gin.Context) {
 	c.JSON(http.StatusNoContent, nil)
 }
 
-// Send sends an invoice to the customer
-// @Summary Send invoice
-// @Description Trigger the delivery of an invoice to the customer (e.g., via email).
+// GetRenderStatus returns the status of one invoice render job.
+// @Summary Get invoice render status
+// @Description Returns a safe status projection for an invoice render job.
 // @Tags Invoices
 // @Produce json
 // @Security BearerAuth
-// @Param id path string true "Invoice ID"
-// @Success 200 {object} map[string]string
+// @Param invoice_id path string true "Invoice ID"
+// @Param render_job_id path string true "Render job ID"
+// @Success 200 {object} services.InvoiceRenderStatus
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
 // @Failure 500 {object} map[string]string
-// @Router /invoices/{id}/send [post]
-func (h *InvoiceHandler) Send(c *gin.Context) {
-	log := logger.FromContext(c.Request.Context()).Named("invoice_handler").With("operation", "send")
+// @Router /invoices/{invoice_id}/renders/{render_job_id} [get]
+func (h *InvoiceHandler) GetRenderStatus(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("invoice_handler").With("operation", "get_render_status")
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
 		return
 	}
-	id := c.Param("id")
-	requestContextWithActor(c)
-	if err := h.svc.SendByBusiness(c.Request.Context(), businessID, id); err != nil {
-		log.Error("failed to send invoice", "error", err, "invoice_id", id)
-		if isNotFoundErr(err) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "invoice not found"})
-			return
+	invoiceID := c.Param("id")
+	renderJobID := c.Param("render_job_id")
+	status, err := h.svc.GetRenderStatusByBusiness(
+		c.Request.Context(),
+		businessID,
+		invoiceID,
+		renderJobID,
+	)
+	if err != nil {
+		log.Error("failed to get invoice render status", "error", err, "invoice_id", invoiceID, "render_job_id", renderJobID)
+		var invalidPayload *idempotency.InvalidPayloadError
+		switch {
+		case errors.As(err, &invalidPayload):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid invoice render request"})
+		case errors.Is(err, interfaces.ErrInvoiceRenderNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": "render job not found"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "invoice render status unavailable"})
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	log.Info("invoice sent", "invoice_id", id)
-
-	c.JSON(http.StatusOK, gin.H{"message": "invoice sent successfully"})
+	c.JSON(http.StatusOK, status)
 }
 
 // GetPDF returns a presigned URL for the invoice PDF
@@ -292,8 +585,11 @@ func (h *InvoiceHandler) Send(c *gin.Context) {
 // @Produce json
 // @Security BearerAuth
 // @Param id path string true "Invoice ID"
-// @Success 200 {object} map[string]string
+// @Success 200 {object} services.InvoicePDFDownload
+// @Failure 400 {object} map[string]string
 // @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
 // @Router /invoices/{id}/pdf [get]
 func (h *InvoiceHandler) GetPDF(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("invoice_handler").With("operation", "get_pdf")
@@ -302,19 +598,122 @@ func (h *InvoiceHandler) GetPDF(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
-	url, err := h.svc.GetPDFURLByBusiness(c.Request.Context(), businessID, id)
+	download, err := h.svc.GetPDFDownloadByBusiness(c.Request.Context(), businessID, id)
 	if err != nil {
 		log.Error("failed to get invoice PDF URL", "error", err, "invoice_id", id)
-		if isNotFoundErr(err) {
+		var invalidPayload *idempotency.InvalidPayloadError
+		switch {
+		case errors.As(err, &invalidPayload):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid invoice request"})
+		case errors.Is(err, services.ErrInvoicePDFNotReady):
+			c.JSON(http.StatusConflict, gin.H{"error": "invoice PDF is not ready"})
+		case errors.Is(err, interfaces.ErrInvoiceNotFound):
 			c.JSON(http.StatusNotFound, gin.H{"error": "invoice not found"})
-			return
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "invoice PDF unavailable"})
 		}
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
 	log.Debug("invoice PDF URL fetched", "invoice_id", id)
 
-	c.JSON(http.StatusOK, gin.H{"pdf_url": url})
+	c.JSON(http.StatusOK, download)
+}
+
+// Deliver queues canonical invoice email delivery after its final render is ready.
+// @Summary Deliver invoice
+// @Description Creates an idempotent invoice email delivery request.
+// @Tags Invoices
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Invoice ID"
+// @Param Idempotency-Key header string true "UUID idempotency key"
+// @Param input body services.DeliverInvoiceInput true "Delivery recipient"
+// @Success 202 {object} services.DeliverInvoiceResult
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /invoices/{id}/deliveries [post]
+func (h *InvoiceHandler) Deliver(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	idempotencyKey, ok := requireIdempotencyKey(c)
+	if !ok {
+		return
+	}
+	var input services.DeliverInvoiceInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid invoice delivery request"})
+		return
+	}
+	input.IdempotencyKey = idempotencyKey
+	requestContextWithActor(c)
+	result, err := h.svc.DeliverByBusiness(
+		c.Request.Context(), businessID, c.Param("id"), input,
+	)
+	if err != nil {
+		status, message := invoiceDeliveryErrorResponse(err)
+		c.JSON(status, gin.H{"error": message})
+		return
+	}
+	c.JSON(http.StatusAccepted, result)
+}
+
+// GetDeliveryStatus returns a safe projection of an invoice delivery attempt.
+// @Summary Get invoice delivery status
+// @Description Returns tenant-scoped invoice delivery status without provider or lease details.
+// @Tags Invoices
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Invoice ID"
+// @Param delivery_id path string true "Delivery ID"
+// @Success 200 {object} services.InvoiceDeliveryStatus
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /invoices/{id}/deliveries/{delivery_id} [get]
+func (h *InvoiceHandler) GetDeliveryStatus(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	status, err := h.svc.GetDeliveryStatusByBusiness(
+		c.Request.Context(), businessID, c.Param("id"), c.Param("delivery_id"),
+	)
+	if err != nil {
+		var invalidPayload *idempotency.InvalidPayloadError
+		switch {
+		case errors.As(err, &invalidPayload):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid invoice delivery request"})
+		case errors.Is(err, interfaces.ErrInvoiceDeliveryNotFound):
+			c.JSON(http.StatusNotFound, gin.H{"error": "invoice delivery not found"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "invoice delivery status unavailable"})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, status)
+}
+
+func invoiceDeliveryErrorResponse(err error) (int, string) {
+	var invalidKey *idempotency.InvalidKeyError
+	var invalidPayload *idempotency.InvalidPayloadError
+	if errors.As(err, &invalidKey) || errors.As(err, &invalidPayload) {
+		return http.StatusBadRequest, "invalid invoice delivery request"
+	}
+	if errors.Is(err, interfaces.ErrInvoiceNotFound) {
+		return http.StatusNotFound, "invoice not found"
+	}
+	var conflict *idempotency.ConflictError
+	var inProgress *idempotency.InProgressError
+	if errors.Is(err, interfaces.ErrInvoiceNotDeliverable) ||
+		errors.As(err, &conflict) || errors.As(err, &inProgress) {
+		return http.StatusConflict, "invoice delivery conflicts with current state"
+	}
+	return http.StatusInternalServerError, "invoice delivery unavailable"
 }
 
 func (h *InvoiceHandler) GenerateEInvoice(c *gin.Context) {
@@ -334,33 +733,4 @@ func (h *InvoiceHandler) GenerateEInvoice(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusAccepted, job)
-}
-
-// NextNumber returns the next available invoice number
-// @Summary Get next invoice number
-// @Description Returns the incremented invoice number for the next invoice to be created.
-// @Tags Invoices
-// @Produce json
-// @Security BearerAuth
-// @Param business_id query string true "Business ID"
-// @Success 200 {object} map[string]string
-// @Failure 400 {object} map[string]string
-// @Failure 500 {object} map[string]string
-// @Router /invoices/next-number [get]
-func (h *InvoiceHandler) NextNumber(c *gin.Context) {
-	log := logger.FromContext(c.Request.Context()).Named("invoice_handler").With("operation", "next_number")
-	businessID, ok := requireBusinessScope(c)
-	if !ok {
-		return
-	}
-
-	number, err := h.svc.GetNextNumber(c.Request.Context(), businessID)
-	if err != nil {
-		log.Error("failed to get next invoice number", "error", err, "business_id", businessID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	log.Debug("next invoice number generated", "business_id", businessID)
-
-	c.JSON(http.StatusOK, gin.H{"next_number": number})
 }

@@ -47,3 +47,40 @@ func TestProtectedDeleteRoutesRequireIDParam(t *testing.T) {
 		}
 	}
 }
+
+func TestLegacyInvoiceSendRouteIsNotRegistered(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := setupRouter(
+		&config.Config{AllowedOrigins: []string{"http://localhost:3000"}},
+		&services.Container{AWS: &awsclients.Config{}},
+		&handlers.Handler{},
+		logger.New(),
+	)
+
+	routes := map[string]bool{}
+	for _, route := range router.Routes() {
+		routes[route.Method+" "+route.Path] = true
+		if route.Method == "POST" && route.Path == "/api/v1/invoices/:id/send" {
+			t.Fatal("legacy invoice send route must not be registered before the issue and delivery workflow exists")
+		}
+	}
+	if routes["GET /api/v1/invoices/next-number"] {
+		t.Fatal("legacy next-number route must not be registered")
+	}
+	if !routes["POST /api/v1/invoices/:id/issue"] {
+		t.Fatal("canonical invoice issue route must be registered")
+	}
+	if !routes["POST /api/v1/invoices/:id/previews"] {
+		t.Fatal("canonical invoice preview route must be registered")
+	}
+	if !routes["GET /api/v1/invoices/:id/renders/:render_job_id"] {
+		t.Fatal("tenant-scoped invoice render status route must be registered")
+	}
+	if !routes["POST /api/v1/invoices/:id/deliveries"] {
+		t.Fatal("canonical invoice delivery route must be registered")
+	}
+	if !routes["GET /api/v1/invoices/:id/deliveries/:delivery_id"] {
+		t.Fatal("tenant-scoped invoice delivery status route must be registered")
+	}
+}

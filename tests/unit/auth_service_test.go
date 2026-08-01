@@ -829,6 +829,7 @@ func TestAuthService_SyncGoogleUser_ExistingUser(t *testing.T) {
 
 	input := services.SyncGoogleUserInput{
 		Email:             "test@example.com",
+		EmailVerified:     true,
 		CognitoID:         "cognito-id-123",
 		Name:              "New Name",
 		ProfilePictureURL: "https://example.com/new-pic.jpg",
@@ -862,6 +863,7 @@ func TestAuthService_SyncGoogleUser_PreservesExistingProfilePicture(t *testing.T
 	}
 	input := services.SyncGoogleUserInput{
 		Email:             "test@example.com",
+		EmailVerified:     true,
 		CognitoID:         "cognito-id-123",
 		Name:              "Google User",
 		ProfilePictureURL: "https://example.com/google-pic.jpg",
@@ -889,9 +891,10 @@ func TestAuthService_SyncGoogleUser_NewUser(t *testing.T) {
 
 	ctx := context.Background()
 	input := services.SyncGoogleUserInput{
-		Email:     "newuser@example.com",
-		CognitoID: "new-cognito-id",
-		Name:      "New User",
+		Email:         "newuser@example.com",
+		EmailVerified: true,
+		CognitoID:     "new-cognito-id",
+		Name:          "New User",
 	}
 
 	mockUserRepo.On("GetByCognitoID", ctx, input.CognitoID).Return(nil, errors.New("user not found"))

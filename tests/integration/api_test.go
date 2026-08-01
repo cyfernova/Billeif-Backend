@@ -234,12 +234,10 @@ func TestFullBusinessLifecycle(t *testing.T) {
 		assert.Equal(t, "draft", res["status"])
 	})
 
-	// 8. Send Invoice (Mocked)
-	t.Run("Send Invoice", func(t *testing.T) {
-		resp, res := client.Post(t, fmt.Sprintf("/api/v1/invoices/%s/send", invoiceID), nil)
-		// Assuming send endpoint returns 200 OK and changes status to 'sent'
-		require.Equal(t, http.StatusOK, resp.StatusCode)
-		assert.Equal(t, "sent", res["status"])
+	// 8. Legacy direct-send endpoint is removed; issue and delivery commands replace it.
+	t.Run("Legacy Send Invoice Is Removed", func(t *testing.T) {
+		resp, _ := client.Post(t, fmt.Sprintf("/api/v1/invoices/%s/send", invoiceID), nil)
+		require.Equal(t, http.StatusNotFound, resp.StatusCode)
 	})
 
 	// 9. Record Payment

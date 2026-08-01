@@ -16,9 +16,32 @@ import (
 
 // LLMService handles interactions with LLM APIs
 type LLMService struct {
-	config config.LLMConfig
-	log    *logger.Logger
-	client *http.Client
+	config   config.LLMConfig
+	appCfg   *config.Config
+	resolver ProviderConfigResolver
+	log      *logger.Logger
+	client   *http.Client
+}
+
+func NewLLMServiceWithResolver(cfg *config.Config, resolver ProviderConfigResolver, log *logger.Logger) *LLMService {
+	if cfg == nil {
+		cfg = &config.Config{}
+	}
+	svc := NewLLMService(cfg.LLM, log)
+	svc.appCfg = cfg
+	svc.resolver = resolver
+	return svc
+}
+
+func (s *LLMService) providerConfig(ctx context.Context, kind config.SecretKind) (config.LLMConfig, error) {
+	if s.resolver == nil || s.appCfg == nil {
+		return s.config, nil
+	}
+	resolved, err := s.resolver.ResolveProvider(ctx, s.appCfg, kind)
+	if err != nil {
+		return config.LLMConfig{}, err
+	}
+	return resolved.LLM, nil
 }
 
 type LLMChatOptions struct {
@@ -214,9 +237,6 @@ func (s *LLMService) ChatWithWebSearch(ctx context.Context, messages []ChatMessa
 	enrichedMessages := messages
 
 	if shouldUseWebSearch(query) {
-		if strings.TrimSpace(s.config.ExaAPIKey) == "" {
-			return nil, fmt.Errorf("web search is required for this question but EXA_API_KEY is not configured")
-		}
 		results, err := s.searchExa(ctx, query)
 		if err != nil {
 			return nil, err
@@ -244,6 +264,13 @@ func (s *LLMService) ChatWithOptions(ctx context.Context, messages []ChatMessage
 	if maxTokens <= 0 {
 		maxTokens = 8192
 	}
+	providerCfg, err := s.providerConfig(ctx, config.SecretLLM)
+	if err != nil {
+		return "", fmt.Errorf("resolve LLM credentials: %w", err)
+	}
+	if strings.TrimSpace(providerCfg.APIKey) == "" {
+		return "", fmt.Errorf("LLM_API_KEY is not configured")
+	}
 
 	openAIMessages := make([]OpenAIChatMessage, 0, len(messages)+1)
 	if options.System != "" {
@@ -257,7 +284,7 @@ func (s *LLMService) ChatWithOptions(ctx context.Context, messages []ChatMessage
 	}
 
 	reqBody := OpenAIChatRequest{
-		Model:     s.config.Model,
+		Model:     providerCfg.Model,
 		Messages:  openAIMessages,
 		MaxTokens: maxTokens,
 		Stream:    false,
@@ -269,14 +296,14 @@ func (s *LLMService) ChatWithOptions(ctx context.Context, messages []ChatMessage
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", s.config.APIURL, bytes.NewBuffer(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", providerCfg.APIURL, bytes.NewBuffer(jsonBody))
 	if err != nil {
 		log.Error("failed to create LLM request", "error", err)
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	apiKey := strings.TrimSpace(s.config.APIKey)
+	apiKey := strings.TrimSpace(providerCfg.APIKey)
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 
 	resp, err := s.client.Do(req)
@@ -338,11 +365,18 @@ func (s *LLMService) ChatWithOptions(ctx context.Context, messages []ChatMessage
 
 func (s *LLMService) searchExa(ctx context.Context, query string) ([]LLMSearchResult, error) {
 	log := logger.FromContext(ctx).With("service", "llm", "operation", "exa_search")
-	endpoint := strings.TrimSpace(s.config.ExaBaseURL)
+	providerCfg, err := s.providerConfig(ctx, config.SecretExa)
+	if err != nil {
+		return nil, fmt.Errorf("resolve Exa credentials: %w", err)
+	}
+	if strings.TrimSpace(providerCfg.ExaAPIKey) == "" {
+		return nil, fmt.Errorf("web search is required for this question but EXA_API_KEY is not configured")
+	}
+	endpoint := strings.TrimSpace(providerCfg.ExaBaseURL)
 	if endpoint == "" {
 		endpoint = "https://api.exa.ai/search"
 	}
-	timeout := s.config.ExaTimeout
+	timeout := providerCfg.ExaTimeout
 	if timeout <= 0 {
 		timeout = 12
 	}
@@ -371,7 +405,7 @@ func (s *LLMService) searchExa(ctx context.Context, query string) ([]LLMSearchRe
 		return nil, fmt.Errorf("create Exa search request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", strings.TrimSpace(s.config.ExaAPIKey))
+	req.Header.Set("x-api-key", strings.TrimSpace(providerCfg.ExaAPIKey))
 
 	resp, err := s.client.Do(req)
 	if err != nil {

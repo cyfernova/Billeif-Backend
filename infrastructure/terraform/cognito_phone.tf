@@ -48,7 +48,7 @@ resource "aws_kms_alias" "cognito_phone_custom_sms" {
 }
 
 resource "aws_iam_role" "cognito_phone_custom_sms" {
-  name               = "${var.project_name}-cognito-phone-custom-sms-role"
+  name               = "${local.resource_prefix}-cognito-phone-custom-sms-role"
   assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
 }
 
@@ -85,7 +85,7 @@ data "aws_iam_policy_document" "cognito_phone_sms_assume_role" {
 }
 
 resource "aws_iam_role" "cognito_phone_sms" {
-  name               = "${var.project_name}-cognito-phone-sms-role"
+  name               = "${local.resource_prefix}-cognito-phone-sms-role"
   assume_role_policy = data.aws_iam_policy_document.cognito_phone_sms_assume_role.json
 }
 
@@ -101,7 +101,7 @@ data "aws_iam_policy_document" "cognito_phone_sms" {
 }
 
 resource "aws_iam_role_policy" "cognito_phone_sms" {
-  name   = "${var.project_name}-cognito-phone-sms-policy"
+  name   = "${local.resource_prefix}-cognito-phone-sms-policy"
   role   = aws_iam_role.cognito_phone_sms.id
   policy = data.aws_iam_policy_document.cognito_phone_sms.json
 }
@@ -133,28 +133,36 @@ data "aws_iam_policy_document" "cognito_phone_custom_sms" {
 }
 
 resource "aws_iam_role_policy" "cognito_phone_custom_sms" {
-  name   = "${var.project_name}-cognito-phone-custom-sms-policy"
+  name   = "${local.resource_prefix}-cognito-phone-custom-sms-policy"
   role   = aws_iam_role.cognito_phone_custom_sms.id
   policy = data.aws_iam_policy_document.cognito_phone_custom_sms.json
 }
 
 resource "aws_cloudwatch_log_group" "cognito_phone_custom_sms" {
   provider          = aws.ap_south_1
-  name              = "/aws/lambda/${var.project_name}-cognito-phone-custom-sms"
+  name              = "/aws/lambda/${local.resource_prefix}-cognito-phone-custom-sms"
   retention_in_days = var.log_retention_days
 }
 
 resource "aws_lambda_function" "custom_sms_sender" {
-  provider         = aws.ap_south_1
-  function_name    = "${var.project_name}-cognito-phone-custom-sms"
-  role             = aws_iam_role.cognito_phone_custom_sms.arn
-  runtime          = "nodejs20.x"
-  handler          = "index.handler"
-  architectures    = ["arm64"]
-  filename         = local.lambda_artifacts.custom_sms_sender
-  source_code_hash = local.lambda_artifact_hashes.custom_sms_sender
-  memory_size      = 256
-  timeout          = 15
+  provider          = aws.ap_south_1
+  function_name     = "${local.resource_prefix}-cognito-phone-custom-sms"
+  role              = aws_iam_role.cognito_phone_custom_sms.arn
+  runtime           = "nodejs20.x"
+  handler           = "index.handler"
+  architectures     = ["arm64"]
+  s3_bucket         = aws_s3_bucket.lambda_artifacts.id
+  s3_key            = aws_s3_object.custom_sms_sender_lambda_artifact.key
+  s3_object_version = aws_s3_object.custom_sms_sender_lambda_artifact.version_id
+  source_code_hash  = local.lambda_artifact_hashes.custom_sms_sender
+  memory_size       = 256
+  timeout           = 15
+
+  reserved_concurrent_executions = var.enable_application ? (var.enable_lambda_reserved_concurrency ? 2 : null) : 0
+
+  tags = {
+    MigrationChecksum = local.application_migration_checksum
+  }
 
   environment {
     variables = {
@@ -190,12 +198,16 @@ resource "aws_lambda_function" "custom_sms_sender" {
     }
   }
 
-  depends_on = [aws_cloudwatch_log_group.cognito_phone_custom_sms]
+  depends_on = [
+    aws_ssm_association.nat_activation_ready,
+    aws_nat_gateway.main,
+    aws_cloudwatch_log_group.cognito_phone_custom_sms,
+  ]
 }
 
 resource "aws_cognito_user_pool" "phone" {
   provider                 = aws.ap_south_1
-  name                     = var.phone_user_pool_name
+  name                     = local.cognito_native_user_pool_name
   alias_attributes         = ["phone_number"]
   auto_verified_attributes = ["phone_number"]
   mfa_configuration        = "OFF"
@@ -238,6 +250,8 @@ resource "aws_cognito_user_pool" "phone" {
 }
 
 resource "aws_lambda_permission" "cognito_phone_custom_sms" {
+  count = var.enable_application ? 1 : 0
+
   provider       = aws.ap_south_1
   statement_id   = "AllowExecutionFromCognitoPhoneUserPool"
   action         = "lambda:InvokeFunction"
@@ -249,7 +263,7 @@ resource "aws_lambda_permission" "cognito_phone_custom_sms" {
 
 resource "aws_cognito_user_pool_client" "phone" {
   provider     = aws.ap_south_1
-  name         = var.phone_client_name
+  name         = local.cognito_native_client_name
   user_pool_id = aws_cognito_user_pool.phone.id
 
   explicit_auth_flows           = ["ALLOW_USER_AUTH", "ALLOW_REFRESH_TOKEN_AUTH"]

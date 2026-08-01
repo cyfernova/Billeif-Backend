@@ -503,12 +503,17 @@ func (s *AuthService) ChangePassword(ctx context.Context, accessToken string, in
 
 type SyncGoogleUserInput struct {
 	Email             string
+	EmailVerified     bool
 	CognitoID         string
 	Name              string
 	ProfilePictureURL string
 }
 
 func (s *AuthService) SyncGoogleUser(ctx context.Context, input SyncGoogleUserInput) (*models.User, error) {
+	if !input.EmailVerified {
+		return nil, fmt.Errorf("google email must be verified")
+	}
+
 	email := normalizeOptionalEmail(input.Email)
 	name := googleDisplayName(input.Name, email)
 	profilePictureURL := strings.TrimSpace(input.ProfilePictureURL)

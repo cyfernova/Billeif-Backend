@@ -7,11 +7,12 @@ import (
 	"time"
 
 	"invoice-backend/internal/app"
+	"invoice-backend/internal/config"
 )
 
 func main() {
 	ctx := context.Background()
-	rt, err := app.Initialize(ctx, app.InitializeOptions{EnableWorker: false})
+	rt, err := app.Initialize(ctx, app.InitializeOptions{EnableWorker: false, Profile: config.ProfileHTTP})
 	if err != nil {
 		panic(fmt.Sprintf("failed to initialize runtime: %v", err))
 	}

@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
+	"invoice-backend/internal/middleware"
 	"invoice-backend/internal/reporting"
 	"invoice-backend/internal/services"
 	"invoice-backend/pkg/logger"
@@ -13,12 +15,13 @@ import (
 )
 
 type ReportHandler struct {
-	svc *services.ReportService
-	log *logger.Logger
+	svc       *services.ReportService
+	inventory *services.InventoryService
+	log       *logger.Logger
 }
 
-func NewReportHandler(svc *services.ReportService, log *logger.Logger) *ReportHandler {
-	return &ReportHandler{svc: svc, log: log}
+func NewReportHandler(svc *services.ReportService, inventory *services.InventoryService, log *logger.Logger) *ReportHandler {
+	return &ReportHandler{svc: svc, inventory: inventory, log: log}
 }
 
 // Catalog returns the available report types
@@ -64,11 +67,16 @@ func (h *ReportHandler) Query(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if !h.applyReportScope(c, businessID, userID, &input.Filters) {
+		return
+	}
 	result, err := h.svc.Query(c.Request.Context(), businessID, userID, c.Param("key"), input)
 	if err != nil {
 		statusCode := http.StatusInternalServerError
 		if isNotFoundErr(err) {
 			statusCode = http.StatusNotFound
+		} else if errors.Is(err, services.ErrReportScopeUnsupported) {
+			statusCode = http.StatusForbidden
 		} else if err.Error() == "at least one valid column is required" {
 			statusCode = http.StatusBadRequest
 		}
@@ -106,11 +114,16 @@ func (h *ReportHandler) Export(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if !h.applyReportScope(c, businessID, userID, &input.Filters) {
+		return
+	}
 	result, err := h.svc.Export(c.Request.Context(), businessID, userID, c.Param("key"), input)
 	if err != nil {
 		statusCode := http.StatusInternalServerError
 		if isNotFoundErr(err) {
 			statusCode = http.StatusNotFound
+		} else if errors.Is(err, services.ErrReportScopeUnsupported) {
+			statusCode = http.StatusForbidden
 		} else if err.Error() == "unsupported export format" || err.Error() == "at least one valid column is required" {
 			statusCode = http.StatusBadRequest
 		}
@@ -134,14 +147,25 @@ func (h *ReportHandler) Dashboard(c *gin.Context) {
 	if !ok {
 		return
 	}
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
 	input, err := readReportQueryFromRequest(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if !h.applyReportScope(c, businessID, userID, &input.Filters) {
+		return
+	}
 	result, err := h.svc.Dashboard(c.Request.Context(), businessID, input)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		statusCode := http.StatusInternalServerError
+		if errors.Is(err, services.ErrReportScopeUnsupported) {
+			statusCode = http.StatusForbidden
+		}
+		c.JSON(statusCode, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, result)
@@ -253,11 +277,16 @@ func (h *ReportHandler) CreateShare(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if !h.applyReportScope(c, businessID, userID, &input.Filters) {
+		return
+	}
 	result, err := h.svc.CreateShare(c.Request.Context(), businessID, userID, c.Param("key"), input)
 	if err != nil {
 		statusCode := http.StatusInternalServerError
 		if isNotFoundErr(err) {
 			statusCode = http.StatusNotFound
+		} else if errors.Is(err, services.ErrReportScopeUnsupported) {
+			statusCode = http.StatusForbidden
 		} else if err.Error() == "unsupported share mode" || err.Error() == "expires_at must be in the future" || err.Error() == "at least one valid column is required" {
 			statusCode = http.StatusBadRequest
 		}
@@ -403,6 +432,44 @@ func readReportQueryFromRequest(c *gin.Context) (services.ReportQueryInput, erro
 			IncludeCancelled: includeCancelled,
 		},
 	}, nil
+}
+
+func (h *ReportHandler) applyReportScope(c *gin.Context, businessID, userID string, filters *reporting.Filters) bool {
+	if filters == nil || h.inventory == nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "report scope unavailable"})
+		return false
+	}
+	allBranches, branchIDs, ok := middleware.GetValidatedBranchScope(c)
+	if !ok {
+		c.JSON(http.StatusForbidden, gin.H{"error": "validated branch scope required"})
+		return false
+	}
+	if !allBranches {
+		filters.BranchScopeRestricted = true
+		filters.AllowedBranchIDs = append([]string(nil), branchIDs...)
+	} else {
+		branchIDs = nil
+	}
+
+	if middleware.GetRole(c) == "admin" && allBranches {
+		return true
+	}
+	allWarehouses, warehouseIDs, err := h.inventory.ReportWarehouseScope(c.Request.Context(), userID, businessID, branchIDs)
+	if err != nil {
+		h.log.Error("resolve report warehouse scope", "error", err, "business_id", businessID, "user_id", userID)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve report scope"})
+		return false
+	}
+	if allWarehouses {
+		return true
+	}
+	filters.WarehouseScopeRestricted = true
+	filters.AllowedWarehouseIDs = append([]string(nil), warehouseIDs...)
+	if filters.WarehouseID != "" && !containsString(warehouseIDs, filters.WarehouseID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "access denied to this warehouse"})
+		return false
+	}
+	return true
 }
 
 func readPageLimit(c *gin.Context) (int, int) {

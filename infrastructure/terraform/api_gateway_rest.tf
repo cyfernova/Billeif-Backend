@@ -1,52 +1,21 @@
 resource "aws_api_gateway_rest_api" "main" {
-  name               = "${var.project_name}-rest-api"
-  description        = "REST API for ${var.project_name} Lambda backend"
-  binary_media_types = ["multipart/form-data", "application/octet-stream", "audio/mp4", "audio/mpeg", "audio/wav", "audio/webm", "audio/x-caf"]
+  name               = "${local.resource_prefix}-rest-api"
+  description        = "A2A response-streaming REST API for ${local.resource_prefix}"
+  binary_media_types = ["application/octet-stream"]
+}
+
+resource "aws_api_gateway_authorizer" "cognito" {
+  name            = "${local.resource_prefix}-cognito"
+  rest_api_id     = aws_api_gateway_rest_api.main.id
+  type            = "COGNITO_USER_POOLS"
+  provider_arns   = [aws_cognito_user_pool.main.arn, aws_cognito_user_pool.phone.arn]
+  identity_source = "method.request.header.Authorization"
 }
 
 locals {
   a2a_stream_invoke_uri = "arn:aws:apigateway:${var.aws_region}:lambda:path/2021-11-15/functions/${aws_lambda_function.a2a_stream.arn}/response-streaming-invocations"
 }
 
-resource "aws_api_gateway_method" "root_any" {
-  rest_api_id   = aws_api_gateway_rest_api.main.id
-  resource_id   = aws_api_gateway_rest_api.main.root_resource_id
-  http_method   = "ANY"
-  authorization = "NONE"
-}
-
-resource "aws_api_gateway_integration" "root_any" {
-  rest_api_id             = aws_api_gateway_rest_api.main.id
-  resource_id             = aws_api_gateway_rest_api.main.root_resource_id
-  http_method             = aws_api_gateway_method.root_any.http_method
-  integration_http_method = "POST"
-  type                    = "AWS_PROXY"
-  uri                     = aws_lambda_function.api_http.invoke_arn
-}
-
-resource "aws_api_gateway_resource" "proxy" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  parent_id   = aws_api_gateway_rest_api.main.root_resource_id
-  path_part   = "{proxy+}"
-}
-
-resource "aws_api_gateway_method" "proxy_any" {
-  rest_api_id   = aws_api_gateway_rest_api.main.id
-  resource_id   = aws_api_gateway_resource.proxy.id
-  http_method   = "ANY"
-  authorization = "NONE"
-}
-
-resource "aws_api_gateway_integration" "proxy_any" {
-  rest_api_id             = aws_api_gateway_rest_api.main.id
-  resource_id             = aws_api_gateway_resource.proxy.id
-  http_method             = aws_api_gateway_method.proxy_any.http_method
-  integration_http_method = "POST"
-  type                    = "AWS_PROXY"
-  uri                     = aws_lambda_function.api_http.invoke_arn
-}
-
-# Dedicated SSE stream endpoint mapping for latest A2A HTTP+JSON streaming.
 resource "aws_api_gateway_resource" "api" {
   rest_api_id = aws_api_gateway_rest_api.main.id
   parent_id   = aws_api_gateway_rest_api.main.root_resource_id
@@ -72,10 +41,12 @@ resource "aws_api_gateway_resource" "api_v1_a2a_message_stream" {
 }
 
 resource "aws_api_gateway_method" "api_v1_a2a_message_stream_post" {
-  rest_api_id   = aws_api_gateway_rest_api.main.id
-  resource_id   = aws_api_gateway_resource.api_v1_a2a_message_stream.id
-  http_method   = "POST"
-  authorization = "NONE"
+  rest_api_id          = aws_api_gateway_rest_api.main.id
+  resource_id          = aws_api_gateway_resource.api_v1_a2a_message_stream.id
+  http_method          = "POST"
+  authorization        = "COGNITO_USER_POOLS"
+  authorizer_id        = aws_api_gateway_authorizer.cognito.id
+  authorization_scopes = ["aws.cognito.signin.user.admin"]
 }
 
 resource "aws_api_gateway_integration" "api_v1_a2a_message_stream_post" {
@@ -107,10 +78,12 @@ resource "aws_api_gateway_resource" "api_v1_a2a_task_subscribe" {
 }
 
 resource "aws_api_gateway_method" "api_v1_a2a_task_subscribe_get" {
-  rest_api_id   = aws_api_gateway_rest_api.main.id
-  resource_id   = aws_api_gateway_resource.api_v1_a2a_task_subscribe.id
-  http_method   = "GET"
-  authorization = "NONE"
+  rest_api_id          = aws_api_gateway_rest_api.main.id
+  resource_id          = aws_api_gateway_resource.api_v1_a2a_task_subscribe.id
+  http_method          = "GET"
+  authorization        = "COGNITO_USER_POOLS"
+  authorizer_id        = aws_api_gateway_authorizer.cognito.id
+  authorization_scopes = ["aws.cognito.signin.user.admin"]
 }
 
 resource "aws_api_gateway_integration" "api_v1_a2a_task_subscribe_get" {
@@ -128,11 +101,9 @@ resource "aws_api_gateway_deployment" "main" {
 
   triggers = {
     redeploy = sha1(jsonencode([
-      aws_api_gateway_integration.root_any.id,
-      aws_api_gateway_integration.proxy_any.id,
       aws_api_gateway_integration.api_v1_a2a_message_stream_post.id,
       aws_api_gateway_integration.api_v1_a2a_task_subscribe_get.id,
-      aws_api_gateway_rest_api.main.binary_media_types
+      aws_api_gateway_rest_api.main.binary_media_types,
     ]))
   }
 
@@ -141,21 +112,49 @@ resource "aws_api_gateway_deployment" "main" {
   }
 }
 
+resource "aws_cloudwatch_log_group" "rest_api_access" {
+  name              = "/aws/apigateway/${local.resource_prefix}-rest"
+  retention_in_days = 14
+}
+
 resource "aws_api_gateway_stage" "main" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
   deployment_id = aws_api_gateway_deployment.main.id
   stage_name    = var.environment
+
+  access_log_settings {
+    destination_arn = aws_cloudwatch_log_group.rest_api_access.arn
+    format = jsonencode({
+      requestId      = "$context.requestId"
+      sourceIp       = "$context.identity.sourceIp"
+      requestTime    = "$context.requestTime"
+      httpMethod     = "$context.httpMethod"
+      resourcePath   = "$context.resourcePath"
+      status         = "$context.status"
+      responseLength = "$context.responseLength"
+    })
+  }
+
+  depends_on = [aws_api_gateway_account.main]
 }
 
-resource "aws_lambda_permission" "allow_rest_api_http" {
-  statement_id  = "AllowExecutionFromAPIGatewayRestApi"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.api_http.function_name
-  principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_api_gateway_rest_api.main.execution_arn}/*/*"
+resource "aws_api_gateway_method_settings" "main" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  stage_name  = aws_api_gateway_stage.main.stage_name
+  method_path = "*/*"
+
+  settings {
+    logging_level          = "ERROR"
+    metrics_enabled        = false
+    data_trace_enabled     = false
+    throttling_burst_limit = local.api_gateway_throttling_burst_limit
+    throttling_rate_limit  = local.api_gateway_throttling_rate_limit
+  }
 }
 
 resource "aws_lambda_permission" "allow_rest_a2a_stream" {
+  count = var.enable_application ? 1 : 0
+
   statement_id  = "AllowExecutionFromAPIGatewayRestA2AStream"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.a2a_stream.function_name

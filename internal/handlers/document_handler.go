@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 
+	"invoice-backend/internal/models"
 	"invoice-backend/internal/services"
 	"invoice-backend/internal/utils"
 	"invoice-backend/pkg/logger"
@@ -78,9 +80,11 @@ func (h *DocumentHandler) Get(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Security BearerAuth
+// @Param Idempotency-Key header string false "Required UUID for sales invoice documents"
 // @Param input body services.CreateDocumentInput true "Document details"
 // @Success 201 {object} interface{}
 // @Failure 400 {object} map[string]string
+// @Failure 409 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /documents [post]
 func (h *DocumentHandler) Create(c *gin.Context) {
@@ -88,15 +92,24 @@ func (h *DocumentHandler) Create(c *gin.Context) {
 	if !ok {
 		return
 	}
+	idempotencyKey := ""
+	if h.documentType == models.DocumentTypeSalesInvoice {
+		var present bool
+		idempotencyKey, present = requireIdempotencyKey(c)
+		if !present {
+			return
+		}
+	}
 	var input services.CreateDocumentInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	input.IdempotencyKey = idempotencyKey
 	requestContextWithActor(c)
 	document, err := h.svc.CreateByType(c.Request.Context(), businessID, h.documentType, input)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(invoiceCreateErrorStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusCreated, document)
@@ -114,6 +127,7 @@ func (h *DocumentHandler) Create(c *gin.Context) {
 // @Success 200 {object} interface{}
 // @Failure 400 {object} map[string]string
 // @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /documents/{id} [put]
 func (h *DocumentHandler) Update(c *gin.Context) {
@@ -129,16 +143,24 @@ func (h *DocumentHandler) Update(c *gin.Context) {
 	requestContextWithActor(c)
 	document, err := h.svc.UpdateByType(c.Request.Context(), businessID, c.Param("id"), h.documentType, input)
 	if err != nil {
-		statusCode := http.StatusInternalServerError
-		if isNotFoundErr(err) {
-			statusCode = http.StatusNotFound
-		} else if err.Error() == "only draft documents can be updated" || err.Error() == "document type mismatch" {
-			statusCode = http.StatusBadRequest
-		}
-		c.JSON(statusCode, gin.H{"error": err.Error()})
+		c.JSON(documentUpdateErrorStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, document)
+}
+
+func documentUpdateErrorStatus(err error) int {
+	var conflict *models.DocumentDraftConflictError
+	switch {
+	case errors.As(err, &conflict):
+		return http.StatusConflict
+	case isNotFoundErr(err):
+		return http.StatusNotFound
+	case err.Error() == "only draft documents can be updated" || err.Error() == "document type mismatch":
+		return http.StatusBadRequest
+	default:
+		return http.StatusInternalServerError
+	}
 }
 
 // Delete deletes a document

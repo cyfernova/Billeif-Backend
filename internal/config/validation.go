@@ -7,6 +7,230 @@ import (
 	"strings"
 )
 
+type Profile string
+
+const (
+	ProfileHTTP          Profile = "http"
+	ProfileA2A           Profile = "a2a-stream"
+	ProfileInvoice       Profile = "sqs-invoice"
+	ProfileGST           Profile = "sqs-gst"
+	ProfileBargaining    Profile = "sqs-bargaining"
+	ProfileWebSocket     Profile = "websocket"
+	ProfileMigration     Profile = "migration"
+	ProfileOutbox        Profile = "outbox"
+	ProfileEmailDelivery Profile = "sqs-email-delivery"
+	ProfileSESFeedback   Profile = "sqs-ses-feedback"
+)
+
+func ValidateForProfile(cfg *Config, profile Profile) error {
+	switch profile {
+	case "", ProfileHTTP, ProfileA2A:
+		if err := validate(cfg); err != nil {
+			return err
+		}
+		if isProductionEnv(cfg.Environment) {
+			if profile != ProfileA2A && strings.TrimSpace(cfg.Secrets.InvoiceCursorHMAC) == "" {
+				return fmt.Errorf("INVOICE_CURSOR_HMAC_SECRET_ARN is required")
+			}
+			if err := requireProviderIdentifier(cfg.Secrets.Exa, cfg.LLM.ExaAPIKey, "EXA_SECRET_ARN"); err != nil {
+				return err
+			}
+			if err := requireProviderIdentifier(cfg.Secrets.GSTLookup, cfg.GSTLookup.APIKey, "GST_LOOKUP_SECRET_ARN"); err != nil {
+				return err
+			}
+			if err := requireGSTProvider(cfg); err != nil {
+				return err
+			}
+			if err := requireProviderIdentifier(cfg.Secrets.Deepgram, firstConfigured(cfg.Deepgram.APIKey, cfg.VoiceRealtime.DeepgramAPIKey), "DEEPGRAM_SECRET_ARN"); err != nil {
+				return err
+			}
+			if err := requireProviderIdentifier(cfg.Secrets.DeepSeek, cfg.VoiceRealtime.DeepSeekAPIKey, "DEEPSEEK_SECRET_ARN"); err != nil {
+				return err
+			}
+		}
+		return nil
+	case ProfileMigration:
+		if err := validateProfileBase(cfg); err != nil {
+			return err
+		}
+		return validateProfileDatabase(cfg)
+	case ProfileOutbox:
+		if err := validateProfileBase(cfg); err != nil {
+			return err
+		}
+		if err := validateProfileDatabase(cfg); err != nil {
+			return err
+		}
+		return validateProfileDependencies(cfg, profile)
+	case ProfileEmailDelivery, ProfileSESFeedback:
+		if err := validateProfileBase(cfg); err != nil {
+			return err
+		}
+		if err := validateProfileDatabase(cfg); err != nil {
+			return err
+		}
+		return validateProfileDependencies(cfg, profile)
+	case ProfileInvoice, ProfileGST, ProfileBargaining, ProfileWebSocket:
+		if err := validateProfileBase(cfg); err != nil {
+			return err
+		}
+		if err := validateProfileDatabase(cfg); err != nil {
+			return err
+		}
+		if profile == ProfileWebSocket {
+			return nil
+		}
+		if err := validateProfileDependencies(cfg, profile); err != nil {
+			return err
+		}
+		if err := requireProviderIdentifier(cfg.Secrets.CredentialEncryption, cfg.Credentials.EncryptionKey, "CREDENTIAL_ENCRYPTION_SECRET_ARN"); err != nil {
+			return err
+		}
+		if cfg.Credentials.EncryptionKey != "" {
+			if err := validateCredentialEncryptionKey(cfg.Credentials.EncryptionKey); err != nil {
+				return err
+			}
+		}
+		if profile == ProfileGST {
+			return requireGSTProvider(cfg)
+		}
+		if profile == ProfileBargaining {
+			if err := requireProviderIdentifier(cfg.Secrets.LLM, cfg.LLM.APIKey, "LLM_SECRET_ARN"); err != nil {
+				return err
+			}
+			if err := requireProviderIdentifier(cfg.Secrets.Exa, cfg.LLM.ExaAPIKey, "EXA_SECRET_ARN"); err != nil {
+				return err
+			}
+			return validateLLMEndpoint(cfg.LLM)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unknown configuration profile %q", profile)
+	}
+}
+
+func validateProfileDependencies(cfg *Config, profile Profile) error {
+	switch profile {
+	case ProfileInvoice, ProfileGST:
+		if strings.TrimSpace(cfg.S3.BucketInvoices) == "" {
+			return fmt.Errorf("S3_BUCKET_INVOICES is required")
+		}
+	case ProfileBargaining:
+		if strings.TrimSpace(cfg.SQS.BargainingQueue) == "" {
+			return fmt.Errorf("SQS_BARGAINING_QUEUE is required")
+		}
+	case ProfileOutbox:
+		if strings.TrimSpace(cfg.SQS.InvoiceQueue) == "" {
+			return fmt.Errorf("SQS_INVOICE_QUEUE is required")
+		}
+		if strings.TrimSpace(cfg.SQS.EmailDeliveryQueue) == "" {
+			return fmt.Errorf("SQS_EMAIL_DELIVERY_QUEUE is required")
+		}
+	case ProfileEmailDelivery:
+		if strings.TrimSpace(cfg.S3.BucketInvoices) == "" {
+			return fmt.Errorf("S3_BUCKET_INVOICES is required")
+		}
+		if strings.TrimSpace(cfg.SES.SenderEmail) == "" {
+			return fmt.Errorf("SES_SENDER_EMAIL is required")
+		}
+		if strings.TrimSpace(cfg.SES.ConfigurationSet) == "" {
+			return fmt.Errorf("SES_CONFIGURATION_SET is required")
+		}
+	case ProfileSESFeedback:
+		if strings.TrimSpace(cfg.SES.SendingAccountID) == "" {
+			return fmt.Errorf("SES_SENDING_ACCOUNT_ID is required")
+		}
+		if strings.TrimSpace(cfg.SES.ConfigurationSet) == "" {
+			return fmt.Errorf("SES_CONFIGURATION_SET is required")
+		}
+	}
+	return nil
+}
+
+func validateProfileBase(cfg *Config) error {
+	if cfg == nil {
+		return fmt.Errorf("config is required")
+	}
+	if strings.TrimSpace(cfg.Environment) == "" {
+		return fmt.Errorf("ENVIRONMENT is required")
+	}
+	if err := validateLogging(cfg.Logging); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateProfileDatabase(cfg *Config) error {
+	if strings.TrimSpace(cfg.AWS.Region) == "" {
+		return fmt.Errorf("AWS_REGION is required")
+	}
+	if cfg.Database.Host == "" && cfg.SSM.DatabaseHostParam == "" {
+		return fmt.Errorf("DATABASE_HOST is required")
+	}
+	if cfg.Database.User == "" && cfg.Secrets.Database == "" {
+		return fmt.Errorf("DATABASE_SECRET_ARN is required")
+	}
+	if cfg.Database.Password == "" && cfg.Secrets.Database == "" {
+		return fmt.Errorf("DATABASE_SECRET_ARN is required")
+	}
+	if cfg.Database.Name == "" {
+		return fmt.Errorf("DATABASE_NAME is required")
+	}
+	return nil
+}
+
+func requireProviderIdentifier(identifier, explicit, envName string) error {
+	if strings.TrimSpace(identifier) == "" && strings.TrimSpace(explicit) == "" {
+		return fmt.Errorf("%s is required", envName)
+	}
+	return nil
+}
+
+func requireGSTProvider(cfg *Config) error {
+	explicit := firstConfigured(cfg.GST.APIToken, cfg.GST.ClientID, cfg.GST.ClientSecret, cfg.GST.Username, cfg.GST.Password)
+	return requireProviderIdentifier(cfg.Secrets.GSTProvider, explicit, "GST_PROVIDER_SECRET_ARN")
+}
+
+func firstConfigured(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func validateCredentialEncryptionKey(value string) error {
+	key, err := base64.StdEncoding.DecodeString(value)
+	if err != nil {
+		return fmt.Errorf("CREDENTIAL_ENCRYPTION_KEY must be base64 encoded: %w", err)
+	}
+	if len(key) != 32 {
+		return fmt.Errorf("CREDENTIAL_ENCRYPTION_KEY must decode to exactly 32 bytes")
+	}
+	return nil
+}
+
+func validateLLMEndpoint(cfg LLMConfig) error {
+	if strings.TrimSpace(cfg.APIURL) == "" {
+		return fmt.Errorf("LLM_API_URL is required")
+	}
+	parsedLLMURL, err := url.Parse(cfg.APIURL)
+	if err != nil || parsedLLMURL.Scheme != "https" || parsedLLMURL.Host == "" {
+		return fmt.Errorf("LLM_API_URL must be an absolute https URL")
+	}
+	if isPlaceholderLLMHost(parsedLLMURL.Hostname()) {
+		return fmt.Errorf("LLM_API_URL cannot use placeholder host %q", parsedLLMURL.Hostname())
+	}
+	if strings.TrimSpace(cfg.Model) == "" {
+		return fmt.Errorf("LLM_MODEL is required")
+	}
+	if isPlaceholderLLMValue(cfg.Model) {
+		return fmt.Errorf("LLM_MODEL cannot be a placeholder value")
+	}
+	return nil
+}
+
 func validate(cfg *Config) error {
 	if cfg.Environment == "" {
 		return fmt.Errorf("ENVIRONMENT is required")
@@ -15,13 +239,13 @@ func validate(cfg *Config) error {
 		return err
 	}
 
-	if cfg.Database.Host == "" {
+	if cfg.Database.Host == "" && cfg.SSM.DatabaseHostParam == "" {
 		return fmt.Errorf("DATABASE_HOST is required")
 	}
-	if cfg.Database.User == "" {
+	if cfg.Database.User == "" && cfg.Secrets.Database == "" {
 		return fmt.Errorf("DATABASE_USER is required")
 	}
-	if cfg.Database.Password == "" {
+	if cfg.Database.Password == "" && cfg.Secrets.Database == "" {
 		return fmt.Errorf("DATABASE_PASSWORD is required")
 	}
 	if cfg.Database.Name == "" {
@@ -62,31 +286,22 @@ func validate(cfg *Config) error {
 	if cfg.SQS.InvoiceQueue == "" {
 		return fmt.Errorf("SQS_INVOICE_QUEUE is required")
 	}
-	if cfg.SQS.PaymentQueue == "" {
-		return fmt.Errorf("SQS_PAYMENT_QUEUE is required")
+	if cfg.SQS.EmailDeliveryQueue == "" {
+		return fmt.Errorf("SQS_EMAIL_DELIVERY_QUEUE is required")
 	}
-	if strings.TrimSpace(cfg.LLM.APIKey) == "" {
+	if strings.TrimSpace(cfg.LLM.APIKey) == "" && strings.TrimSpace(cfg.Secrets.LLM) == "" {
 		return fmt.Errorf("LLM_API_KEY is required")
 	}
-	if strings.TrimSpace(cfg.LLM.APIURL) == "" {
-		return fmt.Errorf("LLM_API_URL is required")
+	if err := validateLLMEndpoint(cfg.LLM); err != nil {
+		return err
 	}
-	parsedLLMURL, err := url.Parse(cfg.LLM.APIURL)
-	if err != nil || parsedLLMURL.Scheme != "https" || parsedLLMURL.Host == "" {
-		return fmt.Errorf("LLM_API_URL must be an absolute https URL")
-	}
-	if strings.TrimSpace(cfg.LLM.Model) == "" {
-		return fmt.Errorf("LLM_MODEL is required")
-	}
-	if cfg.Credentials.EncryptionKey == "" {
+	if cfg.Credentials.EncryptionKey == "" && cfg.Secrets.CredentialEncryption == "" {
 		return fmt.Errorf("CREDENTIAL_ENCRYPTION_KEY is required")
 	}
-	key, err := base64.StdEncoding.DecodeString(cfg.Credentials.EncryptionKey)
-	if err != nil {
-		return fmt.Errorf("CREDENTIAL_ENCRYPTION_KEY must be base64 encoded: %w", err)
-	}
-	if len(key) != 32 {
-		return fmt.Errorf("CREDENTIAL_ENCRYPTION_KEY must decode to exactly 32 bytes")
+	if cfg.Credentials.EncryptionKey != "" {
+		if err := validateCredentialEncryptionKey(cfg.Credentials.EncryptionKey); err != nil {
+			return err
+		}
 	}
 
 	if cfg.Cognito.Phone.UserPoolID != "" || cfg.Cognito.Phone.ClientID != "" || cfg.Cognito.Phone.Region != "" {
@@ -124,13 +339,13 @@ func validate(cfg *Config) error {
 		if strings.TrimSpace(cfg.Cognito.Domain) == "" {
 			return fmt.Errorf("COGNITO_DOMAIN is required in production")
 		}
-		if strings.TrimSpace(cfg.Razorpay.KeyID) == "" {
+		if strings.TrimSpace(cfg.Razorpay.KeyID) == "" && strings.TrimSpace(cfg.Secrets.Razorpay) == "" {
 			return fmt.Errorf("RAZORPAY_KEY_ID is required in production")
 		}
-		if strings.TrimSpace(cfg.Razorpay.KeySecret) == "" {
+		if strings.TrimSpace(cfg.Razorpay.KeySecret) == "" && strings.TrimSpace(cfg.Secrets.Razorpay) == "" {
 			return fmt.Errorf("RAZORPAY_KEY_SECRET is required in production")
 		}
-		if strings.TrimSpace(cfg.Razorpay.WebhookSecret) == "" {
+		if strings.TrimSpace(cfg.Razorpay.WebhookSecret) == "" && strings.TrimSpace(cfg.Secrets.Razorpay) == "" {
 			return fmt.Errorf("RAZORPAY_WEBHOOK_SECRET is required in production")
 		}
 		if cfg.MCP.ServerURL != "" {
@@ -148,6 +363,28 @@ func validate(cfg *Config) error {
 	}
 
 	return nil
+}
+
+func isPlaceholderLLMHost(host string) bool {
+	switch strings.ToLower(strings.TrimSpace(host)) {
+	case "test.com", "www.test.com", "example.com", "www.example.com", "placeholder.com", "www.placeholder.com":
+		return true
+	default:
+		return false
+	}
+}
+
+func isPlaceholderLLMValue(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if normalized == "" {
+		return false
+	}
+	switch normalized {
+	case "test", "placeholder", "dummy", "changeme", "change-me":
+		return true
+	default:
+		return strings.HasPrefix(normalized, "your-")
+	}
 }
 
 func validateLogging(logging LoggingConfig) error {

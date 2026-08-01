@@ -5,7 +5,7 @@ resource "aws_vpc" "main" {
   enable_dns_support   = true
 
   tags = {
-    Name = "${var.project_name}-vpc"
+    Name = "${local.resource_prefix}-vpc"
   }
 }
 
@@ -14,7 +14,7 @@ resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
 
   tags = {
-    Name = "${var.project_name}-igw"
+    Name = "${local.resource_prefix}-igw"
   }
 }
 
@@ -24,10 +24,10 @@ resource "aws_subnet" "public" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = cidrsubnet(var.vpc_cidr, 4, count.index)
   availability_zone       = var.availability_zones[count.index]
-  map_public_ip_on_launch = true
+  map_public_ip_on_launch = false
 
   tags = {
-    Name = "${var.project_name}-public-${count.index + 1}"
+    Name = "${local.resource_prefix}-public-${count.index + 1}"
     Type = "public"
   }
 }
@@ -40,8 +40,23 @@ resource "aws_subnet" "private" {
   availability_zone = var.availability_zones[count.index]
 
   tags = {
-    Name = "${var.project_name}-private-${count.index + 1}"
+    Name = "${local.resource_prefix}-private-${count.index + 1}"
     Type = "private"
+  }
+}
+
+# Isolated subnets host only the Billeif database. They have no default route
+# to the Internet Gateway or NAT instance.
+resource "aws_subnet" "database" {
+  count                   = length(var.availability_zones)
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = cidrsubnet(var.vpc_cidr, 4, count.index + (2 * length(var.availability_zones)))
+  availability_zone       = var.availability_zones[count.index]
+  map_public_ip_on_launch = false
+
+  tags = {
+    Name = "${local.resource_prefix}-database-isolated-${count.index + 1}"
+    Type = "database-isolated"
   }
 }
 
@@ -55,7 +70,7 @@ resource "aws_route_table" "public" {
   }
 
   tags = {
-    Name = "${var.project_name}-public-rt"
+    Name = "${local.resource_prefix}-public-rt"
   }
 }
 
@@ -67,19 +82,23 @@ resource "aws_route_table_association" "public" {
 }
 
 resource "aws_eip" "nat" {
+  count  = var.egress_mode == "managed_nat" ? 1 : 0
   domain = "vpc"
 
   tags = {
-    Name = "${var.project_name}-nat-eip"
+    Name = "${local.resource_prefix}-managed-nat-eip"
   }
+
+  depends_on = [aws_internet_gateway.main]
 }
 
 resource "aws_nat_gateway" "main" {
-  allocation_id = aws_eip.nat.id
+  count         = var.egress_mode == "managed_nat" ? 1 : 0
+  allocation_id = aws_eip.nat[0].id
   subnet_id     = aws_subnet.public[0].id
 
   tags = {
-    Name = "${var.project_name}-nat"
+    Name = "${local.resource_prefix}-managed-nat"
   }
 
   depends_on = [aws_internet_gateway.main]
@@ -88,13 +107,8 @@ resource "aws_nat_gateway" "main" {
 resource "aws_route_table" "private" {
   vpc_id = aws_vpc.main.id
 
-  route {
-    cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.main.id
-  }
-
   tags = {
-    Name = "${var.project_name}-private-rt"
+    Name = "${local.resource_prefix}-private-rt"
   }
 }
 
@@ -104,9 +118,76 @@ resource "aws_route_table_association" "private" {
   route_table_id = aws_route_table.private.id
 }
 
+resource "aws_route_table" "database" {
+  vpc_id = aws_vpc.main.id
+
+  tags = {
+    Name = "${local.resource_prefix}-database-isolated-rt"
+  }
+}
+
+resource "aws_route_table_association" "database" {
+  count          = length(var.availability_zones)
+  subnet_id      = aws_subnet.database[count.index].id
+  route_table_id = aws_route_table.database.id
+}
+
 resource "aws_security_group" "lambda" {
-  name        = "${var.project_name}-lambda-sg"
-  description = "Security group for Lambda functions"
+  name        = "${local.resource_prefix}-lambda-sg"
+  description = "${local.resource_prefix} security group for Lambda functions"
+  vpc_id      = aws_vpc.main.id
+
+  dynamic "ingress" {
+    for_each = var.enable_rds_proxy ? [1] : []
+
+    content {
+      description = "Billeif RDS Proxy from Lambda"
+      from_port   = var.db_port
+      to_port     = var.db_port
+      protocol    = "tcp"
+      self        = true
+    }
+  }
+
+  dynamic "ingress" {
+    for_each = var.enable_rds_proxy ? [aws_security_group.database_migrator.id] : []
+
+    content {
+      description     = "Billeif RDS Proxy from database migrator"
+      from_port       = var.db_port
+      to_port         = var.db_port
+      protocol        = "tcp"
+      security_groups = [ingress.value]
+    }
+  }
+
+  dynamic "ingress" {
+    for_each = var.enable_rds_proxy && local.rds_tunnel_enabled ? [aws_security_group.rds_tunnel[0].id] : []
+
+    content {
+      description     = "Billeif RDS Proxy from RDS tunnel"
+      from_port       = var.db_port
+      to_port         = var.db_port
+      protocol        = "tcp"
+      security_groups = [ingress.value]
+    }
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${local.resource_prefix}-lambda-sg"
+  }
+}
+
+resource "aws_security_group" "database_migrator" {
+  name        = "${local.resource_prefix}-database-migrator-sg"
+  description = "${local.resource_prefix} security group for the database migration Lambda"
   vpc_id      = aws_vpc.main.id
 
   egress {
@@ -117,30 +198,42 @@ resource "aws_security_group" "lambda" {
   }
 
   tags = {
-    Name = "${var.project_name}-lambda-sg"
+    Name = "${local.resource_prefix}-database-migrator-sg"
   }
 }
 
 # Security Group for RDS
 resource "aws_security_group" "rds" {
-  name        = "${var.project_name}-rds-sg"
-  description = "Security group for RDS PostgreSQL"
+  name        = "${local.resource_prefix}-rds-sg"
+  description = "${local.resource_prefix} security group for RDS PostgreSQL"
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    description = "PostgreSQL ingress"
-    from_port   = 5432
-    to_port     = 5432
-    protocol    = "tcp"
-    cidr_blocks = [var.db_allowed_cidr]
+    description     = "PostgreSQL from Lambda"
+    from_port       = var.db_port
+    to_port         = var.db_port
+    protocol        = "tcp"
+    security_groups = [aws_security_group.lambda.id]
   }
 
   ingress {
-    description     = "PostgreSQL from Lambda"
-    from_port       = 5432
-    to_port         = 5432
+    description     = "PostgreSQL from database migrator"
+    from_port       = var.db_port
+    to_port         = var.db_port
     protocol        = "tcp"
-    security_groups = [aws_security_group.lambda.id]
+    security_groups = [aws_security_group.database_migrator.id]
+  }
+
+  dynamic "ingress" {
+    for_each = local.rds_tunnel_enabled ? [aws_security_group.rds_tunnel[0].id] : []
+
+    content {
+      description     = "PostgreSQL from Billeif RDS tunnel"
+      from_port       = var.db_port
+      to_port         = var.db_port
+      protocol        = "tcp"
+      security_groups = [ingress.value]
+    }
   }
 
   egress {
@@ -151,6 +244,6 @@ resource "aws_security_group" "rds" {
   }
 
   tags = {
-    Name = "${var.project_name}-rds-sg"
+    Name = "${local.resource_prefix}-rds-sg"
   }
 }

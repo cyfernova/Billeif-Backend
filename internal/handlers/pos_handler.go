@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
+	"invoice-backend/internal/models"
 	"invoice-backend/internal/services"
 	"invoice-backend/internal/utils"
 	"invoice-backend/pkg/logger"
@@ -11,12 +13,22 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+type posService interface {
+	CreateSession(ctx context.Context, businessID, userID string, input services.CreatePOSSessionInput) (*models.POSSession, error)
+	ListSessions(ctx context.Context, businessID, userID string, page, limit int, status string) ([]models.POSSession, int64, error)
+	CloseSession(ctx context.Context, businessID, userID, sessionID string) (*models.POSSession, error)
+	SearchCatalog(ctx context.Context, businessID, userID, query, warehouseID string, limit int) ([]services.POSCatalogSearchResult, error)
+	ScanItem(ctx context.Context, businessID, userID, sessionID string, input services.ScanPOSItemInput) (*models.POSSession, services.POSSessionCart, error)
+	Checkout(ctx context.Context, businessID, userID, sessionID, idempotencyKey string, input services.CheckoutPOSCartInput) (*models.Document, error)
+	GetThermalReceipt(ctx context.Context, businessID, documentID, format, width string) (*services.POSReceiptResponse, error)
+}
+
 type POSHandler struct {
-	svc *services.POSService
+	svc posService
 	log *logger.Logger
 }
 
-func NewPOSHandler(svc *services.POSService, log *logger.Logger) *POSHandler {
+func NewPOSHandler(svc posService, log *logger.Logger) *POSHandler {
 	return &POSHandler{svc: svc, log: log}
 }
 
@@ -72,8 +84,12 @@ func (h *POSHandler) ListSessions(c *gin.Context) {
 	if !ok {
 		return
 	}
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
 	page, limit := utils.ParsePagination(c)
-	sessions, total, err := h.svc.ListSessions(c.Request.Context(), businessID, page, limit, c.Query("status"))
+	sessions, total, err := h.svc.ListSessions(c.Request.Context(), businessID, userID, page, limit, c.Query("status"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -106,7 +122,11 @@ func (h *POSHandler) CloseSession(c *gin.Context) {
 	if !ok {
 		return
 	}
-	session, err := h.svc.CloseSession(c.Request.Context(), businessID, c.Param("id"))
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
+	session, err := h.svc.CloseSession(c.Request.Context(), businessID, userID, c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -132,8 +152,12 @@ func (h *POSHandler) SearchCatalog(c *gin.Context) {
 	if !ok {
 		return
 	}
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
-	results, err := h.svc.SearchCatalog(c.Request.Context(), businessID, c.Query("q"), c.Query("warehouse_id"), limit)
+	results, err := h.svc.SearchCatalog(c.Request.Context(), businessID, userID, c.Query("q"), c.Query("warehouse_id"), limit)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -159,12 +183,16 @@ func (h *POSHandler) ScanItem(c *gin.Context) {
 	if !ok {
 		return
 	}
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
 	var input services.ScanPOSItemInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	session, cart, err := h.svc.ScanItem(c.Request.Context(), businessID, c.Param("id"), input)
+	session, cart, err := h.svc.ScanItem(c.Request.Context(), businessID, userID, c.Param("id"), input)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -190,6 +218,10 @@ func (h *POSHandler) Checkout(c *gin.Context) {
 	if !ok {
 		return
 	}
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
 	idempotencyKey, ok := requireIdempotencyKey(c)
 	if !ok {
 		return
@@ -199,7 +231,8 @@ func (h *POSHandler) Checkout(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	document, err := h.svc.Checkout(c.Request.Context(), businessID, c.Param("id"), idempotencyKey, input)
+	requestContextWithActor(c)
+	document, err := h.svc.Checkout(c.Request.Context(), businessID, userID, c.Param("id"), idempotencyKey, input)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

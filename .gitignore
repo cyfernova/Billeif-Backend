@@ -53,15 +53,47 @@ postgres-data/
 # Terraform
 *.tfstate
 *.tfstate.*
+*.tfstate.backup
+.terraform.lock.hcl.backup
 .terraform/
-tfplan
-tfplan.*
+*.tfplan
+*.tfplan.*
+*.plan
+*.plan.*
+tfplan*
+*tfplan*
+*_plan
+*_plan.*
 terraform_output.json
 terraform_output.txt
+terraform_output*.json
+terraform_output*.txt
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+terraform.tfvars
+terraform.tfvars.json
+*.tfvars
+*.tfvars.json
 
 # Generated docs
 docs/swagger.json
 docs/swagger.yaml
+
+# Local implementation progress
+.superpowers/
+progress.md
+progress-*.md
+*-progress.md
+PROGRESS.md
+PROGRESS-*.md
+*-PROGRESS.md
+*progress*.md
+*Progress*.md
+*PROGRESS*.md
 
 # Logs
 *.log

@@ -1,6 +1,7 @@
 package models
 
 import (
+	"errors"
 	"time"
 
 	"gorm.io/gorm"
@@ -80,7 +81,23 @@ const (
 	RenderJobStatusProcessing = "processing"
 	RenderJobStatusCompleted  = "completed"
 	RenderJobStatusFailed     = "failed"
+	RenderJobStatusObsolete   = "obsolete"
 )
+
+type RenderKind string
+
+const (
+	RenderKindPreview RenderKind = "preview"
+	RenderKindFinal   RenderKind = "final"
+)
+
+var ErrInvalidRenderKind = errors.New("invalid render kind")
+
+type DocumentDraftConflictError struct{}
+
+func (e *DocumentDraftConflictError) Error() string {
+	return "document draft changed before update"
+}
 
 type Document struct {
 	ID                    string         `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
@@ -257,25 +274,39 @@ func (RenderProfile) TableName() string {
 }
 
 type DocumentRenderJob struct {
-	ID              string         `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
-	DocumentID      string         `gorm:"not null;index" json:"document_id" validate:"required,uuid"`
-	BusinessID      string         `gorm:"not null;index" json:"business_id" validate:"required,uuid"`
-	RenderProfileID *string        `gorm:"index" json:"render_profile_id,omitempty" validate:"omitempty,uuid"`
-	Status          string         `gorm:"not null;size:30;default:'queued';index" json:"status"`
-	Locale          string         `gorm:"size:20;default:'en-IN'" json:"locale,omitempty"`
-	TemplateVersion string         `gorm:"size:50;default:'v1'" json:"template_version,omitempty"`
-	OutputURL       string         `gorm:"size:500" json:"output_url,omitempty"`
-	OutputFilename  string         `gorm:"size:255" json:"output_filename,omitempty"`
-	ErrorMessage    string         `gorm:"type:text" json:"error_message,omitempty"`
-	RequestedAt     time.Time      `gorm:"autoCreateTime" json:"requested_at"`
-	CompletedAt     *time.Time     `json:"completed_at,omitempty"`
-	CreatedAt       time.Time      `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt       time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
-	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`
+	ID                   string         `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
+	DocumentID           *string        `gorm:"index" json:"document_id,omitempty" validate:"omitempty,uuid"`
+	InvoiceID            *string        `gorm:"index" json:"invoice_id,omitempty" validate:"omitempty,uuid"`
+	BusinessID           string         `gorm:"not null;index" json:"business_id" validate:"required,uuid"`
+	RenderProfileID      *string        `gorm:"index" json:"render_profile_id,omitempty" validate:"omitempty,uuid"`
+	Kind                 RenderKind     `gorm:"not null;size:16;default:'preview'" json:"kind"`
+	SourceInvoiceVersion *int           `json:"source_invoice_version,omitempty"`
+	ObjectKey            string         `gorm:"size:1024" json:"object_key,omitempty"`
+	Attempts             int            `gorm:"not null;default:0" json:"attempts"`
+	LeaseOwner           *string        `gorm:"size:255" json:"lease_owner,omitempty"`
+	LeaseExpiresAt       *time.Time     `json:"lease_expires_at,omitempty"`
+	Status               string         `gorm:"not null;size:30;default:'queued';index" json:"status"`
+	Locale               string         `gorm:"size:20;default:'en-IN'" json:"locale,omitempty"`
+	TemplateVersion      string         `gorm:"size:50;default:'v1'" json:"template_version,omitempty"`
+	OutputURL            string         `gorm:"size:500" json:"output_url,omitempty"`
+	OutputFilename       string         `gorm:"size:255" json:"output_filename,omitempty"`
+	ErrorMessage         string         `gorm:"type:text" json:"error_message,omitempty"`
+	RequestedAt          time.Time      `gorm:"autoCreateTime" json:"requested_at"`
+	CompletedAt          *time.Time     `json:"completed_at,omitempty"`
+	CreatedAt            time.Time      `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt            time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
+	DeletedAt            gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 func (DocumentRenderJob) TableName() string {
 	return "document_render_jobs"
+}
+
+func (job DocumentRenderJob) ValidateKind() error {
+	if job.Kind != RenderKindPreview && job.Kind != RenderKindFinal {
+		return ErrInvalidRenderKind
+	}
+	return nil
 }
 
 type DocumentRevision struct {
