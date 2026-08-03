@@ -1,0 +1,4 @@
+migrations/manifest.sha256 text eol=lf
+migrations/*.sql text eol=lf
+migrations/identities.txt text eol=lf
+infrastructure/terraform/templates/*.tftpl text eol=lf

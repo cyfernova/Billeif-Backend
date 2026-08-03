@@ -49,7 +49,7 @@ TF_INIT_BACKEND_ARGS := \
 	-backend-config=region=$(TF_BACKEND_REGION) \
 	-backend-config=key=$(TF_BACKEND_KEY) \
 	-backend-config=encrypt=true \
-	-backend-config=dynamodb_table=$(TF_BACKEND_LOCK_TABLE)
+	-backend-config=use_lockfile=true
 
 help:
 	@echo 'Usage: make [target]'
