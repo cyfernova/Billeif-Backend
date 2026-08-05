@@ -485,6 +485,11 @@ func TestNATReadinessAndShutdownOrderingAreExplicit(t *testing.T) {
 
 	for _, required := range []string{
 		`resource "aws_ssm_association" "nat_bootstrap_ready"`,
+		`ignore_changes = [
+      ami,
+      associate_public_ip_address,
+      user_data
+    ]`,
 		`association_name = "${local.resource_prefix}-nat-bootstrap-ready"`,
 		`wait_for_success_timeout_seconds = 600`,
 		`key    = "tag:BilleifNatTarget"`,

@@ -141,6 +141,7 @@ resource "aws_instance" "nat" {
 
   lifecycle {
     ignore_changes = [
+      ami,
       associate_public_ip_address,
       user_data
     ]
