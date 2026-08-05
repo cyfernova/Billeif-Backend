@@ -1020,6 +1020,8 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 		{
 			voice.GET("/realtime", wafWSRL, h.RealtimeVoice.Handle)
 			voice.POST("/agent", wafLLMRL, h.Voice.Agent)
+			voice.POST("/text-to-speech", wafLLMRL, h.SarvamTTS.Synthesize)
+			voice.GET("/text-to-speech/languages", h.SarvamTTS.ListLanguages)
 		}
 
 		// Workflow automation endpoints

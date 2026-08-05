@@ -204,3 +204,10 @@ resource "aws_secretsmanager_secret" "deepseek" {
   kms_key_id              = aws_kms_key.application_secrets.arn
   recovery_window_in_days = 7
 }
+
+resource "aws_secretsmanager_secret" "sarvam" {
+  name                    = "/${var.project_name}/${var.environment}/providers/sarvam"
+  description             = "Sarvam text-to-speech provider credential metadata"
+  kms_key_id              = aws_kms_key.application_secrets.arn
+  recovery_window_in_days = 7
+}

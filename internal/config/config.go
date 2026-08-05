@@ -35,6 +35,7 @@ type Config struct {
 	LLM            LLMConfig           `mapstructure:"LLM"`
 	Deepgram       DeepgramConfig      `mapstructure:"DEEPGRAM"`
 	VoiceRealtime  VoiceRealtimeConfig `mapstructure:"VOICE_REALTIME"`
+	Sarvam         SarvamConfig        `mapstructure:"SARVAM"`
 	Credentials    CredentialsConfig   `mapstructure:"CREDENTIALS"`
 	MCP            MCPConfig           `mapstructure:"MCP"`
 }
@@ -59,6 +60,12 @@ type LLMConfig struct {
 
 type DeepgramConfig struct {
 	APIKey string `mapstructure:"API_KEY"`
+}
+
+type SarvamConfig struct {
+	APIKey  string `mapstructure:"API_KEY"`
+	BaseURL string `mapstructure:"BASE_URL"`
+	Timeout int    `mapstructure:"TIMEOUT"`
 }
 
 type CredentialsConfig struct {
@@ -130,6 +137,7 @@ type SecretIdentifiers struct {
 	GSTProvider          string `mapstructure:"GST_PROVIDER"`
 	Deepgram             string `mapstructure:"DEEPGRAM"`
 	DeepSeek             string `mapstructure:"DEEPSEEK"`
+	Sarvam               string `mapstructure:"SARVAM"`
 	InvoiceCursorHMAC    string `mapstructure:"INVOICE_CURSOR_HMAC"`
 }
 
@@ -326,6 +334,7 @@ func LoadForProfile(profile Profile) (*Config, error) {
 	_ = viper.BindEnv("SECRETS.GST_PROVIDER", "GST_PROVIDER_SECRET_ARN")
 	_ = viper.BindEnv("SECRETS.DEEPGRAM", "DEEPGRAM_SECRET_ARN")
 	_ = viper.BindEnv("SECRETS.DEEPSEEK", "DEEPSEEK_SECRET_ARN")
+	_ = viper.BindEnv("SECRETS.SARVAM", "SARVAM_SECRET_ARN")
 	_ = viper.BindEnv("SECRETS.INVOICE_CURSOR_HMAC", "INVOICE_CURSOR_HMAC_SECRET_ARN")
 	_ = viper.BindEnv("WEBSOCKET.API_ENDPOINT", "WEBSOCKET_API_ENDPOINT")
 	_ = viper.BindEnv("WEBSOCKET.CONNECTIONS_TABLE", "WEBSOCKET_CONNECTIONS_TABLE")
@@ -410,6 +419,9 @@ func LoadForProfile(profile Profile) (*Config, error) {
 	_ = viper.BindEnv("LLM.EXA_BASE_URL", "EXA_BASE_URL")
 	_ = viper.BindEnv("LLM.EXA_TIMEOUT", "EXA_TIMEOUT")
 	_ = viper.BindEnv("DEEPGRAM.API_KEY", "DEEPGRAM_API_KEY")
+	_ = viper.BindEnv("SARVAM.API_KEY", "SARVAM_API_KEY")
+	_ = viper.BindEnv("SARVAM.BASE_URL", "SARVAM_BASE_URL")
+	_ = viper.BindEnv("SARVAM.TIMEOUT", "SARVAM_TIMEOUT")
 	_ = viper.BindEnv("VOICE_REALTIME.DEEPGRAM_API_KEY", "DEEPGRAM_API_KEY")
 	_ = viper.BindEnv("VOICE_REALTIME.DEEPGRAM_VOICE_AGENT_URL", "DEEPGRAM_VOICE_AGENT_URL")
 	_ = viper.BindEnv("VOICE_REALTIME.INPUT_ENCODING", "DEEPGRAM_VOICE_INPUT_ENCODING")
@@ -622,6 +634,12 @@ func setDefaults(cfg *Config) {
 		cfg.LLM.ExaTimeout = 12
 	}
 	cfg.VoiceRealtime = cfg.VoiceRealtime.WithDefaults(cfg.Deepgram)
+	if cfg.Sarvam.BaseURL == "" {
+		cfg.Sarvam.BaseURL = "https://api.sarvam.ai"
+	}
+	if cfg.Sarvam.Timeout == 0 {
+		cfg.Sarvam.Timeout = 60
+	}
 	if cfg.S3.BucketDrive == "" {
 		cfg.S3.BucketDrive = cfg.S3.BucketInvoices
 	}

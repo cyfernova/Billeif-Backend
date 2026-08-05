@@ -31,6 +31,7 @@ const (
 	SecretGSTProvider          SecretKind = "gst-provider"
 	SecretDeepgram             SecretKind = "deepgram"
 	SecretDeepSeek             SecretKind = "deepseek"
+	SecretSarvam               SecretKind = "sarvam"
 )
 
 var ApplicationSecretKinds = []SecretKind{
@@ -319,6 +320,8 @@ func (c *Config) secretBindings(kind SecretKind) []secretBinding {
 		}
 	case SecretDeepSeek:
 		return []secretBinding{{c.Secrets.DeepSeek, "api_key", &c.VoiceRealtime.DeepSeekAPIKey}}
+	case SecretSarvam:
+		return []secretBinding{{c.Secrets.Sarvam, "api_key", &c.Sarvam.APIKey}}
 	default:
 		return nil
 	}

@@ -102,6 +102,7 @@ locals {
     GST_PROVIDER_SECRET_ARN          = aws_secretsmanager_secret.gst_provider.arn
     DEEPGRAM_SECRET_ARN              = aws_secretsmanager_secret.deepgram.arn
     DEEPSEEK_SECRET_ARN              = aws_secretsmanager_secret.deepseek.arn
+    SARVAM_SECRET_ARN                = aws_secretsmanager_secret.sarvam.arn
   })
 
   http_cursor_secret_env = {

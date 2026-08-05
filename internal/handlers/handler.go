@@ -60,6 +60,7 @@ type Handler struct {
 	LLM             *LLMHandler
 	Voice           *VoiceHandler
 	RealtimeVoice   *RealtimeVoiceHandler
+	SarvamTTS       *SarvamTTSHandler
 	WellKnown       *WellKnownHandler
 	A2ATask         *A2ATaskHandler
 	Workflow        *WorkflowHandler
@@ -139,6 +140,7 @@ func New(
 		LLM:             NewLLMHandler(svcs.LLM, svcs.LLMChatHistory, log),
 		Voice:           NewVoiceHandler(log),
 		RealtimeVoice:   NewRealtimeVoiceHandler(svcs.RealtimeVoice, cfg.AllowedOrigins, log),
+		SarvamTTS:       NewSarvamTTSHandler(svcs.SarvamTTS, log),
 		WellKnown:       NewWellKnownHandler(cfg, log),
 		A2ATask:         NewA2ATaskHandler(svcs.A2ATask, svcs.A2APush, log),
 		Workflow:        NewWorkflowHandler(svcs.Workflow, log),

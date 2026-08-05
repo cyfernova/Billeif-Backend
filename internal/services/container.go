@@ -52,6 +52,7 @@ type Container struct {
 	LLM                 *LLMService
 	LLMChatHistory      *LLMChatHistoryService
 	RealtimeVoice       *RealtimeVoiceService
+	SarvamTTS           *SarvamTTSService
 	A2ATask             *A2ATaskService
 	A2APush             *A2APushService
 	Workflow            *WorkflowService
@@ -113,6 +114,7 @@ func NewContainer(
 		log.Warn("failed to initialize voice MCP bridge", "error", err)
 	}
 	realtimeVoiceSvc := NewRealtimeVoiceServiceWithResolver(cfg, resolver, log, voiceMCPBridge)
+	sarvamTTSSvc := NewSarvamTTSService(cfg, resolver, nil, log)
 
 	agentSvc := NewAgentService(ap2Repo, productRepo, ap2Signer, log)
 	menteeSvc := NewMenteeService(log)
@@ -200,6 +202,7 @@ func NewContainer(
 		LLM:                 llmSvc,
 		LLMChatHistory:      llmChatHistorySvc,
 		RealtimeVoice:       realtimeVoiceSvc,
+		SarvamTTS:           sarvamTTSSvc,
 		A2ATask:             a2aTaskSvc,
 		A2APush:             a2aPushSvc,
 		Workflow:            workflowSvc,
