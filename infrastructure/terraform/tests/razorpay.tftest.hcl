@@ -170,6 +170,14 @@ mock_provider "aws" {
   }
 
   override_resource {
+    target          = aws_secretsmanager_secret.sarvam
+    override_during = plan
+    values = {
+      arn = "arn:aws:secretsmanager:ap-south-1:928282274753:secret:sarvam"
+    }
+  }
+
+  override_resource {
     target          = aws_secretsmanager_secret.billeif_invoice_cursor_hmac
     override_during = plan
     values = {
@@ -335,8 +343,9 @@ run "secret_metadata_rds_lambda_iam_and_output" {
         aws_secretsmanager_secret.gst_lookup.name,
         aws_secretsmanager_secret.gst_provider.name,
         aws_secretsmanager_secret.deepgram.name,
-        aws_secretsmanager_secret.deepseek.name
-      ])) == 13 &&
+        aws_secretsmanager_secret.deepseek.name,
+        aws_secretsmanager_secret.sarvam.name
+      ])) == 14 &&
       alltrue([
         aws_secretsmanager_secret.credential_encryption.kms_key_id == aws_kms_key.application_secrets.arn,
         aws_secretsmanager_secret.billeif_invoice_cursor_hmac.kms_key_id == aws_kms_key.application_secrets.arn,
@@ -350,7 +359,8 @@ run "secret_metadata_rds_lambda_iam_and_output" {
         aws_secretsmanager_secret.gst_lookup.kms_key_id == aws_kms_key.application_secrets.arn,
         aws_secretsmanager_secret.gst_provider.kms_key_id == aws_kms_key.application_secrets.arn,
         aws_secretsmanager_secret.deepgram.kms_key_id == aws_kms_key.application_secrets.arn,
-        aws_secretsmanager_secret.deepseek.kms_key_id == aws_kms_key.application_secrets.arn
+        aws_secretsmanager_secret.deepseek.kms_key_id == aws_kms_key.application_secrets.arn,
+        aws_secretsmanager_secret.sarvam.kms_key_id == aws_kms_key.application_secrets.arn
       ])
     )
     error_message = "Unrelated application/provider credentials must use separated secret containers."
@@ -379,7 +389,8 @@ run "secret_metadata_rds_lambda_iam_and_output" {
         "LLM_SECRET_ARN",
         "RAZORPAY_SECRET_ARN",
         "DEEPGRAM_SECRET_ARN",
-        "DEEPSEEK_SECRET_ARN"
+        "DEEPSEEK_SECRET_ARN",
+        "SARVAM_SECRET_ARN"
       ]) &&
       !contains(keys(aws_lambda_function.api_http.environment[0].variables), "DATABASE_PASSWORD") &&
       !contains(keys(aws_lambda_function.api_http.environment[0].variables), "RAZORPAY_KEY_SECRET")
@@ -395,7 +406,8 @@ run "secret_metadata_rds_lambda_iam_and_output" {
       contains(statement.actions, "secretsmanager:DescribeSecret") &&
       contains(statement.resources, aws_secretsmanager_secret.razorpay.arn) &&
       contains(statement.resources, aws_secretsmanager_secret.gst_provider.arn) &&
-      length(statement.resources) == 9 &&
+      contains(statement.resources, aws_secretsmanager_secret.sarvam.arn) &&
+      length(statement.resources) == 10 &&
       !contains(statement.resources, "*")
     ]) == 1
     error_message = "Lambda IAM must scope secret reads to exact managed ARNs."
@@ -418,7 +430,7 @@ run "secret_metadata_rds_lambda_iam_and_output" {
         for condition in statement.condition : condition
         if condition.variable == "kms:EncryptionContext:SecretARN" &&
         condition.test == "StringEquals" &&
-        length(condition.values) == 9
+        length(condition.values) == 10
       ]) == 1
     ]) == 1
     error_message = "Lambda IAM must scope KMS decrypt to the dedicated key ARN."

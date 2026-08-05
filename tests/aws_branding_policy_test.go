@@ -723,6 +723,7 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_s3_object.sqs_invoice_lambda_artifact",
 		"aws_s3_object.ws_lambda_artifact",
 		"aws_secretsmanager_secret.billeif_invoice_cursor_hmac",
+		"aws_secretsmanager_secret.sarvam",
 		"aws_security_group.database_migrator",
 		"aws_security_group.nat_instance",
 		"aws_sns_topic_policy.ses_events",
@@ -768,7 +769,7 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 	)
 	assertExactManifest(t, "Terraform output keys", terraformOutputKeys(t), wantOutputs)
 	wantEnvironment := removeManifestEntry(manifestLines(preTaskEnvironmentManifest), "SQS_PAYMENT_QUEUE")
-	wantEnvironment = append(wantEnvironment, "INVOICE_CURSOR_HMAC_SECRET_ARN", "SES_SENDING_ACCOUNT_ID", "VOICE_ENABLED")
+	wantEnvironment = append(wantEnvironment, "INVOICE_CURSOR_HMAC_SECRET_ARN", "SARVAM_SECRET_ARN", "SES_SENDING_ACCOUNT_ID", "VOICE_ENABLED")
 	assertExactManifest(t, "Terraform environment keys", terraformEnvironmentKeys(t), wantEnvironment)
 
 	providers := readTerraformFile(t, "providers.tf")
