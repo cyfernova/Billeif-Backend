@@ -156,6 +156,14 @@ output "cognito_region" {
 output "cognito_domain" {
   description = "Active hosted UI domain used by Billeif runtime consumers."
   value       = local.cognito_runtime_domain
+
+  precondition {
+    condition = !var.enable_cognito_custom_domain_cutover || (
+      trimsuffix(lower(data.dns_cname_record_set.cognito_custom_domain[0].cname), ".") ==
+      trimsuffix(lower(aws_cognito_user_pool_domain.custom[0].cloudfront_distribution), ".")
+    )
+    error_message = "Cognito custom-domain cutover requires auth.billeif.com to CNAME to the user-pool domain CloudFront target."
+  }
 }
 
 output "cognito_custom_domain_acm_validation" {

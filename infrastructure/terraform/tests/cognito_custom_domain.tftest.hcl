@@ -114,6 +114,16 @@ mock_provider "aws" {
   }
 }
 
+mock_provider "dns" {
+  override_during = plan
+
+  mock_data "dns_cname_record_set" {
+    defaults = {
+      cname = "d111111abcdef8.cloudfront.net."
+    }
+  }
+}
+
 variables {
   project_name                   = "billeif"
   environment                    = "dev"
@@ -196,6 +206,23 @@ run "custom_domain_uses_us_east_1_certificate_and_preserves_prefix_domain" {
     }
     error_message = "Terraform must output the exact Google OAuth origin and redirect URI required by the Cognito custom domain."
   }
+}
+
+run "custom_domain_cutover_rejects_incorrect_dns_target" {
+  command = plan
+
+  variables {
+    enable_cognito_custom_domain_cutover = true
+  }
+
+  override_data {
+    target = data.dns_cname_record_set.cognito_custom_domain[0]
+    values = {
+      cname = "wrong-target.example.com."
+    }
+  }
+
+  expect_failures = [output.cognito_domain]
 }
 
 run "default_rollout_keeps_consumers_on_the_prefix_domain" {

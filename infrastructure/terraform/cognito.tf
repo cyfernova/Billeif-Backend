@@ -14,6 +14,11 @@ locals {
   google_oauth_client_secret_reference = "{{resolve:secretsmanager:${aws_secretsmanager_secret.google_oauth.arn}:SecretString:client_secret}}"
 }
 
+data "dns_cname_record_set" "cognito_custom_domain" {
+  count = var.enable_cognito_custom_domain_cutover ? 1 : 0
+  host  = local.cognito_custom_domain
+}
+
 resource "aws_cognito_user_pool" "main" {
   name = local.cognito_web_user_pool_name
 
