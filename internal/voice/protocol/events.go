@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"container/list"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -82,6 +83,14 @@ var runtimeEvents = []EventType{
 	EventICERefresh,
 }
 
+var controlMessageJSONFields = map[string]struct{}{
+	"type": {}, "protocol_version": {}, "session_id": {}, "sequence": {},
+	"turn_id": {}, "generation_id": {}, "client_monotonic_ms": {},
+	"state": {}, "text": {}, "detected_language": {},
+	"language_probability": {}, "error_code": {}, "message": {},
+	"rotate_at": {}, "ice_servers": {},
+}
+
 var invocationRequests = []EventType{
 	InvocationSessionAttach,
 	InvocationWebRTCOffer,
@@ -121,6 +130,9 @@ func DecodeControlMessage(data []byte, direction Direction, tracker *SequenceTra
 	if len(data) > MaxControlMessageBytes {
 		return ControlMessage{}, ErrControlMessageTooLarge
 	}
+	if err := validateControlJSONShape(data); err != nil {
+		return ControlMessage{}, fmt.Errorf("%w: %v", ErrInvalidControlMessage, err)
+	}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -140,6 +152,44 @@ func DecodeControlMessage(data []byte, direction Direction, tracker *SequenceTra
 		}
 	}
 	return message, nil
+}
+
+func validateControlJSONShape(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	opening, err := decoder.Token()
+	if err != nil || opening != json.Delim('{') {
+		return errors.New("control message must be one JSON object")
+	}
+	seen := make(map[string]struct{}, len(controlMessageJSONFields))
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return errors.New("invalid JSON object key")
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return errors.New("invalid JSON object key")
+		}
+		if _, allowed := controlMessageJSONFields[key]; !allowed {
+			return errors.New("unknown field")
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return errors.New("duplicate field")
+		}
+		seen[key] = struct{}{}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return errors.New("invalid JSON field value")
+		}
+	}
+	closing, err := decoder.Token()
+	if err != nil || closing != json.Delim('}') {
+		return errors.New("invalid JSON object")
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return errors.New("multiple JSON values")
+	}
+	return nil
 }
 
 // ValidateControlMessage validates a decoded DataChannel message without

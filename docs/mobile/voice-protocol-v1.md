@@ -58,13 +58,23 @@ The response is:
   "protocol_version": 1,
   "session_id": "voice_01K...",
   "sequence": 1,
-  "ice_servers": [{"urls": ["turn:host:port"]}],
-  "ice_expires_at": "2026-08-06T06:05:00Z"
+  "ice_servers": [{
+    "urls": ["turn:discovered-kvs-host:443?transport=udp"],
+    "username": "short-lived-username",
+    "credential": "short-lived-credential"
+  }],
+  "ice_expires_at": "2026-08-06T06:05:00Z",
+  "ice_transport_policy": "relay"
 }
 ```
 
 TURN credentials are returned only through the authorized attach response and
-are never embedded in source, logs, or persistent mobile configuration.
+are never embedded in source, logs, or persistent mobile configuration. The
+client must set its peer connection ICE transport policy to `relay`. TURN
+server URLs must use UDP port 443. Exchanged and selected ICE candidates must
+be UDP `typ relay` component 1 candidates; the relay allocation port itself may
+be ephemeral. The client must not fall back to host, server-reflexive, or TCP
+candidates.
 
 ### Offer
 
@@ -101,7 +111,8 @@ The response is:
   "candidate": {
     "candidate": "...",
     "sdp_mid": "0",
-    "sdp_mline_index": 0
+    "sdp_mline_index": 0,
+    "username_fragment": "freshClientUfrag"
   }
 }
 ```
@@ -117,25 +128,42 @@ no sequence. It does not invent a typed signaling response.
   "type": "webrtc.restart",
   "protocol_version": 1,
   "session_id": "voice_01K...",
-  "sequence": 4
+  "sequence": 4,
+  "sdp": "...fresh client ICE-restart offer..."
 }
 ```
 
-The runtime returns `webrtc.answer` with the common fields and a new SDP after
-it accepts the ICE restart:
+The restart request must contain a newly created client ICE-restart offer whose
+effective ICE username fragment **and** ICE password both differ from the active
+offer. The offer must provide one unambiguous credential pair for every bundled
+media section. The runtime never attempts to restart from an old stable
+description. It returns `webrtc.answer` with the same request sequence and a
+newly gathered SDP after accepting the offer:
 
 ```json
 {
   "type": "webrtc.answer",
   "protocol_version": 1,
   "session_id": "voice_01K...",
-  "sequence": 3,
+  "sequence": 4,
   "sdp": "..."
 }
 ```
 
 `ice.refresh` on the DataChannel tells the client to attach again for renewed
 TURN configuration before performing the restart.
+
+If TURN credentials expire while an offer or restart is being processed, the
+runtime returns an HTTP conflict without consuming that request sequence. The
+client must repeat `session.attach` with the same sequence to refresh its TURN
+configuration, then retry signaling with the next sequence. It must not replay
+the expired offer under that consumed attach sequence.
+
+The signaling exchange deliberately uses half-trickle ICE. The client may send
+bounded candidates before or after its offer. Because a synchronous AgentCore
+invocation cannot push later runtime candidates to the client, the runtime waits
+for its own ICE gathering to complete and embeds its complete relay candidate
+set in each SDP answer.
 
 ## DataChannel event names
 

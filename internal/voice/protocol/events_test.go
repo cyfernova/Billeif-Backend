@@ -166,6 +166,23 @@ func TestDecodeControlMessageRejectsUnknownJSONFields(t *testing.T) {
 	}
 }
 
+func TestDecodeControlMessageRejectsDuplicateAndCaseVariantJSONFields(t *testing.T) {
+	tests := []string{
+		`{"type":"heartbeat","type":"heartbeat","protocol_version":1,"session_id":"voice-1","sequence":1}`,
+		`{"type":"heartbeat","Type":"session.close","protocol_version":1,"session_id":"voice-1","sequence":1}`,
+		`{"type":"heartbeat","Protocol_Version":1,"session_id":"voice-1","sequence":1}`,
+		`{"type":"heartbeat","protocol_version":1,"Session_ID":"voice-1","sequence":1}`,
+		`{"type":"heartbeat","protocol_version":1,"session_id":"voice-1","Sequence":1}`,
+	}
+
+	for _, body := range tests {
+		_, err := DecodeControlMessage([]byte(body), ClientToRuntime, NewSequenceTracker(2, 2))
+		if !errors.Is(err, ErrInvalidControlMessage) {
+			t.Fatalf("DecodeControlMessage(%s) error = %v, want %v", body, err, ErrInvalidControlMessage)
+		}
+	}
+}
+
 func TestDecodeControlMessageRejectsOversizedControlFrames(t *testing.T) {
 	body := []byte(`{"type":"heartbeat","protocol_version":1,"session_id":"voice-1","sequence":1,"text":"` + strings.Repeat("a", MaxControlMessageBytes) + `"}`)
 	_, err := DecodeControlMessage(body, ClientToRuntime, NewSequenceTracker(2, 2))
