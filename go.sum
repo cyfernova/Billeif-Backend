@@ -48,6 +48,10 @@ github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.25 h1:dD3dhHNg
 github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.25/go.mod h1:0yAbjPfd64gG7mj85RW+fMEYdfBgCRZw8g/oWcL1pjc=
 github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.25 h1:2pQEbwf+/6EDbiit/GcBE2K4IUpMZymaA0kOz3xK978=
 github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.25/go.mod h1:KvT6NCcQ0EZ+ZkVRrlBMt04Po3ok23YELEp7WimhLhM=
+github.com/aws/aws-sdk-go-v2/service/kinesisvideo v1.34.0 h1:ReFUNL9hFpr8XP1lqI01YQ8gWhjr9KX1FnSx//i0M+k=
+github.com/aws/aws-sdk-go-v2/service/kinesisvideo v1.34.0/go.mod h1:D1yqdOWqLadSP6Pq12aosx/G0fijr3i2mrk9UFQfW6c=
+github.com/aws/aws-sdk-go-v2/service/kinesisvideosignaling v1.29.1 h1:yPKHRlhqdRzORkgHxlns1mVPcvMW6F9tzDSpOf/5wBA=
+github.com/aws/aws-sdk-go-v2/service/kinesisvideosignaling v1.29.1/go.mod h1:PJA/MK/Cp96Wby9NfkuFbvYRVxkIakZwPmLpupokhyo=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.102.2 h1:ie4ElCmUKS26pzrZcIk/lmt4yWjAqLLcawstyQCh298=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.102.2/go.mod h1:zjsomFeX5duj+4PlMB+o4JoWTIx+G0XMyzjYrUbQkN0=
 github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.41.9 h1:2zXcs+s7xDyX+BJ3Fi+V8wl65HvxI/7BPy88MjzomiY=

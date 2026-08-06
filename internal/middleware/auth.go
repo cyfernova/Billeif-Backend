@@ -34,12 +34,18 @@ type JWK struct {
 }
 
 type JWKSCache struct {
-	mu        sync.RWMutex
-	keys      map[string]*rsa.PublicKey
-	lastFetch time.Time
-	ttl       time.Duration
-	jwksURL   string
+	mu               sync.RWMutex
+	keys             map[string]*rsa.PublicKey
+	lastFetch        time.Time
+	ttl              time.Duration
+	jwksURL          string
+	refreshing       bool
+	refreshDone      chan struct{}
+	lastRefreshError error
+	lastMissRefresh  time.Time
 }
+
+const jwksUnknownKeyRefreshCooldown = 5 * time.Second
 
 type TokenUse string
 
@@ -57,55 +63,119 @@ func NewJWKSCache(jwksURL string, ttl time.Duration) *JWKSCache {
 }
 
 func (c *JWKSCache) GetKey(kid string) (*rsa.PublicKey, error) {
+	return c.GetKeyContext(context.Background(), kid)
+}
+
+func (c *JWKSCache) GetKeyContext(ctx context.Context, kid string) (*rsa.PublicKey, error) {
+	if c == nil || ctx == nil || kid == "" || len(kid) > 256 {
+		return nil, fmt.Errorf("invalid JWKS key request")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	c.mu.RLock()
 	key, ok := c.keys[kid]
+	wasMissing := !ok
 	stale := time.Since(c.lastFetch) >= c.ttl
+	missCoolingDown := !ok && !c.lastMissRefresh.IsZero() && time.Since(c.lastMissRefresh) < jwksUnknownKeyRefreshCooldown
 	c.mu.RUnlock()
 
 	if ok && !stale {
 		return key, nil
 	}
+	if missCoolingDown {
+		return nil, fmt.Errorf("JWKS key not found")
+	}
 
-	if err := c.refresh(!ok); err != nil {
+	if err := c.refreshContext(ctx, !ok); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
 	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if key, ok := c.keys[kid]; ok {
+	key, ok = c.keys[kid]
+	c.mu.RUnlock()
+	if ok {
+		if wasMissing {
+			c.clearMissRefresh()
+		}
 		return key, nil
 	}
-	return nil, fmt.Errorf("key not found: %s", kid)
+	// A successful forced refresh that still did not contain the requested
+	// key proves this kid is currently unknown. Record one global short
+	// cooldown so sequential random-kid JWTs cannot amplify JWKS traffic.
+	return nil, fmt.Errorf("JWKS key not found")
 }
 
-func (c *JWKSCache) refresh(force bool) error {
+func (c *JWKSCache) clearMissRefresh() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.lastMissRefresh = time.Time{}
+	c.mu.Unlock()
+}
+
+func (c *JWKSCache) refreshContext(ctx context.Context, force bool) error {
+	if c == nil || ctx == nil {
+		return fmt.Errorf("invalid JWKS refresh request")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	c.mu.Lock()
 
 	if !force && time.Since(c.lastFetch) < c.ttl && len(c.keys) > 0 {
+		c.mu.Unlock()
 		return nil
 	}
+	if force && !c.lastMissRefresh.IsZero() && time.Since(c.lastMissRefresh) < jwksUnknownKeyRefreshCooldown {
+		c.mu.Unlock()
+		return nil
+	}
+	if c.refreshing {
+		done := c.refreshDone
+		c.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-done:
+			c.mu.RLock()
+			err := c.lastRefreshError
+			c.mu.RUnlock()
+			return err
+		}
+	}
+	if force {
+		// Reserve the short forced-refresh window before network I/O. This
+		// closes the handoff race between single-flight completion and the
+		// requesting goroutine's key recheck.
+		c.lastMissRefresh = time.Now()
+	}
+	c.refreshing = true
+	c.refreshDone = make(chan struct{})
+	done := c.refreshDone
+	c.mu.Unlock()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	requestContext, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.jwksURL, nil)
+	req, err := http.NewRequestWithContext(requestContext, http.MethodGet, c.jwksURL, nil)
 	if err != nil {
-		return err
+		return c.finishRefresh(done, nil, err)
 	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return c.finishRefresh(done, nil, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("fetch JWKS: unexpected status %d", resp.StatusCode)
+		return c.finishRefresh(done, nil, fmt.Errorf("fetch JWKS: unexpected status %d", resp.StatusCode))
 	}
 
 	var jwks JWKS
 	if err := json.NewDecoder(resp.Body).Decode(&jwks); err != nil {
-		return err
+		return c.finishRefresh(done, nil, err)
 	}
 
 	refreshedKeys := make(map[string]*rsa.PublicKey, len(jwks.Keys))
@@ -121,13 +191,24 @@ func (c *JWKSCache) refresh(force bool) error {
 	}
 
 	if len(refreshedKeys) == 0 {
-		return fmt.Errorf("fetch JWKS: no valid RSA keys found")
+		return c.finishRefresh(done, nil, fmt.Errorf("fetch JWKS: no valid RSA keys found"))
 	}
+	return c.finishRefresh(done, refreshedKeys, nil)
+}
 
-	// Replace the entire key map atomically so retired keys are dropped.
-	c.keys = refreshedKeys
-	c.lastFetch = time.Now()
-	return nil
+func (c *JWKSCache) finishRefresh(done chan struct{}, refreshedKeys map[string]*rsa.PublicKey, refreshErr error) error {
+	c.mu.Lock()
+	if refreshErr == nil {
+		// Replace the entire key map atomically so retired keys are dropped.
+		c.keys = refreshedKeys
+		c.lastFetch = time.Now()
+	}
+	c.lastRefreshError = refreshErr
+	c.refreshing = false
+	c.refreshDone = nil
+	close(done)
+	c.mu.Unlock()
+	return refreshErr
 }
 
 func parseRSAPublicKey(k JWK) (*rsa.PublicKey, error) {
@@ -195,15 +276,29 @@ func parseAuthorizationHeader(authHeader string) (string, error) {
 }
 
 func ValidateCognitoToken(cfg config.CognitoConfig, tokenString string) (*CognitoClaims, error) {
-	return validateCognitoTokenWithAllowedTokenUses(cfg, tokenString, defaultAllowedTokenUses())
+	return ValidateCognitoTokenContext(context.Background(), cfg, tokenString)
+}
+
+func ValidateCognitoTokenContext(ctx context.Context, cfg config.CognitoConfig, tokenString string) (*CognitoClaims, error) {
+	return validateCognitoTokenWithAllowedTokenUsesContext(ctx, cfg, tokenString, defaultAllowedTokenUses())
 }
 
 func ValidateCognitoAuthorization(cfg config.CognitoConfig, authHeader string) (*CognitoClaims, error) {
+	return ValidateCognitoAuthorizationContext(context.Background(), cfg, authHeader)
+}
+
+func ValidateCognitoAuthorizationContext(ctx context.Context, cfg config.CognitoConfig, authHeader string) (*CognitoClaims, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("invalid authorization context")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	tokenString, err := parseAuthorizationHeader(authHeader)
 	if err != nil {
 		return nil, err
 	}
-	return ValidateCognitoToken(cfg, tokenString)
+	return ValidateCognitoTokenContext(ctx, cfg, tokenString)
 }
 
 func Auth(cfg config.CognitoConfig, log *logger.Logger) gin.HandlerFunc {
@@ -229,7 +324,7 @@ func AuthWithTokenUse(cfg config.CognitoConfig, log *logger.Logger, allowedToken
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 			return
 		}
-		claims, err := validateCognitoTokenWithAllowedTokenUses(cfg, tokenString, allowedUses)
+		claims, err := validateCognitoTokenWithAllowedTokenUsesContext(c.Request.Context(), cfg, tokenString, allowedUses)
 		if err != nil {
 			reqLog.Warn("token validation failed", "error", err)
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
@@ -351,12 +446,18 @@ func newCognitoPool(region, userPoolID, clientID string, ttl time.Duration, cano
 	}
 }
 
-func validateCognitoTokenWithAllowedTokenUses(cfg config.CognitoConfig, tokenString string, allowedTokenUses map[string]struct{}) (*CognitoClaims, error) {
-	claims, _, err := validateCognitoTokenWithPools(tokenString, cognitoPoolsFromConfig(cfg), allowedTokenUses)
+func validateCognitoTokenWithAllowedTokenUsesContext(ctx context.Context, cfg config.CognitoConfig, tokenString string, allowedTokenUses map[string]struct{}) (*CognitoClaims, error) {
+	claims, _, err := validateCognitoTokenWithPoolsContext(ctx, tokenString, cognitoPoolsFromConfig(cfg), allowedTokenUses)
 	return claims, err
 }
 
-func validateCognitoTokenWithPools(tokenString string, pools []cognitoPool, allowedTokenUses map[string]struct{}) (*CognitoClaims, cognitoPool, error) {
+func validateCognitoTokenWithPoolsContext(ctx context.Context, tokenString string, pools []cognitoPool, allowedTokenUses map[string]struct{}) (*CognitoClaims, cognitoPool, error) {
+	if ctx == nil {
+		return nil, cognitoPool{}, fmt.Errorf("invalid token validation context")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, cognitoPool{}, err
+	}
 	unverifiedClaims, err := parseUnverifiedClaims(tokenString)
 	if err != nil {
 		return nil, cognitoPool{}, err
@@ -376,9 +477,12 @@ func validateCognitoTokenWithPools(tokenString string, pools []cognitoPool, allo
 		if !ok {
 			return nil, fmt.Errorf("kid not found in token header")
 		}
-		return cache.GetKey(kid)
+		return cache.GetKeyContext(ctx, kid)
 	})
 	if err != nil {
+		return nil, cognitoPool{}, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, cognitoPool{}, err
 	}
 

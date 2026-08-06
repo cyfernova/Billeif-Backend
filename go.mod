@@ -12,6 +12,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/bedrockagentcore v1.27.0
 	github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider v1.60.4
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.57.6
+	github.com/aws/aws-sdk-go-v2/service/kinesisvideo v1.34.0
+	github.com/aws/aws-sdk-go-v2/service/kinesisvideosignaling v1.29.1
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.102.2
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.41.9
 	github.com/aws/aws-sdk-go-v2/service/ses v1.34.26

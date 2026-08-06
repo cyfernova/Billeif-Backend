@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -258,6 +260,78 @@ func TestJWKSRefresh_RemovesRetiredKeys(t *testing.T) {
 	_, err = ValidateCognitoToken(cfg, initialToken)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "key not found")
+}
+
+func TestJWKSCacheGetKeyContextCancelsStalledFetch(t *testing.T) {
+	started := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+		close(started)
+		<-request.Context().Done()
+	}))
+	defer server.Close()
+
+	cache := NewJWKSCache(server.URL, time.Minute)
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		_, err := cache.GetKeyContext(ctx, "missing-kid")
+		result <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("JWKS request did not start")
+	}
+	cancel()
+	select {
+	case err := <-result:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("GetKeyContext ignored caller cancellation")
+	}
+}
+
+func TestJWKSCacheBoundsUnknownKeyForcedRefreshesAndAllowsRotationAfterCooldown(t *testing.T) {
+	initialKey := mustGenerateRSAKey(t)
+	rotatedKey := mustGenerateRSAKey(t)
+	var requests atomic.Int32
+	var keysMu sync.RWMutex
+	keys := []map[string]string{jwkForKey(initialKey, "known-kid")}
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		keysMu.RLock()
+		payload := append([]map[string]string(nil), keys...)
+		keysMu.RUnlock()
+		response.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(response).Encode(map[string]any{"keys": payload}))
+	}))
+	defer server.Close()
+
+	cache := NewJWKSCache(server.URL, time.Minute)
+	if _, err := cache.GetKeyContext(context.Background(), "known-kid"); err != nil {
+		t.Fatalf("initial GetKeyContext() error = %v", err)
+	}
+	for index := 0; index < 20; index++ {
+		if _, err := cache.GetKeyContext(context.Background(), fmt.Sprintf("unknown-kid-%d", index)); err == nil {
+			t.Fatalf("unknown kid %d unexpectedly resolved", index)
+		}
+	}
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("JWKS requests after sequential unknown kids = %d, want initial + one forced refresh", got)
+	}
+
+	keysMu.Lock()
+	keys = []map[string]string{jwkForKey(rotatedKey, "rotated-kid")}
+	keysMu.Unlock()
+	cache.mu.Lock()
+	cache.lastMissRefresh = time.Now().Add(-jwksUnknownKeyRefreshCooldown)
+	cache.mu.Unlock()
+	if _, err := cache.GetKeyContext(context.Background(), "rotated-kid"); err != nil {
+		t.Fatalf("rotated GetKeyContext() after cooldown error = %v", err)
+	}
+	if got := requests.Load(); got != 3 {
+		t.Fatalf("JWKS requests after allowed rotation = %d, want 3", got)
+	}
 }
 
 func mustGenerateRSAKey(t *testing.T) *rsa.PrivateKey {

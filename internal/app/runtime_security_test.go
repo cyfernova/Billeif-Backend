@@ -105,7 +105,8 @@ func TestInvoiceAndDocumentRoutesRequireDocumentPermissions(t *testing.T) {
 		`group.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), handler.Delete)`,
 		`group.POST("/:id/cancel", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), handler.Cancel)`,
 		`group.GET("/:id/pdf", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), handler.GetPDF)`,
-		`invoices.GET("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.List)`,
+		`invoices.GET("", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.List)`,
+		`invoices.GET("/:id", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.Get)`,
 		`invoices.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Invoice.Create)`,
 		`invoices.POST("/:id/previews", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), wafUserHeavyRL, h.Invoice.Preview)`,
 		`invoices.PATCH("/:id/draft", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Invoice.UpdateDraft)`,
@@ -121,6 +122,22 @@ func TestInvoiceAndDocumentRoutesRequireDocumentPermissions(t *testing.T) {
 	for _, fragment := range requiredFragments {
 		if !strings.Contains(routes, fragment) {
 			t.Fatalf("document route is missing required permission gate: %s", fragment)
+		}
+	}
+}
+
+func TestVoiceInvoiceToolRoutesRevalidateCurrentAllBranchScope(t *testing.T) {
+	source, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatalf("read runtime routes: %v", err)
+	}
+	routes := string(source)
+	for _, fragment := range []string{
+		`invoices.GET("", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.List)`,
+		`invoices.GET("/:id", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.Get)`,
+	} {
+		if !strings.Contains(routes, fragment) {
+			t.Fatalf("voice invoice tool route must revalidate all-branch scope before permission: %s", fragment)
 		}
 	}
 }
