@@ -405,6 +405,12 @@ run "voice_core_uses_private_mumbai_runtime_and_bounded_resources" {
       ]) == 1 &&
       length([
         for statement in jsondecode(aws_iam_role_policy.voice_agentcore_runtime[0].policy).Statement : statement
+        if statement.Sid == "VoiceRuntimeLogGroupDiscovery" &&
+        toset(statement.Action) == toset(["logs:DescribeLogGroups"]) &&
+        statement.Resource == "arn:aws:logs:ap-south-1:928282274753:log-group:*"
+      ]) == 1 &&
+      length([
+        for statement in jsondecode(aws_iam_role_policy.voice_agentcore_runtime[0].policy).Statement : statement
         if statement.Sid == "VoiceRuntimeLogStreamWrite" &&
         toset(statement.Action) == toset(["logs:CreateLogStream", "logs:PutLogEvents"]) &&
         statement.Resource == "arn:aws:logs:ap-south-1:928282274753:log-group:/aws/bedrock-agentcore/runtimes/billeif_test_test_voice_runtime-*:log-stream:*"
@@ -462,4 +468,25 @@ run "production_voice_registry_is_immutable_and_recoverable" {
     )
     error_message = "Production voice ECR tags must be immutable and non-force-destroyable, with voice-session PITR enabled."
   }
+}
+
+run "voice_rejects_duplicate_physical_availability_zones" {
+  command = plan
+
+  variables {
+    enable_voice                 = true
+    voice_agentcore_image_tag    = "prod-0123456789abcdef"
+    voice_agentcore_release      = "release-0123456789abcdef"
+    enable_voice_turn_udp_egress = true
+  }
+
+  override_data {
+    target = data.aws_availability_zone.voice_agentcore[1]
+    values = {
+      name    = "ap-south-1b"
+      zone_id = "aps1-az1"
+    }
+  }
+
+  expect_failures = [aws_bedrockagentcore_agent_runtime.voice[0]]
 }

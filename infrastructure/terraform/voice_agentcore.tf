@@ -221,7 +221,9 @@ resource "aws_bedrockagentcore_agent_runtime" "voice" {
 
     precondition {
       condition = (
-        length(data.aws_availability_zone.voice_agentcore) >= 2 &&
+        length(toset([
+          for zone in data.aws_availability_zone.voice_agentcore : zone.zone_id
+        ])) >= 2 &&
         alltrue([
           for zone in data.aws_availability_zone.voice_agentcore :
           contains(local.voice_agentcore_supported_zone_ids, zone.zone_id)

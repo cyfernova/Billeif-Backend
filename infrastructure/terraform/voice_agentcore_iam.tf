@@ -88,6 +88,12 @@ resource "aws_iam_role_policy" "voice_agentcore_runtime" {
         Resource = local.voice_agentcore_log_group_arn
       },
       {
+        Sid      = "VoiceRuntimeLogGroupDiscovery"
+        Effect   = "Allow"
+        Action   = ["logs:DescribeLogGroups"]
+        Resource = "arn:${data.aws_partition.current.partition}:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:*"
+      },
+      {
         Sid    = "VoiceRuntimeLogStreamWrite"
         Effect = "Allow"
         Action = [

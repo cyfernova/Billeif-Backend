@@ -70,9 +70,10 @@ resource "terraform_data" "voice_agentcore_mmdsv2" {
     interpreter = ["/usr/bin/env", "bash", "-c"]
 
     environment = {
-      AGENTCORE_RUNTIME_ID   = aws_bedrockagentcore_agent_runtime.voice[0].agent_runtime_id
-      AGENTCORE_UPDATE_INPUT = jsonencode(local.voice_agentcore_mmdsv2_update_input)
-      AWS_REGION             = var.aws_region
+      AGENTCORE_BASE_RUNTIME_VERSION = aws_bedrockagentcore_agent_runtime.voice[0].agent_runtime_version
+      AGENTCORE_RUNTIME_ID           = aws_bedrockagentcore_agent_runtime.voice[0].agent_runtime_id
+      AGENTCORE_UPDATE_INPUT         = jsonencode(local.voice_agentcore_mmdsv2_update_input)
+      AWS_REGION                     = var.aws_region
     }
   }
 
@@ -92,6 +93,7 @@ data "external" "voice_agentcore_version" {
     aws_bedrockagentcore_agent_runtime.voice[0].agent_runtime_id,
     var.aws_region,
     terraform_data.voice_agentcore_mmdsv2[0].id,
+    aws_bedrockagentcore_agent_runtime.voice[0].agent_runtime_version,
   ]
 
   depends_on = [terraform_data.voice_agentcore_mmdsv2]
