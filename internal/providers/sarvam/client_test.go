@@ -16,6 +16,10 @@ import (
 	"time"
 )
 
+// Keep the redirect policy structurally owned: accepting an arbitrary Doer here
+// would let callers wrap a redirect-following client and bypass CheckRedirect.
+var _ func(Config, *http.Client) (*Client, error) = NewClient
+
 func TestClientPostJSONInjectsOnlyCanonicalAuthenticationAndKeepsConfigImmutable(t *testing.T) {
 	const originalKey = "sarvam-test-key-5f9e"
 	received := make(chan struct{}, 1)
@@ -141,6 +145,28 @@ func TestClientRefusesCrossOriginRedirectBeforeCredentialCanBeForwarded(t *testi
 	var providerErr *ProviderError
 	if !errors.As(err, &providerErr) || providerErr.StatusCode != http.StatusTemporaryRedirect {
 		t.Fatalf("error = %v, want safe provider status 307", err)
+	}
+}
+
+func TestClientDoesNotMutateInjectedHTTPClient(t *testing.T) {
+	originalRedirectError := errors.New("caller's redirect policy")
+	injected := &http.Client{
+		Timeout: 17 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return originalRedirectError
+		},
+	}
+
+	_, err := NewClient(Config{APIKey: "clone-test-key", BaseURL: "https://sarvam.example.test"}, injected)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+
+	if injected.Timeout != 17*time.Second {
+		t.Fatalf("injected timeout = %s, want 17s", injected.Timeout)
+	}
+	if err := injected.CheckRedirect(nil, nil); !errors.Is(err, originalRedirectError) {
+		t.Fatalf("injected redirect policy error = %v, want original policy", err)
 	}
 }
 
@@ -278,19 +304,19 @@ func TestClientDropsRequestIDThatReflectsAPIKey(t *testing.T) {
 	}
 }
 
-type errorDoer struct {
-	err error
-}
+type roundTripFunc func(*http.Request) (*http.Response, error)
 
-func (d errorDoer) Do(*http.Request) (*http.Response, error) {
-	return nil, d.err
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
 }
 
 func TestClientRedactsTransportErrorsAndRequiresCallerContext(t *testing.T) {
 	const apiKey = "transport-secret-key"
 	const providerDetail = "upstream-secret-detail"
-	client, err := NewClient(Config{APIKey: apiKey, BaseURL: "https://sarvam.example.test"}, errorDoer{
-		err: fmt.Errorf("dial failed with %s and %s", apiKey, providerDetail),
+	client, err := NewClient(Config{APIKey: apiKey, BaseURL: "https://sarvam.example.test"}, &http.Client{
+		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, fmt.Errorf("dial failed with %s and %s", apiKey, providerDetail)
+		}),
 	})
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
@@ -322,20 +348,16 @@ func (b *trackingBody) Close() error {
 	return nil
 }
 
-type responseDoer struct {
-	response *http.Response
-}
-
-func (d responseDoer) Do(*http.Request) (*http.Response, error) { return d.response, nil }
-
 func TestClientClosesProviderResponseBodies(t *testing.T) {
 	body := &trackingBody{reader: strings.NewReader("failure")}
-	client, err := NewClient(Config{APIKey: "close-test-key", BaseURL: "https://sarvam.example.test"}, responseDoer{
-		response: &http.Response{
-			StatusCode: http.StatusBadGateway,
-			Header:     make(http.Header),
-			Body:       body,
-		},
+	client, err := NewClient(Config{APIKey: "close-test-key", BaseURL: "https://sarvam.example.test"}, &http.Client{
+		Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusBadGateway,
+				Header:     make(http.Header),
+				Body:       body,
+			}, nil
+		}),
 	})
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)

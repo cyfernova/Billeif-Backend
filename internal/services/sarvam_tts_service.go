@@ -68,11 +68,11 @@ type SarvamTTSResult struct {
 type SarvamTTSService struct {
 	appCfg   *config.Config
 	resolver ProviderConfigResolver
-	client   sarvam.HTTPDoer
+	client   *http.Client
 	log      *logger.Logger
 }
 
-func NewSarvamTTSService(appCfg *config.Config, resolver ProviderConfigResolver, client sarvam.HTTPDoer, log *logger.Logger) *SarvamTTSService {
+func NewSarvamTTSService(appCfg *config.Config, resolver ProviderConfigResolver, client *http.Client, log *logger.Logger) *SarvamTTSService {
 	cfg := config.SarvamConfig{}
 	if appCfg != nil {
 		cfg = appCfg.Sarvam

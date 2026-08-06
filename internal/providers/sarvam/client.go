@@ -26,14 +26,10 @@ var (
 	ErrInvalidResponse  = errors.New("invalid Sarvam response")
 )
 
-type HTTPDoer interface {
-	Do(*http.Request) (*http.Response, error)
-}
-
 type Client struct {
-	apiKey  string
-	baseURL url.URL
-	doer    HTTPDoer
+	apiKey     string
+	baseURL    url.URL
+	httpClient *http.Client
 }
 
 type JSONRequest struct {
@@ -65,7 +61,7 @@ func (e *ProviderError) Error() string {
 	return fmt.Sprintf("Sarvam provider returned status %d (request_id=%s)", e.StatusCode, e.RequestID)
 }
 
-func NewClient(cfg Config, doer HTTPDoer) (*Client, error) {
+func NewClient(cfg Config, httpClient *http.Client) (*Client, error) {
 	cfg = cfg.withDefaults()
 	if cfg.APIKey == "" {
 		return nil, ErrAPIKeyRequired
@@ -76,18 +72,6 @@ func NewClient(cfg Config, doer HTTPDoer) (*Client, error) {
 		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return nil, ErrInvalidBaseURL
 	}
-	if doer == nil {
-		doer = http.DefaultClient
-	}
-	doer = withoutRedirects(doer)
-	return &Client{apiKey: cfg.APIKey, baseURL: *parsed, doer: doer}, nil
-}
-
-func withoutRedirects(doer HTTPDoer) HTTPDoer {
-	httpClient, ok := doer.(*http.Client)
-	if !ok {
-		return doer
-	}
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
@@ -95,14 +79,14 @@ func withoutRedirects(doer HTTPDoer) HTTPDoer {
 	clientCopy.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
-	return &clientCopy
+	return &Client{apiKey: cfg.APIKey, baseURL: *parsed, httpClient: &clientCopy}, nil
 }
 
 func (c *Client) PostJSON(ctx context.Context, input JSONRequest) (*Response, error) {
 	if ctx == nil {
 		return nil, ErrContextRequired
 	}
-	if c == nil || c.doer == nil || c.apiKey == "" {
+	if c == nil || c.httpClient == nil || c.apiKey == "" {
 		return nil, ErrInvalidRequest
 	}
 	endpoint, err := c.endpoint(input.Path)
@@ -126,7 +110,7 @@ func (c *Client) PostJSON(ctx context.Context, input JSONRequest) (*Response, er
 		request.Header.Set("Accept", accept)
 	}
 
-	response, err := c.doer.Do(request)
+	response, err := c.httpClient.Do(request)
 	if err != nil {
 		if response != nil {
 			drainAndClose(response.Body)

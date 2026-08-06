@@ -14,6 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var _ func(*config.Config, ProviderConfigResolver, *http.Client, *logger.Logger) *SarvamTTSService = NewSarvamTTSService
+
 type sarvamTTSResolver struct {
 	calls []config.SecretKind
 	key   string
