@@ -3,9 +3,13 @@ package webrtc
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/gob"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -72,9 +76,9 @@ func validEndpoints() []TLSEndpoint {
 
 func validCredentials() TURNCredentials {
 	return TURNCredentials{
-		URIs:      []string{"turn:v-abc123.kinesisvideo.ap-south-1.amazonaws.com:443?transport=udp"},
-		Username:  "turn-user-sensitive",
-		Password:  "turn-password-sensitive",
+		uris:      []string{"turn:v-abc123.kinesisvideo.ap-south-1.amazonaws.com:443?transport=udp"},
+		username:  "turn-user-sensitive",
+		password:  "turn-password-sensitive",
 		ExpiresAt: fixedProbeTime.Add(30 * time.Minute),
 	}
 }
@@ -276,6 +280,68 @@ func TestValidateTLSEndpointsRejectsNonKVSExactAllowlist(t *testing.T) {
 	}
 }
 
+func TestBuildNetworkTargetsRequiresExactSixMandatoryTargets(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		endpoints []TLSEndpoint
+		wantErr   bool
+	}{
+		{name: "control and one dynamic", endpoints: validEndpoints()},
+		{name: "same dynamic for both protocols", endpoints: []TLSEndpoint{
+			{Protocol: EndpointHTTPS, URL: "https://v-shared.kinesisvideo.ap-south-1.amazonaws.com:443"},
+			{Protocol: EndpointWSS, URL: "wss://v-shared.kinesisvideo.ap-south-1.amazonaws.com:443"},
+		}},
+		{name: "missing dynamic", endpoints: []TLSEndpoint{
+			{Protocol: EndpointHTTPS, URL: "https://kinesisvideo.ap-south-1.amazonaws.com:443"},
+			{Protocol: EndpointWSS, URL: "wss://kinesisvideo.ap-south-1.amazonaws.com:443"},
+		}, wantErr: true},
+		{name: "two dynamic", endpoints: []TLSEndpoint{
+			{Protocol: EndpointHTTPS, URL: "https://v-first.kinesisvideo.ap-south-1.amazonaws.com:443"},
+			{Protocol: EndpointWSS, URL: "wss://v-second.kinesisvideo.ap-south-1.amazonaws.com:443"},
+		}, wantErr: true},
+		{name: "dynamic wrong port", endpoints: []TLSEndpoint{
+			{Protocol: EndpointHTTPS, URL: "https://kinesisvideo.ap-south-1.amazonaws.com:443"},
+			{Protocol: EndpointWSS, URL: "wss://v-abc123.kinesisvideo.ap-south-1.amazonaws.com:8443"},
+		}, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			targets, err := buildNetworkTargets(validProbeConfig(), test.endpoints)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("buildNetworkTargets() error = %v, wantErr %v", err, test.wantErr)
+			}
+			if !test.wantErr && !networkTargetsAreExactMandatorySet(targets) {
+				t.Fatalf("buildNetworkTargets() = %+v, want exact six-kind target set", targets)
+			}
+		})
+	}
+}
+
+func networkTargetsAreExactMandatorySet(targets []NetworkTarget) bool {
+	if len(targets) != requiredConnectivityTargetCount {
+		return false
+	}
+	seenKinds := make(map[NetworkTargetKind]struct{}, len(targets))
+	seenHosts := make(map[string]struct{}, len(targets))
+	for _, target := range targets {
+		if !isMandatoryNetworkTargetKind(target.Kind) || target.Port != 443 || target.Host == "" {
+			return false
+		}
+		if _, duplicate := seenKinds[target.Kind]; duplicate {
+			return false
+		}
+		if _, duplicate := seenHosts[target.Host]; duplicate {
+			return false
+		}
+		seenKinds[target.Kind] = struct{}{}
+		seenHosts[target.Host] = struct{}{}
+	}
+	return true
+}
+
 func TestConfigRejectsBilleifBackendHostAliases(t *testing.T) {
 	t.Parallel()
 
@@ -307,24 +373,24 @@ func TestValidateTURNCredentialsRequiresUDP443AndExpiryMargin(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "valid", value: validCredentials()},
-		{name: "missing username", value: mutateCredentials(func(value *TURNCredentials) { value.Username = "" }), wantErr: true},
-		{name: "missing password", value: mutateCredentials(func(value *TURNCredentials) { value.Password = "" }), wantErr: true},
+		{name: "missing username", value: mutateCredentials(func(value *TURNCredentials) { value.username = "" }), wantErr: true},
+		{name: "missing password", value: mutateCredentials(func(value *TURNCredentials) { value.password = "" }), wantErr: true},
 		{name: "credential expires inside safety margin", value: mutateCredentials(func(value *TURNCredentials) { value.ExpiresAt = fixedProbeTime.Add(5 * time.Minute) }), wantErr: true},
 		{name: "tcp transport", value: mutateCredentials(func(value *TURNCredentials) {
-			value.URIs[0] = "turn:v-abc123.kinesisvideo.ap-south-1.amazonaws.com:443?transport=tcp"
+			value.uris[0] = "turn:v-abc123.kinesisvideo.ap-south-1.amazonaws.com:443?transport=tcp"
 		}), wantErr: true},
 		{name: "wrong port", value: mutateCredentials(func(value *TURNCredentials) {
-			value.URIs[0] = "turn:v-abc123.kinesisvideo.ap-south-1.amazonaws.com:3478?transport=udp"
+			value.uris[0] = "turn:v-abc123.kinesisvideo.ap-south-1.amazonaws.com:3478?transport=udp"
 		}), wantErr: true},
 		{name: "tls turn scheme", value: mutateCredentials(func(value *TURNCredentials) {
-			value.URIs[0] = "turns:v-abc123.kinesisvideo.ap-south-1.amazonaws.com:443?transport=udp"
+			value.uris[0] = "turns:v-abc123.kinesisvideo.ap-south-1.amazonaws.com:443?transport=udp"
 		}), wantErr: true},
 		{name: "userinfo", value: mutateCredentials(func(value *TURNCredentials) {
-			value.URIs[0] = "turn:user@v-abc123.kinesisvideo.ap-south-1.amazonaws.com:443?transport=udp"
+			value.uris[0] = "turn:user@v-abc123.kinesisvideo.ap-south-1.amazonaws.com:443?transport=udp"
 		}), wantErr: true},
-		{name: "ip literal", value: mutateCredentials(func(value *TURNCredentials) { value.URIs[0] = "turn:127.0.0.1:443?transport=udp" }), wantErr: true},
+		{name: "ip literal", value: mutateCredentials(func(value *TURNCredentials) { value.uris[0] = "turn:127.0.0.1:443?transport=udp" }), wantErr: true},
 		{name: "suffix trick", value: mutateCredentials(func(value *TURNCredentials) {
-			value.URIs[0] = "turn:v-abc123.kinesisvideo.ap-south-1.amazonaws.com.attacker.invalid:443?transport=udp"
+			value.uris[0] = "turn:v-abc123.kinesisvideo.ap-south-1.amazonaws.com.attacker.invalid:443?transport=udp"
 		}), wantErr: true},
 	}
 
@@ -526,11 +592,17 @@ func TestSensitiveTURNValuesHaveOnlyRedactedRepresentations(t *testing.T) {
 
 	credentials := validCredentials()
 	request := RelayRequest{
-		URI:       credentials.URIs[0],
-		Username:  credentials.Username,
-		Password:  credentials.Password,
-		Payload:   []byte("payload-sensitive"),
+		uri:       credentials.uris[0],
+		username:  credentials.username,
+		password:  credentials.password,
+		payload:   []byte("payload-sensitive"),
 		RelayOnly: true,
+	}
+	observation := RelayObservation{
+		payload:             []byte("payload-sensitive"),
+		LocalCandidateType:  CandidateRelay,
+		RemoteCandidateType: CandidateRelay,
+		ArtifactSHA256:      hashString("relay-artifact"),
 	}
 	redacted, err := RedactICE(credentials)
 	if err != nil {
@@ -540,7 +612,7 @@ func TestSensitiveTURNValuesHaveOnlyRedactedRepresentations(t *testing.T) {
 		t.Fatalf("RedactICE() = %+v, want one hashed UDP/443 endpoint and expiry", redacted)
 	}
 
-	values := []any{credentials, request}
+	values := []any{credentials, request, observation}
 	for _, value := range values {
 		encoded, marshalErr := json.Marshal(value)
 		if marshalErr != nil {
@@ -557,16 +629,88 @@ func TestSensitiveTURNValuesHaveOnlyRedactedRepresentations(t *testing.T) {
 	}
 }
 
+func TestSensitiveTURNFieldsArePrivateAndSkippedByGenericSerializers(t *testing.T) {
+	t.Parallel()
+
+	credentials := validCredentials()
+	request := RelayRequest{
+		uri:       credentials.uris[0],
+		username:  credentials.username,
+		password:  credentials.password,
+		payload:   []byte("nonce-sensitive"),
+		RelayOnly: true,
+	}
+	observation := RelayObservation{
+		payload:             []byte("nonce-sensitive"),
+		LocalCandidateType:  CandidateRelay,
+		RemoteCandidateType: CandidateRelay,
+		ArtifactSHA256:      hashString("relay-artifact"),
+	}
+
+	safeExportedFields := map[string]map[string]struct{}{
+		"TURNCredentials":  {"ExpiresAt": {}},
+		"RelayRequest":     {"RelayOnly": {}},
+		"RelayObservation": {"LocalCandidateType": {}, "RemoteCandidateType": {}, "ArtifactSHA256": {}},
+	}
+	for _, value := range []any{credentials, request, observation} {
+		typeOf := reflect.TypeOf(value)
+		valueOf := reflect.ValueOf(value)
+		exportedCount := 0
+		for index := 0; index < typeOf.NumField(); index++ {
+			field := typeOf.Field(index)
+			if !field.IsExported() {
+				if valueOf.Field(index).CanInterface() {
+					t.Errorf("%s.%s private value unexpectedly exposes Interface()", typeOf.Name(), field.Name)
+				}
+				continue
+			}
+			exportedCount++
+			if _, safe := safeExportedFields[typeOf.Name()][field.Name]; !safe {
+				t.Errorf("%s.%s is not approved safe metadata", typeOf.Name(), field.Name)
+			}
+		}
+		if exportedCount != len(safeExportedFields[typeOf.Name()]) {
+			t.Errorf("%s exported field count = %d, want %d", typeOf.Name(), exportedCount, len(safeExportedFields[typeOf.Name()]))
+		}
+
+		xmlPayload, err := xml.Marshal(value)
+		if err != nil {
+			t.Fatalf("xml.Marshal(%T) error = %v", value, err)
+		}
+		var gobPayload bytes.Buffer
+		if err := gob.NewEncoder(&gobPayload).Encode(value); err != nil {
+			t.Fatalf("gob.Encode(%T) error = %v", value, err)
+		}
+		jsonPayload, err := json.Marshal(value)
+		if err != nil {
+			t.Fatalf("json.Marshal(%T) error = %v", value, err)
+		}
+		for format, encoded := range map[string][]byte{"xml": xmlPayload, "gob": gobPayload.Bytes(), "json": jsonPayload} {
+			for _, secret := range []string{
+				"turn-user-sensitive",
+				"turn-password-sensitive",
+				"v-abc123.kinesisvideo.ap-south-1.amazonaws.com",
+				"nonce-sensitive",
+				base64.StdEncoding.EncodeToString([]byte("nonce-sensitive")),
+			} {
+				if bytes.Contains(encoded, []byte(secret)) {
+					t.Errorf("%s serialization of %T leaked %q", format, value, secret)
+				}
+			}
+		}
+	}
+}
+
 func TestRedactedICESortsHostFingerprintsDeterministically(t *testing.T) {
 	t.Parallel()
 
 	first := validCredentials()
-	first.URIs = []string{
+	first.uris = []string{
 		"turn:v-zulu.kinesisvideo.ap-south-1.amazonaws.com:443?transport=udp",
 		"turn:v-alpha.kinesisvideo.ap-south-1.amazonaws.com:443?transport=udp",
 	}
 	second := first
-	second.URIs = []string{first.URIs[1], first.URIs[0]}
+	second.uris = []string{first.uris[1], first.uris[0]}
 	redactedFirst, err := RedactICE(first)
 	if err != nil {
 		t.Fatalf("RedactICE(first) error = %v", err)
@@ -756,7 +900,7 @@ func TestProbeSyntheticRelayRoundTripIsByteExactAndRedacted(t *testing.T) {
 	}
 }
 
-func TestLiveProbeRequiresValidEvidenceBeforePrivateValidation(t *testing.T) {
+func TestLiveProbeRequiresValidEvidenceBeforeMetricsOrAttestation(t *testing.T) {
 	if !liveProbeBuildEnabled {
 		t.Skip("full fake probe requires the explicit test build tag")
 	}
@@ -764,7 +908,13 @@ func TestLiveProbeRequiresValidEvidenceBeforePrivateValidation(t *testing.T) {
 	config := validProbeConfig()
 	config.EvidenceMode = EvidenceLive
 	deps := successfulFakeDependencies(t)
-	deps.liveObserver.(*testLiveObserver).collectFn = func(context.Context, EvidenceRequest) (LiveEvidenceObservation, error) {
+	observer := deps.liveObserver.(*testLiveObserver)
+	var metricCalls atomic.Int64
+	deps.Metrics = metricsFunc(func(context.Context, ProbeMetric) error {
+		metricCalls.Add(1)
+		return nil
+	})
+	observer.collectFn = func(context.Context, EvidenceRequest) (LiveEvidenceObservation, error) {
 		value := validLiveEvidenceObservation()
 		value.BackendRegression.NoRegression = false
 		return value, nil
@@ -775,6 +925,12 @@ func TestLiveProbeRequiresValidEvidenceBeforePrivateValidation(t *testing.T) {
 	}
 	if result.Envelope != nil {
 		t.Fatal("invalid evidence yielded a signed envelope")
+	}
+	if calls := metricCalls.Load(); calls != 0 {
+		t.Fatalf("metrics calls = %d, want none before evidence validation", calls)
+	}
+	if calls := observer.attestCalls.Load(); calls != 0 {
+		t.Fatalf("observer attest calls = %d, want none for invalid evidence", calls)
 	}
 }
 
@@ -830,8 +986,8 @@ func TestLiveProbeReadsCompletionClockAfterEvidenceCollection(t *testing.T) {
 	if _, err := NewProbe(deps).Run(context.Background(), config); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got := strings.Join(events, ","); got != "clock,clock,clock,clock,evidence,clock" {
-		t.Fatalf("clock/evidence order = %q, want validated operation clocks before evidence completion", got)
+	if got := strings.Join(events, ","); got != "clock,clock,clock,clock,evidence,clock,clock" {
+		t.Fatalf("clock/evidence order = %q, want completion and pre-attestation clock checks", got)
 	}
 }
 
@@ -873,10 +1029,10 @@ func TestProbeRejectsNonRelayOrChangedPayloadWithoutLeakingDependencyDetails(t *
 		relay func([]byte) RelayObservation
 	}{
 		{name: "changed payload", relay: func([]byte) RelayObservation {
-			return RelayObservation{Payload: []byte("not-the-nonce"), LocalCandidateType: CandidateRelay, RemoteCandidateType: CandidateRelay}
+			return RelayObservation{payload: []byte("not-the-nonce"), LocalCandidateType: CandidateRelay, RemoteCandidateType: CandidateRelay}
 		}},
 		{name: "host candidate", relay: func(payload []byte) RelayObservation {
-			return RelayObservation{Payload: bytes.Clone(payload), LocalCandidateType: CandidateHost, RemoteCandidateType: CandidateRelay}
+			return RelayObservation{payload: bytes.Clone(payload), LocalCandidateType: CandidateHost, RemoteCandidateType: CandidateRelay}
 		}},
 	}
 
@@ -884,7 +1040,7 @@ func TestProbeRejectsNonRelayOrChangedPayloadWithoutLeakingDependencyDetails(t *
 		t.Run(test.name, func(t *testing.T) {
 			deps := successfulFakeDependencies(t)
 			deps.Relay = relayFunc(func(_ context.Context, request RelayRequest) (RelayObservation, error) {
-				return test.relay(request.Payload), nil
+				return test.relay(request.payload), nil
 			})
 
 			_, err := NewProbe(deps).Run(context.Background(), validProbeConfig())
@@ -988,7 +1144,7 @@ func replaceWSSEndpoint(rawURL string) []TLSEndpoint {
 
 func mutateCredentials(mutate func(*TURNCredentials)) TURNCredentials {
 	value := validCredentials()
-	value.URIs = append([]string(nil), value.URIs...)
+	value.uris = append([]string(nil), value.uris...)
 	mutate(&value)
 	return value
 }
@@ -1173,11 +1329,11 @@ func successfulFakeDependencies(t *testing.T) Dependencies {
 		}),
 		Relay: relayFunc(func(ctx context.Context, request RelayRequest) (RelayObservation, error) {
 			checkDeadline(ctx)
-			if !request.RelayOnly || len(request.Payload) != ProbeNonceBytes {
+			if !request.RelayOnly || len(request.payload) != ProbeNonceBytes {
 				return RelayObservation{}, errors.New("relay-only request contract violated")
 			}
 			return RelayObservation{
-				Payload:             bytes.Clone(request.Payload),
+				payload:             bytes.Clone(request.payload),
 				LocalCandidateType:  CandidateRelay,
 				RemoteCandidateType: CandidateRelay,
 				ArtifactSHA256:      hashString("relay-artifact-private-a"),

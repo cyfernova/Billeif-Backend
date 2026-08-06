@@ -50,6 +50,11 @@ func TestVoiceNetworkSpikeRunbookKeepsLiveGateClosed(t *testing.T) {
 		"LiveEvidenceEnvelope",
 		"Ed25519",
 		"portable signed",
+		"exactly two approved path fingerprints",
+		"kind/host/artifact tuples",
+		"exact six-target set",
+		"metrics before attestation",
+		"XML, gob, and reflection",
 		"replay",
 		"Stable redacted path identities",
 		"Changing the configured path order must not change the identity",
@@ -119,10 +124,13 @@ func TestVoiceTurnHarnessModelsPortableSignedEvidence(t *testing.T) {
 		"EnduranceObservation",
 		"CredentialLifecycleObservation",
 		"BackendRegressionObservation",
+		"RedactedNetworkTarget",
+		"LiveConnectivityEvidence",
 		"LiveEvidenceArtifacts",
 		"LiveEvidenceClaims",
 		"LiveEvidenceEnvelope",
 		"TrustedObserver",
+		"LiveReleasePathPolicy",
 		"LiveReleasePolicy",
 	} {
 		if !strings.Contains(source, "type "+contract+" struct") {
@@ -134,6 +142,8 @@ func TestVoiceTurnHarnessModelsPortableSignedEvidence(t *testing.T) {
 		"func LiveReleaseGateSatisfied(results ...ProbeResult)",
 		"type ValidatedLiveEvidence struct",
 		"Evidence EvidenceObserver",
+		"ConnectivityHostSHA256",
+		"ConnectivitySHA256",
 	} {
 		if strings.Contains(source, forgeableGate) {
 			t.Errorf("TURN proof harness must not release-gate caller-constructible ProbeResult values: %q", forgeableGate)
@@ -162,14 +172,31 @@ func TestVoiceTurnHarnessModelsPortableSignedEvidence(t *testing.T) {
 	if !sealedObserver {
 		t.Fatal("Dependencies must retain an unexported sealed live observer boundary")
 	}
+	assertExportedStructFields(t, parsed, "TURNCredentials", []string{"ExpiresAt"})
+	assertExportedStructFields(t, parsed, "RelayRequest", []string{"RelayOnly"})
+	assertExportedStructFields(t, parsed, "RelayObservation", []string{"LocalCandidateType", "RemoteCandidateType", "ArtifactSHA256"})
+	assertStructContainsFields(t, parsed, "LiveConnectivityEvidence", []string{"Kind", "HostSHA256", "Port", "ArtifactSHA256"})
+	assertStructContainsFields(t, parsed, "RedactedNetworkTarget", []string{"Kind", "HostSHA256", "Port"})
+	assertStructContainsFields(t, parsed, "LiveReleasePathPolicy", []string{"PathFingerprint", "ConnectivityTargets"})
+	assertStructContainsFields(t, parsed, "LiveReleasePolicy", []string{"ExpectedPaths"})
 	for _, required := range []string{
 		"func VerifyLiveRelease(",
 		"type LiveEvidenceReplayGuard interface",
+		"billeif-agentcore-turn-live-evidence-v2",
+		"requiredConnectivityTargetCount = 6",
+		"validateLiveEvidenceClaimShape(",
+		"validExpectedPaths(",
+		"connectivityTargetsMatchPolicy(",
 		"crypto/ed25519",
 		"liveEvidenceObserverSeal()",
 	} {
 		if !strings.Contains(source, required) {
 			t.Errorf("TURN proof harness is missing signed-envelope guardrail %q", required)
+		}
+	}
+	for _, forbidden := range []string{"ed25519.PrivateKey", "ed25519.Sign(", "ed25519.NewKeyFromSeed("} {
+		if strings.Contains(source, forbidden) {
+			t.Errorf("production TURN proof harness must not contain private signing capability %q", forbidden)
 		}
 	}
 }
@@ -209,6 +236,10 @@ func TestVoiceProbePackageTestsAreFakeOnlyAndRunInSafeCI(t *testing.T) {
 	for _, fakeOnly := range []string{
 		"successfulFakeDependencies",
 		"poisonDependencies",
+		"encoding/gob",
+		"encoding/xml",
+		"reflect",
+		"observer.attestCalls.Load()",
 	} {
 		if !strings.Contains(testSource, fakeOnly) {
 			t.Errorf("tagged probe package tests are missing fake-only invariant %q", fakeOnly)
@@ -224,6 +255,50 @@ func TestVoiceProbePackageTestsAreFakeOnlyAndRunInSafeCI(t *testing.T) {
 	} {
 		if strings.Contains(testSource, forbidden) {
 			t.Errorf("probe package tests must use injected fakes, found live-capable call %q", forbidden)
+		}
+	}
+}
+
+func assertExportedStructFields(t *testing.T, file *ast.File, typeName string, expected []string) {
+	t.Helper()
+	structure := findStructType(file, typeName)
+	if structure == nil {
+		t.Fatalf("TURN proof harness is missing struct %s", typeName)
+	}
+	actual := make(map[string]struct{})
+	for _, field := range structure.Fields.List {
+		for _, name := range field.Names {
+			if ast.IsExported(name.Name) {
+				actual[name.Name] = struct{}{}
+			}
+		}
+	}
+	if len(actual) != len(expected) {
+		t.Errorf("%s exported fields = %v, want exactly %v", typeName, actual, expected)
+		return
+	}
+	for _, name := range expected {
+		if _, ok := actual[name]; !ok {
+			t.Errorf("%s must export only safe field %s", typeName, name)
+		}
+	}
+}
+
+func assertStructContainsFields(t *testing.T, file *ast.File, typeName string, expected []string) {
+	t.Helper()
+	structure := findStructType(file, typeName)
+	if structure == nil {
+		t.Fatalf("TURN proof harness is missing struct %s", typeName)
+	}
+	actual := make(map[string]struct{})
+	for _, field := range structure.Fields.List {
+		for _, name := range field.Names {
+			actual[name.Name] = struct{}{}
+		}
+	}
+	for _, name := range expected {
+		if _, ok := actual[name]; !ok {
+			t.Errorf("%s is missing required field %s", typeName, name)
 		}
 	}
 }

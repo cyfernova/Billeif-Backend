@@ -32,12 +32,14 @@ const (
 
 	SarvamAPIHost = "api.sarvam.ai"
 
-	LiveEvidenceEnvelopeVersion = "billeif-agentcore-turn-live-evidence-v1"
+	LiveEvidenceEnvelopeVersion = "billeif-agentcore-turn-live-evidence-v2"
 )
 
 const liveEvidenceSignatureDomain = LiveEvidenceEnvelopeVersion + "\x00"
 
 const maxProbeTimeout = 45 * time.Minute
+
+const requiredConnectivityTargetCount = 6
 
 const (
 	// NATCPUUtilizationP95Limit is an exclusive p95 CPU pass threshold.
@@ -126,14 +128,14 @@ type TLSEndpoint struct {
 }
 
 type TURNCredentials struct {
-	URIs      []string
-	Username  string
-	Password  string
+	uris      []string
+	username  string
+	password  string
 	ExpiresAt time.Time
 }
 
 func (credentials TURNCredentials) String() string {
-	return fmt.Sprintf("turn_credentials{uri_count=%d,expires_at=%s}", len(credentials.URIs), credentials.ExpiresAt.UTC().Format(time.RFC3339))
+	return fmt.Sprintf("turn_credentials{uri_count=%d,expires_at=%s}", len(credentials.uris), credentials.ExpiresAt.UTC().Format(time.RFC3339))
 }
 
 func (credentials TURNCredentials) GoString() string {
@@ -145,26 +147,26 @@ func (credentials TURNCredentials) MarshalJSON() ([]byte, error) {
 		URIcount  int       `json:"uri_count"`
 		ExpiresAt time.Time `json:"expires_at"`
 	}
-	return json.Marshal(redactedCredentials{URIcount: len(credentials.URIs), ExpiresAt: credentials.ExpiresAt})
+	return json.Marshal(redactedCredentials{URIcount: len(credentials.uris), ExpiresAt: credentials.ExpiresAt})
 }
 
 type RelayRequest struct {
-	URI       string
-	Username  string
-	Password  string
-	Payload   []byte
+	uri       string
+	username  string
+	password  string
+	payload   []byte
 	RelayOnly bool
 }
 
 func (request RelayRequest) String() string {
 	hostFingerprint := ""
-	if host, ok := parseUDP443TURNURI(MumbaiRegion, request.URI); ok {
+	if host, ok := parseUDP443TURNURI(MumbaiRegion, request.uri); ok {
 		hostFingerprint = hashString(host)
 	}
 	return fmt.Sprintf(
 		"relay_request{host_sha256=%s,transport=udp,port=443,payload_bytes=%d,relay_only=%t}",
 		hostFingerprint,
-		len(request.Payload),
+		len(request.payload),
 		request.RelayOnly,
 	)
 }
@@ -175,7 +177,7 @@ func (request RelayRequest) GoString() string {
 
 func (request RelayRequest) MarshalJSON() ([]byte, error) {
 	hostFingerprint := ""
-	if host, ok := parseUDP443TURNURI(MumbaiRegion, request.URI); ok {
+	if host, ok := parseUDP443TURNURI(MumbaiRegion, request.uri); ok {
 		hostFingerprint = hashString(host)
 	}
 	type redactedRequest struct {
@@ -189,7 +191,7 @@ func (request RelayRequest) MarshalJSON() ([]byte, error) {
 		HostSHA256:   hostFingerprint,
 		Transport:    "udp",
 		Port:         443,
-		PayloadBytes: len(request.Payload),
+		PayloadBytes: len(request.payload),
 		RelayOnly:    request.RelayOnly,
 	})
 }
@@ -203,12 +205,12 @@ type RedactedICE struct {
 
 func RedactICE(credentials TURNCredentials) (RedactedICE, error) {
 	redacted := RedactedICE{
-		HostSHA256: make([]string, 0, len(credentials.URIs)),
+		HostSHA256: make([]string, 0, len(credentials.uris)),
 		Transport:  "udp",
 		Port:       443,
 		ExpiresAt:  credentials.ExpiresAt,
 	}
-	for _, rawURI := range credentials.URIs {
+	for _, rawURI := range credentials.uris {
 		host, ok := parseUDP443TURNURI(MumbaiRegion, rawURI)
 		if !ok {
 			return RedactedICE{}, ErrInvalidTURNCredentials
@@ -220,10 +222,39 @@ func RedactICE(credentials TURNCredentials) (RedactedICE, error) {
 }
 
 type RelayObservation struct {
-	Payload             []byte
+	payload             []byte
 	LocalCandidateType  string
 	RemoteCandidateType string
 	ArtifactSHA256      string
+}
+
+func (observation RelayObservation) String() string {
+	return fmt.Sprintf(
+		"relay_observation{payload_bytes=%d,local_candidate_type=%s,remote_candidate_type=%s,artifact_sha256=%s}",
+		len(observation.payload),
+		observation.LocalCandidateType,
+		observation.RemoteCandidateType,
+		observation.ArtifactSHA256,
+	)
+}
+
+func (observation RelayObservation) GoString() string {
+	return observation.String()
+}
+
+func (observation RelayObservation) MarshalJSON() ([]byte, error) {
+	type redactedObservation struct {
+		PayloadBytes        int    `json:"payload_bytes"`
+		LocalCandidateType  string `json:"local_candidate_type"`
+		RemoteCandidateType string `json:"remote_candidate_type"`
+		ArtifactSHA256      string `json:"artifact_sha256"`
+	}
+	return json.Marshal(redactedObservation{
+		PayloadBytes:        len(observation.payload),
+		LocalCandidateType:  observation.LocalCandidateType,
+		RemoteCandidateType: observation.RemoteCandidateType,
+		ArtifactSHA256:      observation.ArtifactSHA256,
+	})
 }
 
 type NetworkTargetKind string
@@ -394,15 +425,27 @@ type EvidenceSummary struct {
 	BackendRegressionPassed   bool `json:"backend_regression_passed"`
 }
 
+type RedactedNetworkTarget struct {
+	Kind       NetworkTargetKind `json:"kind"`
+	HostSHA256 string            `json:"host_sha256"`
+	Port       uint16            `json:"port"`
+}
+
+type LiveConnectivityEvidence struct {
+	Kind           NetworkTargetKind `json:"kind"`
+	HostSHA256     string            `json:"host_sha256"`
+	Port           uint16            `json:"port"`
+	ArtifactSHA256 string            `json:"artifact_sha256"`
+}
+
 type LiveEvidenceArtifacts struct {
-	TopologySHA256            string   `json:"topology_sha256"`
-	ConnectivityHostSHA256    []string `json:"connectivity_host_sha256"`
-	ConnectivitySHA256        []string `json:"connectivity_sha256"`
-	RelaySHA256               string   `json:"relay_sha256"`
-	NATSHA256                 string   `json:"nat_sha256"`
-	EnduranceSHA256           string   `json:"endurance_sha256"`
-	CredentialLifecycleSHA256 string   `json:"credential_lifecycle_sha256"`
-	BackendRegressionSHA256   string   `json:"backend_regression_sha256"`
+	TopologySHA256            string                     `json:"topology_sha256"`
+	Connectivity              []LiveConnectivityEvidence `json:"connectivity"`
+	RelaySHA256               string                     `json:"relay_sha256"`
+	NATSHA256                 string                     `json:"nat_sha256"`
+	EnduranceSHA256           string                     `json:"endurance_sha256"`
+	CredentialLifecycleSHA256 string                     `json:"credential_lifecycle_sha256"`
+	BackendRegressionSHA256   string                     `json:"backend_regression_sha256"`
 }
 
 type LiveEvidenceClaims struct {
@@ -443,6 +486,11 @@ type TrustedObserver struct {
 	PublicKey ed25519.PublicKey `json:"-"`
 }
 
+type LiveReleasePathPolicy struct {
+	PathFingerprint     string
+	ConnectivityTargets []RedactedNetworkTarget
+}
+
 type LiveReleasePolicy struct {
 	CampaignID        string
 	SourceRevision    string
@@ -450,6 +498,7 @@ type LiveReleasePolicy struct {
 	ChangeWindowStart time.Time
 	ChangeWindowEnd   time.Time
 	MaxEvidenceAge    time.Duration
+	ExpectedPaths     []LiveReleasePathPolicy
 	AllowedObservers  []TrustedObserver
 }
 
@@ -645,7 +694,7 @@ func (probe *Probe) Run(parent context.Context, config Config) (ProbeResult, err
 	}
 	targets, err := buildNetworkTargets(config, endpoints)
 	if err != nil {
-		return failed, ErrInvalidProbeConfig
+		return failed, ErrInvalidTLSEndpoint
 	}
 	networkContext, cancelNetwork := context.WithTimeout(overallContext, config.NetworkTimeout)
 	network, err := probe.dependencies.Network.Check(networkContext, append([]NetworkTarget(nil), targets...))
@@ -683,10 +732,10 @@ func (probe *Probe) Run(parent context.Context, config Config) (ProbeResult, err
 	}
 	relayContext, cancelRelay := context.WithTimeout(overallContext, config.RelayTimeout)
 	observation, err := probe.dependencies.Relay.RoundTrip(relayContext, RelayRequest{
-		URI:       credentials.URIs[0],
-		Username:  credentials.Username,
-		Password:  credentials.Password,
-		Payload:   bytes.Clone(payload),
+		uri:       credentials.uris[0],
+		username:  credentials.username,
+		password:  credentials.password,
+		payload:   bytes.Clone(payload),
 		RelayOnly: true,
 	})
 	if err = finishDependency(relayContext, cancelRelay, err, ErrRelayRoundTripFailed); err != nil {
@@ -698,7 +747,7 @@ func (probe *Probe) Run(parent context.Context, config Config) (ProbeResult, err
 		return failed, ErrInvalidTURNCredentials
 	}
 	if observation.LocalCandidateType != CandidateRelay || observation.RemoteCandidateType != CandidateRelay ||
-		!bytes.Equal(observation.Payload, payload) || !isSHA256(observation.ArtifactSHA256) {
+		!bytes.Equal(observation.payload, payload) || !isSHA256(observation.ArtifactSHA256) {
 		return failed, ErrRelayRoundTripFailed
 	}
 
@@ -771,15 +820,25 @@ func (probe *Probe) Run(parent context.Context, config Config) (ProbeResult, err
 			observation,
 			evidence,
 		)
-		claimPolicy := LiveReleasePolicy{
-			CampaignID:        config.CampaignID,
-			SourceRevision:    config.SourceRevision,
-			ImageDigest:       config.ImageDigest,
-			ChangeWindowStart: config.ChangeWindowStart,
-			ChangeWindowEnd:   config.ChangeWindowEnd,
-			MaxEvidenceAge:    config.EvidenceMaxAge,
+		if !validateLiveEvidenceClaimShape(completedAt, config.EvidenceMaxAge, claims) {
+			cancelEvidence()
+			return failed, ErrInvalidLiveEvidence
 		}
-		if !validateLiveEvidenceClaims(completedAt, claimPolicy, claims) {
+		if metricsErr := probe.recordMetrics(overallContext, config.MetricsTimeout, result); metricsErr != nil {
+			cancelEvidence()
+			return failed, metricsErr
+		}
+		if contextErr := overallContext.Err(); contextErr != nil {
+			cancelEvidence()
+			return failed, errors.Join(ErrLiveAttestationFailed, contextErr)
+		}
+		if contextErr := evidenceContext.Err(); contextErr != nil {
+			cancelEvidence()
+			return failed, errors.Join(ErrLiveAttestationFailed, contextErr)
+		}
+		attestationStartedAt := probe.now(EvidenceLive)
+		if attestationStartedAt.Before(completedAt) || attestationStartedAt.Sub(runStartedAt) > config.OverallTimeout ||
+			attestationStartedAt.After(config.ChangeWindowEnd) || !validateLiveEvidenceClaimShape(attestationStartedAt, config.EvidenceMaxAge, claims) {
 			cancelEvidence()
 			return failed, ErrInvalidLiveEvidence
 		}
@@ -791,9 +850,17 @@ func (probe *Probe) Run(parent context.Context, config Config) (ProbeResult, err
 			return failed, ErrInvalidLiveEvidence
 		}
 		result.Envelope = &envelope
+		return result, nil
 	}
-	metricsContext, cancelMetrics := context.WithTimeout(overallContext, config.MetricsTimeout)
-	err = probe.dependencies.Metrics.Record(metricsContext, ProbeMetric{
+	if err := probe.recordMetrics(overallContext, config.MetricsTimeout, result); err != nil {
+		return failed, err
+	}
+	return result, nil
+}
+
+func (probe *Probe) recordMetrics(parent context.Context, timeout time.Duration, result ProbeResult) error {
+	metricsContext, cancelMetrics := context.WithTimeout(parent, timeout)
+	err := probe.dependencies.Metrics.Record(metricsContext, ProbeMetric{
 		Name:                  ProbeMetricName,
 		EvidenceMode:          result.EvidenceMode,
 		PathFingerprint:       result.PathFingerprint,
@@ -805,9 +872,9 @@ func (probe *Probe) Run(parent context.Context, config Config) (ProbeResult, err
 		Evidence:              result.Evidence,
 	})
 	if err = finishDependency(metricsContext, cancelMetrics, err, ErrMetricsRecordingFailed); err != nil {
-		return failed, err
+		return err
 	}
-	return result, nil
+	return nil
 }
 
 func finishDependency(ctx context.Context, cancel context.CancelFunc, providerErr, redactedErr error) error {
@@ -991,30 +1058,64 @@ func ValidateTLSEndpoints(region string, exactHosts []string, endpoints []TLSEnd
 }
 
 func buildNetworkTargets(config Config, endpoints []TLSEndpoint) ([]NetworkTarget, error) {
-	candidates := []NetworkTarget{
+	if err := ValidateTLSEndpoints(config.Region, config.ExactTLSHosts, endpoints); err != nil {
+		return nil, ErrInvalidTLSEndpoint
+	}
+	targets := []NetworkTarget{
 		{Kind: NetworkKVSControl, Host: kvsControlPlaneHost(config.Region), Port: 443},
 		{Kind: NetworkSecretsManager, Host: "secretsmanager." + config.Region + ".amazonaws.com", Port: 443},
 		{Kind: NetworkCloudWatchLogs, Host: "logs." + config.Region + ".amazonaws.com", Port: 443},
 		{Kind: NetworkSarvam, Host: SarvamAPIHost, Port: 443},
 		{Kind: NetworkBilleifBackend, Host: config.BilleifBackendHost, Port: 443},
 	}
+	dynamicHosts := make(map[string]struct{}, 1)
+	controlHost := kvsControlPlaneHost(config.Region)
 	for _, endpoint := range endpoints {
 		parsed, err := url.Parse(endpoint.URL)
-		if err != nil || parsed.Hostname() == "" {
+		if err != nil || parsed.Hostname() == "" || (parsed.Port() != "" && parsed.Port() != "443") {
 			return nil, ErrInvalidTLSEndpoint
 		}
-		candidates = append(candidates, NetworkTarget{Kind: NetworkKVSDiscovered, Host: parsed.Hostname(), Port: 443})
-	}
-	targets := make([]NetworkTarget, 0, len(candidates))
-	seenHosts := make(map[string]struct{}, len(candidates))
-	for _, candidate := range candidates {
-		if _, duplicate := seenHosts[candidate.Host]; duplicate {
+		host := parsed.Hostname()
+		if host == controlHost {
 			continue
 		}
-		seenHosts[candidate.Host] = struct{}{}
-		targets = append(targets, candidate)
+		if !isRegionBoundKVSHost(config.Region, host) {
+			return nil, ErrInvalidTLSEndpoint
+		}
+		dynamicHosts[host] = struct{}{}
+	}
+	if len(dynamicHosts) != 1 {
+		return nil, ErrInvalidTLSEndpoint
+	}
+	for host := range dynamicHosts {
+		targets = append(targets, NetworkTarget{Kind: NetworkKVSDiscovered, Host: host, Port: 443})
+	}
+	if !validMandatoryNetworkTargets(targets) {
+		return nil, ErrInvalidTLSEndpoint
 	}
 	return targets, nil
+}
+
+func validMandatoryNetworkTargets(targets []NetworkTarget) bool {
+	if len(targets) != requiredConnectivityTargetCount {
+		return false
+	}
+	seenKinds := make(map[NetworkTargetKind]struct{}, requiredConnectivityTargetCount)
+	seenHosts := make(map[string]struct{}, requiredConnectivityTargetCount)
+	for _, target := range targets {
+		if !isMandatoryNetworkTargetKind(target.Kind) || !isStrictDNSName(target.Host) || target.Port != 443 {
+			return false
+		}
+		if _, duplicate := seenKinds[target.Kind]; duplicate {
+			return false
+		}
+		if _, duplicate := seenHosts[target.Host]; duplicate {
+			return false
+		}
+		seenKinds[target.Kind] = struct{}{}
+		seenHosts[target.Host] = struct{}{}
+	}
+	return true
 }
 
 func ValidateNetworkObservations(windowStart, windowEnd time.Time, maxAge time.Duration, targets []NetworkTarget, observations []ConnectivityObservation) error {
@@ -1185,14 +1286,21 @@ func buildLiveEvidenceClaims(
 	relay RelayObservation,
 	evidence LiveEvidenceObservation,
 ) LiveEvidenceClaims {
-	hostDigests := make([]string, 0, len(network))
-	connectivityDigests := make([]string, 0, len(network))
+	connectivity := make([]LiveConnectivityEvidence, 0, len(network))
 	for _, item := range network {
-		hostDigests = append(hostDigests, hashString(item.Host))
-		connectivityDigests = append(connectivityDigests, item.ArtifactSHA256)
+		connectivity = append(connectivity, LiveConnectivityEvidence{
+			Kind:           item.Kind,
+			HostSHA256:     hashString(item.Host),
+			Port:           item.Port,
+			ArtifactSHA256: item.ArtifactSHA256,
+		})
 	}
-	sort.Strings(hostDigests)
-	sort.Strings(connectivityDigests)
+	sort.Slice(connectivity, func(first, second int) bool {
+		if connectivity[first].Kind != connectivity[second].Kind {
+			return connectivity[first].Kind < connectivity[second].Kind
+		}
+		return connectivity[first].HostSHA256 < connectivity[second].HostSHA256
+	})
 	return LiveEvidenceClaims{
 		Version:                LiveEvidenceEnvelopeVersion,
 		RunID:                  runID,
@@ -1218,8 +1326,7 @@ func buildLiveEvidenceClaims(
 		RelayOnly:              result.RelayOnly,
 		Artifacts: LiveEvidenceArtifacts{
 			TopologySHA256:            topology.ArtifactSHA256,
-			ConnectivityHostSHA256:    hostDigests,
-			ConnectivitySHA256:        connectivityDigests,
+			Connectivity:              connectivity,
 			RelaySHA256:               relay.ArtifactSHA256,
 			NATSHA256:                 evidence.NAT.ArtifactSHA256,
 			EnduranceSHA256:           evidence.Endurance.ArtifactSHA256,
@@ -1296,6 +1403,10 @@ func verifyLiveReleaseAt(ctx context.Context, now time.Time, policy LiveReleaseP
 
 	runIDs := make(map[string]struct{}, 2)
 	paths := make(map[string]struct{}, 2)
+	expectedPaths := make(map[string]struct{}, len(policy.ExpectedPaths))
+	for _, expectedPath := range policy.ExpectedPaths {
+		expectedPaths[expectedPath.PathFingerprint] = struct{}{}
+	}
 	artifacts := make(map[string]struct{})
 	envelopeDigests := make([]string, 0, 2)
 	for _, envelope := range envelopes {
@@ -1327,8 +1438,13 @@ func verifyLiveReleaseAt(ctx context.Context, now time.Time, policy LiveReleaseP
 		}
 		envelopeDigests = append(envelopeDigests, digest)
 	}
-	if envelopeDigests[0] == envelopeDigests[1] {
+	if len(paths) != len(expectedPaths) || envelopeDigests[0] == envelopeDigests[1] {
 		return ErrInvalidLiveEvidence
+	}
+	for pathFingerprint := range expectedPaths {
+		if _, ok := paths[pathFingerprint]; !ok {
+			return ErrInvalidLiveEvidence
+		}
 	}
 	if err := replay.Reserve(ctx, policy.CampaignID, append([]string(nil), envelopeDigests...), policy.ChangeWindowEnd); err != nil {
 		if contextErr := ctx.Err(); contextErr != nil {
@@ -1343,44 +1459,75 @@ func validLiveReleasePolicy(now time.Time, policy LiveReleasePolicy) bool {
 	return isUTC(now) && isSafeIdentifier(policy.CampaignID) && isSourceRevision(policy.SourceRevision) && isImageDigest(policy.ImageDigest) &&
 		isUTC(policy.ChangeWindowStart) && isUTC(policy.ChangeWindowEnd) && policy.ChangeWindowEnd.After(policy.ChangeWindowStart) &&
 		!now.Before(policy.ChangeWindowStart) && !now.After(policy.ChangeWindowEnd) &&
-		policy.MaxEvidenceAge > 0 && policy.MaxEvidenceAge <= policy.ChangeWindowEnd.Sub(policy.ChangeWindowStart) && len(policy.AllowedObservers) > 0
+		policy.MaxEvidenceAge > 0 && policy.MaxEvidenceAge <= policy.ChangeWindowEnd.Sub(policy.ChangeWindowStart) &&
+		validExpectedPaths(policy.ExpectedPaths) && len(policy.AllowedObservers) > 0
 }
 
 func validateLiveEvidenceClaims(now time.Time, policy LiveReleasePolicy, claims LiveEvidenceClaims) bool {
+	expectedPath, ok := findExpectedPath(policy.ExpectedPaths, claims.PathFingerprint)
+	if !ok {
+		return false
+	}
+	return validateLiveEvidenceClaimShape(now, policy.MaxEvidenceAge, claims) &&
+		claims.CampaignID == policy.CampaignID && claims.SourceRevision == policy.SourceRevision && claims.ImageDigest == policy.ImageDigest &&
+		claims.ChangeWindowStart.Equal(policy.ChangeWindowStart) && claims.ChangeWindowEnd.Equal(policy.ChangeWindowEnd) &&
+		connectivityTargetsMatchPolicy(expectedPath.ConnectivityTargets, claims.Artifacts.Connectivity)
+}
+
+func validateLiveEvidenceClaimShape(now time.Time, maxEvidenceAge time.Duration, claims LiveEvidenceClaims) bool {
 	if claims.Version != LiveEvidenceEnvelopeVersion || !isSHA256(claims.RunID) || !isSHA256(claims.PathFingerprint) ||
-		claims.CampaignID != policy.CampaignID || claims.SourceRevision != policy.SourceRevision || claims.ImageDigest != policy.ImageDigest ||
+		!isSafeIdentifier(claims.CampaignID) || !isSourceRevision(claims.SourceRevision) || !isImageDigest(claims.ImageDigest) ||
 		!isSafeIdentifier(claims.ObserverIdentity) || !isSafeIdentifier(claims.ObserverKeyID) ||
-		!claims.ChangeWindowStart.Equal(policy.ChangeWindowStart) || !claims.ChangeWindowEnd.Equal(policy.ChangeWindowEnd) ||
+		!isUTC(claims.ChangeWindowStart) || !isUTC(claims.ChangeWindowEnd) || !claims.ChangeWindowEnd.After(claims.ChangeWindowStart) ||
 		!isUTC(claims.RunStartedAt) || !isUTC(claims.NetworkCompletedAt) || !isUTC(claims.CredentialAcquiredAt) ||
 		!isUTC(claims.RelayCompletedAt) || !isUTC(claims.CompletedAt) ||
 		claims.RunStartedAt.Before(claims.ChangeWindowStart) || !claims.RunStartedAt.Before(claims.ChangeWindowEnd) ||
 		claims.NetworkCompletedAt.Before(claims.RunStartedAt) || claims.CredentialAcquiredAt.Before(claims.NetworkCompletedAt) ||
 		claims.RelayCompletedAt.Before(claims.CredentialAcquiredAt) || !claims.CompletedAt.After(claims.RelayCompletedAt) ||
 		claims.CompletedAt.After(claims.ChangeWindowEnd) || claims.CompletedAt.Sub(claims.RunStartedAt) < MinimumTURNEndurance ||
-		claims.CompletedAt.Sub(claims.RunStartedAt) > maxProbeTimeout || claims.CompletedAt.After(now) || now.Sub(claims.CompletedAt) > policy.MaxEvidenceAge {
+		claims.CompletedAt.Sub(claims.RunStartedAt) > maxProbeTimeout || !isUTC(now) || maxEvidenceAge <= 0 ||
+		claims.CompletedAt.After(now) || now.Sub(claims.CompletedAt) > maxEvidenceAge {
 		return false
 	}
-	if claims.ValidatedPaths != 2 || claims.TLSEndpoints != 2 || claims.NetworkHostsValidated <= 0 ||
+	if claims.ValidatedPaths != 2 || claims.TLSEndpoints != 2 || claims.NetworkHostsValidated != requiredConnectivityTargetCount ||
 		claims.RoundTripBytes != ProbeNonceBytes || !claims.RelayOnly || claims.CredentialExpiryMargin <= 0 ||
 		claims.ICE.Transport != "udp" || claims.ICE.Port != 443 || !isUTC(claims.ICE.ExpiresAt) ||
 		!claims.ICE.ExpiresAt.After(claims.RelayCompletedAt.Add(claims.CredentialExpiryMargin)) || !claims.ICE.ExpiresAt.Before(claims.CompletedAt) ||
-		len(claims.ICE.HostSHA256) == 0 || len(claims.Artifacts.ConnectivityHostSHA256) != claims.NetworkHostsValidated ||
-		len(claims.Artifacts.ConnectivitySHA256) != claims.NetworkHostsValidated ||
+		len(claims.ICE.HostSHA256) == 0 || len(claims.Artifacts.Connectivity) != requiredConnectivityTargetCount ||
 		!claims.Evidence.NATHealthy || claims.Evidence.EnduranceMinutes < int(MinimumTURNEndurance/time.Minute) ||
 		!claims.Evidence.CredentialLifecyclePassed || !claims.Evidence.BackendRegressionPassed {
 		return false
 	}
-	for _, digests := range [][]string{claims.ICE.HostSHA256, claims.Artifacts.ConnectivityHostSHA256} {
-		seenHosts := make(map[string]struct{}, len(digests))
-		for _, digest := range digests {
-			if !isSHA256(digest) {
-				return false
-			}
-			if _, duplicate := seenHosts[digest]; duplicate {
-				return false
-			}
-			seenHosts[digest] = struct{}{}
+	seenICEHosts := make(map[string]struct{}, len(claims.ICE.HostSHA256))
+	for _, digest := range claims.ICE.HostSHA256 {
+		if !isSHA256(digest) {
+			return false
 		}
+		if _, duplicate := seenICEHosts[digest]; duplicate {
+			return false
+		}
+		seenICEHosts[digest] = struct{}{}
+	}
+	seenConnectivityHosts := make(map[string]struct{}, requiredConnectivityTargetCount)
+	seenConnectivityKinds := make(map[NetworkTargetKind]struct{}, requiredConnectivityTargetCount)
+	seenConnectivityTargets := make(map[string]struct{}, requiredConnectivityTargetCount)
+	for _, item := range claims.Artifacts.Connectivity {
+		if !isMandatoryNetworkTargetKind(item.Kind) || !isSHA256(item.HostSHA256) || item.Port != 443 || !isSHA256(item.ArtifactSHA256) {
+			return false
+		}
+		if _, duplicate := seenConnectivityHosts[item.HostSHA256]; duplicate {
+			return false
+		}
+		if _, duplicate := seenConnectivityKinds[item.Kind]; duplicate {
+			return false
+		}
+		targetKey := redactedNetworkTargetKey(item.Kind, item.HostSHA256, item.Port)
+		if _, duplicate := seenConnectivityTargets[targetKey]; duplicate {
+			return false
+		}
+		seenConnectivityHosts[item.HostSHA256] = struct{}{}
+		seenConnectivityKinds[item.Kind] = struct{}{}
+		seenConnectivityTargets[targetKey] = struct{}{}
 	}
 	seenArtifacts := make(map[string]struct{})
 	for _, digest := range allLiveArtifactDigests(claims.Artifacts) {
@@ -1395,10 +1542,95 @@ func validateLiveEvidenceClaims(now time.Time, policy LiveReleasePolicy, claims 
 	return true
 }
 
+func validExpectedPaths(paths []LiveReleasePathPolicy) bool {
+	if len(paths) != 2 {
+		return false
+	}
+	seen := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		if !isSHA256(path.PathFingerprint) || !validExpectedConnectivityTargets(path.ConnectivityTargets) {
+			return false
+		}
+		if _, duplicate := seen[path.PathFingerprint]; duplicate {
+			return false
+		}
+		seen[path.PathFingerprint] = struct{}{}
+	}
+	return true
+}
+
+func validExpectedConnectivityTargets(targets []RedactedNetworkTarget) bool {
+	if len(targets) != requiredConnectivityTargetCount {
+		return false
+	}
+	seenHosts := make(map[string]struct{}, requiredConnectivityTargetCount)
+	seenKinds := make(map[NetworkTargetKind]struct{}, requiredConnectivityTargetCount)
+	seenTargets := make(map[string]struct{}, requiredConnectivityTargetCount)
+	for _, target := range targets {
+		if !isMandatoryNetworkTargetKind(target.Kind) || !isSHA256(target.HostSHA256) || target.Port != 443 {
+			return false
+		}
+		if _, duplicate := seenHosts[target.HostSHA256]; duplicate {
+			return false
+		}
+		if _, duplicate := seenKinds[target.Kind]; duplicate {
+			return false
+		}
+		key := redactedNetworkTargetKey(target.Kind, target.HostSHA256, target.Port)
+		if _, duplicate := seenTargets[key]; duplicate {
+			return false
+		}
+		seenHosts[target.HostSHA256] = struct{}{}
+		seenKinds[target.Kind] = struct{}{}
+		seenTargets[key] = struct{}{}
+	}
+	return true
+}
+
+func connectivityTargetsMatchPolicy(expected []RedactedNetworkTarget, observed []LiveConnectivityEvidence) bool {
+	if len(expected) != len(observed) {
+		return false
+	}
+	expectedSet := make(map[string]struct{}, len(expected))
+	for _, target := range expected {
+		expectedSet[redactedNetworkTargetKey(target.Kind, target.HostSHA256, target.Port)] = struct{}{}
+	}
+	for _, item := range observed {
+		if _, ok := expectedSet[redactedNetworkTargetKey(item.Kind, item.HostSHA256, item.Port)]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func isMandatoryNetworkTargetKind(kind NetworkTargetKind) bool {
+	switch kind {
+	case NetworkKVSControl, NetworkSecretsManager, NetworkCloudWatchLogs, NetworkSarvam, NetworkBilleifBackend, NetworkKVSDiscovered:
+		return true
+	default:
+		return false
+	}
+}
+
+func redactedNetworkTargetKey(kind NetworkTargetKind, hostSHA256 string, port uint16) string {
+	return fmt.Sprintf("%s\x00%s\x00%d", kind, hostSHA256, port)
+}
+
+func findExpectedPath(paths []LiveReleasePathPolicy, pathFingerprint string) (LiveReleasePathPolicy, bool) {
+	for _, path := range paths {
+		if path.PathFingerprint == pathFingerprint {
+			return path, true
+		}
+	}
+	return LiveReleasePathPolicy{}, false
+}
+
 func allLiveArtifactDigests(artifacts LiveEvidenceArtifacts) []string {
-	values := make([]string, 0, len(artifacts.ConnectivitySHA256)+6)
+	values := make([]string, 0, len(artifacts.Connectivity)+6)
 	values = append(values, artifacts.TopologySHA256)
-	values = append(values, artifacts.ConnectivitySHA256...)
+	for _, item := range artifacts.Connectivity {
+		values = append(values, item.ArtifactSHA256)
+	}
 	values = append(values,
 		artifacts.RelaySHA256,
 		artifacts.NATSHA256,
@@ -1426,14 +1658,14 @@ func validTrustedObserver(observer TrustedObserver) bool {
 }
 
 func ValidateTURNCredentials(region string, now time.Time, expiryMargin time.Duration, credentials TURNCredentials) error {
-	if region != MumbaiRegion || expiryMargin <= 0 || credentials.Username == "" || credentials.Password == "" || len(credentials.URIs) == 0 {
+	if region != MumbaiRegion || expiryMargin <= 0 || credentials.username == "" || credentials.password == "" || len(credentials.uris) == 0 {
 		return ErrInvalidTURNCredentials
 	}
 	if !credentials.ExpiresAt.After(now.Add(expiryMargin)) {
 		return ErrInvalidTURNCredentials
 	}
-	seen := make(map[string]struct{}, len(credentials.URIs))
-	for _, rawURI := range credentials.URIs {
+	seen := make(map[string]struct{}, len(credentials.uris))
+	for _, rawURI := range credentials.uris {
 		if _, duplicate := seen[rawURI]; duplicate || !isUDP443TURNURI(region, rawURI) {
 			return ErrInvalidTURNCredentials
 		}

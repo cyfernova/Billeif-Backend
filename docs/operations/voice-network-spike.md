@@ -63,19 +63,36 @@ target. A public `Dependencies`, `Clock`, or caller-selected `LIVE` label cannot
 inject the package-sealed observer needed to mint an envelope.
 
 One result cannot open the gate. After detailed evidence validation, the sealed
-observer signs a portable `LiveEvidenceEnvelope`. Its canonical claims bind the
-campaign, full source revision, immutable image digest, trusted observer
-identity and key ID, change window, random run ID, stable path fingerprint,
-operation timestamps, redacted ICE metadata and expiry, complete artifact
-digest set, and safe pass summary. The private key stays inside the sealed
-observer adapter and is never serialized, formatted, logged, or returned.
+observer records the required metrics before attestation, re-reads its sealed
+clock, and only then signs a version-2 portable `LiveEvidenceEnvelope`. Its
+canonical claims bind the campaign, full source revision, immutable image
+digest, trusted observer identity and key ID, change window, random run ID,
+stable path fingerprint, operation timestamps, redacted ICE metadata and
+expiry, complete artifact digest set, six port-443 kind/host/artifact tuples,
+and safe pass summary. A metric failure, expired evidence context, elapsed
+overall deadline, stale completion, or closed change window produces no
+signature. The private key stays inside the sealed observer adapter and is
+never serialized, formatted, logged, or returned.
+
+Raw TURN URIs, usernames, passwords, request payloads, and returned nonces are
+unexported package fields so only a future same-package adapter can map them.
+Only expiry, relay-only state, candidate types, sizes, hashes, and other safe
+metadata remain public. Tests cover JSON, XML, gob, and reflection surfaces as
+well as default formatting to prove those standard paths contain neither the
+credentials nor the nonce.
 
 The central evaluator verifies two JSON-round-trippable envelopes against an
-operator-supplied trusted-key policy. Both must be fresh, in the same approved
-campaign, build, image, and change window, while having distinct run IDs, paths,
-and non-overlapping artifact sets. Signature verification precedes an atomic
-reservation in a required durable replay guard. A duplicate, stale, tampered,
-cross-campaign, cross-build, untrusted-observer, or previously consumed envelope
+operator-supplied trusted-key policy. Its two path-scoped entries contain
+exactly two approved path fingerprints and an exact six-target set for each
+path, using redacted kind, host hash, and port 443 values: KVS control, Secrets
+Manager, CloudWatch Logs, Sarvam, Billeif, and one dynamic KVS host distinct
+from control. The two envelope paths must equal that approved set, and each
+envelope's signed connectivity tuples must equal the six targets for its own
+path. Both envelopes must also be fresh, in the same approved campaign, build,
+image, and change window, with distinct run IDs and non-overlapping artifact
+sets. Signature verification precedes an atomic reservation in a required
+durable replay guard. A duplicate, stale, tampered, cross-campaign, cross-build,
+untrusted-observer, wrong-path, missing-target, or previously consumed envelope
 fails closed. Changing the configured path order must not change the identity.
 There is deliberately no Make target for launching a live probe; the future
 operator change must add the reviewed package-owned adapter without exposing a
@@ -98,6 +115,10 @@ it. These contracts are exercised only with fakes in ordinary and
   443 result, bounded observation time, and artifact hash per required host.
   AWS control/signaling, Sarvam, Billeif, and dynamically returned KVS hosts
   must all be present; aggregate success booleans are insufficient.
+- `LiveConnectivityEvidence` preserves six signed kind/host/artifact tuples,
+  including port 443, instead of independently sorted host and artifact lists.
+  The target builder fails unless it finds each mandatory kind exactly once and
+  exactly one dynamic KVS host distinct from the KVS control host.
 - `RedactedICE` carries only a host hash, `udp` transport, port 443, and expiry.
   Raw ICE hosts and credentials remain inside the narrow relay boundary and
   must be non-serializable and safe under default formatting.
@@ -114,9 +135,10 @@ it. These contracts are exercised only with fakes in ordinary and
 - `LiveEvidenceEnvelope` is a portable signed DTO containing hashes and safe
   metadata only. The sealed observer receives claims only after topology,
   connectivity, ICE, relay, NAT, endurance, credential-lifecycle, backend,
-  timestamp, and artifact checks pass. A central `VerifyLiveRelease` call
-  requires a trusted observer policy and replay guard; public or synthetic
-  `ProbeResult` values cannot satisfy it.
+  timestamp, artifact, and required metric checks pass. A central
+  `VerifyLiveRelease` call requires a trusted observer policy with two
+  path-scoped target sets and a replay guard; public or synthetic `ProbeResult`
+  values cannot satisfy it.
 
 Artifact hashes identify access-controlled evidence without embedding raw
 artifacts in a runtime response. The signed envelope may carry those hashes but
@@ -259,7 +281,9 @@ For probe A and then probe B:
    endpoint. Produce one `ConnectivityObservation` per AWS control/signaling,
    Sarvam, Billeif, and dynamic KVS host. Record stable host/result hashes,
    bounded timestamps, and private artifact digests; do not record raw hosts,
-   tokens, request bodies, or resolved credentials.
+   tokens, request bodies, or resolved credentials. Precompute each path's six
+   approved redacted kind/host/443 targets independently and place them in the
+   central release policy; never derive policy targets from submitted envelopes.
 3. Call KVS `GetIceServerConfig` on only the assigned test channel. Record a
    `RedactedICE` response containing the stable approved-host hash, UDP
    transport, port 443, and expiry time. Raw host, username, password, and
@@ -374,11 +398,13 @@ access-controlled, redacted artifacts; do not paste raw logs or credentials.
 | Probe A route table | |
 | Probe A AgentCore ENI | |
 | Probe A stable redacted path identity | |
+| Probe A approved six-target kind/host/443 set | |
 | Probe B runtime and endpoint | |
 | Probe B subnet and AZ ID | |
 | Probe B route table | |
 | Probe B AgentCore ENI | |
 | Probe B stable redacted path identity | |
+| Probe B approved six-target kind/host/443 set | |
 | NAT instance and public subnet | |
 | NAT source/destination check | |
 | Observed NAT Elastic IP | |
@@ -392,6 +418,8 @@ access-controlled, redacted artifacts; do not paste raw logs or credentials.
 | Endpoint allowlist revision | |
 | Probe A per-host DNS/TCP 443 artifact hashes | |
 | Probe B per-host DNS/TCP 443 artifact hashes | |
+| Probe A six signed connectivity tuples | |
+| Probe B six signed connectivity tuples | |
 | Probe A connectivity observation window | |
 | Probe B connectivity observation window | |
 | Probe A run/network/credential/relay/completion instants | |
