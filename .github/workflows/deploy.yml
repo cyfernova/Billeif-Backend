@@ -111,6 +111,23 @@ jobs:
       - name: Run Go tests
         run: go test ./...
 
+      - name: Test AgentCore runtime contract
+        run: make test-agentcore
+
+      - name: Build AgentCore ARM64 binary
+        run: make build-agentcore
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build AgentCore ARM64 image without publishing
+        run: |
+          docker buildx build --platform linux/arm64 \
+            --file deploy/agentcore/Dockerfile \
+            --tag billeif-voice-runtime:ci \
+            --load .
+          test "$(docker inspect billeif-voice-runtime:ci --format '{{.Os}}/{{.Architecture}} {{.Config.User}}')" = "linux/arm64 10001:10001"
+
       - name: Build Lambda artifacts
         run: make package-lambda
 

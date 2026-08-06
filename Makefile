@@ -3,9 +3,10 @@
 -include .env.local
 export
 
-.PHONY: help infra-backend-init infra-init infra-validate infra-apply infra-plan infra-destroy infra-output build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-email-delivery build-lambda-sqs-ses-feedback build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-outbox build-lambda-migrator build-lambda-custom-sms-sender package-lambda package-lambda-email-delivery package-lambda-ses-feedback package-lambda-outbox package-lambda-migrator migration-manifest migration-manifest-verify rds-tunnel run-local test test-integration migrate-up migrate-down migrate-rds-up migrate-rds-down migrate-create fmt lint clean deps test-coverage swagger
+.PHONY: help infra-backend-init infra-init infra-validate infra-apply infra-plan infra-destroy infra-output build-agentcore test-agentcore build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-email-delivery build-lambda-sqs-ses-feedback build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-outbox build-lambda-migrator build-lambda-custom-sms-sender package-lambda package-lambda-email-delivery package-lambda-ses-feedback package-lambda-outbox package-lambda-migrator migration-manifest migration-manifest-verify rds-tunnel run-local test test-integration migrate-up migrate-down migrate-rds-up migrate-rds-down migrate-create fmt lint clean deps test-coverage swagger
 
 LAMBDA_BUILD_DIR := .build/lambda
+AGENTCORE_BUILD_DIR := .build/agentcore
 TERRAFORM_DIR := infrastructure/terraform
 AWS_PROFILE ?= default
 TF_BACKEND_BUCKET ?= billeif-terraform-state-928282274753-ap-south-1
@@ -86,6 +87,10 @@ infra-output: ## Save Terraform output to file
 	@echo "Terraform output saved to infrastructure/terraform/terraform_output.txt"
 
 # Build targets
+build-agentcore: ## Build the AgentCore voice runtime for linux/arm64 without publishing it
+	mkdir -p $(AGENTCORE_BUILD_DIR)
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o $(AGENTCORE_BUILD_DIR)/voice-runtime ./cmd/agentcore/voice-runtime
+
 build-lambda: build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-email-delivery build-lambda-sqs-ses-feedback build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-outbox build-lambda-migrator ## Build all Lambda binaries
 
 build-lambda-http: ## Build HTTP API Lambda bootstrap binary
@@ -227,6 +232,9 @@ run-local: ## Run the HTTP server locally
 # Test targets
 test: ## Run unit tests
 	go test -v -race -cover ./...
+
+test-agentcore: ## Run focused AgentCore runtime and voice protocol tests
+	go test -race -count=1 ./internal/voice/protocol ./internal/voice/runtime ./cmd/agentcore/voice-runtime
 
 test-integration: ## Run integration tests (requires local dependencies running)
 	go test -v -tags=integration ./tests/integration/...
