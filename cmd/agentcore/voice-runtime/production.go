@@ -160,6 +160,10 @@ func newProductionSpeechOutputFactory(
 		return nil, ErrInvalidRuntimeEnvironment
 	}
 	workerContext := context.WithoutCancel(ctx)
+	finalTurns := newProductionFinalTurnSinkFactory(workerContext, writer, telemetryEmitter)
+	if nilRuntimeInterface(finalTurns) {
+		return nil, ErrInvalidRuntimeEnvironment
+	}
 	return composition.SpeechOutputFactory{
 		TTS: composition.SessionTTSFactoryFunc(func(voicesession.Session) (sarvam.TTSOpener, error) {
 			return tts, nil
@@ -172,16 +176,44 @@ func newProductionSpeechOutputFactory(
 			}
 			return voicetelemetry.NewInstrumentation(correlationID.String(), telemetryEmitter)
 		}),
-		FinalTurns: composition.FinalTurnSinkFactoryFunc(func(value voicesession.Session) (composition.FinalTurnSinkLease, error) {
-			worker, err := voicesession.NewFinalTurnWorker(workerContext, writer, voicesession.FinalTurnWorkerConfig{
-				SessionID: value.ID, InitialSequence: value.TurnSequence, InitialGenerationID: value.GenerationID,
-			})
-			if err != nil {
-				return composition.FinalTurnSinkLease{}, ErrInvalidRuntimeEnvironment
-			}
-			return composition.FinalTurnSinkLease{Sink: worker, Close: worker.Close}, nil
-		}),
+		FinalTurns: finalTurns,
 	}, nil
+}
+
+func newProductionFinalTurnSinkFactory(
+	ctx context.Context,
+	writer voicesession.FinalTurnWriter,
+	signals voicetelemetry.SignalRecorder,
+) composition.FinalTurnSinkFactory {
+	if ctx == nil || ctx.Err() != nil || nilRuntimeInterface(writer) || nilRuntimeInterface(signals) {
+		return nil
+	}
+	return composition.FinalTurnSinkFactoryFunc(func(value voicesession.Session) (composition.FinalTurnSinkLease, error) {
+		worker, err := voicesession.NewFinalTurnWorker(ctx, writer, voicesession.FinalTurnWorkerConfig{
+			SessionID: value.ID, InitialSequence: value.TurnSequence, InitialGenerationID: value.GenerationID,
+		})
+		if err != nil {
+			return composition.FinalTurnSinkLease{}, ErrInvalidRuntimeEnvironment
+		}
+		go observeFinalTurnWorkerFailures(worker.Errors(), signals)
+		return composition.FinalTurnSinkLease{Sink: worker, Close: worker.Close}, nil
+	})
+}
+
+func observeFinalTurnWorkerFailures(failures <-chan error, signals voicetelemetry.SignalRecorder) {
+	if failures == nil || nilRuntimeInterface(signals) {
+		return
+	}
+	for failure := range failures {
+		if failure == nil {
+			continue
+		}
+		func() {
+			defer func() { _ = recover() }()
+			_ = signals.RecordSignal(voicetelemetry.SignalDurabilityFailures, 1)
+		}()
+		return
+	}
 }
 
 func newSarvamTransports() (*http.Client, *websocket.Dialer, *http.Transport) {

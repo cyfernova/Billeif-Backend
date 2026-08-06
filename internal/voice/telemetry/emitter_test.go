@@ -115,7 +115,10 @@ func TestEmitterWritesOnlyRealProductionHealthSignals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewEmitter() error = %v", err)
 	}
-	for _, signal := range []Signal{SignalKVSAllocationErrors, SignalICERestarts, SignalSarvam429, SignalSarvam503} {
+	runtimeSignals := []Signal{
+		SignalKVSAllocationErrors, SignalICERestarts, SignalSarvam429, SignalSarvam503, SignalDurabilityFailures,
+	}
+	for _, signal := range runtimeSignals {
 		if err := emitter.RecordSignal(signal, 1); err != nil {
 			t.Fatalf("RecordSignal(%s) error = %v", signal, err)
 		}
@@ -128,10 +131,10 @@ func TestEmitterWritesOnlyRealProductionHealthSignals(t *testing.T) {
 	}
 
 	lines := nonEmptyLines(output.String())
-	if len(lines) != 4 {
-		t.Fatalf("signal events = %d, want 4: %q", len(lines), output.String())
+	if len(lines) != len(runtimeSignals) {
+		t.Fatalf("signal events = %d, want %d: %q", len(lines), len(runtimeSignals), output.String())
 	}
-	for index, signal := range []Signal{SignalKVSAllocationErrors, SignalICERestarts, SignalSarvam429, SignalSarvam503} {
+	for index, signal := range runtimeSignals {
 		var envelope map[string]any
 		if err := json.Unmarshal([]byte(lines[index]), &envelope); err != nil {
 			t.Fatalf("decode signal %s: %v", signal, err)

@@ -269,6 +269,156 @@ func TestSpeechOutputTTSCloseFallsBackToOneFinalAnswerAndNextTurnRemainsUsable(t
 	_ = output.BargeInController().Abort(nextGeneration, errors.New("test cleanup"))
 }
 
+func TestSpeechOutputTextFallbackBeforeAudioPreservesDurabilityForLaterTurns(t *testing.T) {
+	now := time.Date(2026, 8, 8, 8, 0, 0, 0, time.UTC)
+	stream := newFakeSpeechTTSStream()
+	writer := &recordingCompositionFinalTurnWriter{}
+	session := validCompositionSession()
+	session.ConsentTranscriptStorage = true
+	session.ExpiresAt = now.Add(30 * time.Minute)
+	worker, err := voicesession.NewFinalTurnWorker(t.Context(), writer, voicesession.FinalTurnWorkerConfig{
+		SessionID: session.ID,
+	})
+	if err != nil {
+		t.Fatalf("NewFinalTurnWorker() error = %v", err)
+	}
+	output, err := NewSpeechOutput(SpeechOutputConfig{
+		Session: session, TTS: &fakeSpeechTTSOpener{streams: []*fakeSpeechTTSStream{stream}},
+		Encoders:        SpeechEncoderFactoryFunc(func() (audio.Encoder, error) { return &fakeSpeechEncoder{}, nil }),
+		Pacers:          SpeechPacerFactoryFunc(func() (audio.FramePacer, error) { return instantSpeechPacer{}, nil }),
+		FinalTurns:      worker,
+		CloseFinalTurns: worker.Close,
+		PlaybackTimeout: time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewSpeechOutput() error = %v", err)
+	}
+	t.Cleanup(func() { _ = output.Close() })
+	if err := output.AttachPeer(&recordingPeerTransport{}); err != nil {
+		t.Fatalf("AttachPeer() error = %v", err)
+	}
+
+	turnContext, generation, err := output.BargeInController().Begin(context.Background())
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	final := turn.FinalTranscript{
+		Text: "show invoice status", ProviderLanguage: "en-IN", DetectedLanguage: "en-IN", ResponseLanguage: "en-IN",
+		SpeechEndedAt: now, STTFinalAt: now.Add(time.Millisecond),
+	}
+	if err := output.BeginTextGeneration(turnContext, generation, final); err != nil {
+		t.Fatalf("BeginTextGeneration() error = %v", err)
+	}
+	if err := output.HandleTextDelta(turnContext, generation, "The invoice is paid."); err != nil {
+		t.Fatalf("HandleTextDelta() error = %v", err)
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatalf("Close(TTS) error = %v", err)
+	}
+	waitForSpeechOutput(t, func() bool {
+		output.mu.Lock()
+		state := output.active
+		output.mu.Unlock()
+		return state != nil && state.readerError() != nil
+	}, "TTS close was not observed")
+	result := turn.TurnResult{GenerationID: generation, Transcript: final, Text: "The invoice is paid."}
+	if err := output.CompleteTextGeneration(turnContext, generation, result); err != nil {
+		t.Fatalf("CompleteTextGeneration() error = %v", err)
+	}
+	if err := output.BargeInController().CompleteWith(generation, nil); err != nil {
+		t.Fatalf("CompleteWith() error = %v", err)
+	}
+	output.HandleTurnResult(context.Background(), result, TurnFailureNone)
+
+	output.mu.Lock()
+	degraded := output.durabilityDegraded
+	sequence := output.turnSequence
+	output.mu.Unlock()
+	if degraded || sequence != 0 {
+		t.Fatalf("text fallback durability degraded=%v sequence=%d, want false/0", degraded, sequence)
+	}
+	if got := writer.Turns(); len(got) != 0 {
+		t.Fatalf("text-only fallback durable writes = %#v, want none", got)
+	}
+}
+
+func TestSpeechOutputTextFallbackAfterPartialPlaybackNeverPersists(t *testing.T) {
+	now := time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC)
+	stream := newFakeSpeechTTSStream()
+	sink := &recordingFinalTurnSink{}
+	session := validCompositionSession()
+	session.ConsentTranscriptStorage = true
+	session.ExpiresAt = now.Add(30 * time.Minute)
+	output, err := NewSpeechOutput(SpeechOutputConfig{
+		Session: session, TTS: &fakeSpeechTTSOpener{streams: []*fakeSpeechTTSStream{stream}},
+		Encoders:   SpeechEncoderFactoryFunc(func() (audio.Encoder, error) { return &fakeSpeechEncoder{}, nil }),
+		Pacers:     SpeechPacerFactoryFunc(func() (audio.FramePacer, error) { return instantSpeechPacer{}, nil }),
+		FinalTurns: sink, PlaybackTimeout: time.Second,
+	})
+	if err != nil {
+		t.Fatalf("NewSpeechOutput() error = %v", err)
+	}
+	t.Cleanup(func() { _ = output.Close() })
+	transport := &recordingPeerTransport{}
+	if err := output.AttachPeer(transport); err != nil {
+		t.Fatalf("AttachPeer() error = %v", err)
+	}
+
+	turnContext, generation, err := output.BargeInController().Begin(context.Background())
+	if err != nil {
+		t.Fatalf("Begin() error = %v", err)
+	}
+	final := turn.FinalTranscript{
+		Text: "read invoice total", ProviderLanguage: "en-IN", DetectedLanguage: "en-IN", ResponseLanguage: "en-IN",
+		SpeechEndedAt: now, STTFinalAt: now.Add(time.Millisecond),
+	}
+	if err := output.BeginTextGeneration(turnContext, generation, final); err != nil {
+		t.Fatalf("BeginTextGeneration() error = %v", err)
+	}
+	if err := output.HandleTextDelta(turnContext, generation, "The invoice total is one thousand rupees."); err != nil {
+		t.Fatalf("HandleTextDelta() error = %v", err)
+	}
+	stream.events <- sarvam.TTSEvent{PCM16: make([]byte, audio.SamplesPerFrame*2), ContentType: "audio/raw"}
+	waitForSpeechOutput(t, func() bool { return len(transport.opusPackets()) == 1 }, "partial audio was not sent")
+	generationID := int64(generation)
+	turnID := int64(1)
+	if err := output.HandlePeerControl(context.Background(), protocol.ControlMessage{
+		Type: protocol.EventPlaybackStarted, GenerationID: &generationID, TurnID: &turnID,
+	}); err != nil {
+		t.Fatalf("playback.started error = %v", err)
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatalf("Close(TTS) error = %v", err)
+	}
+	waitForSpeechOutput(t, func() bool {
+		output.mu.Lock()
+		state := output.active
+		output.mu.Unlock()
+		return state != nil && state.readerError() != nil
+	}, "TTS close after partial playback was not observed")
+	result := turn.TurnResult{
+		GenerationID: generation, Transcript: final, Text: "The invoice total is one thousand rupees.",
+	}
+	if err := output.CompleteTextGeneration(turnContext, generation, result); err != nil {
+		t.Fatalf("CompleteTextGeneration() error = %v", err)
+	}
+	if err := output.BargeInController().CompleteWith(generation, nil); err != nil {
+		t.Fatalf("CompleteWith() error = %v", err)
+	}
+	output.HandleTurnResult(context.Background(), result, TurnFailureNone)
+
+	if got := sink.Turns(); len(got) != 0 {
+		t.Fatalf("partial-playback fallback persisted without playback.completed: %#v", got)
+	}
+	output.mu.Lock()
+	degraded := output.durabilityDegraded
+	sequence := output.turnSequence
+	output.mu.Unlock()
+	if degraded || sequence != 0 {
+		t.Fatalf("partial fallback durability degraded=%v sequence=%d, want false/0", degraded, sequence)
+	}
+}
+
 func TestSpeechOutputPreInstallFailureRetiresPendingTurnTelemetryAndAllowsNextSpeech(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -1020,6 +1170,24 @@ func (instantSpeechPacer) Wait(ctx context.Context) error { return ctx.Err() }
 type recordingFinalTurnSink struct {
 	mu    sync.Mutex
 	turns []voicesession.FinalTurn
+}
+
+type recordingCompositionFinalTurnWriter struct {
+	mu    sync.Mutex
+	turns []voicesession.FinalTurn
+}
+
+func (writer *recordingCompositionFinalTurnWriter) PersistFinalTurn(_ context.Context, value voicesession.FinalTurn) error {
+	writer.mu.Lock()
+	writer.turns = append(writer.turns, value)
+	writer.mu.Unlock()
+	return nil
+}
+
+func (writer *recordingCompositionFinalTurnWriter) Turns() []voicesession.FinalTurn {
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	return append([]voicesession.FinalTurn(nil), writer.turns...)
 }
 
 type failingFinalTurnSink struct {

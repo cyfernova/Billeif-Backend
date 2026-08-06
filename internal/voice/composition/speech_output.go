@@ -728,7 +728,7 @@ func (output *SpeechOutput) HandleTurnResult(ctx context.Context, result turn.Tu
 		}
 		telemetrySuccess = true
 		persistenceAccepted := false
-		if sink, available := output.durabilitySink(); output.consent && available {
+		if sink, available := output.durabilitySink(); output.consent && available && state.durablePlaybackCompleted() {
 			finalTurn := output.finalTurn(state, result)
 			if err := safeEnqueueFinalTurn(sink, finalTurn); err != nil {
 				state.mu.Lock()
@@ -1457,6 +1457,13 @@ func (state *speechGeneration) playbackAcknowledged() bool {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	return state.playbackStarted && state.playbackComplete && !state.cancelled
+}
+
+func (state *speechGeneration) durablePlaybackCompleted() bool {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	return state.lifecycleDone && !state.cancelled && !state.textFallback &&
+		state.providerFinal && state.playbackStarted && state.playbackComplete
 }
 
 func (state *speechGeneration) signalAcknowledgement() {

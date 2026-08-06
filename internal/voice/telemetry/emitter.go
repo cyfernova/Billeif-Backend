@@ -81,6 +81,7 @@ const (
 	SignalICERestarts         Signal = "ICERestarts"
 	SignalSarvam429           Signal = "Sarvam429"
 	SignalSarvam503           Signal = "Sarvam503"
+	SignalDurabilityFailures  Signal = "DurabilityFailures"
 )
 
 // SignalRecorder is the narrow fail-open seam used by provider, signaling,
@@ -231,7 +232,7 @@ func (emitter *Emitter) RecordSignal(signal Signal, value int64) error {
 	switch emitter.service {
 	case RuntimeService:
 		switch signal {
-		case SignalKVSAllocationErrors, SignalSarvam429, SignalSarvam503:
+		case SignalKVSAllocationErrors, SignalSarvam429, SignalSarvam503, SignalDurabilityFailures:
 		case SignalICERestarts:
 			outcome = OutcomeSuccess
 		default:

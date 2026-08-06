@@ -264,6 +264,46 @@ func TestProductionSpeechOutputFactoryIsLazyAndOwnsConsentWorker(t *testing.T) {
 	}
 }
 
+func TestProductionFinalTurnSinkReportsExhaustedAsyncWrite(t *testing.T) {
+	recorder := &runtimeSignalRecorder{}
+	writer := &bootstrapFinalTurnWriter{err: errors.New("offline durable write failure")}
+	factory := newProductionFinalTurnSinkFactory(t.Context(), writer, recorder)
+	session := voicesession.Session{
+		ID: "voice_01K000000000000000000000001", ConsentTranscriptStorage: true,
+		ExpiresAt: time.Date(2026, 8, 8, 9, 30, 0, 0, time.UTC),
+	}
+	lease, err := factory.NewFinalTurnSink(session)
+	if err != nil {
+		t.Fatalf("NewFinalTurnSink() error = %v", err)
+	}
+	base := time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC)
+	if err := lease.Sink.EnqueueAfterPlayback(voicesession.FinalTurn{
+		SessionID: session.ID, Sequence: 1, GenerationID: 1,
+		Transcript: "show invoice status", ProviderLanguage: "en-IN", SelectedLanguage: "en-IN",
+		Response: "The invoice is paid.",
+		Timings: voicesession.FinalTurnTimings{
+			SpeechEndedAt: base, STTFinalAt: base.Add(time.Millisecond),
+			LLMFirstTokenAt: base.Add(2 * time.Millisecond), TTSFirstAudioAt: base.Add(3 * time.Millisecond),
+			ClientFirstAudioAt: base.Add(4 * time.Millisecond),
+		},
+		CompletedAt: base.Add(5 * time.Millisecond), ExpiresAt: session.ExpiresAt,
+	}); err != nil {
+		t.Fatalf("EnqueueAfterPlayback() error = %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for len(recorder.snapshot()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := recorder.snapshot(); !equalSignals(got, []voicetelemetry.Signal{voicetelemetry.SignalDurabilityFailures}) {
+		t.Fatalf("async durability signals = %v, want one DurabilityFailures", got)
+	}
+	closeContext, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := lease.Close(closeContext); !errors.Is(err, voicesession.ErrFinalTurnWrite) {
+		t.Fatalf("Close() error = %v, want ErrFinalTurnWrite", err)
+	}
+}
+
 func TestProductionSpeechOutputFactoryRejectsTypedNilDependencies(t *testing.T) {
 	validTTS := &bootstrapTTS{}
 	validWriter := &bootstrapFinalTurnWriter{}
@@ -389,11 +429,14 @@ type bootstrapSignalingMetrics struct{}
 func (bootstrapSignalingMetrics) KVSAllocationError() {}
 func (bootstrapSignalingMetrics) ICERestart()         {}
 
-type bootstrapFinalTurnWriter struct{ calls atomic.Int32 }
+type bootstrapFinalTurnWriter struct {
+	calls atomic.Int32
+	err   error
+}
 
 func (writer *bootstrapFinalTurnWriter) PersistFinalTurn(context.Context, voicesession.FinalTurn) error {
 	writer.calls.Add(1)
-	return nil
+	return writer.err
 }
 
 type bootstrapDecoder struct{}
