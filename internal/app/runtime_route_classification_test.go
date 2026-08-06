@@ -79,6 +79,7 @@ func TestEveryGinRouteRegistrationHasAnExplicitAccessClass(t *testing.T) {
 		"discovery":            routeBusiness,
 		"llm":                  routeBusiness,
 		"voice":                routeBusiness,
+		"voiceSessions":        routeBusiness,
 		"workflows":            routeBusiness,
 		"intent":               routeBusiness,
 		"ws":                   routeBusiness,

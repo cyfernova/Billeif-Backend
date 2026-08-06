@@ -9,6 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.19
 	github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue v1.20.42
 	github.com/aws/aws-sdk-go-v2/service/apigatewaymanagementapi v1.29.18
+	github.com/aws/aws-sdk-go-v2/service/bedrockagentcore v1.27.0
 	github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider v1.60.4
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.57.6
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.102.2

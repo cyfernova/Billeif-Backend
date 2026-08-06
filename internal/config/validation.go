@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 )
 
 type Profile string
@@ -262,6 +263,9 @@ func validate(cfg *Config) error {
 	if cfg.AWS.Region == "" {
 		return fmt.Errorf("AWS_REGION is required")
 	}
+	if err := validateVoiceSessionConfig(cfg.VoiceSession); err != nil {
+		return err
+	}
 
 	if cfg.JWT.AccessTokenExpiry <= 0 {
 		return fmt.Errorf("JWT_ACCESS_TOKEN_EXPIRY must be positive")
@@ -359,6 +363,48 @@ func validate(cfg *Config) error {
 		}
 	}
 
+	return nil
+}
+
+func validateVoiceSessionConfig(cfg VoiceSessionConfig) error {
+	tableConfigured := strings.TrimSpace(cfg.TableName) != ""
+	runtimeConfigured := strings.TrimSpace(cfg.AgentRuntimeARN) != ""
+	if tableConfigured != runtimeConfigured {
+		return fmt.Errorf("VOICE_SESSIONS_TABLE_NAME and AGENTCORE_RUNTIME_ARN must be configured together")
+	}
+	if cfg.ProtocolVersion != 0 && cfg.ProtocolVersion != 1 {
+		return fmt.Errorf("VOICE_PROTOCOL_VERSION must be 1")
+	}
+	if cfg.KVSChannelCount != 0 && cfg.KVSChannelCount != 12 {
+		return fmt.Errorf("VOICE_KVS_CHANNEL_COUNT must be 12")
+	}
+	maxDuration := cfg.MaxDuration
+	if maxDuration == 0 {
+		maxDuration = 55 * time.Minute
+	}
+	rotateAfter := cfg.RotateAfter
+	if rotateAfter == 0 {
+		rotateAfter = 52 * time.Minute
+	}
+	leaseDuration := cfg.LeaseDuration
+	if leaseDuration == 0 {
+		leaseDuration = 2 * time.Minute
+	}
+	if maxDuration < 0 || maxDuration > 55*time.Minute {
+		return fmt.Errorf("VOICE_SESSION_MAX_DURATION must be at most 55m")
+	}
+	if rotateAfter < 0 || rotateAfter >= maxDuration {
+		return fmt.Errorf("VOICE_SESSION_ROTATE_AFTER must be shorter than max duration")
+	}
+	if leaseDuration < 0 || leaseDuration > 5*time.Minute {
+		return fmt.Errorf("VOICE_SESSION_LEASE_DURATION must be at most 5m")
+	}
+	if cfg.GlobalCapacityLimit != 0 && cfg.GlobalCapacityLimit != 100 {
+		return fmt.Errorf("VOICE_GLOBAL_CAPACITY_LIMIT must be 100")
+	}
+	if cfg.PerUserCapacityLimit != 0 && cfg.PerUserCapacityLimit != 1 {
+		return fmt.Errorf("VOICE_PER_USER_CAPACITY_LIMIT must be 1")
+	}
 	return nil
 }
 

@@ -17,6 +17,17 @@ func TestLegacyRolePermissionsIncludePaymentBoundaries(t *testing.T) {
 	}
 }
 
+func TestVoicePermissionIsLimitedToOwnerAndLegacyAdmin(t *testing.T) {
+	if !hasPermission(legacyRolePermissions("admin"), PermissionVoiceUse) {
+		t.Fatal("legacy admin must receive voice:use")
+	}
+	for _, role := range []string{"accountant", "viewer", ""} {
+		if hasPermission(legacyRolePermissions(role), PermissionVoiceUse) {
+			t.Fatalf("legacy %q must not receive voice:use", role)
+		}
+	}
+}
+
 func TestBranchScopeAllowsOnlyListedBranches(t *testing.T) {
 	if !branchScopeAllows(false, []string{"branch-1", "branch-2"}, "branch-2") {
 		t.Fatal("expected listed branch to be allowed")

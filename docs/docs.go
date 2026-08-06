@@ -14902,6 +14902,226 @@ const docTemplate = `{
                 ]
             }
         },
+        "/voice/sessions": {
+            "post": {
+                "description": "Creates an idempotent, capacity-controlled AgentCore voice session. Media and signaling payloads do not traverse this endpoint.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Voice"
+                ],
+                "summary": "Create voice session",
+                "parameters": [
+                    {
+                        "description": "Voice session request",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/session.CreateInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/session.CreateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/voice/sessions/{session_id}": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Voice"
+                ],
+                "summary": "Get voice session",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Logical voice session ID",
+                        "name": "session_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/session.SessionResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "delete": {
+                "tags": [
+                    "Voice"
+                ],
+                "summary": "End voice session",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Logical voice session ID",
+                        "name": "session_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/voice/sessions/{session_id}/resume": {
+            "post": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Voice"
+                ],
+                "summary": "Resume voice session",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Logical voice session ID",
+                        "name": "session_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/session.CreateResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/voice/text-to-speech": {
             "post": {
                 "description": "Converts up to 3500 characters to speech using Sarvam Bulbul v3 and returns binary audio.",
@@ -23736,6 +23956,182 @@ const docTemplate = `{
                     "$ref": "#/definitions/services.TriggerType"
                 }
             }
+        },
+        "session.ClientInput": {
+            "type": "object",
+            "required": [
+                "app_version",
+                "platform",
+                "protocol_version"
+            ],
+            "properties": {
+                "app_version": {
+                    "type": "string"
+                },
+                "platform": {
+                    "type": "string"
+                },
+                "protocol_version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "session.ConsentInput": {
+            "type": "object",
+            "required": [
+                "audio_recording",
+                "policy_version",
+                "transcript_storage"
+            ],
+            "properties": {
+                "audio_recording": {
+                    "type": "boolean"
+                },
+                "policy_version": {
+                    "type": "string"
+                },
+                "transcript_storage": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "session.CreateInput": {
+            "type": "object",
+            "required": [
+                "client",
+                "consent",
+                "fallback_language",
+                "idempotency_key",
+                "preferred_language"
+            ],
+            "properties": {
+                "branch_id": {
+                    "type": "string"
+                },
+                "client": {
+                    "$ref": "#/definitions/session.ClientInput"
+                },
+                "consent": {
+                    "$ref": "#/definitions/session.ConsentInput"
+                },
+                "fallback_language": {
+                    "type": "string"
+                },
+                "idempotency_key": {
+                    "type": "string"
+                },
+                "preferred_language": {
+                    "type": "string"
+                }
+            }
+        },
+        "session.CreateResponse": {
+            "type": "object",
+            "properties": {
+                "agent_runtime_arn": {
+                    "type": "string"
+                },
+                "agent_runtime_qualifier": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "kvs_channel_index": {
+                    "type": "integer"
+                },
+                "protocol_version": {
+                    "type": "integer"
+                },
+                "rotate_at": {
+                    "type": "string"
+                },
+                "runtime_session_id": {
+                    "type": "string"
+                },
+                "session_id": {
+                    "type": "string"
+                },
+                "spoken_languages": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "session.SessionResponse": {
+            "type": "object",
+            "properties": {
+                "branch_id": {
+                    "type": "string"
+                },
+                "closed_at": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "current_language": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "fallback_language": {
+                    "type": "string"
+                },
+                "kvs_channel_index": {
+                    "type": "integer"
+                },
+                "lease_expires_at": {
+                    "type": "string"
+                },
+                "preferred_language": {
+                    "type": "string"
+                },
+                "protocol_version": {
+                    "type": "integer"
+                },
+                "resumable": {
+                    "type": "boolean"
+                },
+                "rotate_at": {
+                    "type": "string"
+                },
+                "runtime_session_id": {
+                    "type": "string"
+                },
+                "session_id": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/session.Status"
+                },
+                "turn_sequence": {
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "session.Status": {
+            "type": "string",
+            "enum": [
+                "ACTIVE",
+                "CLOSING",
+                "CLOSED",
+                "FAILED",
+                "EXPIRED"
+            ],
+            "x-enum-varnames": [
+                "StatusActive",
+                "StatusClosing",
+                "StatusClosed",
+                "StatusFailed",
+                "StatusExpired"
+            ]
         }
     },
     "securityDefinitions": {

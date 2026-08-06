@@ -43,4 +43,5 @@ const (
 	PermissionPOSOperate            = "pos.operate"
 	PermissionAgentsManage          = "agents.manage"
 	PermissionAgentsView            = "agents.view"
+	PermissionVoiceUse              = "voice:use"
 )

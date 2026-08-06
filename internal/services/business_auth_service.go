@@ -209,7 +209,7 @@ func branchScopes(raw string) []string {
 func legacyRolePermissions(role string) []string {
 	switch strings.ToLower(strings.TrimSpace(role)) {
 	case "admin":
-		return []string{"*"}
+		return []string{"*", PermissionVoiceUse}
 	case "accountant":
 		return []string{
 			PermissionDocumentsManage,

@@ -1022,6 +1022,16 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			voice.GET("/text-to-speech/languages", h.SarvamTTS.ListLanguages)
 		}
 
+		if svcs.VoiceSession != nil && h.VoiceSession != nil {
+			voiceSessions := protected.Group("/voice/sessions")
+			voiceSessions.Use(middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVoiceUse))
+			voiceSessions.Use(wafUserHeavyRL)
+			voiceSessions.POST("", h.VoiceSession.Create)
+			voiceSessions.GET("/:session_id", h.VoiceSession.Get)
+			voiceSessions.POST("/:session_id/resume", h.VoiceSession.Resume)
+			voiceSessions.DELETE("/:session_id", h.VoiceSession.Delete)
+		}
+
 		// Workflow automation endpoints
 		workflows := protected.Group("/workflows")
 		{

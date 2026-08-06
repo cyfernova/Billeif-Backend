@@ -27,6 +27,33 @@ func TestPaymentRoutesRequirePaymentPermissions(t *testing.T) {
 	}
 }
 
+func TestVoiceSessionRoutesUsePermissionThenExistingRateLimiter(t *testing.T) {
+	source, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatalf("read runtime routes: %v", err)
+	}
+	routes := string(source)
+	required := []string{
+		`voiceSessions.Use(middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVoiceUse))`,
+		`voiceSessions.Use(wafUserHeavyRL)`,
+		`voiceSessions.POST("", h.VoiceSession.Create)`,
+		`voiceSessions.GET("/:session_id", h.VoiceSession.Get)`,
+		`voiceSessions.POST("/:session_id/resume", h.VoiceSession.Resume)`,
+		`voiceSessions.DELETE("/:session_id", h.VoiceSession.Delete)`,
+	}
+	previous := -1
+	for _, fragment := range required {
+		index := strings.Index(routes, fragment)
+		if index < 0 {
+			t.Fatalf("voice route wiring missing: %s", fragment)
+		}
+		if index <= previous {
+			t.Fatalf("voice route middleware/handlers are out of order at %s", fragment)
+		}
+		previous = index
+	}
+}
+
 func TestTeamRoleMutationRoutesRequireRoleManagement(t *testing.T) {
 	source, err := os.ReadFile("runtime.go")
 	if err != nil {

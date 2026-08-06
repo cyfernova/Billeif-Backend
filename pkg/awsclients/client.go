@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/bedrockagentcore"
 	"github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -22,14 +23,15 @@ import (
 type Config struct {
 	SDKConfig aws.Config
 
-	Cognito  *cognitoidentityprovider.Client
-	DynamoDB *dynamodb.Client
-	S3       *s3.Client
-	SES      *ses.Client
-	SSM      *ssm.Client
-	SQS      *sqs.Client
-	SNS      *sns.Client
-	WAF      *wafv2.Client
+	Cognito   *cognitoidentityprovider.Client
+	AgentCore *bedrockagentcore.Client
+	DynamoDB  *dynamodb.Client
+	S3        *s3.Client
+	SES       *ses.Client
+	SSM       *ssm.Client
+	SQS       *sqs.Client
+	SNS       *sns.Client
+	WAF       *wafv2.Client
 }
 
 func New(ctx context.Context, cfg appconfig.AWSConfig, log *logger.Logger) (*Config, error) {
@@ -48,6 +50,11 @@ func New(ctx context.Context, cfg appconfig.AWSConfig, log *logger.Logger) (*Con
 	clients := &Config{
 		SDKConfig: awsCfg,
 		Cognito: cognitoidentityprovider.NewFromConfig(awsCfg, func(o *cognitoidentityprovider.Options) {
+			if cfg.Endpoint != "" {
+				o.BaseEndpoint = aws.String(cfg.Endpoint)
+			}
+		}),
+		AgentCore: bedrockagentcore.NewFromConfig(awsCfg, func(o *bedrockagentcore.Options) {
 			if cfg.Endpoint != "" {
 				o.BaseEndpoint = aws.String(cfg.Endpoint)
 			}

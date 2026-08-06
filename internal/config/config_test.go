@@ -41,6 +41,20 @@ func TestSetDefaultsProductionPreservesExplicitWAFEnabled(t *testing.T) {
 	}
 }
 
+func TestVoiceSessionDefaultsAreBoundedAndNonSecret(t *testing.T) {
+	cfg := &Config{}
+	setDefaults(cfg)
+	if cfg.VoiceSession.ProtocolVersion != 1 || cfg.VoiceSession.KVSChannelCount != 12 {
+		t.Fatalf("unexpected protocol/channel defaults: %#v", cfg.VoiceSession)
+	}
+	if cfg.VoiceSession.MaxDuration != 55*time.Minute || cfg.VoiceSession.RotateAfter != 52*time.Minute || cfg.VoiceSession.LeaseDuration != 2*time.Minute {
+		t.Fatalf("unexpected voice duration defaults: %#v", cfg.VoiceSession)
+	}
+	if cfg.VoiceSession.AgentRuntimeQualifier != "PROD" || cfg.VoiceSession.GlobalCapacityLimit != 100 || cfg.VoiceSession.PerUserCapacityLimit != 1 {
+		t.Fatalf("unexpected voice control defaults: %#v", cfg.VoiceSession)
+	}
+}
+
 func TestValidateRequiresAllowedOrigins(t *testing.T) {
 	cfg := validConfigForTest()
 	cfg.AllowedOrigins = nil

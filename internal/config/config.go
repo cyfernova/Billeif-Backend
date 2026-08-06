@@ -35,6 +35,7 @@ type Config struct {
 	LLM            LLMConfig          `mapstructure:"LLM"`
 	DeepSeek       DeepSeekConfig     `mapstructure:"DEEPSEEK"`
 	Sarvam         SarvamConfig       `mapstructure:"SARVAM"`
+	VoiceSession   VoiceSessionConfig `mapstructure:"VOICE_SESSION"`
 	Credentials    CredentialsConfig  `mapstructure:"CREDENTIALS"`
 	MCP            MCPConfig          `mapstructure:"MCP"`
 }
@@ -61,6 +62,25 @@ type SarvamConfig struct {
 	APIKey  string `mapstructure:"API_KEY"`
 	BaseURL string `mapstructure:"BASE_URL"`
 	Timeout int    `mapstructure:"TIMEOUT"`
+}
+
+type VoiceSessionConfig struct {
+	TableName             string        `mapstructure:"TABLE_NAME"`
+	AgentRuntimeARN       string        `mapstructure:"AGENT_RUNTIME_ARN"`
+	AgentRuntimeQualifier string        `mapstructure:"AGENT_RUNTIME_QUALIFIER"`
+	ProtocolVersion       int           `mapstructure:"PROTOCOL_VERSION"`
+	KVSChannelCount       int           `mapstructure:"KVS_CHANNEL_COUNT"`
+	MaxDuration           time.Duration `mapstructure:"MAX_DURATION"`
+	RotateAfter           time.Duration `mapstructure:"ROTATE_AFTER"`
+	LeaseDuration         time.Duration `mapstructure:"LEASE_DURATION"`
+	IdempotencyTTL        time.Duration `mapstructure:"IDEMPOTENCY_TTL"`
+	LeaseIndexName        string        `mapstructure:"LEASE_INDEX_NAME"`
+	GlobalCapacityLimit   int64         `mapstructure:"GLOBAL_CAPACITY_LIMIT"`
+	PerUserCapacityLimit  int64         `mapstructure:"PER_USER_CAPACITY_LIMIT"`
+}
+
+func (c VoiceSessionConfig) Enabled() bool {
+	return strings.TrimSpace(c.TableName) != "" && strings.TrimSpace(c.AgentRuntimeARN) != ""
 }
 
 type CredentialsConfig struct {
@@ -417,6 +437,18 @@ func LoadForProfile(profile Profile) (*Config, error) {
 	_ = viper.BindEnv("SARVAM.API_KEY", "SARVAM_API_KEY")
 	_ = viper.BindEnv("SARVAM.BASE_URL", "SARVAM_BASE_URL")
 	_ = viper.BindEnv("SARVAM.TIMEOUT", "SARVAM_TIMEOUT")
+	_ = viper.BindEnv("VOICE_SESSION.TABLE_NAME", "VOICE_SESSIONS_TABLE_NAME")
+	_ = viper.BindEnv("VOICE_SESSION.AGENT_RUNTIME_ARN", "AGENTCORE_RUNTIME_ARN")
+	_ = viper.BindEnv("VOICE_SESSION.AGENT_RUNTIME_QUALIFIER", "AGENTCORE_RUNTIME_QUALIFIER")
+	_ = viper.BindEnv("VOICE_SESSION.PROTOCOL_VERSION", "VOICE_PROTOCOL_VERSION")
+	_ = viper.BindEnv("VOICE_SESSION.KVS_CHANNEL_COUNT", "VOICE_KVS_CHANNEL_COUNT")
+	_ = viper.BindEnv("VOICE_SESSION.MAX_DURATION", "VOICE_SESSION_MAX_DURATION")
+	_ = viper.BindEnv("VOICE_SESSION.ROTATE_AFTER", "VOICE_SESSION_ROTATE_AFTER")
+	_ = viper.BindEnv("VOICE_SESSION.LEASE_DURATION", "VOICE_SESSION_LEASE_DURATION")
+	_ = viper.BindEnv("VOICE_SESSION.IDEMPOTENCY_TTL", "VOICE_SESSION_IDEMPOTENCY_TTL")
+	_ = viper.BindEnv("VOICE_SESSION.LEASE_INDEX_NAME", "VOICE_SESSION_LEASE_INDEX_NAME")
+	_ = viper.BindEnv("VOICE_SESSION.GLOBAL_CAPACITY_LIMIT", "VOICE_GLOBAL_CAPACITY_LIMIT")
+	_ = viper.BindEnv("VOICE_SESSION.PER_USER_CAPACITY_LIMIT", "VOICE_PER_USER_CAPACITY_LIMIT")
 	_ = viper.BindEnv("CREDENTIALS.ENCRYPTION_KEY", "CREDENTIAL_ENCRYPTION_KEY")
 	_ = viper.BindEnv("MCP.SERVER_URL", "MCP_SERVER_URL")
 	_ = viper.BindEnv("MCP.TIMEOUT", "MCP_TIMEOUT")
@@ -523,6 +555,19 @@ func applyFlatEnvFileFallbacks(cfg *Config) {
 	setIfEmpty(&cfg.LLM.ExaBaseURL, "EXA_BASE_URL")
 	setIfZeroInt(&cfg.LLM.ExaTimeout, "EXA_TIMEOUT")
 
+	setIfEmpty(&cfg.VoiceSession.TableName, "VOICE_SESSIONS_TABLE_NAME")
+	setIfEmpty(&cfg.VoiceSession.AgentRuntimeARN, "AGENTCORE_RUNTIME_ARN")
+	setIfEmpty(&cfg.VoiceSession.AgentRuntimeQualifier, "AGENTCORE_RUNTIME_QUALIFIER")
+	setIfZeroInt(&cfg.VoiceSession.ProtocolVersion, "VOICE_PROTOCOL_VERSION")
+	setIfZeroInt(&cfg.VoiceSession.KVSChannelCount, "VOICE_KVS_CHANNEL_COUNT")
+	setIfZeroDuration(&cfg.VoiceSession.MaxDuration, "VOICE_SESSION_MAX_DURATION")
+	setIfZeroDuration(&cfg.VoiceSession.RotateAfter, "VOICE_SESSION_ROTATE_AFTER")
+	setIfZeroDuration(&cfg.VoiceSession.LeaseDuration, "VOICE_SESSION_LEASE_DURATION")
+	setIfZeroDuration(&cfg.VoiceSession.IdempotencyTTL, "VOICE_SESSION_IDEMPOTENCY_TTL")
+	setIfEmpty(&cfg.VoiceSession.LeaseIndexName, "VOICE_SESSION_LEASE_INDEX_NAME")
+	setIfZeroInt64(&cfg.VoiceSession.GlobalCapacityLimit, "VOICE_GLOBAL_CAPACITY_LIMIT")
+	setIfZeroInt64(&cfg.VoiceSession.PerUserCapacityLimit, "VOICE_PER_USER_CAPACITY_LIMIT")
+
 	setIfEmpty(&cfg.Credentials.EncryptionKey, "CREDENTIAL_ENCRYPTION_KEY")
 }
 
@@ -540,6 +585,13 @@ func setIfZeroInt(target *int, key string) {
 		return
 	}
 	*target = viper.GetInt(key)
+}
+
+func setIfZeroInt64(target *int64, key string) {
+	if target == nil || *target != 0 || !viper.IsSet(key) {
+		return
+	}
+	*target = viper.GetInt64(key)
 }
 
 func setIfZeroDuration(target *time.Duration, key string) {
@@ -616,6 +668,36 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Sarvam.Timeout == 0 {
 		cfg.Sarvam.Timeout = 60
+	}
+	if cfg.VoiceSession.AgentRuntimeQualifier == "" {
+		cfg.VoiceSession.AgentRuntimeQualifier = "PROD"
+	}
+	if cfg.VoiceSession.ProtocolVersion == 0 {
+		cfg.VoiceSession.ProtocolVersion = 1
+	}
+	if cfg.VoiceSession.KVSChannelCount == 0 {
+		cfg.VoiceSession.KVSChannelCount = 12
+	}
+	if cfg.VoiceSession.MaxDuration == 0 {
+		cfg.VoiceSession.MaxDuration = 55 * time.Minute
+	}
+	if cfg.VoiceSession.RotateAfter == 0 {
+		cfg.VoiceSession.RotateAfter = 52 * time.Minute
+	}
+	if cfg.VoiceSession.LeaseDuration == 0 {
+		cfg.VoiceSession.LeaseDuration = 2 * time.Minute
+	}
+	if cfg.VoiceSession.IdempotencyTTL == 0 {
+		cfg.VoiceSession.IdempotencyTTL = 24 * time.Hour
+	}
+	if cfg.VoiceSession.LeaseIndexName == "" {
+		cfg.VoiceSession.LeaseIndexName = "gsi2"
+	}
+	if cfg.VoiceSession.GlobalCapacityLimit == 0 {
+		cfg.VoiceSession.GlobalCapacityLimit = 100
+	}
+	if cfg.VoiceSession.PerUserCapacityLimit == 0 {
+		cfg.VoiceSession.PerUserCapacityLimit = 1
 	}
 	if cfg.S3.BucketDrive == "" {
 		cfg.S3.BucketDrive = cfg.S3.BucketInvoices

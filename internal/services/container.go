@@ -4,6 +4,7 @@ import (
 	"invoice-backend/internal/config"
 	"invoice-backend/internal/outbox"
 	"invoice-backend/internal/repositories/interfaces"
+	voicesession "invoice-backend/internal/voice/session"
 	"invoice-backend/pkg/a2a"
 	"invoice-backend/pkg/ap2"
 	"invoice-backend/pkg/awsclients"
@@ -52,6 +53,7 @@ type Container struct {
 	LLM                 *LLMService
 	LLMChatHistory      *LLMChatHistoryService
 	SarvamTTS           *SarvamTTSService
+	VoiceSession        *voicesession.Service
 	A2ATask             *A2ATaskService
 	A2APush             *A2APushService
 	Workflow            *WorkflowService
@@ -123,6 +125,22 @@ func NewContainer(
 	a2aBargainingSvc := NewA2ABargainingService(a2aClient, bargainingSvc, menteeSvc, ap2Repo, aws.SQS, cfg, log)
 	websocketConnectionSvc := NewWebSocketConnectionService(cfg, aws, log)
 	credentialProviderSvc := NewCredentialProviderServiceWithResolver(ap2Repo, cfg, resolver, log)
+	var voiceSessionSvc *voicesession.Service
+	if cfg.VoiceSession.Enabled() && aws != nil && aws.DynamoDB != nil && aws.AgentCore != nil {
+		voiceConfig := voicesession.Config{
+			TableName: cfg.VoiceSession.TableName, AgentRuntimeARN: cfg.VoiceSession.AgentRuntimeARN,
+			AgentRuntimeQualifier: cfg.VoiceSession.AgentRuntimeQualifier, ProtocolVersion: cfg.VoiceSession.ProtocolVersion,
+			KVSChannelCount: cfg.VoiceSession.KVSChannelCount, MaxDuration: cfg.VoiceSession.MaxDuration,
+			RotateAfter: cfg.VoiceSession.RotateAfter, LeaseDuration: cfg.VoiceSession.LeaseDuration,
+			IdempotencyTTL: cfg.VoiceSession.IdempotencyTTL, LeaseIndexName: cfg.VoiceSession.LeaseIndexName,
+			GlobalCapacityLimit: cfg.VoiceSession.GlobalCapacityLimit, PerUserCapacityLimit: cfg.VoiceSession.PerUserCapacityLimit,
+		}
+		voiceStore := voicesession.NewDynamoDBStore(aws.DynamoDB, voicesession.DynamoDBStoreConfig{
+			TableName: voiceConfig.TableName, LeaseIndexName: voiceConfig.LeaseIndexName,
+			GlobalCapacityLimit: voiceConfig.GlobalCapacityLimit, PerUserCapacityLimit: voiceConfig.PerUserCapacityLimit,
+		})
+		voiceSessionSvc = voicesession.NewService(voiceStore, voicesession.NewAgentCoreRuntimeStopper(aws.AgentCore), voiceConfig, voicesession.ServiceOptions{})
+	}
 
 	webhookSvc := NewWebhookService(webhookRepo, log)
 	taxComplianceSvc := NewTaxComplianceService(cfg, db, businessRepo, customerRepo, vendorRepo, subscriptionRepo, aws, s3Svc, webhookSvc, log, resolver)
@@ -196,6 +214,7 @@ func NewContainer(
 		LLM:                 llmSvc,
 		LLMChatHistory:      llmChatHistorySvc,
 		SarvamTTS:           sarvamTTSSvc,
+		VoiceSession:        voiceSessionSvc,
 		A2ATask:             a2aTaskSvc,
 		A2APush:             a2aPushSvc,
 		Workflow:            workflowSvc,
