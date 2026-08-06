@@ -196,9 +196,14 @@ The NAT instance is shared egress, not a Deepgram-specific resource, and must
 be preserved/proven through the migration. The following are Terraform
 declaration addresses; every `count`-guarded resource has a concrete state
 address with `[0]` only when `var.egress_mode == "nat_instance"` (and for the
-two instance-state resources, when their `enable_application` condition also
-matches). In `infrastructure/terraform/nat_egress.tf` these are
-`data.aws_ami.billeif_nat_instance[0]`, `aws_iam_role.nat_instance[0]`,
+`aws_ec2_instance_state.nat_running[0]` and
+`aws_ssm_association.nat_activation_ready[0]`, when
+`var.enable_application` is true; and for
+`aws_ec2_instance_state.nat_stopped[0]`, when it is false). In
+`infrastructure/terraform/nat_egress.tf` these are
+`data.aws_ami.billeif_nat_instance[0]`,
+`data.aws_iam_policy_document.nat_instance_assume_role[0]`,
+`aws_iam_role.nat_instance[0]`,
 `aws_iam_role_policy_attachment.nat_instance_ssm[0]`,
 `aws_iam_instance_profile.nat_instance[0]`, `aws_security_group.nat_instance[0]`,
 `aws_instance.nat[0]`, `aws_eip.nat_instance[0]`,
