@@ -234,7 +234,8 @@ test: ## Run unit tests
 	go test -v -race -cover ./...
 
 test-agentcore: ## Run focused AgentCore runtime and voice protocol tests
-	go test -race -count=1 ./internal/voice/protocol ./internal/voice/runtime ./cmd/agentcore/voice-runtime
+	go test -race -count=1 ./internal/voice/protocol ./internal/voice/runtime ./internal/voice/webrtc ./cmd/agentcore/voice-runtime
+	go test -race -count=1 -tags=voice_live_probe ./internal/voice/webrtc
 
 test-integration: ## Run integration tests (requires local dependencies running)
 	go test -v -tags=integration ./tests/integration/...
