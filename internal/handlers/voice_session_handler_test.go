@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -87,6 +89,23 @@ func TestVoiceSessionHandlerCreateUsesAuthenticatedScopeAndReturnsAllowlistedCon
 	if payload["session_id"] != value.ID || len(payload["spoken_languages"].([]any)) != 11 {
 		t.Fatalf("wrong create response: %#v", payload)
 	}
+	if got := payload["expires_at"]; got != "2026-08-06T07:55:00Z" {
+		t.Fatalf("expires_at = %#v, want the initial 55-minute cap", got)
+	}
+	if got := payload["rotate_at"]; got != "2026-08-06T07:52:00Z" {
+		t.Fatalf("rotate_at = %#v, want the 52-minute rotation deadline", got)
+	}
+	golden, err := os.ReadFile(filepath.Join("..", "voice", "protocol", "testdata", "v1", "session-created.json"))
+	if err != nil {
+		t.Fatalf("read mobile session response golden: %v", err)
+	}
+	var wantPayload map[string]any
+	if err := json.Unmarshal(golden, &wantPayload); err != nil {
+		t.Fatalf("decode mobile session response golden: %v", err)
+	}
+	if !reflect.DeepEqual(payload, wantPayload) {
+		t.Fatalf("create response drifted from mobile golden:\n got: %#v\nwant: %#v", payload, wantPayload)
+	}
 	for _, forbidden := range []string{"user_id", "business_id", "transcript", "sarvam", "credentials", "pk", "sk"} {
 		if _, exists := payload[forbidden]; exists {
 			t.Fatalf("response leaked %q: %#v", forbidden, payload)
@@ -124,6 +143,7 @@ func TestVoiceSessionHandlerMapsCapacityAndOwnershipWithoutLeaks(t *testing.T) {
 		{name: "global capacity", err: session.ErrGlobalCapacity, wantStatus: http.StatusServiceUnavailable, wantRetry: "10"},
 		{name: "idempotency conflict", err: session.ErrIdempotencyConflict, wantStatus: http.StatusConflict},
 		{name: "invalid", err: session.ErrInvalidRequest, wantStatus: http.StatusBadRequest},
+		{name: "rollout denied", err: session.ErrRolloutDenied, wantStatus: http.StatusForbidden},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

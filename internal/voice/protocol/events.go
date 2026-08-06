@@ -8,13 +8,21 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
+	"time"
+	"unicode/utf8"
 )
 
 const (
-	ProtocolVersion        = 1
-	MaxControlMessageBytes = 16 * 1024
-	DataChannelLabel       = "billeif.voice.control.v1"
+	ProtocolVersion         = 1
+	MaxControlMessageBytes  = 16 * 1024
+	MaxFinalAnswerTextBytes = 8 * 1024
+	DataChannelLabel        = "billeif.voice.control.v1"
+	// ClientHeartbeatInterval is the protocol-v1 mobile send cadence while a
+	// peer remains connected. Durable writes are independently coalesced by the
+	// runtime, so this wire cadence does not imply one write per message.
+	ClientHeartbeatInterval = 20 * time.Second
 )
 
 // Direction identifies which peer sent a DataChannel control message.
@@ -44,6 +52,7 @@ const (
 	EventTranscriptFinal  EventType = "transcript.final"
 	EventLanguageSelected EventType = "language.selected"
 	EventTurnStarted      EventType = "turn.started"
+	EventAnswerFinal      EventType = "answer.final"
 	EventTurnCompleted    EventType = "turn.completed"
 	EventTurnCancelled    EventType = "turn.cancelled"
 	EventError            EventType = "error"
@@ -76,6 +85,7 @@ var runtimeEvents = []EventType{
 	EventTranscriptFinal,
 	EventLanguageSelected,
 	EventTurnStarted,
+	EventAnswerFinal,
 	EventTurnCompleted,
 	EventTurnCancelled,
 	EventError,
@@ -87,7 +97,7 @@ var controlMessageJSONFields = map[string]struct{}{
 	"type": {}, "protocol_version": {}, "session_id": {}, "sequence": {},
 	"turn_id": {}, "generation_id": {}, "client_monotonic_ms": {},
 	"state": {}, "text": {}, "detected_language": {},
-	"language_probability": {}, "error_code": {}, "message": {},
+	"language": {}, "language_probability": {}, "error_code": {}, "message": {},
 	"rotate_at": {}, "ice_servers": {},
 }
 
@@ -117,6 +127,7 @@ type ControlMessage struct {
 	State               string    `json:"state,omitempty"`
 	Text                string    `json:"text,omitempty"`
 	DetectedLanguage    string    `json:"detected_language,omitempty"`
+	Language            string    `json:"language,omitempty"`
 	LanguageProbability *float64  `json:"language_probability,omitempty"`
 	ErrorCode           string    `json:"error_code,omitempty"`
 	Message             string    `json:"message,omitempty"`
@@ -210,14 +221,105 @@ func ValidateControlMessage(message ControlMessage, direction Direction) error {
 	if IsGenerationSensitive(message.Type) && (message.GenerationID == nil || *message.GenerationID <= 0) {
 		return ErrGenerationIDRequired
 	}
+	if !validEventPayload(message) {
+		return fmt.Errorf("%w: incomplete %s payload", ErrInvalidControlMessage, message.Type)
+	}
 	return nil
+}
+
+func validEventPayload(message ControlMessage) bool {
+	switch message.Type {
+	case EventSpeechStarted, EventSpeechEnded:
+		return positiveInt64(message.TurnID) && positiveInt64(message.ClientMonotonicMS)
+	case EventInterrupt, EventPlaybackStarted, EventPlaybackCompleted:
+		return positiveInt64(message.TurnID) && positiveInt64(message.GenerationID) && positiveInt64(message.ClientMonotonicMS)
+	case EventNetworkChanged:
+		return positiveInt64(message.ClientMonotonicMS)
+	case EventAgentState:
+		return safeProtocolToken(message.State, 32)
+	case EventTranscriptFinal:
+		if !positiveInt64(message.TurnID) || strings.TrimSpace(message.Text) == "" ||
+			(message.DetectedLanguage != "" && !safeProviderLanguage(message.DetectedLanguage)) {
+			return false
+		}
+		if message.LanguageProbability == nil {
+			return true
+		}
+		return message.DetectedLanguage != "" &&
+			*message.LanguageProbability >= 0 && *message.LanguageProbability <= 1
+	case EventLanguageSelected:
+		return supportedSpokenLanguage(message.Language)
+	case EventAnswerFinal:
+		return positiveInt64(message.TurnID) && positiveInt64(message.GenerationID) &&
+			validFinalAnswerText(message.Text)
+	case EventError:
+		return safeProtocolToken(message.ErrorCode, 64) && len(message.Message) <= 256
+	case EventSessionRotate:
+		deadline, err := time.Parse(time.RFC3339, message.RotateAt)
+		return err == nil && deadline.UTC().Format(time.RFC3339) == message.RotateAt
+	default:
+		return true
+	}
+}
+
+func validFinalAnswerText(value string) bool {
+	if strings.TrimSpace(value) == "" || len(value) > MaxFinalAnswerTextBytes || !utf8.ValidString(value) {
+		return false
+	}
+	for _, character := range value {
+		if character == 0 || (character < 0x20 && character != '\n' && character != '\r' && character != '\t') || character == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+func positiveInt64(value *int64) bool {
+	return value != nil && *value > 0
+}
+
+func safeProtocolToken(value string, maximum int) bool {
+	if value == "" || len(value) > maximum || strings.TrimSpace(value) != value {
+		return false
+	}
+	for index, character := range value {
+		if (character >= 'a' && character <= 'z') || (index > 0 && character >= '0' && character <= '9') ||
+			(index > 0 && (character == '_' || character == '.' || character == '-')) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func safeProviderLanguage(value string) bool {
+	if value == "" || len(value) > 16 || strings.TrimSpace(value) != value {
+		return false
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') || character == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func supportedSpokenLanguage(value string) bool {
+	switch value {
+	case "bn-IN", "en-IN", "gu-IN", "hi-IN", "kn-IN", "ml-IN", "mr-IN", "od-IN", "pa-IN", "ta-IN", "te-IN":
+		return true
+	default:
+		return false
+	}
 }
 
 // IsGenerationSensitive reports whether an event must include generation_id.
 func IsGenerationSensitive(eventType EventType) bool {
 	switch eventType {
 	case EventInterrupt, EventPlaybackStarted, EventPlaybackCompleted,
-		EventAgentState, EventTurnStarted, EventTurnCompleted, EventTurnCancelled:
+		EventAgentState, EventTurnStarted, EventAnswerFinal, EventTurnCompleted, EventTurnCancelled:
 		return true
 	default:
 		return false

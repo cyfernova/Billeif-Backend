@@ -181,6 +181,8 @@ func (h *VoiceSessionHandler) writeError(c *gin.Context, err error) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "voice session not found"})
 	case errors.Is(err, session.ErrBranchForbidden):
 		c.JSON(http.StatusForbidden, gin.H{"error": "validated branch scope required"})
+	case errors.Is(err, session.ErrRolloutDenied):
+		c.JSON(http.StatusForbidden, gin.H{"error": "realtime voice is not available for this account"})
 	case errors.Is(err, session.ErrNotResumable):
 		c.JSON(http.StatusConflict, gin.H{"error": "voice session cannot be resumed"})
 	case errors.Is(err, session.ErrUnavailable):

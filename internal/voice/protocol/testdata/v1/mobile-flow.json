@@ -1,0 +1,38 @@
+{
+  "protocol_version": 1,
+  "terminal_runtime_session_ids": [
+    "voice-session-01K1ABCDE2FGHIJK3LMNOPQRST"
+  ],
+  "steps": [
+    {"id":"token.refresh","transport":"cognito","direction":"client_to_identity"},
+    {"id":"session.create","transport":"https","direction":"client_to_backend","fixture":"session-create.json"},
+    {"id":"session.created","transport":"https","direction":"backend_to_client","fixture":"session-created.json"},
+    {"id":"session.attach","transport":"agentcore","direction":"client_to_runtime","fixture":"session-attach.json","runtime_session_id":"voice-session-01K1ABCDE2FGHIJK3LMNOPQRST"},
+    {"id":"session.attached","transport":"agentcore","direction":"runtime_to_client","fixture":"session-attached.json","runtime_session_id":"voice-session-01K1ABCDE2FGHIJK3LMNOPQRST"},
+    {"id":"webrtc.offer","transport":"agentcore","direction":"client_to_runtime","fixture":"webrtc-offer.json","runtime_session_id":"voice-session-01K1ABCDE2FGHIJK3LMNOPQRST"},
+    {"id":"webrtc.answer","transport":"agentcore","direction":"runtime_to_client","fixture":"webrtc-answer.json","runtime_session_id":"voice-session-01K1ABCDE2FGHIJK3LMNOPQRST"},
+    {"id":"webrtc.candidate","transport":"agentcore","direction":"client_to_runtime","fixture":"webrtc-candidate.json","runtime_session_id":"voice-session-01K1ABCDE2FGHIJK3LMNOPQRST"},
+    {"id":"media.open","transport":"webrtc","direction":"bidirectional"},
+    {"id":"client.ready","transport":"datachannel","direction":"client_to_runtime","fixture":"client-ready.json","runtime_session_id":"voice-session-01K1ABCDE2FGHIJK3LMNOPQRST"},
+    {"id":"speech.started","transport":"datachannel","direction":"client_to_runtime","fixture":"speech-started.json","runtime_session_id":"voice-session-01K1ABCDE2FGHIJK3LMNOPQRST"},
+    {"id":"speech.ended","transport":"datachannel","direction":"client_to_runtime","fixture":"speech-ended.json","runtime_session_id":"voice-session-01K1ABCDE2FGHIJK3LMNOPQRST"},
+    {"id":"turn.started","transport":"datachannel","direction":"runtime_to_client","fixture":"turn-started.json","runtime_session_id":"voice-session-01K1ABCDE2FGHIJK3LMNOPQRST"},
+    {"id":"agent.speaking","transport":"datachannel","direction":"runtime_to_client","fixture":"agent-speaking.json","runtime_session_id":"voice-session-01K1ABCDE2FGHIJK3LMNOPQRST"},
+    {"id":"answer.final","transport":"datachannel","direction":"runtime_to_client","fixture":"answer-final.json","runtime_session_id":"voice-session-01K1ABCDE2FGHIJK3LMNOPQRST"},
+    {"id":"playback.started","transport":"datachannel","direction":"client_to_runtime","fixture":"playback-started.json","runtime_session_id":"voice-session-01K1ABCDE2FGHIJK3LMNOPQRST"},
+    {"id":"playback.completed","transport":"datachannel","direction":"client_to_runtime","fixture":"playback-completed.json","runtime_session_id":"voice-session-01K1ABCDE2FGHIJK3LMNOPQRST"},
+    {"id":"turn.completed","transport":"datachannel","direction":"runtime_to_client","fixture":"turn-completed.json","runtime_session_id":"voice-session-01K1ABCDE2FGHIJK3LMNOPQRST"},
+    {"id":"network.changed","transport":"datachannel","direction":"client_to_runtime","fixture":"network-changed.json","runtime_session_id":"voice-session-01K1ABCDE2FGHIJK3LMNOPQRST"},
+    {"id":"network.reattach","transport":"agentcore","direction":"client_to_runtime","fixture":"network-reattach.json","runtime_session_id":"voice-session-01K1ABCDE2FGHIJK3LMNOPQRST"},
+    {"id":"network.reattached","transport":"agentcore","direction":"runtime_to_client","fixture":"network-reattached.json","runtime_session_id":"voice-session-01K1ABCDE2FGHIJK3LMNOPQRST"},
+    {"id":"webrtc.restart","transport":"agentcore","direction":"client_to_runtime","fixture":"webrtc-restart.json","runtime_session_id":"voice-session-01K1ABCDE2FGHIJK3LMNOPQRST"},
+    {"id":"webrtc.restarted","transport":"agentcore","direction":"runtime_to_client","fixture":"webrtc-restarted.json","runtime_session_id":"voice-session-01K1ABCDE2FGHIJK3LMNOPQRST"},
+    {"id":"session.rotate","transport":"datachannel","direction":"runtime_to_client","fixture":"session-rotate.json","runtime_session_id":"voice-session-01K1ABCDE2FGHIJK3LMNOPQRST"},
+    {"id":"session.close.control","transport":"datachannel","direction":"client_to_runtime","fixture":"session-close.json","runtime_session_id":"voice-session-01K1ABCDE2FGHIJK3LMNOPQRST"},
+    {"id":"session.close.http","transport":"https","direction":"client_to_backend","runtime_session_id":"voice-session-01K1ABCDE2FGHIJK3LMNOPQRST"},
+    {"id":"successor.create","transport":"https","direction":"client_to_backend","fixture":"successor-create.json"},
+    {"id":"successor.created","transport":"https","direction":"backend_to_client","fixture":"successor-created.json"},
+    {"id":"successor.attach","transport":"agentcore","direction":"client_to_runtime","fixture":"successor-attach.json","runtime_session_id":"voice-session-01K1ABCDE2FGHIJK3LMNOPQRSU"},
+    {"id":"successor.attached","transport":"agentcore","direction":"runtime_to_client","fixture":"successor-attached.json","runtime_session_id":"voice-session-01K1ABCDE2FGHIJK3LMNOPQRSU"}
+  ]
+}

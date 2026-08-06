@@ -1,0 +1,7 @@
+{
+  "type": "webrtc.answer",
+  "protocol_version": 1,
+  "session_id": "voice_01K1ABCDE2FGHIJK3LMNOPQRST",
+  "sequence": 5,
+  "sdp": "v=0\r\no=- 4 4 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=mid:0\r\na=ice-ufrag:runtimeB\r\na=ice-pwd:runtimePasswordB123456789\r\na=rtpmap:111 opus/48000/2\r\n"
+}

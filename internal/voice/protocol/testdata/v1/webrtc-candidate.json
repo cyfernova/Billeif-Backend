@@ -1,0 +1,12 @@
+{
+  "type": "webrtc.candidate",
+  "protocol_version": 1,
+  "session_id": "voice_01K1ABCDE2FGHIJK3LMNOPQRST",
+  "sequence": 3,
+  "candidate": {
+    "candidate": "candidate:1 1 udp 1677734910 203.0.113.10 50000 typ relay raddr 0.0.0.0 rport 0",
+    "sdp_mid": "0",
+    "sdp_mline_index": 0,
+    "username_fragment": "clientA"
+  }
+}

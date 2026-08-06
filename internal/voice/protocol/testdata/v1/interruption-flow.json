@@ -1,0 +1,9 @@
+[
+  {"direction":"client_to_runtime","fixture":"interrupt-speech-started.json"},
+  {"direction":"client_to_runtime","fixture":"interrupt-speech-ended.json"},
+  {"direction":"runtime_to_client","fixture":"interrupt-turn-started.json"},
+  {"direction":"runtime_to_client","fixture":"interrupt-agent-speaking.json"},
+  {"direction":"client_to_runtime","fixture":"interrupt.json"},
+  {"direction":"runtime_to_client","fixture":"interrupt-turn-cancelled.json"},
+  {"direction":"runtime_to_client","fixture":"interrupt-replacement-started.json"}
+]

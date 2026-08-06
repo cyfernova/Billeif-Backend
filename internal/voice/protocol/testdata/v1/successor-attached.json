@@ -1,0 +1,13 @@
+{
+  "type": "session.attached",
+  "protocol_version": 1,
+  "session_id": "voice_01K1ABCDE2FGHIJK3LMNOPQRSU",
+  "sequence": 1,
+  "ice_servers": [{
+    "urls": ["turn:34-219-91-62.t-fixture.kinesisvideo.ap-south-1.amazonaws.com:443?transport=udp"],
+    "username": "fixture-successor-user",
+    "credential": "fixture-successor-credential"
+  }],
+  "ice_expires_at": "2026-08-06T08:00:00Z",
+  "ice_transport_policy": "relay"
+}

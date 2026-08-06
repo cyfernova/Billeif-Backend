@@ -1,0 +1,16 @@
+{
+  "branch_id": "cbd6e793-62e6-4c32-a106-065709caf460",
+  "idempotency_key": "7b720e56-1ae3-4e43-9164-41f181da536d",
+  "preferred_language": "en-IN",
+  "fallback_language": "hi-IN",
+  "consent": {
+    "transcript_storage": true,
+    "audio_recording": false,
+    "policy_version": "2026-08-01"
+  },
+  "client": {
+    "platform": "ios",
+    "app_version": "1.0.0",
+    "protocol_version": 1
+  }
+}
