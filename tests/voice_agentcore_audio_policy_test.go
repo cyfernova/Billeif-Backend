@@ -16,7 +16,8 @@ func TestAgentCoreProductionImageFailsClosedWithoutARM64Libopus(t *testing.T) {
 		"CGO_ENABLED=1",
 		"-tags=voice_libopus",
 		`go test -count=1 -tags="voice_libopus voice_libopus_test" ./internal/voice/audio`,
-		"COPY internal/voice/audio ./internal/voice/audio",
+		"COPY internal ./internal",
+		"COPY pkg ./pkg",
 		"/usr/lib/aarch64-linux-gnu/libopus.so.0*",
 		"FROM scratch AS voice-runtime-artifact",
 	} {
@@ -78,6 +79,17 @@ func TestAgentCoreBuildAndCIExerciseOnlyTheCodecEnabledImage(t *testing.T) {
 	if !strings.Contains(testRecipe, "./internal/voice/audio") {
 		t.Fatal("test-agentcore must run the pure audio contract under the race detector")
 	}
+	for _, required := range []string{
+		"./internal/providers/sarvam",
+		"./internal/voice/composition",
+		"./internal/voice/session",
+		"./internal/voice/tools",
+		"./internal/voice/turn",
+	} {
+		if !strings.Contains(testRecipe, required) {
+			t.Errorf("test-agentcore must exercise the production voice dependency graph: missing %q", required)
+		}
+	}
 
 	workflow := readRepositoryFile(t, ".github", "workflows", "deploy.yml")
 	qemuIndex := strings.Index(workflow, "docker/setup-qemu-action@v3")
@@ -87,13 +99,34 @@ func TestAgentCoreBuildAndCIExerciseOnlyTheCodecEnabledImage(t *testing.T) {
 		t.Fatal("CI must configure ARM64 emulation and Buildx before build-agentcore")
 	}
 	for _, required := range []string{
+		"docker network create --internal billeif-voice-offline-ci",
 		"docker run --detach",
+		"--network billeif-voice-offline-ci",
 		"billeif-voice-runtime:ci",
 		"http://127.0.0.1:18080/ping",
 		`{"status":"Healthy"}`,
+		"AWS_EC2_METADATA_DISABLED=true",
+		"AWS_ACCESS_KEY_ID=ci-offline",
+		"AWS_SECRET_ACCESS_KEY=ci-offline-secret",
+		"RUNTIME_ID=ci_voice_runtime",
+		"BILLEIF_API_ORIGIN=https://api123.execute-api.ap-south-1.amazonaws.com/test",
+		"SARVAM_SECRET_ARN=arn:aws:secretsmanager:ap-south-1:123456789012:secret:ci-sarvam",
+		"VOICE_KVS_CHANNEL_COUNT=12",
+		"VOICE_PROTOCOL_VERSION=1",
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Errorf("CI must prove the ARM64 runtime can load libopus: missing %q", required)
+		}
+	}
+	if !strings.Contains(workflow, "docker network rm billeif-voice-offline-ci") {
+		t.Fatal("CI bootstrap smoke must remove its internal-only Docker network")
+	}
+	for _, forbidden := range []string{
+		"SARVAM_API_KEY=",
+		"VOICE_RUNTIME_BOOTSTRAP_MODE=",
+	} {
+		if strings.Contains(workflow, forbidden) {
+			t.Errorf("CI bootstrap smoke must remain provider-free and use production wiring: found %q", forbidden)
 		}
 	}
 	publishIndex := strings.Index(workflow, "--push .")

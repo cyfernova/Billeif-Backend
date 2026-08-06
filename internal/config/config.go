@@ -65,18 +65,21 @@ type SarvamConfig struct {
 }
 
 type VoiceSessionConfig struct {
-	TableName             string        `mapstructure:"TABLE_NAME"`
-	AgentRuntimeARN       string        `mapstructure:"AGENT_RUNTIME_ARN"`
-	AgentRuntimeQualifier string        `mapstructure:"AGENT_RUNTIME_QUALIFIER"`
-	ProtocolVersion       int           `mapstructure:"PROTOCOL_VERSION"`
-	KVSChannelCount       int           `mapstructure:"KVS_CHANNEL_COUNT"`
-	MaxDuration           time.Duration `mapstructure:"MAX_DURATION"`
-	RotateAfter           time.Duration `mapstructure:"ROTATE_AFTER"`
-	LeaseDuration         time.Duration `mapstructure:"LEASE_DURATION"`
-	IdempotencyTTL        time.Duration `mapstructure:"IDEMPOTENCY_TTL"`
-	LeaseIndexName        string        `mapstructure:"LEASE_INDEX_NAME"`
-	GlobalCapacityLimit   int64         `mapstructure:"GLOBAL_CAPACITY_LIMIT"`
-	PerUserCapacityLimit  int64         `mapstructure:"PER_USER_CAPACITY_LIMIT"`
+	TableName                    string        `mapstructure:"TABLE_NAME"`
+	AgentRuntimeARN              string        `mapstructure:"AGENT_RUNTIME_ARN"`
+	AgentRuntimeQualifier        string        `mapstructure:"AGENT_RUNTIME_QUALIFIER"`
+	AdmissionEnabled             bool          `mapstructure:"ADMISSION_ENABLED"`
+	RolloutStage                 string        `mapstructure:"ROLLOUT_STAGE"`
+	RolloutInternalSubjectHashes []string      `mapstructure:"ROLLOUT_INTERNAL_SUB_HASHES"`
+	ProtocolVersion              int           `mapstructure:"PROTOCOL_VERSION"`
+	KVSChannelCount              int           `mapstructure:"KVS_CHANNEL_COUNT"`
+	MaxDuration                  time.Duration `mapstructure:"MAX_DURATION"`
+	RotateAfter                  time.Duration `mapstructure:"ROTATE_AFTER"`
+	LeaseDuration                time.Duration `mapstructure:"LEASE_DURATION"`
+	IdempotencyTTL               time.Duration `mapstructure:"IDEMPOTENCY_TTL"`
+	LeaseIndexName               string        `mapstructure:"LEASE_INDEX_NAME"`
+	GlobalCapacityLimit          int64         `mapstructure:"GLOBAL_CAPACITY_LIMIT"`
+	PerUserCapacityLimit         int64         `mapstructure:"PER_USER_CAPACITY_LIMIT"`
 }
 
 func (c VoiceSessionConfig) Enabled() bool {
@@ -440,6 +443,9 @@ func LoadForProfile(profile Profile) (*Config, error) {
 	_ = viper.BindEnv("VOICE_SESSION.TABLE_NAME", "VOICE_SESSIONS_TABLE_NAME")
 	_ = viper.BindEnv("VOICE_SESSION.AGENT_RUNTIME_ARN", "AGENTCORE_RUNTIME_ARN")
 	_ = viper.BindEnv("VOICE_SESSION.AGENT_RUNTIME_QUALIFIER", "AGENTCORE_RUNTIME_QUALIFIER")
+	_ = viper.BindEnv("VOICE_SESSION.ADMISSION_ENABLED", "VOICE_ADMISSION_ENABLED")
+	_ = viper.BindEnv("VOICE_SESSION.ROLLOUT_STAGE", "VOICE_ROLLOUT_STAGE")
+	_ = viper.BindEnv("VOICE_SESSION.ROLLOUT_INTERNAL_SUB_HASHES", "VOICE_ROLLOUT_INTERNAL_SUB_HASHES")
 	_ = viper.BindEnv("VOICE_SESSION.PROTOCOL_VERSION", "VOICE_PROTOCOL_VERSION")
 	_ = viper.BindEnv("VOICE_SESSION.KVS_CHANNEL_COUNT", "VOICE_KVS_CHANNEL_COUNT")
 	_ = viper.BindEnv("VOICE_SESSION.MAX_DURATION", "VOICE_SESSION_MAX_DURATION")
@@ -466,6 +472,9 @@ func LoadForProfile(profile Profile) (*Config, error) {
 
 	if rawAllowedOrigins := viper.GetString("ALLOWED_ORIGINS"); rawAllowedOrigins != "" {
 		cfg.AllowedOrigins = parseAllowedOrigins(rawAllowedOrigins)
+	}
+	if rawRolloutHashes := viper.GetString("VOICE_SESSION.ROLLOUT_INTERNAL_SUB_HASHES"); rawRolloutHashes != "" {
+		cfg.VoiceSession.RolloutInternalSubjectHashes = parseCommaSeparatedValues(rawRolloutHashes)
 	}
 
 	if err := ValidateForProfile(&cfg, profile); err != nil {
@@ -558,6 +567,13 @@ func applyFlatEnvFileFallbacks(cfg *Config) {
 	setIfEmpty(&cfg.VoiceSession.TableName, "VOICE_SESSIONS_TABLE_NAME")
 	setIfEmpty(&cfg.VoiceSession.AgentRuntimeARN, "AGENTCORE_RUNTIME_ARN")
 	setIfEmpty(&cfg.VoiceSession.AgentRuntimeQualifier, "AGENTCORE_RUNTIME_QUALIFIER")
+	if viper.IsSet("VOICE_ADMISSION_ENABLED") {
+		cfg.VoiceSession.AdmissionEnabled = viper.GetBool("VOICE_ADMISSION_ENABLED")
+	}
+	setIfEmpty(&cfg.VoiceSession.RolloutStage, "VOICE_ROLLOUT_STAGE")
+	if rawRolloutHashes := strings.TrimSpace(viper.GetString("VOICE_ROLLOUT_INTERNAL_SUB_HASHES")); rawRolloutHashes != "" {
+		cfg.VoiceSession.RolloutInternalSubjectHashes = parseCommaSeparatedValues(rawRolloutHashes)
+	}
 	setIfZeroInt(&cfg.VoiceSession.ProtocolVersion, "VOICE_PROTOCOL_VERSION")
 	setIfZeroInt(&cfg.VoiceSession.KVSChannelCount, "VOICE_KVS_CHANNEL_COUNT")
 	setIfZeroDuration(&cfg.VoiceSession.MaxDuration, "VOICE_SESSION_MAX_DURATION")
@@ -672,6 +688,9 @@ func setDefaults(cfg *Config) {
 	if cfg.VoiceSession.AgentRuntimeQualifier == "" {
 		cfg.VoiceSession.AgentRuntimeQualifier = "PROD"
 	}
+	if cfg.VoiceSession.RolloutStage == "" {
+		cfg.VoiceSession.RolloutStage = "disabled"
+	}
 	if cfg.VoiceSession.ProtocolVersion == 0 {
 		cfg.VoiceSession.ProtocolVersion = 1
 	}
@@ -762,6 +781,16 @@ func parseAllowedOrigins(raw string) []string {
 		}
 	}
 	return origins
+}
+
+func parseCommaSeparatedValues(raw string) []string {
+	values := make([]string, 0)
+	for _, candidate := range strings.Split(raw, ",") {
+		if value := strings.TrimSpace(candidate); value != "" {
+			values = append(values, value)
+		}
+	}
+	return values
 }
 
 func isProductionEnv(env string) bool {

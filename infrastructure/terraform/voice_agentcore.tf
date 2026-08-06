@@ -3,6 +3,11 @@ locals {
   voice_agentcore_dns_resolver_cidr  = "${cidrhost(var.vpc_cidr, 2)}/32"
   voice_agentcore_runtime_environment = {
     AWS_REGION                    = var.aws_region
+    BILLEIF_API_ORIGIN            = local.http_api_invoke_url
+    COGNITO_PHONE_CLIENT_ID       = aws_cognito_user_pool_client.phone.id
+    COGNITO_PHONE_REGION          = "ap-south-1"
+    COGNITO_PHONE_USER_POOL_ID    = aws_cognito_user_pool.phone.id
+    ENVIRONMENT                   = var.environment
     RUNTIME_ID                    = local.voice_agentcore_runtime_name
     SARVAM_SECRET_ARN             = aws_secretsmanager_secret.sarvam.arn
     VOICE_GLOBAL_CAPACITY_LIMIT   = "100"
@@ -18,13 +23,13 @@ locals {
 }
 
 data "aws_availability_zone" "voice_agentcore" {
-  count = var.enable_voice ? length(var.availability_zones) : 0
+  count = var.provision_voice_infrastructure ? length(var.availability_zones) : 0
 
   name = var.availability_zones[count.index]
 }
 
 resource "aws_ecr_repository" "voice_agentcore" {
-  count = var.enable_voice ? 1 : 0
+  count = var.provision_voice_infrastructure ? 1 : 0
 
   name                 = local.voice_agentcore_ecr_name
   image_tag_mutability = var.environment == "prod" ? "IMMUTABLE" : "MUTABLE"
@@ -39,12 +44,13 @@ resource "aws_ecr_repository" "voice_agentcore" {
   }
 
   tags = {
-    Name = local.voice_agentcore_ecr_name
+    Name     = local.voice_agentcore_ecr_name
+    Workload = local.voice_cost_allocation_tag_value
   }
 }
 
 resource "aws_ecr_lifecycle_policy" "voice_agentcore" {
-  count = var.enable_voice ? 1 : 0
+  count = var.provision_voice_infrastructure ? 1 : 0
 
   repository = aws_ecr_repository.voice_agentcore[0].name
   policy = jsonencode({
@@ -80,7 +86,7 @@ resource "aws_ecr_lifecycle_policy" "voice_agentcore" {
 }
 
 resource "aws_security_group" "voice_agentcore" {
-  count = var.enable_voice ? 1 : 0
+  count = var.provision_voice_infrastructure ? 1 : 0
 
   name        = "${local.resource_prefix}-voice-agentcore-sg"
   description = "Billeif AgentCore voice runtime egress with no inbound rules"
@@ -123,12 +129,13 @@ resource "aws_security_group" "voice_agentcore" {
   }
 
   tags = {
-    Name = "${local.resource_prefix}-voice-agentcore-sg"
+    Name     = "${local.resource_prefix}-voice-agentcore-sg"
+    Workload = local.voice_cost_allocation_tag_value
   }
 }
 
 resource "awscc_kinesisvideo_signaling_channel" "voice" {
-  count = var.enable_voice ? 12 : 0
+  count = var.provision_voice_infrastructure ? 12 : 0
 
   name                = format("%s-voice-turn-%02d", local.resource_prefix, count.index)
   type                = "SINGLE_MASTER"
@@ -151,11 +158,15 @@ resource "awscc_kinesisvideo_signaling_channel" "voice" {
       key   = "Purpose"
       value = "voice-turn-pool"
     },
+    {
+      key   = local.voice_cost_allocation_tag_key
+      value = local.voice_cost_allocation_tag_value
+    },
   ]
 }
 
 resource "aws_bedrockagentcore_agent_runtime" "voice" {
-  count = var.enable_voice ? 1 : 0
+  count = var.provision_voice_infrastructure ? 1 : 0
 
   agent_runtime_name = local.voice_agentcore_runtime_name
   description        = "Billeif realtime voice runtime using Sarvam and managed KVS TURN"
@@ -163,7 +174,7 @@ resource "aws_bedrockagentcore_agent_runtime" "voice" {
 
   agent_runtime_artifact {
     container_configuration {
-      container_uri = "${aws_ecr_repository.voice_agentcore[0].repository_url}:${var.voice_agentcore_image_tag}"
+      container_uri = "${aws_ecr_repository.voice_agentcore[0].repository_url}@${var.voice_agentcore_image_digest}"
     }
   }
 
@@ -205,18 +216,13 @@ resource "aws_bedrockagentcore_agent_runtime" "voice" {
     }
 
     precondition {
-      condition     = var.voice_agentcore_image_tag != ""
-      error_message = "voice_agentcore_image_tag is required when enable_voice is true."
+      condition     = var.voice_agentcore_image_digest != ""
+      error_message = "voice_agentcore_image_digest is required when voice infrastructure is provisioned."
     }
 
     precondition {
       condition     = var.voice_agentcore_release != ""
-      error_message = "voice_agentcore_release is required when enable_voice is true."
-    }
-
-    precondition {
-      condition     = var.environment != "prod" || startswith(var.voice_agentcore_image_tag, "prod-")
-      error_message = "Production AgentCore voice images must use an immutable prod- prefixed version tag."
+      error_message = "voice_agentcore_release is required when voice infrastructure is provisioned."
     }
 
     precondition {
@@ -232,10 +238,6 @@ resource "aws_bedrockagentcore_agent_runtime" "voice" {
       error_message = "AgentCore voice requires at least two private subnets in supported Mumbai AZ IDs aps1-az1, aps1-az2, or aps1-az3."
     }
 
-    precondition {
-      condition     = var.enable_voice_turn_udp_egress
-      error_message = "AgentCore voice enablement requires the reviewed NAT-instance KVS TURN proof gate before UDP egress is opened."
-    }
   }
 
   tags = {
@@ -243,6 +245,7 @@ resource "aws_bedrockagentcore_agent_runtime" "voice" {
     AuthGate  = "phone-client-and-dynamodb-owner"
     ScopeGate = "voice-use-enforced-by-existing-api"
     TurnProof = "required-before-enable"
+    Workload  = local.voice_cost_allocation_tag_value
   }
 
   depends_on = [
@@ -250,30 +253,54 @@ resource "aws_bedrockagentcore_agent_runtime" "voice" {
     aws_vpc_endpoint.dynamodb,
     aws_vpc_endpoint.s3,
     aws_route.private_default_egress,
+    terraform_data.voice_cutover_gates,
   ]
 }
 
 resource "aws_bedrockagentcore_agent_runtime_endpoint" "voice_staging" {
-  count = var.enable_voice ? 1 : 0
+  count = var.provision_voice_infrastructure ? 1 : 0
 
   name                  = "STAGING"
   description           = "Billeif voice runtime staging qualifier"
   agent_runtime_id      = aws_bedrockagentcore_agent_runtime.voice[0].agent_runtime_id
   agent_runtime_version = local.voice_agentcore_endpoint_version
 
-  depends_on = [terraform_data.voice_agentcore_mmdsv2]
+  tags = {
+    Workload = local.voice_cost_allocation_tag_value
+  }
+
+  depends_on = [
+    aws_cloudwatch_log_group.voice_agentcore,
+    terraform_data.voice_agentcore_mmdsv2,
+  ]
 }
 
 resource "aws_bedrockagentcore_agent_runtime_endpoint" "voice_prod" {
-  count = var.enable_voice ? 1 : 0
+  count = var.provision_voice_infrastructure && var.promote_voice_agentcore_prod ? 1 : 0
 
   name                  = "PROD"
   description           = "Billeif voice runtime production qualifier"
   agent_runtime_id      = aws_bedrockagentcore_agent_runtime.voice[0].agent_runtime_id
-  agent_runtime_version = local.voice_agentcore_endpoint_version
+  agent_runtime_version = var.voice_agentcore_prod_version
+
+  tags = {
+    Workload = local.voice_cost_allocation_tag_value
+  }
+
+  lifecycle {
+    precondition {
+      condition = (
+        var.voice_agentcore_prod_version == local.voice_agentcore_endpoint_version ||
+        (!var.enable_voice && var.voice_agentcore_previous_prod_version != "" && var.voice_agentcore_prod_version == var.voice_agentcore_previous_prod_version)
+      )
+      error_message = "PROD must use the exact STAGING-verified version; rollback to voice_agentcore_previous_prod_version is allowed only while admission is disabled."
+    }
+  }
 
   depends_on = [
+    aws_cloudwatch_log_group.voice_agentcore,
     aws_bedrockagentcore_agent_runtime_endpoint.voice_staging,
     terraform_data.voice_agentcore_mmdsv2,
+    terraform_data.voice_cutover_gates,
   ]
 }

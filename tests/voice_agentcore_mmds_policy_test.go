@@ -19,7 +19,7 @@ func TestVoiceAgentCoreMMDSBridgeCarriesTheCompleteDesiredRuntimeConfiguration(t
 		`var.voice_agentcore_release`,
 		`agentRuntimeArtifact`,
 		`aws_ecr_repository.voice_agentcore[0].repository_url`,
-		`var.voice_agentcore_image_tag`,
+		`var.voice_agentcore_image_digest`,
 		`roleArn`,
 		`aws_iam_role.voice_agentcore_runtime[0].arn`,
 		`networkConfiguration`,

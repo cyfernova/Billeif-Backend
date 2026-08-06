@@ -23,7 +23,7 @@ locals {
 }
 
 resource "aws_iam_role" "voice_agentcore_runtime" {
-  count = var.enable_voice ? 1 : 0
+  count = var.provision_voice_infrastructure ? 1 : 0
 
   name        = "${local.resource_prefix}-voice-agentcore-runtime-role"
   description = "Least-privilege execution role for the Billeif AgentCore voice runtime"
@@ -49,7 +49,7 @@ resource "aws_iam_role" "voice_agentcore_runtime" {
 }
 
 resource "aws_iam_role_policy" "voice_agentcore_runtime" {
-  count = var.enable_voice ? 1 : 0
+  count = var.provision_voice_infrastructure ? 1 : 0
 
   name = "${local.resource_prefix}-voice-agentcore-runtime-policy"
   role = aws_iam_role.voice_agentcore_runtime[0].id
@@ -156,7 +156,7 @@ resource "aws_iam_role_policy" "voice_agentcore_runtime" {
 }
 
 resource "aws_iam_role_policy" "voice_session_http" {
-  count = var.enable_voice ? 1 : 0
+  count = var.provision_voice_infrastructure ? 1 : 0
 
   name = "${local.resource_prefix}-voice-session-http-policy"
   role = aws_iam_role.lambda_http_exec.id
@@ -173,10 +173,13 @@ resource "aws_iam_role_policy" "voice_session_http" {
         Sid    = "StopOwnedVoiceRuntimeSession"
         Effect = "Allow"
         Action = ["bedrock-agentcore:StopRuntimeSession"]
-        Resource = [
-          aws_bedrockagentcore_agent_runtime.voice[0].agent_runtime_arn,
-          aws_bedrockagentcore_agent_runtime_endpoint.voice_prod[0].agent_runtime_endpoint_arn,
-        ]
+        Resource = concat(
+          [
+            aws_bedrockagentcore_agent_runtime.voice[0].agent_runtime_arn,
+            aws_bedrockagentcore_agent_runtime_endpoint.voice_staging[0].agent_runtime_endpoint_arn,
+          ],
+          var.promote_voice_agentcore_prod ? [aws_bedrockagentcore_agent_runtime_endpoint.voice_prod[0].agent_runtime_endpoint_arn] : [],
+        )
       },
     ]
   })

@@ -56,10 +56,25 @@ mock_provider "aws" {
   }
 
   override_resource {
+    target = aws_ecr_repository.voice_agentcore[0]
+    values = {
+      repository_url = "928282274753.dkr.ecr.ap-south-1.amazonaws.com/billeif-test/voice-runtime"
+    }
+  }
+
+  override_resource {
+    target = aws_apigatewayv2_api.http
+    values = {
+      id = "billeif-test-http-api"
+    }
+  }
+
+  override_resource {
     target = aws_bedrockagentcore_agent_runtime_endpoint.voice_staging[0]
     values = {
-      agent_runtime_version = "2"
-      name                  = "STAGING"
+      agent_runtime_endpoint_arn = "arn:aws:bedrock-agentcore:ap-south-1:928282274753:runtime/billeif_test_voice/runtime-endpoint/STAGING"
+      agent_runtime_version      = "2"
+      name                       = "STAGING"
     }
   }
 
@@ -185,17 +200,21 @@ mock_provider "external" {
 }
 
 variables {
-  project_name                   = "billeif-test"
-  environment                    = "test"
-  lambda_artifact_dir            = "tests/fixtures/lambda"
-  migration_lambda_artifact_path = "tests/fixtures/lambda/http.zip"
-  llm_api_url                    = "https://llm.example.test/chat/completions"
-  llm_model                      = "test-model"
-  deepseek_base_url              = "https://voice-llm.example.test/v1"
-  deepseek_model                 = "voice-test-model"
-  ses_verified_identity          = "billeif.example"
-  ses_sender_email               = "notifications@billeif.example"
-  db_allowed_cidr                = "10.0.0.0/24"
+  project_name                          = "billeif-test"
+  environment                           = "test"
+  lambda_artifact_dir                   = "tests/fixtures/lambda"
+  migration_lambda_artifact_path        = "tests/fixtures/lambda/http.zip"
+  voice_reconciler_lambda_artifact_path = "tests/fixtures/lambda/http.zip"
+  llm_api_url                           = "https://llm.example.test/chat/completions"
+  llm_model                             = "test-model"
+  deepseek_base_url                     = "https://voice-llm.example.test/v1"
+  deepseek_model                        = "voice-test-model"
+  ses_verified_identity                 = "billeif.example"
+  ses_sender_email                      = "notifications@billeif.example"
+  db_allowed_cidr                       = "10.0.0.0/24"
+  voice_staging_verified_image_digest   = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  voice_staging_verified_release        = "release-0123456789abcdef"
+  voice_staging_verified_version        = "2"
 }
 
 run "voice_is_cost_safe_when_disabled" {
@@ -214,14 +233,237 @@ run "voice_is_cost_safe_when_disabled" {
   }
 }
 
+run "voice_infrastructure_provisions_while_admission_stays_disabled" {
+  command = plan
+
+  variables {
+    provision_voice_infrastructure = true
+    voice_agentcore_image_digest   = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    voice_agentcore_release        = "release-0123456789abcdef"
+  }
+
+  assert {
+    condition = (
+      var.enable_voice == false &&
+      var.voice_rollout_stage == "disabled" &&
+      length(aws_bedrockagentcore_agent_runtime.voice) == 1 &&
+      length(aws_bedrockagentcore_agent_runtime_endpoint.voice_staging) == 1 &&
+      length(aws_bedrockagentcore_agent_runtime_endpoint.voice_prod) == 0 &&
+      aws_lambda_function.api_http.environment[0].variables["VOICE_ADMISSION_ENABLED"] == "false" &&
+      aws_lambda_function.api_http.environment[0].variables["VOICE_ROLLOUT_STAGE"] == "disabled"
+    )
+    error_message = "Provisioning must create the runtime and STAGING endpoint without promoting PROD or admitting users."
+  }
+}
+
+run "voice_image_digest_rejects_tags_and_uppercase_hex" {
+  command = plan
+
+  variables {
+    provision_voice_infrastructure = true
+    voice_agentcore_image_digest   = "prod-latest"
+    voice_agentcore_release        = "release-0123456789abcdef"
+  }
+
+  expect_failures = [var.voice_agentcore_image_digest]
+}
+
+run "production_promotion_fails_until_every_evidence_gate_is_acknowledged" {
+  command = plan
+
+  variables {
+    environment                    = "prod"
+    provision_voice_infrastructure = true
+    promote_voice_agentcore_prod   = true
+    voice_agentcore_image_digest   = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    voice_agentcore_prod_version   = "2"
+    voice_agentcore_release        = "release-0123456789abcdef"
+  }
+
+  expect_failures = [terraform_data.voice_cutover_gates[0]]
+}
+
+run "production_promotion_keeps_admission_disabled_after_all_evidence" {
+  command = plan
+
+  variables {
+    environment                                   = "prod"
+    provision_voice_infrastructure                = true
+    promote_voice_agentcore_prod                  = true
+    enable_voice                                  = false
+    voice_agentcore_image_digest                  = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    voice_agentcore_prod_version                  = "2"
+    voice_agentcore_release                       = "release-0123456789abcdef"
+    enable_voice_turn_udp_egress                  = true
+    voice_sarvam_stt_concurrency_150_acknowledged = true
+    voice_bulbul_concurrency_150_acknowledged     = true
+    voice_sarvam_llm_rpm_300_acknowledged         = true
+    voice_agentcore_kvs_sessions_120_acknowledged = true
+    voice_turn_live_proof_acknowledged            = true
+    voice_load_cost_live_evidence_acknowledged    = true
+    voice_staging_verified                        = true
+    voice_generic_websocket_verified              = true
+  }
+
+  assert {
+    condition = (
+      length(aws_bedrockagentcore_agent_runtime_endpoint.voice_staging) == 1 &&
+      length(aws_bedrockagentcore_agent_runtime_endpoint.voice_prod) == 1 &&
+      aws_bedrockagentcore_agent_runtime_endpoint.voice_prod[0].agent_runtime_version == "2" &&
+      terraform_data.voice_cutover_gates[0].input.evidence_complete == true &&
+      terraform_data.voice_cutover_gates[0].input.staging_bound == true &&
+      aws_lambda_function.api_http.environment[0].variables["VOICE_ADMISSION_ENABLED"] == "false" &&
+      aws_lambda_function.api_http.environment[0].variables["VOICE_ROLLOUT_STAGE"] == "disabled"
+    )
+    error_message = "A verified PROD promotion must remain independently admission-disabled until the separate cutover change."
+  }
+}
+
+run "production_promotion_rejects_staging_evidence_for_another_artifact" {
+  command = plan
+
+  variables {
+    environment                                   = "prod"
+    provision_voice_infrastructure                = true
+    promote_voice_agentcore_prod                  = true
+    enable_voice                                  = false
+    voice_agentcore_image_digest                  = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    voice_agentcore_prod_version                  = "2"
+    voice_agentcore_release                       = "release-0123456789abcdef"
+    enable_voice_turn_udp_egress                  = true
+    voice_sarvam_stt_concurrency_150_acknowledged = true
+    voice_bulbul_concurrency_150_acknowledged     = true
+    voice_sarvam_llm_rpm_300_acknowledged         = true
+    voice_agentcore_kvs_sessions_120_acknowledged = true
+    voice_turn_live_proof_acknowledged            = true
+    voice_load_cost_live_evidence_acknowledged    = true
+    voice_staging_verified                        = true
+    voice_staging_verified_image_digest           = "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    voice_generic_websocket_verified              = true
+  }
+
+  expect_failures = [terraform_data.voice_cutover_gates[0]]
+}
+
+run "production_admission_rejects_a_disabled_rollout" {
+  command = plan
+
+  variables {
+    environment                                   = "prod"
+    provision_voice_infrastructure                = true
+    promote_voice_agentcore_prod                  = true
+    enable_voice                                  = true
+    voice_agentcore_image_digest                  = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    voice_agentcore_prod_version                  = "2"
+    voice_agentcore_release                       = "release-0123456789abcdef"
+    enable_voice_turn_udp_egress                  = true
+    voice_sarvam_stt_concurrency_150_acknowledged = true
+    voice_bulbul_concurrency_150_acknowledged     = true
+    voice_sarvam_llm_rpm_300_acknowledged         = true
+    voice_agentcore_kvs_sessions_120_acknowledged = true
+    voice_turn_live_proof_acknowledged            = true
+    voice_load_cost_live_evidence_acknowledged    = true
+    voice_staging_verified                        = true
+    voice_generic_websocket_verified              = true
+  }
+
+  expect_failures = [terraform_data.voice_cutover_gates[0]]
+}
+
+run "voice_admission_requires_all_evidence_in_every_environment" {
+  command = plan
+
+  variables {
+    provision_voice_infrastructure = true
+    promote_voice_agentcore_prod   = true
+    enable_voice                   = true
+    voice_rollout_stage            = "100"
+    voice_agentcore_image_digest   = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    voice_agentcore_prod_version   = "2"
+    voice_agentcore_release        = "release-0123456789abcdef"
+    enable_voice_turn_udp_egress   = true
+  }
+
+  expect_failures = [terraform_data.voice_cutover_gates[0]]
+}
+
+run "code_rollback_can_select_only_the_recorded_previous_version_with_admission_off" {
+  command = plan
+
+  variables {
+    environment                                   = "prod"
+    provision_voice_infrastructure                = true
+    promote_voice_agentcore_prod                  = true
+    enable_voice                                  = false
+    voice_agentcore_image_digest                  = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    voice_agentcore_prod_version                  = "1"
+    voice_agentcore_previous_prod_version         = "1"
+    voice_agentcore_release                       = "release-0123456789abcdef"
+    enable_voice_turn_udp_egress                  = true
+    voice_sarvam_stt_concurrency_150_acknowledged = true
+    voice_bulbul_concurrency_150_acknowledged     = true
+    voice_sarvam_llm_rpm_300_acknowledged         = true
+    voice_agentcore_kvs_sessions_120_acknowledged = true
+    voice_turn_live_proof_acknowledged            = true
+    voice_load_cost_live_evidence_acknowledged    = true
+    voice_staging_verified                        = true
+    voice_generic_websocket_verified              = true
+  }
+
+  assert {
+    condition     = aws_bedrockagentcore_agent_runtime_endpoint.voice_prod[0].agent_runtime_version == "1"
+    error_message = "Admission-disabled rollback must point PROD to the explicit previous immutable version."
+  }
+}
+
+run "code_rollback_is_rejected_while_admission_is_enabled" {
+  command = plan
+
+  variables {
+    environment                                   = "prod"
+    provision_voice_infrastructure                = true
+    promote_voice_agentcore_prod                  = true
+    enable_voice                                  = true
+    voice_rollout_stage                           = "100"
+    voice_agentcore_image_digest                  = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    voice_agentcore_prod_version                  = "1"
+    voice_agentcore_previous_prod_version         = "1"
+    voice_agentcore_release                       = "release-0123456789abcdef"
+    enable_voice_turn_udp_egress                  = true
+    voice_sarvam_stt_concurrency_150_acknowledged = true
+    voice_bulbul_concurrency_150_acknowledged     = true
+    voice_sarvam_llm_rpm_300_acknowledged         = true
+    voice_agentcore_kvs_sessions_120_acknowledged = true
+    voice_turn_live_proof_acknowledged            = true
+    voice_load_cost_live_evidence_acknowledged    = true
+    voice_staging_verified                        = true
+    voice_generic_websocket_verified              = true
+  }
+
+  expect_failures = [terraform_data.voice_cutover_gates[0]]
+}
+
 run "voice_core_uses_private_mumbai_runtime_and_bounded_resources" {
   command = plan
 
   variables {
-    enable_voice                 = true
-    voice_agentcore_image_tag    = "prod-0123456789abcdef"
-    voice_agentcore_release      = "release-0123456789abcdef"
-    enable_voice_turn_udp_egress = true
+    provision_voice_infrastructure                = true
+    promote_voice_agentcore_prod                  = true
+    enable_voice                                  = true
+    voice_rollout_stage                           = "100"
+    voice_agentcore_image_tag                     = "prod-0123456789abcdef"
+    voice_agentcore_image_digest                  = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    voice_agentcore_prod_version                  = "2"
+    voice_agentcore_release                       = "release-0123456789abcdef"
+    enable_voice_turn_udp_egress                  = true
+    voice_sarvam_stt_concurrency_150_acknowledged = true
+    voice_bulbul_concurrency_150_acknowledged     = true
+    voice_sarvam_llm_rpm_300_acknowledged         = true
+    voice_agentcore_kvs_sessions_120_acknowledged = true
+    voice_turn_live_proof_acknowledged            = true
+    voice_load_cost_live_evidence_acknowledged    = true
+    voice_staging_verified                        = true
+    voice_generic_websocket_verified              = true
   }
 
   assert {
@@ -248,6 +490,7 @@ run "voice_core_uses_private_mumbai_runtime_and_bounded_resources" {
   assert {
     condition = (
       length(aws_bedrockagentcore_agent_runtime.voice) == 1 &&
+      aws_bedrockagentcore_agent_runtime.voice[0].agent_runtime_artifact[0].container_configuration[0].container_uri == "${aws_ecr_repository.voice_agentcore[0].repository_url}@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" &&
       aws_bedrockagentcore_agent_runtime.voice[0].network_configuration[0].network_mode == "VPC" &&
       toset(aws_bedrockagentcore_agent_runtime.voice[0].network_configuration[0].network_mode_config[0].subnets) == toset(aws_subnet.private[*].id) &&
       length(aws_bedrockagentcore_agent_runtime.voice[0].network_configuration[0].network_mode_config[0].subnets) >= 2 &&
@@ -283,6 +526,11 @@ run "voice_core_uses_private_mumbai_runtime_and_bounded_resources" {
     condition = (
       toset(keys(aws_bedrockagentcore_agent_runtime.voice[0].environment_variables)) == toset([
         "AWS_REGION",
+        "BILLEIF_API_ORIGIN",
+        "COGNITO_PHONE_CLIENT_ID",
+        "COGNITO_PHONE_REGION",
+        "COGNITO_PHONE_USER_POOL_ID",
+        "ENVIRONMENT",
         "RUNTIME_ID",
         "SARVAM_SECRET_ARN",
         "VOICE_GLOBAL_CAPACITY_LIMIT",
@@ -295,6 +543,11 @@ run "voice_core_uses_private_mumbai_runtime_and_bounded_resources" {
         "VOICE_SESSION_ROTATE_AFTER",
         "VOICE_SESSIONS_TABLE_NAME",
       ]) &&
+      aws_bedrockagentcore_agent_runtime.voice[0].environment_variables["BILLEIF_API_ORIGIN"] == local.http_api_invoke_url &&
+      aws_bedrockagentcore_agent_runtime.voice[0].environment_variables["COGNITO_PHONE_USER_POOL_ID"] == "ap-south-1_voicephone" &&
+      aws_bedrockagentcore_agent_runtime.voice[0].environment_variables["COGNITO_PHONE_CLIENT_ID"] == "voice-phone-client" &&
+      aws_bedrockagentcore_agent_runtime.voice[0].environment_variables["COGNITO_PHONE_REGION"] == "ap-south-1" &&
+      aws_bedrockagentcore_agent_runtime.voice[0].environment_variables["ENVIRONMENT"] == "test" &&
       aws_bedrockagentcore_agent_runtime.voice[0].environment_variables["SARVAM_SECRET_ARN"] == "arn:aws:secretsmanager:ap-south-1:928282274753:secret:billeif-test-sarvam" &&
       !contains(keys(aws_bedrockagentcore_agent_runtime.voice[0].environment_variables), "SARVAM_API_KEY")
     )
@@ -329,6 +582,9 @@ run "voice_core_uses_private_mumbai_runtime_and_bounded_resources" {
     condition = (
       aws_lambda_function.api_http.environment[0].variables["AGENTCORE_RUNTIME_ARN"] == aws_bedrockagentcore_agent_runtime.voice[0].agent_runtime_arn &&
       aws_lambda_function.api_http.environment[0].variables["AGENTCORE_RUNTIME_QUALIFIER"] == "PROD" &&
+      aws_lambda_function.api_http.environment[0].variables["VOICE_ADMISSION_ENABLED"] == "true" &&
+      aws_lambda_function.api_http.environment[0].variables["VOICE_ROLLOUT_STAGE"] == "100" &&
+      aws_lambda_function.api_http.environment[0].variables["VOICE_ROLLOUT_INTERNAL_SUB_HASHES"] == "" &&
       aws_lambda_function.api_http.environment[0].variables["VOICE_SESSIONS_TABLE_NAME"] == aws_dynamodb_table.voice_sessions.name &&
       alltrue([
         for environment in [
@@ -442,6 +698,7 @@ run "voice_core_uses_private_mumbai_runtime_and_bounded_resources" {
         if statement.Sid == "StopOwnedVoiceRuntimeSession"
         ][0]) == toset([
         aws_bedrockagentcore_agent_runtime.voice[0].agent_runtime_arn,
+        aws_bedrockagentcore_agent_runtime_endpoint.voice_staging[0].agent_runtime_endpoint_arn,
         aws_bedrockagentcore_agent_runtime_endpoint.voice_prod[0].agent_runtime_endpoint_arn,
       ])
     )
@@ -453,11 +710,11 @@ run "production_voice_registry_is_immutable_and_recoverable" {
   command = plan
 
   variables {
-    environment                  = "prod"
-    enable_voice                 = true
-    voice_agentcore_image_tag    = "prod-0123456789abcdef"
-    voice_agentcore_release      = "release-0123456789abcdef"
-    enable_voice_turn_udp_egress = true
+    environment                    = "prod"
+    provision_voice_infrastructure = true
+    voice_agentcore_image_tag      = "prod-0123456789abcdef"
+    voice_agentcore_image_digest   = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    voice_agentcore_release        = "release-0123456789abcdef"
   }
 
   assert {
@@ -474,10 +731,9 @@ run "voice_rejects_duplicate_physical_availability_zones" {
   command = plan
 
   variables {
-    enable_voice                 = true
-    voice_agentcore_image_tag    = "prod-0123456789abcdef"
-    voice_agentcore_release      = "release-0123456789abcdef"
-    enable_voice_turn_udp_egress = true
+    provision_voice_infrastructure = true
+    voice_agentcore_image_digest   = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    voice_agentcore_release        = "release-0123456789abcdef"
   }
 
   override_data {

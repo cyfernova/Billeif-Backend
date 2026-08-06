@@ -254,17 +254,17 @@ output "voice_agentcore_ecr_repository_url" {
 }
 
 output "voice_agentcore_runtime_arn" {
-  description = "AgentCore voice runtime ARN, or null while voice is disabled."
+  description = "AgentCore voice runtime ARN, or null while voice infrastructure is not provisioned."
   value       = try(aws_bedrockagentcore_agent_runtime.voice[0].agent_runtime_arn, null)
 }
 
 output "voice_agentcore_runtime_qualifier" {
   description = "Backend and mobile AgentCore qualifier; DEFAULT is never exposed."
-  value       = var.enable_voice ? "PROD" : null
+  value       = var.provision_voice_infrastructure ? (var.promote_voice_agentcore_prod ? "PROD" : "STAGING") : null
 }
 
 output "voice_agentcore_prod_endpoint_arn" {
-  description = "Version-pinned PROD AgentCore endpoint ARN, or null while voice is disabled."
+  description = "Version-pinned PROD AgentCore endpoint ARN, or null before explicit promotion."
   value       = try(aws_bedrockagentcore_agent_runtime_endpoint.voice_prod[0].agent_runtime_endpoint_arn, null)
 }
 

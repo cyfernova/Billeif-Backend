@@ -44,6 +44,9 @@ func TestSetDefaultsProductionPreservesExplicitWAFEnabled(t *testing.T) {
 func TestVoiceSessionDefaultsAreBoundedAndNonSecret(t *testing.T) {
 	cfg := &Config{}
 	setDefaults(cfg)
+	if cfg.VoiceSession.AdmissionEnabled || cfg.VoiceSession.RolloutStage != "disabled" || len(cfg.VoiceSession.RolloutInternalSubjectHashes) != 0 {
+		t.Fatalf("voice rollout must fail closed by default: %#v", cfg.VoiceSession)
+	}
 	if cfg.VoiceSession.ProtocolVersion != 1 || cfg.VoiceSession.KVSChannelCount != 12 {
 		t.Fatalf("unexpected protocol/channel defaults: %#v", cfg.VoiceSession)
 	}
@@ -52,6 +55,57 @@ func TestVoiceSessionDefaultsAreBoundedAndNonSecret(t *testing.T) {
 	}
 	if cfg.VoiceSession.AgentRuntimeQualifier != "PROD" || cfg.VoiceSession.GlobalCapacityLimit != 100 || cfg.VoiceSession.PerUserCapacityLimit != 1 {
 		t.Fatalf("unexpected voice control defaults: %#v", cfg.VoiceSession)
+	}
+}
+
+func TestValidateVoiceSessionRolloutFailsClosed(t *testing.T) {
+	base := VoiceSessionConfig{
+		TableName:       "voice-sessions",
+		AgentRuntimeARN: "arn:aws:bedrock-agentcore:ap-south-1:123456789012:runtime/test",
+	}
+	tests := []struct {
+		name   string
+		mutate func(*VoiceSessionConfig)
+		want   string
+	}{
+		{name: "admission requires non-disabled rollout", mutate: func(cfg *VoiceSessionConfig) {
+			cfg.AdmissionEnabled = true
+			cfg.RolloutStage = "disabled"
+		}, want: "VOICE_ROLLOUT_STAGE must not be disabled"},
+		{name: "internal rollout requires allowlist", mutate: func(cfg *VoiceSessionConfig) {
+			cfg.AdmissionEnabled = true
+			cfg.RolloutStage = "internal"
+		}, want: "VOICE_ROLLOUT_INTERNAL_SUB_HASHES"},
+		{name: "raw subject is rejected", mutate: func(cfg *VoiceSessionConfig) {
+			cfg.RolloutStage = "internal"
+			cfg.RolloutInternalSubjectHashes = []string{"cognito-sub-is-pii"}
+		}, want: "sha256:<64 lowercase hex>"},
+		{name: "unknown stage is rejected", mutate: func(cfg *VoiceSessionConfig) {
+			cfg.RolloutStage = "10"
+		}, want: "disabled, internal, 5, 25, 50, or 100"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := base
+			tc.mutate(&cfg)
+			if err := validateVoiceSessionConfig(cfg); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected %q validation error, got %v", tc.want, err)
+			}
+		})
+	}
+
+	valid := base
+	valid.AdmissionEnabled = true
+	valid.RolloutStage = "internal"
+	valid.RolloutInternalSubjectHashes = []string{"sha256:a82dbfadf4306ff5b431dd63bb680db4f6f00cd92583e349717838e2fb70fee0"}
+	if err := validateVoiceSessionConfig(valid); err != nil {
+		t.Fatalf("valid hashed internal rollout rejected: %v", err)
+	}
+
+	missingRuntime := VoiceSessionConfig{AdmissionEnabled: true, RolloutStage: "100"}
+	if err := validateVoiceSessionConfig(missingRuntime); err == nil || !strings.Contains(err.Error(), "requires voice session infrastructure") {
+		t.Fatalf("admission without runtime infrastructure must fail closed, got %v", err)
 	}
 }
 

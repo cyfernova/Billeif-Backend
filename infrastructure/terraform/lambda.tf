@@ -70,19 +70,22 @@ locals {
     MCP_SERVER_URL                   = var.mcp_server_url
   }
 
-  voice_http_lambda_env = var.enable_voice ? {
-    AGENTCORE_RUNTIME_ARN          = aws_bedrockagentcore_agent_runtime.voice[0].agent_runtime_arn
-    AGENTCORE_RUNTIME_QUALIFIER    = "PROD"
-    VOICE_GLOBAL_CAPACITY_LIMIT    = "100"
-    VOICE_KVS_CHANNEL_COUNT        = "12"
-    VOICE_PER_USER_CAPACITY_LIMIT  = "1"
-    VOICE_PROTOCOL_VERSION         = "1"
-    VOICE_SESSION_IDEMPOTENCY_TTL  = "24h"
-    VOICE_SESSION_LEASE_DURATION   = "2m"
-    VOICE_SESSION_LEASE_INDEX_NAME = "gsi2"
-    VOICE_SESSION_MAX_DURATION     = "55m"
-    VOICE_SESSION_ROTATE_AFTER     = "52m"
-    VOICE_SESSIONS_TABLE_NAME      = aws_dynamodb_table.voice_sessions.name
+  voice_http_lambda_env = var.provision_voice_infrastructure ? {
+    AGENTCORE_RUNTIME_ARN             = aws_bedrockagentcore_agent_runtime.voice[0].agent_runtime_arn
+    AGENTCORE_RUNTIME_QUALIFIER       = var.promote_voice_agentcore_prod ? "PROD" : "STAGING"
+    VOICE_ADMISSION_ENABLED           = tostring(var.enable_voice)
+    VOICE_GLOBAL_CAPACITY_LIMIT       = "100"
+    VOICE_KVS_CHANNEL_COUNT           = "12"
+    VOICE_PER_USER_CAPACITY_LIMIT     = "1"
+    VOICE_PROTOCOL_VERSION            = "1"
+    VOICE_ROLLOUT_INTERNAL_SUB_HASHES = join(",", sort(tolist(var.voice_rollout_internal_sub_hashes)))
+    VOICE_ROLLOUT_STAGE               = local.voice_effective_rollout_stage
+    VOICE_SESSION_IDEMPOTENCY_TTL     = "24h"
+    VOICE_SESSION_LEASE_DURATION      = "2m"
+    VOICE_SESSION_LEASE_INDEX_NAME    = "gsi2"
+    VOICE_SESSION_MAX_DURATION        = "55m"
+    VOICE_SESSION_ROTATE_AFTER        = "52m"
+    VOICE_SESSIONS_TABLE_NAME         = aws_dynamodb_table.voice_sessions.name
   } : {}
 
   database_runtime_env = {

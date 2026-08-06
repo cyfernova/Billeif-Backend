@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -372,6 +373,9 @@ func validateVoiceSessionConfig(cfg VoiceSessionConfig) error {
 	if tableConfigured != runtimeConfigured {
 		return fmt.Errorf("VOICE_SESSIONS_TABLE_NAME and AGENTCORE_RUNTIME_ARN must be configured together")
 	}
+	if cfg.AdmissionEnabled && !tableConfigured {
+		return fmt.Errorf("VOICE_ADMISSION_ENABLED requires voice session infrastructure")
+	}
 	if cfg.ProtocolVersion != 0 && cfg.ProtocolVersion != 1 {
 		return fmt.Errorf("VOICE_PROTOCOL_VERSION must be 1")
 	}
@@ -405,7 +409,35 @@ func validateVoiceSessionConfig(cfg VoiceSessionConfig) error {
 	if cfg.PerUserCapacityLimit != 0 && cfg.PerUserCapacityLimit != 1 {
 		return fmt.Errorf("VOICE_PER_USER_CAPACITY_LIMIT must be 1")
 	}
+	stage := strings.TrimSpace(cfg.RolloutStage)
+	if stage == "" {
+		stage = "disabled"
+	}
+	if !containsString([]string{"disabled", "internal", "5", "25", "50", "100"}, stage) {
+		return fmt.Errorf("VOICE_ROLLOUT_STAGE must be disabled, internal, 5, 25, 50, or 100")
+	}
+	hashPattern := regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	for _, hash := range cfg.RolloutInternalSubjectHashes {
+		if !hashPattern.MatchString(hash) {
+			return fmt.Errorf("VOICE_ROLLOUT_INTERNAL_SUB_HASHES entries must use sha256:<64 lowercase hex>")
+		}
+	}
+	if cfg.AdmissionEnabled && stage == "disabled" {
+		return fmt.Errorf("VOICE_ROLLOUT_STAGE must not be disabled when VOICE_ADMISSION_ENABLED is true")
+	}
+	if cfg.AdmissionEnabled && stage == "internal" && len(cfg.RolloutInternalSubjectHashes) == 0 {
+		return fmt.Errorf("VOICE_ROLLOUT_INTERNAL_SUB_HASHES is required for internal admission")
+	}
 	return nil
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func isPlaceholderLLMHost(host string) bool {

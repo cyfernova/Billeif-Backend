@@ -15,8 +15,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY cmd/agentcore/voice-runtime ./cmd/agentcore/voice-runtime
-COPY internal/voice/audio ./internal/voice/audio
-COPY internal/voice/runtime ./internal/voice/runtime
+COPY internal ./internal
+COPY pkg ./pkg
 
 RUN go test -count=1 -tags="voice_libopus voice_libopus_test" ./internal/voice/audio
 RUN CGO_ENABLED=1 GOOS=$TARGETOS GOARCH=$TARGETARCH \

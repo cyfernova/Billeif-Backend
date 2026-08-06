@@ -3,7 +3,7 @@
 -include .env.local
 export
 
-.PHONY: help infra-backend-init infra-init infra-validate infra-apply infra-plan infra-destroy infra-output build-agentcore test-agentcore build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-email-delivery build-lambda-sqs-ses-feedback build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-outbox build-lambda-migrator build-lambda-custom-sms-sender package-lambda package-lambda-email-delivery package-lambda-ses-feedback package-lambda-outbox package-lambda-migrator migration-manifest migration-manifest-verify rds-tunnel run-local test test-integration migrate-up migrate-down migrate-rds-up migrate-rds-down migrate-create fmt lint clean deps test-coverage swagger
+.PHONY: help infra-backend-init infra-init infra-validate infra-apply infra-plan infra-destroy infra-output build-agentcore test-agentcore build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-email-delivery build-lambda-sqs-ses-feedback build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-outbox build-lambda-migrator build-lambda-voice-reconciler build-lambda-custom-sms-sender package-lambda package-lambda-email-delivery package-lambda-ses-feedback package-lambda-outbox package-lambda-migrator package-lambda-voice-reconciler migration-manifest migration-manifest-verify rds-tunnel run-local test test-integration migrate-up migrate-down migrate-rds-up migrate-rds-down migrate-create fmt lint clean deps test-coverage swagger
 
 LAMBDA_BUILD_DIR := .build/lambda
 AGENTCORE_BUILD_DIR := .build/agentcore
@@ -91,7 +91,7 @@ build-agentcore: ## Build the AgentCore voice runtime for linux/arm64 without pu
 	mkdir -p $(AGENTCORE_BUILD_DIR)
 	docker buildx build --platform linux/arm64 --file deploy/agentcore/Dockerfile --target voice-runtime-artifact --output type=local,dest=$(AGENTCORE_BUILD_DIR) .
 
-build-lambda: build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-email-delivery build-lambda-sqs-ses-feedback build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-outbox build-lambda-migrator ## Build all Lambda binaries
+build-lambda: build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-email-delivery build-lambda-sqs-ses-feedback build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-outbox build-lambda-migrator build-lambda-voice-reconciler ## Build all Lambda binaries
 
 build-lambda-http: ## Build HTTP API Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/http
@@ -133,13 +133,17 @@ build-lambda-migrator: migration-manifest-verify ## Build stripped ARM64 databas
 	mkdir -p $(LAMBDA_BUILD_DIR)/migrator
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o $(LAMBDA_BUILD_DIR)/migrator/bootstrap ./cmd/lambda/migrator
 
+build-lambda-voice-reconciler: ## Build stripped ARM64 voice lease reconciler Lambda bootstrap binary
+	mkdir -p $(LAMBDA_BUILD_DIR)/voice-reconciler
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o $(LAMBDA_BUILD_DIR)/voice-reconciler/bootstrap ./cmd/lambda/voice-reconciler
+
 build-lambda-custom-sms-sender: ## Build the Node.js custom SMS sender Lambda package
 	rm -rf $(LAMBDA_BUILD_DIR)/custom-sms-sender
 	mkdir -p $(LAMBDA_BUILD_DIR)/custom-sms-sender
 	cp -R infrastructure/lambda/custom-sms-sender/. $(LAMBDA_BUILD_DIR)/custom-sms-sender/
 	cd $(LAMBDA_BUILD_DIR)/custom-sms-sender && pnpm install --prod --frozen-lockfile
 
-package-lambda: build-lambda build-lambda-custom-sms-sender package-lambda-email-delivery package-lambda-ses-feedback package-lambda-outbox package-lambda-migrator ## Package Lambda artifacts into zip files
+package-lambda: build-lambda build-lambda-custom-sms-sender package-lambda-email-delivery package-lambda-ses-feedback package-lambda-outbox package-lambda-migrator package-lambda-voice-reconciler ## Package Lambda artifacts into zip files
 	rm -f $(LAMBDA_BUILD_DIR)/http.zip
 	TZ=UTC touch -t 198001010000 $(LAMBDA_BUILD_DIR)/http/bootstrap
 	cd $(LAMBDA_BUILD_DIR)/http && TZ=UTC zip -q -X -j ../http.zip bootstrap
@@ -182,6 +186,11 @@ package-lambda-migrator: build-lambda-migrator ## Package the migration Lambda d
 	rm -f $(LAMBDA_BUILD_DIR)/migrator.zip
 	TZ=UTC touch -t 198001010000 $(LAMBDA_BUILD_DIR)/migrator/bootstrap
 	cd $(LAMBDA_BUILD_DIR)/migrator && TZ=UTC zip -q -X -j ../migrator.zip bootstrap
+
+package-lambda-voice-reconciler: build-lambda-voice-reconciler ## Package the voice lease reconciler Lambda deterministically
+	rm -f $(LAMBDA_BUILD_DIR)/voice-reconciler.zip
+	TZ=UTC touch -t 198001010000 $(LAMBDA_BUILD_DIR)/voice-reconciler/bootstrap
+	cd $(LAMBDA_BUILD_DIR)/voice-reconciler && TZ=UTC zip -q -X -j ../voice-reconciler.zip bootstrap
 
 migration-manifest: ## Regenerate the deterministic root migration checksum manifest
 	@set -euo pipefail; \
@@ -235,7 +244,9 @@ test: ## Run unit tests
 
 test-agentcore: ## Run focused AgentCore runtime and voice protocol tests
 	go test -race -count=1 ./internal/voice/protocol ./internal/voice/runtime ./internal/voice/webrtc ./cmd/agentcore/voice-runtime
+	go test -race -count=1 ./internal/providers/sarvam ./internal/voice/composition ./internal/voice/session ./internal/voice/tools ./internal/voice/turn
 	go test -race -count=1 ./internal/voice/audio
+	go test -race -count=1 ./internal/voice/reconciler ./cmd/lambda/voice-reconciler
 	go test -race -count=1 -tags=voice_live_probe ./internal/voice/webrtc
 
 test-integration: ## Run integration tests (requires local dependencies running)

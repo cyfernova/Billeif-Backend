@@ -132,13 +132,32 @@ jobs:
             --tag billeif-voice-runtime:ci \
             --load .
           test "$(docker inspect billeif-voice-runtime:ci --format '{{.Os}}/{{.Architecture}} {{.Config.User}}')" = "linux/arm64 10001:10001"
+          docker network create --internal billeif-voice-offline-ci
+          trap 'docker rm --force billeif-voice-runtime-ci >/dev/null 2>&1 || true; docker network rm billeif-voice-offline-ci >/dev/null 2>&1 || true' EXIT
           docker run --detach --name billeif-voice-runtime-ci \
             --platform linux/arm64 \
+            --network billeif-voice-offline-ci \
             --publish 127.0.0.1:18080:8080 \
-            --env RUNTIME_ID=ci-runtime \
+            --env AWS_ACCESS_KEY_ID=ci-offline \
+            --env AWS_SECRET_ACCESS_KEY=ci-offline-secret \
+            --env AWS_EC2_METADATA_DISABLED=true \
             --env AWS_REGION=ap-south-1 \
+            --env BILLEIF_API_ORIGIN=https://api123.execute-api.ap-south-1.amazonaws.com/test \
+            --env COGNITO_PHONE_CLIENT_ID=ci-phone-client \
+            --env COGNITO_PHONE_REGION=ap-south-1 \
+            --env COGNITO_PHONE_USER_POOL_ID=ap-south-1_ciphone \
+            --env RUNTIME_ID=ci_voice_runtime \
+            --env SARVAM_SECRET_ARN=arn:aws:secretsmanager:ap-south-1:123456789012:secret:ci-sarvam \
+            --env VOICE_GLOBAL_CAPACITY_LIMIT=100 \
+            --env VOICE_KVS_CHANNEL_ARNS=arn:aws:kinesisvideo:ap-south-1:123456789012:channel/voice-a/1234567890,arn:aws:kinesisvideo:ap-south-1:123456789012:channel/voice-b/1234567890,arn:aws:kinesisvideo:ap-south-1:123456789012:channel/voice-c/1234567890,arn:aws:kinesisvideo:ap-south-1:123456789012:channel/voice-d/1234567890,arn:aws:kinesisvideo:ap-south-1:123456789012:channel/voice-e/1234567890,arn:aws:kinesisvideo:ap-south-1:123456789012:channel/voice-f/1234567890,arn:aws:kinesisvideo:ap-south-1:123456789012:channel/voice-g/1234567890,arn:aws:kinesisvideo:ap-south-1:123456789012:channel/voice-h/1234567890,arn:aws:kinesisvideo:ap-south-1:123456789012:channel/voice-i/1234567890,arn:aws:kinesisvideo:ap-south-1:123456789012:channel/voice-j/1234567890,arn:aws:kinesisvideo:ap-south-1:123456789012:channel/voice-k/1234567890,arn:aws:kinesisvideo:ap-south-1:123456789012:channel/voice-l/1234567890 \
+            --env VOICE_KVS_CHANNEL_COUNT=12 \
+            --env VOICE_PER_USER_CAPACITY_LIMIT=1 \
+            --env VOICE_PROTOCOL_VERSION=1 \
+            --env VOICE_SESSION_LEASE_DURATION=2m \
+            --env VOICE_SESSION_MAX_DURATION=55m \
+            --env VOICE_SESSION_ROTATE_AFTER=52m \
+            --env VOICE_SESSIONS_TABLE_NAME=billeif-ci-voice-sessions \
             billeif-voice-runtime:ci
-          trap 'docker rm --force billeif-voice-runtime-ci >/dev/null 2>&1 || true' EXIT
           for attempt in $(seq 1 30); do
             response="$(curl --silent --fail http://127.0.0.1:18080/ping || true)"
             if test "${response}" = '{"status":"Healthy"}'; then
@@ -179,10 +198,31 @@ jobs:
       TF_VAR_enable_cognito_custom_domain_provisioning: ${{ vars.ENABLE_COGNITO_CUSTOM_DOMAIN_PROVISIONING == 'true' && 'true' || 'false' }}
       TF_VAR_enable_cognito_custom_domain_cutover: ${{ vars.ENABLE_COGNITO_CUSTOM_DOMAIN_CUTOVER == 'true' && 'true' || 'false' }}
       TF_VAR_enable_background_processing: ${{ vars.ENABLE_BACKGROUND_PROCESSING == 'true' && 'true' || 'false' }}
-      TF_VAR_enable_voice: ${{ vars.ENABLE_VOICE == 'true' && 'true' || 'false' }}
+      TF_VAR_provision_voice_infrastructure: ${{ vars.PROVISION_VOICE_INFRASTRUCTURE == 'true' && 'true' || 'false' }}
+      TF_VAR_promote_voice_agentcore_prod: ${{ vars.PROMOTE_VOICE_AGENTCORE_PROD == 'true' && 'true' || 'false' }}
+      PUBLISH_VOICE_AGENTCORE_IMAGE: ${{ vars.PUBLISH_VOICE_AGENTCORE_IMAGE == 'true' && 'true' || 'false' }}
+      # Task 17 prepares gates only. Enabling production admission requires a
+      # separate reviewed repository change; a mutable GitHub variable cannot do it.
+      TF_VAR_enable_voice: "false"
       TF_VAR_enable_voice_turn_udp_egress: ${{ vars.ENABLE_VOICE_TURN_UDP_EGRESS == 'true' && 'true' || 'false' }}
       TF_VAR_voice_agentcore_image_tag: ${{ vars.VOICE_AGENTCORE_IMAGE_TAG != '' && vars.VOICE_AGENTCORE_IMAGE_TAG || '' }}
+      TF_VAR_voice_agentcore_image_digest: ${{ vars.VOICE_AGENTCORE_IMAGE_DIGEST != '' && vars.VOICE_AGENTCORE_IMAGE_DIGEST || '' }}
       TF_VAR_voice_agentcore_release: ${{ vars.VOICE_AGENTCORE_RELEASE != '' && vars.VOICE_AGENTCORE_RELEASE || '' }}
+      TF_VAR_voice_agentcore_prod_version: ${{ vars.VOICE_AGENTCORE_PROD_VERSION != '' && vars.VOICE_AGENTCORE_PROD_VERSION || '' }}
+      TF_VAR_voice_agentcore_previous_prod_version: ${{ vars.VOICE_AGENTCORE_PREVIOUS_PROD_VERSION != '' && vars.VOICE_AGENTCORE_PREVIOUS_PROD_VERSION || '' }}
+      TF_VAR_voice_rollout_stage: ${{ vars.VOICE_ROLLOUT_STAGE != '' && vars.VOICE_ROLLOUT_STAGE || 'disabled' }}
+      TF_VAR_voice_rollout_internal_sub_hashes: ${{ vars.VOICE_ROLLOUT_INTERNAL_SUB_HASHES != '' && vars.VOICE_ROLLOUT_INTERNAL_SUB_HASHES || '[]' }}
+      TF_VAR_voice_sarvam_stt_concurrency_150_acknowledged: ${{ vars.VOICE_SARVAM_STT_CONCURRENCY_150_ACKNOWLEDGED == 'true' && 'true' || 'false' }}
+      TF_VAR_voice_bulbul_concurrency_150_acknowledged: ${{ vars.VOICE_BULBUL_CONCURRENCY_150_ACKNOWLEDGED == 'true' && 'true' || 'false' }}
+      TF_VAR_voice_sarvam_llm_rpm_300_acknowledged: ${{ vars.VOICE_SARVAM_LLM_RPM_300_ACKNOWLEDGED == 'true' && 'true' || 'false' }}
+      TF_VAR_voice_agentcore_kvs_sessions_120_acknowledged: ${{ vars.VOICE_AGENTCORE_KVS_SESSIONS_120_ACKNOWLEDGED == 'true' && 'true' || 'false' }}
+      TF_VAR_voice_turn_live_proof_acknowledged: ${{ vars.VOICE_TURN_LIVE_PROOF_ACKNOWLEDGED == 'true' && 'true' || 'false' }}
+      TF_VAR_voice_load_cost_live_evidence_acknowledged: ${{ vars.VOICE_LOAD_COST_LIVE_EVIDENCE_ACKNOWLEDGED == 'true' && 'true' || 'false' }}
+      TF_VAR_voice_staging_verified: ${{ vars.VOICE_STAGING_VERIFIED == 'true' && 'true' || 'false' }}
+      TF_VAR_voice_staging_verified_image_digest: ${{ vars.VOICE_STAGING_VERIFIED_IMAGE_DIGEST != '' && vars.VOICE_STAGING_VERIFIED_IMAGE_DIGEST || '' }}
+      TF_VAR_voice_staging_verified_release: ${{ vars.VOICE_STAGING_VERIFIED_RELEASE != '' && vars.VOICE_STAGING_VERIFIED_RELEASE || '' }}
+      TF_VAR_voice_staging_verified_version: ${{ vars.VOICE_STAGING_VERIFIED_VERSION != '' && vars.VOICE_STAGING_VERIFIED_VERSION || '' }}
+      TF_VAR_voice_generic_websocket_verified: ${{ vars.VOICE_GENERIC_WEBSOCKET_VERIFIED == 'true' && 'true' || 'false' }}
       TF_VAR_enable_rds_tunnel: "false"
       TF_VAR_use_ambient_aws_credentials: "true"
       TF_VAR_llm_api_url: ${{ vars.LLM_API_URL != '' && vars.LLM_API_URL || 'https://api.deepseek.com/chat/completions' }}
@@ -234,6 +274,10 @@ jobs:
           require "Missing AWS_DEPLOY_ROLE_ARN secret." "${AWS_DEPLOY_ROLE_ARN}"
           require "Missing TF_STATE_BUCKET secret." "${TF_STATE_BUCKET}"
           require "Missing TF_STATE_LOCK_TABLE secret." "${TF_STATE_LOCK_TABLE}"
+          if [ "${PUBLISH_VOICE_AGENTCORE_IMAGE}" = "true" ] && [ "${TF_VAR_provision_voice_infrastructure}" != "true" ]; then
+            echo "::error::PUBLISH_VOICE_AGENTCORE_IMAGE requires PROVISION_VOICE_INFRASTRUCTURE=true."
+            exit 1
+          fi
 
       - name: Configure AWS credentials with OIDC
         uses: aws-actions/configure-aws-credentials@v6
@@ -258,21 +302,25 @@ jobs:
             -backend-config="dynamodb_table=${TF_STATE_LOCK_TABLE}"
 
       - name: Validate AgentCore voice release gate
-        if: env.TF_VAR_enable_voice == 'true'
+        if: env.TF_VAR_provision_voice_infrastructure == 'true'
         run: |
-          test -n "${TF_VAR_voice_agentcore_image_tag}" || {
-            echo "::error::VOICE_AGENTCORE_IMAGE_TAG is required when voice is enabled."
-            exit 1
-          }
           test -n "${TF_VAR_voice_agentcore_release}" || {
-            echo "::error::VOICE_AGENTCORE_RELEASE is required when voice is enabled."
+            echo "::error::VOICE_AGENTCORE_RELEASE is required when voice infrastructure is provisioned."
             exit 1
           }
-          test "${TF_VAR_enable_voice_turn_udp_egress}" = "true" || {
-            echo "::error::The reviewed TURN proof gate must be acknowledged before voice enablement."
+          if [ "${PUBLISH_VOICE_AGENTCORE_IMAGE}" = "true" ]; then
+            test -n "${TF_VAR_voice_agentcore_image_tag}" || {
+              echo "::error::VOICE_AGENTCORE_IMAGE_TAG is required when publishing a voice image."
+              exit 1
+            }
+            test -z "${TF_VAR_voice_agentcore_image_digest}" || {
+              echo "::error::Clear VOICE_AGENTCORE_IMAGE_DIGEST when publishing; the workflow must capture the pushed manifest digest."
+              exit 1
+            }
+          elif ! [[ "${TF_VAR_voice_agentcore_image_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::VOICE_AGENTCORE_IMAGE_DIGEST must be an exact sha256 digest when reusing a staged image."
             exit 1
-          }
-
+          fi
           aws_cli_version="$(aws --version 2>&1)"
           aws_cli_version="${aws_cli_version#aws-cli/}"
           aws_cli_version="${aws_cli_version%% *}"
@@ -283,7 +331,7 @@ jobs:
           fi
 
       - name: Bootstrap gated AgentCore voice registry
-        if: env.TF_VAR_enable_voice == 'true'
+        if: env.TF_VAR_provision_voice_infrastructure == 'true'
         run: |
           terraform -chdir="${TERRAFORM_DIR}" plan -input=false \
             -target=aws_ecr_repository.voice_agentcore \
@@ -292,25 +340,99 @@ jobs:
           terraform -chdir="${TERRAFORM_DIR}" apply -input=false -auto-approve voice-ecr.tfplan
 
       - name: Set up QEMU for AgentCore voice publishing
-        if: env.TF_VAR_enable_voice == 'true'
+        if: env.PUBLISH_VOICE_AGENTCORE_IMAGE == 'true'
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
 
       - name: Set up Docker Buildx for AgentCore voice
-        if: env.TF_VAR_enable_voice == 'true'
+        if: env.PUBLISH_VOICE_AGENTCORE_IMAGE == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Publish immutable AgentCore ARM64 image
-        if: env.TF_VAR_enable_voice == 'true'
+        if: env.PUBLISH_VOICE_AGENTCORE_IMAGE == 'true'
         run: |
           repository_url="$(terraform -chdir="${TERRAFORM_DIR}" output -raw voice_agentcore_ecr_repository_url)"
           registry="${repository_url%%/*}"
+          repository_name="${repository_url#*/}"
+          metadata_file="${RUNNER_TEMP}/voice-agentcore-image-metadata.json"
           aws ecr get-login-password --region "${AWS_REGION}" | docker login --username AWS --password-stdin "${registry}"
           docker buildx build --platform linux/arm64 \
             --file deploy/agentcore/Dockerfile \
             --tag "${repository_url}:${TF_VAR_voice_agentcore_image_tag}" \
+            --metadata-file "${metadata_file}" \
             --push .
+
+          image_digest="$(jq --raw-output '."containerimage.digest" // empty' "${metadata_file}")"
+          if ! [[ "${image_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::The published AgentCore image did not produce an exact sha256 manifest digest."
+            exit 1
+          fi
+          observed_digest="$(aws ecr describe-images \
+            --repository-name "${repository_name}" \
+            --image-ids "imageTag=${TF_VAR_voice_agentcore_image_tag}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)"
+          if [ "${observed_digest}" != "${image_digest}" ]; then
+            echo "::error::The ECR tag does not resolve to the just-built immutable digest."
+            exit 1
+          fi
+          echo "TF_VAR_voice_agentcore_image_digest=${image_digest}" >>"${GITHUB_ENV}"
+          printf 'AgentCore image digest: `%s`\n' "${image_digest}" >>"${GITHUB_STEP_SUMMARY}"
+
+      - name: Verify reused AgentCore image digest
+        if: env.TF_VAR_provision_voice_infrastructure == 'true' && env.PUBLISH_VOICE_AGENTCORE_IMAGE != 'true'
+        run: |
+          repository_url="$(terraform -chdir="${TERRAFORM_DIR}" output -raw voice_agentcore_ecr_repository_url)"
+          repository_name="${repository_url#*/}"
+          observed_digest="$(aws ecr describe-images \
+            --repository-name "${repository_name}" \
+            --image-ids "imageDigest=${TF_VAR_voice_agentcore_image_digest}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)"
+          if [ "${observed_digest}" != "${TF_VAR_voice_agentcore_image_digest}" ]; then
+            echo "::error::The requested AgentCore digest is not present in the gated ECR repository."
+            exit 1
+          fi
+
+      - name: Validate AgentCore PROD promotion evidence
+        if: env.TF_VAR_promote_voice_agentcore_prod == 'true'
+        run: |
+          if [ "${PUBLISH_VOICE_AGENTCORE_IMAGE}" = "true" ]; then
+            echo "::error::PROD promotion must reuse the exact digest and release already verified in STAGING."
+            exit 1
+          fi
+          if ! [[ "${TF_VAR_voice_agentcore_prod_version}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::VOICE_AGENTCORE_PROD_VERSION must be an explicit immutable numeric version."
+            exit 1
+          fi
+          recorded_rollback="false"
+          if [ -n "${TF_VAR_voice_agentcore_previous_prod_version}" ] && \
+             [ "${TF_VAR_voice_agentcore_prod_version}" = "${TF_VAR_voice_agentcore_previous_prod_version}" ]; then
+            recorded_rollback="true"
+          fi
+          if [ "${recorded_rollback}" != "true" ] && \
+             { [ "${TF_VAR_voice_staging_verified_image_digest}" != "${TF_VAR_voice_agentcore_image_digest}" ] || \
+               [ "${TF_VAR_voice_staging_verified_release}" != "${TF_VAR_voice_agentcore_release}" ] || \
+               [ "${TF_VAR_voice_staging_verified_version}" != "${TF_VAR_voice_agentcore_prod_version}" ]; }; then
+            echo "::error::Staging evidence must match the exact image digest, release, and AgentCore version selected for PROD."
+            exit 1
+          fi
+          for gate in \
+            TF_VAR_enable_voice_turn_udp_egress \
+            TF_VAR_voice_sarvam_stt_concurrency_150_acknowledged \
+            TF_VAR_voice_bulbul_concurrency_150_acknowledged \
+            TF_VAR_voice_sarvam_llm_rpm_300_acknowledged \
+            TF_VAR_voice_agentcore_kvs_sessions_120_acknowledged \
+            TF_VAR_voice_turn_live_proof_acknowledged \
+            TF_VAR_voice_load_cost_live_evidence_acknowledged \
+            TF_VAR_voice_staging_verified \
+            TF_VAR_voice_generic_websocket_verified; do
+            if [ "${!gate}" != "true" ]; then
+              echo "::error::${gate} must be explicitly acknowledged before PROD promotion."
+              exit 1
+            fi
+          done
 
       - name: Terraform plan
         run: terraform -chdir="${TERRAFORM_DIR}" plan -input=false -out=tfplan

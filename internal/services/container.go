@@ -130,7 +130,9 @@ func NewContainer(
 		voiceConfig := voicesession.Config{
 			TableName: cfg.VoiceSession.TableName, AgentRuntimeARN: cfg.VoiceSession.AgentRuntimeARN,
 			AgentRuntimeQualifier: cfg.VoiceSession.AgentRuntimeQualifier, ProtocolVersion: cfg.VoiceSession.ProtocolVersion,
-			KVSChannelCount: cfg.VoiceSession.KVSChannelCount, MaxDuration: cfg.VoiceSession.MaxDuration,
+			AdmissionEnabled: cfg.VoiceSession.AdmissionEnabled, RolloutStage: cfg.VoiceSession.RolloutStage,
+			RolloutInternalSubjectHashes: append([]string(nil), cfg.VoiceSession.RolloutInternalSubjectHashes...),
+			KVSChannelCount:              cfg.VoiceSession.KVSChannelCount, MaxDuration: cfg.VoiceSession.MaxDuration,
 			RotateAfter: cfg.VoiceSession.RotateAfter, LeaseDuration: cfg.VoiceSession.LeaseDuration,
 			IdempotencyTTL: cfg.VoiceSession.IdempotencyTTL, LeaseIndexName: cfg.VoiceSession.LeaseIndexName,
 			GlobalCapacityLimit: cfg.VoiceSession.GlobalCapacityLimit, PerUserCapacityLimit: cfg.VoiceSession.PerUserCapacityLimit,
