@@ -39,9 +39,8 @@ func TestPingReportsHealthAcrossActivityTransitions(t *testing.T) {
 func TestInvocationDelegatesBoundedPayloadAndTrustedRequestMetadata(t *testing.T) {
 	var received InvocationRequest
 	server := NewServer(Config{
-		RuntimeID:   "runtime-metadata-only",
-		AWSRegion:   "ap-south-1",
-		MaxBodySize: 1024,
+		RuntimeID: "runtime-metadata-only",
+		AWSRegion: "ap-south-1",
 	}, InvocationHandlerFunc(func(_ context.Context, request InvocationRequest) (InvocationResponse, error) {
 		received = request
 		return InvocationResponse{
@@ -119,6 +118,33 @@ func TestInvocationEnforcesRuntimeSessionIDBounds(t *testing.T) {
 	assert.EqualValues(t, 2, calls.Load())
 }
 
+func TestInvocationRejectsDuplicateRuntimeSessionIDHeaders(t *testing.T) {
+	var calls atomic.Int32
+	server := newTestServer(t, InvocationHandlerFunc(func(context.Context, InvocationRequest) (InvocationResponse, error) {
+		calls.Add(1)
+		return InvocationResponse{StatusCode: http.StatusNoContent}, nil
+	}))
+
+	for _, values := range [][]string{
+		{testSessionID, testSessionID},
+		{testSessionID, "voice-session-02K000000000000000000"},
+	} {
+		request := newInvocationRequest(`{}`)
+		request.Header.Del(HeaderRuntimeSessionID)
+		for _, value := range values {
+			request.Header.Add(HeaderRuntimeSessionID, value)
+		}
+		response := httptest.NewRecorder()
+
+		server.ServeHTTP(response, request)
+
+		assert.Equal(t, http.StatusBadRequest, response.Code)
+		assert.JSONEq(t, `{"error":"invalid request"}`, response.Body.String())
+		assert.NotContains(t, response.Body.String(), "voice-session")
+	}
+	assert.Zero(t, calls.Load())
+}
+
 func TestInvocationRequiresForwardedBearerAuthorizationWithoutEchoingIt(t *testing.T) {
 	var calls atomic.Int32
 	server := newTestServer(t, InvocationHandlerFunc(func(context.Context, InvocationRequest) (InvocationResponse, error) {
@@ -135,6 +161,33 @@ func TestInvocationRequiresForwardedBearerAuthorizationWithoutEchoingIt(t *testi
 		}
 	}
 
+	assert.Zero(t, calls.Load())
+}
+
+func TestInvocationRejectsDuplicateAuthorizationHeaders(t *testing.T) {
+	var calls atomic.Int32
+	server := newTestServer(t, InvocationHandlerFunc(func(context.Context, InvocationRequest) (InvocationResponse, error) {
+		calls.Add(1)
+		return InvocationResponse{StatusCode: http.StatusNoContent}, nil
+	}))
+
+	for _, values := range [][]string{
+		{testAuthorization, testAuthorization},
+		{testAuthorization, "Bearer second-secret-must-not-leak"},
+	} {
+		request := newInvocationRequest(`{}`)
+		request.Header.Del("Authorization")
+		for _, value := range values {
+			request.Header.Add("Authorization", value)
+		}
+		response := httptest.NewRecorder()
+
+		server.ServeHTTP(response, request)
+
+		assert.Equal(t, http.StatusUnauthorized, response.Code)
+		assert.JSONEq(t, `{"error":"unauthorized"}`, response.Body.String())
+		assert.NotContains(t, response.Body.String(), "secret-must-not-leak")
+	}
 	assert.Zero(t, calls.Load())
 }
 
@@ -156,21 +209,52 @@ func TestInvocationRejectsMalformedAndTrailingJSONWithoutDelegating(t *testing.T
 	assert.Zero(t, calls.Load())
 }
 
-func TestInvocationRejectsBodyBeyondConfiguredCap(t *testing.T) {
-	validBody := `{"value":"123456"}`
+func TestInvocationRequiresTopLevelJSONObject(t *testing.T) {
 	var calls atomic.Int32
-	server := NewServer(Config{MaxBodySize: int64(len(validBody))}, InvocationHandlerFunc(func(context.Context, InvocationRequest) (InvocationResponse, error) {
+	server := newTestServer(t, InvocationHandlerFunc(func(context.Context, InvocationRequest) (InvocationResponse, error) {
 		calls.Add(1)
 		return InvocationResponse{StatusCode: http.StatusNoContent}, nil
 	}))
 
-	atLimit := invoke(t, server, validBody, testSessionID, testAuthorization, "application/json")
+	for _, body := range []string{`null`, `[]`, `"value"`, `42`, `true`} {
+		response := invoke(t, server, body, testSessionID, testAuthorization, "application/json")
+		assert.Equal(t, http.StatusBadRequest, response.Code)
+		assert.JSONEq(t, `{"error":"invalid request"}`, response.Body.String())
+	}
+
+	assert.Zero(t, calls.Load())
+}
+
+func TestInvocationEnforcesFrozenSixteenKiBRequestCap(t *testing.T) {
+	var calls atomic.Int32
+	server := newTestServer(t, InvocationHandlerFunc(func(context.Context, InvocationRequest) (InvocationResponse, error) {
+		calls.Add(1)
+		return InvocationResponse{StatusCode: http.StatusNoContent}, nil
+	}))
+
+	atLimit := invoke(t, server, invocationObjectWithSize(t, 16<<10), testSessionID, testAuthorization, "application/json")
 	require.Equal(t, http.StatusNoContent, atLimit.Code)
 
-	overLimit := invoke(t, server, validBody+" ", testSessionID, testAuthorization, "application/json")
+	overLimit := invoke(t, server, invocationObjectWithSize(t, (16<<10)+1), testSessionID, testAuthorization, "application/json")
 	assert.Equal(t, http.StatusRequestEntityTooLarge, overLimit.Code)
 	assert.JSONEq(t, `{"error":"request too large"}`, overLimit.Body.String())
 	assert.EqualValues(t, 1, calls.Load())
+}
+
+func TestInvocationEnforcesFrozenSixteenKiBResponseCap(t *testing.T) {
+	responseBody := invocationObjectWithSize(t, 16<<10)
+	server := newTestServer(t, InvocationHandlerFunc(func(context.Context, InvocationRequest) (InvocationResponse, error) {
+		return InvocationResponse{StatusCode: http.StatusOK, Body: json.RawMessage(responseBody)}, nil
+	}))
+
+	atLimit := invoke(t, server, `{}`, testSessionID, testAuthorization, "application/json")
+	require.Equal(t, http.StatusOK, atLimit.Code)
+	assert.Len(t, atLimit.Body.Bytes(), 16<<10)
+
+	responseBody = invocationObjectWithSize(t, (16<<10)+1)
+	overLimit := invoke(t, server, `{}`, testSessionID, testAuthorization, "application/json")
+	assert.Equal(t, http.StatusInternalServerError, overLimit.Code)
+	assert.JSONEq(t, `{"error":"internal error"}`, overLimit.Body.String())
 }
 
 func TestRuntimeRoutesRejectUnsupportedRequests(t *testing.T) {
@@ -248,19 +332,6 @@ func TestInvocationRejectsInvalidHandlerResponse(t *testing.T) {
 	assert.JSONEq(t, `{"error":"internal error"}`, response.Body.String())
 }
 
-func TestNewServerUsesExplicitSafeBodyLimitByDefault(t *testing.T) {
-	var calls atomic.Int32
-	server := newTestServer(t, InvocationHandlerFunc(func(context.Context, InvocationRequest) (InvocationResponse, error) {
-		calls.Add(1)
-		return InvocationResponse{StatusCode: http.StatusNoContent}, nil
-	}))
-
-	response := invoke(t, server, `{"value":"`+strings.Repeat("x", DefaultMaxBodySize)+`"}`, testSessionID, testAuthorization, "application/json")
-
-	assert.Equal(t, http.StatusRequestEntityTooLarge, response.Code)
-	assert.Zero(t, calls.Load())
-}
-
 func newTestServer(t *testing.T, handler InvocationHandler) *Server {
 	t.Helper()
 	server := NewServer(Config{}, handler)
@@ -281,6 +352,22 @@ func invoke(t *testing.T, server http.Handler, body, sessionID, authorization, c
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, request)
 	return response
+}
+
+func newInvocationRequest(body string) *http.Request {
+	request := httptest.NewRequest(http.MethodPost, "/invocations", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(HeaderRuntimeSessionID, testSessionID)
+	request.Header.Set("Authorization", testAuthorization)
+	return request
+}
+
+func invocationObjectWithSize(t *testing.T, size int) string {
+	t.Helper()
+	const prefix = `{"value":"`
+	const suffix = `"}`
+	require.GreaterOrEqual(t, size, len(prefix)+len(suffix))
+	return prefix + strings.Repeat("x", size-len(prefix)-len(suffix)) + suffix
 }
 
 func assertPingStatus(t *testing.T, server http.Handler, want string) {

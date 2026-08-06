@@ -19,18 +19,17 @@ const (
 
 	MinRuntimeSessionIDLength = 33
 	MaxRuntimeSessionIDLength = 256
-	DefaultMaxBodySize        = 64 << 10
+	MaxInvocationBodySize     = 16 << 10
 )
 
 var ErrShuttingDown = errors.New("voice runtime is shutting down")
 
 var errInvocationHandlerPanicked = errors.New("invocation handler panicked")
 
-// Config contains non-secret runtime metadata and transport bounds.
+// Config contains non-secret runtime metadata.
 type Config struct {
-	RuntimeID   string
-	AWSRegion   string
-	MaxBodySize int64
+	RuntimeID string
+	AWSRegion string
 }
 
 // InvocationRequest carries a validated JSON request and the trusted headers
@@ -76,10 +75,6 @@ type Server struct {
 
 // NewServer creates a provider-free AgentCore HTTP handler.
 func NewServer(config Config, handler InvocationHandler, closers ...io.Closer) *Server {
-	if config.MaxBodySize <= 0 {
-		config.MaxBodySize = DefaultMaxBodySize
-	}
-
 	rootContext, cancelRoot := context.WithCancel(context.Background())
 	return &Server{
 		config:      config,
@@ -134,19 +129,19 @@ func (s *Server) handleInvocation(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 
-	authorization := request.Header.Get("Authorization")
-	if !validBearerAuthorization(authorization) {
+	authorization, ok := exactlyOneHeaderValue(request.Header, "Authorization")
+	if !ok || !validBearerAuthorization(authorization) {
 		writeError(writer, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
-	runtimeSessionID := request.Header.Get(HeaderRuntimeSessionID)
-	if len(runtimeSessionID) < MinRuntimeSessionIDLength || len(runtimeSessionID) > MaxRuntimeSessionIDLength {
+	runtimeSessionID, ok := exactlyOneHeaderValue(request.Header, HeaderRuntimeSessionID)
+	if !ok || len(runtimeSessionID) < MinRuntimeSessionIDLength || len(runtimeSessionID) > MaxRuntimeSessionIDLength {
 		writeError(writer, http.StatusBadRequest, "invalid request")
 		return
 	}
 
-	body, decodeStatus := decodeInvocationBody(writer, request, s.config.MaxBodySize)
+	body, decodeStatus := decodeInvocationBody(writer, request)
 	if decodeStatus != 0 {
 		if decodeStatus == http.StatusRequestEntityTooLarge {
 			writeError(writer, decodeStatus, "request too large")
@@ -202,7 +197,7 @@ func (s *Server) handleInvocation(writer http.ResponseWriter, request *http.Requ
 	if len(bytes.TrimSpace(response.Body)) == 0 {
 		response.Body = json.RawMessage(`{}`)
 	}
-	if !json.Valid(response.Body) {
+	if len(response.Body) > MaxInvocationBodySize || !json.Valid(response.Body) {
 		writeError(writer, http.StatusInternalServerError, "internal error")
 		return
 	}
@@ -219,8 +214,8 @@ func invokeHandler(ctx context.Context, handler InvocationHandler, request Invoc
 	return handler.Invoke(ctx, request)
 }
 
-func decodeInvocationBody(writer http.ResponseWriter, request *http.Request, limit int64) (json.RawMessage, int) {
-	limitedBody := http.MaxBytesReader(writer, request.Body, limit)
+func decodeInvocationBody(writer http.ResponseWriter, request *http.Request) (json.RawMessage, int) {
+	limitedBody := http.MaxBytesReader(writer, request.Body, MaxInvocationBodySize)
 	decoder := json.NewDecoder(limitedBody)
 
 	var body json.RawMessage
@@ -228,6 +223,10 @@ func decodeInvocationBody(writer http.ResponseWriter, request *http.Request, lim
 		if isBodyTooLarge(err) {
 			return nil, http.StatusRequestEntityTooLarge
 		}
+		return nil, http.StatusBadRequest
+	}
+	trimmedBody := bytes.TrimSpace(body)
+	if len(trimmedBody) == 0 || trimmedBody[0] != '{' {
 		return nil, http.StatusBadRequest
 	}
 
@@ -249,6 +248,14 @@ func isBodyTooLarge(err error) bool {
 func validBearerAuthorization(value string) bool {
 	parts := strings.Fields(value)
 	return len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") && parts[1] != ""
+}
+
+func exactlyOneHeaderValue(header http.Header, name string) (string, bool) {
+	values := header.Values(name)
+	if len(values) != 1 {
+		return "", false
+	}
+	return values[0], true
 }
 
 func setSecurityHeaders(header http.Header) {

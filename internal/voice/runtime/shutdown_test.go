@@ -47,6 +47,26 @@ func TestShutdownRejectsNewWorkCancelsActiveInvocationAndClosesDependenciesOnce(
 	assert.ErrorIs(t, err, ErrShuttingDown)
 }
 
+func TestShutdownClosesActivityAdmissionBeforeCancelingRootContext(t *testing.T) {
+	server := NewServer(Config{}, InvocationHandlerFunc(func(context.Context, InvocationRequest) (InvocationResponse, error) {
+		return InvocationResponse{StatusCode: http.StatusNoContent}, nil
+	}))
+
+	var admissionErr error
+	server.cancelRoot = func() {
+		lease, err := server.AcquireActivity()
+		admissionErr = err
+		if lease != nil {
+			require.NoError(t, lease.Close())
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	require.NoError(t, server.Shutdown(ctx))
+	assert.ErrorIs(t, admissionErr, ErrShuttingDown)
+}
+
 func TestShutdownWaitsForActivityLeaseReleasedByInjectedCloser(t *testing.T) {
 	var lease *ActivityLease
 	server := NewServer(Config{}, InvocationHandlerFunc(func(context.Context, InvocationRequest) (InvocationResponse, error) {

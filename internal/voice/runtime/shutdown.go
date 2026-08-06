@@ -100,9 +100,9 @@ func (s *Server) AcquireActivity() (*ActivityLease, error) {
 // injected closer once, and waits for activity to drain until ctx expires.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.shutdown.once.Do(func() {
+		s.shutdown.idle = s.activities.stop()
 		s.shutdown.started.Store(true)
 		s.cancelRoot()
-		s.shutdown.idle = s.activities.stop()
 		go s.closeDependencies()
 	})
 
