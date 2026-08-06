@@ -74,9 +74,10 @@ type PersistentActivitySource interface {
 // runtime.STTSessionBinding. Activity ownership transfers to Create; the
 // returned binding must release it when closed.
 type STTBindingConfig struct {
-	Context  context.Context
-	Session  voicesession.Session
-	Activity io.Closer
+	Context       context.Context
+	Session       voicesession.Session
+	Activity      io.Closer
+	Authorization AuthorizationSource
 }
 
 // STTBindingFactory is implemented at backend composition by adapting
@@ -84,6 +85,28 @@ type STTBindingConfig struct {
 // dependencies. Signaling retains no provider credentials or transcript data.
 type STTBindingFactory interface {
 	Create(STTBindingConfig) (STTBinding, error)
+}
+
+// PeerTransport is late-bound after the session binding and peer have both
+// been constructed. It is the only capability a session output needs to send
+// bounded control messages and generation-approved Opus frames back to mobile.
+type PeerTransport interface {
+	SendControl(protocol.ControlMessage) error
+	SendOpus([]byte) error
+}
+
+// PeerAttachment is an optional capability implemented by composed session
+// bindings that produce outbound control/audio. Legacy STT-only bindings do
+// not need to implement it.
+type PeerAttachment interface {
+	AttachPeer(PeerTransport) error
+}
+
+// PeerControlHandler is an optional per-session control boundary for
+// interruption, playback, network, and close events. Speech boundaries remain
+// routed directly through STTBinding.HandleControl.
+type PeerControlHandler interface {
+	HandlePeerControl(context.Context, protocol.ControlMessage) error
 }
 
 var _ STTBinding = (*runtime.STTSessionBinding)(nil)
@@ -101,6 +124,14 @@ type SignalingPeer interface {
 // boundary tests. Production defaults to NewPeer.
 type PeerFactory interface {
 	Create(PeerConfig) (SignalingPeer, error)
+}
+
+// SignalingMetrics receives only coarse counters. Implementations must not be
+// given session IDs, TURN credentials, SDP, candidates, or authorization.
+// Metric failures are isolated from signaling results.
+type SignalingMetrics interface {
+	KVSAllocationError()
+	ICERestart()
 }
 
 type directPeerFactory struct{}
@@ -135,6 +166,7 @@ type SignalingDependencies struct {
 	Activities    PersistentActivitySource
 	Peers         PeerFactory
 	STTBindings   STTBindingFactory
+	Metrics       SignalingMetrics
 	HandleControl func(context.Context, protocol.ControlMessage) error
 }
 
@@ -168,6 +200,7 @@ type SignalingService struct {
 	activities    PersistentActivitySource
 	peers         PeerFactory
 	sttBindings   STTBindingFactory
+	metrics       SignalingMetrics
 	handleControl func(context.Context, protocol.ControlMessage) error
 
 	mu          sync.Mutex
@@ -200,7 +233,7 @@ type signalingSessionState struct {
 	peer         SignalingPeer
 	peerDone     <-chan struct{}
 	peerStop     chan struct{}
-	binding      STTBinding
+	binding      *ownedSTTBinding
 	attachTimer  *time.Timer
 	hasOffer     bool
 	iceExpiresAt time.Time
@@ -238,10 +271,11 @@ func (closer *onceActivityCloser) Close() error {
 // signaling's fallback cleanup. It stops STT/decoder work first, then releases
 // the persistent runtime activity, with both operations fenced exactly once.
 type ownedSTTBinding struct {
-	mu       sync.RWMutex
-	binding  STTBinding
-	activity io.Closer
-	closed   bool
+	mu            sync.RWMutex
+	binding       STTBinding
+	authorization *peerAuthorizationVault
+	activity      io.Closer
+	closed        bool
 
 	closeOnce sync.Once
 	closeErr  error
@@ -280,10 +314,23 @@ func (binding *ownedSTTBinding) Close() error {
 		defer binding.mu.Unlock()
 		binding.closed = true
 		bindingError := safeCloseSTTBinding(binding.binding)
+		authorizationError := binding.authorization.Close()
 		activityError := safeCloseActivity(binding.activity)
-		binding.closeErr = errors.Join(bindingError, activityError)
+		binding.closeErr = errors.Join(bindingError, authorizationError, activityError)
 	})
 	return binding.closeErr
+}
+
+func (binding *ownedSTTBinding) rotateAuthorization(authorization string) error {
+	if binding == nil {
+		return ErrPeerAuthorizationUnavailable
+	}
+	binding.mu.RLock()
+	defer binding.mu.RUnlock()
+	if binding.closed || binding.authorization == nil {
+		return ErrPeerAuthorizationUnavailable
+	}
+	return binding.authorization.rotate(authorization)
 }
 
 type signalingRequest struct {
@@ -344,6 +391,7 @@ func NewSignalingService(config SignalingConfig, dependencies SignalingDependenc
 		activities:    dependencies.Activities,
 		peers:         dependencies.Peers,
 		sttBindings:   dependencies.STTBindings,
+		metrics:       dependencies.Metrics,
 		handleControl: dependencies.HandleControl,
 		states:        make(map[signalingSessionKey]*signalingSessionState, normalized.maxTrackedSessions),
 		recency:       list.New(),
@@ -542,7 +590,7 @@ func (service *SignalingService) invoke(ctx context.Context, invocation runtime.
 
 	switch request.Type {
 	case protocol.InvocationSessionAttach:
-		return service.attach(ctx, state, request, logicalSession)
+		return service.attach(ctx, state, request, logicalSession, invocation.Authorization)
 	case protocol.InvocationWebRTCOffer:
 		return service.answer(ctx, state, request, false)
 	case protocol.InvocationWebRTCRestart:
@@ -818,9 +866,15 @@ func (service *SignalingService) releaseState(state *signalingSessionState) {
 	}
 }
 
-func (service *SignalingService) attach(ctx context.Context, state *signalingSessionState, request signalingRequest, logicalSession *voicesession.Session) (runtime.InvocationResponse, error) {
+func (service *SignalingService) attach(
+	ctx context.Context,
+	state *signalingSessionState,
+	request signalingRequest,
+	logicalSession *voicesession.Session,
+	authorization string,
+) (runtime.InvocationResponse, error) {
 	if state.peer != nil {
-		return service.refreshActivePeer(ctx, state, request, logicalSession)
+		return service.refreshActivePeer(ctx, state, request, logicalSession, authorization)
 	}
 	if err := service.reservePeer(state); err != nil {
 		return runtime.InvocationResponse{}, err
@@ -833,11 +887,17 @@ func (service *SignalingService) attach(ctx context.Context, state *signalingSes
 	}()
 	credentials, err := service.ice.GetTURN(ctx, service.config.channelARNs[logicalSession.KVSChannelIndex])
 	if err != nil || !validSignalingTURNCredentials(service.config.awsRegion, service.config.now().UTC(), service.config.iceExpiryMargin, credentials) {
+		safeKVSAllocationError(service.metrics)
 		return runtime.InvocationResponse{}, fail(http.StatusServiceUnavailable)
+	}
+	authorizationVault, err := newPeerAuthorizationVault(authorization)
+	if err != nil {
+		return runtime.InvocationResponse{}, fail(http.StatusNotFound)
 	}
 
 	peerContext, rawActivity, err := service.activities.AcquirePersistentActivity()
 	if err != nil || peerContext == nil || isNilInterface(rawActivity) || peerContext.Err() != nil {
+		_ = authorizationVault.Close()
 		if !isNilInterface(rawActivity) {
 			_ = safeCloseActivity(rawActivity)
 		}
@@ -845,19 +905,16 @@ func (service *SignalingService) attach(ctx context.Context, state *signalingSes
 	}
 	activity := &onceActivityCloser{activity: rawActivity}
 	binding, bindingErr := safelyCreateSTTBinding(service.sttBindings, STTBindingConfig{
-		Context:  peerContext,
-		Session:  cloneSignalingSession(logicalSession),
-		Activity: activity,
+		Context:       peerContext,
+		Session:       cloneSignalingSession(logicalSession),
+		Activity:      activity,
+		Authorization: authorizationVault,
 	})
+	ownedBinding := &ownedSTTBinding{binding: binding, authorization: authorizationVault, activity: activity}
 	if bindingErr != nil || isNilInterface(binding) {
-		if !isNilInterface(binding) {
-			_ = safeCloseSTTBinding(&ownedSTTBinding{binding: binding, activity: activity})
-		} else {
-			_ = safeCloseActivity(activity)
-		}
+		_ = safeCloseSTTBinding(ownedBinding)
 		return runtime.InvocationResponse{}, fail(http.StatusServiceUnavailable)
 	}
-	ownedBinding := &ownedSTTBinding{binding: binding, activity: activity}
 	peer, err := safelyCreatePeer(service.peers, PeerConfig{
 		Context:           peerContext,
 		SessionID:         logicalSession.ID,
@@ -869,7 +926,7 @@ func (service *SignalingService) attach(ctx context.Context, state *signalingSes
 		MaxCandidates:     service.config.maxPendingCandidates,
 		MaxCandidateBytes: service.config.maxCandidateBytes,
 		MaxControlQueue:   service.config.maxControlQueue,
-		HandleControl:     service.handleControl,
+		HandleControl:     composePeerControlHandler(binding, service.handleControl),
 		STTBinding:        ownedBinding,
 	})
 	done, doneErr := safePeerDone(peer)
@@ -877,6 +934,11 @@ func (service *SignalingService) attach(ctx context.Context, state *signalingSes
 		if peer != nil {
 			_ = safeClosePeer(peer)
 		}
+		_ = safeCloseSTTBinding(ownedBinding)
+		return runtime.InvocationResponse{}, fail(http.StatusServiceUnavailable)
+	}
+	if err := attachPeerTransport(binding, peer); err != nil {
+		_ = safeClosePeer(peer)
 		_ = safeCloseSTTBinding(ownedBinding)
 		return runtime.InvocationResponse{}, fail(http.StatusServiceUnavailable)
 	}
@@ -916,13 +978,20 @@ func (service *SignalingService) attach(ctx context.Context, state *signalingSes
 	return runtime.InvocationResponse{StatusCode: http.StatusOK, Body: body}, nil
 }
 
-func (service *SignalingService) refreshActivePeer(ctx context.Context, state *signalingSessionState, request signalingRequest, logicalSession *voicesession.Session) (runtime.InvocationResponse, error) {
+func (service *SignalingService) refreshActivePeer(
+	ctx context.Context,
+	state *signalingSessionState,
+	request signalingRequest,
+	logicalSession *voicesession.Session,
+	authorization string,
+) (runtime.InvocationResponse, error) {
 	peer := state.peer
 	if channelClosed(state.peerDone) {
 		return runtime.InvocationResponse{}, fail(http.StatusConflict)
 	}
 	credentials, err := service.ice.GetTURN(ctx, service.config.channelARNs[logicalSession.KVSChannelIndex])
 	if err != nil || !validSignalingTURNCredentials(service.config.awsRegion, service.config.now().UTC(), service.config.iceExpiryMargin, credentials) {
+		safeKVSAllocationError(service.metrics)
 		return runtime.InvocationResponse{}, fail(http.StatusServiceUnavailable)
 	}
 	if err := safelyRefreshICE(peer, ctx, credentials); err != nil {
@@ -944,9 +1013,32 @@ func (service *SignalingService) refreshActivePeer(ctx context.Context, state *s
 		service.retirePeerLocked(state, peer)
 		return runtime.InvocationResponse{}, fail(http.StatusServiceUnavailable)
 	}
+	if !validPeerAuthorization(authorization) {
+		return runtime.InvocationResponse{}, fail(http.StatusNotFound)
+	}
+	if state.binding == nil || state.binding.rotateAuthorization(authorization) != nil {
+		service.retirePeerLocked(state, peer)
+		return runtime.InvocationResponse{}, fail(http.StatusServiceUnavailable)
+	}
 	state.iceExpiresAt = credentials.ExpiresAt.UTC()
 	state.lastSequence = request.Sequence
 	return runtime.InvocationResponse{StatusCode: http.StatusOK, Body: body}, nil
+}
+
+func safeKVSAllocationError(metrics SignalingMetrics) {
+	if isNilInterface(metrics) {
+		return
+	}
+	defer func() { _ = recover() }()
+	metrics.KVSAllocationError()
+}
+
+func safeICERestart(metrics SignalingMetrics) {
+	if isNilInterface(metrics) {
+		return
+	}
+	defer func() { _ = recover() }()
+	metrics.ICERestart()
 }
 
 func safelyCreatePeer(factory PeerFactory, config PeerConfig) (peer SignalingPeer, err error) {
@@ -967,6 +1059,53 @@ func safelyCreateSTTBinding(factory STTBindingFactory, config STTBindingConfig) 
 		}
 	}()
 	return factory.Create(config)
+}
+
+func attachPeerTransport(binding STTBinding, peer SignalingPeer) (err error) {
+	attachment, ok := binding.(PeerAttachment)
+	if !ok {
+		return nil
+	}
+	transport, ok := peer.(PeerTransport)
+	if !ok || isNilInterface(transport) {
+		return ErrSignalingClose
+	}
+	defer func() {
+		if recover() != nil {
+			err = ErrSignalingClose
+		}
+	}()
+	if attachment.AttachPeer(transport) != nil {
+		return ErrSignalingClose
+	}
+	return nil
+}
+
+func composePeerControlHandler(
+	binding STTBinding,
+	fallback func(context.Context, protocol.ControlMessage) error,
+) func(context.Context, protocol.ControlMessage) error {
+	perSession, hasPerSession := binding.(PeerControlHandler)
+	return func(ctx context.Context, message protocol.ControlMessage) (err error) {
+		defer func() {
+			if recover() != nil {
+				err = errControlHandlerPanic
+			}
+		}()
+		if hasPerSession {
+			if err := perSession.HandlePeerControl(ctx, message); err != nil {
+				// A per-session handler owns generation and output state. If it
+				// rejects a control, continuing the peer could replay audio or
+				// controls against state it already canceled. Fail the peer closed;
+				// the process-wide fallback remains retryable on its own errors.
+				return errControlHandlerPanic
+			}
+		}
+		if fallback != nil {
+			return fallback(ctx, message)
+		}
+		return nil
+	}
 }
 
 func cloneSignalingSession(session *voicesession.Session) voicesession.Session {
@@ -1153,6 +1292,9 @@ func (service *SignalingService) answer(ctx context.Context, state *signalingSes
 		}
 	}
 	state.lastSequence = request.Sequence
+	if restart {
+		safeICERestart(service.metrics)
+	}
 	return runtime.InvocationResponse{StatusCode: http.StatusOK, Body: body}, nil
 }
 

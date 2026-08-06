@@ -45,6 +45,9 @@ func TestSTTSessionOpensOnlyOnSpeechStartedAndReplaysNewestPreRoll(t *testing.T)
 	if final.LanguageProbability == nil || *final.LanguageProbability != wantProbability {
 		t.Fatalf("language probability = %v, want %.2f", final.LanguageProbability, wantProbability)
 	}
+	if final.SpeechEndedAt.IsZero() || final.STTFinalAt.IsZero() || final.STTFinalAt.Before(final.SpeechEndedAt) {
+		t.Fatalf("authoritative timing boundaries = (%s, %s)", final.SpeechEndedAt, final.STTFinalAt)
+	}
 	writes := stream.Writes()
 	if len(writes) != 25 {
 		t.Fatalf("pre-roll writes = %d, want 25", len(writes))

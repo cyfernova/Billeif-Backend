@@ -85,7 +85,7 @@ func TestNewPeerRequiresMumbaiKVSUDP443OutsideLoopbackTests(t *testing.T) {
 		t.Fatalf("NewPeer(loopback without override) = (%v, %v), want invalid config", peer, err)
 	}
 
-	config.TURNCredentials.uris = []string{"turn:channel-1.kinesisvideo.ap-south-1.amazonaws.com:443?transport=udp"}
+	config.TURNCredentials.uris = []string{"turn:127-0-0-1.channel-1.kinesisvideo.ap-south-1.amazonaws.com:443?transport=udp"}
 	peer, err := NewPeer(config)
 	if err != nil {
 		t.Fatalf("NewPeer(Mumbai KVS UDP/443) error = %v", err)
@@ -657,12 +657,26 @@ func TestPeerHalfTrickleAnswerConnectsOnlyThroughLoopbackTURN(t *testing.T) {
 	default:
 	}
 
-	runtimePacket := &rtp.Packet{Header: rtp.Header{Version: 2, PayloadType: uint8(opusPayloadType), SequenceNumber: 1, Timestamp: 960, SSRC: 202}, Payload: []byte{0xf8, 0xff, 0xfe}}
-	if err := peer.OutboundAudio().WriteRTP(runtimePacket); err != nil {
-		t.Fatalf("runtime WriteRTP() error = %v", err)
+	firstRuntimePayload := []byte{0xf8, 0xff, 0xfe}
+	secondRuntimePayload := []byte{0xf8, 0xff, 0xfd}
+	if err := peer.SendOpus(firstRuntimePayload); err != nil {
+		t.Fatalf("SendOpus(first) error = %v", err)
+	}
+	if err := peer.SendOpus(secondRuntimePayload); err != nil {
+		t.Fatalf("SendOpus(second) error = %v", err)
 	}
 	clientTrackRemote := awaitRemoteTrack(t, clientInbound, "client inbound Opus")
-	readRTPWithTimeout(t, clientTrackRemote, "client inbound RTP")
+	firstRuntimePacket := readRTPPacketWithTimeout(t, clientTrackRemote, "first client inbound RTP")
+	secondRuntimePacket := readRTPPacketWithTimeout(t, clientTrackRemote, "second client inbound RTP")
+	if !bytes.Equal(firstRuntimePacket.Payload, firstRuntimePayload) || !bytes.Equal(secondRuntimePacket.Payload, secondRuntimePayload) {
+		t.Fatalf("runtime Opus payloads = (%x, %x), want (%x, %x)", firstRuntimePacket.Payload, secondRuntimePacket.Payload, firstRuntimePayload, secondRuntimePayload)
+	}
+	if secondRuntimePacket.SequenceNumber != firstRuntimePacket.SequenceNumber+1 {
+		t.Fatalf("runtime RTP sequences = (%d, %d), want +1", firstRuntimePacket.SequenceNumber, secondRuntimePacket.SequenceNumber)
+	}
+	if secondRuntimePacket.Timestamp != firstRuntimePacket.Timestamp+audio.RTPTimePerFrame {
+		t.Fatalf("runtime RTP timestamps = (%d, %d), want +%d", firstRuntimePacket.Timestamp, secondRuntimePacket.Timestamp, audio.RTPTimePerFrame)
+	}
 	runtimeMessage := protocol.ControlMessage{Type: protocol.EventSessionReady, ProtocolVersion: protocol.ProtocolVersion, SessionID: "voice-session-1", Sequence: 1}
 	if err := peer.SendControl(runtimeMessage); err != nil {
 		t.Fatalf("SendControl() error = %v", err)
@@ -693,7 +707,7 @@ func TestPeerHalfTrickleAnswerConnectsOnlyThroughLoopbackTURN(t *testing.T) {
 		t.Fatal("state-corrected control retry was not accepted")
 	}
 	for sequence, eventType := range []protocol.EventType{protocol.EventSpeechStarted, protocol.EventSpeechEnded} {
-		frame := fmt.Sprintf(`{"type":%q,"protocol_version":1,"session_id":"voice-session-1","sequence":%d}`, eventType, sequence+2)
+		frame := fmt.Sprintf(`{"type":%q,"protocol_version":1,"session_id":"voice-session-1","sequence":%d,"turn_id":1,"client_monotonic_ms":%d}`, eventType, sequence+2, sequence+1)
 		if err := clientControl.SendText(frame); err != nil {
 			t.Fatalf("SendText(%s) error = %v", eventType, err)
 		}
@@ -782,12 +796,34 @@ func TestPeerSTTBindingControlFailureAndPanicFailClosed(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = peer.Close() })
 
-			peer.enqueueControlMessage(pion.DataChannelMessage{IsString: true, Data: []byte(`{"type":"speech.started","protocol_version":1,"session_id":"voice-session-1","sequence":1}`)})
+			peer.enqueueControlMessage(pion.DataChannelMessage{IsString: true, Data: []byte(`{"type":"speech.started","protocol_version":1,"session_id":"voice-session-1","sequence":1,"turn_id":1,"client_monotonic_ms":1}`)})
 			awaitSignal(t, peer.Done(), time.Second, "STT binding control failure closes peer")
 			if got := binding.closeCalls.Load(); got != 1 {
 				t.Fatalf("binding Close() calls = %d, want 1", got)
 			}
 		})
+	}
+}
+
+func TestPeerSendOpusRejectsInvalidPayloadAndDisconnectedPeer(t *testing.T) {
+	peer, err := NewPeer(testPeerConfig(context.Background()))
+	if err != nil {
+		t.Fatalf("NewPeer() error = %v", err)
+	}
+	t.Cleanup(func() { _ = peer.Close() })
+	for _, payload := range [][]byte{nil, make([]byte, audio.MaxOpusPacketBytes+1)} {
+		if err := peer.SendOpus(payload); !errors.Is(err, ErrPeerInvalidAudio) {
+			t.Fatalf("SendOpus(%d bytes) error = %v, want ErrPeerInvalidAudio", len(payload), err)
+		}
+	}
+	if err := peer.SendOpus([]byte{0xf8, 0xff, 0xfe}); !errors.Is(err, ErrPeerState) {
+		t.Fatalf("SendOpus(disconnected) error = %v, want ErrPeerState", err)
+	}
+	if err := peer.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if err := peer.SendOpus([]byte{0xf8, 0xff, 0xfe}); !errors.Is(err, ErrPeerState) {
+		t.Fatalf("SendOpus(closed) error = %v, want ErrPeerState", err)
 	}
 }
 
@@ -1585,20 +1621,26 @@ func awaitRemoteTrack(t *testing.T, tracks <-chan *pion.TrackRemote, description
 	}
 }
 
-func readRTPWithTimeout(t *testing.T, track *pion.TrackRemote, description string) {
+func readRTPPacketWithTimeout(t *testing.T, track *pion.TrackRemote, description string) *rtp.Packet {
 	t.Helper()
-	result := make(chan error, 1)
+	type readResult struct {
+		packet *rtp.Packet
+		err    error
+	}
+	result := make(chan readResult, 1)
 	go func() {
-		_, _, err := track.ReadRTP()
-		result <- err
+		packet, _, err := track.ReadRTP()
+		result <- readResult{packet: packet, err: err}
 	}()
 	select {
-	case err := <-result:
-		if err != nil {
-			t.Fatalf("%s error = %v", description, err)
+	case value := <-result:
+		if value.err != nil {
+			t.Fatalf("%s error = %v", description, value.err)
 		}
+		return value.packet
 	case <-time.After(3 * time.Second):
 		t.Fatalf("timed out waiting for %s", description)
+		return nil
 	}
 }
 

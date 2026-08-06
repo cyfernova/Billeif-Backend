@@ -3,7 +3,9 @@ package webrtc
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
@@ -22,6 +24,7 @@ import (
 	"github.com/pion/ice/v4"
 	"github.com/pion/interceptor"
 	"github.com/pion/logging"
+	"github.com/pion/rtp"
 	"github.com/pion/sdp/v3"
 	pion "github.com/pion/webrtc/v4"
 )
@@ -161,6 +164,9 @@ type Peer struct {
 	lastInboundSequence  int
 	lastOutboundSequence int
 	sendMu               sync.Mutex
+	audioSendMu          sync.Mutex
+	outboundClock        *audio.RTPClock
+	outboundSequence     uint16
 	peerContext          context.Context
 	cancelPeer           context.CancelFunc
 	setRemoteDescription func(pion.SessionDescription) error
@@ -246,6 +252,10 @@ func NewPeer(config PeerConfig) (*Peer, error) {
 	if err := validatePeerConfig(config); err != nil {
 		return nil, err
 	}
+	var rtpSeed [6]byte
+	if _, err := rand.Read(rtpSeed[:]); err != nil {
+		return nil, ErrInvalidPeerConfig
+	}
 
 	mediaEngine := &pion.MediaEngine{}
 	if err := mediaEngine.RegisterCodec(pion.RTPCodecParameters{
@@ -305,6 +315,8 @@ func NewPeer(config PeerConfig) (*Peer, error) {
 		inboundAudio:      make(chan *pion.TrackRemote, 1),
 		controlQueue:      make(chan []byte, config.MaxControlQueue),
 		controlTracker:    protocol.NewSequenceTracker(1, config.MaxControlQueue),
+		outboundClock:     audio.NewRTPClock(binary.BigEndian.Uint32(rtpSeed[:4])),
+		outboundSequence:  binary.BigEndian.Uint16(rtpSeed[4:]),
 		peerContext:       peerContext,
 		cancelPeer:        cancelPeer,
 		pionLoggerFactory: loggerFactory,
@@ -945,6 +957,44 @@ func (peer *Peer) SendControl(message protocol.ControlMessage) error {
 		return ErrPeerInvalidControl
 	}
 	peer.lastOutboundSequence = message.Sequence
+	return nil
+}
+
+// SendOpus writes one already-encoded 20 ms Opus frame. The peer owns RTP
+// sequence/timestamp state and advances it only after a successful network
+// write, so canceled generations cannot create timestamp drift.
+func (peer *Peer) SendOpus(payload []byte) error {
+	if peer == nil || len(payload) == 0 || len(payload) > audio.MaxOpusPacketBytes {
+		return ErrPeerInvalidAudio
+	}
+	peer.audioSendMu.Lock()
+	defer peer.audioSendMu.Unlock()
+
+	peer.mu.Lock()
+	connected := peer.state == PeerStateConnected
+	track := peer.outboundAudio
+	clock := peer.outboundClock
+	sequence := peer.outboundSequence
+	peer.mu.Unlock()
+	if !connected || track == nil || clock == nil {
+		return ErrPeerState
+	}
+	timestamp, err := clock.Prepare()
+	if err != nil {
+		return ErrPeerState
+	}
+	packet := &rtp.Packet{
+		Header: rtp.Header{Version: 2, PayloadType: uint8(opusPayloadType), SequenceNumber: sequence, Timestamp: timestamp},
+		Payload: payload,
+	}
+	if err := track.WriteRTP(packet); err != nil {
+		_ = clock.Abort(timestamp)
+		return ErrPeerState
+	}
+	if err := clock.Commit(timestamp); err != nil {
+		return ErrPeerState
+	}
+	peer.outboundSequence++
 	return nil
 }
 

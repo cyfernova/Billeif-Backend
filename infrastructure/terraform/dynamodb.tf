@@ -367,6 +367,7 @@ resource "aws_dynamodb_table" "voice_sessions" {
   }
 
   tags = {
-    Name = local.voice_sessions_table_name
+    Name     = local.voice_sessions_table_name
+    Workload = local.voice_cost_allocation_tag_value
   }
 }

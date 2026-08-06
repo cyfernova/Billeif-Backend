@@ -222,14 +222,51 @@ variable "enable_background_processing" {
   default     = true
 }
 
-variable "enable_voice" {
-  description = "Activate the explicitly reviewed AgentCore realtime voice rollout after its deployment gates pass."
+variable "provision_voice_infrastructure" {
+  description = "Provision the AgentCore runtime, STAGING endpoint, KVS TURN pool, reconciler, and optional observability without admitting users."
   type        = bool
   default     = false
 }
 
+variable "promote_voice_agentcore_prod" {
+  description = "Create or update the version-pinned PROD endpoint only after the production evidence gates pass."
+  type        = bool
+  default     = false
+}
+
+variable "enable_voice" {
+  description = "Admit users to the explicitly reviewed AgentCore realtime voice rollout. Production deployment keeps this false until a separate cutover change."
+  type        = bool
+  default     = false
+}
+
+variable "voice_rollout_stage" {
+  description = "Backend-enforced voice admission cohort: disabled, internal, 5, 25, 50, or 100."
+  type        = string
+  default     = "disabled"
+
+  validation {
+    condition     = contains(["disabled", "internal", "5", "25", "50", "100"], var.voice_rollout_stage)
+    error_message = "voice_rollout_stage must be disabled, internal, 5, 25, 50, or 100."
+  }
+}
+
+variable "voice_rollout_internal_sub_hashes" {
+  description = "Canonical authenticated Cognito identity allowlist for the internal cohort, stored only as exact sha256:<64 lowercase hex> hashes. Phone-pool identities are <user-pool-id>:<sub>, matching backend authentication."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for value in var.voice_rollout_internal_sub_hashes :
+      can(regex("^sha256:[0-9a-f]{64}$", value))
+    ])
+    error_message = "voice_rollout_internal_sub_hashes entries must use sha256:<64 lowercase hex>; raw Cognito subjects are forbidden."
+  }
+}
+
 variable "voice_agentcore_image_tag" {
-  description = "Immutable, versioned ECR tag for the AgentCore voice image. Required only when enable_voice is true; mutable aliases such as latest are rejected."
+  description = "Bounded versioned ECR tag used only as the image publishing input; runtime deployment is pinned by digest."
   type        = string
   default     = ""
 
@@ -243,8 +280,19 @@ variable "voice_agentcore_image_tag" {
   }
 }
 
+variable "voice_agentcore_image_digest" {
+  description = "Exact immutable ECR manifest digest used by AgentCore as repository@sha256; required when voice infrastructure is provisioned."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.voice_agentcore_image_digest == "" || can(regex("^sha256:[0-9a-f]{64}$", var.voice_agentcore_image_digest))
+    error_message = "voice_agentcore_image_digest must be empty or exactly sha256:<64 lowercase hex>."
+  }
+}
+
 variable "voice_agentcore_release" {
-  description = "Reviewed immutable voice rollout identifier used to key the MMDSv2 compatibility update. Required only when enable_voice is true."
+  description = "Reviewed immutable voice rollout identifier used to key the MMDSv2 compatibility update. Required when voice infrastructure is provisioned."
   type        = string
   default     = ""
 
@@ -257,6 +305,112 @@ variable "voice_agentcore_release" {
   }
 }
 
+variable "voice_agentcore_prod_version" {
+  description = "Explicit immutable numeric AgentCore version for the PROD endpoint. Required only when PROD promotion is requested."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.voice_agentcore_prod_version == "" || can(regex("^[1-9][0-9]*$", var.voice_agentcore_prod_version))
+    error_message = "voice_agentcore_prod_version must be empty or a positive base-10 integer without a mutable alias."
+  }
+}
+
+variable "voice_agentcore_previous_prod_version" {
+  description = "Optional previous immutable numeric PROD version retained as the code-rollback target while admission is disabled."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.voice_agentcore_previous_prod_version == "" || can(regex("^[1-9][0-9]*$", var.voice_agentcore_previous_prod_version))
+    error_message = "voice_agentcore_previous_prod_version must be empty or a positive base-10 integer."
+  }
+}
+
+variable "voice_sarvam_stt_concurrency_150_acknowledged" {
+  description = "Operator acknowledgement that Sarvam STT concurrency of at least 150 was verified for production."
+  type        = bool
+  default     = false
+}
+
+variable "voice_bulbul_concurrency_150_acknowledged" {
+  description = "Operator acknowledgement that Bulbul concurrency of at least 150 was verified for production."
+  type        = bool
+  default     = false
+}
+
+variable "voice_sarvam_llm_rpm_300_acknowledged" {
+  description = "Operator acknowledgement that Sarvam-105B quota of at least 300 requests per minute was verified for production."
+  type        = bool
+  default     = false
+}
+
+variable "voice_agentcore_kvs_sessions_120_acknowledged" {
+  description = "Operator acknowledgement that AgentCore and KVS quotas cover at least 120 tested concurrent sessions."
+  type        = bool
+  default     = false
+}
+
+variable "voice_turn_live_proof_acknowledged" {
+  description = "Operator acknowledgement that the Task 7 live AgentCore-to-KVS TURN proof passed through the production-equivalent NAT path."
+  type        = bool
+  default     = false
+}
+
+variable "voice_load_cost_live_evidence_acknowledged" {
+  description = "Operator acknowledgement that Task 16 live load and actual cost evidence passed at 120 sessions."
+  type        = bool
+  default     = false
+}
+
+variable "voice_staging_verified" {
+  description = "Operator acknowledgement that the exact immutable AgentCore version passed staging verification."
+  type        = bool
+  default     = false
+}
+
+variable "voice_staging_verified_image_digest" {
+  description = "Exact immutable image digest covered by the staging evidence. Required to match the selected runtime artifact when voice_staging_verified is true."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.voice_staging_verified_image_digest == "" || can(regex("^sha256:[0-9a-f]{64}$", var.voice_staging_verified_image_digest))
+    error_message = "voice_staging_verified_image_digest must be empty or exactly sha256:<64 lowercase hex>."
+  }
+}
+
+variable "voice_staging_verified_release" {
+  description = "Immutable release identifier covered by the staging evidence."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = var.voice_staging_verified_release == "" || (
+      var.voice_staging_verified_release == trimspace(var.voice_staging_verified_release) &&
+      can(regex("^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$", var.voice_staging_verified_release))
+    )
+    error_message = "voice_staging_verified_release must be empty or a 1-128 character immutable rollout identifier."
+  }
+}
+
+variable "voice_staging_verified_version" {
+  description = "Exact positive numeric AgentCore runtime version covered by the staging evidence."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.voice_staging_verified_version == "" || can(regex("^[1-9][0-9]*$", var.voice_staging_verified_version))
+    error_message = "voice_staging_verified_version must be empty or a positive base-10 integer."
+  }
+}
+
+variable "voice_generic_websocket_verified" {
+  description = "Operator acknowledgement that generic non-voice WebSocket notifications passed staging verification."
+  type        = bool
+  default     = false
+}
+
 variable "enable_voice_turn_udp_egress" {
   description = "Open UDP 443 egress for managed KVS TURN only after the NAT-instance TURN proof gate passes."
   type        = bool
@@ -267,6 +421,17 @@ variable "migration_lambda_artifact_path" {
   description = "Optional path to the packaged database migration Lambda artifact."
   type        = string
   default     = ""
+}
+
+variable "voice_reconciler_lambda_artifact_path" {
+  description = "Optional path to the packaged voice lease reconciler Lambda artifact."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.voice_reconciler_lambda_artifact_path == trimspace(var.voice_reconciler_lambda_artifact_path)
+    error_message = "voice_reconciler_lambda_artifact_path must not contain leading or trailing whitespace."
+  }
 }
 
 variable "worker_queue_visibility_timeout_seconds" {

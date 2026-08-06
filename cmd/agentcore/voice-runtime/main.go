@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -36,7 +35,18 @@ func run(ctx context.Context) error {
 	if err := audio.VerifyLibopus(); err != nil {
 		return err
 	}
-	application, httpServer := newRuntimeApplication()
+	environment, err := loadRuntimeEnvironment(os.LookupEnv)
+	if err != nil {
+		return err
+	}
+	dependencies, err := loadProductionRuntimeDependencies(ctx, environment)
+	if err != nil {
+		return err
+	}
+	application, httpServer, err := newRuntimeApplication(environment, dependencies)
+	if err != nil {
+		return err
+	}
 	serveErrors := make(chan error, 1)
 	go func() {
 		serveErrors <- httpServer.ListenAndServe()
@@ -51,28 +61,6 @@ func run(ctx context.Context) error {
 		return errors.Join(err, shutdownErr)
 	case <-ctx.Done():
 		return shutdown(application, httpServer)
-	}
-}
-
-func newRuntimeApplication() (*voiceruntime.Server, *http.Server) {
-	application := voiceruntime.NewServer(voiceruntime.Config{
-		RuntimeID: os.Getenv("RUNTIME_ID"),
-		AWSRegion: os.Getenv("AWS_REGION"),
-	}, voiceruntime.InvocationHandlerFunc(func(context.Context, voiceruntime.InvocationRequest) (voiceruntime.InvocationResponse, error) {
-		return voiceruntime.InvocationResponse{
-			StatusCode: http.StatusServiceUnavailable,
-			Body:       json.RawMessage(`{"error":"runtime signaling is not configured"}`),
-		}, nil
-	}))
-
-	return application, &http.Server{
-		Addr:              runtimeAddress,
-		Handler:           application,
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      15 * time.Second,
-		IdleTimeout:       30 * time.Second,
-		MaxHeaderBytes:    16 << 10,
 	}
 }
 

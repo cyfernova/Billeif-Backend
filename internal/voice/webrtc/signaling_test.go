@@ -236,7 +236,7 @@ func TestSignalingAttachUsesTrustedSessionAndPersistedChannel(t *testing.T) {
 	resolver := &fakeAuthorizationResolver{identity: identity}
 	lookup := &fakeSessionLookup{value: logicalSession}
 	credentials := TURNCredentials{
-		uris:      []string{"turn:v-attach.kinesisvideo.ap-south-1.amazonaws.com:443?transport=udp"},
+		uris:      []string{"turn:34-219-91-62.t-attach.kinesisvideo.ap-south-1.amazonaws.com:443?transport=udp"},
 		username:  "attach-user-secret",
 		password:  "attach-password-secret",
 		ExpiresAt: signalingTestNow.Add(5 * time.Minute),
@@ -278,7 +278,7 @@ func TestSignalingAttachUsesTrustedSessionAndPersistedChannel(t *testing.T) {
 		"session_id":"voice_01KTEST",
 		"sequence":1,
 		"ice_servers":[{
-			"urls":["turn:v-attach.kinesisvideo.ap-south-1.amazonaws.com:443?transport=udp"],
+			"urls":["turn:34-219-91-62.t-attach.kinesisvideo.ap-south-1.amazonaws.com:443?transport=udp"],
 			"username":"attach-user-secret",
 			"credential":"attach-password-secret"
 		}],
@@ -373,6 +373,59 @@ func TestSignalingOfferCandidateRestartFlowAndExactSequences(t *testing.T) {
 
 	require.Equal(t, 409, invokeSignaling(t, service, logicalSession, restartBody(logicalSession.ID, 5, "duplicate-sensitive-offer")).StatusCode)
 	require.Equal(t, 409, invokeSignaling(t, service, logicalSession, restartBody(logicalSession.ID, 7, "out-of-order-sensitive-offer")).StatusCode)
+}
+
+func TestSignalingMetricsRecordKVSFailuresAndSuccessfulICERestarts(t *testing.T) {
+	logicalSession := validSignalingSession()
+	metrics := &fakeSignalingMetrics{}
+	failed := newTestSignalingService(t, testChannelARNs(12), SignalingDependencies{
+		Authorization: &fakeAuthorizationResolver{identity: TrustedIdentity{
+			UserID: logicalSession.UserID, BusinessID: logicalSession.BusinessID, ClientID: "client",
+		}},
+		Sessions:   &fakeSessionLookup{value: logicalSession},
+		ICE:        &fakeICECredentialSource{err: errors.New("KVS unavailable")},
+		Activities: newFakeActivitySource(),
+		Peers:      &fakePeerFactory{peer: newFakeSignalingPeer()},
+		Metrics:    metrics,
+	})
+	require.Equal(t, http.StatusServiceUnavailable, invokeSignaling(t, failed, logicalSession, attachBody(1)).StatusCode)
+	require.Equal(t, 1, metrics.kvsFailures())
+	require.Equal(t, 0, metrics.iceRestarts())
+	require.NoError(t, failed.Close())
+
+	metrics = &fakeSignalingMetrics{}
+	service := newTestSignalingService(t, testChannelARNs(12), SignalingDependencies{
+		Authorization: &fakeAuthorizationResolver{identity: TrustedIdentity{
+			UserID: logicalSession.UserID, BusinessID: logicalSession.BusinessID, ClientID: "client",
+		}},
+		Sessions:   &fakeSessionLookup{value: logicalSession},
+		ICE:        &fakeICECredentialSource{credentials: validSignalingCredentials()},
+		Activities: newFakeActivitySource(),
+		Peers:      &fakePeerFactory{peer: newFakeSignalingPeer()},
+		Metrics:    metrics,
+	})
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	require.Equal(t, http.StatusOK, invokeSignaling(t, service, logicalSession, attachBody(1)).StatusCode)
+	require.Equal(t, http.StatusOK, invokeSignaling(t, service, logicalSession, offerBody(logicalSession.ID, 2, "initial-offer")).StatusCode)
+	require.Equal(t, http.StatusOK, invokeSignaling(t, service, logicalSession, restartBody(logicalSession.ID, 3, "fresh-restart-offer")).StatusCode)
+	require.Equal(t, 0, metrics.kvsFailures())
+	require.Equal(t, 1, metrics.iceRestarts())
+}
+
+func TestSignalingMetricsPanicCannotChangeTheSignalingResult(t *testing.T) {
+	logicalSession := validSignalingSession()
+	service := newTestSignalingService(t, testChannelARNs(12), SignalingDependencies{
+		Authorization: &fakeAuthorizationResolver{identity: TrustedIdentity{
+			UserID: logicalSession.UserID, BusinessID: logicalSession.BusinessID, ClientID: "client",
+		}},
+		Sessions:   &fakeSessionLookup{value: logicalSession},
+		ICE:        &fakeICECredentialSource{err: errors.New("KVS unavailable")},
+		Activities: newFakeActivitySource(),
+		Peers:      &fakePeerFactory{peer: newFakeSignalingPeer()},
+		Metrics:    panicSignalingMetrics{},
+	})
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+	require.Equal(t, http.StatusServiceUnavailable, invokeSignaling(t, service, logicalSession, attachBody(1)).StatusCode)
 }
 
 func TestSignalingConcurrentSameSequenceRunsExactlyOneOperation(t *testing.T) {
@@ -1418,7 +1471,7 @@ func TestSignalingBoundsCredentialSourceBeforePeerOrResponse(t *testing.T) {
 		{name: "too many uris", mutate: func(value *TURNCredentials) {
 			value.uris = make([]string, 17)
 			for index := range value.uris {
-				value.uris[index] = fmt.Sprintf("turn:v-%02d.kinesisvideo.ap-south-1.amazonaws.com:443?transport=udp", index)
+				value.uris[index] = fmt.Sprintf("turn:34-219-91-%02d.t-signal.kinesisvideo.ap-south-1.amazonaws.com:443?transport=udp", index)
 			}
 		}},
 		{name: "username too long", mutate: func(value *TURNCredentials) { value.username = strings.Repeat("u", 257) }},
@@ -1482,7 +1535,7 @@ func validSignalingSession() *voicesession.Session {
 
 func validSignalingCredentials() TURNCredentials {
 	return TURNCredentials{
-		uris:      []string{"turn:v-signal.kinesisvideo.ap-south-1.amazonaws.com:443?transport=udp"},
+		uris:      []string{"turn:34-219-91-62.t-signal.kinesisvideo.ap-south-1.amazonaws.com:443?transport=udp"},
 		username:  "turn-user-secret",
 		password:  "turn-password-secret",
 		ExpiresAt: signalingTestNow.Add(5 * time.Minute),
@@ -1601,6 +1654,41 @@ type lifecycleRecorder struct {
 	mu     sync.Mutex
 	events []string
 }
+
+type fakeSignalingMetrics struct {
+	mu         sync.Mutex
+	kvsErrors  int
+	iceRestart int
+}
+
+func (metrics *fakeSignalingMetrics) KVSAllocationError() {
+	metrics.mu.Lock()
+	metrics.kvsErrors++
+	metrics.mu.Unlock()
+}
+
+func (metrics *fakeSignalingMetrics) ICERestart() {
+	metrics.mu.Lock()
+	metrics.iceRestart++
+	metrics.mu.Unlock()
+}
+
+func (metrics *fakeSignalingMetrics) kvsFailures() int {
+	metrics.mu.Lock()
+	defer metrics.mu.Unlock()
+	return metrics.kvsErrors
+}
+
+func (metrics *fakeSignalingMetrics) iceRestarts() int {
+	metrics.mu.Lock()
+	defer metrics.mu.Unlock()
+	return metrics.iceRestart
+}
+
+type panicSignalingMetrics struct{}
+
+func (panicSignalingMetrics) KVSAllocationError() { panic("metrics must fail open") }
+func (panicSignalingMetrics) ICERestart()         { panic("metrics must fail open") }
 
 func (recorder *lifecycleRecorder) record(event string) {
 	if recorder == nil {
@@ -1965,6 +2053,8 @@ type fakeSignalingPeer struct {
 	afterAnswer    func()
 	afterCandidate func()
 	leaveDoneOpen  bool
+	opus           [][]byte
+	controls       []protocol.ControlMessage
 }
 
 type fakeAnswerCall struct {
@@ -2010,6 +2100,30 @@ func (peer *fakeSignalingPeer) RefreshICE(_ context.Context, credentials TURNCre
 	defer peer.mu.Unlock()
 	peer.refreshCalls = append(peer.refreshCalls, credentials)
 	return peer.refreshErr
+}
+
+func (peer *fakeSignalingPeer) SendControl(message protocol.ControlMessage) error {
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+	peer.controls = append(peer.controls, message)
+	return nil
+}
+
+func (peer *fakeSignalingPeer) SendOpus(payload []byte) error {
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+	peer.opus = append(peer.opus, append([]byte(nil), payload...))
+	return nil
+}
+
+func (peer *fakeSignalingPeer) opusFrames() [][]byte {
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+	frames := make([][]byte, len(peer.opus))
+	for index := range peer.opus {
+		frames[index] = append([]byte(nil), peer.opus[index]...)
+	}
+	return frames
 }
 
 func (peer *fakeSignalingPeer) refreshes() []TURNCredentials {

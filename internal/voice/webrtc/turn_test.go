@@ -76,7 +76,7 @@ func validEndpoints() []TLSEndpoint {
 
 func validCredentials() TURNCredentials {
 	return TURNCredentials{
-		uris:      []string{"turn:v-abc123.kinesisvideo.ap-south-1.amazonaws.com:443?transport=udp"},
+		uris:      []string{"turn:34-219-91-62.t-abc123.kinesisvideo.ap-south-1.amazonaws.com:443?transport=udp"},
 		username:  "turn-user-sensitive",
 		password:  "turn-password-sensitive",
 		ExpiresAt: fixedProbeTime.Add(30 * time.Minute),
@@ -377,20 +377,23 @@ func TestValidateTURNCredentialsRequiresUDP443AndExpiryMargin(t *testing.T) {
 		{name: "missing password", value: mutateCredentials(func(value *TURNCredentials) { value.password = "" }), wantErr: true},
 		{name: "credential expires inside safety margin", value: mutateCredentials(func(value *TURNCredentials) { value.ExpiresAt = fixedProbeTime.Add(5 * time.Minute) }), wantErr: true},
 		{name: "tcp transport", value: mutateCredentials(func(value *TURNCredentials) {
-			value.uris[0] = "turn:v-abc123.kinesisvideo.ap-south-1.amazonaws.com:443?transport=tcp"
+			value.uris[0] = "turn:34-219-91-62.t-abc123.kinesisvideo.ap-south-1.amazonaws.com:443?transport=tcp"
 		}), wantErr: true},
 		{name: "wrong port", value: mutateCredentials(func(value *TURNCredentials) {
-			value.uris[0] = "turn:v-abc123.kinesisvideo.ap-south-1.amazonaws.com:3478?transport=udp"
+			value.uris[0] = "turn:34-219-91-62.t-abc123.kinesisvideo.ap-south-1.amazonaws.com:3478?transport=udp"
 		}), wantErr: true},
 		{name: "tls turn scheme", value: mutateCredentials(func(value *TURNCredentials) {
 			value.uris[0] = "turns:v-abc123.kinesisvideo.ap-south-1.amazonaws.com:443?transport=udp"
 		}), wantErr: true},
 		{name: "userinfo", value: mutateCredentials(func(value *TURNCredentials) {
-			value.uris[0] = "turn:user@v-abc123.kinesisvideo.ap-south-1.amazonaws.com:443?transport=udp"
+			value.uris[0] = "turn:user@34-219-91-62.t-abc123.kinesisvideo.ap-south-1.amazonaws.com:443?transport=udp"
 		}), wantErr: true},
 		{name: "ip literal", value: mutateCredentials(func(value *TURNCredentials) { value.uris[0] = "turn:127.0.0.1:443?transport=udp" }), wantErr: true},
 		{name: "suffix trick", value: mutateCredentials(func(value *TURNCredentials) {
-			value.uris[0] = "turn:v-abc123.kinesisvideo.ap-south-1.amazonaws.com.attacker.invalid:443?transport=udp"
+			value.uris[0] = "turn:34-219-91-62.t-abc123.kinesisvideo.ap-south-1.amazonaws.com.attacker.invalid:443?transport=udp"
+		}), wantErr: true},
+		{name: "signaling-style single dynamic label", value: mutateCredentials(func(value *TURNCredentials) {
+			value.uris[0] = "turn:v-abc123.kinesisvideo.ap-south-1.amazonaws.com:443?transport=udp"
 		}), wantErr: true},
 	}
 
@@ -689,7 +692,7 @@ func TestSensitiveTURNFieldsArePrivateAndSkippedByGenericSerializers(t *testing.
 			for _, secret := range []string{
 				"turn-user-sensitive",
 				"turn-password-sensitive",
-				"v-abc123.kinesisvideo.ap-south-1.amazonaws.com",
+				"34-219-91-62.t-abc123.kinesisvideo.ap-south-1.amazonaws.com",
 				"nonce-sensitive",
 				base64.StdEncoding.EncodeToString([]byte("nonce-sensitive")),
 			} {
@@ -706,8 +709,8 @@ func TestRedactedICESortsHostFingerprintsDeterministically(t *testing.T) {
 
 	first := validCredentials()
 	first.uris = []string{
-		"turn:v-zulu.kinesisvideo.ap-south-1.amazonaws.com:443?transport=udp",
-		"turn:v-alpha.kinesisvideo.ap-south-1.amazonaws.com:443?transport=udp",
+		"turn:34-219-91-62.t-zulu.kinesisvideo.ap-south-1.amazonaws.com:443?transport=udp",
+		"turn:34-219-91-63.t-alpha.kinesisvideo.ap-south-1.amazonaws.com:443?transport=udp",
 	}
 	second := first
 	second.uris = []string{first.uris[1], first.uris[0]}

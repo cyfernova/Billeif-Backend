@@ -17,9 +17,10 @@ const (
 	StatusHealthy     = "Healthy"
 	StatusHealthyBusy = "HealthyBusy"
 
-	MinRuntimeSessionIDLength = 33
-	MaxRuntimeSessionIDLength = 256
-	MaxInvocationBodySize     = 16 << 10
+	MinRuntimeSessionIDLength  = 33
+	MaxRuntimeSessionIDLength  = 256
+	MaxInvocationBodySize      = 16 << 10
+	MaxAuthorizationHeaderSize = 8 << 10
 )
 
 var ErrShuttingDown = errors.New("voice runtime is shutting down")
@@ -246,8 +247,23 @@ func isBodyTooLarge(err error) bool {
 }
 
 func validBearerAuthorization(value string) bool {
-	parts := strings.Fields(value)
-	return len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") && parts[1] != ""
+	if len(value) < len("Bearer ")+1 || len(value) > MaxAuthorizationHeaderSize {
+		return false
+	}
+	separator := strings.IndexByte(value, ' ')
+	if separator <= 0 || !strings.EqualFold(value[:separator], "Bearer") {
+		return false
+	}
+	token := value[separator+1:]
+	if token == "" {
+		return false
+	}
+	for _, character := range token {
+		if character < 0x21 || character > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 func exactlyOneHeaderValue(header http.Header, name string) (string, bool) {

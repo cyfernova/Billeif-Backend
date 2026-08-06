@@ -512,7 +512,7 @@ resource "aws_cloudwatch_dashboard" "main" {
   dashboard_name = "${local.resource_prefix}-dashboard"
 
   dashboard_body = jsonencode({
-    widgets = [
+    widgets = concat([
       {
         type   = "metric"
         x      = 0
@@ -568,6 +568,6 @@ resource "aws_cloudwatch_dashboard" "main" {
           period = 300
         }
       }
-    ]
+    ], local.voice_dashboard_widgets)
   })
 }

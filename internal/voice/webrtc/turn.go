@@ -1695,7 +1695,7 @@ func parseUDP443TURNURI(region, rawURI string) (string, bool) {
 	if err != nil || port != "443" || net.ParseIP(host) != nil || !isStrictDNSName(host) {
 		return "", false
 	}
-	if !isRegionBoundKVSHost(region, host) {
+	if !isRegionBoundKVSTURNHost(region, host) {
 		return "", false
 	}
 	return host, true
@@ -1710,6 +1710,20 @@ func isRegionBoundKVSHost(region, host string) bool {
 	return label != "" && !strings.Contains(label, ".") && isDNSLabel(label)
 }
 
+// AWS Kinesis Video Streams documents signaling endpoints with one dynamic
+// label and TURN endpoints with two dynamic labels before the regional
+// service suffix. Keep the two host classes distinct so accepting a real TURN
+// URI does not widen the HTTPS/WSS signaling boundary.
+func isRegionBoundKVSTURNHost(region, host string) bool {
+	suffix := ".kinesisvideo." + region + ".amazonaws.com"
+	if !strings.HasSuffix(host, suffix) {
+		return false
+	}
+	prefix := strings.TrimSuffix(host, suffix)
+	labels := strings.Split(prefix, ".")
+	return len(labels) == 2 && isDNSLabel(labels[0]) && isDNSLabel(labels[1])
+}
+
 func kvsControlPlaneHost(region string) string {
 	return "kinesisvideo." + region + ".amazonaws.com"
 }
@@ -1722,7 +1736,7 @@ func isMandatoryConnectivityHost(region, host string) bool {
 		SarvamAPIHost:
 		return true
 	default:
-		return isRegionBoundKVSHost(region, host)
+		return isRegionBoundKVSHost(region, host) || isRegionBoundKVSTURNHost(region, host)
 	}
 }
 

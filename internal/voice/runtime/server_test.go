@@ -152,7 +152,10 @@ func TestInvocationRequiresForwardedBearerAuthorizationWithoutEchoingIt(t *testi
 		return InvocationResponse{StatusCode: http.StatusNoContent}, nil
 	}))
 
-	for _, authorization := range []string{"", "Basic not-a-bearer", "Bearer", "Bearer    "} {
+	for _, authorization := range []string{
+		"", "Basic not-a-bearer", "Bearer", "Bearer    ",
+		"Bearer token with spaces", "Bearer\ttoken", "Bearer " + strings.Repeat("x", (8<<10)+1),
+	} {
 		response := invoke(t, server, `{}`, testSessionID, authorization, "application/json")
 		assert.Equal(t, http.StatusUnauthorized, response.Code)
 		assert.JSONEq(t, `{"error":"unauthorized"}`, response.Body.String())

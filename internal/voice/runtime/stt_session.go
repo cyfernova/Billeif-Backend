@@ -55,6 +55,8 @@ type STTFinalTranscript struct {
 	ResponseLanguage    string
 	LanguageProbability *float64
 	UsedFallback        bool
+	SpeechEndedAt       time.Time
+	STTFinalAt          time.Time
 }
 
 // FinalTranscriptHandler receives an admitted authoritative final outside all
@@ -114,13 +116,14 @@ type sttTurn struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	preRoll      [STTPreRollFrames]pcmSTTFrame
-	preRollCount int
-	frames       chan pcmSTTFrame
-	ended        bool
-	speechEnded  bool
-	failed       bool
-	stream       sarvam.STTStream
+	preRoll       [STTPreRollFrames]pcmSTTFrame
+	preRollCount  int
+	frames        chan pcmSTTFrame
+	ended         bool
+	speechEnded   bool
+	speechEndedAt time.Time
+	failed        bool
+	stream        sarvam.STTStream
 }
 
 type warmSTTLease struct {
@@ -339,6 +342,7 @@ func (session *STTSession) SpeechEnded() error {
 	if session.current.ended {
 		if session.current.failed && !session.current.speechEnded {
 			session.current.speechEnded = true
+			session.current.speechEndedAt = time.Now().UTC()
 			session.lastEnded = true
 			return nil
 		}
@@ -346,6 +350,7 @@ func (session *STTSession) SpeechEnded() error {
 	}
 	session.current.ended = true
 	session.current.speechEnded = true
+	session.current.speechEndedAt = time.Now().UTC()
 	session.lastEnded = true
 	close(session.current.frames)
 	return nil
@@ -519,6 +524,8 @@ func (session *STTSession) executeSTTTurn(turnState *sttTurn) (sarvam.STTStream,
 	if err != nil {
 		return stream, STTFinalTranscript{}, err
 	}
+	final.SpeechEndedAt = turnState.speechEndedAt
+	final.STTFinalAt = time.Now().UTC()
 	return stream, final, nil
 }
 

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 for attempt in {1..20}; do
-  if dnf install -y iptables-services; then
+  if dnf install -y iptables-services%{ if enable_observability } amazon-cloudwatch-agent ethtool%{ endif }; then
     break
   fi
   if [[ "$attempt" -eq 20 ]]; then
@@ -10,6 +10,19 @@ for attempt in {1..20}; do
   fi
   sleep 15
 done
+
+%{ if enable_observability }
+install -d -m 0755 /opt/aws/amazon-cloudwatch-agent/etc
+cat >/opt/aws/amazon-cloudwatch-agent/etc/billeif-nat.json <<'CLOUDWATCH_AGENT_CONFIG'
+${cloudwatch_agent_config}
+CLOUDWATCH_AGENT_CONFIG
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+  -a fetch-config \
+  -m ec2 \
+  -s \
+  -c file:/opt/aws/amazon-cloudwatch-agent/etc/billeif-nat.json
+systemctl is-active --quiet amazon-cloudwatch-agent
+%{ endif }
 
 cat >/etc/sysctl.d/99-billeif-nat.conf <<'SYSCTL'
 net.ipv4.ip_forward=1

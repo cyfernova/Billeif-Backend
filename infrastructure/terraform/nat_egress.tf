@@ -4,14 +4,23 @@ locals {
   nat_instance_forwarding_script = templatefile("${path.module}/templates/nat-instance-forwarding.sh.tftpl", {
     vpc_cidr = var.vpc_cidr
   })
-  nat_instance_forwarding_script_base64 = base64encode(local.nat_instance_forwarding_script)
+  nat_instance_forwarding_script_base64       = base64encode(local.nat_instance_forwarding_script)
+  nat_instance_cloudwatch_agent_config_base64 = base64encode(local.nat_cloudwatch_agent_config)
+  nat_instance_observability_converge_command = local.voice_observability_enabled ? join(" && ", [
+    "dnf install -y amazon-cloudwatch-agent ethtool",
+    "install -d -m 0755 /opt/aws/amazon-cloudwatch-agent/etc",
+    "printf '%s' '${local.nat_instance_cloudwatch_agent_config_base64}' | base64 --decode >/opt/aws/amazon-cloudwatch-agent/etc/billeif-nat.json",
+    "/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/billeif-nat.json",
+    "systemctl is-active --quiet amazon-cloudwatch-agent",
+  ]) : "if systemctl list-unit-files amazon-cloudwatch-agent.service --no-legend 2>/dev/null | grep -q '^amazon-cloudwatch-agent.service'; then systemctl disable --now amazon-cloudwatch-agent; fi"
   nat_instance_forwarding_converge_command = join(" && ", [
     "printf '%s' '${local.nat_instance_forwarding_script_base64}' | base64 --decode >/usr/local/sbin/billeif-nat-configure",
     "chmod 0755 /usr/local/sbin/billeif-nat-configure",
     "systemctl reset-failed billeif-nat.service",
     "systemctl restart billeif-nat.service",
     "systemctl is-active --quiet billeif-nat.service",
-    "test \"$(sysctl -n net.ipv4.ip_forward)\" = \"1\""
+    "test \"$(sysctl -n net.ipv4.ip_forward)\" = \"1\"",
+    local.nat_instance_observability_converge_command,
   ])
   private_subnet_cidrs = [
     for index in range(length(var.availability_zones)) :
@@ -116,7 +125,9 @@ resource "aws_instance" "nat" {
   iam_instance_profile        = aws_iam_instance_profile.nat_instance[0].name
   vpc_security_group_ids      = [aws_security_group.nat_instance[0].id]
   user_data = templatefile("${path.module}/templates/nat-instance-user-data.sh.tftpl", {
-    forwarding_script = local.nat_instance_forwarding_script
+    cloudwatch_agent_config = local.nat_cloudwatch_agent_config
+    enable_observability    = local.voice_observability_enabled
+    forwarding_script       = local.nat_instance_forwarding_script
   })
   user_data_replace_on_change = false
 
@@ -153,6 +164,7 @@ resource "aws_instance" "nat" {
   }
 
   depends_on = [
+    aws_iam_role_policy.nat_cloudwatch_metrics,
     aws_iam_role_policy_attachment.nat_instance_ssm,
     aws_internet_gateway.main
   ]
