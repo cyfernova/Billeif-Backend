@@ -158,6 +158,10 @@ jobs:
       TF_VAR_enable_cognito_custom_domain_provisioning: ${{ vars.ENABLE_COGNITO_CUSTOM_DOMAIN_PROVISIONING == 'true' && 'true' || 'false' }}
       TF_VAR_enable_cognito_custom_domain_cutover: ${{ vars.ENABLE_COGNITO_CUSTOM_DOMAIN_CUTOVER == 'true' && 'true' || 'false' }}
       TF_VAR_enable_background_processing: ${{ vars.ENABLE_BACKGROUND_PROCESSING == 'true' && 'true' || 'false' }}
+      TF_VAR_enable_voice: ${{ vars.ENABLE_VOICE == 'true' && 'true' || 'false' }}
+      TF_VAR_enable_voice_turn_udp_egress: ${{ vars.ENABLE_VOICE_TURN_UDP_EGRESS == 'true' && 'true' || 'false' }}
+      TF_VAR_voice_agentcore_image_tag: ${{ vars.VOICE_AGENTCORE_IMAGE_TAG != '' && vars.VOICE_AGENTCORE_IMAGE_TAG || '' }}
+      TF_VAR_voice_agentcore_release: ${{ vars.VOICE_AGENTCORE_RELEASE != '' && vars.VOICE_AGENTCORE_RELEASE || '' }}
       TF_VAR_enable_rds_tunnel: "false"
       TF_VAR_use_ambient_aws_credentials: "true"
       TF_VAR_llm_api_url: ${{ vars.LLM_API_URL != '' && vars.LLM_API_URL || 'https://api.deepseek.com/chat/completions' }}
@@ -231,6 +235,55 @@ jobs:
             -backend-config="key=${TF_BACKEND_KEY}" \
             -backend-config="encrypt=true" \
             -backend-config="dynamodb_table=${TF_STATE_LOCK_TABLE}"
+
+      - name: Validate AgentCore voice release gate
+        if: env.TF_VAR_enable_voice == 'true'
+        run: |
+          test -n "${TF_VAR_voice_agentcore_image_tag}" || {
+            echo "::error::VOICE_AGENTCORE_IMAGE_TAG is required when voice is enabled."
+            exit 1
+          }
+          test -n "${TF_VAR_voice_agentcore_release}" || {
+            echo "::error::VOICE_AGENTCORE_RELEASE is required when voice is enabled."
+            exit 1
+          }
+          test "${TF_VAR_enable_voice_turn_udp_egress}" = "true" || {
+            echo "::error::The reviewed TURN proof gate must be acknowledged before voice enablement."
+            exit 1
+          }
+
+          aws_cli_version="$(aws --version 2>&1)"
+          aws_cli_version="${aws_cli_version#aws-cli/}"
+          aws_cli_version="${aws_cli_version%% *}"
+          IFS=. read -r aws_cli_major aws_cli_minor _ <<<"${aws_cli_version}"
+          if [ "${aws_cli_major:-0}" -lt 2 ] || { [ "${aws_cli_major:-0}" -eq 2 ] && [ "${aws_cli_minor:-0}" -lt 35 ]; }; then
+            echo "::error::AWS CLI 2.35 or newer is required for the AgentCore MMDSv2 bridge."
+            exit 1
+          fi
+
+      - name: Bootstrap gated AgentCore voice registry
+        if: env.TF_VAR_enable_voice == 'true'
+        run: |
+          terraform -chdir="${TERRAFORM_DIR}" plan -input=false \
+            -target=aws_ecr_repository.voice_agentcore \
+            -target=aws_ecr_lifecycle_policy.voice_agentcore \
+            -out=voice-ecr.tfplan
+          terraform -chdir="${TERRAFORM_DIR}" apply -input=false -auto-approve voice-ecr.tfplan
+
+      - name: Set up Docker Buildx for AgentCore voice
+        if: env.TF_VAR_enable_voice == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Publish immutable AgentCore ARM64 image
+        if: env.TF_VAR_enable_voice == 'true'
+        run: |
+          repository_url="$(terraform -chdir="${TERRAFORM_DIR}" output -raw voice_agentcore_ecr_repository_url)"
+          registry="${repository_url%%/*}"
+          aws ecr get-login-password --region "${AWS_REGION}" | docker login --username AWS --password-stdin "${registry}"
+          docker buildx build --platform linux/arm64 \
+            --file deploy/agentcore/Dockerfile \
+            --tag "${repository_url}:${TF_VAR_voice_agentcore_image_tag}" \
+            --push .
 
       - name: Terraform plan
         run: terraform -chdir="${TERRAFORM_DIR}" plan -input=false -out=tfplan

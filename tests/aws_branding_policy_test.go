@@ -607,6 +607,9 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 	wantResources = append(wantResources,
 		"aws_acm_certificate.cognito_custom_domain",
 		"aws_acm_certificate_validation.cognito_custom_domain",
+		"aws_bedrockagentcore_agent_runtime.voice",
+		"aws_bedrockagentcore_agent_runtime_endpoint.voice_prod",
+		"aws_bedrockagentcore_agent_runtime_endpoint.voice_staging",
 		"aws_apigatewayv2_api.http",
 		"aws_apigatewayv2_integration.http_lambda",
 		"aws_apigatewayv2_route.http_default",
@@ -644,6 +647,8 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_db_proxy_target.main",
 		"aws_ec2_instance_state.nat_running",
 		"aws_ec2_instance_state.nat_stopped",
+		"aws_ecr_lifecycle_policy.voice_agentcore",
+		"aws_ecr_repository.voice_agentcore",
 		"aws_eip.nat_instance",
 		"aws_eip_association.nat_instance",
 		"aws_iam_openid_connect_provider.github_actions",
@@ -655,6 +660,7 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_iam_role.nat_instance",
 		"aws_iam_role.rds_proxy",
 		"aws_iam_role.ses_feedback",
+		"aws_iam_role.voice_agentcore_runtime",
 		"aws_iam_role.outbox_dispatcher",
 		"aws_iam_role.outbox_scheduler",
 		"aws_iam_role_policy.database_migrator",
@@ -664,6 +670,8 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_iam_role_policy.lambda_http_app",
 		"aws_iam_role_policy.rds_proxy",
 		"aws_iam_role_policy.ses_feedback",
+		"aws_iam_role_policy.voice_agentcore_runtime",
+		"aws_iam_role_policy.voice_session_http",
 		"aws_iam_role_policy.outbox_dispatcher",
 		"aws_iam_role_policy.outbox_scheduler",
 		"aws_iam_role_policy_attachment.outbox_dispatcher_basic",
@@ -697,6 +705,7 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_secretsmanager_secret.sarvam",
 		"aws_security_group.database_migrator",
 		"aws_security_group.nat_instance",
+		"aws_security_group.voice_agentcore",
 		"aws_sns_topic_policy.ses_events",
 		"aws_sns_topic_subscription.ses_feedback",
 		"aws_sqs_queue.email_delivery",
@@ -718,6 +727,8 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_subnet.database",
 		"aws_vpc_endpoint.dynamodb",
 		"aws_vpc_endpoint.s3",
+		"awscc_kinesisvideo_signaling_channel.voice",
+		"terraform_data.voice_agentcore_mmdsv2",
 	)
 	assertExactManifest(t, "Terraform resource labels", terraformResourceLabels(t), wantResources)
 	wantOutputs := manifestLines(preTaskOutputManifest)
@@ -737,6 +748,11 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"github_actions_deployment_role_arn",
 		"rds_proxy_endpoint",
 		"ses_feedback_queue_url",
+		"voice_agentcore_ecr_repository_url",
+		"voice_agentcore_prod_endpoint_arn",
+		"voice_agentcore_runtime_arn",
+		"voice_agentcore_runtime_qualifier",
+		"voice_turn_channel_arns",
 	)
 	assertExactManifest(t, "Terraform output keys", terraformOutputKeys(t), wantOutputs)
 	wantEnvironment := removeManifestEntry(manifestLines(preTaskEnvironmentManifest), "SQS_PAYMENT_QUEUE")
@@ -1029,6 +1045,8 @@ var stableAWSNameAttributeAllowlist = map[string][]string{
 	"aws_api_gateway_stage.stage_name":                          {"var.environment"},
 	"aws_apigatewayv2_api.name":                                 {"local.resource_prefix"},
 	"aws_apigatewayv2_stage.name":                               {"var.environment"},
+	"aws_bedrockagentcore_agent_runtime.agent_runtime_name":     {"local.voice_agentcore_runtime_name"},
+	"aws_bedrockagentcore_agent_runtime_endpoint.name":          {`"STAGING"`, `"PROD"`},
 	"aws_budgets_budget.name":                                   {"local.resource_prefix"},
 	"aws_cloudformation_stack.name":                             {"local.resource_prefix"},
 	"aws_cloudwatch_dashboard.dashboard_name":                   {"local.resource_prefix"},
@@ -1046,6 +1064,7 @@ var stableAWSNameAttributeAllowlist = map[string][]string{
 	"aws_db_proxy.name":                                         {"local.resource_prefix"},
 	"aws_db_subnet_group.name":                                  {"local.resource_prefix"},
 	"aws_dynamodb_table.name":                                   {"local.resource_prefix", "local.phone_auth_cooldown_table_name", "local.websocket_connections_table", "local.voice_sessions_table_name"},
+	"aws_ecr_repository.name":                                   {"local.voice_agentcore_ecr_name"},
 	"aws_eip.domain":                                            {`"vpc"`},
 	"aws_iam_instance_profile.name":                             {"local.resource_prefix"},
 	"aws_iam_role.name":                                         {"local.resource_prefix"},
@@ -1070,6 +1089,7 @@ var stableAWSNameAttributeAllowlist = map[string][]string{
 	"aws_sqs_queue.name":                                        {"local.resource_prefix"},
 	"aws_ssm_association.name":                                  {`"AWS-RunShellScript"`},
 	"aws_ssm_parameter.name":                                    {"local.db_host_ssm_parameter_name"},
+	"awscc_kinesisvideo_signaling_channel.name":                 {"local.resource_prefix"},
 }
 
 type terraformAWSNameAttribute struct {
@@ -1084,6 +1104,7 @@ var terraformLocalReference = regexp.MustCompile(`\blocal\.([A-Za-z0-9_]+)\b`)
 
 var terraformStableNameAttributes = []string{
 	"name",
+	"agent_runtime_name",
 	"bucket",
 	"identifier",
 	"function_name",

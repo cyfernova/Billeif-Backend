@@ -104,6 +104,10 @@ mock_provider "aws" {
   override_during = plan
 }
 
+mock_provider "awscc" {
+  override_during = plan
+}
+
 variables {
   project_name                       = "billeif-test"
   environment                        = "test"

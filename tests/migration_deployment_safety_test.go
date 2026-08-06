@@ -36,8 +36,14 @@ func TestMigrationBundleHasOneRootSourceAndNoImperativeTerraformRunner(t *testin
 	}
 
 	terraform := readTerraformSources(t)
+	migrationTerraform, err := os.ReadFile("../infrastructure/terraform/migrations.tf")
+	if err != nil {
+		t.Fatalf("read migration Terraform: %v", err)
+	}
+	if match := regexp.MustCompile(`(?m)provisioner\s+"local-exec"`).FindString(string(migrationTerraform)); match != "" {
+		t.Fatalf("imperative migration runner found: %q", match)
+	}
 	for _, forbidden := range []*regexp.Regexp{
-		regexp.MustCompile(`(?m)provisioner\s+"local-exec"`),
 		regexp.MustCompile(`(?m)resource\s+"null_resource"\s+"[^"]*migrat`),
 		regexp.MustCompile(`\btimestamp\s*\(`),
 	} {

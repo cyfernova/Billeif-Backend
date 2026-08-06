@@ -248,6 +248,31 @@ output "voice_sessions_table" {
   value       = aws_dynamodb_table.voice_sessions.name
 }
 
+output "voice_agentcore_ecr_repository_url" {
+  description = "Private ECR repository URL for the gated AgentCore voice image."
+  value       = try(aws_ecr_repository.voice_agentcore[0].repository_url, null)
+}
+
+output "voice_agentcore_runtime_arn" {
+  description = "AgentCore voice runtime ARN, or null while voice is disabled."
+  value       = try(aws_bedrockagentcore_agent_runtime.voice[0].agent_runtime_arn, null)
+}
+
+output "voice_agentcore_runtime_qualifier" {
+  description = "Backend and mobile AgentCore qualifier; DEFAULT is never exposed."
+  value       = var.enable_voice ? "PROD" : null
+}
+
+output "voice_agentcore_prod_endpoint_arn" {
+  description = "Version-pinned PROD AgentCore endpoint ARN, or null while voice is disabled."
+  value       = try(aws_bedrockagentcore_agent_runtime_endpoint.voice_prod[0].agent_runtime_endpoint_arn, null)
+}
+
+output "voice_turn_channel_arns" {
+  description = "ARNs for the fixed 12-channel managed KVS TURN credential pool."
+  value       = awscc_kinesisvideo_signaling_channel.voice[*].arn
+}
+
 output "cloudwatch_dashboard_url" {
   description = "CloudWatch Dashboard URL"
   value       = "https://${var.aws_region}.console.aws.amazon.com/cloudwatch/home?region=${var.aws_region}#dashboards:name=${aws_cloudwatch_dashboard.main.dashboard_name}"

@@ -70,6 +70,21 @@ locals {
     MCP_SERVER_URL                   = var.mcp_server_url
   }
 
+  voice_http_lambda_env = var.enable_voice ? {
+    AGENTCORE_RUNTIME_ARN          = aws_bedrockagentcore_agent_runtime.voice[0].agent_runtime_arn
+    AGENTCORE_RUNTIME_QUALIFIER    = "PROD"
+    VOICE_GLOBAL_CAPACITY_LIMIT    = "100"
+    VOICE_KVS_CHANNEL_COUNT        = "12"
+    VOICE_PER_USER_CAPACITY_LIMIT  = "1"
+    VOICE_PROTOCOL_VERSION         = "1"
+    VOICE_SESSION_IDEMPOTENCY_TTL  = "24h"
+    VOICE_SESSION_LEASE_DURATION   = "2m"
+    VOICE_SESSION_LEASE_INDEX_NAME = "gsi2"
+    VOICE_SESSION_MAX_DURATION     = "55m"
+    VOICE_SESSION_ROTATE_AFTER     = "52m"
+    VOICE_SESSIONS_TABLE_NAME      = aws_dynamodb_table.voice_sessions.name
+  } : {}
+
   database_runtime_env = {
     DATABASE_HOST_SSM_PARAM = local.db_host_ssm_parameter_name
     DATABASE_SECRET_ARN     = aws_db_instance.main.master_user_secret[0].secret_arn
@@ -322,7 +337,7 @@ resource "aws_lambda_function" "api_http" {
   }
 
   environment {
-    variables = merge(local.common_lambda_env, local.http_secret_env, local.http_cursor_secret_env, {
+    variables = merge(local.common_lambda_env, local.http_secret_env, local.http_cursor_secret_env, local.voice_http_lambda_env, {
       WEBSOCKET_API_ENDPOINT = local.websocket_api_invoke_url
       SERVER_BASE_URL        = local.http_api_invoke_url
     })
@@ -344,6 +359,7 @@ resource "aws_lambda_function" "api_http" {
     aws_ssm_association.nat_activation_ready,
     aws_nat_gateway.main,
     aws_cloudwatch_log_group.lambda_api_http,
+    aws_bedrockagentcore_agent_runtime_endpoint.voice_prod,
     aws_iam_role_policy.lambda_http_app,
     aws_iam_role_policy.invoice_cursor_http,
     aws_iam_role_policy_attachment.lambda_http_basic,

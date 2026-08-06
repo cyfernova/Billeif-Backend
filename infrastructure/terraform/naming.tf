@@ -14,6 +14,7 @@ locals {
   phone_auth_cooldown_table_name = var.phone_auth_cooldown_table_name != "" ? var.phone_auth_cooldown_table_name : "${local.resource_prefix}-phone-auth-cooldowns"
   websocket_connections_table    = var.websocket_connections_table != "" ? var.websocket_connections_table : "${local.resource_prefix}-ws-connections"
   voice_sessions_table_name      = var.voice_sessions_table_name != "" ? var.voice_sessions_table_name : "${local.resource_prefix}-voice-sessions"
+  voice_agentcore_ecr_name       = "${local.resource_prefix}/voice-runtime"
 
   ses_dns_label_pattern          = "[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
   ses_domain_pattern             = "${local.ses_dns_label_pattern}(?:\\.${local.ses_dns_label_pattern})+"

@@ -188,6 +188,10 @@ mock_provider "aws" {
   override_during = plan
 }
 
+mock_provider "awscc" {
+  override_during = plan
+}
+
 variables {
   migration_lambda_artifact_path = "tests/fixtures/lambda/http.zip"
 }

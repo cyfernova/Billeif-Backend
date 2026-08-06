@@ -8,9 +8,17 @@ terraform {
       source  = "hashicorp/aws"
       version = ">= 6.25.0, < 7.0.0"
     }
+    awscc = {
+      source  = "hashicorp/awscc"
+      version = "= 1.95.0"
+    }
     dns = {
       source  = "hashicorp/dns"
       version = ">= 3.6.1, < 4.0.0"
+    }
+    external = {
+      source  = "hashicorp/external"
+      version = "= 2.3.5"
     }
   }
 }
@@ -26,6 +34,11 @@ provider "aws" {
       ManagedBy   = "Terraform"
     }
   }
+}
+
+provider "awscc" {
+  region  = "ap-south-1"
+  profile = var.use_ambient_aws_credentials ? null : var.aws_profile
 }
 
 provider "aws" {

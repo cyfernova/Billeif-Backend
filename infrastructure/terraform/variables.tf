@@ -228,6 +228,41 @@ variable "enable_voice" {
   default     = false
 }
 
+variable "voice_agentcore_image_tag" {
+  description = "Immutable, versioned ECR tag for the AgentCore voice image. Required only when enable_voice is true; mutable aliases such as latest are rejected."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = var.voice_agentcore_image_tag == "" || (
+      var.voice_agentcore_image_tag == trimspace(var.voice_agentcore_image_tag) &&
+      can(regex("^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$", var.voice_agentcore_image_tag)) &&
+      !contains(["latest", "staging", "prod"], lower(var.voice_agentcore_image_tag))
+    )
+    error_message = "voice_agentcore_image_tag must be empty or a versioned ECR tag; latest, staging, and prod aliases are not allowed."
+  }
+}
+
+variable "voice_agentcore_release" {
+  description = "Reviewed immutable voice rollout identifier used to key the MMDSv2 compatibility update. Required only when enable_voice is true."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = var.voice_agentcore_release == "" || (
+      var.voice_agentcore_release == trimspace(var.voice_agentcore_release) &&
+      can(regex("^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$", var.voice_agentcore_release))
+    )
+    error_message = "voice_agentcore_release must be empty or a 1-128 character immutable rollout identifier."
+  }
+}
+
+variable "enable_voice_turn_udp_egress" {
+  description = "Open UDP 443 egress for managed KVS TURN only after the NAT-instance TURN proof gate passes."
+  type        = bool
+  default     = false
+}
+
 variable "migration_lambda_artifact_path" {
   description = "Optional path to the packaged database migration Lambda artifact."
   type        = string

@@ -84,6 +84,7 @@ data "aws_iam_policy_document" "github_actions_deployment_iam" {
       variable = "iam:PassedToService"
       values = [
         "apigateway.amazonaws.com",
+        "bedrock-agentcore.amazonaws.com",
         "cognito-idp.amazonaws.com",
         "ec2.amazonaws.com",
         "lambda.amazonaws.com",

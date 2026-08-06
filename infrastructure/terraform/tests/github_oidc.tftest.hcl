@@ -49,6 +49,10 @@ mock_provider "aws" {
   override_during = plan
 }
 
+mock_provider "awscc" {
+  override_during = plan
+}
+
 variables {
   project_name                   = "billeif"
   environment                    = "dev"
@@ -110,7 +114,13 @@ run "github_actions_oidc_deployment_role_is_main_branch_scoped" {
         for statement in data.aws_iam_policy_document.github_actions_deployment_iam.statement : statement
         if statement.sid == "PassBilleifRolesToApprovedServices" &&
         toset(statement.actions) == toset(["iam:PassRole"]) &&
-        toset(statement.resources) == toset(["arn:aws:iam::928282274753:role/billeif-*"])
+        toset(statement.resources) == toset(["arn:aws:iam::928282274753:role/billeif-*"]) &&
+        length([
+          for condition in statement.condition : condition
+          if condition.test == "StringEquals" &&
+          condition.variable == "iam:PassedToService" &&
+          contains(condition.values, "bedrock-agentcore.amazonaws.com")
+        ]) == 1
       ]) == 1 &&
       length([
         for statement in data.aws_iam_policy_document.github_actions_deployment_iam.statement : statement

@@ -114,6 +114,10 @@ mock_provider "aws" {
   }
 }
 
+mock_provider "awscc" {
+  override_during = plan
+}
+
 mock_provider "dns" {
   override_during = plan
 
