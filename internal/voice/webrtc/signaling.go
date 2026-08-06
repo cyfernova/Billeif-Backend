@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +41,7 @@ var (
 	ErrSignalingUnauthorized  = errors.New("voice signaling authorization rejected")
 	ErrSignalingClose         = errors.New("close voice signaling peers")
 	errSignalingPeerPanicked  = errors.New("voice signaling peer operation failed")
+	errSTTBindingFactoryPanic = errors.New("voice STT binding construction failed")
 )
 
 // TrustedIdentity contains only the claims the authorization boundary has
@@ -67,6 +69,24 @@ type SessionLookup interface {
 type PersistentActivitySource interface {
 	AcquirePersistentActivity() (context.Context, io.Closer, error)
 }
+
+// STTBindingConfig is the immutable, per-peer input needed to compose a
+// runtime.STTSessionBinding. Activity ownership transfers to Create; the
+// returned binding must release it when closed.
+type STTBindingConfig struct {
+	Context  context.Context
+	Session  voicesession.Session
+	Activity io.Closer
+}
+
+// STTBindingFactory is implemented at backend composition by adapting
+// runtime.NewSTTSessionBinding with provider, decoder, and final-handler
+// dependencies. Signaling retains no provider credentials or transcript data.
+type STTBindingFactory interface {
+	Create(STTBindingConfig) (STTBinding, error)
+}
+
+var _ STTBinding = (*runtime.STTSessionBinding)(nil)
 
 // SignalingPeer is the narrow peer lifecycle used by the invocation boundary.
 type SignalingPeer interface {
@@ -114,6 +134,7 @@ type SignalingDependencies struct {
 	ICE           ICECredentialSource
 	Activities    PersistentActivitySource
 	Peers         PeerFactory
+	STTBindings   STTBindingFactory
 	HandleControl func(context.Context, protocol.ControlMessage) error
 }
 
@@ -136,8 +157,9 @@ type signalingConfig struct {
 	now                  func() time.Time
 }
 
-// SignalingService owns only bounded logical-session metadata. It never keeps
-// Authorization, SDP, candidates, or TURN response credentials in its state.
+// SignalingService owns bounded logical-session metadata and one opaque
+// lifecycle binding per active peer. It never keeps Authorization, SDP,
+// candidates, TURN response credentials, audio, or transcripts in its state.
 type SignalingService struct {
 	config        signalingConfig
 	authorization AuthorizationResolver
@@ -145,6 +167,7 @@ type SignalingService struct {
 	ice           ICECredentialSource
 	activities    PersistentActivitySource
 	peers         PeerFactory
+	sttBindings   STTBindingFactory
 	handleControl func(context.Context, protocol.ControlMessage) error
 
 	mu          sync.Mutex
@@ -177,7 +200,7 @@ type signalingSessionState struct {
 	peer         SignalingPeer
 	peerDone     <-chan struct{}
 	peerStop     chan struct{}
-	activity     io.Closer
+	binding      STTBinding
 	attachTimer  *time.Timer
 	hasOffer     bool
 	iceExpiresAt time.Time
@@ -186,6 +209,81 @@ type signalingSessionState struct {
 	active  bool
 	refs    int
 	recency *list.Element
+}
+
+// onceActivityCloser makes the ownership-transfer edge safe even when the
+// runtime activity implementation itself is not idempotent. A binding
+// constructor may consume it before returning an error; signaling can still
+// close the same wrapper on every failure path.
+type onceActivityCloser struct {
+	once     sync.Once
+	activity io.Closer
+	err      error
+}
+
+func (closer *onceActivityCloser) Close() error {
+	if closer == nil {
+		return nil
+	}
+	closer.once.Do(func() {
+		if closer.activity != nil {
+			closer.err = closer.activity.Close()
+		}
+		closer.activity = nil
+	})
+	return closer.err
+}
+
+// ownedSTTBinding is the single lifecycle object shared by the real Peer and
+// signaling's fallback cleanup. It stops STT/decoder work first, then releases
+// the persistent runtime activity, with both operations fenced exactly once.
+type ownedSTTBinding struct {
+	mu       sync.RWMutex
+	binding  STTBinding
+	activity io.Closer
+	closed   bool
+
+	closeOnce sync.Once
+	closeErr  error
+}
+
+func (binding *ownedSTTBinding) HandleOpus(payload []byte) error {
+	if binding == nil {
+		return ErrPeerClosed
+	}
+	binding.mu.RLock()
+	defer binding.mu.RUnlock()
+	if binding.closed || binding.binding == nil {
+		return ErrPeerClosed
+	}
+	return binding.binding.HandleOpus(payload)
+}
+
+func (binding *ownedSTTBinding) HandleControl(ctx context.Context, message protocol.ControlMessage) error {
+	if binding == nil {
+		return ErrPeerClosed
+	}
+	binding.mu.RLock()
+	defer binding.mu.RUnlock()
+	if binding.closed || binding.binding == nil {
+		return ErrPeerClosed
+	}
+	return binding.binding.HandleControl(ctx, message)
+}
+
+func (binding *ownedSTTBinding) Close() error {
+	if binding == nil {
+		return nil
+	}
+	binding.closeOnce.Do(func() {
+		binding.mu.Lock()
+		defer binding.mu.Unlock()
+		binding.closed = true
+		bindingError := safeCloseSTTBinding(binding.binding)
+		activityError := safeCloseActivity(binding.activity)
+		binding.closeErr = errors.Join(bindingError, activityError)
+	})
+	return binding.closeErr
 }
 
 type signalingRequest struct {
@@ -229,7 +327,7 @@ func NewSignalingService(config SignalingConfig, dependencies SignalingDependenc
 	if err != nil {
 		return nil, err
 	}
-	if dependencies.Authorization == nil || dependencies.Sessions == nil || dependencies.ICE == nil || dependencies.Activities == nil {
+	if dependencies.Authorization == nil || dependencies.Sessions == nil || dependencies.ICE == nil || dependencies.Activities == nil || isNilInterface(dependencies.STTBindings) {
 		return nil, ErrInvalidSignalingConfig
 	}
 	if dependencies.Peers == nil {
@@ -245,6 +343,7 @@ func NewSignalingService(config SignalingConfig, dependencies SignalingDependenc
 		ice:           dependencies.ICE,
 		activities:    dependencies.Activities,
 		peers:         dependencies.Peers,
+		sttBindings:   dependencies.STTBindings,
 		handleControl: dependencies.HandleControl,
 		states:        make(map[signalingSessionKey]*signalingSessionState, normalized.maxTrackedSessions),
 		recency:       list.New(),
@@ -737,13 +836,28 @@ func (service *SignalingService) attach(ctx context.Context, state *signalingSes
 		return runtime.InvocationResponse{}, fail(http.StatusServiceUnavailable)
 	}
 
-	peerContext, activity, err := service.activities.AcquirePersistentActivity()
-	if err != nil || peerContext == nil || activity == nil || peerContext.Err() != nil {
-		if activity != nil {
+	peerContext, rawActivity, err := service.activities.AcquirePersistentActivity()
+	if err != nil || peerContext == nil || isNilInterface(rawActivity) || peerContext.Err() != nil {
+		if !isNilInterface(rawActivity) {
+			_ = safeCloseActivity(rawActivity)
+		}
+		return runtime.InvocationResponse{}, fail(http.StatusServiceUnavailable)
+	}
+	activity := &onceActivityCloser{activity: rawActivity}
+	binding, bindingErr := safelyCreateSTTBinding(service.sttBindings, STTBindingConfig{
+		Context:  peerContext,
+		Session:  cloneSignalingSession(logicalSession),
+		Activity: activity,
+	})
+	if bindingErr != nil || isNilInterface(binding) {
+		if !isNilInterface(binding) {
+			_ = safeCloseSTTBinding(&ownedSTTBinding{binding: binding, activity: activity})
+		} else {
 			_ = safeCloseActivity(activity)
 		}
 		return runtime.InvocationResponse{}, fail(http.StatusServiceUnavailable)
 	}
+	ownedBinding := &ownedSTTBinding{binding: binding, activity: activity}
 	peer, err := safelyCreatePeer(service.peers, PeerConfig{
 		Context:           peerContext,
 		SessionID:         logicalSession.ID,
@@ -756,20 +870,21 @@ func (service *SignalingService) attach(ctx context.Context, state *signalingSes
 		MaxCandidateBytes: service.config.maxCandidateBytes,
 		MaxControlQueue:   service.config.maxControlQueue,
 		HandleControl:     service.handleControl,
+		STTBinding:        ownedBinding,
 	})
 	done, doneErr := safePeerDone(peer)
 	if err != nil || doneErr != nil || peer == nil || done == nil {
-		_ = safeCloseActivity(activity)
 		if peer != nil {
 			_ = safeClosePeer(peer)
 		}
+		_ = safeCloseSTTBinding(ownedBinding)
 		return runtime.InvocationResponse{}, fail(http.StatusServiceUnavailable)
 	}
 	cleanupPeer := true
 	defer func() {
 		if cleanupPeer {
 			_ = safeClosePeer(peer)
-			_ = safeCloseActivity(activity)
+			_ = safeCloseSTTBinding(ownedBinding)
 		}
 	}()
 	if channelClosed(done) || service.isClosing() || peerContext.Err() != nil ||
@@ -787,7 +902,7 @@ func (service *SignalingService) attach(ctx context.Context, state *signalingSes
 	state.peer = peer
 	state.peerDone = done
 	state.peerStop = make(chan struct{})
-	state.activity = activity
+	state.binding = ownedBinding
 	state.hasOffer = false
 	state.iceExpiresAt = credentials.ExpiresAt.UTC()
 	state.lastSequence = request.Sequence
@@ -842,6 +957,41 @@ func safelyCreatePeer(factory PeerFactory, config PeerConfig) (peer SignalingPee
 		}
 	}()
 	return factory.Create(config)
+}
+
+func safelyCreateSTTBinding(factory STTBindingFactory, config STTBindingConfig) (binding STTBinding, err error) {
+	defer func() {
+		if recover() != nil {
+			binding = nil
+			err = errSTTBindingFactoryPanic
+		}
+	}()
+	return factory.Create(config)
+}
+
+func cloneSignalingSession(session *voicesession.Session) voicesession.Session {
+	if session == nil {
+		return voicesession.Session{}
+	}
+	cloned := *session
+	if session.ClosedAt != nil {
+		closedAt := *session.ClosedAt
+		cloned.ClosedAt = &closedAt
+	}
+	return cloned
+}
+
+func isNilInterface(value any) bool {
+	if value == nil {
+		return true
+	}
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return reflected.IsNil()
+	default:
+		return false
+	}
 }
 
 func safePeerDone(peer SignalingPeer) (done <-chan struct{}, err error) {
@@ -1090,19 +1240,19 @@ func (service *SignalingService) retirePeerLocked(state *signalingSessionState, 
 		state.attachTimer.Stop()
 		state.attachTimer = nil
 	}
-	activity := state.activity
+	binding := state.binding
 	stop := state.peerStop
 	state.peer = nil
 	state.peerDone = nil
 	state.peerStop = nil
-	state.activity = nil
+	state.binding = nil
 	state.hasOffer = false
 	state.iceExpiresAt = time.Time{}
 	if stop != nil {
 		close(stop)
 	}
 	_ = safeClosePeer(peer)
-	_ = safeCloseActivity(activity)
+	_ = safeCloseSTTBinding(binding)
 	service.releasePeerReservation(state)
 }
 
@@ -1116,20 +1266,20 @@ func (service *SignalingService) detachPeer(state *signalingSessionState, peer S
 		state.attachTimer.Stop()
 		state.attachTimer = nil
 	}
-	activity := state.activity
+	binding := state.binding
 	stop := state.peerStop
 	state.peer = nil
 	state.peerDone = nil
 	state.peerStop = nil
-	state.activity = nil
+	state.binding = nil
 	state.hasOffer = false
 	state.iceExpiresAt = time.Time{}
 	state.mu.Unlock()
 	if stop != nil {
 		close(stop)
 	}
-	if activity != nil {
-		_ = safeCloseActivity(activity)
+	if binding != nil {
+		_ = safeCloseSTTBinding(binding)
 	}
 	service.releasePeerReservation(state)
 }

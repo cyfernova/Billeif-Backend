@@ -12,10 +12,12 @@ import (
 	"net"
 	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"invoice-backend/internal/voice/audio"
 	"invoice-backend/internal/voice/protocol"
 
 	"github.com/pion/ice/v4"
@@ -583,13 +585,18 @@ func TestPeerHalfTrickleAnswerConnectsOnlyThroughLoopbackTURN(t *testing.T) {
 	config.GatherTimeout = 3 * time.Second
 	config.ConnectTimeout = 3 * time.Second
 	config.RestartWindow = 5 * time.Second
+	binding := newRecordingPeerSTTBinding()
+	config.STTBinding = binding
 	acceptedControl := make(chan protocol.ControlMessage, 1)
 	var handlerCalls atomic.Int32
 	config.HandleControl = func(_ context.Context, message protocol.ControlMessage) error {
-		if handlerCalls.Add(1) == 1 {
+		call := handlerCalls.Add(1)
+		if message.Type == protocol.EventHeartbeat && call == 1 {
 			return errors.New("state rejected")
 		}
-		acceptedControl <- message
+		if message.Type == protocol.EventHeartbeat {
+			acceptedControl <- message
+		}
 		return nil
 	}
 	peer, err := NewPeer(config)
@@ -636,11 +643,19 @@ func TestPeerHalfTrickleAnswerConnectsOnlyThroughLoopbackTURN(t *testing.T) {
 	if err := clientTrack.WriteRTP(clientPacket); err != nil {
 		t.Fatalf("client WriteRTP() error = %v", err)
 	}
-	serverInbound := awaitRemoteTrack(t, peer.InboundAudio(), "server inbound Opus")
-	if codec := serverInbound.Codec().RTPCodecCapability; !strings.EqualFold(codec.MimeType, pion.MimeTypeOpus) || codec.ClockRate != 48000 || codec.Channels != 2 {
-		t.Fatalf("server inbound codec = %#v, want Opus/48000/2", codec)
+	select {
+	case payload := <-binding.opus:
+		if !bytes.Equal(payload, clientPacket.Payload) {
+			t.Fatalf("binding Opus payload = %x, want exact RTP payload %x", payload, clientPacket.Payload)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("production peer track reader did not route inbound Opus to STT binding")
 	}
-	readRTPWithTimeout(t, serverInbound, "server inbound RTP")
+	select {
+	case track := <-peer.InboundAudio():
+		t.Fatalf("configured production binding exposed a competing inbound track reader: %v", track)
+	default:
+	}
 
 	runtimePacket := &rtp.Packet{Header: rtp.Header{Version: 2, PayloadType: uint8(opusPayloadType), SequenceNumber: 1, Timestamp: 960, SSRC: 202}, Payload: []byte{0xf8, 0xff, 0xfe}}
 	if err := peer.OutboundAudio().WriteRTP(runtimePacket); err != nil {
@@ -676,6 +691,20 @@ func TestPeerHalfTrickleAnswerConnectsOnlyThroughLoopbackTURN(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("state-corrected control retry was not accepted")
+	}
+	for sequence, eventType := range []protocol.EventType{protocol.EventSpeechStarted, protocol.EventSpeechEnded} {
+		frame := fmt.Sprintf(`{"type":%q,"protocol_version":1,"session_id":"voice-session-1","sequence":%d}`, eventType, sequence+2)
+		if err := clientControl.SendText(frame); err != nil {
+			t.Fatalf("SendText(%s) error = %v", eventType, err)
+		}
+		select {
+		case message := <-binding.controls:
+			if message.Type != eventType || message.Sequence != sequence+2 {
+				t.Fatalf("binding control = %#v, want %s sequence %d", message, eventType, sequence+2)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("binding did not receive ordered %s control", eventType)
+		}
 	}
 	if _, err := peer.Answer(context.Background(), signalingOffer, true); !errors.Is(err, ErrPeerState) {
 		t.Fatalf("Answer(same-ufrag restart) error = %v, want %v", err, ErrPeerState)
@@ -717,12 +746,162 @@ func TestPeerHalfTrickleAnswerConnectsOnlyThroughLoopbackTURN(t *testing.T) {
 	assertSelectedPairIsRelayUDP(t, client)
 	assertSelectedPairIsRelayUDP(t, peer.pc)
 
-	if err := clientControl.SendText(control); err != nil {
-		t.Fatalf("SendText(duplicate) error = %v", err)
+	binding.setOpusError(errors.New("offline STT decode failure"))
+	clientPacket.SequenceNumber++
+	clientPacket.Timestamp += 960
+	if err := clientTrack.WriteRTP(clientPacket); err != nil {
+		t.Fatalf("client WriteRTP(binding failure) error = %v", err)
 	}
-	awaitSignal(t, peer.Done(), 3*time.Second, "duplicate control closes peer")
+	awaitSignal(t, peer.Done(), 3*time.Second, "STT binding failure closes peer")
 	if got := handlerCalls.Load(); got != 2 {
-		t.Fatalf("handler calls = %d, want 2 (duplicate rejected before handler)", got)
+		t.Fatalf("generic handler calls = %d, want 2 heartbeat attempts; speech controls must route exclusively to the binding", got)
+	}
+	if got := binding.closeCalls.Load(); got != 1 {
+		t.Fatalf("binding Close() calls = %d, want 1", got)
+	}
+}
+
+func TestPeerSTTBindingControlFailureAndPanicFailClosed(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		controlErr error
+		panicValue any
+	}{
+		{name: "error", controlErr: errors.New("binding control rejected")},
+		{name: "panic", panicValue: "binding-control-panic-canary"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			binding := newRecordingPeerSTTBinding()
+			binding.controlErr = test.controlErr
+			binding.controlPanic = test.panicValue
+			config := testPeerConfig(context.Background())
+			config.STTBinding = binding
+			peer, err := NewPeer(config)
+			if err != nil {
+				t.Fatalf("NewPeer() error = %v", err)
+			}
+			t.Cleanup(func() { _ = peer.Close() })
+
+			peer.enqueueControlMessage(pion.DataChannelMessage{IsString: true, Data: []byte(`{"type":"speech.started","protocol_version":1,"session_id":"voice-session-1","sequence":1}`)})
+			awaitSignal(t, peer.Done(), time.Second, "STT binding control failure closes peer")
+			if got := binding.closeCalls.Load(); got != 1 {
+				t.Fatalf("binding Close() calls = %d, want 1", got)
+			}
+		})
+	}
+}
+
+func TestPeerSTTBindingOpusPayloadBoundsAndPanicContainment(t *testing.T) {
+	binding := newRecordingPeerSTTBinding()
+	config := testPeerConfig(context.Background())
+	config.STTBinding = binding
+	peer, err := NewPeer(config)
+	if err != nil {
+		t.Fatalf("NewPeer() error = %v", err)
+	}
+	t.Cleanup(func() { _ = peer.Close() })
+
+	for _, payload := range [][]byte{nil, make([]byte, audio.MaxOpusPacketBytes+1)} {
+		if err := peer.dispatchInboundOpus(payload); !errors.Is(err, ErrPeerInvalidAudio) {
+			t.Fatalf("dispatchInboundOpus(%d bytes) error = %v, want ErrPeerInvalidAudio", len(payload), err)
+		}
+	}
+	select {
+	case payload := <-binding.opus:
+		t.Fatalf("invalid Opus payload reached binding: %d bytes", len(payload))
+	default:
+	}
+
+	minimum := []byte{0x7f}
+	if err := peer.dispatchInboundOpus(minimum); err != nil {
+		t.Fatalf("dispatchInboundOpus(minimum) error = %v", err)
+	}
+	select {
+	case payload := <-binding.opus:
+		if !bytes.Equal(payload, minimum) {
+			t.Fatal("minimum Opus payload changed at binding boundary")
+		}
+	default:
+		t.Fatal("minimum valid Opus payload did not reach binding")
+	}
+
+	maximum := bytes.Repeat([]byte{0xa5}, audio.MaxOpusPacketBytes)
+	if err := peer.dispatchInboundOpus(maximum); err != nil {
+		t.Fatalf("dispatchInboundOpus(maximum) error = %v", err)
+	}
+	select {
+	case payload := <-binding.opus:
+		if !bytes.Equal(payload, maximum) {
+			t.Fatal("maximum Opus payload changed at binding boundary")
+		}
+	default:
+		t.Fatal("maximum valid Opus payload did not reach binding")
+	}
+
+	binding.mu.Lock()
+	binding.opusPanic = "binding-opus-panic-canary"
+	binding.mu.Unlock()
+	if err := peer.dispatchInboundOpus([]byte{0x01}); !errors.Is(err, errSTTBindingPanic) {
+		t.Fatalf("dispatchInboundOpus(panicking binding) error = %v, want contained panic", err)
+	}
+}
+
+func TestPeerDuplicateAcceptedControlStillClosesBeforeRedispatch(t *testing.T) {
+	var calls atomic.Int32
+	config := testPeerConfig(context.Background())
+	config.HandleControl = func(context.Context, protocol.ControlMessage) error {
+		calls.Add(1)
+		return nil
+	}
+	peer, err := NewPeer(config)
+	if err != nil {
+		t.Fatalf("NewPeer() error = %v", err)
+	}
+	t.Cleanup(func() { _ = peer.Close() })
+	frame := pion.DataChannelMessage{IsString: true, Data: []byte(`{"type":"heartbeat","protocol_version":1,"session_id":"voice-session-1","sequence":1}`)}
+	peer.enqueueControlMessage(frame)
+	deadline := time.Now().Add(time.Second)
+	for calls.Load() != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("initial handler calls = %d, want 1", got)
+	}
+	peer.enqueueControlMessage(frame)
+	awaitSignal(t, peer.Done(), time.Second, "duplicate accepted control closes peer")
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("handler calls after duplicate = %d, want 1", got)
+	}
+}
+
+func TestPeerGenericControlHandlerCanSynchronouslyClosePeer(t *testing.T) {
+	handlerReturned := make(chan error, 1)
+	config := testPeerConfig(context.Background())
+	var peer *Peer
+	config.HandleControl = func(context.Context, protocol.ControlMessage) error {
+		err := peer.Close()
+		handlerReturned <- err
+		return err
+	}
+	var err error
+	peer, err = NewPeer(config)
+	if err != nil {
+		t.Fatalf("NewPeer() error = %v", err)
+	}
+	t.Cleanup(func() { _ = peer.Close() })
+
+	peer.enqueueControlMessage(pion.DataChannelMessage{IsString: true, Data: []byte(`{"type":"heartbeat","protocol_version":1,"session_id":"voice-session-1","sequence":1}`)})
+	select {
+	case err := <-handlerReturned:
+		if err != nil {
+			t.Fatalf("handler Peer.Close() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("generic control handler deadlocked while synchronously closing its peer")
+	}
+	awaitSignal(t, peer.Done(), time.Second, "synchronous handler peer close")
+	if got := peer.lastInboundSequence; got != 0 {
+		t.Fatalf("closed peer committed inbound sequence = %d, want 0", got)
 	}
 }
 
@@ -1480,4 +1659,73 @@ func testPeerConfig(ctx context.Context) PeerConfig {
 		HandleControl:             func(context.Context, protocol.ControlMessage) error { return nil },
 		allowLoopbackTURNForTests: true,
 	}
+}
+
+type recordingPeerSTTBinding struct {
+	mu sync.Mutex
+
+	opus         chan []byte
+	controls     chan protocol.ControlMessage
+	opusErr      error
+	opusPanic    any
+	controlErr   error
+	controlPanic any
+	closeErr     error
+	closePanic   any
+	closeCalls   atomic.Int32
+}
+
+func newRecordingPeerSTTBinding() *recordingPeerSTTBinding {
+	return &recordingPeerSTTBinding{
+		opus:     make(chan []byte, 8),
+		controls: make(chan protocol.ControlMessage, 8),
+	}
+}
+
+func (binding *recordingPeerSTTBinding) HandleOpus(payload []byte) error {
+	binding.mu.Lock()
+	panicValue := binding.opusPanic
+	err := binding.opusErr
+	binding.mu.Unlock()
+	if panicValue != nil {
+		panic(panicValue)
+	}
+	if err != nil {
+		return err
+	}
+	binding.opus <- append([]byte(nil), payload...)
+	return nil
+}
+
+func (binding *recordingPeerSTTBinding) HandleControl(_ context.Context, message protocol.ControlMessage) error {
+	binding.mu.Lock()
+	panicValue := binding.controlPanic
+	err := binding.controlErr
+	binding.mu.Unlock()
+	if panicValue != nil {
+		panic(panicValue)
+	}
+	if err != nil {
+		return err
+	}
+	binding.controls <- message
+	return nil
+}
+
+func (binding *recordingPeerSTTBinding) Close() error {
+	binding.closeCalls.Add(1)
+	binding.mu.Lock()
+	panicValue := binding.closePanic
+	err := binding.closeErr
+	binding.mu.Unlock()
+	if panicValue != nil {
+		panic(panicValue)
+	}
+	return err
+}
+
+func (binding *recordingPeerSTTBinding) setOpusError(err error) {
+	binding.mu.Lock()
+	binding.opusErr = err
+	binding.mu.Unlock()
 }

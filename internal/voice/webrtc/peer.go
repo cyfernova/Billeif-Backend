@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"invoice-backend/internal/voice/audio"
 	"invoice-backend/internal/voice/protocol"
 
 	"github.com/pion/ice/v4"
@@ -45,8 +46,19 @@ var (
 	ErrPeerCapacity           = errors.New("WebRTC peer capacity exceeded")
 	ErrPeerGatherTimeout      = errors.New("WebRTC ICE gathering timed out")
 	ErrPeerInvalidControl     = errors.New("invalid WebRTC control message")
+	ErrPeerInvalidAudio       = errors.New("invalid WebRTC inbound audio")
 	errControlHandlerPanic    = errors.New("voice control handler panicked")
+	errSTTBindingPanic        = errors.New("voice STT binding panicked")
 )
+
+// STTBinding is the narrow per-peer bridge implemented by
+// runtime.STTSessionBinding. HandleOpus is synchronous: implementations must
+// consume the payload before returning and must not retain it.
+type STTBinding interface {
+	HandleOpus([]byte) error
+	HandleControl(context.Context, protocol.ControlMessage) error
+	Close() error
+}
 
 type PeerState string
 
@@ -110,17 +122,22 @@ func (candidate ICECandidate) GobEncode() ([]byte, error) {
 }
 
 type PeerConfig struct {
-	Context                   context.Context
-	SessionID                 string
-	TURNCredentials           TURNCredentials
-	AttachTimeout             time.Duration
-	GatherTimeout             time.Duration
-	ConnectTimeout            time.Duration
-	RestartWindow             time.Duration
-	MaxCandidates             int
-	MaxCandidateBytes         int
-	MaxControlQueue           int
+	Context           context.Context
+	SessionID         string
+	TURNCredentials   TURNCredentials
+	AttachTimeout     time.Duration
+	GatherTimeout     time.Duration
+	ConnectTimeout    time.Duration
+	RestartWindow     time.Duration
+	MaxCandidates     int
+	MaxCandidateBytes int
+	MaxControlQueue   int
+	// HandleControl receives non-speech controls on the ordered worker with
+	// the peer-derived context. An admitted callback may overlap or trigger
+	// Close, must honor cancellation, and never commits its sequence after the
+	// peer context is canceled. Speech boundaries route exclusively to STTBinding.
 	HandleControl             func(context.Context, protocol.ControlMessage) error
+	STTBinding                STTBinding
 	allowLoopbackTURNForTests bool
 }
 
@@ -156,6 +173,7 @@ type Peer struct {
 	done                 chan struct{}
 	closeOne             sync.Once
 	attach               *time.Timer
+	mediaWorkers         sync.WaitGroup
 }
 
 type silentPionLoggerFactory struct{}
@@ -692,12 +710,51 @@ func (peer *Peer) handleInboundTrack(track *pion.TrackRemote) {
 		return
 	}
 	peer.inboundTrackAccepted = true
+	binding := peer.config.STTBinding
+	if binding != nil {
+		peer.mediaWorkers.Add(1)
+	}
 	peer.mu.Unlock()
+	if binding != nil {
+		go peer.readInboundOpus(track)
+		return
+	}
 	select {
 	case peer.inboundAudio <- track:
 	default:
-		go func() { _ = peer.Close() }()
+		peer.closeAsynchronously()
 	}
+}
+
+func (peer *Peer) readInboundOpus(track *pion.TrackRemote) {
+	defer peer.mediaWorkers.Done()
+	for {
+		packet, _, err := track.ReadRTP()
+		if err != nil {
+			if peer.peerContext.Err() == nil {
+				peer.closeAsynchronously()
+			}
+			return
+		}
+		if packet == nil || peer.dispatchInboundOpus(packet.Payload) != nil {
+			peer.closeAsynchronously()
+			return
+		}
+	}
+}
+
+func (peer *Peer) dispatchInboundOpus(payload []byte) error {
+	if len(payload) == 0 || len(payload) > audio.MaxOpusPacketBytes {
+		return ErrPeerInvalidAudio
+	}
+	peer.mu.Lock()
+	binding := peer.config.STTBinding
+	closing := peer.state == PeerStateClosing || peer.state == PeerStateClosed
+	peer.mu.Unlock()
+	if closing || binding == nil {
+		return ErrPeerClosed
+	}
+	return safeHandleOpus(binding, payload)
 }
 
 func (peer *Peer) acceptControlDataChannel(channel *pion.DataChannel) bool {
@@ -735,6 +792,8 @@ func (peer *Peer) runControlWorker() {
 		select {
 		case <-peer.done:
 			return
+		case <-peer.peerContext.Done():
+			return
 		case frame := <-peer.controlQueue:
 			if peer.peerContext.Err() != nil {
 				clear(frame)
@@ -749,15 +808,23 @@ func (peer *Peer) runControlWorker() {
 				go func() { _ = peer.Close() }()
 				return
 			}
-			if err := safeHandleControl(peer.config.HandleControl, peer.peerContext, message); err != nil {
+			if peer.config.STTBinding != nil && (message.Type == protocol.EventSpeechStarted || message.Type == protocol.EventSpeechEnded) {
+				if err := safeHandleSTTControl(peer.config.STTBinding, peer.peerContext, message); err != nil {
+					peer.closeAsynchronously()
+					return
+				}
+			} else if err := safeHandleControl(peer.config.HandleControl, peer.peerContext, message); err != nil {
 				if errors.Is(err, errControlHandlerPanic) {
-					go func() { _ = peer.Close() }()
+					peer.closeAsynchronously()
 					return
 				}
 				if peer.peerContext.Err() != nil {
 					return
 				}
 				continue
+			}
+			if peer.peerContext.Err() != nil {
+				return
 			}
 			if err := peer.controlTracker.Accept(message.SessionID, protocol.ClientToRuntime, message.Sequence); err != nil {
 				go func() { _ = peer.Close() }()
@@ -812,6 +879,40 @@ func safeHandleControl(handler func(context.Context, protocol.ControlMessage) er
 		}
 	}()
 	return handler(ctx, message)
+}
+
+func safeHandleSTTControl(binding STTBinding, ctx context.Context, message protocol.ControlMessage) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = errSTTBindingPanic
+		}
+	}()
+	return binding.HandleControl(ctx, message)
+}
+
+func safeHandleOpus(binding STTBinding, payload []byte) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = errSTTBindingPanic
+		}
+	}()
+	return binding.HandleOpus(payload)
+}
+
+func safeCloseSTTBinding(binding STTBinding) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = errSTTBindingPanic
+		}
+	}()
+	if binding == nil {
+		return nil
+	}
+	return binding.Close()
+}
+
+func (peer *Peer) closeAsynchronously() {
+	go func() { _ = peer.Close() }()
 }
 
 func (peer *Peer) SendControl(message protocol.ControlMessage) error {
@@ -1319,12 +1420,15 @@ func (peer *Peer) Close() error {
 				draining = false
 			}
 		}
-		closeErr = peer.pc.Close()
+		peerConnectionError := peer.pc.Close()
+		peer.mediaWorkers.Wait()
+		bindingError := safeCloseSTTBinding(peer.config.STTBinding)
 		peer.mu.Lock()
 		peer.controlChannel = nil
 		peer.state = PeerStateClosed
 		peer.mu.Unlock()
 		close(peer.done)
+		closeErr = errors.Join(peerConnectionError, bindingError)
 	})
 	return closeErr
 }

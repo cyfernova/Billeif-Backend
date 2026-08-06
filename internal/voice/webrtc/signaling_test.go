@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -72,6 +73,157 @@ func TestSignalingConfigRejectsImpossibleICEExpiryMargin(t *testing.T) {
 	if _, err := validateSignalingConfig(config); !errors.Is(err, ErrInvalidSignalingConfig) {
 		t.Fatalf("validateSignalingConfig() error = %v, want %v", err, ErrInvalidSignalingConfig)
 	}
+}
+
+func TestNewSignalingServiceRequiresSTTBindingFactory(t *testing.T) {
+	dependencies := SignalingDependencies{
+		Authorization: &fakeAuthorizationResolver{},
+		Sessions:      &fakeSessionLookup{},
+		ICE:           &fakeICECredentialSource{},
+		Activities:    newFakeActivitySource(),
+		Peers:         &fakePeerFactory{},
+	}
+	if _, err := NewSignalingService(validSignalingConfig(testChannelARNs(requiredKVSChannelCount)), dependencies); !errors.Is(err, ErrInvalidSignalingConfig) {
+		t.Fatalf("NewSignalingService(nil STT binding factory) error = %v, want ErrInvalidSignalingConfig", err)
+	}
+	var typedNil *fakeSTTBindingFactory
+	dependencies.STTBindings = typedNil
+	if _, err := NewSignalingService(validSignalingConfig(testChannelARNs(requiredKVSChannelCount)), dependencies); !errors.Is(err, ErrInvalidSignalingConfig) {
+		t.Fatalf("NewSignalingService(typed nil STT binding factory) error = %v, want ErrInvalidSignalingConfig", err)
+	}
+}
+
+func TestSignalingAttachCreatesOnePersistentSTTBindingAndClosesOwnershipExactlyOnce(t *testing.T) {
+	logicalSession := validSignalingSession()
+	lifecycle := &lifecycleRecorder{}
+	rawActivity := &countingActivityCloser{lifecycle: lifecycle}
+	persistentContext := context.WithValue(context.Background(), struct{ name string }{"persistent"}, "context-canary")
+	activities := &configuredActivitySource{ctx: persistentContext, activity: rawActivity}
+	bindings := &fakeSTTBindingFactory{lifecycle: lifecycle}
+	peerFactory := &fakePeerFactory{peer: newFakeSignalingPeer()}
+	service := newTestSignalingService(t, testChannelARNs(requiredKVSChannelCount), SignalingDependencies{
+		Authorization: &fakeAuthorizationResolver{identity: TrustedIdentity{
+			UserID: logicalSession.UserID, BusinessID: logicalSession.BusinessID, ClientID: "client",
+		}},
+		Sessions:    &fakeSessionLookup{value: logicalSession},
+		ICE:         &fakeICECredentialSource{credentials: validSignalingCredentials()},
+		Activities:  activities,
+		Peers:       peerFactory,
+		STTBindings: bindings,
+	})
+
+	require.Equal(t, http.StatusOK, invokeSignaling(t, service, logicalSession, attachBody(1)).StatusCode)
+	require.Equal(t, http.StatusOK, invokeSignaling(t, service, logicalSession, attachBody(2)).StatusCode, "refresh attach must reuse the existing peer binding")
+	configs := bindings.configsSnapshot()
+	require.Len(t, configs, 1)
+	require.Equal(t, logicalSession.ID, configs[0].Session.ID)
+	require.Equal(t, "en-IN", configs[0].Session.FallbackLanguage)
+	require.Same(t, persistentContext, configs[0].Context)
+	require.NotNil(t, configs[0].Activity)
+	require.NotNil(t, peerFactory.config.STTBinding)
+	require.Same(t, peerFactory.config.Context, configs[0].Context)
+
+	require.NoError(t, service.Close())
+	require.NoError(t, service.Close())
+	require.Equal(t, 1, bindings.bindingsSnapshot()[0].closeCount(), "binding owner must close the raw binding once")
+	require.Equal(t, 1, rawActivity.closeCount(), "raw persistent activity must close exactly once")
+	require.Equal(t, []string{"binding.create", "binding.close", "activity.close"}, lifecycle.snapshot())
+}
+
+func TestSignalingSTTBindingConstructionFailureClosesActivityExactlyOnce(t *testing.T) {
+	logicalSession := validSignalingSession()
+	for _, test := range []struct {
+		name    string
+		factory *fakeSTTBindingFactory
+	}{
+		{
+			name: "error after constructor consumed ownership",
+			factory: &fakeSTTBindingFactory{
+				err: errors.New("binding-construction-sensitive-canary"), closeActivityBeforeReturn: true,
+			},
+		},
+		{name: "panic before ownership consumed", factory: &fakeSTTBindingFactory{panicValue: "binding-panic-sensitive-canary"}},
+		{name: "nil binding", factory: &fakeSTTBindingFactory{returnNil: true}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rawActivity := &countingActivityCloser{}
+			peerFactory := &fakePeerFactory{peer: newFakeSignalingPeer()}
+			service := newTestSignalingService(t, testChannelARNs(requiredKVSChannelCount), SignalingDependencies{
+				Authorization: &fakeAuthorizationResolver{identity: TrustedIdentity{
+					UserID: logicalSession.UserID, BusinessID: logicalSession.BusinessID, ClientID: "client",
+				}},
+				Sessions:    &fakeSessionLookup{value: logicalSession},
+				ICE:         &fakeICECredentialSource{credentials: validSignalingCredentials()},
+				Activities:  &configuredActivitySource{ctx: context.Background(), activity: rawActivity},
+				Peers:       peerFactory,
+				STTBindings: test.factory,
+			})
+			t.Cleanup(func() { _ = service.Close() })
+
+			response := invokeSignaling(t, service, logicalSession, attachBody(1))
+			require.Equal(t, http.StatusServiceUnavailable, response.StatusCode)
+			assertSanitized(t, response.Body, "binding-construction-sensitive-canary", "binding-panic-sensitive-canary")
+			require.Equal(t, 1, rawActivity.closeCount())
+			require.Empty(t, peerFactory.calls, "peer creation must not run without a live binding")
+		})
+	}
+}
+
+func TestSignalingPeerCreationFailureClosesBindingBeforeActivity(t *testing.T) {
+	logicalSession := validSignalingSession()
+	lifecycle := &lifecycleRecorder{}
+	rawActivity := &countingActivityCloser{lifecycle: lifecycle}
+	bindings := &fakeSTTBindingFactory{lifecycle: lifecycle}
+	service := newTestSignalingService(t, testChannelARNs(requiredKVSChannelCount), SignalingDependencies{
+		Authorization: &fakeAuthorizationResolver{identity: TrustedIdentity{
+			UserID: logicalSession.UserID, BusinessID: logicalSession.BusinessID, ClientID: "client",
+		}},
+		Sessions:    &fakeSessionLookup{value: logicalSession},
+		ICE:         &fakeICECredentialSource{credentials: validSignalingCredentials()},
+		Activities:  &configuredActivitySource{ctx: context.Background(), activity: rawActivity},
+		Peers:       &fakePeerFactory{err: errors.New("peer-construction-sensitive-canary")},
+		STTBindings: bindings,
+	})
+	t.Cleanup(func() { _ = service.Close() })
+
+	response := invokeSignaling(t, service, logicalSession, attachBody(1))
+	require.Equal(t, http.StatusServiceUnavailable, response.StatusCode)
+	require.Equal(t, 1, bindings.bindingsSnapshot()[0].closeCount())
+	require.Equal(t, 1, rawActivity.closeCount())
+	require.Equal(t, []string{"binding.create", "binding.close", "activity.close"}, lifecycle.snapshot())
+}
+
+func TestOwnedSTTBindingFencesConcurrentHandleAndClose(t *testing.T) {
+	underlying := newBlockingSTTBinding()
+	activity := &countingActivityCloser{}
+	binding := &ownedSTTBinding{binding: underlying, activity: activity}
+
+	handleResult := make(chan error, 1)
+	go func() { handleResult <- binding.HandleOpus([]byte{0x01}) }()
+	awaitSignal(t, underlying.handleStarted, time.Second, "binding HandleOpus entry")
+	closeResult := make(chan error, 1)
+	closeAttempted := make(chan struct{})
+	go func() {
+		close(closeAttempted)
+		closeResult <- binding.Close()
+	}()
+	awaitSignal(t, closeAttempted, time.Second, "binding Close attempt")
+	select {
+	case <-underlying.closeStarted:
+		t.Fatal("underlying binding closed while HandleOpus was in flight")
+	default:
+	}
+	close(underlying.releaseHandle)
+	require.NoError(t, <-handleResult)
+	require.NoError(t, <-closeResult)
+	require.Equal(t, 1, underlying.closeCount())
+	require.Equal(t, 1, activity.closeCount())
+
+	require.ErrorIs(t, binding.HandleOpus([]byte{0x02}), ErrPeerClosed)
+	require.ErrorIs(t, binding.HandleControl(context.Background(), protocol.ControlMessage{Type: protocol.EventSpeechStarted}), ErrPeerClosed)
+	require.NoError(t, binding.Close())
+	require.Equal(t, 1, underlying.closeCount())
+	require.Equal(t, 1, activity.closeCount())
 }
 
 func TestSignalingAttachUsesTrustedSessionAndPersistedChannel(t *testing.T) {
@@ -281,6 +433,7 @@ func TestSignalingStrictDecodeRejectsDuplicateFieldsBeforeAuthorization(t *testi
 		ICE:           &fakeICECredentialSource{},
 		Activities:    newFakeActivitySource(),
 		Peers:         &fakePeerFactory{peer: newFakeSignalingPeer()},
+		STTBindings:   &fakeSTTBindingFactory{},
 	})
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 
@@ -423,6 +576,7 @@ func TestSignalingReservesCapacityBeforeRequestingCredentials(t *testing.T) {
 		ICE:           ice,
 		Activities:    newFakeActivitySource(),
 		Peers:         &fakePeerFactory{peer: newFakeSignalingPeer()},
+		STTBindings:   &fakeSTTBindingFactory{},
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
@@ -525,10 +679,11 @@ func TestSignalingMapsPeerErrorsAndReusesFailedSequence(t *testing.T) {
 		Authorization: &fakeAuthorizationResolver{identity: TrustedIdentity{
 			UserID: logicalSession.UserID, BusinessID: logicalSession.BusinessID, ClientID: "client",
 		}},
-		Sessions:   &fakeSessionLookup{value: logicalSession},
-		ICE:        &fakeICECredentialSource{credentials: validSignalingCredentials()},
-		Activities: newFakeActivitySource(),
-		Peers:      &fakePeerFactory{peer: peer},
+		Sessions:    &fakeSessionLookup{value: logicalSession},
+		ICE:         &fakeICECredentialSource{credentials: validSignalingCredentials()},
+		Activities:  newFakeActivitySource(),
+		Peers:       &fakePeerFactory{peer: peer},
+		STTBindings: &fakeSTTBindingFactory{},
 	})
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	require.Equal(t, 200, invokeSignaling(t, service, logicalSession, attachBody(1)).StatusCode)
@@ -684,10 +839,11 @@ func TestSignalingDelegatesCandidateBoundsPerICEGeneration(t *testing.T) {
 		Authorization: &fakeAuthorizationResolver{identity: TrustedIdentity{
 			UserID: logicalSession.UserID, BusinessID: logicalSession.BusinessID, ClientID: "client",
 		}},
-		Sessions:   &fakeSessionLookup{value: logicalSession},
-		ICE:        &fakeICECredentialSource{credentials: validSignalingCredentials()},
-		Activities: newFakeActivitySource(),
-		Peers:      &fakePeerFactory{peer: peer},
+		Sessions:    &fakeSessionLookup{value: logicalSession},
+		ICE:         &fakeICECredentialSource{credentials: validSignalingCredentials()},
+		Activities:  newFakeActivitySource(),
+		Peers:       &fakePeerFactory{peer: peer},
+		STTBindings: &fakeSTTBindingFactory{},
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
@@ -729,10 +885,11 @@ func TestSignalingAttachTimeoutAndCloseReleasePersistentActivity(t *testing.T) {
 		Authorization: &fakeAuthorizationResolver{identity: TrustedIdentity{
 			UserID: logicalSession.UserID, BusinessID: logicalSession.BusinessID, ClientID: "client",
 		}},
-		Sessions:   &fakeSessionLookup{value: logicalSession},
-		ICE:        &fakeICECredentialSource{credentials: validSignalingCredentials()},
-		Activities: activity,
-		Peers:      &fakePeerFactory{peer: peer},
+		Sessions:    &fakeSessionLookup{value: logicalSession},
+		ICE:         &fakeICECredentialSource{credentials: validSignalingCredentials()},
+		Activities:  activity,
+		Peers:       &fakePeerFactory{peer: peer},
+		STTBindings: &fakeSTTBindingFactory{},
 	})
 	require.NoError(t, err)
 	require.Equal(t, 200, invokeSignaling(t, service, logicalSession, attachBody(1)).StatusCode)
@@ -764,6 +921,7 @@ func TestSignalingBoundsTrackedTombstonesAndPreservesActiveState(t *testing.T) {
 		ICE:           &fakeICECredentialSource{credentials: validSignalingCredentials()},
 		Activities:    newFakeActivitySource(),
 		Peers:         &fakePeerFactory{peer: newFakeSignalingPeer()},
+		STTBindings:   &fakeSTTBindingFactory{},
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
@@ -865,10 +1023,11 @@ func TestSignalingPeerMethodPanicIsTerminalAndReleasesCapacity(t *testing.T) {
 		Authorization: &fakeAuthorizationResolver{identity: TrustedIdentity{
 			UserID: logicalSession.UserID, BusinessID: logicalSession.BusinessID, ClientID: "client",
 		}},
-		Sessions:   &fakeSessionLookup{value: logicalSession},
-		ICE:        &fakeICECredentialSource{credentials: validSignalingCredentials()},
-		Activities: activities,
-		Peers:      &fakePeerFactory{peers: []SignalingPeer{panickingPeer, healthyPeer}},
+		Sessions:    &fakeSessionLookup{value: logicalSession},
+		ICE:         &fakeICECredentialSource{credentials: validSignalingCredentials()},
+		Activities:  activities,
+		Peers:       &fakePeerFactory{peers: []SignalingPeer{panickingPeer, healthyPeer}},
+		STTBindings: &fakeSTTBindingFactory{},
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
@@ -1164,10 +1323,11 @@ func TestSignalingCloseDoesNotWaitForeverForBrokenPeerDone(t *testing.T) {
 		Authorization: &fakeAuthorizationResolver{identity: TrustedIdentity{
 			UserID: logicalSession.UserID, BusinessID: logicalSession.BusinessID, ClientID: "client",
 		}},
-		Sessions:   &fakeSessionLookup{value: logicalSession},
-		ICE:        &fakeICECredentialSource{credentials: validSignalingCredentials()},
-		Activities: newFakeActivitySource(),
-		Peers:      &fakePeerFactory{peer: peer},
+		Sessions:    &fakeSessionLookup{value: logicalSession},
+		ICE:         &fakeICECredentialSource{credentials: validSignalingCredentials()},
+		Activities:  newFakeActivitySource(),
+		Peers:       &fakePeerFactory{peer: peer},
+		STTBindings: &fakeSTTBindingFactory{},
 	})
 	require.Equal(t, 200, invokeSignaling(t, service, logicalSession, attachBody(1)).StatusCode)
 
@@ -1195,10 +1355,11 @@ func TestSignalingRequiresFreshICEBeforeOfferAndPreservesSequenceForRefresh(t *t
 		Authorization: &fakeAuthorizationResolver{identity: TrustedIdentity{
 			UserID: logicalSession.UserID, BusinessID: logicalSession.BusinessID, ClientID: "client",
 		}},
-		Sessions:   &fakeSessionLookup{value: logicalSession},
-		ICE:        ice,
-		Activities: newFakeActivitySource(),
-		Peers:      &fakePeerFactory{peer: peer},
+		Sessions:    &fakeSessionLookup{value: logicalSession},
+		ICE:         ice,
+		Activities:  newFakeActivitySource(),
+		Peers:       &fakePeerFactory{peer: peer},
+		STTBindings: &fakeSTTBindingFactory{},
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
@@ -1231,10 +1392,11 @@ func TestSignalingRechecksICEFreshnessAfterAnswerGathering(t *testing.T) {
 		Authorization: &fakeAuthorizationResolver{identity: TrustedIdentity{
 			UserID: logicalSession.UserID, BusinessID: logicalSession.BusinessID, ClientID: "client",
 		}},
-		Sessions:   &fakeSessionLookup{value: logicalSession},
-		ICE:        &fakeICECredentialSource{credentials: validSignalingCredentials()},
-		Activities: newFakeActivitySource(),
-		Peers:      &fakePeerFactory{peer: peer},
+		Sessions:    &fakeSessionLookup{value: logicalSession},
+		ICE:         &fakeICECredentialSource{credentials: validSignalingCredentials()},
+		Activities:  newFakeActivitySource(),
+		Peers:       &fakePeerFactory{peer: peer},
+		STTBindings: &fakeSTTBindingFactory{},
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
@@ -1310,6 +1472,7 @@ func validSignalingSession() *voicesession.Session {
 		RuntimeState:     voicesession.RuntimeStateRunning,
 		ProtocolVersion:  protocol.ProtocolVersion,
 		KVSChannelIndex:  0,
+		FallbackLanguage: "en-IN",
 		ClientPlatform:   "android",
 		ClientAppVersion: "1.2.3",
 		ExpiresAt:        signalingTestNow.Add(30 * time.Minute),
@@ -1412,6 +1575,9 @@ func validSignalingConfig(channels []string) SignalingConfig {
 
 func newTestSignalingService(t *testing.T, channels []string, dependencies SignalingDependencies) *SignalingService {
 	t.Helper()
+	if dependencies.STTBindings == nil {
+		dependencies.STTBindings = &fakeSTTBindingFactory{}
+	}
 	service, err := NewSignalingService(validSignalingConfig(channels), dependencies)
 	require.NoError(t, err)
 	return service
@@ -1423,11 +1589,190 @@ func validSignalingDependencies(logicalSession *voicesession.Session, peer Signa
 			identity:   TrustedIdentity{UserID: logicalSession.UserID, BusinessID: logicalSession.BusinessID, ClientID: "client"},
 			panicValue: authorizationPanic,
 		},
-		Sessions:   &fakeSessionLookup{value: logicalSession, panicValue: sessionPanic},
-		ICE:        &fakeICECredentialSource{credentials: validSignalingCredentials(), panicValue: icePanic},
-		Activities: &fakeActivitySource{ctx: context.Background(), closer: newRecordingCloser(), panicValue: activityPanic},
-		Peers:      &fakePeerFactory{peer: peer},
+		Sessions:    &fakeSessionLookup{value: logicalSession, panicValue: sessionPanic},
+		ICE:         &fakeICECredentialSource{credentials: validSignalingCredentials(), panicValue: icePanic},
+		Activities:  &fakeActivitySource{ctx: context.Background(), closer: newRecordingCloser(), panicValue: activityPanic},
+		Peers:       &fakePeerFactory{peer: peer},
+		STTBindings: &fakeSTTBindingFactory{},
 	}
+}
+
+type lifecycleRecorder struct {
+	mu     sync.Mutex
+	events []string
+}
+
+func (recorder *lifecycleRecorder) record(event string) {
+	if recorder == nil {
+		return
+	}
+	recorder.mu.Lock()
+	recorder.events = append(recorder.events, event)
+	recorder.mu.Unlock()
+}
+
+func (recorder *lifecycleRecorder) snapshot() []string {
+	if recorder == nil {
+		return nil
+	}
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	return append([]string(nil), recorder.events...)
+}
+
+type countingActivityCloser struct {
+	mu        sync.Mutex
+	calls     int
+	lifecycle *lifecycleRecorder
+}
+
+func (closer *countingActivityCloser) Close() error {
+	closer.mu.Lock()
+	closer.calls++
+	closer.mu.Unlock()
+	closer.lifecycle.record("activity.close")
+	return nil
+}
+
+func (closer *countingActivityCloser) closeCount() int {
+	closer.mu.Lock()
+	defer closer.mu.Unlock()
+	return closer.calls
+}
+
+type configuredActivitySource struct {
+	ctx      context.Context
+	activity io.Closer
+}
+
+func (source *configuredActivitySource) AcquirePersistentActivity() (context.Context, io.Closer, error) {
+	return source.ctx, source.activity, nil
+}
+
+type fakeSTTBindingFactory struct {
+	mu sync.Mutex
+
+	configs                   []STTBindingConfig
+	bindings                  []*fakeSignalingSTTBinding
+	err                       error
+	panicValue                any
+	returnNil                 bool
+	closeActivityBeforeReturn bool
+	lifecycle                 *lifecycleRecorder
+}
+
+func (factory *fakeSTTBindingFactory) Create(config STTBindingConfig) (STTBinding, error) {
+	if factory == nil {
+		panic("typed nil fake STT binding factory")
+	}
+	factory.mu.Lock()
+	factory.configs = append(factory.configs, config)
+	err := factory.err
+	panicValue := factory.panicValue
+	returnNil := factory.returnNil
+	closeActivityBeforeReturn := factory.closeActivityBeforeReturn
+	lifecycle := factory.lifecycle
+	factory.mu.Unlock()
+	lifecycle.record("binding.create")
+	if closeActivityBeforeReturn {
+		_ = config.Activity.Close()
+	}
+	if panicValue != nil {
+		panic(panicValue)
+	}
+	if returnNil || err != nil {
+		return nil, err
+	}
+	binding := &fakeSignalingSTTBinding{activity: config.Activity, lifecycle: lifecycle}
+	factory.mu.Lock()
+	factory.bindings = append(factory.bindings, binding)
+	factory.mu.Unlock()
+	return binding, nil
+}
+
+func (factory *fakeSTTBindingFactory) configsSnapshot() []STTBindingConfig {
+	factory.mu.Lock()
+	defer factory.mu.Unlock()
+	return append([]STTBindingConfig(nil), factory.configs...)
+}
+
+func (factory *fakeSTTBindingFactory) bindingsSnapshot() []*fakeSignalingSTTBinding {
+	factory.mu.Lock()
+	defer factory.mu.Unlock()
+	return append([]*fakeSignalingSTTBinding(nil), factory.bindings...)
+}
+
+type fakeSignalingSTTBinding struct {
+	mu sync.Mutex
+
+	activity  io.Closer
+	lifecycle *lifecycleRecorder
+	closes    int
+}
+
+func (*fakeSignalingSTTBinding) HandleOpus([]byte) error { return nil }
+
+func (*fakeSignalingSTTBinding) HandleControl(context.Context, protocol.ControlMessage) error {
+	return nil
+}
+
+func (binding *fakeSignalingSTTBinding) Close() error {
+	binding.mu.Lock()
+	binding.closes++
+	activity := binding.activity
+	binding.mu.Unlock()
+	binding.lifecycle.record("binding.close")
+	if activity != nil {
+		return activity.Close()
+	}
+	return nil
+}
+
+func (binding *fakeSignalingSTTBinding) closeCount() int {
+	binding.mu.Lock()
+	defer binding.mu.Unlock()
+	return binding.closes
+}
+
+type blockingSTTBinding struct {
+	handleStarted chan struct{}
+	releaseHandle chan struct{}
+	closeStarted  chan struct{}
+
+	mu     sync.Mutex
+	closes int
+}
+
+func newBlockingSTTBinding() *blockingSTTBinding {
+	return &blockingSTTBinding{
+		handleStarted: make(chan struct{}),
+		releaseHandle: make(chan struct{}),
+		closeStarted:  make(chan struct{}),
+	}
+}
+
+func (binding *blockingSTTBinding) HandleOpus([]byte) error {
+	close(binding.handleStarted)
+	<-binding.releaseHandle
+	return nil
+}
+
+func (*blockingSTTBinding) HandleControl(context.Context, protocol.ControlMessage) error {
+	return nil
+}
+
+func (binding *blockingSTTBinding) Close() error {
+	close(binding.closeStarted)
+	binding.mu.Lock()
+	binding.closes++
+	binding.mu.Unlock()
+	return nil
+}
+
+func (binding *blockingSTTBinding) closeCount() int {
+	binding.mu.Lock()
+	defer binding.mu.Unlock()
+	return binding.closes
 }
 
 type fakeAuthorizationResolver struct {
