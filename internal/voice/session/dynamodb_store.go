@@ -132,6 +132,9 @@ func (s *DynamoDBStore) Get(ctx context.Context, scope Scope, sessionID string) 
 	if value.UserID != scope.UserID || value.BusinessID != scope.BusinessID {
 		return nil, ErrNotFound
 	}
+	if !scopeAllowsBranch(scope, value.BranchID) {
+		return nil, ErrNotFound
+	}
 	return value, nil
 }
 
@@ -139,8 +142,12 @@ func (s *DynamoDBStore) Resume(ctx context.Context, input ResumeRecord) (*Sessio
 	if err := s.validate(); err != nil {
 		return nil, err
 	}
+	if !scopeAllowsBranch(input.Scope, input.ExpectedBranchID) {
+		return nil, ErrNotFound
+	}
 	names := map[string]string{
 		"#status": "status", "#user_id": "user_id", "#business_id": "business_id",
+		"#branch_id":          "branch_id",
 		"#runtime_session_id": "runtime_session_id", "#runtime_state": "runtime_state",
 		"#expires_at": "expires_at", "#lease_expires_at": "lease_expires_at",
 		"#updated_at": "updated_at", "#gsi2pk": "GSI2PK", "#gsi2sk": "GSI2SK",
@@ -148,11 +155,15 @@ func (s *DynamoDBStore) Resume(ctx context.Context, input ResumeRecord) (*Sessio
 	values := map[string]types.AttributeValue{
 		":active": stringAttribute(string(StatusActive)), ":user_id": stringAttribute(input.Scope.UserID),
 		":business_id": stringAttribute(input.Scope.BusinessID), ":old_runtime_session_id": stringAttribute(input.OldRuntimeSessionID),
-		":expected_runtime_state": stringAttribute(string(input.ExpectedRuntimeState)),
-		":now_epoch":              numberAttribute(input.UpdatedAt.Unix()), ":lease_expires_at": stringAttribute(formatTime(input.LeaseExpiresAt)),
-		":updated_at": stringAttribute(formatTime(input.UpdatedAt)), ":lease_pk": stringAttribute(leasePartitionKey),
+		":expected_runtime_state":    stringAttribute(string(input.ExpectedRuntimeState)),
+		":expected_lease_expires_at": stringAttribute(formatTime(input.ExpectedLeaseExpiresAt)),
+		":now":                       stringAttribute(formatTime(input.UpdatedAt)), ":now_epoch": numberAttribute(input.UpdatedAt.Unix()),
+		":lease_expires_at": stringAttribute(formatTime(input.LeaseExpiresAt)),
+		":updated_at":       stringAttribute(formatTime(input.UpdatedAt)), ":lease_pk": stringAttribute(leasePartitionKey),
 		":lease_sk": stringAttribute(leaseSortKey(input.LeaseExpiresAt, input.SessionID)),
 	}
+	conditionExpression := "#status = :active AND #user_id = :user_id AND #business_id = :business_id AND #runtime_session_id = :old_runtime_session_id AND #runtime_state = :expected_runtime_state AND #expires_at > :now_epoch AND #lease_expires_at = :expected_lease_expires_at AND #lease_expires_at > :now"
+	conditionExpression = addExpectedBranchCondition(conditionExpression, input.ExpectedBranchID, values)
 	updateExpression := "SET #lease_expires_at = :lease_expires_at, #updated_at = :updated_at, #gsi2pk = :lease_pk, #gsi2sk = :lease_sk"
 	if input.NewRuntimeSessionID != "" {
 		updateExpression += ", #runtime_session_id = :new_runtime_session_id, #runtime_state = :running"
@@ -161,7 +172,7 @@ func (s *DynamoDBStore) Resume(ctx context.Context, input ResumeRecord) (*Sessio
 	}
 	output, err := s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 		TableName: aws.String(s.tableName), Key: sessionKey(input.SessionID),
-		ConditionExpression: aws.String("#status = :active AND #user_id = :user_id AND #business_id = :business_id AND #runtime_session_id = :old_runtime_session_id AND #runtime_state = :expected_runtime_state AND #expires_at > :now_epoch"),
+		ConditionExpression: aws.String(conditionExpression),
 		UpdateExpression:    aws.String(updateExpression), ExpressionAttributeNames: names, ExpressionAttributeValues: values,
 		ReturnValues: types.ReturnValueAllNew,
 	})
@@ -181,6 +192,9 @@ func (s *DynamoDBStore) Resume(ctx context.Context, input ResumeRecord) (*Sessio
 	resumed, err := unmarshalSession(output.Attributes)
 	if err != nil {
 		return nil, fmt.Errorf("decode resumed voice session: %w", err)
+	}
+	if resumed.UserID != input.Scope.UserID || resumed.BusinessID != input.Scope.BusinessID || !scopeAllowsBranch(input.Scope, resumed.BranchID) {
+		return nil, ErrNotFound
 	}
 	return resumed, nil
 }
@@ -202,22 +216,26 @@ func (s *DynamoDBStore) Release(ctx context.Context, scope Scope, sessionID stri
 	}
 
 	nowAttribute := stringAttribute(formatTime(now))
+	conditionExpression := "#status = :active AND #user_id = :user_id AND #business_id = :business_id AND #capacity_released = :false"
+	releaseValues := map[string]types.AttributeValue{
+		":active": stringAttribute(string(StatusActive)), ":closing": stringAttribute(string(StatusClosing)),
+		":user_id": stringAttribute(scope.UserID), ":business_id": stringAttribute(scope.BusinessID),
+		":false": boolAttribute(false), ":true": boolAttribute(true), ":updated_at": nowAttribute,
+		":lease_pk": stringAttribute(leasePartitionKey), ":stop_pending_sk": stringAttribute(leaseSortKey(now, sessionID)),
+	}
+	conditionExpression = addExpectedBranchCondition(conditionExpression, stored.BranchID, releaseValues)
 	transaction := &dynamodb.TransactWriteItemsInput{
 		ClientRequestToken: aws.String(transactionToken("close", sessionID)),
 		TransactItems: []types.TransactWriteItem{
 			{Update: &types.Update{
 				TableName: aws.String(s.tableName), Key: sessionKey(sessionID),
-				ConditionExpression: aws.String("#status = :active AND #user_id = :user_id AND #business_id = :business_id AND #capacity_released = :false"),
-				UpdateExpression:    aws.String("SET #status = :closing, #capacity_released = :true, #updated_at = :updated_at REMOVE #gsi1pk, #gsi1sk, #gsi2pk, #gsi2sk"),
+				ConditionExpression: aws.String(conditionExpression),
+				UpdateExpression:    aws.String("SET #status = :closing, #capacity_released = :true, #updated_at = :updated_at, #gsi2pk = :lease_pk, #gsi2sk = :stop_pending_sk REMOVE #gsi1pk, #gsi1sk"),
 				ExpressionAttributeNames: map[string]string{
 					"#status": "status", "#user_id": "user_id", "#business_id": "business_id", "#capacity_released": "capacity_released",
-					"#updated_at": "updated_at", "#gsi1pk": "GSI1PK", "#gsi1sk": "GSI1SK", "#gsi2pk": "GSI2PK", "#gsi2sk": "GSI2SK",
+					"#branch_id": "branch_id", "#updated_at": "updated_at", "#gsi1pk": "GSI1PK", "#gsi1sk": "GSI1SK", "#gsi2pk": "GSI2PK", "#gsi2sk": "GSI2SK",
 				},
-				ExpressionAttributeValues: map[string]types.AttributeValue{
-					":active": stringAttribute(string(StatusActive)), ":closing": stringAttribute(string(StatusClosing)),
-					":user_id": stringAttribute(scope.UserID), ":business_id": stringAttribute(scope.BusinessID),
-					":false": boolAttribute(false), ":true": boolAttribute(true), ":updated_at": nowAttribute,
-				},
+				ExpressionAttributeValues: releaseValues,
 			}},
 			{Update: capacityDecrement(s.tableName, globalCapacityPK, globalCapacitySK, nowAttribute)},
 			{Update: capacityDecrement(s.tableName, userCapacityPK(scope.UserID), userCapacitySK, nowAttribute)},
@@ -243,21 +261,28 @@ func (s *DynamoDBStore) Release(ctx context.Context, scope Scope, sessionID stri
 	return released, ReleaseState{Released: true, ShouldStop: true}, nil
 }
 
-func (s *DynamoDBStore) MarkClosed(ctx context.Context, scope Scope, sessionID string, now time.Time) error {
+func (s *DynamoDBStore) MarkClosed(ctx context.Context, scope Scope, sessionID, expectedBranchID string, now time.Time) error {
+	if !scopeAllowsBranch(scope, expectedBranchID) {
+		return ErrNotFound
+	}
+	values := map[string]types.AttributeValue{
+		":closing": stringAttribute(string(StatusClosing)), ":closed": stringAttribute(string(StatusClosed)),
+		":stopped": stringAttribute(string(RuntimeStateStopped)), ":closed_at": stringAttribute(formatTime(now)),
+		":updated_at": stringAttribute(formatTime(now)), ":user_id": stringAttribute(scope.UserID),
+		":business_id": stringAttribute(scope.BusinessID), ":true": boolAttribute(true),
+	}
+	conditionExpression := "#status = :closing AND #user_id = :user_id AND #business_id = :business_id AND #capacity_released = :true"
+	conditionExpression = addExpectedBranchCondition(conditionExpression, expectedBranchID, values)
 	_, err := s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
 		TableName: aws.String(s.tableName), Key: sessionKey(sessionID),
-		ConditionExpression: aws.String("#status = :closing AND #user_id = :user_id AND #business_id = :business_id AND #capacity_released = :true"),
-		UpdateExpression:    aws.String("SET #status = :closed, #runtime_state = :stopped, #closed_at = :closed_at, #updated_at = :updated_at"),
+		ConditionExpression: aws.String(conditionExpression),
+		UpdateExpression:    aws.String("SET #status = :closed, #runtime_state = :stopped, #closed_at = :closed_at, #updated_at = :updated_at REMOVE #gsi2pk, #gsi2sk"),
 		ExpressionAttributeNames: map[string]string{
 			"#status": "status", "#runtime_state": "runtime_state", "#closed_at": "closed_at", "#updated_at": "updated_at",
-			"#user_id": "user_id", "#business_id": "business_id", "#capacity_released": "capacity_released",
+			"#user_id": "user_id", "#business_id": "business_id", "#branch_id": "branch_id", "#capacity_released": "capacity_released",
+			"#gsi2pk": "GSI2PK", "#gsi2sk": "GSI2SK",
 		},
-		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":closing": stringAttribute(string(StatusClosing)), ":closed": stringAttribute(string(StatusClosed)),
-			":stopped": stringAttribute(string(RuntimeStateStopped)), ":closed_at": stringAttribute(formatTime(now)),
-			":updated_at": stringAttribute(formatTime(now)), ":user_id": stringAttribute(scope.UserID),
-			":business_id": stringAttribute(scope.BusinessID), ":true": boolAttribute(true),
-		},
+		ExpressionAttributeValues: values,
 	})
 	if err == nil {
 		return nil
@@ -329,7 +354,13 @@ func (s *DynamoDBStore) lookupIdempotency(ctx context.Context, record CreateReco
 	if sessionID == "" {
 		return nil, false, fmt.Errorf("voice idempotency record has no session id: %w", ErrUnavailable)
 	}
-	value, err := s.Get(ctx, Scope{UserID: record.Session.UserID, BusinessID: record.Session.BusinessID}, sessionID)
+	lookupScope := Scope{UserID: record.Session.UserID, BusinessID: record.Session.BusinessID}
+	if record.Session.BranchID == "" {
+		lookupScope.AllBranches = true
+	} else {
+		lookupScope.AllowedBranchIDs = []string{record.Session.BranchID}
+	}
+	value, err := s.Get(ctx, lookupScope, sessionID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -486,8 +517,16 @@ func sessionKey(sessionID string) map[string]types.AttributeValue {
 }
 
 func leaseSortKey(at time.Time, sessionID string) string { return formatTime(at) + "#" + sessionID }
-func formatTime(value time.Time) string                  { return value.UTC().Format(timeKeyFormat) }
-func parseTime(value string) (time.Time, error)          { return time.Parse(timeKeyFormat, value) }
+
+func addExpectedBranchCondition(condition, expectedBranchID string, values map[string]types.AttributeValue) string {
+	if expectedBranchID == "" {
+		return condition + " AND attribute_not_exists(#branch_id)"
+	}
+	values[":expected_branch_id"] = stringAttribute(expectedBranchID)
+	return condition + " AND #branch_id = :expected_branch_id"
+}
+func formatTime(value time.Time) string         { return value.UTC().Format(timeKeyFormat) }
+func parseTime(value string) (time.Time, error) { return time.Parse(timeKeyFormat, value) }
 func stringAttribute(value string) types.AttributeValue {
 	return &types.AttributeValueMemberS{Value: value}
 }

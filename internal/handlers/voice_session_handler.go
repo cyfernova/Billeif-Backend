@@ -145,13 +145,21 @@ func (h *VoiceSessionHandler) Delete(c *gin.Context) {
 }
 
 func validatedVoiceScope(c *gin.Context) (session.Scope, bool) {
-	scope := session.Scope{UserID: middleware.GetUserID(c), BusinessID: middleware.GetValidatedBusinessID(c)}
+	allBranches, allowedBranchIDs, branchScopeOK := middleware.GetValidatedBranchScope(c)
+	scope := session.Scope{
+		UserID: middleware.GetUserID(c), BusinessID: middleware.GetValidatedBusinessID(c),
+		AllBranches: allBranches, AllowedBranchIDs: append([]string{}, allowedBranchIDs...),
+	}
 	if scope.UserID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
 		return session.Scope{}, false
 	}
 	if scope.BusinessID == "" {
 		c.JSON(http.StatusForbidden, gin.H{"error": "validated business scope required"})
+		return session.Scope{}, false
+	}
+	if !branchScopeOK {
+		c.JSON(http.StatusForbidden, gin.H{"error": "validated branch scope required"})
 		return session.Scope{}, false
 	}
 	return scope, true
@@ -171,6 +179,8 @@ func (h *VoiceSessionHandler) writeError(c *gin.Context, err error) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "voice session capacity is temporarily full"})
 	case errors.Is(err, session.ErrNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": "voice session not found"})
+	case errors.Is(err, session.ErrBranchForbidden):
+		c.JSON(http.StatusForbidden, gin.H{"error": "validated branch scope required"})
 	case errors.Is(err, session.ErrNotResumable):
 		c.JSON(http.StatusConflict, gin.H{"error": "voice session cannot be resumed"})
 	case errors.Is(err, session.ErrUnavailable):

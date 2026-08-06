@@ -168,9 +168,11 @@ func TestDynamoDBResumeExtendsLeaseWithoutAdmissionWrites(t *testing.T) {
 	client := &fakeDynamoDB{updateOutputs: []*dynamodb.UpdateItemOutput{{Attributes: marshalSessionForTest(t, resumed)}}}
 	store := NewDynamoDBStore(client, DynamoDBStoreConfig{TableName: "voice-table"})
 	got, err := store.Resume(context.Background(), ResumeRecord{
-		Scope: Scope{UserID: record.Session.UserID, BusinessID: record.Session.BusinessID}, SessionID: record.Session.ID,
+		Scope: Scope{UserID: record.Session.UserID, BusinessID: record.Session.BusinessID, AllBranches: true}, SessionID: record.Session.ID,
+		ExpectedBranchID:    record.Session.BranchID,
 		OldRuntimeSessionID: record.Session.RuntimeSessionID, ExpectedRuntimeState: RuntimeStateRunning,
-		LeaseExpiresAt: resumed.LeaseExpiresAt, UpdatedAt: resumed.UpdatedAt,
+		ExpectedLeaseExpiresAt: record.Session.LeaseExpiresAt,
+		LeaseExpiresAt:         resumed.LeaseExpiresAt, UpdatedAt: resumed.UpdatedAt,
 	})
 	if err != nil || !got.LeaseExpiresAt.Equal(resumed.LeaseExpiresAt) {
 		t.Fatalf("resume failed: %#v %v", got, err)
@@ -188,7 +190,7 @@ func TestDynamoDBReleaseIsOneGuardedTransaction(t *testing.T) {
 	record := testCreateRecord()
 	client := &fakeDynamoDB{getOutputs: []*dynamodb.GetItemOutput{{Item: marshalSessionForTest(t, record.Session)}}}
 	store := NewDynamoDBStore(client, DynamoDBStoreConfig{TableName: "voice-table"})
-	got, state, err := store.Release(context.Background(), Scope{UserID: record.Session.UserID, BusinessID: record.Session.BusinessID}, record.Session.ID, record.Session.UpdatedAt.Add(time.Minute))
+	got, state, err := store.Release(context.Background(), Scope{UserID: record.Session.UserID, BusinessID: record.Session.BusinessID, AllBranches: true}, record.Session.ID, record.Session.UpdatedAt.Add(time.Minute))
 	if err != nil || !state.Released || !state.ShouldStop || got.Status != StatusClosing {
 		t.Fatalf("release failed state=%#v session=%#v err=%v", state, got, err)
 	}
@@ -229,7 +231,7 @@ func TestDynamoDBGetHidesTenantAndOwnerMismatch(t *testing.T) {
 	record := testCreateRecord()
 	client := &fakeDynamoDB{getOutputs: []*dynamodb.GetItemOutput{{Item: marshalSessionForTest(t, record.Session)}}}
 	store := NewDynamoDBStore(client, DynamoDBStoreConfig{TableName: "voice-table"})
-	if _, err := store.Get(context.Background(), Scope{UserID: "foreign", BusinessID: record.Session.BusinessID}, record.Session.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := store.Get(context.Background(), Scope{UserID: "foreign", BusinessID: record.Session.BusinessID, AllBranches: true}, record.Session.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("foreign owner leaked: %v", err)
 	}
 }

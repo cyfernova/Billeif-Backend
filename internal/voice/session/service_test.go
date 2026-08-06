@@ -14,6 +14,8 @@ type memoryStore struct {
 	resumeCalls     int
 	releaseCalls    int
 	markClosedCalls int
+	beforeResume    func(*Session)
+	markClosedErr   error
 }
 
 func newMemoryStore() *memoryStore {
@@ -36,7 +38,7 @@ func (s *memoryStore) Create(_ context.Context, record CreateRecord) (*Session, 
 
 func (s *memoryStore) Get(_ context.Context, scope Scope, sessionID string) (*Session, error) {
 	stored, ok := s.sessions[sessionID]
-	if !ok || stored.UserID != scope.UserID || stored.BusinessID != scope.BusinessID {
+	if !ok || stored.UserID != scope.UserID || stored.BusinessID != scope.BusinessID || !scopeAllowsBranch(scope, stored.BranchID) {
 		return nil, ErrNotFound
 	}
 	return cloneSession(stored), nil
@@ -45,10 +47,13 @@ func (s *memoryStore) Get(_ context.Context, scope Scope, sessionID string) (*Se
 func (s *memoryStore) Resume(_ context.Context, input ResumeRecord) (*Session, error) {
 	s.resumeCalls++
 	stored, ok := s.sessions[input.SessionID]
-	if !ok || stored.UserID != input.Scope.UserID || stored.BusinessID != input.Scope.BusinessID {
+	if !ok || stored.UserID != input.Scope.UserID || stored.BusinessID != input.Scope.BusinessID || !scopeAllowsBranch(input.Scope, stored.BranchID) {
 		return nil, ErrNotFound
 	}
-	if stored.Status != StatusActive || !stored.ExpiresAt.After(input.UpdatedAt) {
+	if s.beforeResume != nil {
+		s.beforeResume(stored)
+	}
+	if stored.BranchID != input.ExpectedBranchID || stored.Status != StatusActive || !stored.ExpiresAt.After(input.UpdatedAt) || !stored.LeaseExpiresAt.After(input.UpdatedAt) || !stored.LeaseExpiresAt.Equal(input.ExpectedLeaseExpiresAt) {
 		return nil, ErrNotResumable
 	}
 	if stored.RuntimeState != input.ExpectedRuntimeState {
@@ -66,7 +71,7 @@ func (s *memoryStore) Resume(_ context.Context, input ResumeRecord) (*Session, e
 func (s *memoryStore) Release(_ context.Context, scope Scope, sessionID string, now time.Time) (*Session, ReleaseState, error) {
 	s.releaseCalls++
 	stored, ok := s.sessions[sessionID]
-	if !ok || stored.UserID != scope.UserID || stored.BusinessID != scope.BusinessID {
+	if !ok || stored.UserID != scope.UserID || stored.BusinessID != scope.BusinessID || !scopeAllowsBranch(scope, stored.BranchID) {
 		return nil, ReleaseState{}, ErrNotFound
 	}
 	if stored.Status == StatusClosed {
@@ -84,10 +89,13 @@ func (s *memoryStore) Release(_ context.Context, scope Scope, sessionID string, 
 	return nil, ReleaseState{}, ErrNotResumable
 }
 
-func (s *memoryStore) MarkClosed(_ context.Context, scope Scope, sessionID string, now time.Time) error {
+func (s *memoryStore) MarkClosed(_ context.Context, scope Scope, sessionID, expectedBranchID string, now time.Time) error {
 	s.markClosedCalls++
+	if s.markClosedErr != nil {
+		return s.markClosedErr
+	}
 	stored, ok := s.sessions[sessionID]
-	if !ok || stored.UserID != scope.UserID || stored.BusinessID != scope.BusinessID {
+	if !ok || stored.UserID != scope.UserID || stored.BusinessID != scope.BusinessID || !scopeAllowsBranch(scope, stored.BranchID) || stored.BranchID != expectedBranchID {
 		return ErrNotFound
 	}
 	stored.Status = StatusClosed
@@ -118,7 +126,7 @@ func TestServiceCreateIsIdempotentAndValidatesContract(t *testing.T) {
 		NewULID: func() string { return "01K1ABCDE2FGHIJK3LMNOPQRST" },
 	})
 	input := validCreateInput()
-	identity := Scope{UserID: "user-1", BusinessID: "business-1"}
+	identity := Scope{UserID: "user-1", BusinessID: "business-1", AllBranches: true}
 
 	created, err := svc.Create(context.Background(), identity, input)
 	if err != nil {
@@ -169,7 +177,7 @@ func TestServiceCreateRejectsInvalidConsentAndLanguage(t *testing.T) {
 			input := validCreateInput()
 			tc.mutate(&input)
 			svc := NewService(newMemoryStore(), &stopRecorder{}, testConfig(), ServiceOptions{})
-			if _, err := svc.Create(context.Background(), Scope{UserID: "u", BusinessID: "b"}, input); !errors.Is(err, ErrInvalidRequest) {
+			if _, err := svc.Create(context.Background(), Scope{UserID: "u", BusinessID: "b", AllBranches: true}, input); !errors.Is(err, ErrInvalidRequest) {
 				t.Fatalf("expected invalid request, got %v", err)
 			}
 		})
@@ -188,7 +196,7 @@ func TestServiceResumeRotatesOnlyStoppedRuntimeWithoutAdmission(t *testing.T) {
 	svc := NewService(store, &stopRecorder{}, testConfig(), ServiceOptions{Now: func() time.Time { return now }, NewULID: func() string { return "01K1ABCDE2FGHIJK3LMNOPQRST" }})
 	originalRuntimeID := active.RuntimeSessionID
 
-	resumed, err := svc.Resume(context.Background(), Scope{UserID: "u", BusinessID: "b"}, active.ID)
+	resumed, err := svc.Resume(context.Background(), Scope{UserID: "u", BusinessID: "b", AllBranches: true}, active.ID)
 	if err != nil {
 		t.Fatalf("resume active: %v", err)
 	}
@@ -200,7 +208,7 @@ func TestServiceResumeRotatesOnlyStoppedRuntimeWithoutAdmission(t *testing.T) {
 	}
 
 	store.sessions[active.ID].RuntimeState = RuntimeStateStopped
-	rotated, err := svc.Resume(context.Background(), Scope{UserID: "u", BusinessID: "b"}, active.ID)
+	rotated, err := svc.Resume(context.Background(), Scope{UserID: "u", BusinessID: "b", AllBranches: true}, active.ID)
 	if err != nil {
 		t.Fatalf("resume stopped: %v", err)
 	}
@@ -209,6 +217,25 @@ func TestServiceResumeRotatesOnlyStoppedRuntimeWithoutAdmission(t *testing.T) {
 	}
 	if store.createCalls != 0 {
 		t.Fatal("rotation must not increment admission")
+	}
+}
+
+func TestServiceResumeRejectsLeaseChangedAfterRead(t *testing.T) {
+	now := time.Date(2026, 8, 6, 8, 0, 0, 0, time.UTC)
+	store := newMemoryStore()
+	stored := &Session{
+		ID: "voice_race", RuntimeSessionID: "voice-session-race-123456789012345678",
+		UserID: "u", BusinessID: "b", Status: StatusActive, RuntimeState: RuntimeStateRunning,
+		ExpiresAt: now.Add(time.Hour), LeaseExpiresAt: now.Add(time.Minute),
+	}
+	store.sessions[stored.ID] = stored
+	store.beforeResume = func(current *Session) {
+		current.LeaseExpiresAt = now.Add(-time.Nanosecond)
+	}
+	svc := NewService(store, &stopRecorder{}, testConfig(), ServiceOptions{Now: func() time.Time { return now }})
+
+	if _, err := svc.Resume(context.Background(), Scope{UserID: "u", BusinessID: "b", AllBranches: true}, stored.ID); !errors.Is(err, ErrNotResumable) {
+		t.Fatalf("renewed/reconciled lease race must reject resume, got %v", err)
 	}
 }
 
@@ -222,7 +249,7 @@ func TestServiceCloseReleasesOnceStopsExactRuntimeAndIsIdempotent(t *testing.T) 
 	}
 	stopper := &stopRecorder{}
 	svc := NewService(store, stopper, testConfig(), ServiceOptions{Now: func() time.Time { return now }})
-	scope := Scope{UserID: "u", BusinessID: "b"}
+	scope := Scope{UserID: "u", BusinessID: "b", AllBranches: true}
 
 	if err := svc.Close(context.Background(), scope, "voice_one"); err != nil {
 		t.Fatalf("close: %v", err)
@@ -246,11 +273,66 @@ func TestServiceCloseReleasesOnceStopsExactRuntimeAndIsIdempotent(t *testing.T) 
 	}
 }
 
+func TestServiceCloseFailuresLeaveClosingSessionRetryable(t *testing.T) {
+	now := time.Date(2026, 8, 6, 9, 0, 0, 0, time.UTC)
+	newSession := func(id string) *Session {
+		return &Session{
+			ID: id, RuntimeSessionID: "voice-session-retry-12345678901234567",
+			UserID: "u", BusinessID: "b", Status: StatusActive, RuntimeState: RuntimeStateRunning,
+			LeaseExpiresAt: now.Add(time.Minute), ExpiresAt: now.Add(time.Hour),
+		}
+	}
+	scope := Scope{UserID: "u", BusinessID: "b", AllBranches: true}
+
+	t.Run("runtime stop failure", func(t *testing.T) {
+		store := newMemoryStore()
+		store.sessions["voice_stop_retry"] = newSession("voice_stop_retry")
+		stopper := &stopRecorder{err: errors.New("transient stop failure")}
+		svc := NewService(store, stopper, testConfig(), ServiceOptions{Now: func() time.Time { return now }})
+
+		if err := svc.Close(context.Background(), scope, "voice_stop_retry"); err == nil {
+			t.Fatal("expected stop failure")
+		}
+		if got := store.sessions["voice_stop_retry"]; got.Status != StatusClosing || !got.CapacityReleased {
+			t.Fatalf("stop failure lost retryable closing state: %#v", got)
+		}
+		stopper.err = nil
+		if err := svc.Close(context.Background(), scope, "voice_stop_retry"); err != nil {
+			t.Fatalf("retry close: %v", err)
+		}
+		if store.sessions["voice_stop_retry"].Status != StatusClosed {
+			t.Fatalf("retry did not terminally close: %#v", store.sessions["voice_stop_retry"])
+		}
+	})
+
+	t.Run("terminal write failure", func(t *testing.T) {
+		store := newMemoryStore()
+		store.sessions["voice_mark_retry"] = newSession("voice_mark_retry")
+		store.markClosedErr = errors.New("transient mark failure")
+		stopper := &stopRecorder{}
+		svc := NewService(store, stopper, testConfig(), ServiceOptions{Now: func() time.Time { return now }})
+
+		if err := svc.Close(context.Background(), scope, "voice_mark_retry"); err == nil {
+			t.Fatal("expected mark-closed failure")
+		}
+		if got := store.sessions["voice_mark_retry"]; got.Status != StatusClosing || !got.CapacityReleased {
+			t.Fatalf("terminal write failure lost retryable closing state: %#v", got)
+		}
+		store.markClosedErr = nil
+		if err := svc.Close(context.Background(), scope, "voice_mark_retry"); err != nil {
+			t.Fatalf("retry close: %v", err)
+		}
+		if len(stopper.calls) != 2 || store.sessions["voice_mark_retry"].Status != StatusClosed {
+			t.Fatalf("retry did not stop and close: calls=%d session=%#v", len(stopper.calls), store.sessions["voice_mark_retry"])
+		}
+	})
+}
+
 func TestServiceDoesNotLeakForeignSession(t *testing.T) {
 	store := newMemoryStore()
 	store.sessions["voice_private"] = &Session{ID: "voice_private", UserID: "owner", BusinessID: "biz", Status: StatusActive, ExpiresAt: time.Now().Add(time.Hour)}
 	svc := NewService(store, &stopRecorder{}, testConfig(), ServiceOptions{})
-	if _, err := svc.Get(context.Background(), Scope{UserID: "stranger", BusinessID: "biz"}, "voice_private"); !errors.Is(err, ErrNotFound) {
+	if _, err := svc.Get(context.Background(), Scope{UserID: "stranger", BusinessID: "biz", AllBranches: true}, "voice_private"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("foreign session should look absent, got %v", err)
 	}
 }

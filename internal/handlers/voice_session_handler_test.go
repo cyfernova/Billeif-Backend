@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -73,7 +74,7 @@ func TestVoiceSessionHandlerCreateUsesAuthenticatedScopeAndReturnsAllowlistedCon
 	if response.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
-	if svc.createScope != (session.Scope{UserID: "user-1", BusinessID: "business-1"}) {
+	if !reflect.DeepEqual(svc.createScope, session.Scope{UserID: "user-1", BusinessID: "business-1", AllowedBranchIDs: []string{"cbd6e793-62e6-4c32-a106-065709caf460"}}) {
 		t.Fatalf("handler did not use middleware identity: %#v", svc.createScope)
 	}
 	if svc.createInput.BranchID != "cbd6e793-62e6-4c32-a106-065709caf460" {
@@ -147,6 +148,8 @@ func TestVoiceSessionHandlerRequiresValidatedBranch(t *testing.T) {
 	router.Use(func(c *gin.Context) {
 		c.Set("user_id", "user-1")
 		c.Set("validated_business_id", "business-1")
+		c.Set("validated_branch_scope_all", false)
+		c.Set("validated_branch_scope_ids", []string{"cbd6e793-62e6-4c32-a106-065709caf460"})
 		c.Next()
 	})
 	handler := NewVoiceSessionHandler(svc, logger.New())
@@ -157,6 +160,39 @@ func TestVoiceSessionHandlerRequiresValidatedBranch(t *testing.T) {
 	}
 }
 
+func TestVoiceSessionHandlerRequiresValidatedBranchScopeForEveryOperation(t *testing.T) {
+	value := handlerSession()
+	svc := &fakeVoiceSessionService{got: value, resumed: value}
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("user_id", "user-1")
+		c.Set("validated_business_id", "business-1")
+		c.Next()
+	})
+	handler := NewVoiceSessionHandler(svc, logger.New())
+	routes := router.Group("/api/v1/voice/sessions")
+	routes.GET("/:session_id", handler.Get)
+	routes.POST("/:session_id/resume", handler.Resume)
+	routes.DELETE("/:session_id", handler.Delete)
+
+	for _, request := range []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodGet, path: "/api/v1/voice/sessions/" + value.ID},
+		{method: http.MethodPost, path: "/api/v1/voice/sessions/" + value.ID + "/resume"},
+		{method: http.MethodDelete, path: "/api/v1/voice/sessions/" + value.ID},
+	} {
+		response := performVoiceRequest(router, request.method, request.path, "")
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("%s %s status=%d body=%s", request.method, request.path, response.Code, response.Body.String())
+		}
+	}
+	if svc.getID != "" || svc.resumeID != "" || svc.closeID != "" {
+		t.Fatalf("request without branch scope reached service: %#v", svc)
+	}
+}
+
 func voiceSessionTestRouter(svc VoiceSessionService) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -164,6 +200,8 @@ func voiceSessionTestRouter(svc VoiceSessionService) *gin.Engine {
 		c.Set("user_id", "user-1")
 		c.Set("validated_business_id", "business-1")
 		c.Set("validated_branch_id", "cbd6e793-62e6-4c32-a106-065709caf460")
+		c.Set("validated_branch_scope_all", false)
+		c.Set("validated_branch_scope_ids", []string{"cbd6e793-62e6-4c32-a106-065709caf460"})
 		c.Next()
 	})
 	handler := NewVoiceSessionHandler(svc, logger.New())

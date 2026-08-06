@@ -44,8 +44,10 @@ func (c Config) Enabled() bool {
 }
 
 type Scope struct {
-	UserID     string
-	BusinessID string
+	UserID           string
+	BusinessID       string
+	AllBranches      bool
+	AllowedBranchIDs []string
 }
 
 type ConsentInput struct {

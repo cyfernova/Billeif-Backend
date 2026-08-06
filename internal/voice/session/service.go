@@ -98,6 +98,13 @@ func (s *Service) Create(ctx context.Context, scope Scope, input CreateInput) (*
 	if err := s.validateCreate(input); err != nil {
 		return nil, err
 	}
+	branchID := strings.TrimSpace(input.BranchID)
+	if !scope.AllBranches && branchID == "" {
+		return nil, fmt.Errorf("%w: branch_id is required for restricted branch access", ErrInvalidRequest)
+	}
+	if !scopeAllowsBranch(scope, branchID) {
+		return nil, ErrBranchForbidden
+	}
 	now := s.now().UTC()
 	ulid := s.newULID()
 	if len(ulid) != 26 {
@@ -114,7 +121,7 @@ func (s *Service) Create(ctx context.Context, scope Scope, input CreateInput) (*
 	}
 	created := &Session{
 		ID: sessionID, RuntimeSessionID: runtimeSessionID,
-		UserID: scope.UserID, BusinessID: scope.BusinessID, BranchID: strings.TrimSpace(input.BranchID),
+		UserID: scope.UserID, BusinessID: scope.BusinessID, BranchID: branchID,
 		Status: StatusActive, RuntimeState: RuntimeStateRunning,
 		ProtocolVersion: s.config.ProtocolVersion, KVSChannelIndex: stableChannel(sessionID, s.config.KVSChannelCount),
 		PreferredLanguage: input.PreferredLanguage, FallbackLanguage: input.FallbackLanguage, CurrentLanguage: input.PreferredLanguage,
@@ -160,7 +167,7 @@ func (s *Service) Resume(ctx context.Context, scope Scope, sessionID string) (*S
 		return nil, err
 	}
 	now := s.now().UTC()
-	if stored.Status != StatusActive || !stored.ExpiresAt.After(now) {
+	if stored.Status != StatusActive || !stored.ExpiresAt.After(now) || !stored.LeaseExpiresAt.After(now) {
 		return nil, ErrNotResumable
 	}
 	newRuntimeID := ""
@@ -172,9 +179,10 @@ func (s *Service) Resume(ctx context.Context, scope Scope, sessionID string) (*S
 		newRuntimeID = "voice-session-" + ulid
 	}
 	resumed, err := s.store.Resume(ctx, ResumeRecord{
-		Scope: scope, SessionID: sessionID, OldRuntimeSessionID: stored.RuntimeSessionID,
-		ExpectedRuntimeState: stored.RuntimeState,
-		NewRuntimeSessionID:  newRuntimeID, LeaseExpiresAt: boundedLease(now, stored.ExpiresAt, s.config.LeaseDuration), UpdatedAt: now,
+		Scope: scope, SessionID: sessionID, ExpectedBranchID: stored.BranchID, OldRuntimeSessionID: stored.RuntimeSessionID,
+		ExpectedRuntimeState:   stored.RuntimeState,
+		ExpectedLeaseExpiresAt: stored.LeaseExpiresAt,
+		NewRuntimeSessionID:    newRuntimeID, LeaseExpiresAt: boundedLease(now, stored.ExpiresAt, s.config.LeaseDuration), UpdatedAt: now,
 	})
 	if err != nil {
 		return nil, err
@@ -209,7 +217,7 @@ func (s *Service) Close(ctx context.Context, scope Scope, sessionID string) erro
 	}); err != nil {
 		return fmt.Errorf("stop AgentCore runtime session: %w", err)
 	}
-	if err := s.store.MarkClosed(ctx, scope, sessionID, now); err != nil {
+	if err := s.store.MarkClosed(ctx, scope, sessionID, stored.BranchID, now); err != nil {
 		return fmt.Errorf("mark voice session closed: %w", err)
 	}
 	return nil
@@ -288,6 +296,21 @@ func validateScope(scope Scope) error {
 	return nil
 }
 
+func scopeAllowsBranch(scope Scope, branchID string) bool {
+	if scope.AllBranches {
+		return true
+	}
+	if branchID == "" {
+		return false
+	}
+	for _, allowedBranchID := range scope.AllowedBranchIDs {
+		if branchID == allowedBranchID {
+			return true
+		}
+	}
+	return false
+}
+
 func validSessionID(value string) bool {
 	return strings.HasPrefix(value, "voice_") && len(value) >= len("voice_")+1 && len(value) <= 96
 }
@@ -333,7 +356,7 @@ func boundedLease(now, expiresAt time.Time, duration time.Duration) time.Time {
 
 func setResumable(value *Session, now time.Time) {
 	if value != nil {
-		value.Resumable = value.Status == StatusActive && value.ExpiresAt.After(now)
+		value.Resumable = value.Status == StatusActive && value.ExpiresAt.After(now) && value.LeaseExpiresAt.After(now)
 	}
 }
 
