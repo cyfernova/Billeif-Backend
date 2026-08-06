@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"invoice-backend/internal/voice/audio"
 	voiceruntime "invoice-backend/internal/voice/runtime"
 )
 
@@ -32,6 +33,9 @@ func main() {
 }
 
 func run(ctx context.Context) error {
+	if err := audio.VerifyLibopus(); err != nil {
+		return err
+	}
 	application, httpServer := newRuntimeApplication()
 	serveErrors := make(chan error, 1)
 	go func() {

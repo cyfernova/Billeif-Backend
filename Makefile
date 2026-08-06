@@ -89,7 +89,7 @@ infra-output: ## Save Terraform output to file
 # Build targets
 build-agentcore: ## Build the AgentCore voice runtime for linux/arm64 without publishing it
 	mkdir -p $(AGENTCORE_BUILD_DIR)
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o $(AGENTCORE_BUILD_DIR)/voice-runtime ./cmd/agentcore/voice-runtime
+	docker buildx build --platform linux/arm64 --file deploy/agentcore/Dockerfile --target voice-runtime-artifact --output type=local,dest=$(AGENTCORE_BUILD_DIR) .
 
 build-lambda: build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-email-delivery build-lambda-sqs-ses-feedback build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-outbox build-lambda-migrator ## Build all Lambda binaries
 
@@ -235,6 +235,7 @@ test: ## Run unit tests
 
 test-agentcore: ## Run focused AgentCore runtime and voice protocol tests
 	go test -race -count=1 ./internal/voice/protocol ./internal/voice/runtime ./internal/voice/webrtc ./cmd/agentcore/voice-runtime
+	go test -race -count=1 ./internal/voice/audio
 	go test -race -count=1 -tags=voice_live_probe ./internal/voice/webrtc
 
 test-integration: ## Run integration tests (requires local dependencies running)

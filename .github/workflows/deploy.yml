@@ -114,11 +114,16 @@ jobs:
       - name: Test AgentCore runtime contract
         run: make test-agentcore
 
-      - name: Build AgentCore ARM64 binary
-        run: make build-agentcore
+      - name: Set up QEMU for AgentCore ARM64
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Build AgentCore ARM64 binary
+        run: make build-agentcore
 
       - name: Build AgentCore ARM64 image without publishing
         run: |
@@ -127,6 +132,22 @@ jobs:
             --tag billeif-voice-runtime:ci \
             --load .
           test "$(docker inspect billeif-voice-runtime:ci --format '{{.Os}}/{{.Architecture}} {{.Config.User}}')" = "linux/arm64 10001:10001"
+          docker run --detach --name billeif-voice-runtime-ci \
+            --platform linux/arm64 \
+            --publish 127.0.0.1:18080:8080 \
+            --env RUNTIME_ID=ci-runtime \
+            --env AWS_REGION=ap-south-1 \
+            billeif-voice-runtime:ci
+          trap 'docker rm --force billeif-voice-runtime-ci >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 30); do
+            response="$(curl --silent --fail http://127.0.0.1:18080/ping || true)"
+            if test "${response}" = '{"status":"Healthy"}'; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs billeif-voice-runtime-ci
+          exit 1
 
       - name: Build Lambda artifacts
         run: make package-lambda
@@ -269,6 +290,12 @@ jobs:
             -target=aws_ecr_lifecycle_policy.voice_agentcore \
             -out=voice-ecr.tfplan
           terraform -chdir="${TERRAFORM_DIR}" apply -input=false -auto-approve voice-ecr.tfplan
+
+      - name: Set up QEMU for AgentCore voice publishing
+        if: env.TF_VAR_enable_voice == 'true'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
       - name: Set up Docker Buildx for AgentCore voice
         if: env.TF_VAR_enable_voice == 'true'
