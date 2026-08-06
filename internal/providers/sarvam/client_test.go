@@ -103,6 +103,47 @@ func TestClientPostJSONPreservesConfiguredBasePath(t *testing.T) {
 	}
 }
 
+func TestClientRefusesCrossOriginRedirectBeforeCredentialCanBeForwarded(t *testing.T) {
+	const apiKey = "redirect-test-api-key"
+	var redirectedCalls atomic.Int32
+	var redirectedCredential atomic.Bool
+	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirectedCalls.Add(1)
+		if r.Header.Get("api-subscription-key") != "" {
+			redirectedCredential.Store(true)
+		}
+		_, _ = io.WriteString(w, "redirected")
+	}))
+	defer destination.Close()
+
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", destination.URL+"/credential-target")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer origin.Close()
+
+	client, err := NewClient(Config{APIKey: apiKey, BaseURL: origin.URL}, origin.Client())
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	_, err = client.PostJSON(context.Background(), JSONRequest{
+		Path:          "/redirect",
+		Payload:       map[string]string{"text": "hello"},
+		ResponseLimit: 32,
+	})
+
+	if got := redirectedCalls.Load(); got != 0 {
+		t.Fatalf("redirected host received %d requests, want 0", got)
+	}
+	if redirectedCredential.Load() {
+		t.Fatal("redirected host received api-subscription-key")
+	}
+	var providerErr *ProviderError
+	if !errors.As(err, &providerErr) || providerErr.StatusCode != http.StatusTemporaryRedirect {
+		t.Fatalf("error = %v, want safe provider status 307", err)
+	}
+}
+
 func TestClientPostJSONPreservesCallerDeadlineAndCancellation(t *testing.T) {
 	requestStarted := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {

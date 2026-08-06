@@ -79,7 +79,23 @@ func NewClient(cfg Config, doer HTTPDoer) (*Client, error) {
 	if doer == nil {
 		doer = http.DefaultClient
 	}
+	doer = withoutRedirects(doer)
 	return &Client{apiKey: cfg.APIKey, baseURL: *parsed, doer: doer}, nil
+}
+
+func withoutRedirects(doer HTTPDoer) HTTPDoer {
+	httpClient, ok := doer.(*http.Client)
+	if !ok {
+		return doer
+	}
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	clientCopy := *httpClient
+	clientCopy.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return &clientCopy
 }
 
 func (c *Client) PostJSON(ctx context.Context, input JSONRequest) (*Response, error) {
