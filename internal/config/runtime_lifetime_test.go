@@ -11,6 +11,33 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 )
 
+func TestSecretIdentifierValuesIncludesSarvamExactlyOnce(t *testing.T) {
+	cfg := &Config{Secrets: SecretIdentifiers{
+		Database:             "database-secret",
+		CredentialEncryption: "credential-secret",
+		Razorpay:             "razorpay-secret",
+		LLM:                  "llm-secret",
+		Exa:                  "exa-secret",
+		GSTLookup:            "gst-lookup-secret",
+		GSTProvider:          "gst-provider-secret",
+		DeepSeek:             "deepseek-secret",
+		Sarvam:               "sarvam-secret",
+		InvoiceCursorHMAC:    "cursor-secret",
+	}}
+
+	got := cfg.SecretIdentifierValues()
+
+	count := 0
+	for _, identifier := range got {
+		if identifier == "sarvam-secret" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("Sarvam secret identifier count = %d in %#v, want exactly 1", count, got)
+	}
+}
+
 func TestSecretKindsForEntrypointAreExact(t *testing.T) {
 	tests := map[string][]SecretKind{
 		"http":           {SecretCredentialEncryption, SecretRazorpay, SecretLLM, SecretExa, SecretGSTLookup, SecretGSTProvider, SecretDeepSeek},

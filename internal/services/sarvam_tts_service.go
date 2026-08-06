@@ -1,25 +1,23 @@
 package services
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
 
 	"invoice-backend/internal/config"
+	"invoice-backend/internal/providers/sarvam"
 	"invoice-backend/pkg/logger"
 )
 
 const (
-	SarvamTTSModel          = "bulbul:v3"
-	SarvamTTSMaxCharacters  = 3500
-	SarvamTTSMaxAudioBytes  = 32 << 20
-	defaultSarvamTTSSpeaker = "shubh"
+	SarvamTTSModel          = sarvam.DefaultTTSModel
+	SarvamTTSMaxCharacters  = sarvam.TTSMaxCharacters
+	SarvamTTSMaxAudioBytes  = sarvam.MaxResponseBytes
+	defaultSarvamTTSSpeaker = sarvam.DefaultTTSSpeaker
 )
 
 var (
@@ -67,18 +65,14 @@ type SarvamTTSResult struct {
 	RequestID   string
 }
 
-type sarvamHTTPDoer interface {
-	Do(*http.Request) (*http.Response, error)
-}
-
 type SarvamTTSService struct {
 	appCfg   *config.Config
 	resolver ProviderConfigResolver
-	client   sarvamHTTPDoer
+	client   sarvam.HTTPDoer
 	log      *logger.Logger
 }
 
-func NewSarvamTTSService(appCfg *config.Config, resolver ProviderConfigResolver, client sarvamHTTPDoer, log *logger.Logger) *SarvamTTSService {
+func NewSarvamTTSService(appCfg *config.Config, resolver ProviderConfigResolver, client sarvam.HTTPDoer, log *logger.Logger) *SarvamTTSService {
 	cfg := config.SarvamConfig{}
 	if appCfg != nil {
 		cfg = appCfg.Sarvam
@@ -115,54 +109,42 @@ func (s *SarvamTTSService) Synthesize(ctx context.Context, input SarvamTTSReques
 	if err := validateSarvamTTSRequest(input); err != nil {
 		return nil, err
 	}
-	body, err := json.Marshal(input)
+	providerClient, err := sarvam.NewClient(sarvam.Config{
+		APIKey:     cfg.APIKey,
+		BaseURL:    cfg.BaseURL,
+		TTSModel:   SarvamTTSModel,
+		TTSSpeaker: defaultSarvamTTSSpeaker,
+	}, s.client)
 	if err != nil {
-		return nil, fmt.Errorf("marshal Sarvam TTS request: %w", err)
+		return nil, fmt.Errorf("configure Sarvam TTS client: %w", err)
 	}
-	endpoint := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/") + "/text-to-speech/stream"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	response, err := providerClient.PostJSON(ctx, sarvam.JSONRequest{
+		Path:          "/text-to-speech/stream",
+		Payload:       input,
+		Accept:        sarvamCodecContentType(input.OutputAudioCodec),
+		ResponseLimit: SarvamTTSMaxAudioBytes,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("create Sarvam TTS request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", sarvamCodecContentType(input.OutputAudioCodec))
-	req.Header.Set("api-subscription-key", strings.TrimSpace(cfg.APIKey))
-
-	resp, err := s.client.Do(req)
-	if err != nil {
+		if errors.Is(err, sarvam.ErrResponseTooLarge) {
+			return nil, fmt.Errorf("Sarvam TTS response exceeds %d bytes: %w", SarvamTTSMaxAudioBytes, err)
+		}
 		return nil, fmt.Errorf("call Sarvam TTS: %w", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		message, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		return nil, &SarvamProviderError{StatusCode: resp.StatusCode, Message: strings.TrimSpace(string(message))}
-	}
-	audio, err := io.ReadAll(io.LimitReader(resp.Body, SarvamTTSMaxAudioBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("read Sarvam TTS response: %w", err)
-	}
-	if len(audio) > SarvamTTSMaxAudioBytes {
-		return nil, fmt.Errorf("Sarvam TTS response exceeds %d bytes", SarvamTTSMaxAudioBytes)
-	}
-	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
+	contentType := strings.TrimSpace(response.ContentType)
 	if contentType == "" {
 		contentType = sarvamCodecContentType(input.OutputAudioCodec)
 	}
-	return &SarvamTTSResult{Audio: audio, ContentType: contentType, RequestID: resp.Header.Get("x-request-id")}, nil
+	return &SarvamTTSResult{Audio: response.Body, ContentType: contentType, RequestID: response.RequestID}, nil
 }
 
-type SarvamProviderError struct {
-	StatusCode int
-	Message    string
-}
-
-func (e *SarvamProviderError) Error() string {
-	return fmt.Sprintf("Sarvam TTS returned status %d", e.StatusCode)
-}
+type SarvamProviderError = sarvam.ProviderError
 
 func normalizeSarvamTTSRequest(input SarvamTTSRequest) SarvamTTSRequest {
 	input.Text = strings.TrimSpace(input.Text)
 	input.LanguageCode = strings.TrimSpace(input.LanguageCode)
+	if input.LanguageCode == "or-IN" {
+		input.LanguageCode = "od-IN"
+	}
 	input.Speaker = strings.TrimSpace(input.Speaker)
 	input.Model = strings.TrimSpace(input.Model)
 	input.OutputAudioCodec = strings.ToLower(strings.TrimSpace(input.OutputAudioCodec))

@@ -347,6 +347,7 @@ func (c *Config) configuredSecretIdentifiers() []string {
 		c.Secrets.GSTLookup,
 		c.Secrets.GSTProvider,
 		c.Secrets.DeepSeek,
+		c.Secrets.Sarvam,
 		c.Secrets.InvoiceCursorHMAC,
 	})
 }

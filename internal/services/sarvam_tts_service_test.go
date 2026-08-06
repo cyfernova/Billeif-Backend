@@ -14,6 +14,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type sarvamTTSResolver struct {
+	calls []config.SecretKind
+	key   string
+}
+
+func (r *sarvamTTSResolver) ResolveProvider(_ context.Context, cfg *config.Config, kind config.SecretKind) (*config.Config, error) {
+	r.calls = append(r.calls, kind)
+	resolved := *cfg
+	resolved.Sarvam.APIKey = r.key
+	return &resolved, nil
+}
+
 func TestSarvamTTSServiceSupportsEveryDocumentedLanguage(t *testing.T) {
 	for _, language := range SarvamLanguages {
 		t.Run(language.Code, func(t *testing.T) {
@@ -52,4 +64,73 @@ func TestSarvamTTSServiceRejectsInvalidInputBeforeProviderCall(t *testing.T) {
 
 	require.ErrorIs(t, err, ErrInvalidSarvamTTS)
 	require.False(t, called)
+}
+
+func TestSarvamTTSServiceNormalizesLegacyOdiaCodeAtTTSBoundary(t *testing.T) {
+	var received SarvamTTSRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&received))
+		w.Header().Set("Content-Type", "audio/mpeg")
+		_, _ = io.WriteString(w, "audio")
+	}))
+	defer server.Close()
+	svc := NewSarvamTTSService(
+		&config.Config{Sarvam: config.SarvamConfig{APIKey: "test-key", BaseURL: server.URL}},
+		nil,
+		server.Client(),
+		logger.New(),
+	)
+
+	_, err := svc.Synthesize(context.Background(), SarvamTTSRequest{Text: "namaskar", LanguageCode: "or-IN"})
+
+	require.NoError(t, err)
+	require.Equal(t, "od-IN", received.LanguageCode)
+}
+
+func TestSarvamTTSServiceResolvesSecretLazilyAtUseBoundary(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "resolved-test-key", r.Header.Get("api-subscription-key"))
+		_, _ = io.WriteString(w, "audio")
+	}))
+	defer server.Close()
+	resolver := &sarvamTTSResolver{key: "resolved-test-key"}
+	svc := NewSarvamTTSService(
+		&config.Config{
+			Sarvam:  config.SarvamConfig{BaseURL: server.URL},
+			Secrets: config.SecretIdentifiers{Sarvam: "sarvam-secret-identifier"},
+		},
+		resolver,
+		server.Client(),
+		logger.New(),
+	)
+	require.Empty(t, resolver.calls)
+
+	result, err := svc.Synthesize(context.Background(), SarvamTTSRequest{Text: "hello", LanguageCode: "en-IN"})
+
+	require.NoError(t, err)
+	require.Equal(t, []byte("audio"), result.Audio)
+	require.Equal(t, []config.SecretKind{config.SecretSarvam}, resolver.calls)
+}
+
+func TestSarvamTTSServicePrefersInlineKeyWithoutResolvingSecret(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "inline-test-key", r.Header.Get("api-subscription-key"))
+		_, _ = io.WriteString(w, "audio")
+	}))
+	defer server.Close()
+	resolver := &sarvamTTSResolver{key: "must-not-be-used"}
+	svc := NewSarvamTTSService(
+		&config.Config{
+			Sarvam:  config.SarvamConfig{APIKey: "inline-test-key", BaseURL: server.URL},
+			Secrets: config.SecretIdentifiers{Sarvam: "sarvam-secret-identifier"},
+		},
+		resolver,
+		server.Client(),
+		logger.New(),
+	)
+
+	_, err := svc.Synthesize(context.Background(), SarvamTTSRequest{Text: "hello", LanguageCode: "en-IN"})
+
+	require.NoError(t, err)
+	require.Empty(t, resolver.calls)
 }
