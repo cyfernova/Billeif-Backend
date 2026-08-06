@@ -358,7 +358,6 @@ func TestTerraformAddsGatewayLoggingAndLeastPrivilegeBoundaries(t *testing.T) {
 				`EXA_SECRET_ARN`,
 				`GST_LOOKUP_SECRET_ARN`,
 				`GST_PROVIDER_SECRET_ARN`,
-				`DEEPGRAM_SECRET_ARN`,
 				`DEEPSEEK_SECRET_ARN`,
 			},
 		},
@@ -375,7 +374,6 @@ func TestTerraformAddsGatewayLoggingAndLeastPrivilegeBoundaries(t *testing.T) {
 		`LLM_API_KEY               = var.llm_api_key`,
 		`EXA_API_KEY               = var.exa_api_key`,
 		`GST_LOOKUP_API_KEY        = var.gst_lookup_api_key`,
-		`DEEPGRAM_API_KEY          = var.deepgram_api_key`,
 		`DEEPSEEK_API_KEY          = var.deepseek_api_key`,
 	} {
 		if strings.Contains(string(lambda), forbidden) {

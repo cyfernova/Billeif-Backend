@@ -11,7 +11,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/apigatewaymanagementapi v1.29.18
 	github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider v1.60.4
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.57.6
-	github.com/aws/aws-sdk-go-v2/service/lambda v1.90.3
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.102.2
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.41.9
 	github.com/aws/aws-sdk-go-v2/service/ses v1.34.26

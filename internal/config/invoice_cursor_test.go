@@ -84,7 +84,6 @@ func validProductionHTTPConfigForCursorTest() *Config {
 	cfg.LLM.ExaAPIKey = "exa-key"
 	cfg.GSTLookup.APIKey = "gst-lookup-key"
 	cfg.GST.APIToken = "gst-provider-token"
-	cfg.Deepgram.APIKey = "deepgram-key"
-	cfg.VoiceRealtime.DeepSeekAPIKey = "deepseek-key"
+	cfg.DeepSeek.APIKey = "deepseek-key"
 	return cfg
 }

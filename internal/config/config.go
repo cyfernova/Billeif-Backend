@@ -9,35 +9,34 @@ import (
 )
 
 type Config struct {
-	Environment    string              `mapstructure:"ENVIRONMENT"`
-	Logging        LoggingConfig       `mapstructure:"LOGGING"`
-	Server         ServerConfig        `mapstructure:"SERVER"`
-	Database       DatabaseConfig      `mapstructure:"DATABASE"`
-	Redis          RedisConfig         `mapstructure:"REDIS"`
-	AWS            AWSConfig           `mapstructure:"AWS"`
-	SSM            SSMConfig           `mapstructure:"SSM"`
-	Secrets        SecretIdentifiers   `mapstructure:"SECRETS"`
-	WebSocket      WebSocketConfig     `mapstructure:"WEBSOCKET"`
-	Cognito        CognitoConfig       `mapstructure:"COGNITO"`
-	JWT            JWTConfig           `mapstructure:"JWT"`
-	S3             S3Config            `mapstructure:"S3"`
-	Razorpay       RazorpayConfig      `mapstructure:"RAZORPAY"`
-	FX             FXConfig            `mapstructure:"FX"`
-	WhatsApp       WhatsAppConfig      `mapstructure:"WHATSAPP"`
-	SQS            SQSConfig           `mapstructure:"SQS"`
-	SES            SESConfig           `mapstructure:"SES"`
-	Sentry         SentryConfig        `mapstructure:"SENTRY"`
-	Shipping       ShippingConfig      `mapstructure:"SHIPPING"`
-	GST            GSTConfig           `mapstructure:"GST"`
-	GSTLookup      GSTLookupConfig     `mapstructure:"GST_LOOKUP"`
-	Entitlements   EntitlementsConfig  `mapstructure:"ENTITLEMENTS"`
-	AllowedOrigins []string            `mapstructure:"ALLOWED_ORIGINS"`
-	LLM            LLMConfig           `mapstructure:"LLM"`
-	Deepgram       DeepgramConfig      `mapstructure:"DEEPGRAM"`
-	VoiceRealtime  VoiceRealtimeConfig `mapstructure:"VOICE_REALTIME"`
-	Sarvam         SarvamConfig        `mapstructure:"SARVAM"`
-	Credentials    CredentialsConfig   `mapstructure:"CREDENTIALS"`
-	MCP            MCPConfig           `mapstructure:"MCP"`
+	Environment    string             `mapstructure:"ENVIRONMENT"`
+	Logging        LoggingConfig      `mapstructure:"LOGGING"`
+	Server         ServerConfig       `mapstructure:"SERVER"`
+	Database       DatabaseConfig     `mapstructure:"DATABASE"`
+	Redis          RedisConfig        `mapstructure:"REDIS"`
+	AWS            AWSConfig          `mapstructure:"AWS"`
+	SSM            SSMConfig          `mapstructure:"SSM"`
+	Secrets        SecretIdentifiers  `mapstructure:"SECRETS"`
+	WebSocket      WebSocketConfig    `mapstructure:"WEBSOCKET"`
+	Cognito        CognitoConfig      `mapstructure:"COGNITO"`
+	JWT            JWTConfig          `mapstructure:"JWT"`
+	S3             S3Config           `mapstructure:"S3"`
+	Razorpay       RazorpayConfig     `mapstructure:"RAZORPAY"`
+	FX             FXConfig           `mapstructure:"FX"`
+	WhatsApp       WhatsAppConfig     `mapstructure:"WHATSAPP"`
+	SQS            SQSConfig          `mapstructure:"SQS"`
+	SES            SESConfig          `mapstructure:"SES"`
+	Sentry         SentryConfig       `mapstructure:"SENTRY"`
+	Shipping       ShippingConfig     `mapstructure:"SHIPPING"`
+	GST            GSTConfig          `mapstructure:"GST"`
+	GSTLookup      GSTLookupConfig    `mapstructure:"GST_LOOKUP"`
+	Entitlements   EntitlementsConfig `mapstructure:"ENTITLEMENTS"`
+	AllowedOrigins []string           `mapstructure:"ALLOWED_ORIGINS"`
+	LLM            LLMConfig          `mapstructure:"LLM"`
+	DeepSeek       DeepSeekConfig     `mapstructure:"DEEPSEEK"`
+	Sarvam         SarvamConfig       `mapstructure:"SARVAM"`
+	Credentials    CredentialsConfig  `mapstructure:"CREDENTIALS"`
+	MCP            MCPConfig          `mapstructure:"MCP"`
 }
 
 type LoggingConfig struct {
@@ -56,10 +55,6 @@ type LLMConfig struct {
 	ExaAPIKey  string `mapstructure:"EXA_API_KEY"`
 	ExaBaseURL string `mapstructure:"EXA_BASE_URL"`
 	ExaTimeout int    `mapstructure:"EXA_TIMEOUT"`
-}
-
-type DeepgramConfig struct {
-	APIKey string `mapstructure:"API_KEY"`
 }
 
 type SarvamConfig struct {
@@ -135,7 +130,6 @@ type SecretIdentifiers struct {
 	Exa                  string `mapstructure:"EXA"`
 	GSTLookup            string `mapstructure:"GST_LOOKUP"`
 	GSTProvider          string `mapstructure:"GST_PROVIDER"`
-	Deepgram             string `mapstructure:"DEEPGRAM"`
 	DeepSeek             string `mapstructure:"DEEPSEEK"`
 	Sarvam               string `mapstructure:"SARVAM"`
 	InvoiceCursorHMAC    string `mapstructure:"INVOICE_CURSOR_HMAC"`
@@ -332,7 +326,6 @@ func LoadForProfile(profile Profile) (*Config, error) {
 	_ = viper.BindEnv("SECRETS.EXA", "EXA_SECRET_ARN")
 	_ = viper.BindEnv("SECRETS.GST_LOOKUP", "GST_LOOKUP_SECRET_ARN")
 	_ = viper.BindEnv("SECRETS.GST_PROVIDER", "GST_PROVIDER_SECRET_ARN")
-	_ = viper.BindEnv("SECRETS.DEEPGRAM", "DEEPGRAM_SECRET_ARN")
 	_ = viper.BindEnv("SECRETS.DEEPSEEK", "DEEPSEEK_SECRET_ARN")
 	_ = viper.BindEnv("SECRETS.SARVAM", "SARVAM_SECRET_ARN")
 	_ = viper.BindEnv("SECRETS.INVOICE_CURSOR_HMAC", "INVOICE_CURSOR_HMAC_SECRET_ARN")
@@ -418,26 +411,12 @@ func LoadForProfile(profile Profile) (*Config, error) {
 	_ = viper.BindEnv("LLM.EXA_API_KEY", "EXA_API_KEY")
 	_ = viper.BindEnv("LLM.EXA_BASE_URL", "EXA_BASE_URL")
 	_ = viper.BindEnv("LLM.EXA_TIMEOUT", "EXA_TIMEOUT")
-	_ = viper.BindEnv("DEEPGRAM.API_KEY", "DEEPGRAM_API_KEY")
+	_ = viper.BindEnv("DEEPSEEK.API_KEY", "DEEPSEEK_API_KEY")
+	_ = viper.BindEnv("DEEPSEEK.BASE_URL", "DEEPSEEK_BASE_URL")
+	_ = viper.BindEnv("DEEPSEEK.MODEL", "DEEPSEEK_MODEL")
 	_ = viper.BindEnv("SARVAM.API_KEY", "SARVAM_API_KEY")
 	_ = viper.BindEnv("SARVAM.BASE_URL", "SARVAM_BASE_URL")
 	_ = viper.BindEnv("SARVAM.TIMEOUT", "SARVAM_TIMEOUT")
-	_ = viper.BindEnv("VOICE_REALTIME.DEEPGRAM_API_KEY", "DEEPGRAM_API_KEY")
-	_ = viper.BindEnv("VOICE_REALTIME.DEEPGRAM_VOICE_AGENT_URL", "DEEPGRAM_VOICE_AGENT_URL")
-	_ = viper.BindEnv("VOICE_REALTIME.INPUT_ENCODING", "DEEPGRAM_VOICE_INPUT_ENCODING")
-	_ = viper.BindEnv("VOICE_REALTIME.INPUT_SAMPLE_RATE", "DEEPGRAM_VOICE_INPUT_SAMPLE_RATE")
-	_ = viper.BindEnv("VOICE_REALTIME.OUTPUT_ENCODING", "DEEPGRAM_VOICE_OUTPUT_ENCODING")
-	_ = viper.BindEnv("VOICE_REALTIME.OUTPUT_SAMPLE_RATE", "DEEPGRAM_VOICE_OUTPUT_SAMPLE_RATE")
-	_ = viper.BindEnv("VOICE_REALTIME.LISTEN_MODEL", "DEEPGRAM_VOICE_LISTEN_MODEL")
-	_ = viper.BindEnv("VOICE_REALTIME.SPEAK_MODEL", "DEEPGRAM_VOICE_SPEAK_MODEL")
-	_ = viper.BindEnv("VOICE_REALTIME.DEEPSEEK_API_KEY", "DEEPSEEK_API_KEY")
-	_ = viper.BindEnv("VOICE_REALTIME.DEEPSEEK_BASE_URL", "DEEPSEEK_BASE_URL")
-	_ = viper.BindEnv("VOICE_REALTIME.DEEPSEEK_MODEL", "DEEPSEEK_MODEL")
-	_ = viper.BindEnv("VOICE_REALTIME.MAX_SESSION_SECONDS", "VOICE_WS_MAX_SESSION_SECONDS")
-	_ = viper.BindEnv("VOICE_REALTIME.PING_INTERVAL_SECONDS", "VOICE_WS_PING_INTERVAL_SECONDS")
-	_ = viper.BindEnv("VOICE_REALTIME.WRITE_TIMEOUT_SECONDS", "VOICE_WS_WRITE_TIMEOUT_SECONDS")
-	_ = viper.BindEnv("VOICE_REALTIME.MAX_FRAME_BYTES", "VOICE_WS_MAX_FRAME_BYTES")
-	_ = viper.BindEnv("VOICE_REALTIME.MAX_CONCURRENT_SESSIONS_PER_USER", "VOICE_WS_MAX_CONCURRENT_SESSIONS_PER_USER")
 	_ = viper.BindEnv("CREDENTIALS.ENCRYPTION_KEY", "CREDENTIAL_ENCRYPTION_KEY")
 	_ = viper.BindEnv("MCP.SERVER_URL", "MCP_SERVER_URL")
 	_ = viper.BindEnv("MCP.TIMEOUT", "MCP_TIMEOUT")
@@ -500,7 +479,6 @@ func applyFlatEnvFileFallbacks(cfg *Config) {
 	setIfEmpty(&cfg.Secrets.Exa, "EXA_SECRET_ARN")
 	setIfEmpty(&cfg.Secrets.GSTLookup, "GST_LOOKUP_SECRET_ARN")
 	setIfEmpty(&cfg.Secrets.GSTProvider, "GST_PROVIDER_SECRET_ARN")
-	setIfEmpty(&cfg.Secrets.Deepgram, "DEEPGRAM_SECRET_ARN")
 	setIfEmpty(&cfg.Secrets.DeepSeek, "DEEPSEEK_SECRET_ARN")
 	setIfEmpty(&cfg.Secrets.InvoiceCursorHMAC, "INVOICE_CURSOR_HMAC_SECRET_ARN")
 
@@ -633,7 +611,6 @@ func setDefaults(cfg *Config) {
 	if cfg.LLM.ExaTimeout == 0 {
 		cfg.LLM.ExaTimeout = 12
 	}
-	cfg.VoiceRealtime = cfg.VoiceRealtime.WithDefaults(cfg.Deepgram)
 	if cfg.Sarvam.BaseURL == "" {
 		cfg.Sarvam.BaseURL = "https://api.sarvam.ai"
 	}

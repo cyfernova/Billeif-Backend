@@ -41,10 +41,7 @@ func ValidateForProfile(cfg *Config, profile Profile) error {
 			if err := requireGSTProvider(cfg); err != nil {
 				return err
 			}
-			if err := requireProviderIdentifier(cfg.Secrets.Deepgram, firstConfigured(cfg.Deepgram.APIKey, cfg.VoiceRealtime.DeepgramAPIKey), "DEEPGRAM_SECRET_ARN"); err != nil {
-				return err
-			}
-			if err := requireProviderIdentifier(cfg.Secrets.DeepSeek, cfg.VoiceRealtime.DeepSeekAPIKey, "DEEPSEEK_SECRET_ARN"); err != nil {
+			if err := requireProviderIdentifier(cfg.Secrets.DeepSeek, cfg.DeepSeek.APIKey, "DEEPSEEK_SECRET_ARN"); err != nil {
 				return err
 			}
 		}

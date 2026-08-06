@@ -13,14 +13,13 @@ import (
 
 func TestSecretKindsForEntrypointAreExact(t *testing.T) {
 	tests := map[string][]SecretKind{
-		"http":           {SecretCredentialEncryption, SecretRazorpay, SecretLLM, SecretExa, SecretGSTLookup, SecretGSTProvider, SecretDeepgram, SecretDeepSeek},
-		"a2a-stream":     {SecretCredentialEncryption, SecretRazorpay, SecretLLM, SecretExa, SecretGSTLookup, SecretGSTProvider, SecretDeepgram, SecretDeepSeek},
+		"http":           {SecretCredentialEncryption, SecretRazorpay, SecretLLM, SecretExa, SecretGSTLookup, SecretGSTProvider, SecretDeepSeek},
+		"a2a-stream":     {SecretCredentialEncryption, SecretRazorpay, SecretLLM, SecretExa, SecretGSTLookup, SecretGSTProvider, SecretDeepSeek},
 		"sqs-invoice":    {SecretCredentialEncryption},
 		"sqs-gst":        {SecretCredentialEncryption, SecretGSTProvider},
 		"sqs-bargaining": {SecretCredentialEncryption, SecretLLM, SecretExa},
 		"outbox":         nil,
 		"ws":             nil,
-		"voice-session":  {SecretDeepgram, SecretDeepSeek},
 	}
 	for entrypoint, want := range tests {
 		t.Run(entrypoint, func(t *testing.T) {

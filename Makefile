@@ -3,7 +3,7 @@
 -include .env.local
 export
 
-.PHONY: help infra-backend-init infra-init infra-validate infra-apply infra-plan infra-destroy infra-output build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-email-delivery build-lambda-sqs-ses-feedback build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-voice-session build-lambda-outbox build-lambda-migrator build-lambda-custom-sms-sender package-lambda package-lambda-email-delivery package-lambda-ses-feedback package-lambda-outbox package-lambda-migrator migration-manifest migration-manifest-verify rds-tunnel run-local test test-integration migrate-up migrate-down migrate-rds-up migrate-rds-down migrate-create fmt lint clean deps test-coverage swagger
+.PHONY: help infra-backend-init infra-init infra-validate infra-apply infra-plan infra-destroy infra-output build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-email-delivery build-lambda-sqs-ses-feedback build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-outbox build-lambda-migrator build-lambda-custom-sms-sender package-lambda package-lambda-email-delivery package-lambda-ses-feedback package-lambda-outbox package-lambda-migrator migration-manifest migration-manifest-verify rds-tunnel run-local test test-integration migrate-up migrate-down migrate-rds-up migrate-rds-down migrate-create fmt lint clean deps test-coverage swagger
 
 LAMBDA_BUILD_DIR := .build/lambda
 TERRAFORM_DIR := infrastructure/terraform
@@ -23,21 +23,9 @@ TF_VAR_exa_base_url ?= $(EXA_BASE_URL)
 TF_VAR_exa_timeout ?= $(EXA_TIMEOUT)
 TF_VAR_gst_lookup_base_url ?= $(GST_LOOKUP_BASE_URL)
 TF_VAR_gst_lookup_timeout ?= $(GST_LOOKUP_TIMEOUT)
-TF_VAR_deepgram_voice_agent_url ?= $(DEEPGRAM_VOICE_AGENT_URL)
-TF_VAR_deepgram_voice_listen_model ?= $(DEEPGRAM_VOICE_LISTEN_MODEL)
-TF_VAR_deepgram_voice_speak_model ?= $(DEEPGRAM_VOICE_SPEAK_MODEL)
-TF_VAR_deepgram_voice_input_encoding ?= $(DEEPGRAM_VOICE_INPUT_ENCODING)
-TF_VAR_deepgram_voice_input_sample_rate ?= $(DEEPGRAM_VOICE_INPUT_SAMPLE_RATE)
-TF_VAR_deepgram_voice_output_encoding ?= $(DEEPGRAM_VOICE_OUTPUT_ENCODING)
-TF_VAR_deepgram_voice_output_sample_rate ?= $(DEEPGRAM_VOICE_OUTPUT_SAMPLE_RATE)
 TF_VAR_deepseek_base_url ?= $(DEEPSEEK_BASE_URL)
 TF_VAR_deepseek_model ?= $(DEEPSEEK_MODEL)
 TF_VAR_mcp_server_url ?= $(MCP_SERVER_URL)
-TF_VAR_voice_ws_max_session_seconds ?= $(VOICE_WS_MAX_SESSION_SECONDS)
-TF_VAR_voice_ws_ping_interval_seconds ?= $(VOICE_WS_PING_INTERVAL_SECONDS)
-TF_VAR_voice_ws_write_timeout_seconds ?= $(VOICE_WS_WRITE_TIMEOUT_SECONDS)
-TF_VAR_voice_ws_max_frame_bytes ?= $(VOICE_WS_MAX_FRAME_BYTES)
-TF_VAR_voice_ws_max_concurrent_sessions_per_user ?= $(VOICE_WS_MAX_CONCURRENT_SESSIONS_PER_USER)
 ifneq ($(strip $(ENABLE_COGNITO_CUSTOM_DOMAIN_CUTOVER)),)
 TF_VAR_enable_cognito_custom_domain_cutover ?= $(ENABLE_COGNITO_CUSTOM_DOMAIN_CUTOVER)
 endif
@@ -98,7 +86,7 @@ infra-output: ## Save Terraform output to file
 	@echo "Terraform output saved to infrastructure/terraform/terraform_output.txt"
 
 # Build targets
-build-lambda: build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-email-delivery build-lambda-sqs-ses-feedback build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-voice-session build-lambda-outbox build-lambda-migrator ## Build all Lambda binaries
+build-lambda: build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-email-delivery build-lambda-sqs-ses-feedback build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-outbox build-lambda-migrator ## Build all Lambda binaries
 
 build-lambda-http: ## Build HTTP API Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/http
@@ -131,10 +119,6 @@ build-lambda-sqs-bargaining: ## Build bargaining SQS Lambda bootstrap binary
 build-lambda-ws: ## Build WebSocket Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/ws
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o $(LAMBDA_BUILD_DIR)/ws/bootstrap ./cmd/lambda/ws
-
-build-lambda-voice-session: ## Build realtime voice session Lambda bootstrap binary
-	mkdir -p $(LAMBDA_BUILD_DIR)/voice-session
-	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o $(LAMBDA_BUILD_DIR)/voice-session/bootstrap ./cmd/lambda/voice-session
 
 build-lambda-outbox: ## Build stripped ARM64 Billeif outbox dispatcher Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/outbox
@@ -169,9 +153,6 @@ package-lambda: build-lambda build-lambda-custom-sms-sender package-lambda-email
 	rm -f $(LAMBDA_BUILD_DIR)/ws.zip
 	TZ=UTC touch -t 198001010000 $(LAMBDA_BUILD_DIR)/ws/bootstrap
 	cd $(LAMBDA_BUILD_DIR)/ws && TZ=UTC zip -q -X -j ../ws.zip bootstrap
-	rm -f $(LAMBDA_BUILD_DIR)/voice-session.zip
-	TZ=UTC touch -t 198001010000 $(LAMBDA_BUILD_DIR)/voice-session/bootstrap
-	cd $(LAMBDA_BUILD_DIR)/voice-session && TZ=UTC zip -q -X -j ../voice-session.zip bootstrap
 	rm -f $(LAMBDA_BUILD_DIR)/custom-sms-sender.zip
 	rm -f $(LAMBDA_BUILD_DIR)/custom-sms-sender/node_modules/.modules.yaml $(LAMBDA_BUILD_DIR)/custom-sms-sender/node_modules/.pnpm-workspace-state-v1.json
 	find $(LAMBDA_BUILD_DIR)/custom-sms-sender -exec touch -t 198001010000 {} +

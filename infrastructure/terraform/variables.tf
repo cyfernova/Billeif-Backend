@@ -223,7 +223,7 @@ variable "enable_background_processing" {
 }
 
 variable "enable_voice" {
-  description = "Activate the explicitly reviewed Billeif realtime voice pilot after ordinary application enablement."
+  description = "Activate the explicitly reviewed AgentCore realtime voice rollout after its deployment gates pass."
   type        = bool
   default     = false
 }
@@ -436,50 +436,8 @@ variable "gst_lookup_timeout" {
   default     = 15
 }
 
-variable "deepgram_voice_agent_url" {
-  description = "Deepgram Voice Agent websocket URL"
-  type        = string
-  default     = ""
-}
-
-variable "deepgram_voice_listen_model" {
-  description = "Deepgram Voice Agent listen model"
-  type        = string
-  default     = "nova-2"
-}
-
-variable "deepgram_voice_speak_model" {
-  description = "Deepgram Voice Agent speak model"
-  type        = string
-  default     = "nova-2"
-}
-
-variable "deepgram_voice_input_encoding" {
-  description = "Realtime voice input encoding"
-  type        = string
-  default     = "linear16"
-}
-
-variable "deepgram_voice_input_sample_rate" {
-  description = "Realtime voice input sample rate"
-  type        = number
-  default     = 24000
-}
-
-variable "deepgram_voice_output_encoding" {
-  description = "Realtime voice output encoding"
-  type        = string
-  default     = "linear16"
-}
-
-variable "deepgram_voice_output_sample_rate" {
-  description = "Realtime voice output sample rate"
-  type        = number
-  default     = 24000
-}
-
 variable "deepseek_base_url" {
-  description = "OpenAI-compatible base URL for realtime voice LLM calls"
+  description = "OpenAI-compatible base URL for DeepSeek calls"
   type        = string
 
   validation {
@@ -494,7 +452,7 @@ variable "deepseek_base_url" {
 }
 
 variable "deepseek_model" {
-  description = "OpenAI-compatible model for realtime voice"
+  description = "OpenAI-compatible DeepSeek model"
   type        = string
 
   validation {
@@ -509,7 +467,7 @@ variable "deepseek_model" {
 }
 
 variable "mcp_server_url" {
-  description = "Base URL for the deployed MCP server used by API and realtime voice tool calls"
+  description = "Base URL for the deployed MCP server used by API tool calls"
   type        = string
   default     = ""
 
@@ -519,94 +477,14 @@ variable "mcp_server_url" {
   }
 }
 
-variable "voice_ws_max_session_seconds" {
-  description = "Maximum Billeif pilot voice session duration"
-  type        = number
-  default     = 900
-
-  validation {
-    condition     = var.voice_ws_max_session_seconds == 900
-    error_message = "voice_ws_max_session_seconds is fixed at the 900-second Billeif pilot cap."
-  }
-}
-
-variable "voice_ws_ping_interval_seconds" {
-  description = "Realtime voice websocket ping interval"
-  type        = number
-  default     = 30
-}
-
-variable "voice_ws_write_timeout_seconds" {
-  description = "Realtime voice websocket write timeout"
-  type        = number
-  default     = 10
-}
-
-variable "voice_ws_max_frame_bytes" {
-  description = "Maximum realtime voice websocket binary frame size"
-  type        = number
-  default     = 16384
-}
-
-variable "voice_ws_max_concurrent_sessions_per_user" {
-  description = "Maximum concurrent Billeif pilot voice sessions per authenticated user"
-  type        = number
-  default     = 1
-
-  validation {
-    condition     = var.voice_ws_max_concurrent_sessions_per_user == 1
-    error_message = "voice_ws_max_concurrent_sessions_per_user is fixed at one for the Billeif pilot."
-  }
-}
-
-variable "voice_ws_event_poll_interval_ms" {
-  description = "Billeif pilot voice Lambda worker DynamoDB event poll interval"
-  type        = number
-  default     = 250
-
-  validation {
-    condition     = var.voice_ws_event_poll_interval_ms == 250
-    error_message = "voice_ws_event_poll_interval_ms is fixed at 250ms for the Billeif pilot."
-  }
-}
-
-variable "voice_ws_event_ttl_seconds" {
-  description = "Realtime voice queued event TTL"
-  type        = number
-  default     = 300
-}
-
-variable "voice_ws_max_outbound_chunk_bytes" {
-  description = "Maximum raw assistant audio bytes per API Gateway WebSocket message before base64 encoding"
-  type        = number
-  default     = 32768
-}
-
-variable "voice_ws_provider_ready_timeout_seconds" {
-  description = "Realtime voice provider welcome timeout"
-  type        = number
-  default     = 30
-}
-
 variable "voice_sessions_table_name" {
-  description = "Optional DynamoDB table name override for realtime voice session state."
+  description = "Optional DynamoDB table name override for retained voice session state."
   type        = string
   default     = ""
 
   validation {
     condition     = var.voice_sessions_table_name == trimspace(var.voice_sessions_table_name) && (var.voice_sessions_table_name == "" || can(regex("^[A-Za-z0-9_.-]{3,255}$", var.voice_sessions_table_name)))
     error_message = "voice_sessions_table_name must be a 3-255 character DynamoDB table name without surrounding whitespace."
-  }
-}
-
-variable "voice_session_lambda_function_name" {
-  description = "Optional Lambda function name override for the realtime voice session worker."
-  type        = string
-  default     = ""
-
-  validation {
-    condition     = var.voice_session_lambda_function_name == trimspace(var.voice_session_lambda_function_name) && (var.voice_session_lambda_function_name == "" || can(regex("^[A-Za-z0-9-_]{1,64}$", var.voice_session_lambda_function_name)))
-    error_message = "voice_session_lambda_function_name must be a 1-64 character Lambda name without surrounding whitespace."
   }
 }
 
@@ -630,33 +508,5 @@ variable "ses_sender_email" {
   validation {
     condition     = var.ses_sender_email == trimspace(var.ses_sender_email) && can(regex("^[A-Za-z0-9!#$%&'+_-]+(?:\\.[A-Za-z0-9!#$%&'+_-]+)*@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$", var.ses_sender_email)) && !endswith(lower(var.ses_sender_email), ".local")
     error_message = "ses_sender_email must be a non-.local email address with strict DNS labels and no ARN wildcard or path characters."
-  }
-}
-
-variable "voice_session_lambda_memory_size" {
-  description = "Memory size for realtime voice session worker Lambda"
-  type        = number
-  default     = 1024
-}
-
-variable "voice_session_lambda_timeout_seconds" {
-  description = "Timeout for the Billeif pilot realtime voice session worker Lambda"
-  type        = number
-  default     = 900
-
-  validation {
-    condition     = var.voice_session_lambda_timeout_seconds == 900
-    error_message = "voice_session_lambda_timeout_seconds is fixed at the 900-second Billeif pilot cap."
-  }
-}
-
-variable "voice_session_reserved_concurrency" {
-  description = "Hard reserved-concurrency cap for the explicitly enabled Billeif realtime voice pilot"
-  type        = number
-  default     = 5
-
-  validation {
-    condition     = var.voice_session_reserved_concurrency == 5
-    error_message = "voice_session_reserved_concurrency is fixed at five for the Billeif pilot."
   }
 }

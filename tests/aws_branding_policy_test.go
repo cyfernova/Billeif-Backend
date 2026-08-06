@@ -92,9 +92,6 @@ aws_apigatewayv2_integration.websocket_lambda
 aws_apigatewayv2_route.ws_connect
 aws_apigatewayv2_route.ws_default
 aws_apigatewayv2_route.ws_disconnect
-aws_apigatewayv2_route.ws_voice_audio
-aws_apigatewayv2_route.ws_voice_control
-aws_apigatewayv2_route.ws_voice_start
 aws_apigatewayv2_stage.websocket_default
 aws_cloudwatch_dashboard.main
 aws_cloudwatch_log_group.cognito_phone_custom_sms
@@ -104,7 +101,6 @@ aws_cloudwatch_log_group.lambda_sqs_bargaining
 aws_cloudwatch_log_group.lambda_sqs_gst
 aws_cloudwatch_log_group.lambda_sqs_invoice
 aws_cloudwatch_log_group.lambda_sqs_payment
-aws_cloudwatch_log_group.lambda_voice_session
 aws_cloudwatch_log_group.lambda_ws_handler
 aws_cloudwatch_log_group.rest_api_access
 aws_cloudwatch_log_group.websocket_api_access
@@ -117,7 +113,6 @@ aws_cloudwatch_metric_alarm.lambda_ws_errors
 aws_cloudwatch_metric_alarm.rds_cpu_high
 aws_cloudwatch_metric_alarm.rds_storage_low
 aws_cloudwatch_metric_alarm.threat_detection
-aws_cloudwatch_metric_alarm.voice_active_sessions
 aws_cognito_user_group.accountant
 aws_cognito_user_group.admin
 aws_cognito_user_group.viewer
@@ -148,7 +143,6 @@ aws_iam_role.apigateway_cloudwatch
 aws_iam_role.cognito_phone_custom_sms
 aws_iam_role.cognito_phone_sms
 aws_iam_role.lambda_exec
-aws_iam_role.lambda_voice_exec
 aws_iam_role.lambda_websocket_exec
 aws_iam_role.lambda_worker_exec
 aws_iam_role.rds_tunnel
@@ -156,14 +150,12 @@ aws_iam_role.sns_feedback
 aws_iam_role_policy.cognito_phone_custom_sms
 aws_iam_role_policy.cognito_phone_sms
 aws_iam_role_policy.lambda_app
-aws_iam_role_policy.lambda_voice_app
 aws_iam_role_policy.lambda_websocket_app
 aws_iam_role_policy.lambda_worker_app
 aws_iam_role_policy.sns_feedback
 aws_iam_role_policy_attachment.apigateway_cloudwatch
 aws_iam_role_policy_attachment.cognito_phone_custom_sms_basic
 aws_iam_role_policy_attachment.lambda_basic
-aws_iam_role_policy_attachment.lambda_voice_basic
 aws_iam_role_policy_attachment.lambda_vpc_access
 aws_iam_role_policy_attachment.lambda_websocket_basic
 aws_iam_role_policy_attachment.lambda_websocket_vpc_access
@@ -187,7 +179,6 @@ aws_lambda_function.sqs_bargaining
 aws_lambda_function.sqs_gst
 aws_lambda_function.sqs_invoice
 aws_lambda_function.sqs_payment
-aws_lambda_function.voice_session
 aws_lambda_function.ws_handler
 aws_lambda_permission.allow_rest_a2a_stream
 aws_lambda_permission.allow_rest_api_http
@@ -225,7 +216,6 @@ aws_s3_object.api_http_lambda_artifact
 aws_s3_object.sqs_bargaining_lambda_artifact
 aws_secretsmanager_secret.apns
 aws_secretsmanager_secret.credential_encryption
-aws_secretsmanager_secret.deepgram
 aws_secretsmanager_secret.deepseek
 aws_secretsmanager_secret.exa
 aws_secretsmanager_secret.fcm
@@ -292,7 +282,6 @@ lambda_api_http_arn
 lambda_sqs_gst_arn
 lambda_sqs_invoice_arn
 lambda_sqs_payment_arn
-lambda_voice_session_arn
 lambda_ws_handler_arn
 payment_processing_queue_url
 phone_auth_cooldown_table
@@ -313,9 +302,6 @@ s3_bucket_logos
 s3_bucket_products
 sns_alerts_topic_arn
 user_pool_id
-voice_realtime_input_sample_rate
-voice_realtime_output_sample_rate
-voice_realtime_ws_url
 voice_sessions_table
 vpc_id
 websocket_api_url
@@ -340,14 +326,6 @@ DATABASE_NAME
 DATABASE_PORT
 DATABASE_SECRET_ARN
 DATABASE_SSL_MODE
-DEEPGRAM_SECRET_ARN
-DEEPGRAM_VOICE_AGENT_URL
-DEEPGRAM_VOICE_INPUT_ENCODING
-DEEPGRAM_VOICE_INPUT_SAMPLE_RATE
-DEEPGRAM_VOICE_LISTEN_MODEL
-DEEPGRAM_VOICE_OUTPUT_ENCODING
-DEEPGRAM_VOICE_OUTPUT_SAMPLE_RATE
-DEEPGRAM_VOICE_SPEAK_MODEL
 DEEPSEEK_BASE_URL
 DEEPSEEK_MODEL
 DEEPSEEK_SECRET_ARN
@@ -390,17 +368,6 @@ SQS_EMAIL_DELIVERY_QUEUE
 SQS_GST_QUEUE
 SQS_INVOICE_QUEUE
 SQS_PAYMENT_QUEUE
-VOICE_SESSIONS_TABLE
-VOICE_SESSION_WORKER_FUNCTION_NAME
-VOICE_WS_EVENT_POLL_INTERVAL_MS
-VOICE_WS_EVENT_TTL_SECONDS
-VOICE_WS_MAX_CONCURRENT_SESSIONS_PER_USER
-VOICE_WS_MAX_FRAME_BYTES
-VOICE_WS_MAX_OUTBOUND_CHUNK_BYTES
-VOICE_WS_MAX_SESSION_SECONDS
-VOICE_WS_PING_INTERVAL_SECONDS
-VOICE_WS_PROVIDER_READY_TIMEOUT_SECONDS
-VOICE_WS_WRITE_TIMEOUT_SECONDS
 WEBSOCKET_API_ENDPOINT
 WEBSOCKET_CONNECTIONS_TABLE
 `
@@ -509,8 +476,8 @@ func TestNATReadinessAndShutdownOrderingAreExplicit(t *testing.T) {
 	if !strings.Contains(migrations, `aws_ssm_association.nat_bootstrap_ready`) {
 		t.Error("database migration must depend on verified NAT bootstrap readiness")
 	}
-	if got := strings.Count(lambdas, `aws_ssm_association.nat_activation_ready,`); got != 10 {
-		t.Errorf("all ten application Lambda resources must wait for NAT activation readiness; got %d", got)
+	if got := strings.Count(lambdas, `aws_ssm_association.nat_activation_ready,`); got != 9 {
+		t.Errorf("all nine application Lambda resources must wait for NAT activation readiness; got %d", got)
 	}
 }
 
@@ -548,7 +515,6 @@ func TestTerraformBrandingPreservesPublicInterfaceNames(t *testing.T) {
 	for _, required := range []string{
 		`COGNITO_DOMAIN`,
 		`WEBSOCKET_CONNECTIONS_TABLE`,
-		`VOICE_SESSIONS_TABLE`,
 		`cognito_additional_callback_urls`,
 		`cognito_additional_logout_urls`,
 	} {
@@ -774,7 +740,7 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 	)
 	assertExactManifest(t, "Terraform output keys", terraformOutputKeys(t), wantOutputs)
 	wantEnvironment := removeManifestEntry(manifestLines(preTaskEnvironmentManifest), "SQS_PAYMENT_QUEUE")
-	wantEnvironment = append(wantEnvironment, "INVOICE_CURSOR_HMAC_SECRET_ARN", "SARVAM_SECRET_ARN", "SES_SENDING_ACCOUNT_ID", "VOICE_ENABLED")
+	wantEnvironment = append(wantEnvironment, "INVOICE_CURSOR_HMAC_SECRET_ARN", "SARVAM_SECRET_ARN", "SES_SENDING_ACCOUNT_ID")
 	assertExactManifest(t, "Terraform environment keys", terraformEnvironmentKeys(t), wantEnvironment)
 
 	providers := readTerraformFile(t, "providers.tf")
@@ -1066,7 +1032,7 @@ var stableAWSNameAttributeAllowlist = map[string][]string{
 	"aws_budgets_budget.name":                                   {"local.resource_prefix"},
 	"aws_cloudformation_stack.name":                             {"local.resource_prefix"},
 	"aws_cloudwatch_dashboard.dashboard_name":                   {"local.resource_prefix"},
-	"aws_cloudwatch_log_group.name":                             {"local.resource_prefix", "local.voice_session_lambda_name"},
+	"aws_cloudwatch_log_group.name":                             {"local.resource_prefix"},
 	"aws_cloudwatch_log_metric_filter.log_group_name":           {"each.value"},
 	"aws_cloudwatch_log_metric_filter.name":                     {"local.resource_prefix"},
 	"aws_cloudwatch_metric_alarm.alarm_name":                    {"local.resource_prefix"},
@@ -1086,7 +1052,7 @@ var stableAWSNameAttributeAllowlist = map[string][]string{
 	"aws_iam_role_policy.name":                                  {"local.resource_prefix"},
 	"aws_kms_alias.name":                                        {"var.project_name"},
 	"aws_lambda_event_source_mapping.function_name":             {"aws_lambda_function."},
-	"aws_lambda_function.function_name":                         {"local.resource_prefix", "local.voice_session_lambda_name"},
+	"aws_lambda_function.function_name":                         {"local.resource_prefix"},
 	"aws_lambda_invocation.function_name":                       {"aws_lambda_function."},
 	"aws_lambda_permission.function_name":                       {"aws_lambda_function."},
 	"aws_s3_bucket.bucket":                                      {"local.bucket_prefix"},
@@ -1624,9 +1590,6 @@ var stableNameLocalDefinitionContracts = map[string]stableNameLocalDefinitionCon
 	},
 	"voice_sessions_table_name": {
 		explicitValidatedOverrides: []string{"var.voice_sessions_table_name"},
-	},
-	"voice_session_lambda_name": {
-		explicitValidatedOverrides: []string{"var.voice_session_lambda_function_name"},
 	},
 	"db_host_ssm_parameter_name": {
 		derivedTokenSets: [][]string{{"var.project_name", "var.environment"}},

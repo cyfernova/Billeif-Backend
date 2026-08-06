@@ -194,22 +194,19 @@ func TestProductionValidationProfilesFailClosedForTheirOwnSecretIdentifiers(t *t
 	}
 }
 
-func TestHTTPProfileRequiresVoiceProviderIdentifiersWhileRoutesExposeRealtimeVoice(t *testing.T) {
+func TestHTTPProfileRequiresDeepSeekProviderIdentifier(t *testing.T) {
 	cfg := validConfigForTest()
 	cfg.Environment = "production"
-	cfg.Secrets.Deepgram = ""
 	cfg.Secrets.DeepSeek = ""
-	cfg.Deepgram.APIKey = ""
-	cfg.VoiceRealtime.DeepgramAPIKey = ""
-	cfg.VoiceRealtime.DeepSeekAPIKey = ""
+	cfg.DeepSeek.APIKey = ""
 	cfg.LLM.ExaAPIKey = "exa-key"
 	cfg.GSTLookup.APIKey = "gst-lookup-key"
 	cfg.GST.APIToken = "gst-provider-token"
 	cfg.Secrets.InvoiceCursorHMAC = "cursor-secret"
 
 	err := ValidateForProfile(cfg, ProfileHTTP)
-	if err == nil || !strings.Contains(err.Error(), "DEEPGRAM_SECRET_ARN") {
-		t.Fatalf("expected HTTP voice provider identifier validation, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "DEEPSEEK_SECRET_ARN") {
+		t.Fatalf("expected HTTP DeepSeek provider identifier validation, got %v", err)
 	}
 }
 
@@ -265,7 +262,7 @@ func TestLoadForProfileAcceptsScopedProductionWorkerAndWebSocketEnvironments(t *
 			for _, key := range []string{
 				"CREDENTIAL_ENCRYPTION_SECRET_ARN", "RAZORPAY_SECRET_ARN", "LLM_SECRET_ARN",
 				"EXA_SECRET_ARN", "GST_LOOKUP_SECRET_ARN", "GST_PROVIDER_SECRET_ARN",
-				"DEEPGRAM_SECRET_ARN", "DEEPSEEK_SECRET_ARN", "LLM_API_URL", "LLM_MODEL",
+				"DEEPSEEK_SECRET_ARN", "LLM_API_URL", "LLM_MODEL",
 			} {
 				t.Setenv(key, "")
 			}

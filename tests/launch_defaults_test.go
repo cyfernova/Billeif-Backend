@@ -76,7 +76,6 @@ func TestAllGoLambdaBuildsAreStrippedAndReproducible(t *testing.T) {
 		"build-lambda-sqs-gst",
 		"build-lambda-sqs-bargaining",
 		"build-lambda-ws",
-		"build-lambda-voice-session",
 		"build-lambda-outbox",
 		"build-lambda-migrator",
 	}
@@ -113,7 +112,6 @@ func TestAllLambdaArchivesAreDeterministic(t *testing.T) {
 		"sqs-gst",
 		"sqs-bargaining",
 		"ws",
-		"voice-session",
 		"outbox",
 		"migrator",
 	} {

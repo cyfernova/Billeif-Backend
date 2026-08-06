@@ -508,28 +508,6 @@ resource "aws_cloudwatch_metric_alarm" "outbox_oldest_pending_age" {
   }
 }
 
-resource "aws_cloudwatch_metric_alarm" "voice_active_sessions" {
-  count = var.enable_application && var.enable_voice ? 1 : 0
-
-  alarm_name          = "${local.resource_prefix}-voice-active-sessions"
-  comparison_operator = "GreaterThanOrEqualToThreshold"
-  evaluation_periods  = 3
-  datapoints_to_alarm = 2
-  metric_name         = "ConcurrentExecutions"
-  namespace           = "AWS/Lambda"
-  period              = 60
-  statistic           = "Maximum"
-  threshold           = var.voice_session_reserved_concurrency
-  treat_missing_data  = "notBreaching"
-  alarm_description   = "Billeif pilot voice sessions reached the hard concurrency cap"
-  alarm_actions       = [aws_sns_topic.alerts.arn]
-  ok_actions          = [aws_sns_topic.alerts.arn]
-
-  dimensions = {
-    FunctionName = aws_lambda_function.voice_session.function_name
-  }
-}
-
 resource "aws_cloudwatch_dashboard" "main" {
   dashboard_name = "${local.resource_prefix}-dashboard"
 

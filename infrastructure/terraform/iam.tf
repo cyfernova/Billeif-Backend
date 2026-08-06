@@ -11,7 +11,6 @@ locals {
     aws_secretsmanager_secret.exa.arn,
     aws_secretsmanager_secret.gst_lookup.arn,
     aws_secretsmanager_secret.gst_provider.arn,
-    aws_secretsmanager_secret.deepgram.arn,
     aws_secretsmanager_secret.deepseek.arn,
     aws_secretsmanager_secret.sarvam.arn
   ]
@@ -138,16 +137,6 @@ resource "aws_iam_role_policy_attachment" "lambda_websocket_basic" {
 resource "aws_iam_role_policy_attachment" "lambda_websocket_vpc_access" {
   role       = aws_iam_role.lambda_websocket_exec.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
-}
-
-resource "aws_iam_role" "lambda_voice_exec" {
-  name               = "${local.resource_prefix}-lambda-voice-exec-role"
-  assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
-}
-
-resource "aws_iam_role_policy_attachment" "lambda_voice_basic" {
-  role       = aws_iam_role.lambda_voice_exec.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
 resource "aws_iam_role" "outbox_dispatcher" {
@@ -500,8 +489,6 @@ data "aws_iam_policy_document" "lambda_app" {
     resources = [
       aws_dynamodb_table.ws_connections.arn,
       "${aws_dynamodb_table.ws_connections.arn}/index/*",
-      aws_dynamodb_table.voice_sessions.arn,
-      "${aws_dynamodb_table.voice_sessions.arn}/index/*",
       aws_dynamodb_table.users_sessions.arn,
       aws_dynamodb_table.refresh_tokens.arn,
       aws_dynamodb_table.password_reset_tokens.arn,
@@ -580,17 +567,6 @@ data "aws_iam_policy_document" "lambda_app" {
       "execute-api:ManageConnections"
     ]
     resources = ["${aws_apigatewayv2_api.websocket.execution_arn}/${var.environment}/POST/@connections/*"]
-  }
-
-  statement {
-    sid    = "InvokeVoiceSessionWorker"
-    effect = "Allow"
-    actions = [
-      "lambda:InvokeFunction"
-    ]
-    resources = [
-      aws_lambda_function.voice_session.arn
-    ]
   }
 }
 
@@ -838,9 +814,7 @@ data "aws_iam_policy_document" "lambda_websocket_app" {
     ]
     resources = [
       aws_dynamodb_table.ws_connections.arn,
-      "${aws_dynamodb_table.ws_connections.arn}/index/*",
-      aws_dynamodb_table.voice_sessions.arn,
-      "${aws_dynamodb_table.voice_sessions.arn}/index/*"
+      "${aws_dynamodb_table.ws_connections.arn}/index/*"
     ]
   }
 
@@ -850,98 +824,10 @@ data "aws_iam_policy_document" "lambda_websocket_app" {
     actions   = ["execute-api:ManageConnections"]
     resources = ["${aws_apigatewayv2_api.websocket.execution_arn}/${var.environment}/POST/@connections/*"]
   }
-
-  statement {
-    sid       = "InvokeVoiceSessionWorker"
-    effect    = "Allow"
-    actions   = ["lambda:InvokeFunction"]
-    resources = [aws_lambda_function.voice_session.arn]
-  }
 }
 
 resource "aws_iam_role_policy" "lambda_websocket_app" {
   name   = "${local.resource_prefix}-lambda-websocket-policy"
   role   = aws_iam_role.lambda_websocket_exec.id
   policy = data.aws_iam_policy_document.lambda_websocket_app.json
-}
-
-data "aws_iam_policy_document" "lambda_voice_app" {
-  statement {
-    sid    = "VoiceProviderSecrets"
-    effect = "Allow"
-    actions = [
-      "secretsmanager:DescribeSecret",
-      "secretsmanager:GetSecretValue"
-    ]
-    resources = [
-      aws_secretsmanager_secret.deepgram.arn,
-      aws_secretsmanager_secret.deepseek.arn
-    ]
-
-    condition {
-      test     = "Bool"
-      variable = "aws:SecureTransport"
-      values   = ["true"]
-    }
-  }
-
-  statement {
-    sid    = "VoiceProviderSecretsKMS"
-    effect = "Allow"
-    actions = [
-      "kms:Decrypt",
-      "kms:DescribeKey"
-    ]
-    resources = [aws_kms_key.application_secrets.arn]
-
-    condition {
-      test     = "Bool"
-      variable = "aws:SecureTransport"
-      values   = ["true"]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "kms:ViaService"
-      values   = ["secretsmanager.${var.aws_region}.amazonaws.com"]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "kms:EncryptionContext:SecretARN"
-      values = [
-        aws_secretsmanager_secret.deepgram.arn,
-        aws_secretsmanager_secret.deepseek.arn
-      ]
-    }
-  }
-
-  statement {
-    sid    = "VoiceSessions"
-    effect = "Allow"
-    actions = [
-      "dynamodb:GetItem",
-      "dynamodb:PutItem",
-      "dynamodb:DeleteItem",
-      "dynamodb:UpdateItem",
-      "dynamodb:Query"
-    ]
-    resources = [
-      aws_dynamodb_table.voice_sessions.arn,
-      "${aws_dynamodb_table.voice_sessions.arn}/index/*"
-    ]
-  }
-
-  statement {
-    sid       = "VoiceManageConnections"
-    effect    = "Allow"
-    actions   = ["execute-api:ManageConnections"]
-    resources = ["${aws_apigatewayv2_api.websocket.execution_arn}/${var.environment}/POST/@connections/*"]
-  }
-}
-
-resource "aws_iam_role_policy" "lambda_voice_app" {
-  name   = "${local.resource_prefix}-lambda-voice-policy"
-  role   = aws_iam_role.lambda_voice_exec.id
-  policy = data.aws_iam_policy_document.lambda_voice_app.json
 }

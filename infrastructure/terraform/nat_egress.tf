@@ -248,7 +248,6 @@ resource "aws_ec2_instance_state" "nat_stopped" {
     aws_lambda_function.sqs_gst,
     aws_lambda_function.sqs_bargaining,
     aws_lambda_function.ws_handler,
-    aws_lambda_function.voice_session,
     aws_lambda_function.custom_sms_sender,
     aws_lambda_event_source_mapping.invoice_queue,
     aws_lambda_event_source_mapping.gst_queue,

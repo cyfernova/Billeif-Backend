@@ -27,10 +27,6 @@ func (r *recordingProviderResolver) ResolveProvider(_ context.Context, cfg *conf
 		resolved.Razorpay.KeyID = "key-id"
 		resolved.Razorpay.KeySecret = "key-secret"
 		resolved.Razorpay.WebhookSecret = "webhook-secret"
-	case config.SecretDeepgram:
-		resolved.VoiceRealtime.DeepgramAPIKey = "deepgram-key"
-	case config.SecretDeepSeek:
-		resolved.VoiceRealtime.DeepSeekAPIKey = "deepseek-key"
 	case config.SecretGSTProvider:
 		resolved.GST.APIToken = "gst-token"
 	}
@@ -50,49 +46,20 @@ func TestProviderServicesResolveOnlyAtConcreteUseBoundaries(t *testing.T) {
 	cfg.Razorpay.BaseURL = "https://api.razorpay.com"
 	cfg.Razorpay.Timeout = 1
 	cfg.GST.BaseURL = "https://gst.example.test"
-	cfg.Secrets.Deepgram = "deepgram-secret"
-	cfg.Secrets.DeepSeek = "deepseek-secret"
-	cfg.VoiceRealtime = config.VoiceRealtimeConfig{
-		DeepgramVoiceAgentURL:        "wss://agent.deepgram.com/v1/agent/converse",
-		InputEncoding:                "linear16",
-		InputSampleRate:              16000,
-		OutputEncoding:               "linear16",
-		OutputSampleRate:             16000,
-		ListenModel:                  "nova-3",
-		SpeakModel:                   "aura-2",
-		DeepSeekBaseURL:              "https://api.deepseek.com/v1",
-		DeepSeekModel:                "deepseek-chat",
-		MaxSessionSeconds:            60,
-		PingIntervalSeconds:          10,
-		WriteTimeoutSeconds:          5,
-		MaxFrameBytes:                8192,
-		MaxConcurrentSessionsPerUser: 1,
-	}
 	resolver := &recordingProviderResolver{}
 	log := logger.New()
 
 	credentials := NewCredentialProviderServiceWithResolver(nil, cfg, resolver, log)
 	payments := NewRazorpayPaymentService(cfg, nil, log, resolver)
-	voice := NewRealtimeVoiceServiceWithResolver(cfg, resolver, log)
 	gstProvider := NewLazyConfiguredGSTProvider(cfg, resolver, log)
 	if got := resolver.calls(); len(got) != 0 {
 		t.Fatalf("constructors fetched provider credentials: %v", got)
 	}
-	if err := voice.ConfigError(); err != nil {
-		t.Fatalf("identifier-backed voice config rejected before upgrade: %v", err)
-	}
-	if got := resolver.calls(); len(got) != 0 {
-		t.Fatalf("pre-upgrade validation fetched provider credentials: %v", got)
-	}
-
 	if _, err := credentials.encryptCredential(context.Background(), "token"); err != nil {
 		t.Fatalf("encrypt credential: %v", err)
 	}
 	if _, err := payments.clientFor(context.Background()); err != nil {
 		t.Fatalf("construct Razorpay client: %v", err)
-	}
-	if _, err := voice.runtimeConfig(context.Background()); err != nil {
-		t.Fatalf("resolve voice config: %v", err)
 	}
 	if err := gstProvider.ValidateCredentials(context.Background(), &GSTIntegrationAccountCredentials{}); err != nil {
 		t.Fatalf("validate GST credentials: %v", err)
@@ -101,8 +68,6 @@ func TestProviderServicesResolveOnlyAtConcreteUseBoundaries(t *testing.T) {
 	want := []config.SecretKind{
 		config.SecretCredentialEncryption,
 		config.SecretRazorpay,
-		config.SecretDeepgram,
-		config.SecretDeepSeek,
 		config.SecretGSTProvider,
 	}
 	got := resolver.calls()

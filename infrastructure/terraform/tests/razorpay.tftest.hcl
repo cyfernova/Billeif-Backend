@@ -154,14 +154,6 @@ mock_provider "aws" {
   }
 
   override_resource {
-    target          = aws_secretsmanager_secret.deepgram
-    override_during = plan
-    values = {
-      arn = "arn:aws:secretsmanager:ap-south-1:928282274753:secret:deepgram"
-    }
-  }
-
-  override_resource {
     target          = aws_secretsmanager_secret.deepseek
     override_during = plan
     values = {
@@ -342,10 +334,9 @@ run "secret_metadata_rds_lambda_iam_and_output" {
         aws_secretsmanager_secret.exa.name,
         aws_secretsmanager_secret.gst_lookup.name,
         aws_secretsmanager_secret.gst_provider.name,
-        aws_secretsmanager_secret.deepgram.name,
         aws_secretsmanager_secret.deepseek.name,
         aws_secretsmanager_secret.sarvam.name
-      ])) == 14 &&
+      ])) == 13 &&
       alltrue([
         aws_secretsmanager_secret.credential_encryption.kms_key_id == aws_kms_key.application_secrets.arn,
         aws_secretsmanager_secret.billeif_invoice_cursor_hmac.kms_key_id == aws_kms_key.application_secrets.arn,
@@ -358,7 +349,6 @@ run "secret_metadata_rds_lambda_iam_and_output" {
         aws_secretsmanager_secret.exa.kms_key_id == aws_kms_key.application_secrets.arn,
         aws_secretsmanager_secret.gst_lookup.kms_key_id == aws_kms_key.application_secrets.arn,
         aws_secretsmanager_secret.gst_provider.kms_key_id == aws_kms_key.application_secrets.arn,
-        aws_secretsmanager_secret.deepgram.kms_key_id == aws_kms_key.application_secrets.arn,
         aws_secretsmanager_secret.deepseek.kms_key_id == aws_kms_key.application_secrets.arn,
         aws_secretsmanager_secret.sarvam.kms_key_id == aws_kms_key.application_secrets.arn
       ])
@@ -388,7 +378,6 @@ run "secret_metadata_rds_lambda_iam_and_output" {
         "INVOICE_CURSOR_HMAC_SECRET_ARN",
         "LLM_SECRET_ARN",
         "RAZORPAY_SECRET_ARN",
-        "DEEPGRAM_SECRET_ARN",
         "DEEPSEEK_SECRET_ARN",
         "SARVAM_SECRET_ARN"
       ]) &&
@@ -407,7 +396,7 @@ run "secret_metadata_rds_lambda_iam_and_output" {
       contains(statement.resources, aws_secretsmanager_secret.razorpay.arn) &&
       contains(statement.resources, aws_secretsmanager_secret.gst_provider.arn) &&
       contains(statement.resources, aws_secretsmanager_secret.sarvam.arn) &&
-      length(statement.resources) == 10 &&
+      length(statement.resources) == 9 &&
       !contains(statement.resources, "*")
     ]) == 1
     error_message = "Lambda IAM must scope secret reads to exact managed ARNs."
@@ -430,7 +419,7 @@ run "secret_metadata_rds_lambda_iam_and_output" {
         for condition in statement.condition : condition
         if condition.variable == "kms:EncryptionContext:SecretARN" &&
         condition.test == "StringEquals" &&
-        length(condition.values) == 10
+        length(condition.values) == 9
       ]) == 1
     ]) == 1
     error_message = "Lambda IAM must scope KMS decrypt to the dedicated key ARN."
@@ -453,11 +442,7 @@ run "secret_metadata_rds_lambda_iam_and_output" {
       toset([
         for key in keys(aws_lambda_function.ws_handler.environment[0].variables) : key
         if endswith(key, "_SECRET_ARN")
-      ]) == toset(["DATABASE_SECRET_ARN"]),
-      toset([
-        for key in keys(aws_lambda_function.voice_session.environment[0].variables) : key
-        if endswith(key, "_SECRET_ARN")
-      ]) == toset(["DEEPGRAM_SECRET_ARN", "DEEPSEEK_SECRET_ARN"])
+      ]) == toset(["DATABASE_SECRET_ARN"])
     ])
     error_message = "Every Lambda environment must receive only the secret identifiers used by its entrypoint."
   }
@@ -488,16 +473,6 @@ run "secret_metadata_rds_lambda_iam_and_output" {
         length([
           for statement in data.aws_iam_policy_document.lambda_websocket_app.statement : statement
           if statement.sid == "WebSocketSecretsKMS" &&
-          length([
-            for condition in statement.condition : condition
-            if condition.variable == "kms:ViaService" &&
-            condition.test == "StringEquals" &&
-            contains(condition.values, "secretsmanager.ap-south-1.amazonaws.com")
-          ]) == 1
-        ]) == 1,
-        length([
-          for statement in data.aws_iam_policy_document.lambda_voice_app.statement : statement
-          if statement.sid == "VoiceProviderSecretsKMS" &&
           length([
             for condition in statement.condition : condition
             if condition.variable == "kms:ViaService" &&
@@ -659,7 +634,6 @@ run "billeif_branding_defaults_and_public_url_inputs" {
       aws_s3_bucket.business_logos.bucket == "billeif-preview-928282274753-business-logos" &&
       aws_apigatewayv2_api.websocket.name == "billeif-preview-websocket" &&
       aws_dynamodb_table.voice_sessions.name == "billeif-preview-voice-sessions" &&
-      aws_lambda_function.voice_session.function_name == "billeif-preview-voice-session" &&
       aws_ses_configuration_set.main.name == "billeif-preview-ses-config" &&
       aws_iam_role.nat_instance[0].name == "billeif-preview-nat-instance-role" &&
       aws_iam_instance_profile.nat_instance[0].name == "billeif-preview-nat-instance-profile" &&
@@ -694,8 +668,7 @@ run "billeif_branding_defaults_and_public_url_inputs" {
       !contains(keys(aws_lambda_function.sqs_email_delivery.environment[0].variables), "INVOICE_CURSOR_HMAC_SECRET_ARN") &&
       !contains(keys(aws_lambda_function.sqs_ses_feedback.environment[0].variables), "INVOICE_CURSOR_HMAC_SECRET_ARN") &&
       !contains(keys(aws_lambda_function.outbox_dispatcher.environment[0].variables), "INVOICE_CURSOR_HMAC_SECRET_ARN") &&
-      !contains(keys(aws_lambda_function.ws_handler.environment[0].variables), "INVOICE_CURSOR_HMAC_SECRET_ARN") &&
-      !contains(keys(aws_lambda_function.voice_session.environment[0].variables), "INVOICE_CURSOR_HMAC_SECRET_ARN")
+      !contains(keys(aws_lambda_function.ws_handler.environment[0].variables), "INVOICE_CURSOR_HMAC_SECRET_ARN")
     )
     error_message = "Only the dedicated Billeif HTTP runtime may receive the invoice cursor secret ARN."
   }

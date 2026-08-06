@@ -191,16 +191,9 @@ resource "aws_secretsmanager_secret" "gst_provider" {
   recovery_window_in_days = 7
 }
 
-resource "aws_secretsmanager_secret" "deepgram" {
-  name                    = "/${var.project_name}/${var.environment}/providers/deepgram"
-  description             = "Deepgram voice provider credential metadata"
-  kms_key_id              = aws_kms_key.application_secrets.arn
-  recovery_window_in_days = 7
-}
-
 resource "aws_secretsmanager_secret" "deepseek" {
   name                    = "/${var.project_name}/${var.environment}/providers/deepseek"
-  description             = "DeepSeek voice LLM credential metadata"
+  description             = "DeepSeek OpenAI-compatible provider credential metadata"
   kms_key_id              = aws_kms_key.application_secrets.arn
   recovery_window_in_days = 7
 }

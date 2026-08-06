@@ -15,7 +15,6 @@ locals {
     sqs_gst            = "${var.lambda_artifact_dir}/sqs-gst.zip"
     sqs_bargaining     = "${var.lambda_artifact_dir}/sqs-bargaining.zip"
     ws_handler         = "${var.lambda_artifact_dir}/ws.zip"
-    voice_session      = "${var.lambda_artifact_dir}/voice-session.zip"
     custom_sms_sender  = "${var.lambda_artifact_dir}/custom-sms-sender.zip"
     outbox             = "${var.lambda_artifact_dir}/outbox.zip"
     sqs_email_delivery = "${var.lambda_artifact_dir}/sqs-email-delivery.zip"
@@ -33,59 +32,42 @@ locals {
   }
 
   common_lambda_env = {
-    ENVIRONMENT                               = var.environment
-    LOG_LEVEL                                 = "info"
-    LOG_FORMAT                                = "json"
-    SERVER_PORT                               = "8080"
-    DATABASE_PORT                             = tostring(var.db_port)
-    DATABASE_NAME                             = var.db_name
-    DATABASE_SSL_MODE                         = "require"
-    ALLOWED_ORIGINS                           = join(",", distinct(concat([local.http_api_invoke_url], var.allowed_origins)))
-    S3_BUCKET_LOGOS                           = aws_s3_bucket.business_logos.id
-    S3_BUCKET_INVOICES                        = aws_s3_bucket.invoices_pdf.id
-    S3_BUCKET_PRODUCTS                        = aws_s3_bucket.product_images.id
-    S3_BUCKET_EMAIL_SINK                      = aws_s3_bucket.email_sink.id
-    SQS_INVOICE_QUEUE                         = aws_sqs_queue.invoice_processing.url
-    SQS_EMAIL_DELIVERY_QUEUE                  = aws_sqs_queue.email_delivery.url
-    SQS_GST_QUEUE                             = aws_sqs_queue.gst_processing.url
-    SQS_BARGAINING_QUEUE                      = aws_sqs_queue.bargaining_negotiation.url
-    COGNITO_USER_POOL_ID                      = aws_cognito_user_pool.main.id
-    COGNITO_CLIENT_ID                         = aws_cognito_user_pool_client.main.id
-    COGNITO_DOMAIN                            = local.cognito_runtime_domain
-    COGNITO_REGION                            = var.aws_region
-    COGNITO_PHONE_USER_POOL_ID                = aws_cognito_user_pool.phone.id
-    COGNITO_PHONE_CLIENT_ID                   = aws_cognito_user_pool_client.phone.id
-    COGNITO_PHONE_REGION                      = "ap-south-1"
-    COGNITO_PHONE_OTP_COOLDOWN_TABLE          = aws_dynamodb_table.phone_auth_cooldowns.name
-    JWT_ACCESS_TOKEN_EXPIRY                   = "1h"
-    JWT_REFRESH_TOKEN_EXPIRY                  = "720h"
-    WEBSOCKET_CONNECTIONS_TABLE               = aws_dynamodb_table.ws_connections.name
-    LLM_API_URL                               = var.llm_api_url
-    LLM_MODEL                                 = var.llm_model
-    EXA_BASE_URL                              = var.exa_base_url
-    EXA_TIMEOUT                               = tostring(var.exa_timeout)
-    GST_LOOKUP_BASE_URL                       = var.gst_lookup_base_url
-    GST_LOOKUP_TIMEOUT                        = tostring(var.gst_lookup_timeout)
-    DEEPGRAM_VOICE_AGENT_URL                  = var.deepgram_voice_agent_url
-    DEEPGRAM_VOICE_LISTEN_MODEL               = var.deepgram_voice_listen_model
-    DEEPGRAM_VOICE_SPEAK_MODEL                = var.deepgram_voice_speak_model
-    DEEPGRAM_VOICE_INPUT_ENCODING             = var.deepgram_voice_input_encoding
-    DEEPGRAM_VOICE_INPUT_SAMPLE_RATE          = tostring(var.deepgram_voice_input_sample_rate)
-    DEEPGRAM_VOICE_OUTPUT_ENCODING            = var.deepgram_voice_output_encoding
-    DEEPGRAM_VOICE_OUTPUT_SAMPLE_RATE         = tostring(var.deepgram_voice_output_sample_rate)
-    DEEPSEEK_BASE_URL                         = var.deepseek_base_url
-    DEEPSEEK_MODEL                            = var.deepseek_model
-    MCP_SERVER_URL                            = var.mcp_server_url
-    VOICE_WS_MAX_SESSION_SECONDS              = tostring(var.voice_ws_max_session_seconds)
-    VOICE_WS_PING_INTERVAL_SECONDS            = tostring(var.voice_ws_ping_interval_seconds)
-    VOICE_WS_WRITE_TIMEOUT_SECONDS            = tostring(var.voice_ws_write_timeout_seconds)
-    VOICE_WS_MAX_FRAME_BYTES                  = tostring(var.voice_ws_max_frame_bytes)
-    VOICE_WS_MAX_CONCURRENT_SESSIONS_PER_USER = tostring(var.voice_ws_max_concurrent_sessions_per_user)
-    VOICE_WS_EVENT_POLL_INTERVAL_MS           = tostring(var.voice_ws_event_poll_interval_ms)
-    VOICE_WS_EVENT_TTL_SECONDS                = tostring(var.voice_ws_event_ttl_seconds)
-    VOICE_WS_MAX_OUTBOUND_CHUNK_BYTES         = tostring(var.voice_ws_max_outbound_chunk_bytes)
-    VOICE_WS_PROVIDER_READY_TIMEOUT_SECONDS   = tostring(var.voice_ws_provider_ready_timeout_seconds)
-    VOICE_SESSIONS_TABLE                      = aws_dynamodb_table.voice_sessions.name
+    ENVIRONMENT                      = var.environment
+    LOG_LEVEL                        = "info"
+    LOG_FORMAT                       = "json"
+    SERVER_PORT                      = "8080"
+    DATABASE_PORT                    = tostring(var.db_port)
+    DATABASE_NAME                    = var.db_name
+    DATABASE_SSL_MODE                = "require"
+    ALLOWED_ORIGINS                  = join(",", distinct(concat([local.http_api_invoke_url], var.allowed_origins)))
+    S3_BUCKET_LOGOS                  = aws_s3_bucket.business_logos.id
+    S3_BUCKET_INVOICES               = aws_s3_bucket.invoices_pdf.id
+    S3_BUCKET_PRODUCTS               = aws_s3_bucket.product_images.id
+    S3_BUCKET_EMAIL_SINK             = aws_s3_bucket.email_sink.id
+    SQS_INVOICE_QUEUE                = aws_sqs_queue.invoice_processing.url
+    SQS_EMAIL_DELIVERY_QUEUE         = aws_sqs_queue.email_delivery.url
+    SQS_GST_QUEUE                    = aws_sqs_queue.gst_processing.url
+    SQS_BARGAINING_QUEUE             = aws_sqs_queue.bargaining_negotiation.url
+    COGNITO_USER_POOL_ID             = aws_cognito_user_pool.main.id
+    COGNITO_CLIENT_ID                = aws_cognito_user_pool_client.main.id
+    COGNITO_DOMAIN                   = local.cognito_runtime_domain
+    COGNITO_REGION                   = var.aws_region
+    COGNITO_PHONE_USER_POOL_ID       = aws_cognito_user_pool.phone.id
+    COGNITO_PHONE_CLIENT_ID          = aws_cognito_user_pool_client.phone.id
+    COGNITO_PHONE_REGION             = "ap-south-1"
+    COGNITO_PHONE_OTP_COOLDOWN_TABLE = aws_dynamodb_table.phone_auth_cooldowns.name
+    JWT_ACCESS_TOKEN_EXPIRY          = "1h"
+    JWT_REFRESH_TOKEN_EXPIRY         = "720h"
+    WEBSOCKET_CONNECTIONS_TABLE      = aws_dynamodb_table.ws_connections.name
+    LLM_API_URL                      = var.llm_api_url
+    LLM_MODEL                        = var.llm_model
+    EXA_BASE_URL                     = var.exa_base_url
+    EXA_TIMEOUT                      = tostring(var.exa_timeout)
+    GST_LOOKUP_BASE_URL              = var.gst_lookup_base_url
+    GST_LOOKUP_TIMEOUT               = tostring(var.gst_lookup_timeout)
+    DEEPSEEK_BASE_URL                = var.deepseek_base_url
+    DEEPSEEK_MODEL                   = var.deepseek_model
+    MCP_SERVER_URL                   = var.mcp_server_url
   }
 
   database_runtime_env = {
@@ -100,7 +82,6 @@ locals {
     EXA_SECRET_ARN                   = aws_secretsmanager_secret.exa.arn
     GST_LOOKUP_SECRET_ARN            = aws_secretsmanager_secret.gst_lookup.arn
     GST_PROVIDER_SECRET_ARN          = aws_secretsmanager_secret.gst_provider.arn
-    DEEPGRAM_SECRET_ARN              = aws_secretsmanager_secret.deepgram.arn
     DEEPSEEK_SECRET_ARN              = aws_secretsmanager_secret.deepseek.arn
     SARVAM_SECRET_ARN                = aws_secretsmanager_secret.sarvam.arn
   })
@@ -122,11 +103,6 @@ locals {
       LLM_SECRET_ARN                   = aws_secretsmanager_secret.llm.arn
       EXA_SECRET_ARN                   = aws_secretsmanager_secret.exa.arn
     })
-  }
-
-  voice_secret_env = {
-    DEEPGRAM_SECRET_ARN = aws_secretsmanager_secret.deepgram.arn
-    DEEPSEEK_SECRET_ARN = aws_secretsmanager_secret.deepseek.arn
   }
 }
 
@@ -152,11 +128,6 @@ resource "aws_cloudwatch_log_group" "lambda_sqs_gst" {
 
 resource "aws_cloudwatch_log_group" "lambda_ws_handler" {
   name              = "/aws/lambda/${local.resource_prefix}-ws-handler"
-  retention_in_days = var.log_retention_days
-}
-
-resource "aws_cloudwatch_log_group" "lambda_voice_session" {
-  name              = "/aws/lambda/${local.voice_session_lambda_name}"
   retention_in_days = var.log_retention_days
 }
 
@@ -581,10 +552,8 @@ resource "aws_lambda_function" "ws_handler" {
 
   environment {
     variables = merge(local.common_lambda_env, local.database_runtime_env, {
-      AWS_ENDPOINT                       = ""
-      WEBSOCKET_API_ENDPOINT             = local.websocket_management_api_endpoint
-      VOICE_ENABLED                      = tostring(var.enable_voice)
-      VOICE_SESSION_WORKER_FUNCTION_NAME = aws_lambda_function.voice_session.function_name
+      AWS_ENDPOINT           = ""
+      WEBSOCKET_API_ENDPOINT = local.websocket_management_api_endpoint
     })
   }
 
@@ -604,44 +573,6 @@ resource "aws_lambda_function" "ws_handler" {
     aws_ssm_association.nat_activation_ready,
     aws_nat_gateway.main,
     aws_cloudwatch_log_group.lambda_ws_handler,
-  ]
-}
-
-resource "aws_lambda_function" "voice_session" {
-  function_name    = local.voice_session_lambda_name
-  role             = aws_iam_role.lambda_voice_exec.arn
-  runtime          = "provided.al2023"
-  handler          = "bootstrap"
-  architectures    = ["arm64"]
-  filename         = local.lambda_artifacts.voice_session
-  source_code_hash = local.lambda_artifact_hashes.voice_session
-  memory_size      = var.voice_session_lambda_memory_size
-  timeout          = var.voice_session_lambda_timeout_seconds
-
-  reserved_concurrent_executions = var.enable_application && var.enable_voice ? var.voice_session_reserved_concurrency : 0
-
-  tags = {
-    MigrationChecksum = local.application_migration_checksum
-  }
-
-  environment {
-    variables = merge(local.common_lambda_env, local.voice_secret_env, {
-      AWS_ENDPOINT           = ""
-      WEBSOCKET_API_ENDPOINT = local.websocket_management_api_endpoint
-    })
-  }
-
-  lifecycle {
-    precondition {
-      condition     = fileexists(local.lambda_artifacts.voice_session)
-      error_message = "Missing Lambda artifact ${local.lambda_artifacts.voice_session}. Run make package-lambda from the repository root before running Terraform."
-    }
-  }
-
-  depends_on = [
-    aws_ssm_association.nat_activation_ready,
-    aws_nat_gateway.main,
-    aws_cloudwatch_log_group.lambda_voice_session,
   ]
 }
 

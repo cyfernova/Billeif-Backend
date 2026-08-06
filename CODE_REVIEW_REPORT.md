@@ -22,7 +22,7 @@ Validation was static except for the two checks explicitly authorized:
 | Check | Result |
 |---|---|
 | `make lint` | Passed |
-| `make build-lambda` | Passed for HTTP, A2A stream, invoice/payment/GST/bargaining SQS, WebSocket, and voice-session Lambdas |
+| `make build-lambda` | Passed for HTTP, A2A stream, invoice/payment/GST/bargaining SQS, and WebSocket Lambdas |
 | Tests, race detector, vet | Not run |
 | Terraform, migrations, servers, deployments, exploit/PoC execution | Not run |
 

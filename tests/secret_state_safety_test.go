@@ -30,7 +30,7 @@ func TestTerraformAndShellDoNotCarrySecretValues(t *testing.T) {
 		regexp.MustCompile(`(?m)\bsecret_(string|binary)\s*=`),
 		regexp.MustCompile(`(?m)type\s*=\s*"SecureString"`),
 		regexp.MustCompile(`(?m)^\s*password\s*=`),
-		regexp.MustCompile(`(?m)variable\s+"(db_password|credential_encryption_key|jwt_secret|razorpay_key_id|razorpay_key_secret|razorpay_webhook_secret|google_client_id|google_client_secret|fcm_api_key|apns_private_key|apns_certificate|llm_api_key|exa_api_key|gst_lookup_api_key|deepgram_api_key|deepseek_api_key)"`),
+		regexp.MustCompile(`(?m)variable\s+"(db_password|credential_encryption_key|jwt_secret|razorpay_key_id|razorpay_key_secret|razorpay_webhook_secret|google_client_id|google_client_secret|fcm_api_key|apns_private_key|apns_certificate|llm_api_key|exa_api_key|gst_lookup_api_key|deepseek_api_key)"`),
 		regexp.MustCompile(`(?m)resource\s+"aws_cognito_identity_provider"`),
 	} {
 		if match := forbidden.FindString(source); match != "" {

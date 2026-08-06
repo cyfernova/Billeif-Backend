@@ -25,11 +25,6 @@ const docTemplate = `{
     "paths": {
         "/.well-known/agent-card.json": {
             "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
                 "description": "Returns the agent card for A2A protocol agent discovery",
                 "produces": [
                     "application/json"
@@ -45,16 +40,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/a2a.AgentCard"
                         }
                     }
-                }
-            }
-        },
-        "/a2a-bargaining/autonomous/start": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/a2a-bargaining/autonomous/start": {
+            "post": {
                 "description": "Starts a fully autonomous price negotiation driven by LLM decisions between buyer and seller agents. Real-time events are delivered via webhook callbacks.",
                 "consumes": [
                     "application/json"
@@ -114,16 +109,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/a2a-bargaining/negotiation/{negotiationId}/progress": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/a2a-bargaining/negotiation/{negotiationId}/progress": {
+            "get": {
                 "description": "Returns the progress of a bargaining negotiation using the database UUID",
                 "produces": [
                     "application/json"
@@ -173,16 +168,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/a2a-bargaining/progress/{sessionId}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/a2a-bargaining/progress/{sessionId}": {
+            "get": {
                 "description": "Returns the progress of an A2A bargaining negotiation",
                 "produces": [
                     "application/json"
@@ -232,16 +227,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/a2a-bargaining/start": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/a2a-bargaining/start": {
+            "post": {
                 "description": "Starts an A2A bargaining negotiation between buyer and seller agents",
                 "consumes": [
                     "application/json"
@@ -298,16 +293,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/a2a-bargaining/stop/{sessionId}": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/a2a-bargaining/stop/{sessionId}": {
+            "post": {
                 "description": "Stops an active A2A bargaining negotiation",
                 "produces": [
                     "application/json"
@@ -353,16 +348,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/activity-logs": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/activity-logs": {
+            "get": {
                 "description": "Returns activity logs for the business",
                 "produces": [
                     "application/json"
@@ -388,16 +383,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/admin/local-emails": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/admin/local-emails": {
+            "get": {
                 "description": "[Admin Only] Returns a list of all emails captured by the system (for development/testing).",
                 "produces": [
                     "application/json"
@@ -441,16 +436,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents": {
+            "get": {
                 "description": "Returns all agents owned by the user or business",
                 "produces": [
                     "application/json"
@@ -484,14 +479,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Creates a new shopping or merchant agent",
                 "consumes": [
                     "application/json"
@@ -545,16 +540,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/active": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/active": {
+            "get": {
                 "description": "Returns all active agents of a specific type for the business",
                 "produces": [
                     "application/json"
@@ -600,16 +595,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/config": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/config": {
+            "get": {
                 "description": "Returns all agent configurations for the authenticated user.",
                 "produces": [
                     "application/json"
@@ -635,14 +630,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Create or update a bargaining agent configuration for buyer or seller agents.",
                 "consumes": [
                     "application/json"
@@ -699,16 +694,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/config/default": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/config/default": {
+            "post": {
                 "description": "Creates a default bargaining configuration for a buyer or seller agent.",
                 "consumes": [
                     "application/json"
@@ -765,16 +760,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/config/mentee/export": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/config/mentee/export": {
+            "get": {
                 "description": "Exports all mentee learning data as a JSON file.",
                 "tags": [
                     "Agent Configuration"
@@ -796,16 +791,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/config/mentee/import": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/config/mentee/import": {
+            "post": {
                 "description": "Imports mentee learning data from a JSON file.",
                 "tags": [
                     "Agent Configuration"
@@ -848,16 +843,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/config/mentee/learning/{agent_id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/config/mentee/learning/{agent_id}": {
+            "get": {
                 "description": "Returns the mentee's learning data for a specific agent.",
                 "produces": [
                     "application/json"
@@ -891,14 +886,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Resets the mentee's learning data for a specific agent.",
                 "tags": [
                     "Agent Configuration"
@@ -926,16 +921,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/config/mentee/recommendation/{negotiation_id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/config/mentee/recommendation/{negotiation_id}": {
+            "get": {
                 "description": "Returns the mentee's recommendation for the next bargaining action.",
                 "produces": [
                     "application/json"
@@ -998,16 +993,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/config/{agent_id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/config/{agent_id}": {
+            "get": {
                 "description": "Returns the configuration for a specific agent.",
                 "produces": [
                     "application/json"
@@ -1050,14 +1045,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Update the bargaining configuration for a specific agent.",
                 "consumes": [
                     "application/json"
@@ -1121,14 +1116,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Deletes the configuration for a specific agent.",
                 "tags": [
                     "Agent Configuration"
@@ -1147,16 +1142,16 @@ const docTemplate = `{
                     "204": {
                         "description": "No Content"
                     }
-                }
-            }
-        },
-        "/agents/credentials/payment-methods": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/credentials/payment-methods": {
+            "get": {
                 "description": "Returns all payment methods associated with the user",
                 "produces": [
                     "application/json"
@@ -1184,14 +1179,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Adds a new payment method (card) to the user's account",
                 "consumes": [
                     "application/json"
@@ -1239,16 +1234,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/credentials/payment-methods/default": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/credentials/payment-methods/default": {
+            "get": {
                 "description": "Returns the user's default payment method",
                 "produces": [
                     "application/json"
@@ -1282,16 +1277,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/credentials/payment-methods/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/credentials/payment-methods/{id}": {
+            "get": {
                 "description": "Returns a specific payment method by its ID",
                 "produces": [
                     "application/json"
@@ -1334,14 +1329,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Sets a payment method as the user's default",
                 "produces": [
                     "application/json"
@@ -1378,14 +1373,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Deletes a payment method by ID",
                 "produces": [
                     "application/json"
@@ -1419,16 +1414,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/credentials/tokens": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/credentials/tokens": {
+            "post": {
                 "description": "Generates a credential token for payment processing",
                 "consumes": [
                     "application/json"
@@ -1476,7 +1471,12 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
             }
         },
         "/agents/credentials/tokens/validate": {
@@ -1528,11 +1528,6 @@ const docTemplate = `{
         },
         "/agents/ideate": {
             "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
                 "description": "Generates shopping ideas using LLM",
                 "consumes": [
                     "application/json"
@@ -1581,16 +1576,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/shopping/cart": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/shopping/cart": {
+            "post": {
                 "description": "Creates a new shopping cart with agent",
                 "consumes": [
                     "application/json"
@@ -1643,16 +1638,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/shopping/cart/add": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/shopping/cart/add": {
+            "post": {
                 "description": "Adds a product to an existing shopping cart",
                 "consumes": [
                     "application/json"
@@ -1705,16 +1700,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/shopping/cart/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/shopping/cart/{id}": {
+            "get": {
                 "description": "Returns a shopping cart by ID",
                 "produces": [
                     "application/json"
@@ -1755,16 +1750,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/shopping/carts": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/shopping/carts": {
+            "get": {
                 "description": "Returns all shopping carts for the user",
                 "produces": [
                     "application/json"
@@ -1790,16 +1785,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/shopping/checkout": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/shopping/checkout": {
+            "post": {
                 "description": "Completes checkout for a shopping cart",
                 "consumes": [
                     "application/json"
@@ -1845,16 +1840,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/shopping/orders": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/shopping/orders": {
+            "get": {
                 "description": "Returns all marketplace orders for the user",
                 "produces": [
                     "application/json"
@@ -1888,16 +1883,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/shopping/orders/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/shopping/orders/{id}": {
+            "get": {
                 "description": "Returns tracking information for an order",
                 "produces": [
                     "application/json"
@@ -1938,16 +1933,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/shopping/products/available": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/shopping/products/available": {
+            "get": {
                 "description": "Returns all available marketplace products",
                 "produces": [
                     "application/json"
@@ -1973,16 +1968,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/shopping/products/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/shopping/products/{id}": {
+            "get": {
                 "description": "Returns details for a specific marketplace product",
                 "produces": [
                     "application/json"
@@ -2023,16 +2018,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/shopping/search": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/shopping/search": {
+            "get": {
                 "description": "Searches for products in the marketplace",
                 "produces": [
                     "application/json"
@@ -2072,16 +2067,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/shopping/{id}/capabilities": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/shopping/{id}/capabilities": {
+            "get": {
                 "description": "Returns capabilities for a shopping agent",
                 "produces": [
                     "application/json"
@@ -2113,16 +2108,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/type/{type}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/type/{type}": {
+            "get": {
                 "description": "Returns agents filtered by type for the user or business",
                 "produces": [
                     "application/json"
@@ -2166,16 +2161,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/validate-permissions/{id}": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/validate-permissions/{id}": {
+            "post": {
                 "description": "Validates if the agent has required permissions",
                 "produces": [
                     "application/json"
@@ -2203,16 +2198,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/{id}": {
+            "get": {
                 "description": "Returns a specific agent by ID",
                 "produces": [
                     "application/json"
@@ -2255,14 +2250,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Updates an existing agent by ID",
                 "consumes": [
                     "application/json"
@@ -2329,14 +2324,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Deletes an agent by ID",
                 "produces": [
                     "application/json"
@@ -2379,16 +2374,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/{id}/capabilities": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/{id}/capabilities": {
+            "get": {
                 "description": "Returns all capabilities for a specific agent",
                 "produces": [
                     "application/json"
@@ -2432,14 +2427,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Adds a new capability to an existing agent",
                 "consumes": [
                     "application/json"
@@ -2506,16 +2501,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/{id}/procurement-runs": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/{id}/procurement-runs": {
+            "post": {
                 "description": "Starts a procurement run for a shopping agent",
                 "consumes": [
                     "application/json"
@@ -2577,16 +2572,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/{id}/procurement-runs/{run_id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/{id}/procurement-runs/{run_id}": {
+            "get": {
                 "description": "Returns a procurement run by ID",
                 "produces": [
                     "application/json"
@@ -2634,16 +2629,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/agents/{id}/procurement-runs/{run_id}/cancel": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/agents/{id}/procurement-runs/{run_id}/cancel": {
+            "post": {
                 "description": "Cancels a procurement run by ID",
                 "produces": [
                     "application/json"
@@ -2691,16 +2686,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/assemblies": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/assemblies": {
+            "get": {
                 "description": "Returns all assembly recipes for the business",
                 "produces": [
                     "application/json"
@@ -2726,14 +2721,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Creates an assembly recipe for bundled products",
                 "consumes": [
                     "application/json"
@@ -2779,16 +2774,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/assemblies/{id}/build": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/assemblies/{id}/build": {
+            "post": {
                 "description": "Builds an assembly from its recipe",
                 "consumes": [
                     "application/json"
@@ -2844,16 +2839,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/assemblies/{id}/disassemble": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/assemblies/{id}/disassemble": {
+            "post": {
                 "description": "Disassembles an assembly back into components",
                 "consumes": [
                     "application/json"
@@ -2909,16 +2904,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/auth/change-password": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/auth/change-password": {
+            "post": {
                 "description": "Change the password of the authenticated user.",
                 "consumes": [
                     "application/json"
@@ -2969,7 +2964,12 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
             }
         },
         "/auth/forgot-password": {
@@ -3011,11 +3011,6 @@ const docTemplate = `{
         },
         "/auth/google": {
             "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
                 "description": "Sync user data from Google after successful OAuth authentication.",
                 "produces": [
                     "application/json"
@@ -3050,7 +3045,12 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
             }
         },
         "/auth/login": {
@@ -3098,11 +3098,6 @@ const docTemplate = `{
         },
         "/auth/logout": {
             "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
                 "description": "Revoke the user's access token and end the session.",
                 "produces": [
                     "application/json"
@@ -3130,16 +3125,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/auth/me": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/auth/me": {
+            "get": {
                 "description": "Returns the profile information of the authenticated user.",
                 "produces": [
                     "application/json"
@@ -3174,16 +3169,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/auth/profile": {
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/auth/profile": {
+            "put": {
                 "description": "Update the profile information of the authenticated user.",
                 "consumes": [
                     "application/json"
@@ -3232,16 +3227,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/auth/profile-picture": {
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/auth/profile-picture": {
+            "put": {
                 "description": "Updates the user's profile picture URL after successful upload.",
                 "consumes": [
                     "application/json"
@@ -3295,14 +3290,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Returns a presigned S3 URL to upload a profile picture.",
                 "produces": [
                     "application/json"
@@ -3338,7 +3333,12 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
             }
         },
         "/auth/refresh": {
@@ -3572,11 +3572,6 @@ const docTemplate = `{
         },
         "/barcodes": {
             "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
                 "description": "Lists product barcodes for the active business",
                 "produces": [
                     "application/json"
@@ -3602,16 +3597,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/barcodes/assign": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/barcodes/assign": {
+            "post": {
                 "description": "Assigns a barcode to a product",
                 "consumes": [
                     "application/json"
@@ -3662,16 +3657,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/barcodes/generate": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/barcodes/generate": {
+            "post": {
                 "description": "Generates a new barcode value",
                 "consumes": [
                     "application/json"
@@ -3713,16 +3708,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/barcodes/lookup": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/barcodes/lookup": {
+            "get": {
                 "description": "Looks up a barcode and returns product information",
                 "produces": [
                     "application/json"
@@ -3763,16 +3758,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/barcodes/render/pdf": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/barcodes/render/pdf": {
+            "post": {
                 "description": "Renders a barcode as a PDF document",
                 "consumes": [
                     "application/json"
@@ -3820,16 +3815,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/barcodes/render/png": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/barcodes/render/png": {
+            "post": {
                 "description": "Renders a barcode as a PNG image",
                 "consumes": [
                     "application/json"
@@ -3877,16 +3872,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/barcodes/render/svg": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/barcodes/render/svg": {
+            "post": {
                 "description": "Renders a barcode as an SVG image",
                 "consumes": [
                     "application/json"
@@ -3934,16 +3929,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/bargaining/negotiations": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/bargaining/negotiations": {
+            "get": {
                 "description": "Returns a list of negotiations belonging to the authenticated user.",
                 "produces": [
                     "application/json"
@@ -3985,14 +3980,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Create a new bargaining negotiation between buyer and seller agents.",
                 "consumes": [
                     "application/json"
@@ -4040,16 +4035,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/bargaining/negotiations/llm-decision": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/bargaining/negotiations/llm-decision": {
+            "get": {
                 "consumes": [
                     "application/json"
                 ],
@@ -4113,16 +4108,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/bargaining/negotiations/llm-summary": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/bargaining/negotiations/llm-summary": {
+            "get": {
                 "produces": [
                     "application/json"
                 ],
@@ -4165,16 +4160,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/bargaining/negotiations/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/bargaining/negotiations/{id}": {
+            "get": {
                 "description": "Returns the details of a specific negotiation.",
                 "produces": [
                     "application/json"
@@ -4208,16 +4203,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/bargaining/negotiations/{id}/counteroffer": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/bargaining/negotiations/{id}/counteroffer": {
+            "post": {
                 "description": "Submit a counter offer, accept, or reject a negotiation round.",
                 "consumes": [
                     "application/json"
@@ -4291,16 +4286,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/bargaining/negotiations/{id}/rounds": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/bargaining/negotiations/{id}/rounds": {
+            "get": {
                 "description": "Returns all rounds for a specific negotiation.",
                 "produces": [
                     "application/json"
@@ -4335,16 +4330,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/bargaining/negotiations/{id}/suggest": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/bargaining/negotiations/{id}/suggest": {
+            "get": {
                 "description": "Returns a suggested counter offer amount based on negotiation state and agent type.",
                 "produces": [
                     "application/json"
@@ -4399,16 +4394,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/branches": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/branches": {
+            "get": {
                 "description": "Returns a list of all branches for a business",
                 "produces": [
                     "application/json"
@@ -4443,14 +4438,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Creates a new branch for a business",
                 "consumes": [
                     "application/json"
@@ -4499,16 +4494,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/branches/{id}": {
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/branches/{id}": {
+            "put": {
                 "description": "Updates an existing branch",
                 "consumes": [
                     "application/json"
@@ -4573,14 +4568,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Deletes an existing branch",
                 "tags": [
                     "Commerce"
@@ -4626,16 +4621,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/business-profiles": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/business-profiles": {
+            "get": {
                 "description": "Returns a list of business profiles belonging to the authenticated user.",
                 "produces": [
                     "application/json"
@@ -4686,14 +4681,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Create a new business profile for the authenticated user.",
                 "consumes": [
                     "application/json"
@@ -4750,16 +4745,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/business-profiles/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/business-profiles/{id}": {
+            "get": {
                 "description": "Returns the profile information of a specific business.",
                 "produces": [
                     "application/json"
@@ -4793,14 +4788,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Update the profile information of a specific business.",
                 "consumes": [
                     "application/json"
@@ -4855,14 +4850,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Remove a specific business profile.",
                 "produces": [
                     "application/json"
@@ -4893,16 +4888,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/business-profiles/{id}/logo": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/business-profiles/{id}/logo": {
+            "post": {
                 "description": "Returns a presigned S3 URL to upload a business logo.",
                 "produces": [
                     "application/json"
@@ -4945,16 +4940,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/customers": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/customers": {
+            "get": {
                 "description": "Returns a list of customers belonging to a specific business.",
                 "produces": [
                     "application/json"
@@ -5012,14 +5007,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Create a new customer for a business.",
                 "consumes": [
                     "application/json"
@@ -5067,16 +5062,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/customers/export": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/customers/export": {
+            "get": {
                 "description": "Returns a list of all customers for a business in JSON format.",
                 "produces": [
                     "application/json"
@@ -5122,16 +5117,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/customers/import": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/customers/import": {
+            "post": {
                 "description": "Batch import multiple customers for a business.",
                 "consumes": [
                     "application/json"
@@ -5192,16 +5187,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/customers/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/customers/{id}": {
+            "get": {
                 "description": "Returns the details of a specific customer.",
                 "produces": [
                     "application/json"
@@ -5235,14 +5230,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Update the details of a specific customer.",
                 "consumes": [
                     "application/json"
@@ -5297,14 +5292,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Remove a specific customer.",
                 "produces": [
                     "application/json"
@@ -5335,16 +5330,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents": {
+            "get": {
                 "description": "Search for agents using various filters like type, capability, jurisdiction, and currency.",
                 "produces": [
                     "application/json"
@@ -5416,16 +5411,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/by-budget": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/by-budget": {
+            "get": {
                 "description": "Find merchant agents from the agents table whose price is within the given budget.",
                 "produces": [
                     "application/json"
@@ -5483,16 +5478,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/by-capability": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/by-capability": {
+            "get": {
                 "description": "Retrieve agents that have specific capabilities.",
                 "produces": [
                     "application/json"
@@ -5554,16 +5549,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/by-categories": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/by-categories": {
+            "get": {
                 "description": "Find agents from the agents table whose categories contain any of the specified categories, and whose price is within the given budget.",
                 "produces": [
                     "application/json"
@@ -5627,16 +5622,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/by-product-categories": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/by-product-categories": {
+            "get": {
                 "description": "Find agents whose products have matching categories. Searches through product categories.",
                 "produces": [
                     "application/json"
@@ -5704,16 +5699,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/find-sellers": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/find-sellers": {
+            "get": {
                 "description": "Discover seller and merchant agents that sell the specified product.",
                 "produces": [
                     "application/json"
@@ -5771,16 +5766,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/find-sellers-by-category": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/find-sellers-by-category": {
+            "get": {
                 "description": "Discover seller and merchant agents that sell products in the specified category.",
                 "produces": [
                     "application/json"
@@ -5838,16 +5833,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/public": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/public": {
+            "get": {
                 "description": "Retrieve all publicly available agents with pagination.",
                 "produces": [
                     "application/json"
@@ -5889,16 +5884,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/register": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/register": {
+            "post": {
                 "description": "Register an agent in the discovery registry.",
                 "consumes": [
                     "application/json"
@@ -5947,16 +5942,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/register-from-agents": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/register-from-agents": {
+            "post": {
                 "description": "Finds an agent by ID from the agents table and registers it in the discovery registry",
                 "produces": [
                     "application/json"
@@ -6009,16 +6004,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/search": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/search": {
+            "get": {
                 "description": "Uses AI to parse natural language queries and find matching agents from the registry.",
                 "produces": [
                     "application/json"
@@ -6082,16 +6077,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/verified": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/verified": {
+            "get": {
                 "description": "Retrieve all verified agents, optionally filtered by type.",
                 "produces": [
                     "application/json"
@@ -6139,16 +6134,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/{agentID}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/{agentID}": {
+            "get": {
                 "description": "Retrieve a specific agent's registry entry by agent ID.",
                 "produces": [
                     "application/json"
@@ -6183,16 +6178,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/{registryID}/activate": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/{registryID}/activate": {
+            "post": {
                 "description": "Activate a previously deactivated agent. Requires admin role.",
                 "produces": [
                     "application/json"
@@ -6229,16 +6224,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/{registryID}/deactivate": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/{registryID}/deactivate": {
+            "post": {
                 "description": "Deactivate an agent in the registry. Requires admin role.",
                 "produces": [
                     "application/json"
@@ -6275,16 +6270,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/{registryID}/health-check": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/{registryID}/health-check": {
+            "post": {
                 "description": "Perform a health check on a registered agent. Requires admin role.",
                 "produces": [
                     "application/json"
@@ -6321,16 +6316,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/{registryID}/inquiry": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/{registryID}/inquiry": {
+            "post": {
                 "description": "Record an inquiry event for a registered agent.",
                 "produces": [
                     "application/json"
@@ -6367,16 +6362,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/{registryID}/integration": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/{registryID}/integration": {
+            "post": {
                 "description": "Record an integration event for a registered agent.",
                 "produces": [
                     "application/json"
@@ -6413,16 +6408,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/{registryID}/rate": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/{registryID}/rate": {
+            "post": {
                 "description": "Submit a rating and optional review for an agent.",
                 "consumes": [
                     "application/json"
@@ -6480,16 +6475,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/{registryID}/unverify": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/{registryID}/unverify": {
+            "post": {
                 "description": "Remove verification from an agent. Requires admin role.",
                 "produces": [
                     "application/json"
@@ -6526,16 +6521,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/discovery/agents/{registryID}/verify": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/discovery/agents/{registryID}/verify": {
+            "post": {
                 "description": "Mark an agent as verified. Requires admin role.",
                 "produces": [
                     "application/json"
@@ -6572,16 +6567,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/documents": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/documents": {
+            "get": {
                 "description": "Returns all documents for the business",
                 "produces": [
                     "application/json"
@@ -6607,14 +6602,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Creates a new document for the business",
                 "consumes": [
                     "application/json"
@@ -6675,16 +6670,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/documents/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/documents/{id}": {
+            "get": {
                 "description": "Returns a document by ID",
                 "produces": [
                     "application/json"
@@ -6725,14 +6720,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Updates an existing document by ID",
                 "consumes": [
                     "application/json"
@@ -6803,14 +6798,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Deletes a document by ID",
                 "produces": [
                     "application/json"
@@ -6862,16 +6857,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/documents/{id}/cancel": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/documents/{id}/cancel": {
+            "post": {
                 "description": "Cancels a document by ID",
                 "consumes": [
                     "application/json"
@@ -6923,16 +6918,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/documents/{id}/pdf": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/documents/{id}/pdf": {
+            "get": {
                 "description": "Returns the PDF URL for a document",
                 "produces": [
                     "application/json"
@@ -6978,16 +6973,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/drive": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/drive": {
+            "get": {
                 "description": "Returns a list of all drive assets for a business with usage statistics",
                 "produces": [
                     "application/json"
@@ -7022,16 +7017,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/drive/presign": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/drive/presign": {
+            "post": {
                 "description": "Creates a presigned URL for uploading a drive asset",
                 "consumes": [
                     "application/json"
@@ -7080,16 +7075,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/drive/{id}": {
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/drive/{id}": {
+            "delete": {
                 "description": "Deletes a specific drive asset",
                 "tags": [
                     "Drive"
@@ -7135,7 +7130,12 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
             }
         },
         "/health": {
@@ -7160,11 +7160,6 @@ const docTemplate = `{
         },
         "/intent/parse": {
             "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
                 "description": "Parses a natural language intent without searching for products",
                 "consumes": [
                     "application/json"
@@ -7213,16 +7208,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/intent/process": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/intent/process": {
+            "post": {
                 "description": "Processes a natural language shopping intent and returns matched products",
                 "consumes": [
                     "application/json"
@@ -7262,16 +7257,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/intent/validate": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/intent/validate": {
+            "post": {
                 "description": "Validates if products exist for the given natural language intent",
                 "consumes": [
                     "application/json"
@@ -7311,16 +7306,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/inventory/adjustments": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/inventory/adjustments": {
+            "post": {
                 "description": "Creates an inventory adjustment",
                 "consumes": [
                     "application/json"
@@ -7369,16 +7364,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/inventory/alerts": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/inventory/alerts": {
+            "get": {
                 "description": "Returns inventory alerts for low stock and expiry",
                 "produces": [
                     "application/json"
@@ -7404,16 +7399,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/inventory/batches": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/inventory/batches": {
+            "get": {
                 "description": "Returns batch inventory information",
                 "produces": [
                     "application/json"
@@ -7439,16 +7434,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/inventory/serials": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/inventory/serials": {
+            "get": {
                 "description": "Returns serial number inventory information",
                 "produces": [
                     "application/json"
@@ -7474,16 +7469,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/inventory/timeline": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/inventory/timeline": {
+            "get": {
                 "description": "Returns inventory movement timeline",
                 "produces": [
                     "application/json"
@@ -7509,16 +7504,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/inventory/transfers": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/inventory/transfers": {
+            "post": {
                 "description": "Creates an inventory transfer between warehouses",
                 "consumes": [
                     "application/json"
@@ -7567,16 +7562,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/inventory/valuation": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/inventory/valuation": {
+            "get": {
                 "description": "Returns inventory valuation report",
                 "produces": [
                     "application/json"
@@ -7602,16 +7597,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/invoices": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/invoices": {
+            "get": {
                 "description": "Returns a list of invoices belonging to a specific business.",
                 "produces": [
                     "application/json"
@@ -7659,14 +7654,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Create a new invoice for a business and customer.",
                 "consumes": [
                     "application/json"
@@ -7739,16 +7734,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/invoices/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/invoices/{id}": {
+            "get": {
                 "description": "Returns the details of a specific invoice.",
                 "produces": [
                     "application/json"
@@ -7782,14 +7777,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Update the details of a specific invoice.",
                 "consumes": [
                     "application/json"
@@ -7844,14 +7839,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Remove a specific invoice.",
                 "produces": [
                     "application/json"
@@ -7882,16 +7877,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/invoices/{id}/deliveries": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/invoices/{id}/deliveries": {
+            "post": {
                 "description": "Creates an idempotent invoice email delivery request.",
                 "consumes": [
                     "application/json"
@@ -7971,16 +7966,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/invoices/{id}/deliveries/{delivery_id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/invoices/{id}/deliveries/{delivery_id}": {
+            "get": {
                 "description": "Returns tenant-scoped invoice delivery status without provider or lease details.",
                 "produces": [
                     "application/json"
@@ -8039,16 +8034,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/invoices/{id}/draft": {
-            "patch": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/invoices/{id}/draft": {
+            "patch": {
                 "description": "Replaces draft customer snapshot, items, details, template, payment display, and compliance draft JSON transactionally.",
                 "consumes": [
                     "application/json"
@@ -8119,16 +8114,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/invoices/{id}/issue": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/invoices/{id}/issue": {
+            "post": {
                 "description": "Atomically assigns the legal invoice number, freezes the draft, and queues the final private render.",
                 "consumes": [
                     "application/json"
@@ -8215,16 +8210,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/invoices/{id}/pdf": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/invoices/{id}/pdf": {
+            "get": {
                 "description": "Returns a presigned S3 URL to download the invoice in PDF format.",
                 "produces": [
                     "application/json"
@@ -8285,16 +8280,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/invoices/{id}/previews": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/invoices/{id}/previews": {
+            "post": {
                 "description": "Atomically queues a private PDF preview for the current draft invoice version.",
                 "produces": [
                     "application/json"
@@ -8362,16 +8357,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/invoices/{invoice_id}/renders/{render_job_id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/invoices/{invoice_id}/renders/{render_job_id}": {
+            "get": {
                 "description": "Returns a safe status projection for an invoice render job.",
                 "produces": [
                     "application/json"
@@ -8430,16 +8425,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/journals": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/journals": {
+            "get": {
                 "description": "Returns all journals for the business",
                 "produces": [
                     "application/json"
@@ -8465,14 +8460,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Creates a new journal entry for the business",
                 "consumes": [
                     "application/json"
@@ -8518,16 +8513,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/journals/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/journals/{id}": {
+            "get": {
                 "description": "Returns a journal by ID",
                 "produces": [
                     "application/json"
@@ -8568,14 +8563,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Updates an existing journal by ID",
                 "consumes": [
                     "application/json"
@@ -8637,14 +8632,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Deletes a journal by ID",
                 "produces": [
                     "application/json"
@@ -8696,16 +8691,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/journals/{id}/post": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/journals/{id}/post": {
+            "post": {
                 "description": "Posts a journal by ID",
                 "produces": [
                     "application/json"
@@ -8755,16 +8750,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/journals/{id}/reverse": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/journals/{id}/reverse": {
+            "post": {
                 "description": "Reverses a posted journal by ID",
                 "produces": [
                     "application/json"
@@ -8814,16 +8809,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/ledger": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/ledger": {
+            "get": {
                 "description": "Returns a list of general ledger entries for a specific business.",
                 "produces": [
                     "application/json"
@@ -8881,16 +8876,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/ledger/balance": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/ledger/balance": {
+            "get": {
                 "description": "Returns the total balance for a specific business from the general ledger.",
                 "produces": [
                     "application/json"
@@ -8937,16 +8932,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/llm/agent-assist": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/llm/agent-assist": {
+            "post": {
                 "description": "Provides LLM-powered assistance for agent workflows",
                 "consumes": [
                     "application/json"
@@ -8995,16 +8990,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/llm/chat": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/llm/chat": {
+            "post": {
                 "description": "Sends a chat request to the configured LLM (Claude/Gemini)",
                 "consumes": [
                     "application/json"
@@ -9053,16 +9048,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/marketplace/merchant/products": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/marketplace/merchant/products": {
+            "get": {
                 "description": "Retrieve all products belonging to a specific merchant agent.",
                 "produces": [
                     "application/json"
@@ -9120,14 +9115,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Add a new product to the marketplace for a merchant agent.",
                 "consumes": [
                     "application/json"
@@ -9182,16 +9177,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/marketplace/merchant/products/{id}": {
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/marketplace/merchant/products/{id}": {
+            "put": {
                 "description": "Update an existing marketplace product.",
                 "consumes": [
                     "application/json"
@@ -9258,16 +9253,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/marketplace/orders": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/marketplace/orders": {
+            "get": {
                 "description": "Retrieve orders for the authenticated user, optionally filtered by status.",
                 "produces": [
                     "application/json"
@@ -9315,16 +9310,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/marketplace/orders/status/{status}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/marketplace/orders/status/{status}": {
+            "get": {
                 "description": "Retrieve orders for the authenticated user filtered by a specific status.",
                 "produces": [
                     "application/json"
@@ -9373,16 +9368,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/marketplace/products": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/marketplace/products": {
+            "get": {
                 "description": "List marketplace products with optional category and agent filters.",
                 "produces": [
                     "application/json"
@@ -9436,16 +9431,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/marketplace/products/available": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/marketplace/products/available": {
+            "get": {
                 "description": "Retrieve all currently available marketplace products.",
                 "produces": [
                     "application/json"
@@ -9487,16 +9482,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/marketplace/products/search": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/marketplace/products/search": {
+            "get": {
                 "description": "Search marketplace products by query string.",
                 "produces": [
                     "application/json"
@@ -9544,16 +9539,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/marketplace/products/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/marketplace/products/{id}": {
+            "get": {
                 "description": "Retrieve a specific marketplace product by its ID.",
                 "produces": [
                     "application/json"
@@ -9587,16 +9582,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/marketplace/stats": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/marketplace/stats": {
+            "get": {
                 "description": "Retrieve overall marketplace statistics.",
                 "produces": [
                     "application/json"
@@ -9622,7 +9617,12 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
             }
         },
         "/mcp/tools/call": {
@@ -9708,11 +9708,6 @@ const docTemplate = `{
         },
         "/payments": {
             "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
                 "description": "Returns a paginated list of payments recorded for the active business. Provide invoice_id to limit results to one invoice.",
                 "produces": [
                     "application/json"
@@ -9769,14 +9764,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Record a new payment for an invoice.",
                 "consumes": [
                     "application/json"
@@ -9824,16 +9819,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/payments/razorpay/order": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/payments/razorpay/order": {
+            "post": {
                 "description": "Creates a server-calculated Razorpay order for a plan or authenticated store order",
                 "consumes": [
                     "application/json"
@@ -9908,16 +9903,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/payments/razorpay/verify": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/payments/razorpay/verify": {
+            "post": {
                 "description": "Verifies the Razorpay checkout signature and trusted provider payment status",
                 "consumes": [
                     "application/json"
@@ -9983,16 +9978,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/payments/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/payments/{id}": {
+            "get": {
                 "description": "Returns the details of a specific payment.",
                 "produces": [
                     "application/json"
@@ -10026,14 +10021,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Update the details of a specific payment.",
                 "consumes": [
                     "application/json"
@@ -10088,14 +10083,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Remove a specific payment record.",
                 "produces": [
                     "application/json"
@@ -10126,16 +10121,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/pos/carts/{id}/checkout": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/pos/carts/{id}/checkout": {
+            "post": {
                 "description": "Completes checkout for a POS cart",
                 "consumes": [
                     "application/json"
@@ -10188,16 +10183,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/pos/carts/{id}/items/scan": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/pos/carts/{id}/items/scan": {
+            "post": {
                 "description": "Scans an item into the POS cart",
                 "consumes": [
                     "application/json"
@@ -10253,16 +10248,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/pos/catalog/search": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/pos/catalog/search": {
+            "get": {
                 "description": "Searches the product catalog for POS",
                 "produces": [
                     "application/json"
@@ -10317,16 +10312,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/pos/receipts/{documentID}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/pos/receipts/{documentID}": {
+            "get": {
                 "description": "Returns a thermal receipt for a document",
                 "produces": [
                     "application/json"
@@ -10379,16 +10374,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/pos/sessions": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/pos/sessions": {
+            "get": {
                 "description": "Lists Point of Sale sessions",
                 "produces": [
                     "application/json"
@@ -10443,14 +10438,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Creates a new Point of Sale session",
                 "consumes": [
                     "application/json"
@@ -10496,16 +10491,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/pos/sessions/{id}/close": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/pos/sessions/{id}/close": {
+            "post": {
                 "description": "Closes a Point of Sale session",
                 "produces": [
                     "application/json"
@@ -10537,16 +10532,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/price-lists": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/price-lists": {
+            "get": {
                 "description": "Returns all price lists for the business",
                 "produces": [
                     "application/json"
@@ -10572,14 +10567,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Creates a new price list for the business",
                 "consumes": [
                     "application/json"
@@ -10625,16 +10620,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/products": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/products": {
+            "get": {
                 "description": "Returns a list of products belonging to a specific business.",
                 "produces": [
                     "application/json"
@@ -10692,14 +10687,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Create a new product for a business.",
                 "consumes": [
                     "application/json"
@@ -10747,16 +10742,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/products/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/products/{id}": {
+            "get": {
                 "description": "Returns the details of a specific product.",
                 "produces": [
                     "application/json"
@@ -10796,14 +10791,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Update the details of a specific product.",
                 "consumes": [
                     "application/json"
@@ -10864,14 +10859,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Remove a specific product.",
                 "produces": [
                     "application/json"
@@ -10926,16 +10921,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/products/{id}/image": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/products/{id}/image": {
+            "post": {
                 "description": "Returns a presigned S3 URL to upload a product image.",
                 "produces": [
                     "application/json"
@@ -10978,16 +10973,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/products/{id}/stock": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/products/{id}/stock": {
+            "post": {
                 "description": "Add or remove stock for a specific product.",
                 "consumes": [
                     "application/json"
@@ -11042,16 +11037,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/projects": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/projects": {
+            "get": {
                 "description": "Returns all projects for the business",
                 "produces": [
                     "application/json"
@@ -11077,14 +11072,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Creates a new project for the business",
                 "consumes": [
                     "application/json"
@@ -11130,16 +11125,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/projects/{id}": {
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/projects/{id}": {
+            "put": {
                 "description": "Updates an existing project by ID",
                 "consumes": [
                     "application/json"
@@ -11201,14 +11196,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Deletes a project by ID",
                 "produces": [
                     "application/json"
@@ -11251,7 +11246,12 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
             }
         },
         "/public/report-shares/{token}/access": {
@@ -11664,11 +11664,6 @@ const docTemplate = `{
         },
         "/render-profiles": {
             "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
                 "description": "Returns all render profiles for the business",
                 "produces": [
                     "application/json"
@@ -11694,14 +11689,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Creates a new render profile for the business",
                 "consumes": [
                     "application/json"
@@ -11747,16 +11742,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/render-profiles/default": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/render-profiles/default": {
+            "get": {
                 "description": "Returns the default render profile for the business",
                 "produces": [
                     "application/json"
@@ -11788,16 +11783,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/render-profiles/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/render-profiles/{id}": {
+            "get": {
                 "description": "Returns a render profile by ID",
                 "produces": [
                     "application/json"
@@ -11838,14 +11833,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Updates an existing render profile by ID",
                 "consumes": [
                     "application/json"
@@ -11907,14 +11902,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Deletes a render profile by ID",
                 "produces": [
                     "application/json"
@@ -11957,16 +11952,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/render-profiles/{id}/default": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/render-profiles/{id}/default": {
+            "post": {
                 "description": "Marks the specified render profile as default for the business",
                 "produces": [
                     "application/json"
@@ -12007,16 +12002,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/reports/catalog": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/reports/catalog": {
+            "get": {
                 "description": "Returns all available report types",
                 "produces": [
                     "application/json"
@@ -12033,16 +12028,16 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     }
-                }
-            }
-        },
-        "/reports/dashboard": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/reports/dashboard": {
+            "get": {
                 "description": "Returns dashboard data for the business",
                 "produces": [
                     "application/json"
@@ -12065,16 +12060,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/reports/preferences/{key}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/reports/preferences/{key}": {
+            "get": {
                 "description": "Returns a saved report preference",
                 "produces": [
                     "application/json"
@@ -12115,14 +12110,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Saves a report preference",
                 "consumes": [
                     "application/json"
@@ -12184,16 +12179,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/reports/shares/history": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/reports/shares/history": {
+            "get": {
                 "description": "Returns the history of report shares",
                 "produces": [
                     "application/json"
@@ -12219,16 +12214,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/reports/{key}/export": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/reports/{key}/export": {
+            "post": {
                 "description": "Exports a report in the specified format",
                 "consumes": [
                     "application/json"
@@ -12290,16 +12285,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/reports/{key}/query": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/reports/{key}/query": {
+            "post": {
                 "description": "Executes a report query and returns results",
                 "consumes": [
                     "application/json"
@@ -12361,16 +12356,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/reports/{key}/share": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/reports/{key}/share": {
+            "post": {
                 "description": "Creates a public share link for a report",
                 "consumes": [
                     "application/json"
@@ -12432,16 +12427,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/roles": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/roles": {
+            "get": {
                 "description": "Returns a list of all roles for a business",
                 "produces": [
                     "application/json"
@@ -12476,14 +12471,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Creates a new role for a business",
                 "consumes": [
                     "application/json"
@@ -12532,16 +12527,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/roles/{id}": {
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/roles/{id}": {
+            "put": {
                 "description": "Updates an existing role",
                 "consumes": [
                     "application/json"
@@ -12606,14 +12601,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Deletes an existing role",
                 "tags": [
                     "Commerce"
@@ -12659,16 +12654,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/shipments/documents/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/shipments/documents/{id}": {
+            "get": {
                 "description": "Returns shipment information for a document",
                 "produces": [
                     "application/json"
@@ -12709,14 +12704,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Creates or updates shipment for a document",
                 "consumes": [
                     "application/json"
@@ -12778,16 +12773,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/shipments/documents/{id}/label": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/shipments/documents/{id}/label": {
+            "get": {
                 "description": "Returns shipping label for a document",
                 "produces": [
                     "application/json"
@@ -12828,14 +12823,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Generates and returns shipping label for a document",
                 "consumes": [
                     "application/json"
@@ -12896,16 +12891,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/storefronts": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/storefronts": {
+            "get": {
                 "description": "Returns a list of all storefronts for a business",
                 "produces": [
                     "application/json"
@@ -12940,14 +12935,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Creates a new storefront for a business",
                 "consumes": [
                     "application/json"
@@ -12996,16 +12991,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/storefronts/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/storefronts/{id}": {
+            "get": {
                 "description": "Returns the details of a specific storefront",
                 "produces": [
                     "application/json"
@@ -13049,16 +13044,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/storefronts/{id}/coupons": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/storefronts/{id}/coupons": {
+            "get": {
                 "description": "Returns a list of all coupons for a specific storefront",
                 "produces": [
                     "application/json"
@@ -13102,14 +13097,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Creates a new coupon for a specific storefront",
                 "consumes": [
                     "application/json"
@@ -13174,16 +13169,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/storefronts/{id}/coupons/{coupon_id}": {
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/storefronts/{id}/coupons/{coupon_id}": {
+            "put": {
                 "description": "Updates an existing coupon for a specific storefront",
                 "consumes": [
                     "application/json"
@@ -13255,16 +13250,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/storefronts/{id}/orders": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/storefronts/{id}/orders": {
+            "get": {
                 "description": "Returns a paginated list of orders for a specific storefront",
                 "produces": [
                     "application/json"
@@ -13328,16 +13323,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/storefronts/{id}/orders/{order_id}/approve": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/storefronts/{id}/orders/{order_id}/approve": {
+            "post": {
                 "description": "Approves a pending order for a specific storefront",
                 "produces": [
                     "application/json"
@@ -13397,16 +13392,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/storefronts/{id}/orders/{order_id}/cancel": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/storefronts/{id}/orders/{order_id}/cancel": {
+            "post": {
                 "description": "Cancels a pending order for a specific storefront",
                 "consumes": [
                     "application/json"
@@ -13477,16 +13472,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/storefronts/{id}/products": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/storefronts/{id}/products": {
+            "get": {
                 "description": "Returns a list of all products for a specific storefront",
                 "produces": [
                     "application/json"
@@ -13530,14 +13525,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Replaces all products for a specific storefront",
                 "consumes": [
                     "application/json"
@@ -13605,16 +13600,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/storefronts/{id}/settings": {
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/storefronts/{id}/settings": {
+            "put": {
                 "description": "Updates the settings of a specific storefront",
                 "consumes": [
                     "application/json"
@@ -13679,16 +13674,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/subscriptions": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/subscriptions": {
+            "get": {
                 "description": "Returns the subscription details for the authenticated business.",
                 "produces": [
                     "application/json"
@@ -13730,14 +13725,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Update the subscription plan or status for a business.",
                 "consumes": [
                     "application/json"
@@ -13791,14 +13786,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Create a new subscription plan for a business.",
                 "consumes": [
                     "application/json"
@@ -13846,16 +13841,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/subscriptions/entitlements": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/subscriptions/entitlements": {
+            "get": {
                 "description": "Returns a list of all feature entitlements for a business",
                 "produces": [
                     "application/json"
@@ -13890,16 +13885,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/subscriptions/entitlements/sync": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/subscriptions/entitlements/sync": {
+            "post": {
                 "description": "Syncs feature entitlements for a business from the subscription service",
                 "produces": [
                     "application/json"
@@ -13934,16 +13929,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/tax/gstr-2b/import": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/tax/gstr-2b/import": {
+            "post": {
                 "description": "Imports GSTR-2B data from government portal",
                 "consumes": [
                     "application/json"
@@ -13992,16 +13987,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/tax/integrations": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/tax/integrations": {
+            "get": {
                 "description": "Returns all tax integration accounts for the business",
                 "produces": [
                     "application/json"
@@ -14027,16 +14022,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/tax/integrations/{id}": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/tax/integrations/{id}": {
+            "post": {
                 "description": "Creates or updates a tax integration account",
                 "consumes": [
                     "application/json"
@@ -14088,16 +14083,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/tax/integrations/{id}/validate": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/tax/integrations/{id}/validate": {
+            "post": {
                 "description": "Validates credentials for a tax integration account",
                 "produces": [
                     "application/json"
@@ -14138,16 +14133,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/tax/report-runs/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/tax/report-runs/{id}": {
+            "get": {
                 "description": "Returns the status of a tax report export run",
                 "produces": [
                     "application/json"
@@ -14188,16 +14183,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/tax/reports/{type}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/tax/reports/{type}": {
+            "get": {
                 "description": "Returns a tax report of the specified type",
                 "produces": [
                     "application/json"
@@ -14264,16 +14259,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/tax/reports/{type}/export": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/tax/reports/{type}/export": {
+            "post": {
                 "description": "Exports a tax report in the specified format",
                 "consumes": [
                     "application/json"
@@ -14326,16 +14321,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/teams": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/teams": {
+            "get": {
                 "description": "Returns a list of team members belonging to a specific business.",
                 "produces": [
                     "application/json"
@@ -14393,14 +14388,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Add a new team member to a business.",
                 "consumes": [
                     "application/json"
@@ -14448,16 +14443,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/teams/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/teams/{id}": {
+            "get": {
                 "description": "Returns the details of a specific team member.",
                 "produces": [
                     "application/json"
@@ -14491,14 +14486,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Update the details of a specific team member.",
                 "consumes": [
                     "application/json"
@@ -14553,14 +14548,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Remove a specific team member from a business.",
                 "produces": [
                     "application/json"
@@ -14591,16 +14586,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/utils/gstin/{gstin}/fetch": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/utils/gstin/{gstin}/fetch": {
+            "post": {
                 "description": "Verifies GSTIN details through the configured GST lookup provider and falls back to local format validation when the provider is unavailable.",
                 "produces": [
                     "application/json"
@@ -14634,16 +14629,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/vendors": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/vendors": {
+            "get": {
                 "description": "Returns a list of vendors belonging to a specific business.",
                 "produces": [
                     "application/json"
@@ -14701,14 +14696,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Create a new vendor for a business.",
                 "consumes": [
                     "application/json"
@@ -14756,16 +14751,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/vendors/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/vendors/{id}": {
+            "get": {
                 "description": "Returns the details of a specific vendor.",
                 "produces": [
                     "application/json"
@@ -14799,14 +14794,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Update the details of a specific vendor.",
                 "consumes": [
                     "application/json"
@@ -14861,14 +14856,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Remove a specific vendor.",
                 "produces": [
                     "application/json"
@@ -14899,44 +14894,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/voice/agent": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
-                "description": "Live voice conversation now requires GET /api/v1/voice/realtime over WebSocket.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Voice"
-                ],
-                "summary": "Retired voice agent route",
-                "responses": {
-                    "410": {
-                        "description": "Gone",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
+                ]
             }
         },
         "/voice/text-to-speech": {
             "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
                 "description": "Converts up to 3500 characters to speech using Sarvam Bulbul v3 and returns binary audio.",
                 "consumes": [
                     "application/json"
@@ -14998,16 +14965,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/voice/text-to-speech/languages": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/voice/text-to-speech/languages": {
+            "get": {
                 "produces": [
                     "application/json"
                 ],
@@ -15023,16 +14990,16 @@ const docTemplate = `{
                             "additionalProperties": true
                         }
                     }
-                }
-            }
-        },
-        "/warehouses": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/warehouses": {
+            "get": {
                 "description": "Returns all warehouses for the business",
                 "produces": [
                     "application/json"
@@ -15058,14 +15025,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Creates a new warehouse for the business",
                 "consumes": [
                     "application/json"
@@ -15120,16 +15087,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/warehouses/{id}": {
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/warehouses/{id}": {
+            "put": {
                 "description": "Updates an existing warehouse by ID",
                 "consumes": [
                     "application/json"
@@ -15200,14 +15167,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Deletes a warehouse by ID",
                 "produces": [
                     "application/json"
@@ -15259,16 +15226,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/webhooks": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/webhooks": {
+            "get": {
                 "description": "Returns a list of webhook subscriptions for a specific business.",
                 "produces": [
                     "application/json"
@@ -15312,14 +15279,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Register a new webhook URL for event notifications.",
                 "consumes": [
                     "application/json"
@@ -15367,7 +15334,12 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
             }
         },
         "/webhooks/razorpay": {
@@ -15441,11 +15413,6 @@ const docTemplate = `{
         },
         "/webhooks/{id}": {
             "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
                 "description": "Returns the details of a specific webhook subscription.",
                 "produces": [
                     "application/json"
@@ -15479,14 +15446,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Update the details of a specific webhook subscription.",
                 "consumes": [
                     "application/json"
@@ -15541,14 +15508,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Remove a specific webhook subscription.",
                 "produces": [
                     "application/json"
@@ -15579,16 +15546,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/whatsapp/config": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/whatsapp/config": {
+            "get": {
                 "description": "Returns the WhatsApp configuration for a business",
                 "produces": [
                     "application/json"
@@ -15623,14 +15590,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Creates or updates the WhatsApp configuration for a business",
                 "consumes": [
                     "application/json"
@@ -15679,16 +15646,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/whatsapp/deliveries": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/whatsapp/deliveries": {
+            "get": {
                 "description": "Returns a list of notification deliveries for a business",
                 "produces": [
                     "application/json"
@@ -15732,16 +15699,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/workflows": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/workflows": {
+            "get": {
                 "description": "Returns all workflows for the authenticated user",
                 "produces": [
                     "application/json"
@@ -15790,14 +15757,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "post": {
                 "description": "Creates a new workflow",
                 "consumes": [
                     "application/json"
@@ -15846,16 +15813,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/workflows/{id}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/workflows/{id}": {
+            "get": {
                 "description": "Returns a specific workflow",
                 "produces": [
                     "application/json"
@@ -15908,14 +15875,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "put": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "put": {
                 "description": "Updates an existing workflow",
                 "consumes": [
                     "application/json"
@@ -15980,14 +15947,14 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            },
-            "delete": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            },
+            "delete": {
                 "description": "Deletes a workflow",
                 "produces": [
                     "application/json"
@@ -16042,16 +16009,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/workflows/{id}/duplicate": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/workflows/{id}/duplicate": {
+            "post": {
                 "description": "Creates a disabled copy of a workflow owned by the authenticated user",
                 "produces": [
                     "application/json"
@@ -16113,16 +16080,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/workflows/{id}/pause": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/workflows/{id}/pause": {
+            "post": {
                 "description": "Pauses a workflow",
                 "produces": [
                     "application/json"
@@ -16177,16 +16144,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/workflows/{id}/resume": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/workflows/{id}/resume": {
+            "post": {
                 "description": "Resumes a paused workflow",
                 "produces": [
                     "application/json"
@@ -16241,16 +16208,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/workflows/{id}/run": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/workflows/{id}/run": {
+            "post": {
                 "description": "Runs a workflow immediately",
                 "produces": [
                     "application/json"
@@ -16303,16 +16270,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/ws": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/ws": {
+            "get": {
                 "description": "Upgrades to a WebSocket connection",
                 "produces": [
                     "application/json"
@@ -16337,16 +16304,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/ws/health": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/ws/health": {
+            "get": {
                 "description": "Returns the health status of the WebSocket subsystem",
                 "produces": [
                     "application/json"
@@ -16372,16 +16339,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/ws/notify-all": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/ws/notify-all": {
+            "post": {
                 "description": "Broadcasts a notification to all connected WebSocket clients",
                 "consumes": [
                     "application/json"
@@ -16432,16 +16399,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/ws/notify/{userID}": {
-            "post": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/ws/notify/{userID}": {
+            "post": {
                 "description": "Sends a notification to a specific user via WebSocket",
                 "consumes": [
                     "application/json"
@@ -16499,16 +16466,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/ws/stats": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/ws/stats": {
+            "get": {
                 "description": "Returns WebSocket connection statistics",
                 "produces": [
                     "application/json"
@@ -16534,16 +16501,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/ws/status/{userID}": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/ws/status/{userID}": {
+            "get": {
                 "description": "Checks if a specific user is connected via WebSocket",
                 "produces": [
                     "application/json"
@@ -16578,16 +16545,16 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
-            }
-        },
-        "/ws/users": {
-            "get": {
+                },
                 "security": [
                     {
                         "BearerAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/ws/users": {
+            "get": {
                 "description": "Returns all connected WebSocket user IDs",
                 "produces": [
                     "application/json"
@@ -16613,7 +16580,12 @@ const docTemplate = `{
                             }
                         }
                     }
-                }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
             }
         }
     },

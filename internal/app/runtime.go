@@ -1015,11 +1015,9 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			llm.POST("/agent-assist", wafLLMRL, h.LLM.AgentAssist)
 		}
 
-		// Realtime voice endpoints
+		// Voice endpoints
 		voice := protected.Group("/voice")
 		{
-			voice.GET("/realtime", wafWSRL, h.RealtimeVoice.Handle)
-			voice.POST("/agent", wafLLMRL, h.Voice.Agent)
 			voice.POST("/text-to-speech", wafLLMRL, h.SarvamTTS.Synthesize)
 			voice.GET("/text-to-speech/languages", h.SarvamTTS.ListLanguages)
 		}

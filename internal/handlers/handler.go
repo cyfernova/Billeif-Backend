@@ -58,8 +58,6 @@ type Handler struct {
 	Intent          *IntentHandler
 	WebSocket       *WebSocketHandler
 	LLM             *LLMHandler
-	Voice           *VoiceHandler
-	RealtimeVoice   *RealtimeVoiceHandler
 	SarvamTTS       *SarvamTTSHandler
 	WellKnown       *WellKnownHandler
 	A2ATask         *A2ATaskHandler
@@ -138,8 +136,6 @@ func New(
 		Intent:          NewIntentHandler(svcs.IntentProcessing, log),
 		WebSocket:       NewWebSocketHandler(wsHub, svcs.WebSocketConnection, log),
 		LLM:             NewLLMHandler(svcs.LLM, svcs.LLMChatHistory, log),
-		Voice:           NewVoiceHandler(log),
-		RealtimeVoice:   NewRealtimeVoiceHandler(svcs.RealtimeVoice, cfg.AllowedOrigins, log),
 		SarvamTTS:       NewSarvamTTSHandler(svcs.SarvamTTS, log),
 		WellKnown:       NewWellKnownHandler(cfg, log),
 		A2ATask:         NewA2ATaskHandler(svcs.A2ATask, svcs.A2APush, log),

@@ -29,7 +29,6 @@ const (
 	SecretExa                  SecretKind = "exa"
 	SecretGSTLookup            SecretKind = "gst-lookup"
 	SecretGSTProvider          SecretKind = "gst-provider"
-	SecretDeepgram             SecretKind = "deepgram"
 	SecretDeepSeek             SecretKind = "deepseek"
 	SecretSarvam               SecretKind = "sarvam"
 )
@@ -41,7 +40,6 @@ var ApplicationSecretKinds = []SecretKind{
 	SecretExa,
 	SecretGSTLookup,
 	SecretGSTProvider,
-	SecretDeepgram,
 	SecretDeepSeek,
 }
 
@@ -52,7 +50,7 @@ func SecretKindsForEntrypoint(entrypoint string) []SecretKind {
 		kinds = []SecretKind{
 			SecretCredentialEncryption, SecretRazorpay, SecretLLM,
 			SecretExa, SecretGSTLookup, SecretGSTProvider,
-			SecretDeepgram, SecretDeepSeek,
+			SecretDeepSeek,
 		}
 	case "sqs-invoice":
 		kinds = []SecretKind{SecretCredentialEncryption}
@@ -60,8 +58,6 @@ func SecretKindsForEntrypoint(entrypoint string) []SecretKind {
 		kinds = []SecretKind{SecretCredentialEncryption, SecretGSTProvider}
 	case "sqs-bargaining":
 		kinds = []SecretKind{SecretCredentialEncryption, SecretLLM, SecretExa}
-	case "voice-session":
-		kinds = []SecretKind{SecretDeepgram, SecretDeepSeek}
 	case "outbox":
 		kinds = nil
 	}
@@ -190,7 +186,6 @@ func (r *RuntimeResolver) Resolve(ctx context.Context, cfg *Config, kinds []Secr
 			*binding.target = value
 		}
 	}
-	cfg.VoiceRealtime = cfg.VoiceRealtime.WithDefaults(cfg.Deepgram)
 	return nil
 }
 
@@ -313,13 +308,8 @@ func (c *Config) secretBindings(kind SecretKind) []secretBinding {
 			{c.Secrets.GSTProvider, "password", &c.GST.Password},
 			{c.Secrets.GSTProvider, "api_token", &c.GST.APIToken},
 		}
-	case SecretDeepgram:
-		return []secretBinding{
-			{c.Secrets.Deepgram, "api_key", &c.Deepgram.APIKey},
-			{c.Secrets.Deepgram, "api_key", &c.VoiceRealtime.DeepgramAPIKey},
-		}
 	case SecretDeepSeek:
-		return []secretBinding{{c.Secrets.DeepSeek, "api_key", &c.VoiceRealtime.DeepSeekAPIKey}}
+		return []secretBinding{{c.Secrets.DeepSeek, "api_key", &c.DeepSeek.APIKey}}
 	case SecretSarvam:
 		return []secretBinding{{c.Secrets.Sarvam, "api_key", &c.Sarvam.APIKey}}
 	default:
@@ -356,7 +346,6 @@ func (c *Config) configuredSecretIdentifiers() []string {
 		c.Secrets.Exa,
 		c.Secrets.GSTLookup,
 		c.Secrets.GSTProvider,
-		c.Secrets.Deepgram,
 		c.Secrets.DeepSeek,
 		c.Secrets.InvoiceCursorHMAC,
 	})

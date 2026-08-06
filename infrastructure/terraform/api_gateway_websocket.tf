@@ -30,24 +30,6 @@ resource "aws_apigatewayv2_route" "ws_default" {
   target    = "integrations/${aws_apigatewayv2_integration.websocket_lambda.id}"
 }
 
-resource "aws_apigatewayv2_route" "ws_voice_start" {
-  api_id    = aws_apigatewayv2_api.websocket.id
-  route_key = "voice.start"
-  target    = "integrations/${aws_apigatewayv2_integration.websocket_lambda.id}"
-}
-
-resource "aws_apigatewayv2_route" "ws_voice_audio" {
-  api_id    = aws_apigatewayv2_api.websocket.id
-  route_key = "voice.audio"
-  target    = "integrations/${aws_apigatewayv2_integration.websocket_lambda.id}"
-}
-
-resource "aws_apigatewayv2_route" "ws_voice_control" {
-  api_id    = aws_apigatewayv2_api.websocket.id
-  route_key = "voice.control"
-  target    = "integrations/${aws_apigatewayv2_integration.websocket_lambda.id}"
-}
-
 resource "aws_apigatewayv2_deployment" "websocket" {
   api_id = aws_apigatewayv2_api.websocket.id
 
@@ -55,10 +37,7 @@ resource "aws_apigatewayv2_deployment" "websocket" {
     redeploy = sha1(jsonencode([
       aws_apigatewayv2_route.ws_connect.id,
       aws_apigatewayv2_route.ws_disconnect.id,
-      aws_apigatewayv2_route.ws_default.id,
-      aws_apigatewayv2_route.ws_voice_start.id,
-      aws_apigatewayv2_route.ws_voice_audio.id,
-      aws_apigatewayv2_route.ws_voice_control.id
+      aws_apigatewayv2_route.ws_default.id
     ]))
   }
 

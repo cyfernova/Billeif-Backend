@@ -410,7 +410,6 @@ run "low_quota_activation_keeps_request_paths_unreserved_and_background_off" {
       aws_lambda_function.ws_handler.reserved_concurrent_executions == null &&
       aws_lambda_function.custom_sms_sender.reserved_concurrent_executions == null &&
       aws_lambda_function.database_migrator.reserved_concurrent_executions == null &&
-      aws_lambda_function.voice_session.reserved_concurrent_executions == 0 &&
       aws_lambda_function.outbox_dispatcher.reserved_concurrent_executions == 0 &&
       aws_lambda_function.sqs_invoice.reserved_concurrent_executions == 0 &&
       aws_lambda_function.sqs_gst.reserved_concurrent_executions == 0 &&

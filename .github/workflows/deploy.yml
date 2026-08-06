@@ -141,7 +141,6 @@ jobs:
       TF_VAR_enable_cognito_custom_domain_provisioning: ${{ vars.ENABLE_COGNITO_CUSTOM_DOMAIN_PROVISIONING == 'true' && 'true' || 'false' }}
       TF_VAR_enable_cognito_custom_domain_cutover: ${{ vars.ENABLE_COGNITO_CUSTOM_DOMAIN_CUTOVER == 'true' && 'true' || 'false' }}
       TF_VAR_enable_background_processing: ${{ vars.ENABLE_BACKGROUND_PROCESSING == 'true' && 'true' || 'false' }}
-      TF_VAR_enable_voice: ${{ vars.ENABLE_VOICE == 'true' && 'true' || 'false' }}
       TF_VAR_enable_rds_tunnel: "false"
       TF_VAR_use_ambient_aws_credentials: "true"
       TF_VAR_llm_api_url: ${{ vars.LLM_API_URL != '' && vars.LLM_API_URL || 'https://api.deepseek.com/chat/completions' }}
