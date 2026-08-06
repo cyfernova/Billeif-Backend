@@ -340,7 +340,7 @@ func TestServiceDoesNotLeakForeignSession(t *testing.T) {
 func testConfig() Config {
 	return Config{
 		TableName: "voice-sessions", AgentRuntimeARN: "arn:aws:bedrock-agentcore:ap-south-1:123456789012:runtime/test",
-		AgentRuntimeQualifier: "PROD", ProtocolVersion: 1, KVSChannelCount: 12,
+		AgentRuntimeQualifier: "PROD", AdmissionEnabled: true, RolloutStage: "100", ProtocolVersion: 1, KVSChannelCount: 12,
 		MaxDuration: 55 * time.Minute, RotateAfter: 52 * time.Minute, LeaseDuration: 2 * time.Minute,
 	}
 }

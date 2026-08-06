@@ -3,10 +3,15 @@ package session
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
@@ -23,6 +28,8 @@ const (
 	leasePartitionKey  = "VOICE#LEASE"
 	timeKeyFormat      = "2006-01-02T15:04:05.000000000Z07:00"
 )
+
+var finalTurnMetadataPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 
 type DynamoDBAPI interface {
 	GetItem(context.Context, *dynamodb.GetItemInput, ...func(*dynamodb.Options)) (*dynamodb.GetItemOutput, error)
@@ -59,6 +66,69 @@ func NewDynamoDBStore(db DynamoDBAPI, cfg DynamoDBStoreConfig) *DynamoDBStore {
 	return &DynamoDBStore{
 		db: db, tableName: cfg.TableName, leaseIndexName: cfg.LeaseIndexName,
 		globalCapacityLimit: cfg.GlobalCapacityLimit, perUserCapacityLimit: cfg.PerUserCapacityLimit,
+	}
+}
+
+func (s *DynamoDBStore) PersistFinalTurn(ctx context.Context, turn FinalTurn) error {
+	if err := s.validate(); err != nil {
+		return err
+	}
+	if err := validateFinalTurn(turn); err != nil {
+		return err
+	}
+	item, err := marshalFinalTurn(turn)
+	if err != nil {
+		return fmt.Errorf("marshal final voice turn: %w", ErrInvalidFinalTurn)
+	}
+	hash := attributeString(item, "content_hash")
+	input := &dynamodb.TransactWriteItemsInput{
+		ClientRequestToken: aws.String(transactionToken("turn", turn.SessionID+"|"+strconv.FormatInt(turn.Sequence, 10)+"|"+hash)),
+		TransactItems: []types.TransactWriteItem{
+			{Update: &types.Update{
+				TableName:           aws.String(s.tableName),
+				Key:                 sessionKey(turn.SessionID),
+				ConditionExpression: aws.String("#status = :active AND #consent_transcript_storage = :true AND #turn_sequence = :previous_sequence AND #generation_id < :generation_id AND #expires_at > :completed_at_epoch AND #expires_at >= :turn_expires_at_epoch"),
+				UpdateExpression:    aws.String("SET #turn_sequence = :turn_sequence, #generation_id = :generation_id, #updated_at = :updated_at"),
+				ExpressionAttributeNames: map[string]string{
+					"#status": "status", "#consent_transcript_storage": "consent_transcript_storage",
+					"#turn_sequence": "turn_sequence", "#generation_id": "generation_id",
+					"#expires_at": "expires_at", "#updated_at": "updated_at",
+				},
+				ExpressionAttributeValues: map[string]types.AttributeValue{
+					":active": stringAttribute(string(StatusActive)), ":true": boolAttribute(true),
+					":previous_sequence": numberAttribute(turn.Sequence - 1), ":turn_sequence": numberAttribute(turn.Sequence),
+					":generation_id": numberAttribute(turn.GenerationID), ":completed_at_epoch": numberAttribute(turn.CompletedAt.Unix()),
+					":turn_expires_at_epoch": numberAttribute(turn.ExpiresAt.Unix()),
+					":updated_at":            stringAttribute(formatTime(turn.CompletedAt)),
+				},
+			}},
+			{Put: &types.Put{
+				TableName: aws.String(s.tableName), Item: item,
+				ConditionExpression:      aws.String("attribute_not_exists(#pk) AND attribute_not_exists(#sk)"),
+				ExpressionAttributeNames: map[string]string{"#pk": "pk", "#sk": "sk"},
+			}},
+		},
+	}
+	if _, err := s.db.TransactWriteItems(ctx, input); err == nil {
+		return nil
+	} else {
+		durableHash, found, lookupErr := s.lookupFinalTurnHash(ctx, turn.SessionID, turn.Sequence)
+		if lookupErr != nil {
+			return lookupErr
+		}
+		if found {
+			if durableHash == hash {
+				return nil
+			}
+			return ErrFinalTurnConflict
+		}
+		if cancellationReasonIs(err, 0, "ConditionalCheckFailed") {
+			return ErrFinalTurnSequence
+		}
+		if cancellationReasonIs(err, 1, "ConditionalCheckFailed") {
+			return ErrFinalTurnConflict
+		}
+		return fmt.Errorf("persist final voice turn: %w", err)
 	}
 }
 
@@ -199,6 +269,79 @@ func (s *DynamoDBStore) Resume(ctx context.Context, input ResumeRecord) (*Sessio
 	return resumed, nil
 }
 
+// RenewLease advances one exact active runtime lease. The old lease timestamp
+// is the optimistic-lock version shared with ReleaseExpired: DynamoDB can
+// commit the renewal or the reconciler release, never both.
+func (s *DynamoDBStore) RenewLease(ctx context.Context, input LeaseRenewal) (*Session, error) {
+	if err := s.validate(); err != nil {
+		return nil, err
+	}
+	if ctx == nil || validateScope(input.Scope) != nil || !validSessionID(input.SessionID) ||
+		!validRuntimeLeaseID(input.RuntimeSessionID) || !scopeAllowsBranch(input.Scope, input.ExpectedBranchID) ||
+		input.ExpectedLeaseExpiresAt.IsZero() || input.ExpectedExpiresAt.IsZero() || input.RenewedAt.IsZero() ||
+		input.LeaseDuration <= 0 || input.LeaseDuration > 5*time.Minute ||
+		!input.ExpectedLeaseExpiresAt.After(input.RenewedAt) || input.ExpectedExpiresAt.Unix() <= input.RenewedAt.Unix() {
+		return nil, ErrInvalidRequest
+	}
+
+	productExpiresAt := time.Unix(input.ExpectedExpiresAt.Unix(), 0).UTC()
+	if input.ExpectedLeaseExpiresAt.After(productExpiresAt) {
+		return nil, ErrInvalidRequest
+	}
+	leaseExpiresAt := input.RenewedAt.Add(input.LeaseDuration)
+	if leaseExpiresAt.After(productExpiresAt) {
+		leaseExpiresAt = productExpiresAt
+	}
+	if !leaseExpiresAt.After(input.ExpectedLeaseExpiresAt) {
+		return nil, ErrLeaseNotRenewable
+	}
+
+	names := map[string]string{
+		"#session_id": "session_id", "#user_id": "user_id", "#business_id": "business_id", "#branch_id": "branch_id",
+		"#runtime_session_id": "runtime_session_id", "#status": "status", "#runtime_state": "runtime_state",
+		"#capacity_released": "capacity_released", "#lease_expires_at": "lease_expires_at", "#expires_at": "expires_at",
+		"#updated_at": "updated_at", "#gsi2pk": "GSI2PK", "#gsi2sk": "GSI2SK",
+	}
+	values := map[string]types.AttributeValue{
+		":session_id": stringAttribute(input.SessionID), ":user_id": stringAttribute(input.Scope.UserID),
+		":business_id": stringAttribute(input.Scope.BusinessID), ":runtime_session_id": stringAttribute(input.RuntimeSessionID),
+		":active": stringAttribute(string(StatusActive)), ":running": stringAttribute(string(RuntimeStateRunning)),
+		":false": boolAttribute(false), ":expected_lease_expires_at": stringAttribute(formatTime(input.ExpectedLeaseExpiresAt)),
+		":renewed_at": stringAttribute(formatTime(input.RenewedAt)), ":expected_expires_at": numberAttribute(input.ExpectedExpiresAt.Unix()),
+		":renewed_at_epoch": numberAttribute(input.RenewedAt.Unix()), ":lease_expires_at": stringAttribute(formatTime(leaseExpiresAt)),
+		":lease_expires_at_epoch": numberAttribute(leaseExpiresAt.Unix()),
+		":updated_at":             stringAttribute(formatTime(input.RenewedAt)), ":lease_pk": stringAttribute(leasePartitionKey),
+		":lease_sk": stringAttribute(leaseSortKey(leaseExpiresAt, input.SessionID)),
+	}
+	condition := "#session_id = :session_id AND #user_id = :user_id AND #business_id = :business_id AND " +
+		"#runtime_session_id = :runtime_session_id AND #status = :active AND #runtime_state = :running AND " +
+		"#capacity_released = :false AND #lease_expires_at = :expected_lease_expires_at AND " +
+		"#lease_expires_at > :renewed_at AND #expires_at = :expected_expires_at AND #expires_at > :renewed_at_epoch AND " +
+		"#expires_at >= :lease_expires_at_epoch"
+	condition = addExpectedBranchCondition(condition, input.ExpectedBranchID, values)
+	output, err := s.db.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.tableName), Key: sessionKey(input.SessionID),
+		ConditionExpression:      aws.String(condition),
+		UpdateExpression:         aws.String("SET #lease_expires_at = :lease_expires_at, #updated_at = :updated_at, #gsi2pk = :lease_pk, #gsi2sk = :lease_sk"),
+		ExpressionAttributeNames: names, ExpressionAttributeValues: values, ReturnValues: types.ReturnValueAllNew,
+	})
+	if err != nil {
+		var conditional *types.ConditionalCheckFailedException
+		if errors.As(err, &conditional) {
+			return nil, ErrLeaseNotRenewable
+		}
+		return nil, fmt.Errorf("renew voice session lease: %w", ErrUnavailable)
+	}
+	if output == nil || len(output.Attributes) == 0 {
+		return nil, fmt.Errorf("renew voice session lease: %w", ErrUnavailable)
+	}
+	renewed, err := unmarshalSession(output.Attributes)
+	if err != nil || !validRenewedLease(renewed, input, leaseExpiresAt) {
+		return nil, fmt.Errorf("renew voice session lease: %w", ErrUnavailable)
+	}
+	return renewed, nil
+}
+
 func (s *DynamoDBStore) Release(ctx context.Context, scope Scope, sessionID string, now time.Time) (*Session, ReleaseState, error) {
 	stored, err := s.Get(ctx, scope, sessionID)
 	if err != nil {
@@ -215,32 +358,7 @@ func (s *DynamoDBStore) Release(ctx context.Context, scope Scope, sessionID stri
 		return nil, ReleaseState{}, ErrNotResumable
 	}
 
-	nowAttribute := stringAttribute(formatTime(now))
-	conditionExpression := "#status = :active AND #user_id = :user_id AND #business_id = :business_id AND #capacity_released = :false"
-	releaseValues := map[string]types.AttributeValue{
-		":active": stringAttribute(string(StatusActive)), ":closing": stringAttribute(string(StatusClosing)),
-		":user_id": stringAttribute(scope.UserID), ":business_id": stringAttribute(scope.BusinessID),
-		":false": boolAttribute(false), ":true": boolAttribute(true), ":updated_at": nowAttribute,
-		":lease_pk": stringAttribute(leasePartitionKey), ":stop_pending_sk": stringAttribute(leaseSortKey(now, sessionID)),
-	}
-	conditionExpression = addExpectedBranchCondition(conditionExpression, stored.BranchID, releaseValues)
-	transaction := &dynamodb.TransactWriteItemsInput{
-		ClientRequestToken: aws.String(transactionToken("close", sessionID)),
-		TransactItems: []types.TransactWriteItem{
-			{Update: &types.Update{
-				TableName: aws.String(s.tableName), Key: sessionKey(sessionID),
-				ConditionExpression: aws.String(conditionExpression),
-				UpdateExpression:    aws.String("SET #status = :closing, #capacity_released = :true, #updated_at = :updated_at, #gsi2pk = :lease_pk, #gsi2sk = :stop_pending_sk REMOVE #gsi1pk, #gsi1sk"),
-				ExpressionAttributeNames: map[string]string{
-					"#status": "status", "#user_id": "user_id", "#business_id": "business_id", "#capacity_released": "capacity_released",
-					"#branch_id": "branch_id", "#updated_at": "updated_at", "#gsi1pk": "GSI1PK", "#gsi1sk": "GSI1SK", "#gsi2pk": "GSI2PK", "#gsi2sk": "GSI2SK",
-				},
-				ExpressionAttributeValues: releaseValues,
-			}},
-			{Update: capacityDecrement(s.tableName, globalCapacityPK, globalCapacitySK, nowAttribute)},
-			{Update: capacityDecrement(s.tableName, userCapacityPK(scope.UserID), userCapacitySK, nowAttribute)},
-		},
-	}
+	transaction := s.releaseTransaction(scope, stored, now, "close", nil, nil)
 	if _, err := s.db.TransactWriteItems(ctx, transaction); err != nil {
 		current, getErr := s.Get(ctx, scope, sessionID)
 		if getErr != nil {
@@ -259,6 +377,114 @@ func (s *DynamoDBStore) Release(ctx context.Context, scope Scope, sessionID stri
 	released.CapacityReleased = true
 	released.UpdatedAt = now
 	return released, ReleaseState{Released: true, ShouldStop: true}, nil
+}
+
+// ReleaseExpired transitions only the exact expired lease observed through the
+// lease index. A concurrent renewal changes lease_expires_at and wins the race.
+func (s *DynamoDBStore) ReleaseExpired(ctx context.Context, candidate *Session, cutoff time.Time) (*Session, ReleaseState, error) {
+	if err := s.validate(); err != nil {
+		return nil, ReleaseState{}, err
+	}
+	if candidate == nil || candidate.UserID == "" || candidate.BusinessID == "" || !validSessionID(candidate.ID) ||
+		candidate.LeaseExpiresAt.IsZero() || candidate.LeaseExpiresAt.After(cutoff) {
+		return nil, ReleaseState{}, ErrInvalidRequest
+	}
+	scope := sessionScope(candidate)
+	current, err := s.Get(ctx, scope, candidate.ID)
+	if err != nil {
+		return nil, ReleaseState{}, err
+	}
+	if result, state, handled := classifyExpiredRelease(current, candidate.LeaseExpiresAt, cutoff); handled {
+		return result, state, nil
+	}
+
+	transaction := s.releaseTransaction(scope, current, cutoff, "reconcile", &candidate.LeaseExpiresAt, &cutoff)
+	if _, err := s.db.TransactWriteItems(ctx, transaction); err != nil {
+		latest, getErr := s.Get(ctx, scope, candidate.ID)
+		if getErr != nil {
+			return nil, ReleaseState{}, getErr
+		}
+		if result, state, handled := classifyExpiredRelease(latest, candidate.LeaseExpiresAt, cutoff); handled {
+			return result, state, nil
+		}
+		return nil, ReleaseState{}, fmt.Errorf("release expired voice session capacity: %w", err)
+	}
+	released := cloneSession(current)
+	released.Status = StatusClosing
+	released.CapacityReleased = true
+	released.UpdatedAt = cutoff.UTC()
+	return released, ReleaseState{Released: true, ShouldStop: true}, nil
+}
+
+func (s *DynamoDBStore) releaseTransaction(scope Scope, stored *Session, now time.Time, operation string, expectedLease, cutoff *time.Time) *dynamodb.TransactWriteItemsInput {
+	now = now.UTC()
+	nowAttribute := stringAttribute(formatTime(now))
+	conditionExpression := "#status = :active AND #user_id = :user_id AND #business_id = :business_id AND #capacity_released = :false"
+	releaseValues := map[string]types.AttributeValue{
+		":active": stringAttribute(string(StatusActive)), ":closing": stringAttribute(string(StatusClosing)),
+		":user_id": stringAttribute(scope.UserID), ":business_id": stringAttribute(scope.BusinessID),
+		":false": boolAttribute(false), ":true": boolAttribute(true), ":updated_at": nowAttribute,
+		":lease_pk": stringAttribute(leasePartitionKey), ":stop_pending_sk": stringAttribute(leaseSortKey(now, stored.ID)),
+	}
+	names := map[string]string{
+		"#status": "status", "#user_id": "user_id", "#business_id": "business_id", "#capacity_released": "capacity_released",
+		"#branch_id": "branch_id", "#updated_at": "updated_at", "#gsi1pk": "GSI1PK", "#gsi1sk": "GSI1SK", "#gsi2pk": "GSI2PK", "#gsi2sk": "GSI2SK",
+	}
+	conditionExpression = addExpectedBranchCondition(conditionExpression, stored.BranchID, releaseValues)
+	// A DynamoDB client token may be reused only for byte-for-byte equivalent
+	// transactions. Include the attempt timestamp because updated_at and the
+	// closing lease-index key change between later close/reconcile attempts.
+	tokenScope := stored.ID + "|" + formatTime(now)
+	if expectedLease != nil && cutoff != nil {
+		names["#lease_expires_at"] = "lease_expires_at"
+		releaseValues[":expected_lease_expires_at"] = stringAttribute(formatTime(*expectedLease))
+		releaseValues[":cutoff"] = stringAttribute(formatTime(*cutoff))
+		conditionExpression += " AND #lease_expires_at = :expected_lease_expires_at AND #lease_expires_at <= :cutoff"
+		tokenScope += "|" + formatTime(*expectedLease)
+	}
+	return &dynamodb.TransactWriteItemsInput{
+		ClientRequestToken: aws.String(transactionToken(operation, tokenScope)),
+		TransactItems: []types.TransactWriteItem{
+			{Update: &types.Update{
+				TableName: aws.String(s.tableName), Key: sessionKey(stored.ID),
+				ConditionExpression:      aws.String(conditionExpression),
+				UpdateExpression:         aws.String("SET #status = :closing, #capacity_released = :true, #updated_at = :updated_at, #gsi2pk = :lease_pk, #gsi2sk = :stop_pending_sk REMOVE #gsi1pk, #gsi1sk"),
+				ExpressionAttributeNames: names, ExpressionAttributeValues: releaseValues,
+			}},
+			{Update: capacityDecrement(s.tableName, globalCapacityPK, globalCapacitySK, nowAttribute)},
+			{Update: capacityDecrement(s.tableName, userCapacityPK(scope.UserID), userCapacitySK, nowAttribute)},
+		},
+	}
+}
+
+func classifyExpiredRelease(current *Session, expectedLease, cutoff time.Time) (*Session, ReleaseState, bool) {
+	if current == nil {
+		return nil, ReleaseState{}, false
+	}
+	switch current.Status {
+	case StatusClosed:
+		return current, ReleaseState{AlreadyClosed: true}, true
+	case StatusClosing:
+		if current.CapacityReleased {
+			return current, ReleaseState{ShouldStop: true}, true
+		}
+		return nil, ReleaseState{}, false
+	case StatusActive:
+		if !current.LeaseExpiresAt.Equal(expectedLease) || current.LeaseExpiresAt.After(cutoff) {
+			return current, ReleaseState{LeaseRenewed: true}, true
+		}
+	}
+	return nil, ReleaseState{}, false
+}
+
+func sessionScope(value *Session) Scope {
+	scope := Scope{UserID: value.UserID, BusinessID: value.BusinessID}
+	if value.BranchID == "" {
+		scope.AllBranches = true
+	} else {
+		scope.AllowedBranchIDs = []string{value.BranchID}
+	}
+	return scope
 }
 
 func (s *DynamoDBStore) MarkClosed(ctx context.Context, scope Scope, sessionID, expectedBranchID string, now time.Time) error {
@@ -304,34 +530,84 @@ func (s *DynamoDBStore) ExpiredLeases(ctx context.Context, before time.Time, lim
 	if err := s.validate(); err != nil {
 		return nil, err
 	}
-	output, err := s.db.Query(ctx, &dynamodb.QueryInput{
-		TableName: aws.String(s.tableName), IndexName: aws.String(s.leaseIndexName), Limit: aws.Int32(limit),
-		ConsistentRead: aws.Bool(false), ScanIndexForward: aws.Bool(true),
-		KeyConditionExpression:   aws.String("#gsi2pk = :lease AND #gsi2sk <= :cutoff"),
-		ExpressionAttributeNames: map[string]string{"#gsi2pk": "GSI2PK", "#gsi2sk": "GSI2SK"},
-		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":lease": stringAttribute(leasePartitionKey), ":cutoff": stringAttribute(leaseSortKey(before, "\uffff")),
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("query expired voice leases: %w", err)
+	if limit <= 0 || limit > 100 {
+		limit = 100
 	}
-	values := make([]*Session, 0, len(output.Items))
-	for _, item := range output.Items {
-		value, decodeErr := unmarshalSession(item)
-		if decodeErr != nil {
-			return nil, fmt.Errorf("decode expired voice lease: %w", decodeErr)
+	values := make([]*Session, 0, limit)
+	var cursor map[string]types.AttributeValue
+	for page := int32(0); int32(len(values)) < limit && page < limit; page++ {
+		remaining := limit - int32(len(values))
+		output, err := s.db.Query(ctx, &dynamodb.QueryInput{
+			TableName: aws.String(s.tableName), IndexName: aws.String(s.leaseIndexName), Limit: aws.Int32(remaining),
+			ConsistentRead: aws.Bool(false), ScanIndexForward: aws.Bool(true), ExclusiveStartKey: cursor,
+			KeyConditionExpression:   aws.String("#gsi2pk = :lease AND #gsi2sk <= :cutoff"),
+			ExpressionAttributeNames: map[string]string{"#gsi2pk": "GSI2PK", "#gsi2sk": "GSI2SK"},
+			ExpressionAttributeValues: map[string]types.AttributeValue{
+				":lease": stringAttribute(leasePartitionKey), ":cutoff": stringAttribute(leaseSortKey(before, "\uffff")),
+			},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("query expired voice leases: %w", err)
 		}
-		values = append(values, value)
+		for _, item := range output.Items {
+			if int32(len(values)) == limit {
+				break
+			}
+			value, decodeErr := unmarshalSession(item)
+			if decodeErr != nil {
+				return nil, fmt.Errorf("decode expired voice lease: %w", decodeErr)
+			}
+			values = append(values, value)
+		}
+		if len(output.LastEvaluatedKey) == 0 {
+			return values, nil
+		}
+		cursor = output.LastEvaluatedKey
+	}
+	if int32(len(values)) < limit && len(cursor) != 0 {
+		return nil, fmt.Errorf("query expired voice leases exceeded pagination bound: %w", ErrUnavailable)
 	}
 	return values, nil
 }
 
 func (s *DynamoDBStore) validate() error {
-	if s == nil || s.db == nil || s.tableName == "" {
+	if s == nil || nilDynamoDBAPI(s.db) || s.tableName == "" {
 		return ErrUnavailable
 	}
 	return nil
+}
+
+func nilDynamoDBAPI(value DynamoDBAPI) bool {
+	if value == nil {
+		return true
+	}
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return reflected.IsNil()
+	default:
+		return false
+	}
+}
+
+func validRuntimeLeaseID(value string) bool {
+	if value == "" || len(value) > 256 || strings.TrimSpace(value) != value || !utf8.ValidString(value) {
+		return false
+	}
+	for _, character := range value {
+		if character < 0x21 || character > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
+func validRenewedLease(value *Session, input LeaseRenewal, expectedLease time.Time) bool {
+	return value != nil && value.ID == input.SessionID && value.RuntimeSessionID == input.RuntimeSessionID &&
+		value.UserID == input.Scope.UserID && value.BusinessID == input.Scope.BusinessID && value.BranchID == input.ExpectedBranchID &&
+		value.Status == StatusActive && value.RuntimeState == RuntimeStateRunning && !value.CapacityReleased &&
+		value.LeaseExpiresAt.Equal(expectedLease) && value.ExpiresAt.Unix() == input.ExpectedExpiresAt.Unix() &&
+		value.UpdatedAt.Equal(input.RenewedAt) && !value.LeaseExpiresAt.After(value.ExpiresAt)
 }
 
 func (s *DynamoDBStore) lookupIdempotency(ctx context.Context, record CreateRecord) (*Session, bool, error) {
@@ -401,6 +677,195 @@ type sessionDynamoItem struct {
 	GSI1SK                   string `dynamodbav:"GSI1SK,omitempty"`
 	GSI2PK                   string `dynamodbav:"GSI2PK,omitempty"`
 	GSI2SK                   string `dynamodbav:"GSI2SK,omitempty"`
+}
+
+type finalTurnDynamoItem struct {
+	PK                 string                 `dynamodbav:"pk"`
+	SK                 string                 `dynamodbav:"sk"`
+	ItemType           string                 `dynamodbav:"item_type"`
+	SessionID          string                 `dynamodbav:"session_id"`
+	Sequence           int64                  `dynamodbav:"sequence"`
+	GenerationID       int64                  `dynamodbav:"generation_id"`
+	Transcript         string                 `dynamodbav:"transcript"`
+	DetectedLanguage   string                 `dynamodbav:"detected_language"`
+	SelectedLanguage   string                 `dynamodbav:"selected_language"`
+	Response           string                 `dynamodbav:"response"`
+	Tools              []FinalTurnToolOutcome `dynamodbav:"tools"`
+	SpeechEndedAt      string                 `dynamodbav:"speech_ended_at"`
+	STTFinalAt         string                 `dynamodbav:"stt_final_at"`
+	LLMFirstTokenAt    string                 `dynamodbav:"llm_first_token_at,omitempty"`
+	TTSFirstAudioAt    string                 `dynamodbav:"tts_first_audio_at,omitempty"`
+	ClientFirstAudioAt string                 `dynamodbav:"client_first_audio_at,omitempty"`
+	Cancelled          bool                   `dynamodbav:"cancelled"`
+	InputTokens        *int64                 `dynamodbav:"input_tokens,omitempty"`
+	OutputTokens       *int64                 `dynamodbav:"output_tokens,omitempty"`
+	TotalTokens        *int64                 `dynamodbav:"total_tokens,omitempty"`
+	TTSCharacters      *int64                 `dynamodbav:"tts_characters,omitempty"`
+	CompletedAt        string                 `dynamodbav:"completed_at"`
+	ExpiresAt          int64                  `dynamodbav:"expires_at"`
+	ContentHash        string                 `dynamodbav:"content_hash"`
+}
+
+func validateFinalTurn(turn FinalTurn) error {
+	if !validSessionID(turn.SessionID) || turn.Sequence <= 0 || turn.GenerationID <= 0 ||
+		turn.CompletedAt.IsZero() || !turn.ExpiresAt.After(turn.CompletedAt) || turn.ExpiresAt.Sub(turn.CompletedAt) > MaxFinalTurnRetention ||
+		strings.TrimSpace(turn.Transcript) == "" ||
+		!utf8.ValidString(turn.Transcript) || !utf8.ValidString(turn.Response) ||
+		len(turn.Transcript) > MaxPersistedTranscriptBytes || len(turn.Response) > MaxPersistedResponseBytes {
+		return ErrInvalidFinalTurn
+	}
+	if (!turn.Cancelled && strings.TrimSpace(turn.Response) == "") || (turn.Cancelled && turn.Response != "") {
+		return ErrInvalidFinalTurn
+	}
+	if !safeFinalTurnProviderLanguage(turn.ProviderLanguage) || !supportedLanguage(turn.SelectedLanguage) {
+		return ErrInvalidFinalTurn
+	}
+	if len(turn.Tools) > MaxPersistedToolOutcomes {
+		return ErrInvalidFinalTurn
+	}
+	for _, tool := range turn.Tools {
+		if !finalTurnMetadataPattern.MatchString(tool.Name) ||
+			(tool.Success && tool.ErrorCode != "") ||
+			(!tool.Success && !finalTurnMetadataPattern.MatchString(tool.ErrorCode)) {
+			return ErrInvalidFinalTurn
+		}
+	}
+	if !validFinalTurnTimings(turn.Timings, turn.CompletedAt, turn.Cancelled) || !validFinalTurnUsage(turn.Usage) {
+		return ErrInvalidFinalTurn
+	}
+	return nil
+}
+
+func safeFinalTurnProviderLanguage(value string) bool {
+	if len(value) > 16 {
+		return false
+	}
+	for _, character := range value {
+		if character < 0x20 || character > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
+func validFinalTurnTimings(timings FinalTurnTimings, completedAt time.Time, cancelled bool) bool {
+	if timings.SpeechEndedAt.IsZero() || timings.STTFinalAt.IsZero() || timings.STTFinalAt.Before(timings.SpeechEndedAt) {
+		return false
+	}
+	last := timings.STTFinalAt
+	missing := false
+	for _, boundary := range []time.Time{timings.LLMFirstTokenAt, timings.TTSFirstAudioAt, timings.ClientFirstAudioAt} {
+		if boundary.IsZero() {
+			missing = true
+			continue
+		}
+		if missing || boundary.Before(last) {
+			return false
+		}
+		last = boundary
+	}
+	if (!cancelled && missing) || completedAt.Before(last) {
+		return false
+	}
+	return true
+}
+
+func validFinalTurnUsage(usage FinalTurnUsage) bool {
+	for _, value := range []*int64{usage.InputTokens, usage.OutputTokens, usage.TotalTokens, usage.TTSCharacters} {
+		if value != nil && (*value < 0 || *value > 1_000_000) {
+			return false
+		}
+	}
+	if usage.InputTokens != nil && usage.OutputTokens != nil && usage.TotalTokens != nil &&
+		*usage.TotalTokens != *usage.InputTokens+*usage.OutputTokens {
+		return false
+	}
+	return true
+}
+
+func marshalFinalTurn(turn FinalTurn) (map[string]types.AttributeValue, error) {
+	canonical := struct {
+		SessionID          string                 `json:"session_id"`
+		Sequence           int64                  `json:"sequence"`
+		GenerationID       int64                  `json:"generation_id"`
+		Transcript         string                 `json:"transcript"`
+		DetectedLanguage   string                 `json:"detected_language"`
+		SelectedLanguage   string                 `json:"selected_language"`
+		Response           string                 `json:"response"`
+		Tools              []FinalTurnToolOutcome `json:"tools"`
+		SpeechEndedAt      string                 `json:"speech_ended_at"`
+		STTFinalAt         string                 `json:"stt_final_at"`
+		LLMFirstTokenAt    string                 `json:"llm_first_token_at"`
+		TTSFirstAudioAt    string                 `json:"tts_first_audio_at"`
+		ClientFirstAudioAt string                 `json:"client_first_audio_at"`
+		Cancelled          bool                   `json:"cancelled"`
+		InputTokens        *int64                 `json:"input_tokens,omitempty"`
+		OutputTokens       *int64                 `json:"output_tokens,omitempty"`
+		TotalTokens        *int64                 `json:"total_tokens,omitempty"`
+		TTSCharacters      *int64                 `json:"tts_characters,omitempty"`
+		CompletedAt        string                 `json:"completed_at"`
+		ExpiresAt          int64                  `json:"expires_at"`
+	}{
+		SessionID: turn.SessionID, Sequence: turn.Sequence, GenerationID: turn.GenerationID,
+		Transcript: turn.Transcript, DetectedLanguage: turn.ProviderLanguage, SelectedLanguage: turn.SelectedLanguage,
+		Response: turn.Response, Tools: turn.Tools,
+		SpeechEndedAt: formatTime(turn.Timings.SpeechEndedAt), STTFinalAt: formatTime(turn.Timings.STTFinalAt),
+		LLMFirstTokenAt: optionalTime(turn.Timings.LLMFirstTokenAt), TTSFirstAudioAt: optionalTime(turn.Timings.TTSFirstAudioAt),
+		ClientFirstAudioAt: optionalTime(turn.Timings.ClientFirstAudioAt), Cancelled: turn.Cancelled,
+		InputTokens: turn.Usage.InputTokens, OutputTokens: turn.Usage.OutputTokens,
+		TotalTokens: turn.Usage.TotalTokens, TTSCharacters: turn.Usage.TTSCharacters,
+		CompletedAt: formatTime(turn.CompletedAt), ExpiresAt: turn.ExpiresAt.Unix(),
+	}
+	encoded, err := json.Marshal(canonical)
+	if err != nil {
+		return nil, err
+	}
+	hash := fmt.Sprintf("%x", sha256.Sum256(encoded))
+	return attributevalue.MarshalMap(finalTurnDynamoItem{
+		PK: sessionPK(turn.SessionID), SK: turnSortKey(turn.Sequence), ItemType: "FINAL_TURN",
+		SessionID: turn.SessionID, Sequence: turn.Sequence, GenerationID: turn.GenerationID,
+		Transcript: turn.Transcript, DetectedLanguage: turn.ProviderLanguage, SelectedLanguage: turn.SelectedLanguage,
+		Response: turn.Response, Tools: append([]FinalTurnToolOutcome(nil), turn.Tools...),
+		SpeechEndedAt: canonical.SpeechEndedAt, STTFinalAt: canonical.STTFinalAt,
+		LLMFirstTokenAt: canonical.LLMFirstTokenAt, TTSFirstAudioAt: canonical.TTSFirstAudioAt,
+		ClientFirstAudioAt: canonical.ClientFirstAudioAt, Cancelled: turn.Cancelled,
+		InputTokens: cloneInt64(turn.Usage.InputTokens), OutputTokens: cloneInt64(turn.Usage.OutputTokens),
+		TotalTokens: cloneInt64(turn.Usage.TotalTokens), TTSCharacters: cloneInt64(turn.Usage.TTSCharacters),
+		CompletedAt: canonical.CompletedAt,
+		ExpiresAt:   canonical.ExpiresAt, ContentHash: hash,
+	})
+}
+
+func optionalTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return formatTime(value)
+}
+
+func cloneInt64(value *int64) *int64 {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
+func (s *DynamoDBStore) lookupFinalTurnHash(ctx context.Context, sessionID string, sequence int64) (string, bool, error) {
+	output, err := s.db.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(s.tableName), ConsistentRead: aws.Bool(true), Key: turnKey(sessionID, sequence),
+	})
+	if err != nil {
+		return "", false, fmt.Errorf("read retained final voice turn: %w", err)
+	}
+	if len(output.Item) == 0 {
+		return "", false, nil
+	}
+	hash := attributeString(output.Item, "content_hash")
+	if len(hash) != sha256.Size*2 {
+		return "", false, fmt.Errorf("read retained final voice turn: %w", ErrFinalTurnConflict)
+	}
+	return hash, true, nil
 }
 
 func marshalSession(value *Session) (map[string]types.AttributeValue, error) {
@@ -515,6 +980,12 @@ func idempotencyPK(userID, key string) string { return "VOICE#IDEMPOTENCY#" + us
 func sessionKey(sessionID string) map[string]types.AttributeValue {
 	return map[string]types.AttributeValue{"pk": stringAttribute(sessionPK(sessionID)), "sk": stringAttribute(sessionSortKey)}
 }
+
+func turnKey(sessionID string, sequence int64) map[string]types.AttributeValue {
+	return map[string]types.AttributeValue{"pk": stringAttribute(sessionPK(sessionID)), "sk": stringAttribute(turnSortKey(sequence))}
+}
+
+func turnSortKey(sequence int64) string { return fmt.Sprintf("TURN#%020d", sequence) }
 
 func leaseSortKey(at time.Time, sessionID string) string { return formatTime(at) + "#" + sessionID }
 

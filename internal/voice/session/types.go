@@ -25,18 +25,21 @@ var SpokenLanguages = []string{
 }
 
 type Config struct {
-	TableName             string
-	AgentRuntimeARN       string
-	AgentRuntimeQualifier string
-	ProtocolVersion       int
-	KVSChannelCount       int
-	MaxDuration           time.Duration
-	RotateAfter           time.Duration
-	LeaseDuration         time.Duration
-	IdempotencyTTL        time.Duration
-	LeaseIndexName        string
-	GlobalCapacityLimit   int64
-	PerUserCapacityLimit  int64
+	TableName                    string
+	AgentRuntimeARN              string
+	AgentRuntimeQualifier        string
+	AdmissionEnabled             bool
+	RolloutStage                 string
+	RolloutInternalSubjectHashes []string
+	ProtocolVersion              int
+	KVSChannelCount              int
+	MaxDuration                  time.Duration
+	RotateAfter                  time.Duration
+	LeaseDuration                time.Duration
+	IdempotencyTTL               time.Duration
+	LeaseIndexName               string
+	GlobalCapacityLimit          int64
+	PerUserCapacityLimit         int64
 }
 
 func (c Config) Enabled() bool {

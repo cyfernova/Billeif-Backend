@@ -95,6 +95,9 @@ func (s *Service) Create(ctx context.Context, scope Scope, input CreateInput) (*
 	if err := validateScope(scope); err != nil {
 		return nil, err
 	}
+	if !rolloutAllows(s.config, scope) {
+		return nil, ErrRolloutDenied
+	}
 	if err := s.validateCreate(input); err != nil {
 		return nil, err
 	}
@@ -158,6 +161,9 @@ func (s *Service) Get(ctx context.Context, scope Scope, sessionID string) (*Sess
 		return nil, err
 	}
 	setResumable(stored, s.now().UTC())
+	if !rolloutAllows(s.config, scope) {
+		stored.Resumable = false
+	}
 	return stored, nil
 }
 
@@ -165,6 +171,9 @@ func (s *Service) Resume(ctx context.Context, scope Scope, sessionID string) (*S
 	stored, err := s.Get(ctx, scope, sessionID)
 	if err != nil {
 		return nil, err
+	}
+	if !rolloutAllows(s.config, scope) {
+		return nil, ErrRolloutDenied
 	}
 	now := s.now().UTC()
 	if stored.Status != StatusActive || !stored.ExpiresAt.After(now) || !stored.LeaseExpiresAt.After(now) {
