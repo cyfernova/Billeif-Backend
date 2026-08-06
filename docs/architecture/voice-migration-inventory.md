@@ -44,8 +44,8 @@ transport, not the generic notification WebSocket or synchronous Sarvam TTS.
 | Deepgram provider/protocol | `internal/services/deepgram_voice_agent.go`: `DeepgramVoiceAgentClient`, `NewDeepgramVoiceAgentClient`, `Connect`, `SendSettings`, `SendJSON`, `SendBinary`, `SendRaw`, `ReadMessage`, `Close`; `internal/services/realtime_voice_protocol.go`: `RealtimeAppEvent`, `RealtimeDeepgramOutbound`, `DeepgramFunctionCall*`, `MapDeepgramJSONEvent`, `BuildDeepgramVoiceAgentSettings`; `internal/services/voice_mcp_bridge.go`: `VoiceMCPBridge`, function-definition and function-call bridge. |
 | API Gateway WebSocket ingress | `cmd/lambda/ws/main.go`: `handleWebSocket`, `handleVoiceStart`, `handleVoiceAudio`, `handleVoiceControl`, `resolveVoiceSession`, `postVoiceEvent`; `internal/services/voice_lambda_transport.go`: `VoiceActionStart`, `VoiceActionAudio`, `VoiceActionControl`, request/session/event types, `VoiceLambdaStore`, `VoiceLambdaSessionRunner`, and `APIGatewayVoicePoster`. Actions are `voice.start`, `voice.audio`, and `voice.control`. |
 | Background session relay | `cmd/lambda/voice-session/main.go`: `initRuntime`, `voiceRuntime.runner`, `handle`; `internal/services/voice_lambda_transport.go`: `NewVoiceLambdaStore`, `CreateSession`, `FindActiveSessionByConnection`, `EnqueueAudio`, `EnqueueControl`, `ListEventsAfter`, `NewVoiceLambdaSessionRunner`, `Run`, and Deepgram message/function-call handling. |
-| Configuration/wiring | `internal/config/config.go`: `DeepgramConfig`, secret and environment bindings; `internal/config/voice_realtime_config.go`: `VoiceRealtimeConfig`, `WithDefaults`, `ValidateForRuntime`; `internal/config/lambda_voice_config.go`: `LambdaVoiceConfig`, `LoadLambdaVoiceConfig`, `ResolveLambdaVoiceRuntime`; `internal/services/container.go` and `internal/handlers/handler.go` wire `RealtimeVoice`; `internal/config/runtime.go`/`validation.go` enforce profile configuration. |
-| Test coverage | `cmd/lambda/ws/main_test.go`; `internal/config/lambda_voice_config_test.go`, `profile_validation_test.go`; `internal/services/realtime_voice_protocol_test.go`, `voice_lambda_transport_test.go`, `voice_mcp_bridge_test.go`, `provider_boundary_test.go`; `internal/app/runtime_security_test.go`; and policy/launch tests `tests/aws_branding_policy_test.go`, `tests/launch_defaults_test.go`, `tests/runtime_bootstrap_profiles_test.go`, `tests/secret_state_safety_test.go`. |
+| Configuration/wiring | `internal/config/config.go`: `DeepgramConfig`, secret and environment bindings; `internal/config/voice_realtime_config.go`: `VoiceRealtimeConfig`, `WithDefaults`, `ValidateForRuntime`; `internal/config/lambda_voice_config.go`: `LambdaVoiceConfig`, `LoadLambdaVoiceConfig`, `ResolveLambdaVoiceRuntime`; `internal/services/container.go` and `internal/handlers/handler.go` wire `RealtimeVoice`; `internal/config/runtime.go`/`validation.go` enforce profile configuration. `SecretKindsForEntrypoint` currently loads both `SecretDeepgram` and `SecretDeepSeek` for `http`, `a2a-stream`, and `server`, and the voice pair for `voice-session`. |
+| Test coverage | `cmd/lambda/ws/main_test.go`; `internal/config/lambda_voice_config_test.go`, `profile_validation_test.go`, `runtime_lifetime_test.go`; `internal/services/realtime_voice_protocol_test.go`, `voice_lambda_transport_test.go`, `voice_mcp_bridge_test.go`, `provider_boundary_test.go`; `internal/app/runtime_security_test.go`; and policy/launch tests `tests/aws_branding_policy_test.go`, `tests/ci_policy_test.go`, `tests/launch_defaults_test.go`, `tests/runtime_bootstrap_profiles_test.go`, `tests/secret_state_safety_test.go`. |
 
 Legacy control/data semantics are: the WebSocket Lambda authorizes the business
 scope, writes a session plus connection pointer and per-user counter to DynamoDB,
@@ -63,6 +63,15 @@ Deepgram, DeepSeek, realtime-WebSocket, session-table, and session-Lambda
 variable names (its placeholder values were not used). Terraform variables are
 `enable_voice`, `deepgram_voice_*`, `deepseek_*`, `mcp_server_url`,
 `voice_ws_*`, `voice_sessions_table_name`, and `voice_session_lambda_*`.
+
+`cmd/lambda/a2a-stream/main.go` uses the ordinary application runtime. That
+runtime currently asks `internal/config/runtime.go` for both Deepgram and
+DeepSeek provider bindings for the `a2a-stream` profile; this is active shared
+wiring outside the HTTP and voice-session entrypoints. The migration must remove
+Deepgram from the `a2a-stream`/shared runtime list only after confirming no A2A
+call site needs it. It must preserve DeepSeek and its configuration where A2A or
+other non-voice consumers require it; DeepSeek is not automatically removable
+merely because the legacy Deepgram relay is removed.
 
 Generated API documentation consists of `docs/docs.go` and `docs/openapi.yaml`:
 they retain the Sarvam endpoints and the retired `/voice/agent` contract;
@@ -98,12 +107,35 @@ The legacy Terraform addresses are:
   Lambda environment includes `DEEPGRAM_SECRET_ARN`, `DEEPSEEK_SECRET_ARN`,
   `VOICE_SESSIONS_TABLE`, `VOICE_SESSION_WORKER_FUNCTION_NAME`, and the
   Deepgram protocol variables. Do not destroy or inspect secret values.
+- Shared provider wiring is also material: `aws_lambda_function.a2a_stream`
+  merges `local.common_lambda_env` and `local.http_secret_env`, therefore it
+  receives the Deepgram and DeepSeek identifiers and voice/session variables.
+  It runs as `aws_iam_role.lambda_exec`, whose
+  `data.aws_iam_policy_document.lambda_app` and
+  `aws_iam_role_policy.lambda_app` grant `local.http_runtime_secret_arns`, the
+  voice-sessions table, and voice-session-worker invocation; the HTTP role uses
+  the same policy document. Remove only the Deepgram identifier/secret/KMS
+  scope and unneeded voice-table/worker grants from these shared paths after
+  their non-voice consumers are proven absent. Preserve DeepSeek variables and
+  permission scope needed by A2A/non-voice runtime, rather than deleting the
+  shared role or `a2a_stream` function.
 - Outputs `voice_realtime_input_sample_rate` and
   `voice_realtime_output_sample_rate`, sourced from the Deepgram variables.
-- Terraform checks in `infrastructure/terraform/tests/migrator.tftest.hcl` and
-  `razorpay.tftest.hcl`, plus string/address assertions in
-  `tests/aws_branding_policy_test.go` and secret-state policy in
-  `tests/secret_state_safety_test.go`.
+- Update the voice-specific expectations in
+  `infrastructure/terraform/tests/migrator.tftest.hcl` and
+  `razorpay.tftest.hcl`, and the string/address assertions in
+  `tests/aws_branding_policy_test.go`, `tests/launch_defaults_test.go`,
+  `tests/runtime_bootstrap_profiles_test.go`, and
+  `tests/secret_state_safety_test.go`. Update
+  `internal/config/runtime_lifetime_test.go` when the exact entrypoint secret
+  sets change. Preserve `tests/ci_policy_test.go`'s required deployment
+  DeepSeek Terraform inputs unless the non-voice consumer decision changes.
+  The mocked Terraform inputs in `cognito_custom_domain.tftest.hcl`,
+  `github_oidc.tftest.hcl`, `http_serverless.tftest.hcl`,
+  `network_egress.tftest.hcl`, and `outbox.tftest.hcl` currently inject
+  DeepSeek/provider inputs; preserve or adjust those inputs to the resulting
+  non-voice contract, while only removing Deepgram/voice expectations. Do not
+  weaken their Cognito, OIDC, HTTP-serverless, egress, or outbox assertions.
 
 `aws_secretsmanager_secret.sarvam` is intentionally not legacy realtime voice:
 it belongs to the preserved synchronous TTS surface below.
@@ -161,14 +193,23 @@ new multi-worker AgentCore scheduling.
 ## NAT egress evidence to preserve or prove
 
 The NAT instance is shared egress, not a Deepgram-specific resource, and must
-be preserved/proven through the migration. In `infrastructure/terraform/nat_egress.tf`
-the exact resources are `data.aws_ami.billeif_nat_instance`,
-`aws_iam_role.nat_instance`, `.nat_instance_ssm`,
-`aws_iam_instance_profile.nat_instance`, `aws_security_group.nat_instance`,
-`aws_instance.nat`, `aws_eip.nat_instance`,
-`aws_eip_association.nat_instance`, `aws_route.private_default_egress`,
-`aws_ssm_association.nat_bootstrap_ready`, `.nat_activation_ready`,
-`aws_ec2_instance_state.nat_running`, and `.nat_stopped`.
+be preserved/proven through the migration. The following are Terraform
+declaration addresses; every `count`-guarded resource has a concrete state
+address with `[0]` only when `var.egress_mode == "nat_instance"` (and for the
+two instance-state resources, when their `enable_application` condition also
+matches). In `infrastructure/terraform/nat_egress.tf` these are
+`data.aws_ami.billeif_nat_instance[0]`, `aws_iam_role.nat_instance[0]`,
+`aws_iam_role_policy_attachment.nat_instance_ssm[0]`,
+`aws_iam_instance_profile.nat_instance[0]`, `aws_security_group.nat_instance[0]`,
+`aws_instance.nat[0]`, `aws_eip.nat_instance[0]`,
+`aws_eip_association.nat_instance[0]`,
+`aws_ssm_association.nat_bootstrap_ready[0]`,
+`aws_ssm_association.nat_activation_ready[0]`,
+`aws_ec2_instance_state.nat_running[0]`,
+`aws_ec2_instance_state.nat_stopped[0]`, and the count-free
+`aws_route.private_default_egress`. The count-guarded alarms have state
+addresses `aws_cloudwatch_metric_alarm.nat_system_status[0]`,
+`.nat_cpu_high[0]`, and `.nat_cpu_credits_low[0]`.
 
 The instance is an AL2023 ARM64 `t4g.micro` in `aws_subnet.public[1]`, with
 source/destination checking disabled, no associated public IP, IMDSv2 required,
