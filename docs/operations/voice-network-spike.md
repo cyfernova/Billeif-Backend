@@ -33,9 +33,11 @@ The release gate may open only after live evidence shows all of the following:
    status, and VPC Flow Logs evidence correlated with each run.
 7. A backend regression artifact compares latency, errors, connections, and
    egress before, during, and after the run and records no regression.
-8. Stable redacted path identities prove that two privately validated live
-   evidence bundles came from distinct configured subnets. Caller-constructed
-   result fields or slice positions cannot establish identity or open a gate.
+8. Stable redacted path identities and signed portable envelopes prove that two
+   trusted-observer evidence bundles came from distinct configured subnets.
+   Caller-constructed result fields, fake public dependencies, slice positions,
+   stale envelopes, and replayed signatures cannot establish identity or open a
+   gate.
 9. Every temporary runtime, endpoint, authorization path, rule, credential,
    session, peer, and observer permission is removed or revoked afterward.
 
@@ -54,20 +56,30 @@ I_ACKNOWLEDGE_LIVE_AGENTCORE_TURN_PROBE_MAY_INCUR_COSTS
 ```
 
 Both gates are necessary and neither is evidence of approval. The tagged test
-suite uses injected fakes only; it exercises synthetic behavior and test-only
-`LIVE` branches with fabricated observation bundles, but creates no external
-evidence. A normal `ProbeResult`, including one labeled `LIVE`, is not release
-evidence and cannot be converted into it by setting public fields. There is
-deliberately no Make target for launching a live probe. A future live run
-requires a reviewed operator change, an approved spend window, temporary
-operator-only authorization, and the commands recorded in that change record.
+suite uses injected fakes and deterministic test-only Ed25519 keys declared in
+`_test.go` files; it creates no trusted external evidence. Production code has
+no live-observer constructor, setter, private key, provider adapter, or launch
+target. A public `Dependencies`, `Clock`, or caller-selected `LIVE` label cannot
+inject the package-sealed observer needed to mint an envelope.
 
-One result cannot open the gate. Release evaluation accepts only privately
-validated live evidence produced after the complete observation bundle passes
-the validator. It requires two passed, relay-only bundles with distinct stable
-redacted path identities. The identity is safe correlation metadata; the
-observer's protected evidence maps it to the actual subnet and route table.
-Changing the configured path order must not change the identity.
+One result cannot open the gate. After detailed evidence validation, the sealed
+observer signs a portable `LiveEvidenceEnvelope`. Its canonical claims bind the
+campaign, full source revision, immutable image digest, trusted observer
+identity and key ID, change window, random run ID, stable path fingerprint,
+operation timestamps, redacted ICE metadata and expiry, complete artifact
+digest set, and safe pass summary. The private key stays inside the sealed
+observer adapter and is never serialized, formatted, logged, or returned.
+
+The central evaluator verifies two JSON-round-trippable envelopes against an
+operator-supplied trusted-key policy. Both must be fresh, in the same approved
+campaign, build, image, and change window, while having distinct run IDs, paths,
+and non-overlapping artifact sets. Signature verification precedes an atomic
+reservation in a required durable replay guard. A duplicate, stale, tampered,
+cross-campaign, cross-build, untrusted-observer, or previously consumed envelope
+fails closed. Changing the configured path order must not change the identity.
+There is deliberately no Make target for launching a live probe; the future
+operator change must add the reviewed package-owned adapter without exposing a
+general observer-injection API.
 
 The probe runtime role must stay limited to its workload calls. Route, ENI,
 NAT, metrics, and VPC Flow Logs inspection belongs to a separate, short-lived,
@@ -99,16 +111,19 @@ it. These contracts are exercised only with fakes in ordinary and
   the observed restart decision.
 - `BackendRegressionObservation` references before/during/after evidence and
   must explicitly report no existing-backend regression.
-- `ValidatedLiveEvidence` is an internal/private validator result, not a
-  deserializable DTO or public struct literal. It is constructible only after
-  all topology, connectivity, ICE, relay, NAT, endurance, credential-lifecycle,
-  backend, timestamp, and artifact checks pass. Synthetic `ProbeResult` values
-  can never satisfy the release gate.
+- `LiveEvidenceEnvelope` is a portable signed DTO containing hashes and safe
+  metadata only. The sealed observer receives claims only after topology,
+  connectivity, ICE, relay, NAT, endurance, credential-lifecycle, backend,
+  timestamp, and artifact checks pass. A central `VerifyLiveRelease` call
+  requires a trusted observer policy and replay guard; public or synthetic
+  `ProbeResult` values cannot satisfy it.
 
-Artifact hashes identify access-controlled evidence without embedding it in a
-runtime response. A hash is not proof by itself: the independent reviewer must
-retrieve the private artifact, verify its digest and time window, and approve
-the validated evidence bundle before release evaluation.
+Artifact hashes identify access-controlled evidence without embedding raw
+artifacts in a runtime response. The signed envelope may carry those hashes but
+never credentials, channel ARNs, subnet IDs, raw endpoints, payloads, or private
+keys. A hash and signature do not replace review: the independent reviewer must
+retrieve each private artifact, verify every digest and time window, and approve
+the trusted observer key before central release evaluation.
 
 ## Known design contradictions to resolve first
 
@@ -237,7 +252,9 @@ For probe A and then probe B:
 1. Start the reviewed streaming/background probe with the live build tag,
    exact runtime acknowledgement, approved endpoint allowlist, expected subnet,
    route-table, NAT-instance, source/destination-check expectation, and bounded
-   deadlines.
+   deadlines. Pin the approved campaign ID, full source revision, immutable
+   image digest, observer identity and key ID, and UTC change-window bounds in
+   the probe configuration.
 2. Resolve every required hostname and establish TCP 443 only to an approved
    endpoint. Produce one `ConnectivityObservation` per AWS control/signaling,
    Sarvam, Billeif, and dynamic KVS host. Record stable host/result hashes,
@@ -246,7 +263,9 @@ For probe A and then probe B:
 3. Call KVS `GetIceServerConfig` on only the assigned test channel. Record a
    `RedactedICE` response containing the stable approved-host hash, UDP
    transport, port 443, and expiry time. Raw host, username, password, and
-   channel fields must be absent, not masked copies.
+   channel fields must be absent, not masked copies. Validate the configured
+   expiry margin immediately after credential acquisition and again after TURN
+   relay setup; either failure aborts before attestation.
 4. Start the external test peer and allocate KVS TURN. Send a fresh random nonce
    in each direction, require the exact peer echo, enforce send/receive
    deadlines, and record byte counts, loss, setup latency, and reconnect result.
@@ -340,8 +359,10 @@ access-controlled, redacted artifacts; do not paste raw logs or credentials.
 | Spend owner and ceiling | |
 | Window start UTC | |
 | Window end UTC | |
+| Campaign ID | |
 | Source revision | |
 | Temporary image digest | |
+| Trusted observer identity and key ID | |
 | Harness acknowledgement reviewed | |
 
 ### Topology and authorization
@@ -373,6 +394,8 @@ access-controlled, redacted artifacts; do not paste raw logs or credentials.
 | Probe B per-host DNS/TCP 443 artifact hashes | |
 | Probe A connectivity observation window | |
 | Probe B connectivity observation window | |
+| Probe A run/network/credential/relay/completion instants | |
+| Probe B run/network/credential/relay/completion instants | |
 | Probe A redacted ICE host hash/transport/port/expiry | |
 | Probe B redacted ICE host hash/transport/port/expiry | |
 | Probe A TURN send/receive artifact | |
@@ -411,9 +434,10 @@ access-controlled, redacted artifacts; do not paste raw logs or credentials.
 | Probe A backend-regression artifact hash | |
 | Probe B backend-regression artifact hash | |
 | Backend regression verdict | |
-| Probe A private evidence bundle digest | |
-| Probe B private evidence bundle digest | |
-| Independent validator identity and decision | |
+| Probe A signed envelope digest and signature | |
+| Probe B signed envelope digest and signature | |
+| Durable replay reservation | |
+| Independent validator identity and central decision | |
 
 ### Cleanup and decision
 

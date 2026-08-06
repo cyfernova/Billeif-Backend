@@ -17,10 +17,17 @@ var fixedProbeTime = time.Date(2026, time.August, 6, 12, 0, 0, 0, time.UTC)
 
 func validProbeConfig() Config {
 	return Config{
-		RuntimeAcknowledgement: RequiredLiveProbeAcknowledgement,
-		EvidenceMode:           EvidenceSynthetic,
-		Region:                 MumbaiRegion,
-		ChannelARN:             "arn:aws:kinesisvideo:ap-south-1:123456789012:channel/voice-01/1234567890",
+		RuntimeAcknowledgement:   RequiredLiveProbeAcknowledgement,
+		EvidenceMode:             EvidenceSynthetic,
+		CampaignID:               "voice-turn-campaign-01",
+		SourceRevision:           strings.Repeat("a", 40),
+		ImageDigest:              "sha256:" + strings.Repeat("b", 64),
+		ExpectedObserverIdentity: "observer-primary",
+		ExpectedObserverKeyID:    "observer-key-01",
+		ChangeWindowStart:        fixedProbeTime.Add(-time.Minute),
+		ChangeWindowEnd:          fixedProbeTime.Add(45 * time.Minute),
+		Region:                   MumbaiRegion,
+		ChannelARN:               "arn:aws:kinesisvideo:ap-south-1:123456789012:channel/voice-01/1234567890",
 		Topology: TopologyExpectation{
 			Paths: []PrivatePath{
 				{SubnetID: "subnet-private-a", RouteTableID: "rtb-private-a", AvailabilityZoneID: "aps1-az1"},
@@ -52,6 +59,7 @@ func validTopologyObservation() TopologyObservation {
 		},
 		NAT:             NATObservation{ENIID: "eni-nat-voice", SourceDestCheck: false, SourceDestCheckObserved: true},
 		RuntimeSubnetID: "subnet-private-a",
+		ArtifactSHA256:  hashString("topology-artifact-private-a"),
 	}
 }
 
@@ -331,6 +339,60 @@ func TestValidateTURNCredentialsRequiresUDP443AndExpiryMargin(t *testing.T) {
 	}
 }
 
+func TestProbeValidatesCredentialExpiryAtAcquisitionTime(t *testing.T) {
+	if !liveProbeBuildEnabled {
+		t.Skip("full fake probe requires the explicit test build tag")
+	}
+
+	var clockCalls atomic.Int64
+	deps := successfulFakeDependencies(t)
+	deps.Clock = func() time.Time {
+		switch clockCalls.Add(1) {
+		case 1:
+			return fixedProbeTime
+		default:
+			return fixedProbeTime.Add(2 * time.Minute)
+		}
+	}
+	deps.ICE = iceFunc(func(context.Context, string) (TURNCredentials, error) {
+		credentials := validCredentials()
+		credentials.ExpiresAt = fixedProbeTime.Add(6 * time.Minute)
+		return credentials, nil
+	})
+
+	if _, err := NewProbe(deps).Run(context.Background(), validProbeConfig()); !errors.Is(err, ErrInvalidTURNCredentials) {
+		t.Fatalf("Run() error = %v, want credential freshness rejection at acquisition time", err)
+	}
+}
+
+func TestProbeRevalidatesCredentialMarginAfterRelaySetup(t *testing.T) {
+	if !liveProbeBuildEnabled {
+		t.Skip("full fake probe requires the explicit test build tag")
+	}
+
+	var clockCalls atomic.Int64
+	deps := successfulFakeDependencies(t)
+	deps.Clock = func() time.Time {
+		switch clockCalls.Add(1) {
+		case 1:
+			return fixedProbeTime
+		case 2, 3:
+			return fixedProbeTime.Add(time.Minute)
+		default:
+			return fixedProbeTime.Add(4 * time.Minute)
+		}
+	}
+	deps.ICE = iceFunc(func(context.Context, string) (TURNCredentials, error) {
+		credentials := validCredentials()
+		credentials.ExpiresAt = fixedProbeTime.Add(8 * time.Minute)
+		return credentials, nil
+	})
+
+	if _, err := NewProbe(deps).Run(context.Background(), validProbeConfig()); !errors.Is(err, ErrInvalidTURNCredentials) {
+		t.Fatalf("Run() error = %v, want credential margin rejection after relay setup", err)
+	}
+}
+
 func TestValidateNetworkObservationsRequiresEveryStrictDNSAndTCP443Target(t *testing.T) {
 	t.Parallel()
 
@@ -351,7 +413,7 @@ func TestValidateNetworkObservationsRequiresEveryStrictDNSAndTCP443Target(t *tes
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			err := ValidateNetworkObservations(fixedProbeTime, 2*time.Hour, targets, test.observation)
+			err := ValidateNetworkObservations(fixedProbeTime, fixedProbeTime, 2*time.Hour, targets, test.observation)
 			if (err != nil) != test.wantErr {
 				t.Fatalf("ValidateNetworkObservations() error = %v, wantErr %v", err, test.wantErr)
 			}
@@ -395,10 +457,48 @@ func TestValidateNetworkObservationsRejectsUnboundedOrUnauthenticatedEvidence(t 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			if err := ValidateNetworkObservations(fixedProbeTime, 2*time.Hour, targets, test.mutate(valid)); !errors.Is(err, ErrInvalidNetworkObservation) {
+			if err := ValidateNetworkObservations(fixedProbeTime, fixedProbeTime, 2*time.Hour, targets, test.mutate(valid)); !errors.Is(err, ErrInvalidNetworkObservation) {
 				t.Fatalf("ValidateNetworkObservations() error = %v, want invalid observation", err)
 			}
 		})
+	}
+}
+
+func TestProbeAcceptsConnectivityObservedInsideTheRunWindow(t *testing.T) {
+	if !liveProbeBuildEnabled {
+		t.Skip("full fake probe requires the explicit test build tag")
+	}
+
+	deps := successfulFakeDependencies(t)
+	deps.Network = networkFunc(func(ctx context.Context, targets []NetworkTarget) ([]ConnectivityObservation, error) {
+		observations := successfulNetworkObservations(targets)
+		for index := range observations {
+			observations[index].ObservedAt = fixedProbeTime.Add(time.Second)
+		}
+		return observations, ctx.Err()
+	})
+
+	if _, err := NewProbe(deps).Run(context.Background(), validProbeConfig()); err != nil {
+		t.Fatalf("Run() rejected connectivity observed after run start: %v", err)
+	}
+}
+
+func TestProbeRejectsConnectivityObservedBeforeTheRunWindow(t *testing.T) {
+	if !liveProbeBuildEnabled {
+		t.Skip("full fake probe requires the explicit test build tag")
+	}
+
+	deps := successfulFakeDependencies(t)
+	deps.Network = networkFunc(func(ctx context.Context, targets []NetworkTarget) ([]ConnectivityObservation, error) {
+		observations := successfulNetworkObservations(targets)
+		for index := range observations {
+			observations[index].ObservedAt = fixedProbeTime.Add(-time.Second)
+		}
+		return observations, ctx.Err()
+	})
+
+	if _, err := NewProbe(deps).Run(context.Background(), validProbeConfig()); !errors.Is(err, ErrInvalidNetworkObservation) {
+		t.Fatalf("Run() error = %v, want pre-run connectivity rejection", err)
 	}
 }
 
@@ -629,9 +729,6 @@ func TestProbeSyntheticRelayRoundTripIsByteExactAndRedacted(t *testing.T) {
 	}
 
 	deps := successfulFakeDependencies(t)
-	deps.Evidence = evidenceFunc(func(context.Context, EvidenceRequest) (LiveEvidenceObservation, error) {
-		panic("synthetic probe must not collect live evidence")
-	})
 	probe := NewProbe(deps)
 
 	result, err := probe.Run(context.Background(), validProbeConfig())
@@ -641,8 +738,8 @@ func TestProbeSyntheticRelayRoundTripIsByteExactAndRedacted(t *testing.T) {
 	if result.Status != ProbeStatusPassed || !result.RelayOnly || result.RoundTripBytes != ProbeNonceBytes || len(result.PathFingerprint) != 64 || len(result.ICE.HostSHA256) != 1 {
 		t.Fatalf("Run() result = %+v, want passed %d-byte relay-only proof", result, ProbeNonceBytes)
 	}
-	if _, ok := result.ValidatedLiveEvidence(); ok {
-		t.Fatal("synthetic result must never carry privately validated live evidence")
+	if result.Envelope != nil {
+		t.Fatal("synthetic result must never carry a signed live evidence envelope")
 	}
 
 	encoded, marshalErr := json.Marshal(result)
@@ -667,17 +764,17 @@ func TestLiveProbeRequiresValidEvidenceBeforePrivateValidation(t *testing.T) {
 	config := validProbeConfig()
 	config.EvidenceMode = EvidenceLive
 	deps := successfulFakeDependencies(t)
-	deps.Evidence = evidenceFunc(func(context.Context, EvidenceRequest) (LiveEvidenceObservation, error) {
+	deps.liveObserver.(*testLiveObserver).collectFn = func(context.Context, EvidenceRequest) (LiveEvidenceObservation, error) {
 		value := validLiveEvidenceObservation()
 		value.BackendRegression.NoRegression = false
 		return value, nil
-	})
+	}
 	result, err := NewProbe(deps).Run(context.Background(), config)
 	if !errors.Is(err, ErrInvalidLiveEvidence) {
 		t.Fatalf("Run() error = %v, want invalid live evidence", err)
 	}
-	if _, ok := result.ValidatedLiveEvidence(); ok {
-		t.Fatal("invalid evidence yielded private validation")
+	if result.Envelope != nil {
+		t.Fatal("invalid evidence yielded a signed envelope")
 	}
 }
 
@@ -690,10 +787,10 @@ func TestLiveProbeEvidenceCollectionIsBoundedAndContextSafe(t *testing.T) {
 	config.EvidenceMode = EvidenceLive
 	config.EvidenceTimeout = 5 * time.Millisecond
 	deps := successfulFakeDependencies(t)
-	deps.Evidence = evidenceFunc(func(ctx context.Context, _ EvidenceRequest) (LiveEvidenceObservation, error) {
+	deps.liveObserver.(*testLiveObserver).collectFn = func(ctx context.Context, _ EvidenceRequest) (LiveEvidenceObservation, error) {
 		<-ctx.Done()
 		return validLiveEvidenceObservation(), nil
-	})
+	}
 	_, err := NewProbe(deps).Run(context.Background(), config)
 	if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, ErrEvidenceCollectionFailed) {
 		t.Fatalf("Run() error = %v, want evidence operation and deadline identities", err)
@@ -705,26 +802,36 @@ func TestLiveProbeReadsCompletionClockAfterEvidenceCollection(t *testing.T) {
 		t.Skip("full fake probe requires the explicit test build tag")
 	}
 
-	events := make([]string, 0, 3)
+	events := make([]string, 0, 6)
 	deps := successfulFakeDependencies(t)
-	deps.Clock = func() time.Time {
+	observer := deps.liveObserver.(*testLiveObserver)
+	var clockCalls atomic.Int64
+	observer.clock = func() time.Time {
 		events = append(events, "clock")
-		if len(events) == 1 {
+		switch clockCalls.Add(1) {
+		case 1:
 			return fixedProbeTime
+		case 2:
+			return fixedProbeTime.Add(time.Second)
+		case 3:
+			return fixedProbeTime.Add(2 * time.Second)
+		case 4:
+			return fixedProbeTime.Add(3 * time.Second)
+		default:
+			return fixedProbeTime.Add(35 * time.Minute)
 		}
-		return fixedProbeTime.Add(35 * time.Minute)
 	}
-	deps.Evidence = evidenceFunc(func(context.Context, EvidenceRequest) (LiveEvidenceObservation, error) {
+	observer.collectFn = func(context.Context, EvidenceRequest) (LiveEvidenceObservation, error) {
 		events = append(events, "evidence")
 		return validLiveEvidenceObservation(), nil
-	})
+	}
 	config := validProbeConfig()
 	config.EvidenceMode = EvidenceLive
 	if _, err := NewProbe(deps).Run(context.Background(), config); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got := strings.Join(events, ","); got != "clock,evidence,clock" {
-		t.Fatalf("clock/evidence order = %q, want clock,evidence,clock", got)
+	if got := strings.Join(events, ","); got != "clock,clock,clock,clock,evidence,clock" {
+		t.Fatalf("clock/evidence order = %q, want validated operation clocks before evidence completion", got)
 	}
 }
 
@@ -735,11 +842,19 @@ func TestLiveProbeRejectsCompletionBeyondOverallWindow(t *testing.T) {
 
 	var calls atomic.Int64
 	deps := successfulFakeDependencies(t)
-	deps.Clock = func() time.Time {
-		if calls.Add(1) == 1 {
+	deps.liveObserver.(*testLiveObserver).clock = func() time.Time {
+		switch calls.Add(1) {
+		case 1:
 			return fixedProbeTime
+		case 2:
+			return fixedProbeTime.Add(time.Second)
+		case 3:
+			return fixedProbeTime.Add(2 * time.Second)
+		case 4:
+			return fixedProbeTime.Add(3 * time.Second)
+		default:
+			return fixedProbeTime.Add(41 * time.Minute)
 		}
-		return fixedProbeTime.Add(41 * time.Minute)
 	}
 	config := validProbeConfig()
 	config.EvidenceMode = EvidenceLive
@@ -817,29 +932,6 @@ func TestProbeBoundsEveryDependencyContext(t *testing.T) {
 	}
 }
 
-func TestRawOrJSONProbeResultCannotSatisfyLiveReleaseGate(t *testing.T) {
-	t.Parallel()
-
-	raw := ProbeResult{Status: ProbeStatusPassed, EvidenceMode: EvidenceLive, RelayOnly: true, PathFingerprint: strings.Repeat("a", 64)}
-	if _, ok := raw.ValidatedLiveEvidence(); ok {
-		t.Fatal("fabricated raw result must not yield validated evidence")
-	}
-	encoded, err := json.Marshal(raw)
-	if err != nil {
-		t.Fatalf("json.Marshal() error = %v", err)
-	}
-	var decoded ProbeResult
-	if err := json.Unmarshal(encoded, &decoded); err != nil {
-		t.Fatalf("json.Unmarshal() error = %v", err)
-	}
-	if _, ok := decoded.ValidatedLiveEvidence(); ok {
-		t.Fatal("JSON round trip must not yield validated evidence")
-	}
-	if LiveReleaseGateSatisfied(ValidatedLiveEvidence{}, ValidatedLiveEvidence{}) {
-		t.Fatal("fabricated zero evidence must not satisfy release gate")
-	}
-}
-
 func TestStablePathFingerprintIgnoresConfiguredPathOrdering(t *testing.T) {
 	t.Parallel()
 
@@ -848,85 +940,6 @@ func TestStablePathFingerprintIgnoresConfiguredPathOrdering(t *testing.T) {
 	reversed.Paths = []PrivatePath{topology.Paths[1], topology.Paths[0]}
 	if stablePathFingerprint(topology) != stablePathFingerprint(reversed) {
 		t.Fatal("reversing configured path order changed the runtime path identity")
-	}
-}
-
-func TestLiveReleaseGateRequiresTwoDistinctPrivatelyValidatedPaths(t *testing.T) {
-	if !liveProbeBuildEnabled {
-		t.Skip("full fake probe requires the explicit test build tag")
-	}
-
-	firstConfig := validProbeConfig()
-	firstConfig.EvidenceMode = EvidenceLive
-	firstResult, err := NewProbe(successfulFakeDependencies(t)).Run(context.Background(), firstConfig)
-	if err != nil {
-		t.Fatalf("first Run() error = %v", err)
-	}
-	first, ok := firstResult.ValidatedLiveEvidence()
-	if !ok {
-		t.Fatal("successful live run did not yield private evidence")
-	}
-
-	secondConfig := validProbeConfig()
-	secondConfig.EvidenceMode = EvidenceLive
-	secondConfig.Topology.RuntimeSubnetID = "subnet-private-b"
-	secondTopology := topologyFunc(func(ctx context.Context, _ TopologyExpectation) (TopologyObservation, error) {
-		observation := validTopologyObservation()
-		observation.RuntimeSubnetID = "subnet-private-b"
-		return observation, ctx.Err()
-	})
-	sameArtifactDependencies := successfulFakeDependencies(t)
-	sameArtifactDependencies.Topology = secondTopology
-	sameArtifactResult, err := NewProbe(sameArtifactDependencies).Run(context.Background(), secondConfig)
-	if err != nil {
-		t.Fatalf("same-artifact Run() error = %v", err)
-	}
-	sameArtifact, ok := sameArtifactResult.ValidatedLiveEvidence()
-	if !ok {
-		t.Fatal("same-artifact live run did not yield private evidence")
-	}
-	if LiveReleaseGateSatisfied(first, sameArtifact) {
-		t.Fatal("distinct paths with the same artifact set satisfied release gate")
-	}
-
-	secondDependencies := successfulFakeDependencies(t)
-	secondDependencies.Topology = secondTopology
-	secondDependencies.Evidence = evidenceFunc(func(context.Context, EvidenceRequest) (LiveEvidenceObservation, error) {
-		return validSecondPathEvidenceObservation(), nil
-	})
-	secondResult, err := NewProbe(secondDependencies).Run(context.Background(), secondConfig)
-	if err != nil {
-		t.Fatalf("second Run() error = %v", err)
-	}
-	second, ok := secondResult.ValidatedLiveEvidence()
-	if !ok {
-		t.Fatal("second successful live run did not yield private evidence")
-	}
-	if !LiveReleaseGateSatisfied(first, second) {
-		t.Fatal("two distinct private path and artifact identities must satisfy release gate")
-	}
-	if !firstResult.Evidence.NATHealthy || firstResult.Evidence.EnduranceMinutes < 30 || !firstResult.Evidence.CredentialLifecyclePassed || !firstResult.Evidence.BackendRegressionPassed {
-		t.Fatalf("live result summary = %+v, want complete safe pass summary", firstResult.Evidence)
-	}
-	encoded, marshalErr := json.Marshal(firstResult)
-	if marshalErr != nil {
-		t.Fatalf("json.Marshal(live result) error = %v", marshalErr)
-	}
-	for _, digest := range []string{strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64), strings.Repeat("d", 64)} {
-		if strings.Contains(string(encoded), digest) {
-			t.Fatalf("live result leaked private artifact digest %q", digest)
-		}
-	}
-
-	reversedConfig := firstConfig
-	reversedConfig.Topology.Paths = []PrivatePath{firstConfig.Topology.Paths[1], firstConfig.Topology.Paths[0]}
-	reversedResult, err := NewProbe(successfulFakeDependencies(t)).Run(context.Background(), reversedConfig)
-	if err != nil {
-		t.Fatalf("reversed Run() error = %v", err)
-	}
-	reversed, ok := reversedResult.ValidatedLiveEvidence()
-	if !ok || LiveReleaseGateSatisfied(first, reversed) {
-		t.Fatal("slice reversal fabricated a distinct path identity")
 	}
 }
 
@@ -1107,10 +1120,6 @@ func poisonDependencies() Dependencies {
 			panicIfCalled()
 			return nil, nil
 		}),
-		Evidence: evidenceFunc(func(context.Context, EvidenceRequest) (LiveEvidenceObservation, error) {
-			panicIfCalled()
-			return LiveEvidenceObservation{}, nil
-		}),
 		ICE: iceFunc(func(context.Context, string) (TURNCredentials, error) { panicIfCalled(); return TURNCredentials{}, nil }),
 		Relay: relayFunc(func(context.Context, RelayRequest) (RelayObservation, error) {
 			panicIfCalled()
@@ -1123,7 +1132,18 @@ func poisonDependencies() Dependencies {
 
 func successfulFakeDependencies(t *testing.T) Dependencies {
 	t.Helper()
-	var clockCalls atomic.Int64
+	clock := fakeProbeClock()
+	observer := newTestLiveObserver("observer-primary", "observer-key-01", 7)
+	observer.clock = fakeProbeClock()
+	observer.collectFn = func(ctx context.Context, request EvidenceRequest) (LiveEvidenceObservation, error) {
+		if len(request.RunID) != 64 || len(request.PathFingerprint) != 64 || len(request.ICE.HostSHA256) == 0 ||
+			request.RunStartedAt != fixedProbeTime || request.CampaignID != "voice-turn-campaign-01" ||
+			request.SourceRevision != strings.Repeat("a", 40) || request.ImageDigest != "sha256:"+strings.Repeat("b", 64) ||
+			request.ObserverIdentity != "observer-primary" || request.ObserverKeyID != "observer-key-01" {
+			return LiveEvidenceObservation{}, errors.New("invalid redacted evidence request")
+		}
+		return validLiveEvidenceObservation(), ctx.Err()
+	}
 	checkDeadline := func(ctx context.Context) {
 		t.Helper()
 		deadline, ok := ctx.Deadline()
@@ -1147,13 +1167,6 @@ func successfulFakeDependencies(t *testing.T) Dependencies {
 			}
 			return successfulNetworkObservations(targets), nil
 		}),
-		Evidence: evidenceFunc(func(ctx context.Context, request EvidenceRequest) (LiveEvidenceObservation, error) {
-			checkDeadline(ctx)
-			if len(request.PathFingerprint) != 64 || len(request.ICE.HostSHA256) == 0 || request.RunStartedAt != fixedProbeTime {
-				return LiveEvidenceObservation{}, errors.New("invalid redacted evidence request")
-			}
-			return validLiveEvidenceObservation(), nil
-		}),
 		ICE: iceFunc(func(ctx context.Context, _ string) (TURNCredentials, error) {
 			checkDeadline(ctx)
 			return validCredentials(), nil
@@ -1167,6 +1180,7 @@ func successfulFakeDependencies(t *testing.T) Dependencies {
 				Payload:             bytes.Clone(request.Payload),
 				LocalCandidateType:  CandidateRelay,
 				RemoteCandidateType: CandidateRelay,
+				ArtifactSHA256:      hashString("relay-artifact-private-a"),
 			}, nil
 		}),
 		Metrics: metricsFunc(func(ctx context.Context, metric ProbeMetric) error {
@@ -1179,12 +1193,26 @@ func successfulFakeDependencies(t *testing.T) Dependencies {
 			}
 			return nil
 		}),
-		Clock: func() time.Time {
-			if clockCalls.Add(1) == 1 {
-				return fixedProbeTime
-			}
+		Clock:        clock,
+		liveObserver: observer,
+	}
+}
+
+func fakeProbeClock() func() time.Time {
+	var calls atomic.Int64
+	return func() time.Time {
+		switch calls.Add(1) {
+		case 1:
+			return fixedProbeTime
+		case 2:
+			return fixedProbeTime.Add(time.Second)
+		case 3:
+			return fixedProbeTime.Add(2 * time.Second)
+		case 4:
+			return fixedProbeTime.Add(3 * time.Second)
+		default:
 			return fixedProbeTime.Add(35 * time.Minute)
-		},
+		}
 	}
 }
 
@@ -1210,12 +1238,6 @@ type networkFunc func(context.Context, []NetworkTarget) ([]ConnectivityObservati
 
 func (function networkFunc) Check(ctx context.Context, targets []NetworkTarget) ([]ConnectivityObservation, error) {
 	return function(ctx, targets)
-}
-
-type evidenceFunc func(context.Context, EvidenceRequest) (LiveEvidenceObservation, error)
-
-func (function evidenceFunc) Collect(ctx context.Context, request EvidenceRequest) (LiveEvidenceObservation, error) {
-	return function(ctx, request)
 }
 
 type relayFunc func(context.Context, RelayRequest) (RelayObservation, error)

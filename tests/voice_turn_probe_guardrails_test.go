@@ -47,8 +47,10 @@ func TestVoiceNetworkSpikeRunbookKeepsLiveGateClosed(t *testing.T) {
 		"EnduranceObservation",
 		"CredentialLifecycleObservation",
 		"BackendRegressionObservation",
-		"ValidatedLiveEvidence",
-		"privately validated live",
+		"LiveEvidenceEnvelope",
+		"Ed25519",
+		"portable signed",
+		"replay",
 		"Stable redacted path identities",
 		"Changing the configured path order must not change the identity",
 		"one `ConnectivityObservation` per AWS control/signaling",
@@ -105,7 +107,7 @@ func TestVoiceNetworkSpikeRunbookKeepsLiveGateClosed(t *testing.T) {
 	}
 }
 
-func TestVoiceTurnHarnessModelsCompletePrivatelyValidatedEvidence(t *testing.T) {
+func TestVoiceTurnHarnessModelsPortableSignedEvidence(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join("..", "internal", "voice", "webrtc", "turn.go")
@@ -117,7 +119,11 @@ func TestVoiceTurnHarnessModelsCompletePrivatelyValidatedEvidence(t *testing.T) 
 		"EnduranceObservation",
 		"CredentialLifecycleObservation",
 		"BackendRegressionObservation",
-		"ValidatedLiveEvidence",
+		"LiveEvidenceArtifacts",
+		"LiveEvidenceClaims",
+		"LiveEvidenceEnvelope",
+		"TrustedObserver",
+		"LiveReleasePolicy",
 	} {
 		if !strings.Contains(source, "type "+contract+" struct") {
 			t.Errorf("TURN proof harness is missing evidence contract %s", contract)
@@ -126,6 +132,8 @@ func TestVoiceTurnHarnessModelsCompletePrivatelyValidatedEvidence(t *testing.T) 
 	for _, forgeableGate := range []string{
 		"func (result ProbeResult) LiveEvidenceSatisfied",
 		"func LiveReleaseGateSatisfied(results ...ProbeResult)",
+		"type ValidatedLiveEvidence struct",
+		"Evidence EvidenceObserver",
 	} {
 		if strings.Contains(source, forgeableGate) {
 			t.Errorf("TURN proof harness must not release-gate caller-constructible ProbeResult values: %q", forgeableGate)
@@ -136,24 +144,33 @@ func TestVoiceTurnHarnessModelsCompletePrivatelyValidatedEvidence(t *testing.T) 
 	if err != nil {
 		t.Fatalf("parse TURN proof harness: %v", err)
 	}
-	validatedType := findStructType(parsed, "ValidatedLiveEvidence")
-	if validatedType == nil {
-		t.Fatal("ValidatedLiveEvidence must be a struct with private validated state")
+	dependencies := findStructType(parsed, "Dependencies")
+	if dependencies == nil {
+		t.Fatal("Dependencies must remain a struct with a sealed live-observer field")
 	}
-	privateFields := 0
-	for _, field := range validatedType.Fields.List {
-		if len(field.Names) == 0 {
-			t.Fatal("ValidatedLiveEvidence must not expose embedded construction state")
-		}
+	sealedObserver := false
+	for _, field := range dependencies.Fields.List {
 		for _, name := range field.Names {
-			if ast.IsExported(name.Name) {
-				t.Errorf("ValidatedLiveEvidence field %s must remain private", name.Name)
+			if name.Name == "liveObserver" && !ast.IsExported(name.Name) {
+				sealedObserver = true
 			}
-			privateFields++
+			if ast.IsExported(name.Name) && strings.Contains(strings.ToLower(name.Name), "observer") {
+				t.Errorf("Dependencies must not expose live observer injection through %s", name.Name)
+			}
 		}
 	}
-	if privateFields == 0 {
-		t.Fatal("ValidatedLiveEvidence must carry private validation state")
+	if !sealedObserver {
+		t.Fatal("Dependencies must retain an unexported sealed live observer boundary")
+	}
+	for _, required := range []string{
+		"func VerifyLiveRelease(",
+		"type LiveEvidenceReplayGuard interface",
+		"crypto/ed25519",
+		"liveEvidenceObserverSeal()",
+	} {
+		if !strings.Contains(source, required) {
+			t.Errorf("TURN proof harness is missing signed-envelope guardrail %q", required)
+		}
 	}
 }
 
@@ -187,7 +204,8 @@ func TestVoiceProbePackageTestsAreFakeOnlyAndRunInSafeCI(t *testing.T) {
 		t.Fatal("safe CI verification must run the AgentCore package test target")
 	}
 
-	testSource := readRepositoryFile(t, "internal", "voice", "webrtc", "turn_test.go")
+	testSource := readRepositoryFile(t, "internal", "voice", "webrtc", "turn_test.go") +
+		readRepositoryFile(t, "internal", "voice", "webrtc", "turn_attestation_test.go")
 	for _, fakeOnly := range []string{
 		"successfulFakeDependencies",
 		"poisonDependencies",
