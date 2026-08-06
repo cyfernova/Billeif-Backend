@@ -5,7 +5,9 @@
 Mobile invokes the AgentCore Runtime over HTTPS for signaling and sends media
 over WebRTC. Audio must never pass through API Gateway or Lambda. The runtime
 accepts only a Cognito-authorized invocation and checks the logical session
-before processing a request.
+before processing a request. JSON signaling requests and responses carry the
+same `protocol_version`, `session_id`, and positive sender-scoped monotonic
+`sequence` fields as DataChannel control messages.
 
 Create one ordered, reliable WebRTC DataChannel named
 `billeif.voice.control.v1`. Every DataChannel control message has:
@@ -20,9 +22,10 @@ Create one ordered, reliable WebRTC DataChannel named
 ```
 
 `sequence` is a positive, strictly increasing integer for one sender and one
-logical session. Receivers ignore duplicate and out-of-order values. Control
-JSON is limited to 16 KiB, including its UTF-8 encoding. Unknown JSON fields
-and unsupported event names are rejected.
+logical session. Client-to-runtime and runtime-to-client counters are
+independent. Receivers reject duplicate and out-of-order values and do not
+process them. Control JSON is limited to 16 KiB, including its UTF-8 encoding.
+Unknown JSON fields and unsupported event names are rejected.
 
 Messages about an active generated response include a positive
 `generation_id`. A new generation supersedes all older generations. The client
@@ -42,6 +45,7 @@ transport media.
   "type": "session.attach",
   "protocol_version": 1,
   "session_id": "voice_01K...",
+  "sequence": 1,
   "client": {"platform": "ios", "app_version": "1.0.0"}
 }
 ```
@@ -53,6 +57,7 @@ The response is:
   "type": "session.attached",
   "protocol_version": 1,
   "session_id": "voice_01K...",
+  "sequence": 1,
   "ice_servers": [{"urls": ["turn:host:port"]}],
   "ice_expires_at": "2026-08-06T06:05:00Z"
 }
@@ -68,6 +73,7 @@ are never embedded in source, logs, or persistent mobile configuration.
   "type": "webrtc.offer",
   "protocol_version": 1,
   "session_id": "voice_01K...",
+  "sequence": 2,
   "sdp": "..."
 }
 ```
@@ -79,6 +85,7 @@ The response is:
   "type": "webrtc.answer",
   "protocol_version": 1,
   "session_id": "voice_01K...",
+  "sequence": 2,
   "sdp": "..."
 }
 ```
@@ -90,6 +97,7 @@ The response is:
   "type": "webrtc.candidate",
   "protocol_version": 1,
   "session_id": "voice_01K...",
+  "sequence": 3,
   "candidate": {
     "candidate": "...",
     "sdp_mid": "0",
@@ -98,8 +106,9 @@ The response is:
 }
 ```
 
-The runtime accepts the candidate for the attached session. It emits no new
-typed signaling response unless it needs to provide the next SDP answer.
+The runtime returns **HTTP 204 No Content** when it accepts a candidate for the
+attached session. That acknowledgement is not a JSON event and therefore has
+no sequence. It does not invent a typed signaling response.
 
 ### Restart
 
@@ -107,11 +116,24 @@ typed signaling response unless it needs to provide the next SDP answer.
 {
   "type": "webrtc.restart",
   "protocol_version": 1,
-  "session_id": "voice_01K..."
+  "session_id": "voice_01K...",
+  "sequence": 4
 }
 ```
 
-The runtime responds with `webrtc.answer` after it accepts the ICE restart.
+The runtime returns `webrtc.answer` with the common fields and a new SDP after
+it accepts the ICE restart:
+
+```json
+{
+  "type": "webrtc.answer",
+  "protocol_version": 1,
+  "session_id": "voice_01K...",
+  "sequence": 3,
+  "sdp": "..."
+}
+```
+
 `ice.refresh` on the DataChannel tells the client to attach again for renewed
 TURN configuration before performing the restart.
 

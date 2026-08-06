@@ -112,6 +112,26 @@ func TestDecodeControlMessageRejectsDuplicateAndNonMonotonicSequencesPerSession(
 	}
 }
 
+func TestDecodeControlMessageTracksSequencesIndependentlyByDirection(t *testing.T) {
+	tracker := NewSequenceTracker(2, 2)
+	clientHeartbeat := controlJSON(EventHeartbeat, "voice-1", 1, nil)
+	runtimeReady := controlJSON(EventSessionReady, "voice-1", 1, nil)
+
+	if _, err := DecodeControlMessage(clientHeartbeat, ClientToRuntime, tracker); err != nil {
+		t.Fatalf("client sequence 1 error = %v", err)
+	}
+	if _, err := DecodeControlMessage(runtimeReady, RuntimeToClient, tracker); err != nil {
+		t.Fatalf("runtime sequence 1 error = %v, want independently valid sender sequence", err)
+	}
+
+	if _, err := DecodeControlMessage(clientHeartbeat, ClientToRuntime, tracker); !errors.Is(err, ErrDuplicateSequence) {
+		t.Fatalf("duplicate client sequence error = %v, want %v", err, ErrDuplicateSequence)
+	}
+	if _, err := DecodeControlMessage(runtimeReady, RuntimeToClient, tracker); !errors.Is(err, ErrDuplicateSequence) {
+		t.Fatalf("duplicate runtime sequence error = %v, want %v", err, ErrDuplicateSequence)
+	}
+}
+
 func TestSequenceTrackerBoundsSessions(t *testing.T) {
 	tracker := NewSequenceTracker(1, 2)
 	if _, err := DecodeControlMessage(controlJSON(EventHeartbeat, "voice-1", 10, nil), ClientToRuntime, tracker); err != nil {

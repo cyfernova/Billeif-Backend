@@ -135,7 +135,7 @@ func DecodeControlMessage(data []byte, direction Direction, tracker *SequenceTra
 		return ControlMessage{}, err
 	}
 	if tracker != nil {
-		if err := tracker.Accept(message.SessionID, message.Sequence); err != nil {
+		if err := tracker.Accept(message.SessionID, direction, message.Sequence); err != nil {
 			return ControlMessage{}, err
 		}
 	}
@@ -223,10 +223,14 @@ type SequenceTracker struct {
 }
 
 type sessionSequenceState struct {
+	directions map[Direction]*directionSequenceState
+	recency    *list.Element
+}
+
+type directionSequenceState struct {
 	lastSequence  int
 	seen          map[int]struct{}
 	sequenceOrder *list.List
-	recency       *list.Element
 }
 
 // NewSequenceTracker creates a bounded, session-scoped tracker. Non-positive
@@ -248,8 +252,8 @@ func NewSequenceTracker(maxSessions, maxSequencesPerSession int) *SequenceTracke
 }
 
 // Accept records a sequence after validation, rejecting replayed or
-// out-of-order values for the same logical session.
-func (tracker *SequenceTracker) Accept(sessionID string, sequence int) error {
+// out-of-order values for the same logical session and sender direction.
+func (tracker *SequenceTracker) Accept(sessionID string, direction Direction, sequence int) error {
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
 
@@ -260,19 +264,28 @@ func (tracker *SequenceTracker) Accept(sessionID string, sequence int) error {
 		tracker.sessionRecency.MoveToFront(state.recency)
 	}
 
-	if _, duplicate := state.seen[sequence]; duplicate {
+	directionState := state.directions[direction]
+	if directionState == nil {
+		directionState = &directionSequenceState{
+			seen:          make(map[int]struct{}, tracker.maxPerSession),
+			sequenceOrder: list.New(),
+		}
+		state.directions[direction] = directionState
+	}
+
+	if _, duplicate := directionState.seen[sequence]; duplicate {
 		return ErrDuplicateSequence
 	}
-	if sequence <= state.lastSequence {
+	if sequence <= directionState.lastSequence {
 		return ErrNonMonotonicSequence
 	}
 
-	state.lastSequence = sequence
-	state.seen[sequence] = struct{}{}
-	state.sequenceOrder.PushBack(sequence)
-	if state.sequenceOrder.Len() > tracker.maxPerSession {
-		oldest := state.sequenceOrder.Remove(state.sequenceOrder.Front()).(int)
-		delete(state.seen, oldest)
+	directionState.lastSequence = sequence
+	directionState.seen[sequence] = struct{}{}
+	directionState.sequenceOrder.PushBack(sequence)
+	if directionState.sequenceOrder.Len() > tracker.maxPerSession {
+		oldest := directionState.sequenceOrder.Remove(directionState.sequenceOrder.Front()).(int)
+		delete(directionState.seen, oldest)
 	}
 	return nil
 }
@@ -293,9 +306,8 @@ func (tracker *SequenceTracker) newSession(sessionID string) *sessionSequenceSta
 	}
 	recency := tracker.sessionRecency.PushFront(sessionID)
 	state := &sessionSequenceState{
-		seen:          make(map[int]struct{}, tracker.maxPerSession),
-		sequenceOrder: list.New(),
-		recency:       recency,
+		directions: make(map[Direction]*directionSequenceState, 2),
+		recency:    recency,
 	}
 	tracker.sessions[sessionID] = state
 	return state
