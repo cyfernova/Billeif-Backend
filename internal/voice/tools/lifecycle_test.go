@@ -43,16 +43,18 @@ func TestExecuteHonorsConfiguredDeadlineWhileWaitingForResponseHeaders(t *testin
 }
 
 func TestExecuteHonorsDeadlineDuringResponseBodyWithoutLeakingCredential(t *testing.T) {
-	server, origin, roots, resolver, dialer := newInjectedTLSServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	releaseBody := make(chan struct{})
+	server, origin, roots, resolver, dialer := newInjectedTLSServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		writer.WriteHeader(http.StatusOK)
 		_, _ = writer.Write([]byte(`{"items":[`))
 		if flusher, ok := writer.(http.Flusher); ok {
 			flusher.Flush()
 		}
-		<-request.Context().Done()
+		<-releaseBody
 	}))
 	defer server.Close()
+	defer close(releaseBody)
 	const token = "Bearer stalled-body-secret-canary"
 	binding, err := NewSessionBinding(staticAuthorizationSource{value: token}, testBusinessID, "")
 	if err != nil {

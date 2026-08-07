@@ -92,11 +92,18 @@ func TestAgentCoreBuildAndCIExerciseOnlyTheCodecEnabledImage(t *testing.T) {
 	}
 
 	workflow := readRepositoryFile(t, ".github", "workflows", "deploy.yml")
-	qemuIndex := strings.Index(workflow, "docker/setup-qemu-action@v3")
-	buildxIndex := strings.Index(workflow, "docker/setup-buildx-action@v3")
-	makeBuildIndex := strings.Index(workflow, "run: make build-agentcore")
-	if qemuIndex < 0 || buildxIndex < 0 || makeBuildIndex < 0 || qemuIndex > makeBuildIndex || buildxIndex > makeBuildIndex {
-		t.Fatal("CI must configure ARM64 emulation and Buildx before build-agentcore")
+	verifyStart := strings.Index(workflow, "  verify:")
+	deployStart := strings.Index(workflow, "  deploy:")
+	if verifyStart < 0 || deployStart < verifyStart {
+		t.Fatal("CI workflow must define verify before deploy")
+	}
+	verifyJob := workflow[verifyStart:deployStart]
+	nativeARM64 := strings.Contains(verifyJob, "runs-on: ubuntu-24.04-arm")
+	qemuIndex := strings.Index(verifyJob, "docker/setup-qemu-action@v3")
+	buildxIndex := strings.Index(verifyJob, "docker/setup-buildx-action@v3")
+	makeBuildIndex := strings.Index(verifyJob, "run: make build-agentcore")
+	if buildxIndex < 0 || makeBuildIndex < 0 || buildxIndex > makeBuildIndex || (!nativeARM64 && (qemuIndex < 0 || qemuIndex > makeBuildIndex)) {
+		t.Fatal("CI must use native ARM64 or configure ARM64 emulation, then configure Buildx before build-agentcore")
 	}
 	for _, required := range []string{
 		"docker network create --internal billeif-voice-offline-ci",
@@ -132,7 +139,7 @@ func TestAgentCoreBuildAndCIExerciseOnlyTheCodecEnabledImage(t *testing.T) {
 	publishIndex := strings.Index(workflow, "--push .")
 	deployQEMUIndex := strings.LastIndex(workflow, "docker/setup-qemu-action@v3")
 	deployBuildxIndex := strings.LastIndex(workflow, "docker/setup-buildx-action@v3")
-	if strings.Count(workflow, "docker/setup-qemu-action@v3") != 2 || publishIndex < 0 ||
+	if strings.Count(workflow, "docker/setup-qemu-action@v3") != 1 || publishIndex < 0 ||
 		deployQEMUIndex > publishIndex || deployBuildxIndex > publishIndex || deployQEMUIndex > deployBuildxIndex {
 		t.Fatal("the separately hosted deploy job must configure ARM64 emulation before publishing")
 	}
