@@ -2,10 +2,17 @@
 useDefault = true
 
 [[allowlists]]
-description = "Synthetic API-key fixtures used by configuration and Terraform policy tests"
+description = "Synthetic API-key fixtures used by configuration, Terraform, and voice tests"
 paths = [
   '''^infrastructure/terraform/tests/http_serverless\.tftest\.hcl$''',
   '''^infrastructure/terraform/tests/razorpay\.tftest\.hcl$''',
   '''^internal/config/config_test\.go$''',
   '''^internal/config/invoice_cursor_test\.go$''',
+  '''^internal/handlers/voice_session_handler_test\.go$''',
+  '''^internal/providers/sarvam/client_test\.go$''',
+  '''^internal/voice/protocol/testdata/v1/session-create\.json$''',
+  '''^internal/voice/protocol/testdata/v1/successor-create\.json$''',
+  '''^internal/voice/session/dynamodb_store_test\.go$''',
+  '''^internal/voice/session/service_test\.go$''',
+  '''^internal/voice/telemetry/redaction_test\.go$''',
 ]
