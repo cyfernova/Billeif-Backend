@@ -186,7 +186,7 @@ jobs:
     needs:
       - secret-scan
       - verify
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     permissions:
       contents: read
       id-token: write

@@ -46,8 +46,8 @@ func TestDeployWorkflowLaunchSafetyPolicy(t *testing.T) {
 
 	deploy := requiredMap(t, jobs, "deploy")
 	deployIf := requiredScalar(t, deploy, "if")
-	if deployIf != "github.event_name == 'workflow_dispatch'" {
-		t.Fatalf("deploy must require explicit workflow dispatch until the OIDC role is configured, got if: %q", deployIf)
+	if deployIf != "github.event_name == 'push' || github.event_name == 'workflow_dispatch'" {
+		t.Fatalf("deploy must run for protected-branch pushes and manual retries, got if: %q", deployIf)
 	}
 
 	deployPermissions := requiredMap(t, deploy, "permissions")
