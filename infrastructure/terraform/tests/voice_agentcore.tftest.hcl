@@ -370,10 +370,11 @@ run "production_admission_rejects_a_disabled_rollout" {
   expect_failures = [terraform_data.voice_cutover_gates[0]]
 }
 
-run "voice_admission_requires_all_evidence_in_every_environment" {
+run "production_voice_admission_requires_all_evidence" {
   command = plan
 
   variables {
+    environment                    = "prod"
     provision_voice_infrastructure = true
     promote_voice_agentcore_prod   = true
     enable_voice                   = true
@@ -385,6 +386,30 @@ run "voice_admission_requires_all_evidence_in_every_environment" {
   }
 
   expect_failures = [terraform_data.voice_cutover_gates[0]]
+}
+
+run "nonproduction_voice_admission_uses_staging_without_production_evidence" {
+  command = plan
+
+  variables {
+    environment                    = "dev"
+    provision_voice_infrastructure = true
+    enable_voice                   = true
+    voice_rollout_stage            = "100"
+    voice_agentcore_image_digest   = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    voice_agentcore_release        = "release-0123456789abcdef"
+  }
+
+  assert {
+    condition = (
+      length(aws_bedrockagentcore_agent_runtime_endpoint.voice_staging) == 1 &&
+      length(aws_bedrockagentcore_agent_runtime_endpoint.voice_prod) == 0 &&
+      aws_lambda_function.api_http.environment[0].variables["AGENTCORE_RUNTIME_QUALIFIER"] == "STAGING" &&
+      aws_lambda_function.api_http.environment[0].variables["VOICE_ADMISSION_ENABLED"] == "true" &&
+      aws_lambda_function.api_http.environment[0].variables["VOICE_ROLLOUT_STAGE"] == "100"
+    )
+    error_message = "A non-production mobile test must admit the bounded dev cohort only through STAGING without weakening production promotion gates."
+  }
 }
 
 run "code_rollback_can_select_only_the_recorded_previous_version_with_admission_off" {

@@ -201,9 +201,9 @@ jobs:
       TF_VAR_provision_voice_infrastructure: ${{ vars.PROVISION_VOICE_INFRASTRUCTURE == 'true' && 'true' || 'false' }}
       TF_VAR_promote_voice_agentcore_prod: ${{ vars.PROMOTE_VOICE_AGENTCORE_PROD == 'true' && 'true' || 'false' }}
       PUBLISH_VOICE_AGENTCORE_IMAGE: ${{ vars.PUBLISH_VOICE_AGENTCORE_IMAGE == 'true' && 'true' || 'false' }}
-      # Task 17 prepares gates only. Enabling production admission requires a
-      # separate reviewed repository change; a mutable GitHub variable cannot do it.
-      TF_VAR_enable_voice: "false"
+      # Terraform permits STAGING admission only outside prod. Production still
+      # requires the immutable PROD endpoint and every evidence gate below.
+      TF_VAR_enable_voice: ${{ vars.ENABLE_VOICE == 'true' && 'true' || 'false' }}
       TF_VAR_enable_voice_turn_udp_egress: ${{ vars.ENABLE_VOICE_TURN_UDP_EGRESS == 'true' && 'true' || 'false' }}
       TF_VAR_voice_agentcore_image_tag: ${{ vars.VOICE_AGENTCORE_IMAGE_TAG != '' && vars.VOICE_AGENTCORE_IMAGE_TAG || '' }}
       TF_VAR_voice_agentcore_image_digest: ${{ vars.VOICE_AGENTCORE_IMAGE_DIGEST != '' && vars.VOICE_AGENTCORE_IMAGE_DIGEST || '' }}

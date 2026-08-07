@@ -66,7 +66,7 @@ func TestVoiceAgentCoreDeploymentPublishesOnlyBehindManualGate(t *testing.T) {
 	}
 	source := string(body)
 	for _, required := range []string{
-		`TF_VAR_enable_voice: "false"`,
+		`TF_VAR_enable_voice: ${{ vars.ENABLE_VOICE == 'true' && 'true' || 'false' }}`,
 		`TF_VAR_provision_voice_infrastructure:`,
 		`PUBLISH_VOICE_AGENTCORE_IMAGE: ${{ vars.PUBLISH_VOICE_AGENTCORE_IMAGE == 'true' && 'true' || 'false' }}`,
 		`TF_VAR_voice_agentcore_image_digest: ${{ vars.VOICE_AGENTCORE_IMAGE_DIGEST != '' && vars.VOICE_AGENTCORE_IMAGE_DIGEST || '' }}`,
@@ -94,8 +94,5 @@ func TestVoiceAgentCoreDeploymentPublishesOnlyBehindManualGate(t *testing.T) {
 	}
 	if strings.Contains(source, "voice-runtime:latest") {
 		t.Fatal("AgentCore deployment must never publish a mutable latest tag")
-	}
-	if strings.Contains(source, "vars.ENABLE_VOICE ==") {
-		t.Fatal("the repository preparation workflow must keep production voice admission hard-disabled")
 	}
 }

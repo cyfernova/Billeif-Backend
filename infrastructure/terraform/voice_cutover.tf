@@ -54,8 +54,8 @@ resource "terraform_data" "voice_cutover_gates" {
     }
 
     precondition {
-      condition     = !var.enable_voice || var.promote_voice_agentcore_prod
-      error_message = "Voice admission requires a version-pinned PROD AgentCore endpoint."
+      condition     = !var.enable_voice || var.environment != "prod" || var.promote_voice_agentcore_prod
+      error_message = "Production voice admission requires a version-pinned PROD AgentCore endpoint."
     }
 
     precondition {
@@ -83,8 +83,8 @@ resource "terraform_data" "voice_cutover_gates" {
     }
 
     precondition {
-      condition     = !var.enable_voice || local.voice_production_evidence_acknowledged
-      error_message = "Voice admission requires every Sarvam quota, AgentCore/KVS capacity, live TURN, live load/cost, staging, and generic WebSocket evidence acknowledgement."
+      condition     = !var.enable_voice || var.environment != "prod" || local.voice_production_evidence_acknowledged
+      error_message = "Production voice admission requires every Sarvam quota, AgentCore/KVS capacity, live TURN, live load/cost, staging, and generic WebSocket evidence acknowledgement."
     }
 
     precondition {
