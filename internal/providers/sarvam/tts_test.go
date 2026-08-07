@@ -193,6 +193,7 @@ func TestTTSStreamExactContractFirstAudioMultipleTextAndDelayedFinal(t *testing.
 
 func TestTTSStreamAcceptsOfficialOptionalProviderFields(t *testing.T) {
 	t.Run("audio request ID omitted", func(t *testing.T) {
+		releaseServer := make(chan struct{})
 		server := newTTSLoopbackServer(t, func(conn *websocket.Conn, _ *http.Request) {
 			if _, _, err := conn.ReadMessage(); err != nil { // config
 				return
@@ -200,9 +201,13 @@ func TestTTSStreamAcceptsOfficialOptionalProviderFields(t *testing.T) {
 			if _, _, err := conn.ReadMessage(); err != nil { // text
 				return
 			}
-			_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"audio","data":{"audio":"AQI=","content_type":"audio/raw"}}`))
+			if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"audio","data":{"audio":"AQI=","content_type":"audio/raw"}}`)); err != nil {
+				return
+			}
+			<-releaseServer
 		})
 		defer server.Close()
+		defer closeIfOpen(releaseServer)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
