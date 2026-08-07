@@ -69,10 +69,11 @@ data "aws_iam_policy_document" "nat_instance_assume_role" {
 }
 
 resource "aws_iam_role" "nat_instance" {
-  count              = local.nat_instance_enabled ? 1 : 0
-  name               = "${local.resource_prefix}-nat-instance-role"
-  description        = "Billeif NAT instance role for SSM access"
-  assume_role_policy = data.aws_iam_policy_document.nat_instance_assume_role[0].json
+  count                = local.nat_instance_enabled ? 1 : 0
+  name                 = "${local.resource_prefix}-nat-instance-role"
+  description          = "Billeif NAT instance role for SSM access"
+  assume_role_policy   = data.aws_iam_policy_document.nat_instance_assume_role[0].json
+  permissions_boundary = local.workload_permissions_boundary_arn
 }
 
 resource "aws_iam_role_policy_attachment" "nat_instance_ssm" {

@@ -3,6 +3,8 @@
 locals {
   resource_prefix = "${var.project_name}-${var.environment}"
 
+  workload_permissions_boundary_arn = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/${local.resource_prefix}-workload-boundary"
+
   cognito_web_user_pool_name      = var.user_pool_name != "" ? var.user_pool_name : "${local.resource_prefix}-web-user-pool"
   cognito_web_client_name         = var.client_name != "" ? var.client_name : "${local.resource_prefix}-web-client"
   cognito_native_user_pool_name   = var.phone_user_pool_name != "" ? var.phone_user_pool_name : "${local.resource_prefix}-native-user-pool"

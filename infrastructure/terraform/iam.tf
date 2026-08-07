@@ -58,8 +58,9 @@ data "aws_iam_policy_document" "apigateway_cloudwatch_assume_role" {
 }
 
 resource "aws_iam_role" "apigateway_cloudwatch" {
-  name               = "${local.resource_prefix}-apigateway-cloudwatch-role"
-  assume_role_policy = data.aws_iam_policy_document.apigateway_cloudwatch_assume_role.json
+  name                 = "${local.resource_prefix}-apigateway-cloudwatch-role"
+  assume_role_policy   = data.aws_iam_policy_document.apigateway_cloudwatch_assume_role.json
+  permissions_boundary = local.workload_permissions_boundary_arn
 }
 
 resource "aws_iam_role_policy_attachment" "apigateway_cloudwatch" {
@@ -74,13 +75,15 @@ resource "aws_api_gateway_account" "main" {
 }
 
 resource "aws_iam_role" "lambda_exec" {
-  name               = "${local.resource_prefix}-lambda-exec-role"
-  assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
+  name                 = "${local.resource_prefix}-lambda-exec-role"
+  assume_role_policy   = data.aws_iam_policy_document.lambda_assume_role.json
+  permissions_boundary = local.workload_permissions_boundary_arn
 }
 
 resource "aws_iam_role" "lambda_http_exec" {
-  name               = "${local.resource_prefix}-lambda-http-exec-role"
-  assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
+  name                 = "${local.resource_prefix}-lambda-http-exec-role"
+  assume_role_policy   = data.aws_iam_policy_document.lambda_assume_role.json
+  permissions_boundary = local.workload_permissions_boundary_arn
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_basic" {
@@ -106,8 +109,9 @@ resource "aws_iam_role_policy_attachment" "lambda_http_vpc_access" {
 resource "aws_iam_role" "lambda_worker_exec" {
   for_each = local.worker_runtime_secret_arns
 
-  name               = "${local.resource_prefix}-lambda-${each.key}-worker-exec-role"
-  assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
+  name                 = "${local.resource_prefix}-lambda-${each.key}-worker-exec-role"
+  assume_role_policy   = data.aws_iam_policy_document.lambda_assume_role.json
+  permissions_boundary = local.workload_permissions_boundary_arn
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_worker_basic" {
@@ -125,8 +129,9 @@ resource "aws_iam_role_policy_attachment" "lambda_worker_vpc_access" {
 }
 
 resource "aws_iam_role" "lambda_websocket_exec" {
-  name               = "${local.resource_prefix}-lambda-websocket-exec-role"
-  assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
+  name                 = "${local.resource_prefix}-lambda-websocket-exec-role"
+  assume_role_policy   = data.aws_iam_policy_document.lambda_assume_role.json
+  permissions_boundary = local.workload_permissions_boundary_arn
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_websocket_basic" {
@@ -140,8 +145,9 @@ resource "aws_iam_role_policy_attachment" "lambda_websocket_vpc_access" {
 }
 
 resource "aws_iam_role" "outbox_dispatcher" {
-  name               = "${local.resource_prefix}-outbox-dispatcher-exec-role"
-  assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
+  name                 = "${local.resource_prefix}-outbox-dispatcher-exec-role"
+  assume_role_policy   = data.aws_iam_policy_document.lambda_assume_role.json
+  permissions_boundary = local.workload_permissions_boundary_arn
 }
 
 resource "aws_iam_role_policy_attachment" "outbox_dispatcher_basic" {
@@ -155,8 +161,9 @@ resource "aws_iam_role_policy_attachment" "outbox_dispatcher_vpc_access" {
 }
 
 resource "aws_iam_role" "email_delivery" {
-  name               = "${local.resource_prefix}-email-delivery-exec-role"
-  assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
+  name                 = "${local.resource_prefix}-email-delivery-exec-role"
+  assume_role_policy   = data.aws_iam_policy_document.lambda_assume_role.json
+  permissions_boundary = local.workload_permissions_boundary_arn
 }
 
 resource "aws_iam_role_policy_attachment" "email_delivery_basic" {
@@ -246,8 +253,9 @@ resource "aws_iam_role_policy" "email_delivery" {
 }
 
 resource "aws_iam_role" "ses_feedback" {
-  name               = "${local.resource_prefix}-ses-feedback-exec-role"
-  assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
+  name                 = "${local.resource_prefix}-ses-feedback-exec-role"
+  assume_role_policy   = data.aws_iam_policy_document.lambda_assume_role.json
+  permissions_boundary = local.workload_permissions_boundary_arn
 }
 
 resource "aws_iam_role_policy_attachment" "ses_feedback_basic" {

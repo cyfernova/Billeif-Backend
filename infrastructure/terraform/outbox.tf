@@ -11,8 +11,9 @@ data "aws_iam_policy_document" "outbox_scheduler_assume_role" {
 }
 
 resource "aws_iam_role" "outbox_scheduler" {
-  name               = "${local.resource_prefix}-outbox-scheduler-exec-role"
-  assume_role_policy = data.aws_iam_policy_document.outbox_scheduler_assume_role.json
+  name                 = "${local.resource_prefix}-outbox-scheduler-exec-role"
+  assume_role_policy   = data.aws_iam_policy_document.outbox_scheduler_assume_role.json
+  permissions_boundary = local.workload_permissions_boundary_arn
 }
 
 data "aws_iam_policy_document" "outbox_scheduler" {

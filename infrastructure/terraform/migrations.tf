@@ -12,8 +12,9 @@ resource "aws_cloudwatch_log_group" "database_migrator" {
 }
 
 resource "aws_iam_role" "database_migrator" {
-  name               = "${local.resource_prefix}-database-migrator-exec-role"
-  assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
+  name                 = "${local.resource_prefix}-database-migrator-exec-role"
+  assume_role_policy   = data.aws_iam_policy_document.lambda_assume_role.json
+  permissions_boundary = local.workload_permissions_boundary_arn
 }
 
 data "aws_iam_policy_document" "database_migrator" {

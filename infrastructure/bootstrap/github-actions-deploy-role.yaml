@@ -1,0 +1,165 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  One-time security bootstrap for Billeif production deployments. This stack is
+  deliberately administered outside the application Terraform state so the
+  GitHub deployment role cannot change its own trust or permission ceiling.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: billeif
+    AllowedPattern: "[a-z0-9-]+"
+  Environment:
+    Type: String
+    Default: dev
+    AllowedPattern: "[a-z0-9-]+"
+
+Resources:
+  WorkloadPermissionsBoundary:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "${ProjectName}-${Environment}-workload-boundary"
+      Description: Maximum permissions for Billeif application workload roles
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowApplicationServices
+            Effect: Allow
+            Action: "*"
+            Resource: "*"
+          - Sid: DenyIdentityAndOrganizationAdministration
+            Effect: Deny
+            Action:
+              - account:*
+              - iam:*
+              - identitystore:*
+              - organizations:*
+              - sso:*
+              - sso-directory:*
+              - sts:AssumeRole
+              - sts:AssumeRoleWithSAML
+              - sts:AssumeRoleWithWebIdentity
+              - sts:GetFederationToken
+            Resource: "*"
+
+  ProductionDeploymentRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-${Environment}-github-actions-production-role"
+      Description: Approval-gated GitHub OIDC role for Billeif production deployments
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: GitHubProductionEnvironment
+            Effect: Allow
+            Principal:
+              Federated: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com"
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                "token.actions.githubusercontent.com:aud": sts.amazonaws.com
+                "token.actions.githubusercontent.com:sub": repo:cyfernova/Billeif-Backend:environment:production
+                "token.actions.githubusercontent.com:repository_id": "1122461982"
+                "token.actions.githubusercontent.com:repository_owner_id": "236051948"
+                "token.actions.githubusercontent.com:workflow": Terraform Deploy
+                "token.actions.githubusercontent.com:ref": refs/heads/main
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/PowerUserAccess"
+      Policies:
+        - PolicyName: !Sub "${ProjectName}-${Environment}-bounded-iam-deployment"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReadBilleifIAM
+                Effect: Allow
+                Action:
+                  - iam:GetInstanceProfile
+                  - iam:GetRole
+                  - iam:GetRolePolicy
+                  - iam:ListAttachedRolePolicies
+                  - iam:ListInstanceProfileTags
+                  - iam:ListInstanceProfilesForRole
+                  - iam:ListRolePolicies
+                  - iam:ListRoleTags
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-*"
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:instance-profile/${ProjectName}-${Environment}-*"
+              - Sid: ReadGitHubOIDCProvider
+                Effect: Allow
+                Action:
+                  - iam:GetOpenIDConnectProvider
+                  - iam:ListOpenIDConnectProviderTags
+                Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com"
+              - Sid: ListIAMMetadata
+                Effect: Allow
+                Action:
+                  - iam:ListOpenIDConnectProviders
+                  - iam:ListRoles
+                Resource: "*"
+              - Sid: CreateBoundaryConstrainedRoles
+                Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:PutRolePermissionsBoundary
+                Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-*"
+                Condition:
+                  StringEquals:
+                    "iam:PermissionsBoundary": !Ref WorkloadPermissionsBoundary
+              - Sid: ManageBilleifWorkloadRoles
+                Effect: Allow
+                Action:
+                  - iam:AttachRolePolicy
+                  - iam:DeleteRole
+                  - iam:DeleteRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:UpdateAssumeRolePolicy
+                  - iam:UpdateRole
+                Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-*"
+              - Sid: ManageBilleifInstanceProfiles
+                Effect: Allow
+                Action:
+                  - iam:AddRoleToInstanceProfile
+                  - iam:CreateInstanceProfile
+                  - iam:DeleteInstanceProfile
+                  - iam:RemoveRoleFromInstanceProfile
+                  - iam:TagInstanceProfile
+                  - iam:UntagInstanceProfile
+                Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:instance-profile/${ProjectName}-${Environment}-*"
+              - Sid: PassBilleifRolesToApprovedServices
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-*"
+                Condition:
+                  StringEquals:
+                    "iam:PassedToService":
+                      - apigateway.amazonaws.com
+                      - bedrock-agentcore.amazonaws.com
+                      - cognito-idp.amazonaws.com
+                      - ec2.amazonaws.com
+                      - lambda.amazonaws.com
+                      - rds.amazonaws.com
+                      - scheduler.amazonaws.com
+              - Sid: DenyDeploymentRoleSelfMutation
+                Effect: Deny
+                Action: iam:*
+                Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-github-actions-production-role"
+              - Sid: DenyBoundaryMutation
+                Effect: Deny
+                Action: iam:*
+                Resource: !Ref WorkloadPermissionsBoundary
+              - Sid: DenyBoundaryRemoval
+                Effect: Deny
+                Action: iam:DeleteRolePermissionsBoundary
+                Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-*"
+
+Outputs:
+  DeploymentRoleArn:
+    Description: Store as the production environment AWS_DEPLOY_ROLE_ARN secret
+    Value: !GetAtt ProductionDeploymentRole.Arn
+  WorkloadPermissionsBoundaryArn:
+    Description: Permission ceiling applied to every Terraform-managed workload role
+    Value: !Ref WorkloadPermissionsBoundary

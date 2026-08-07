@@ -182,6 +182,7 @@ jobs:
   deploy:
     name: Apply Terraform
     runs-on: ubuntu-latest
+    environment: production
     needs:
       - secret-scan
       - verify
@@ -283,7 +284,7 @@ jobs:
         with:
           aws-region: ${{ env.AWS_REGION }}
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-          role-session-name: github-actions-terraform
+          role-session-name: github-${{ github.run_id }}
 
       - name: Build Lambda artifacts
         run: make package-lambda

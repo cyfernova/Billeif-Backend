@@ -25,8 +25,9 @@ locals {
 resource "aws_iam_role" "voice_agentcore_runtime" {
   count = var.provision_voice_infrastructure ? 1 : 0
 
-  name        = "${local.resource_prefix}-voice-agentcore-runtime-role"
-  description = "Least-privilege execution role for the Billeif AgentCore voice runtime"
+  name                 = "${local.resource_prefix}-voice-agentcore-runtime-role"
+  description          = "Least-privilege execution role for the Billeif AgentCore voice runtime"
+  permissions_boundary = local.workload_permissions_boundary_arn
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{

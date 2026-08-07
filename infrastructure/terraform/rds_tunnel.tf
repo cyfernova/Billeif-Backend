@@ -38,9 +38,10 @@ data "aws_iam_policy_document" "rds_tunnel_assume_role" {
 }
 
 resource "aws_iam_role" "rds_tunnel" {
-  count              = local.rds_tunnel_enabled ? 1 : 0
-  name               = "${local.resource_prefix}-rds-tunnel-role"
-  assume_role_policy = data.aws_iam_policy_document.rds_tunnel_assume_role[0].json
+  count                = local.rds_tunnel_enabled ? 1 : 0
+  name                 = "${local.resource_prefix}-rds-tunnel-role"
+  assume_role_policy   = data.aws_iam_policy_document.rds_tunnel_assume_role[0].json
+  permissions_boundary = local.workload_permissions_boundary_arn
 }
 
 resource "aws_iam_role_policy_attachment" "rds_tunnel_ssm" {

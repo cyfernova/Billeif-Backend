@@ -67,114 +67,31 @@ variables {
   db_allowed_cidr                = "10.0.0.0/24"
 }
 
-run "github_actions_oidc_deployment_role_is_main_branch_scoped" {
+run "github_actions_oidc_provider_retains_only_an_inert_legacy_role" {
   command = plan
 
   assert {
     condition = (
       aws_iam_openid_connect_provider.github_actions.url == "https://token.actions.githubusercontent.com" &&
       toset(aws_iam_openid_connect_provider.github_actions.client_id_list) == toset(["sts.amazonaws.com"]) &&
-      aws_iam_role.github_actions_deployment.name == "billeif-dev-github-actions-deploy-role" &&
-      output.github_actions_deployment_role_arn == "arn:aws:iam::928282274753:role/billeif-dev-github-actions-deploy-role"
+      output.github_actions_deployment_role_arn == "arn:aws:iam::928282274753:role/billeif-dev-github-actions-production-role"
     )
-    error_message = "GitHub Actions must receive the expected Billeif deployment role through the GitHub OIDC issuer."
+    error_message = "The application state must retain the GitHub OIDC provider while exporting the separately bootstrapped production role."
   }
 
   assert {
     condition = (
+      aws_iam_role.github_actions_deployment.name == "billeif-dev-github-actions-deploy-role" &&
+      aws_iam_role.github_actions_deployment.permissions_boundary == "arn:aws:iam::928282274753:policy/billeif-dev-workload-boundary" &&
       length([
         for statement in data.aws_iam_policy_document.github_actions_deployment_assume_role.statement : statement
-        if statement.effect == "Allow" &&
+        if statement.sid == "RetiredMainBranchRole" &&
+        statement.effect == "Deny" &&
         toset(statement.actions) == toset(["sts:AssumeRoleWithWebIdentity"]) &&
-        length(statement.principals) == 1 &&
-        length([for principal in statement.principals : principal if principal.type == "Federated" && toset(principal.identifiers) == toset(["arn:aws:iam::928282274753:oidc-provider/token.actions.githubusercontent.com"])]) == 1 &&
-        length([for condition in statement.condition : condition if condition.test == "StringEquals" && condition.variable == "token.actions.githubusercontent.com:aud" && toset(condition.values) == toset(["sts.amazonaws.com"])]) == 1 &&
-        length([for condition in statement.condition : condition if condition.test == "StringEquals" && condition.variable == "token.actions.githubusercontent.com:sub" && toset(condition.values) == toset(["repo:cyfernova/Billeif-Backend:ref:refs/heads/main"])]) == 1
+        length([for principal in statement.principals : principal if principal.type == "Federated" && toset(principal.identifiers) == toset(["arn:aws:iam::928282274753:oidc-provider/token.actions.githubusercontent.com"])]) == 1
       ]) == 1
     )
-    error_message = "Only the exact cyfernova/Billeif-Backend main branch subject may assume the deployment role."
-  }
-
-  assert {
-    condition = (
-      aws_iam_role_policy_attachment.github_actions_deployment_power_user.policy_arn == "arn:aws:iam::aws:policy/PowerUserAccess" &&
-      !strcontains(aws_iam_role_policy_attachment.github_actions_deployment_power_user.policy_arn, "AdministratorAccess") &&
-      length([
-        for statement in data.aws_iam_policy_document.github_actions_deployment_iam.statement : statement
-        if statement.sid == "ReadBilleifRoles" &&
-        toset(statement.resources) == toset(["arn:aws:iam::928282274753:role/billeif-*"]) &&
-        contains(statement.actions, "iam:GetRole") &&
-        contains(statement.actions, "iam:GetRolePolicy") &&
-        contains(statement.actions, "iam:ListAttachedRolePolicies") &&
-        contains(statement.actions, "iam:ListRolePolicies") &&
-        contains(statement.actions, "iam:ListRoleTags") &&
-        contains(statement.actions, "iam:ListInstanceProfilesForRole")
-      ]) == 1 &&
-      length([
-        for statement in data.aws_iam_policy_document.github_actions_deployment_iam.statement : statement
-        if statement.sid == "PassBilleifRolesToApprovedServices" &&
-        toset(statement.actions) == toset(["iam:PassRole"]) &&
-        toset(statement.resources) == toset(["arn:aws:iam::928282274753:role/billeif-*"]) &&
-        length([
-          for condition in statement.condition : condition
-          if condition.test == "StringEquals" &&
-          condition.variable == "iam:PassedToService" &&
-          contains(condition.values, "bedrock-agentcore.amazonaws.com")
-        ]) == 1
-      ]) == 1 &&
-      length([
-        for statement in data.aws_iam_policy_document.github_actions_deployment_iam.statement : statement
-        if statement.sid == "ReadBilleifInstanceProfiles" &&
-        contains(statement.actions, "iam:GetInstanceProfile") &&
-        contains(statement.actions, "iam:ListInstanceProfileTags") &&
-        toset(statement.resources) == toset(["arn:aws:iam::928282274753:instance-profile/billeif-*"])
-      ]) == 1 &&
-      length([
-        for statement in data.aws_iam_policy_document.github_actions_deployment_iam.statement : statement
-        if statement.sid == "ReadGitHubOIDCProvider" &&
-        contains(statement.actions, "iam:GetOpenIDConnectProvider") &&
-        contains(statement.actions, "iam:ListOpenIDConnectProviderTags")
-      ]) == 1 &&
-      length([
-        for statement in data.aws_iam_policy_document.github_actions_deployment_iam.statement : statement
-        if statement.sid == "ListOIDCProviders" &&
-        toset(statement.actions) == toset(["iam:ListOpenIDConnectProviders"]) &&
-        toset(statement.resources) == toset(["*"])
-      ]) == 1
-    )
-    error_message = "The deployment role must use PowerUserAccess with narrowly scoped IAM permissions for Billeif roles and the GitHub OIDC provider."
-  }
-
-  assert {
-    condition = length(setintersection(
-      toset(flatten([for statement in data.aws_iam_policy_document.github_actions_deployment_iam.statement : statement.actions])),
-      toset([
-        "iam:AddClientIDToOpenIDConnectProvider",
-        "iam:AddRoleToInstanceProfile",
-        "iam:AttachRolePolicy",
-        "iam:CreateInstanceProfile",
-        "iam:CreateOpenIDConnectProvider",
-        "iam:CreateRole",
-        "iam:DeleteInstanceProfile",
-        "iam:DeleteOpenIDConnectProvider",
-        "iam:DeleteRole",
-        "iam:DeleteRolePolicy",
-        "iam:DetachRolePolicy",
-        "iam:PutRolePolicy",
-        "iam:RemoveClientIDFromOpenIDConnectProvider",
-        "iam:RemoveRoleFromInstanceProfile",
-        "iam:TagInstanceProfile",
-        "iam:TagOpenIDConnectProvider",
-        "iam:TagRole",
-        "iam:UntagInstanceProfile",
-        "iam:UntagOpenIDConnectProvider",
-        "iam:UntagRole",
-        "iam:UpdateAssumeRolePolicy",
-        "iam:UpdateOpenIDConnectProviderThumbprint",
-        "iam:UpdateRole",
-      ])
-    )) == 0
-    error_message = "Routine GitHub deployments must not receive IAM, OIDC, or instance-profile mutation permissions."
+    error_message = "The legacy main-branch role must be inert and capped by the workload permissions boundary."
   }
 }
 

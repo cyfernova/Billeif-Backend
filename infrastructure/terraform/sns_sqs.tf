@@ -4,7 +4,8 @@ resource "aws_sns_topic" "low_stock_alerts" {
 
 # IAM Role for SNS Feedback Logging
 resource "aws_iam_role" "sns_feedback" {
-  name = "${local.resource_prefix}-sns-feedback"
+  name                 = "${local.resource_prefix}-sns-feedback"
+  permissions_boundary = local.workload_permissions_boundary_arn
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"

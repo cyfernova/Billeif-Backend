@@ -48,8 +48,9 @@ resource "aws_kms_alias" "cognito_phone_custom_sms" {
 }
 
 resource "aws_iam_role" "cognito_phone_custom_sms" {
-  name               = "${local.resource_prefix}-cognito-phone-custom-sms-role"
-  assume_role_policy = data.aws_iam_policy_document.lambda_assume_role.json
+  name                 = "${local.resource_prefix}-cognito-phone-custom-sms-role"
+  assume_role_policy   = data.aws_iam_policy_document.lambda_assume_role.json
+  permissions_boundary = local.workload_permissions_boundary_arn
 }
 
 data "aws_iam_policy_document" "cognito_phone_sms_assume_role" {
@@ -85,8 +86,9 @@ data "aws_iam_policy_document" "cognito_phone_sms_assume_role" {
 }
 
 resource "aws_iam_role" "cognito_phone_sms" {
-  name               = "${local.resource_prefix}-cognito-phone-sms-role"
-  assume_role_policy = data.aws_iam_policy_document.cognito_phone_sms_assume_role.json
+  name                 = "${local.resource_prefix}-cognito-phone-sms-role"
+  assume_role_policy   = data.aws_iam_policy_document.cognito_phone_sms_assume_role.json
+  permissions_boundary = local.workload_permissions_boundary_arn
 }
 
 data "aws_iam_policy_document" "cognito_phone_sms" {
