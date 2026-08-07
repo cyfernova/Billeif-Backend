@@ -115,6 +115,7 @@ func TestAgentCoreBuildAndCIExerciseOnlyTheCodecEnabledImage(t *testing.T) {
 		"AWS_EC2_METADATA_DISABLED=true",
 		"AWS_ACCESS_KEY_ID=ci-offline",
 		"AWS_SECRET_ACCESS_KEY=ci-offline-secret",
+		"ENVIRONMENT=test",
 		"RUNTIME_ID=ci_voice_runtime",
 		"BILLEIF_API_ORIGIN=https://api123.execute-api.ap-south-1.amazonaws.com/test",
 		"SARVAM_SECRET_ARN=arn:aws:secretsmanager:ap-south-1:123456789012:secret:ci-sarvam",

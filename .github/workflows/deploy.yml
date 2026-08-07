@@ -137,6 +137,7 @@ jobs:
             --env AWS_SECRET_ACCESS_KEY=ci-offline-secret \
             --env AWS_EC2_METADATA_DISABLED=true \
             --env AWS_REGION=ap-south-1 \
+            --env ENVIRONMENT=test \
             --env BILLEIF_API_ORIGIN=https://api123.execute-api.ap-south-1.amazonaws.com/test \
             --env COGNITO_PHONE_CLIENT_ID=ci-phone-client \
             --env COGNITO_PHONE_REGION=ap-south-1 \
