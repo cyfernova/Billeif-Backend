@@ -77,7 +77,7 @@ jobs:
 
   verify:
     name: Verify Build And Terraform
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
 
     steps:
       - name: Checkout code
@@ -113,11 +113,6 @@ jobs:
 
       - name: Test AgentCore runtime contract
         run: make test-agentcore
-
-      - name: Set up QEMU for AgentCore ARM64
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
