@@ -106,11 +106,12 @@ func TestAgentCoreBuildAndCIExerciseOnlyTheCodecEnabledImage(t *testing.T) {
 		t.Fatal("CI must use native ARM64 or configure ARM64 emulation, then configure Buildx before build-agentcore")
 	}
 	for _, required := range []string{
+		"docker pull --platform linux/arm64 curlimages/curl:8.16.0",
 		"docker network create --internal billeif-voice-offline-ci",
 		"docker run --detach",
 		"--network billeif-voice-offline-ci",
 		"billeif-voice-runtime:ci",
-		"http://127.0.0.1:18080/ping",
+		"http://billeif-voice-runtime-ci:8080/ping",
 		`{"status":"Healthy"}`,
 		"AWS_EC2_METADATA_DISABLED=true",
 		"AWS_ACCESS_KEY_ID=ci-offline",
@@ -130,6 +131,7 @@ func TestAgentCoreBuildAndCIExerciseOnlyTheCodecEnabledImage(t *testing.T) {
 		t.Fatal("CI bootstrap smoke must remove its internal-only Docker network")
 	}
 	for _, forbidden := range []string{
+		"--publish 127.0.0.1:18080:8080",
 		"SARVAM_API_KEY=",
 		"VOICE_RUNTIME_BOOTSTRAP_MODE=",
 	} {

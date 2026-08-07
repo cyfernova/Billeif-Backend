@@ -127,12 +127,12 @@ jobs:
             --tag billeif-voice-runtime:ci \
             --load .
           test "$(docker inspect billeif-voice-runtime:ci --format '{{.Os}}/{{.Architecture}} {{.Config.User}}')" = "linux/arm64 10001:10001"
+          docker pull --platform linux/arm64 curlimages/curl:8.16.0
           docker network create --internal billeif-voice-offline-ci
           trap 'docker rm --force billeif-voice-runtime-ci >/dev/null 2>&1 || true; docker network rm billeif-voice-offline-ci >/dev/null 2>&1 || true' EXIT
           docker run --detach --name billeif-voice-runtime-ci \
             --platform linux/arm64 \
             --network billeif-voice-offline-ci \
-            --publish 127.0.0.1:18080:8080 \
             --env AWS_ACCESS_KEY_ID=ci-offline \
             --env AWS_SECRET_ACCESS_KEY=ci-offline-secret \
             --env AWS_EC2_METADATA_DISABLED=true \
@@ -155,7 +155,10 @@ jobs:
             --env VOICE_SESSIONS_TABLE_NAME=billeif-ci-voice-sessions \
             billeif-voice-runtime:ci
           for attempt in $(seq 1 30); do
-            response="$(curl --silent --fail http://127.0.0.1:18080/ping || true)"
+            response="$(docker run --rm --platform linux/arm64 \
+              --network billeif-voice-offline-ci \
+              curlimages/curl:8.16.0 \
+              --silent --fail http://billeif-voice-runtime-ci:8080/ping || true)"
             if test "${response}" = '{"status":"Healthy"}'; then
               exit 0
             fi
