@@ -223,9 +223,15 @@ variable "enable_background_processing" {
 }
 
 variable "provision_voice_infrastructure" {
-  description = "Provision the AgentCore runtime, STAGING endpoint, KVS TURN pool, reconciler, and optional observability without admitting users."
+  description = "Provision shared voice infrastructure such as ECR, KVS TURN, networking, and session state without admitting users."
   type        = bool
   default     = false
+}
+
+variable "provision_voice_agentcore_runtime" {
+  description = "Provision the quota-gated AgentCore runtime, endpoints, reconciler, and runtime-dependent application wiring."
+  type        = bool
+  default     = true
 }
 
 variable "promote_voice_agentcore_prod" {

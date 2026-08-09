@@ -41,7 +41,7 @@ variable "voice_monthly_budget_amount" {
 locals {
   voice_metric_namespace               = "Billeif/Voice"
   voice_service_dimension              = "voice-runtime"
-  voice_observability_enabled          = var.provision_voice_infrastructure && var.enable_voice_observability
+  voice_observability_enabled          = local.voice_agentcore_runtime_enabled && var.enable_voice_observability
   voice_log_retention_days             = var.environment == "prod" ? 14 : 7
   voice_cost_allocation_tag_key        = "Workload"
   voice_cost_allocation_tag_value      = "voice-agentcore"
@@ -251,7 +251,7 @@ locals {
 }
 
 resource "aws_cloudwatch_log_group" "voice_agentcore" {
-  for_each = var.provision_voice_infrastructure ? setunion(toset(["STAGING"]), var.promote_voice_agentcore_prod ? toset(["PROD"]) : toset([])) : toset([])
+  for_each = local.voice_agentcore_runtime_enabled ? setunion(toset(["STAGING"]), var.promote_voice_agentcore_prod ? toset(["PROD"]) : toset([])) : toset([])
 
   name              = "/aws/bedrock-agentcore/runtimes/${aws_bedrockagentcore_agent_runtime.voice[0].agent_runtime_id}-${each.value}"
   retention_in_days = local.voice_log_retention_days

@@ -4,7 +4,7 @@ locals {
 }
 
 resource "aws_cloudwatch_log_group" "lambda_voice_reconciler" {
-  count = var.provision_voice_infrastructure ? 1 : 0
+  count = local.voice_agentcore_runtime_enabled ? 1 : 0
 
   name              = "/aws/lambda/${local.resource_prefix}-voice-reconciler"
   retention_in_days = local.voice_log_retention_days
@@ -15,7 +15,7 @@ resource "aws_cloudwatch_log_group" "lambda_voice_reconciler" {
 }
 
 resource "aws_iam_role" "voice_reconciler" {
-  count = var.provision_voice_infrastructure ? 1 : 0
+  count = local.voice_agentcore_runtime_enabled ? 1 : 0
 
   name                 = "${local.resource_prefix}-voice-reconciler-role"
   assume_role_policy   = data.aws_iam_policy_document.lambda_assume_role.json
@@ -23,7 +23,7 @@ resource "aws_iam_role" "voice_reconciler" {
 }
 
 data "aws_iam_policy_document" "voice_reconciler" {
-  count = var.provision_voice_infrastructure ? 1 : 0
+  count = local.voice_agentcore_runtime_enabled ? 1 : 0
 
   statement {
     sid       = "WriteVoiceReconcilerLogs"
@@ -65,7 +65,7 @@ data "aws_iam_policy_document" "voice_reconciler" {
 }
 
 resource "aws_iam_role_policy" "voice_reconciler" {
-  count = var.provision_voice_infrastructure ? 1 : 0
+  count = local.voice_agentcore_runtime_enabled ? 1 : 0
 
   name   = "${local.resource_prefix}-voice-reconciler-policy"
   role   = aws_iam_role.voice_reconciler[0].id
@@ -73,7 +73,7 @@ resource "aws_iam_role_policy" "voice_reconciler" {
 }
 
 resource "aws_lambda_function" "voice_reconciler" {
-  count = var.provision_voice_infrastructure ? 1 : 0
+  count = local.voice_agentcore_runtime_enabled ? 1 : 0
 
   function_name    = "${local.resource_prefix}-voice-reconciler"
   role             = aws_iam_role.voice_reconciler[0].arn
@@ -117,7 +117,7 @@ resource "aws_lambda_function" "voice_reconciler" {
 }
 
 data "aws_iam_policy_document" "voice_reconciler_scheduler_assume_role" {
-  count = var.provision_voice_infrastructure ? 1 : 0
+  count = local.voice_agentcore_runtime_enabled ? 1 : 0
 
   statement {
     effect  = "Allow"
@@ -131,7 +131,7 @@ data "aws_iam_policy_document" "voice_reconciler_scheduler_assume_role" {
 }
 
 resource "aws_iam_role" "voice_reconciler_scheduler" {
-  count = var.provision_voice_infrastructure ? 1 : 0
+  count = local.voice_agentcore_runtime_enabled ? 1 : 0
 
   name                 = "${local.resource_prefix}-voice-reconciler-scheduler-role"
   assume_role_policy   = data.aws_iam_policy_document.voice_reconciler_scheduler_assume_role[0].json
@@ -139,7 +139,7 @@ resource "aws_iam_role" "voice_reconciler_scheduler" {
 }
 
 data "aws_iam_policy_document" "voice_reconciler_scheduler" {
-  count = var.provision_voice_infrastructure ? 1 : 0
+  count = local.voice_agentcore_runtime_enabled ? 1 : 0
 
   statement {
     sid       = "InvokeVoiceReconciler"
@@ -150,7 +150,7 @@ data "aws_iam_policy_document" "voice_reconciler_scheduler" {
 }
 
 resource "aws_iam_role_policy" "voice_reconciler_scheduler" {
-  count = var.provision_voice_infrastructure ? 1 : 0
+  count = local.voice_agentcore_runtime_enabled ? 1 : 0
 
   name   = "${local.resource_prefix}-voice-reconciler-scheduler-policy"
   role   = aws_iam_role.voice_reconciler_scheduler[0].id
@@ -158,7 +158,7 @@ resource "aws_iam_role_policy" "voice_reconciler_scheduler" {
 }
 
 resource "aws_scheduler_schedule" "voice_reconciler" {
-  count = var.provision_voice_infrastructure ? 1 : 0
+  count = local.voice_agentcore_runtime_enabled ? 1 : 0
 
   name                         = "${local.resource_prefix}-voice-reconciler-minute"
   description                  = "${local.resource_prefix} Billeif voice lease reconciler schedule"

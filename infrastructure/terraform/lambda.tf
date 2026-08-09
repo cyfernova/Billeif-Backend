@@ -70,7 +70,7 @@ locals {
     MCP_SERVER_URL                   = var.mcp_server_url
   }
 
-  voice_http_lambda_env = var.provision_voice_infrastructure ? {
+  voice_http_lambda_env = local.voice_agentcore_runtime_enabled ? {
     AGENTCORE_RUNTIME_ARN             = aws_bedrockagentcore_agent_runtime.voice[0].agent_runtime_arn
     AGENTCORE_RUNTIME_QUALIFIER       = var.promote_voice_agentcore_prod ? "PROD" : "STAGING"
     VOICE_ADMISSION_ENABLED           = tostring(var.enable_voice)

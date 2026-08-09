@@ -11,7 +11,7 @@ func TestVoiceAgentCoreObservabilityIsFeatureGatedAndBounded(t *testing.T) {
 
 	for _, required := range []string{
 		`default     = false`,
-		`var.provision_voice_infrastructure && var.enable_voice_observability`,
+		`local.voice_agentcore_runtime_enabled && var.enable_voice_observability`,
 		`var.environment == "prod" ? 14 : 7`,
 		`format("user:%s$%s"`,
 		`actions   = ["cloudwatch:PutMetricData"]`,

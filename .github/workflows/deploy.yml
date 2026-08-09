@@ -199,11 +199,12 @@ jobs:
       TF_VAR_enable_cognito_custom_domain_cutover: ${{ vars.ENABLE_COGNITO_CUSTOM_DOMAIN_CUTOVER == 'true' && 'true' || 'false' }}
       TF_VAR_enable_background_processing: ${{ vars.ENABLE_BACKGROUND_PROCESSING == 'true' && 'true' || 'false' }}
       TF_VAR_provision_voice_infrastructure: ${{ vars.PROVISION_VOICE_INFRASTRUCTURE == 'true' && 'true' || 'false' }}
+      TF_VAR_provision_voice_agentcore_runtime: ${{ vars.PROVISION_VOICE_AGENTCORE_RUNTIME == 'true' && 'true' || 'false' }}
       TF_VAR_promote_voice_agentcore_prod: ${{ vars.PROMOTE_VOICE_AGENTCORE_PROD == 'true' && 'true' || 'false' }}
       PUBLISH_VOICE_AGENTCORE_IMAGE: ${{ vars.PUBLISH_VOICE_AGENTCORE_IMAGE == 'true' && 'true' || 'false' }}
       # Terraform permits STAGING admission only outside prod. Production still
       # requires the immutable PROD endpoint and every evidence gate below.
-      TF_VAR_enable_voice: ${{ vars.ENABLE_VOICE == 'true' && 'true' || 'false' }}
+      TF_VAR_enable_voice: ${{ vars.PROVISION_VOICE_AGENTCORE_RUNTIME == 'true' && vars.ENABLE_VOICE == 'true' && 'true' || 'false' }}
       TF_VAR_enable_voice_turn_udp_egress: ${{ vars.ENABLE_VOICE_TURN_UDP_EGRESS == 'true' && 'true' || 'false' }}
       TF_VAR_voice_agentcore_image_tag: ${{ vars.VOICE_AGENTCORE_IMAGE_TAG != '' && vars.VOICE_AGENTCORE_IMAGE_TAG || '' }}
       TF_VAR_voice_agentcore_image_digest: ${{ vars.VOICE_AGENTCORE_IMAGE_DIGEST != '' && vars.VOICE_AGENTCORE_IMAGE_DIGEST || '' }}
@@ -276,6 +277,14 @@ jobs:
           require "Missing TF_STATE_LOCK_TABLE secret." "${TF_STATE_LOCK_TABLE}"
           if [ "${PUBLISH_VOICE_AGENTCORE_IMAGE}" = "true" ] && [ "${TF_VAR_provision_voice_infrastructure}" != "true" ]; then
             echo "::error::PUBLISH_VOICE_AGENTCORE_IMAGE requires PROVISION_VOICE_INFRASTRUCTURE=true."
+            exit 1
+          fi
+          if [ "${TF_VAR_provision_voice_agentcore_runtime}" = "true" ] && [ "${TF_VAR_provision_voice_infrastructure}" != "true" ]; then
+            echo "::error::PROVISION_VOICE_AGENTCORE_RUNTIME requires PROVISION_VOICE_INFRASTRUCTURE=true."
+            exit 1
+          fi
+          if [ "${TF_VAR_promote_voice_agentcore_prod}" = "true" ] && [ "${TF_VAR_provision_voice_agentcore_runtime}" != "true" ]; then
+            echo "::error::PROMOTE_VOICE_AGENTCORE_PROD requires PROVISION_VOICE_AGENTCORE_RUNTIME=true."
             exit 1
           fi
 

@@ -260,7 +260,7 @@ output "voice_agentcore_runtime_arn" {
 
 output "voice_agentcore_runtime_qualifier" {
   description = "Backend and mobile AgentCore qualifier; DEFAULT is never exposed."
-  value       = var.provision_voice_infrastructure ? (var.promote_voice_agentcore_prod ? "PROD" : "STAGING") : null
+  value       = local.voice_agentcore_runtime_enabled ? (var.promote_voice_agentcore_prod ? "PROD" : "STAGING") : null
 }
 
 output "voice_agentcore_prod_endpoint_arn" {

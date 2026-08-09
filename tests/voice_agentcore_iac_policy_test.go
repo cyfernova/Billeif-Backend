@@ -66,8 +66,9 @@ func TestVoiceAgentCoreDeploymentPublishesOnlyBehindManualGate(t *testing.T) {
 	}
 	source := string(body)
 	for _, required := range []string{
-		`TF_VAR_enable_voice: ${{ vars.ENABLE_VOICE == 'true' && 'true' || 'false' }}`,
+		`TF_VAR_enable_voice: ${{ vars.PROVISION_VOICE_AGENTCORE_RUNTIME == 'true' && vars.ENABLE_VOICE == 'true' && 'true' || 'false' }}`,
 		`TF_VAR_provision_voice_infrastructure:`,
+		`TF_VAR_provision_voice_agentcore_runtime: ${{ vars.PROVISION_VOICE_AGENTCORE_RUNTIME == 'true' && 'true' || 'false' }}`,
 		`PUBLISH_VOICE_AGENTCORE_IMAGE: ${{ vars.PUBLISH_VOICE_AGENTCORE_IMAGE == 'true' && 'true' || 'false' }}`,
 		`TF_VAR_voice_agentcore_image_digest: ${{ vars.VOICE_AGENTCORE_IMAGE_DIGEST != '' && vars.VOICE_AGENTCORE_IMAGE_DIGEST || '' }}`,
 		`TF_VAR_voice_staging_verified_image_digest: ${{ vars.VOICE_STAGING_VERIFIED_IMAGE_DIGEST != '' && vars.VOICE_STAGING_VERIFIED_IMAGE_DIGEST || '' }}`,

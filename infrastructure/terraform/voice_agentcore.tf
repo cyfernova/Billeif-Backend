@@ -1,4 +1,5 @@
 locals {
+  voice_agentcore_runtime_enabled    = var.provision_voice_infrastructure && var.provision_voice_agentcore_runtime
   voice_agentcore_supported_zone_ids = toset(["aps1-az1", "aps1-az2", "aps1-az3"])
   voice_agentcore_dns_resolver_cidr  = "${cidrhost(var.vpc_cidr, 2)}/32"
   voice_agentcore_runtime_environment = {
@@ -166,7 +167,7 @@ resource "awscc_kinesisvideo_signaling_channel" "voice" {
 }
 
 resource "aws_bedrockagentcore_agent_runtime" "voice" {
-  count = var.provision_voice_infrastructure ? 1 : 0
+  count = local.voice_agentcore_runtime_enabled ? 1 : 0
 
   agent_runtime_name = local.voice_agentcore_runtime_name
   description        = "Billeif realtime voice runtime using Sarvam and managed KVS TURN"
@@ -258,7 +259,7 @@ resource "aws_bedrockagentcore_agent_runtime" "voice" {
 }
 
 resource "aws_bedrockagentcore_agent_runtime_endpoint" "voice_staging" {
-  count = var.provision_voice_infrastructure ? 1 : 0
+  count = local.voice_agentcore_runtime_enabled ? 1 : 0
 
   name                  = "STAGING"
   description           = "Billeif voice runtime staging qualifier"
@@ -276,7 +277,7 @@ resource "aws_bedrockagentcore_agent_runtime_endpoint" "voice_staging" {
 }
 
 resource "aws_bedrockagentcore_agent_runtime_endpoint" "voice_prod" {
-  count = var.provision_voice_infrastructure && var.promote_voice_agentcore_prod ? 1 : 0
+  count = local.voice_agentcore_runtime_enabled && var.promote_voice_agentcore_prod ? 1 : 0
 
   name                  = "PROD"
   description           = "Billeif voice runtime production qualifier"

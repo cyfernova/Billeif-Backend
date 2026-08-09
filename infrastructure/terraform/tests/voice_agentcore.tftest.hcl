@@ -233,6 +233,45 @@ run "voice_is_cost_safe_when_disabled" {
   }
 }
 
+run "voice_support_infrastructure_does_not_require_agentcore_quota" {
+  command = plan
+
+  variables {
+    provision_voice_infrastructure    = true
+    provision_voice_agentcore_runtime = false
+    voice_agentcore_image_digest      = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    voice_agentcore_release           = "release-0123456789abcdef"
+  }
+
+  assert {
+    condition = (
+      length(aws_ecr_repository.voice_agentcore) == 1 &&
+      length(awscc_kinesisvideo_signaling_channel.voice) == 12 &&
+      length(aws_bedrockagentcore_agent_runtime.voice) == 0 &&
+      length(aws_bedrockagentcore_agent_runtime_endpoint.voice_staging) == 0 &&
+      length(aws_lambda_function.voice_reconciler) == 0 &&
+      length(aws_iam_role_policy.voice_session_http) == 0 &&
+      !contains(keys(aws_lambda_function.api_http.environment[0].variables), "AGENTCORE_RUNTIME_ARN")
+    )
+    error_message = "Shared voice infrastructure must remain deployable while quota-gated AgentCore runtime resources and wiring stay absent."
+  }
+}
+
+run "voice_admission_requires_agentcore_runtime" {
+  command = plan
+
+  variables {
+    provision_voice_infrastructure    = true
+    provision_voice_agentcore_runtime = false
+    enable_voice                      = true
+    voice_rollout_stage               = "100"
+    voice_agentcore_image_digest      = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    voice_agentcore_release           = "release-0123456789abcdef"
+  }
+
+  expect_failures = [terraform_data.voice_cutover_gates[0]]
+}
+
 run "voice_infrastructure_provisions_while_admission_stays_disabled" {
   command = plan
 

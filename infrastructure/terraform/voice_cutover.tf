@@ -37,6 +37,7 @@ resource "terraform_data" "voice_cutover_gates" {
     prod_promoted       = var.promote_voice_agentcore_prod
     prod_version        = var.voice_agentcore_prod_version
     provisioned         = var.provision_voice_infrastructure
+    runtime_provisioned = local.voice_agentcore_runtime_enabled
     rollout_stage       = local.voice_effective_rollout_stage
     staging_bound       = local.voice_staging_evidence_matches_selection
     turn_udp_proof_gate = var.enable_voice_turn_udp_egress
@@ -44,13 +45,13 @@ resource "terraform_data" "voice_cutover_gates" {
 
   lifecycle {
     precondition {
-      condition     = !var.promote_voice_agentcore_prod || var.provision_voice_infrastructure
-      error_message = "PROD promotion requires provision_voice_infrastructure=true."
+      condition     = !var.promote_voice_agentcore_prod || local.voice_agentcore_runtime_enabled
+      error_message = "PROD promotion requires both voice infrastructure and the AgentCore runtime to be provisioned."
     }
 
     precondition {
-      condition     = !var.enable_voice || var.provision_voice_infrastructure
-      error_message = "Voice admission requires provision_voice_infrastructure=true."
+      condition     = !var.enable_voice || local.voice_agentcore_runtime_enabled
+      error_message = "Voice admission requires both voice infrastructure and the AgentCore runtime to be provisioned."
     }
 
     precondition {

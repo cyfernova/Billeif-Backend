@@ -1,5 +1,5 @@
 locals {
-  voice_agentcore_mmdsv2_desired_configuration = var.provision_voice_infrastructure ? {
+  voice_agentcore_mmdsv2_desired_configuration = local.voice_agentcore_runtime_enabled ? {
     agentRuntimeArtifact = {
       containerConfiguration = {
         containerUri = "${aws_ecr_repository.voice_agentcore[0].repository_url}@${var.voice_agentcore_image_digest}"
@@ -36,7 +36,7 @@ locals {
     roleArn = aws_iam_role.voice_agentcore_runtime[0].arn
   } : null
 
-  voice_agentcore_mmdsv2_update_input = var.provision_voice_infrastructure ? merge(
+  voice_agentcore_mmdsv2_update_input = local.voice_agentcore_runtime_enabled ? merge(
     local.voice_agentcore_mmdsv2_desired_configuration,
     {
       agentRuntimeId = aws_bedrockagentcore_agent_runtime.voice[0].agent_runtime_id
@@ -49,14 +49,14 @@ locals {
     },
   ) : null
 
-  voice_agentcore_endpoint_version = var.provision_voice_infrastructure ? data.external.voice_agentcore_version[0].result.agent_runtime_version : null
+  voice_agentcore_endpoint_version = local.voice_agentcore_runtime_enabled ? data.external.voice_agentcore_version[0].result.agent_runtime_version : null
 }
 
 # The AWS provider does not yet expose RuntimeMetadataConfiguration. Keep this
 # compatibility bridge until metadata_configuration.require_mmdsv2 is managed
 # natively by aws_bedrockagentcore_agent_runtime.
 resource "terraform_data" "voice_agentcore_mmdsv2" {
-  count = var.provision_voice_infrastructure ? 1 : 0
+  count = local.voice_agentcore_runtime_enabled ? 1 : 0
 
   triggers_replace = {
     desired_configuration_sha256 = sha256(jsonencode(local.voice_agentcore_mmdsv2_desired_configuration))
@@ -84,7 +84,7 @@ resource "terraform_data" "voice_agentcore_mmdsv2" {
 # MMDSv2 update creates a new AgentCore version, so endpoints must consume the
 # post-update version rather than the version exported by the provider resource.
 data "external" "voice_agentcore_version" {
-  count = var.provision_voice_infrastructure ? 1 : 0
+  count = local.voice_agentcore_runtime_enabled ? 1 : 0
 
   program = [
     "bash",

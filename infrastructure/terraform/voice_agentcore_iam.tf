@@ -157,7 +157,7 @@ resource "aws_iam_role_policy" "voice_agentcore_runtime" {
 }
 
 resource "aws_iam_role_policy" "voice_session_http" {
-  count = var.provision_voice_infrastructure ? 1 : 0
+  count = local.voice_agentcore_runtime_enabled ? 1 : 0
 
   name = "${local.resource_prefix}-voice-session-http-policy"
   role = aws_iam_role.lambda_http_exec.id
