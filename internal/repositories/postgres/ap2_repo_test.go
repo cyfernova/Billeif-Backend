@@ -114,3 +114,60 @@ func TestSearchMarketplaceProductsEmptyQueryUsesMarketplaceProductSchema(t *test
 		t.Fatalf("products = %#v, want seeded product", products)
 	}
 }
+
+func TestDeleteCapabilityScopesByAgent(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite db: %v", err)
+	}
+	if err := db.Exec(`
+		CREATE TABLE agent_capabilities (
+			id TEXT PRIMARY KEY,
+			agent_id TEXT NOT NULL,
+			capability_type TEXT NOT NULL,
+			description TEXT,
+			config TEXT NOT NULL,
+			created_at DATETIME
+		)
+	`).Error; err != nil {
+		t.Fatalf("create agent capabilities table: %v", err)
+	}
+
+	if err := db.Create(&models.AgentCapability{
+		ID:             "capability-owned-by-agent-a",
+		AgentID:        "agent-a",
+		CapabilityType: "search_products",
+		Config:         "{}",
+	}).Error; err != nil {
+		t.Fatalf("seed agent-a capability: %v", err)
+	}
+	if err := db.Create(&models.AgentCapability{
+		ID:             "capability-owned-by-agent-b",
+		AgentID:        "agent-b",
+		CapabilityType: "create_cart",
+		Config:         "{}",
+	}).Error; err != nil {
+		t.Fatalf("seed agent-b capability: %v", err)
+	}
+
+	repo := postgresrepo.NewAP2Repository(db)
+	ctx := context.Background()
+	if err := repo.DeleteCapability(ctx, "agent-a", "capability-owned-by-agent-a"); err != nil {
+		t.Fatalf("delete owned capability: %v", err)
+	}
+
+	var remaining models.AgentCapability
+	if err := db.Where("id = ?", "capability-owned-by-agent-b").First(&remaining).Error; err != nil {
+		t.Fatalf("load foreign capability: %v", err)
+	}
+	if remaining.AgentID != "agent-b" {
+		t.Fatalf("foreign capability agent_id = %q, want agent-b", remaining.AgentID)
+	}
+
+	if err := repo.DeleteCapability(ctx, "agent-a", "capability-owned-by-agent-b"); err == nil {
+		t.Fatal("cross-agent capability deletion succeeded")
+	}
+	if err := db.Where("id = ?", "capability-owned-by-agent-b").First(&remaining).Error; err != nil {
+		t.Fatalf("foreign capability was deleted: %v", err)
+	}
+}

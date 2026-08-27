@@ -259,7 +259,7 @@ func (m *MockAP2Repository) CreateAgentCapability(ctx context.Context, capabilit
 func (m *MockAP2Repository) GetCapabilitiesByAgent(ctx context.Context, agentID string) ([]*models.AgentCapability, error) {
 	return nil, nil
 }
-func (m *MockAP2Repository) DeleteCapability(ctx context.Context, id string) error {
+func (m *MockAP2Repository) DeleteCapability(ctx context.Context, agentID, capabilityID string) error {
 	return nil
 }
 func (m *MockAP2Repository) CreatePaymentCredential(ctx context.Context, credential *models.PaymentCredential) error {
