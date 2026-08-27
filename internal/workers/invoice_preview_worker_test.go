@@ -589,6 +589,52 @@ func TestProcessInvoiceQueueMessageDropsRetiredLegacyPDFWithoutWork(t *testing.T
 	}
 }
 
+func TestProcessInvoiceQueueMessageNoOpsCompletedGenericReplay(t *testing.T) {
+	documentID := uuid.NewString()
+	businessID := uuid.NewString()
+	jobID := uuid.NewString()
+	document := &models.Document{ID: documentID, BusinessID: businessID}
+	job := &models.DocumentRenderJob{
+		ID:         jobID,
+		DocumentID: models.StringPointer(documentID),
+		BusinessID: businessID,
+		Kind:       models.RenderKindPreview,
+		Status:     models.RenderJobStatusCompleted,
+	}
+	cfg := &config.Config{}
+	log := logger.NewWithEnv("test")
+	documentService := services.NewDocumentService(
+		nil,
+		cfg,
+		&queueMessageDocumentRepository{document: document, job: job},
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		&awsclients.Config{},
+		log,
+	)
+	body := fmt.Sprintf(
+		`{"type":"generate_document_pdf","document_id":%q,"render_job_id":%q}`,
+		documentID,
+		jobID,
+	)
+
+	if err := ProcessInvoiceQueueMessageWithOwner(
+		context.Background(),
+		cfg,
+		&services.Container{Document: documentService},
+		log,
+		body,
+		"owner",
+	); err != nil {
+		t.Fatalf("completed generic replay: %v", err)
+	}
+}
+
 func TestProcessPreviewRenderTreatsCompletedAndObsoleteClaimsAsSuccessfulNoOps(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -877,6 +923,32 @@ func TestProcessDocumentRenderJobRoutesRequestRenderGenericShapeToLegacyRenderer
 	}
 	if operations.versionCalls != 0 || operations.processing || operations.rendered {
 		t.Fatalf("generic job entered canonical preview path: %#v", operations)
+	}
+}
+
+func TestProcessDocumentRenderJobNoOpsCompletedOrObsoleteGenericDuplicate(t *testing.T) {
+	for _, status := range []string{models.RenderJobStatusCompleted, models.RenderJobStatusObsolete} {
+		t.Run(status, func(t *testing.T) {
+			businessID := uuid.NewString()
+			documentID := uuid.NewString()
+			jobID := uuid.NewString()
+			document := &models.Document{ID: documentID, BusinessID: businessID}
+			job := &models.DocumentRenderJob{
+				ID:         jobID,
+				DocumentID: models.StringPointer(documentID),
+				BusinessID: businessID,
+				Kind:       models.RenderKindPreview,
+				Status:     status,
+			}
+			operations := &fakePreviewRenderOperations{}
+
+			if err := processDocumentRenderJob(context.Background(), document, job, 0, operations); err != nil {
+				t.Fatalf("terminal generic duplicate: %v", err)
+			}
+			if operations.genericRendered || operations.rendered || operations.uploadKey != "" {
+				t.Fatalf("terminal generic duplicate performed work: %#v", operations)
+			}
+		})
 	}
 }
 

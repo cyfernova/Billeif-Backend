@@ -251,6 +251,10 @@ func processDocumentRenderJob(
 			job.SourceInvoiceVersion == nil &&
 			job.ObjectKey == ""
 		if isGenericDocumentRender {
+			if job.Status == models.RenderJobStatusCompleted ||
+				job.Status == models.RenderJobStatusObsolete {
+				return nil
+			}
 			if operations == nil {
 				return errors.New("generic document renderer is not configured")
 			}
