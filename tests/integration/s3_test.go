@@ -198,9 +198,10 @@ func TestS3PresignedUploadURL(t *testing.T) {
 	// Generate presigned URL for PUT
 	presignClient := s3.NewPresignClient(client)
 	presignResp, err := presignClient.PresignPutObject(ctx, &s3.PutObjectInput{
-		Bucket:      aws.String(bucket),
-		Key:         aws.String(key),
-		ContentType: aws.String("text/plain"),
+		Bucket:        aws.String(bucket),
+		Key:           aws.String(key),
+		ContentLength: aws.Int64(4),
+		ContentType:   aws.String("text/plain"),
 	}, s3.WithPresignExpires(time.Hour))
 	require.NoError(t, err, "Failed to generate presigned URL")
 
@@ -208,6 +209,8 @@ func TestS3PresignedUploadURL(t *testing.T) {
 	assert.NotEmpty(t, presignResp.URL)
 	assert.True(t, strings.Contains(presignResp.URL, bucket))
 	assert.True(t, strings.Contains(presignResp.URL, key))
+	assert.Equal(t, "4", presignResp.SignedHeader.Get("Content-Length"))
+	assert.Equal(t, "text/plain", presignResp.SignedHeader.Get("Content-Type"))
 }
 
 func TestS3PresignedDownloadURL(t *testing.T) {

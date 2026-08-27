@@ -747,13 +747,13 @@ func (h *CommerceHandler) ListDriveAssets(c *gin.Context) {
 
 // CreateDriveUpload godoc
 // @Summary Create drive upload
-// @Description Creates a presigned URL for uploading a drive asset
+// @Description Creates a presigned URL and exact required headers for uploading a drive asset up to 25 MiB
 // @Tags Drive
 // @Security BearerAuth
 // @Accept json
 // @Produce json
 // @Param input body services.CreateDriveAssetInput true "Drive asset input"
-// @Success 201 {object} map[string]interface{}
+// @Success 201 {object} services.DriveUploadSession
 // @Failure 400 {object} map[string]string
 // @Failure 401 {object} map[string]string
 // @Router /drive/presign [post]

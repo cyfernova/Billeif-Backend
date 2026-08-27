@@ -1,11 +1,23 @@
 package services
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 
+	"invoice-backend/internal/config"
 	"invoice-backend/internal/models"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 func TestDefaultEntitlementSeedsForSubscriptionMakesFeaturesAvailable(t *testing.T) {
@@ -210,7 +222,7 @@ func TestValidateDriveAssetUploadRejectsActiveContentAndOversize(t *testing.T) {
 
 	if _, err := validateDriveAssetUpload(CreateDriveAssetInput{
 		ContentType: "image/png",
-		SizeBytes:   maxDriveAssetUploadBytes + 1,
+		SizeBytes:   MaxDriveAssetUploadBytes + 1,
 	}); err == nil {
 		t.Fatal("expected oversized upload to be rejected")
 	}
@@ -225,6 +237,86 @@ func TestValidateDriveAssetUploadRejectsActiveContentAndOversize(t *testing.T) {
 	if contentType != "image/png" {
 		t.Fatalf("expected content type to normalize, got %q", contentType)
 	}
+}
+
+func TestCreateDriveUploadSignsDeclaredSizeAndAccountsForQuotaUsage(t *testing.T) {
+	db := newDriveUploadTestDB(t)
+	client := s3.NewFromConfig(aws.Config{
+		Region:      "us-east-1",
+		Credentials: credentials.NewStaticCredentialsProvider("test", "test", ""),
+	}, func(options *s3.Options) {
+		options.BaseEndpoint = aws.String("https://storage.example.com")
+		options.UsePathStyle = true
+	})
+	service := &CommerceService{
+		cfg: &config.Config{S3: config.S3Config{BucketDrive: "private-drive"}},
+		db:  db,
+		s3:  &S3Service{client: client},
+	}
+
+	session, err := service.CreateDriveUpload(context.Background(), "business-123", "user-456", CreateDriveAssetInput{
+		Name:        "invoice.pdf",
+		ContentType: "application/pdf",
+		SizeBytes:   8192,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "8192", session.RequiredHeaders["Content-Length"])
+	require.Equal(t, "application/pdf", session.RequiredHeaders["Content-Type"])
+	parsed, err := url.Parse(session.UploadURL)
+	require.NoError(t, err)
+	require.Contains(t, parsed.EscapedPath(), "/private-drive/business-123/")
+	require.Equal(t, "business-123", session.Asset.BusinessID)
+	require.NotNil(t, session.Asset.UploadedBy)
+	require.Equal(t, "user-456", *session.Asset.UploadedBy)
+
+	var usageBytes int64
+	require.NoError(t, db.Model(&models.DriveAsset{}).
+		Select("COALESCE(SUM(size_bytes), 0)").
+		Where("business_id = ? AND deleted_at IS NULL", "business-123").
+		Scan(&usageBytes).Error)
+	require.Equal(t, int64(8192), usageBytes)
+}
+
+func newDriveUploadTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(`CREATE TABLE feature_entitlements (
+		id TEXT PRIMARY KEY,
+		business_id TEXT NOT NULL,
+		feature_key TEXT NOT NULL,
+		enabled NUMERIC NOT NULL,
+		limit_value INTEGER,
+		metadata TEXT DEFAULT '{}',
+		created_at DATETIME,
+		updated_at DATETIME,
+		deleted_at DATETIME
+	)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE drive_assets (
+		id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+		business_id TEXT NOT NULL,
+		uploaded_by TEXT,
+		name TEXT NOT NULL,
+		folder_path TEXT,
+		bucket TEXT NOT NULL,
+		object_key TEXT NOT NULL,
+		content_type TEXT,
+		size_bytes INTEGER NOT NULL,
+		category TEXT,
+		metadata TEXT DEFAULT '{}',
+		created_at DATETIME,
+		updated_at DATETIME,
+		deleted_at DATETIME
+	)`).Error)
+
+	for index, seed := range defaultEntitlementSeedsForSubscription(nil) {
+		require.NoError(t, db.Exec(
+			"INSERT INTO feature_entitlements (id, business_id, feature_key, enabled, limit_value, metadata, created_at, updated_at) VALUES (?, ?, ?, ?, ?, '{}', ?, ?)",
+			fmt.Sprintf("entitlement-%d", index), "business-123", seed.FeatureKey, seed.Enabled, seed.LimitValue, time.Now().UTC(), time.Now().UTC(),
+		).Error)
+	}
+	return db
 }
 
 func seedEnabled(seeds []entitlementSeed, featureKey string) bool {
