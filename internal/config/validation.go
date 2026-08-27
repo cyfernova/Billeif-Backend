@@ -82,12 +82,14 @@ func ValidateForProfile(cfg *Config, profile Profile) error {
 		if err := validateProfileDependencies(cfg, profile); err != nil {
 			return err
 		}
-		if err := requireProviderIdentifier(cfg.Secrets.CredentialEncryption, cfg.Credentials.EncryptionKey, "CREDENTIAL_ENCRYPTION_SECRET_ARN"); err != nil {
-			return err
-		}
-		if cfg.Credentials.EncryptionKey != "" {
-			if err := validateCredentialEncryptionKey(cfg.Credentials.EncryptionKey); err != nil {
+		if profile == ProfileInvoice || profile == ProfileGST {
+			if err := requireProviderIdentifier(cfg.Secrets.CredentialEncryption, cfg.Credentials.EncryptionKey, "CREDENTIAL_ENCRYPTION_SECRET_ARN"); err != nil {
 				return err
+			}
+			if cfg.Credentials.EncryptionKey != "" {
+				if err := validateCredentialEncryptionKey(cfg.Credentials.EncryptionKey); err != nil {
+					return err
+				}
 			}
 		}
 		if profile == ProfileGST {

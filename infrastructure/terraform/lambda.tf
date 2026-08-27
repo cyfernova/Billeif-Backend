@@ -117,9 +117,8 @@ locals {
       GST_PROVIDER_SECRET_ARN          = aws_secretsmanager_secret.gst_provider.arn
     })
     bargaining = merge(local.database_runtime_env, {
-      CREDENTIAL_ENCRYPTION_SECRET_ARN = aws_secretsmanager_secret.credential_encryption.arn
-      LLM_SECRET_ARN                   = aws_secretsmanager_secret.llm.arn
-      EXA_SECRET_ARN                   = aws_secretsmanager_secret.exa.arn
+      LLM_SECRET_ARN = aws_secretsmanager_secret.llm.arn
+      EXA_SECRET_ARN = aws_secretsmanager_secret.exa.arn
     })
   }
 }
