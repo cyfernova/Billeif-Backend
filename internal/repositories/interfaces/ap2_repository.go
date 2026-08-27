@@ -60,7 +60,7 @@ type AP2Repository interface {
 	// Agent Capabilities
 	CreateAgentCapability(ctx context.Context, capability *models.AgentCapability) error
 	GetCapabilitiesByAgent(ctx context.Context, agentID string) ([]*models.AgentCapability, error)
-	DeleteCapability(ctx context.Context, id string) error
+	DeleteCapability(ctx context.Context, agentID, capabilityID string) error
 
 	// Credentials
 	CreatePaymentCredential(ctx context.Context, credential *models.PaymentCredential) error

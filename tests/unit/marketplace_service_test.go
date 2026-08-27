@@ -121,8 +121,8 @@ func (m *MockMarketplaceAP2Repository) GetCapabilitiesByAgent(ctx context.Contex
 	return args.Get(0).([]*models.AgentCapability), args.Error(1)
 }
 
-func (m *MockMarketplaceAP2Repository) DeleteCapability(ctx context.Context, id string) error {
-	args := m.Called(ctx, id)
+func (m *MockMarketplaceAP2Repository) DeleteCapability(ctx context.Context, agentID, capabilityID string) error {
+	args := m.Called(ctx, agentID, capabilityID)
 	return args.Error(0)
 }
 

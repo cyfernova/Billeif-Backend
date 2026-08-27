@@ -488,8 +488,17 @@ func (r *ap2Repository) GetCapabilitiesByAgent(ctx context.Context, agentID stri
 	return result, nil
 }
 
-func (r *ap2Repository) DeleteCapability(ctx context.Context, id string) error {
-	return r.db.WithContext(ctx).Delete(&models.AgentCapability{}, id).Error
+func (r *ap2Repository) DeleteCapability(ctx context.Context, agentID, capabilityID string) error {
+	result := r.db.WithContext(ctx).
+		Where("agent_id = ? AND id = ?", agentID, capabilityID).
+		Delete(&models.AgentCapability{})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("capability not found")
+	}
+	return nil
 }
 
 // Credentials
