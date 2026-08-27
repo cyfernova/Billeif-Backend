@@ -18217,6 +18217,7 @@ const docTemplate = `{
         "models.BargainingNegotiation": {
             "type": "object",
             "required": [
+                "business_id",
                 "buyer_agent_id",
                 "buyer_volatility",
                 "current_amount",
@@ -18228,6 +18229,9 @@ const docTemplate = `{
                 "user_id"
             ],
             "properties": {
+                "business_id": {
+                    "type": "string"
+                },
                 "buyer_agent": {
                     "$ref": "#/definitions/models.Agent"
                 },
@@ -18292,9 +18296,13 @@ const docTemplate = `{
                     "enum": [
                         "initiated",
                         "in_progress",
+                        "running",
                         "accepted",
                         "rejected",
-                        "expired"
+                        "expired",
+                        "completed",
+                        "stopped",
+                        "failed"
                     ]
                 },
                 "updated_at": {

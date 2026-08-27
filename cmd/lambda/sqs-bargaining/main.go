@@ -86,13 +86,12 @@ func processBargainingMessage(ctx context.Context, cfg *config.Config, svc *serv
 }
 
 type bargainingRoundProcessor interface {
-	GetSessionProgress(sessionID string) *services.A2ASessionProgress
-	GetSessionProgressByNegotiationID(ctx context.Context, negotiationID string) *services.A2ASessionProgress
-	ClaimAutonomousNegotiationRound(ctx context.Context, negotiationID string, roundNumber int, leaseOwner string, now, leaseExpiresAt time.Time) (bool, error)
-	RunAutonomousNegotiationRound(ctx context.Context, sessionID string, roundNumber int) error
+	GetAutonomousNegotiationProgress(ctx context.Context, sessionID, negotiationID string) (*services.A2ASessionProgress, error)
+	ClaimAutonomousNegotiationRound(ctx context.Context, sessionID, negotiationID string, roundNumber int, leaseOwner string, now, leaseExpiresAt time.Time) (bool, error)
+	RunAutonomousNegotiationRound(ctx context.Context, sessionID, negotiationID string, roundNumber int) error
 	EnsureAutonomousNegotiationSuccessor(ctx context.Context, sessionID, negotiationID string, completedRound int) error
-	CompleteAutonomousNegotiationRound(ctx context.Context, negotiationID string, roundNumber int, leaseOwner string, completedAt time.Time) (bool, error)
-	StopNegotiation(sessionID string)
+	CompleteAutonomousNegotiationRound(ctx context.Context, sessionID, negotiationID string, roundNumber int, leaseOwner string, completedAt time.Time) (bool, error)
+	StopAutonomousNegotiation(ctx context.Context, sessionID, negotiationID string) error
 }
 
 func processBargainingRound(
@@ -136,12 +135,21 @@ func processBargainingRoundWithProcessor(
 	if messageRound <= 0 {
 		return fmt.Errorf("invalid bargaining message round: %d", messageRound)
 	}
-	progress := processor.GetSessionProgress(sessionID)
-	if progress == nil {
-		progress = processor.GetSessionProgressByNegotiationID(ctx, negotiationID)
+	progress, err := processor.GetAutonomousNegotiationProgress(ctx, sessionID, negotiationID)
+	if err != nil {
+		return fmt.Errorf("load bargaining session tuple: session_id=%s negotiation_id=%s: %w", sessionID, negotiationID, err)
 	}
 	if progress == nil {
-		return fmt.Errorf("session not found: session_id=%s, negotiation_id=%s", sessionID, negotiationID)
+		return fmt.Errorf("bargaining session tuple not found: session_id=%s negotiation_id=%s", sessionID, negotiationID)
+	}
+	if progress.NegotiationID != sessionID || progress.NegotiationUUID != negotiationID {
+		return fmt.Errorf(
+			"bargaining session tuple mismatch: requested=%s/%s loaded=%s/%s",
+			sessionID,
+			negotiationID,
+			progress.NegotiationID,
+			progress.NegotiationUUID,
+		)
 	}
 
 	log.Info("processing bargaining round",
@@ -151,20 +159,24 @@ func processBargainingRoundWithProcessor(
 		"max_rounds", progress.MaxRounds,
 		"status", progress.Status)
 
-	if progress.Status == "completed" || progress.Status == "accepted" || progress.Status == "rejected" || progress.Status == "expired" {
+	if isTerminalBargainingStatus(progress.Status) {
 		log.Info("negotiation already completed", "session_id", sessionID, "status", progress.Status)
 		return nil
 	}
 
 	if progress.MaxRounds <= 0 {
 		log.Error("invalid max_rounds on negotiation, cannot process", "session_id", sessionID, "max_rounds", progress.MaxRounds, "db_round", progress.Round)
-		processor.StopNegotiation(sessionID)
+		if stopErr := processor.StopAutonomousNegotiation(ctx, sessionID, negotiationID); stopErr != nil {
+			return fmt.Errorf("stop negotiation with invalid max_rounds: %w", stopErr)
+		}
 		return fmt.Errorf("invalid max_rounds: %d", progress.MaxRounds)
 	}
 
 	if progress.Round >= progress.MaxRounds {
 		log.Info("max rounds reached", "session_id", sessionID, "round", progress.Round, "max_rounds", progress.MaxRounds)
-		processor.StopNegotiation(sessionID)
+		if err := processor.StopAutonomousNegotiation(ctx, sessionID, negotiationID); err != nil {
+			return fmt.Errorf("stop negotiation at max rounds: %w", err)
+		}
 		return nil
 	}
 
@@ -185,6 +197,7 @@ func processBargainingRoundWithProcessor(
 			}
 			completed, err := processor.CompleteAutonomousNegotiationRound(
 				ctx,
+				sessionID,
 				negotiationID,
 				messageRound,
 				leaseOwner,
@@ -224,6 +237,7 @@ func processBargainingRoundWithProcessor(
 	}
 	claimed, err := processor.ClaimAutonomousNegotiationRound(
 		ctx,
+		sessionID,
 		negotiationID,
 		nextRound,
 		leaseOwner,
@@ -240,12 +254,13 @@ func processBargainingRoundWithProcessor(
 
 	providerCtx, cancel := context.WithTimeout(ctx, bargainingProviderTimeout)
 	defer cancel()
-	if err := processor.RunAutonomousNegotiationRound(providerCtx, sessionID, nextRound); err != nil {
+	if err := processor.RunAutonomousNegotiationRound(providerCtx, sessionID, negotiationID, nextRound); err != nil {
 		log.Error("failed to run bargaining round", "error", err, "session_id", sessionID, "round", nextRound)
 		return err
 	}
 	completed, err := processor.CompleteAutonomousNegotiationRound(
 		ctx,
+		sessionID,
 		negotiationID,
 		nextRound,
 		leaseOwner,
@@ -260,6 +275,15 @@ func processBargainingRoundWithProcessor(
 
 	log.Info("bargaining round completed", "session_id", sessionID, "round", nextRound)
 	return nil
+}
+
+func isTerminalBargainingStatus(status string) bool {
+	switch status {
+	case "accepted", "rejected", "expired", "completed", "stopped", "failed":
+		return true
+	default:
+		return false
+	}
 }
 
 func main() {
