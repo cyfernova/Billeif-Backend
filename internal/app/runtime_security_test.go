@@ -27,6 +27,35 @@ func TestPaymentRoutesRequirePaymentPermissions(t *testing.T) {
 	}
 }
 
+func TestPartyAndRenderProfileMutationRoutesRequireExactPermissions(t *testing.T) {
+	source, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatalf("read runtime routes: %v", err)
+	}
+	routes := string(source)
+
+	requiredFragments := []string{
+		`customers.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersCreate), wafUserWriteRL, h.Customer.Create)`,
+		`customers.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersUpdate), wafUserWriteRL, h.Customer.Update)`,
+		`customers.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersDelete), wafUserWriteRL, h.Customer.Delete)`,
+		`customers.POST("/import", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersCreate), wafBulkRL, h.Customer.Import)`,
+		`vendors.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVendorsCreate), wafUserWriteRL, h.Vendor.Create)`,
+		`vendors.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVendorsUpdate), wafUserWriteRL, h.Vendor.Update)`,
+		`vendors.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVendorsDelete), wafUserWriteRL, h.Vendor.Delete)`,
+		`imports.POST("/customers", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersCreate), wafBulkRL, h.BillingOps.CreateCustomerImportJob)`,
+		`imports.POST("/vendors", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVendorsCreate), wafBulkRL, h.BillingOps.CreateVendorImportJob)`,
+		`renderProfiles.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRenderProfilesCreate), wafUserWriteRL, h.RenderProfile.Create)`,
+		`renderProfiles.POST("/:id/default", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRenderProfilesUpdate), wafUserWriteRL, h.RenderProfile.SetDefault)`,
+		`renderProfiles.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRenderProfilesUpdate), wafUserWriteRL, h.RenderProfile.Update)`,
+		`renderProfiles.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRenderProfilesDelete), wafUserWriteRL, h.RenderProfile.Delete)`,
+	}
+	for _, fragment := range requiredFragments {
+		if !strings.Contains(routes, fragment) {
+			t.Fatalf("mutation route is missing exact permission gate: %s", fragment)
+		}
+	}
+}
+
 func TestVoiceSessionRoutesUsePermissionThenExistingRateLimiter(t *testing.T) {
 	source, err := os.ReadFile("runtime.go")
 	if err != nil {

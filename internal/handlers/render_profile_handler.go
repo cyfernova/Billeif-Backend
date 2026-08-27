@@ -111,9 +111,14 @@ func (h *RenderProfileHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	requestContextWithActor(c)
 	profile, err := h.svc.CreateRenderProfileByBusiness(c.Request.Context(), businessID, input)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		statusCode := http.StatusInternalServerError
+		if isPermissionDeniedErr(err) {
+			statusCode = http.StatusForbidden
+		}
+		c.JSON(statusCode, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusCreated, profile)
@@ -143,10 +148,13 @@ func (h *RenderProfileHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	requestContextWithActor(c)
 	profile, err := h.svc.UpdateRenderProfileByBusiness(c.Request.Context(), businessID, c.Param("id"), input)
 	if err != nil {
 		statusCode := http.StatusInternalServerError
-		if isNotFoundErr(err) {
+		if isPermissionDeniedErr(err) {
+			statusCode = http.StatusForbidden
+		} else if isNotFoundErr(err) {
 			statusCode = http.StatusNotFound
 		}
 		c.JSON(statusCode, gin.H{"error": err.Error()})
@@ -172,12 +180,15 @@ func (h *RenderProfileHandler) SetDefault(c *gin.Context) {
 		return
 	}
 	value := true
+	requestContextWithActor(c)
 	profile, err := h.svc.UpdateRenderProfileByBusiness(c.Request.Context(), businessID, c.Param("id"), services.UpdateRenderProfileInput{
 		IsDefault: &value,
 	})
 	if err != nil {
 		statusCode := http.StatusInternalServerError
-		if isNotFoundErr(err) {
+		if isPermissionDeniedErr(err) {
+			statusCode = http.StatusForbidden
+		} else if isNotFoundErr(err) {
 			statusCode = http.StatusNotFound
 		}
 		c.JSON(statusCode, gin.H{"error": err.Error()})
@@ -202,9 +213,12 @@ func (h *RenderProfileHandler) Delete(c *gin.Context) {
 	if !ok {
 		return
 	}
+	requestContextWithActor(c)
 	if err := h.svc.DeleteRenderProfileByBusiness(c.Request.Context(), businessID, c.Param("id")); err != nil {
 		statusCode := http.StatusInternalServerError
-		if isNotFoundErr(err) {
+		if isPermissionDeniedErr(err) {
+			statusCode = http.StatusForbidden
+		} else if isNotFoundErr(err) {
 			statusCode = http.StatusNotFound
 		}
 		c.JSON(statusCode, gin.H{"error": err.Error()})

@@ -18,6 +18,20 @@ type MockVendorRepository struct {
 	mock.Mock
 }
 
+type allowVendorPermissionChecker struct{}
+
+func (allowVendorPermissionChecker) UserHasPermission(context.Context, string, string, string) bool {
+	return true
+}
+
+func newVendorService(repo *MockVendorRepository, log *logger.Logger) *services.VendorService {
+	return services.NewVendorService(repo, allowVendorPermissionChecker{}, log)
+}
+
+func authorizedVendorContext() context.Context {
+	return services.ContextWithActor(context.Background(), services.ActorContext{UserID: "accountant-1", Role: "accountant"})
+}
+
 func (m *MockVendorRepository) Create(ctx context.Context, vendor *models.Vendor) error {
 	args := m.Called(ctx, vendor)
 	return args.Error(0)
@@ -51,9 +65,9 @@ func TestVendorService_Create_Success(t *testing.T) {
 	mockRepo := new(MockVendorRepository)
 	log := logger.New()
 
-	svc := services.NewVendorService(mockRepo, log)
+	svc := newVendorService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedVendorContext()
 	input := services.CreateVendorInput{
 		BusinessID:   "business-123",
 		Name:         "Acme Corp",
@@ -89,9 +103,9 @@ func TestVendorService_Create_RepositoryError(t *testing.T) {
 	mockRepo := new(MockVendorRepository)
 	log := logger.New()
 
-	svc := services.NewVendorService(mockRepo, log)
+	svc := newVendorService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedVendorContext()
 	input := services.CreateVendorInput{
 		BusinessID: "business-123",
 		Name:       "Acme Corp",
@@ -113,9 +127,9 @@ func TestVendorService_GetByBusiness_Success(t *testing.T) {
 	mockRepo := new(MockVendorRepository)
 	log := logger.New()
 
-	svc := services.NewVendorService(mockRepo, log)
+	svc := newVendorService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedVendorContext()
 	businessID := "business-123"
 	vendorID := "vendor-456"
 
@@ -142,9 +156,9 @@ func TestVendorService_GetByBusiness_NotFound(t *testing.T) {
 	mockRepo := new(MockVendorRepository)
 	log := logger.New()
 
-	svc := services.NewVendorService(mockRepo, log)
+	svc := newVendorService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedVendorContext()
 	businessID := "business-123"
 	vendorID := "nonexistent"
 
@@ -162,9 +176,9 @@ func TestVendorService_List_Success(t *testing.T) {
 	mockRepo := new(MockVendorRepository)
 	log := logger.New()
 
-	svc := services.NewVendorService(mockRepo, log)
+	svc := newVendorService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedVendorContext()
 	businessID := "business-123"
 	page := 1
 	limit := 10
@@ -189,9 +203,9 @@ func TestVendorService_List_EmptyResult(t *testing.T) {
 	mockRepo := new(MockVendorRepository)
 	log := logger.New()
 
-	svc := services.NewVendorService(mockRepo, log)
+	svc := newVendorService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedVendorContext()
 	businessID := "business-123"
 
 	mockRepo.On("GetByBusinessID", ctx, businessID, 1, 10).Return([]*models.Vendor{}, int64(0), nil)
@@ -209,9 +223,9 @@ func TestVendorService_List_RepositoryError(t *testing.T) {
 	mockRepo := new(MockVendorRepository)
 	log := logger.New()
 
-	svc := services.NewVendorService(mockRepo, log)
+	svc := newVendorService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedVendorContext()
 	businessID := "business-123"
 
 	mockRepo.On("GetByBusinessID", ctx, businessID, 1, 10).Return([]*models.Vendor{}, int64(0), errors.New("database error"))
@@ -228,9 +242,9 @@ func TestVendorService_UpdateByBusiness_Success(t *testing.T) {
 	mockRepo := new(MockVendorRepository)
 	log := logger.New()
 
-	svc := services.NewVendorService(mockRepo, log)
+	svc := newVendorService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedVendorContext()
 	businessID := "business-123"
 	vendorID := "vendor-456"
 
@@ -265,9 +279,9 @@ func TestVendorService_UpdateByBusiness_PartialUpdate(t *testing.T) {
 	mockRepo := new(MockVendorRepository)
 	log := logger.New()
 
-	svc := services.NewVendorService(mockRepo, log)
+	svc := newVendorService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedVendorContext()
 	businessID := "business-123"
 	vendorID := "vendor-456"
 
@@ -302,9 +316,9 @@ func TestVendorService_UpdateByBusiness_NotFound(t *testing.T) {
 	mockRepo := new(MockVendorRepository)
 	log := logger.New()
 
-	svc := services.NewVendorService(mockRepo, log)
+	svc := newVendorService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedVendorContext()
 	businessID := "business-123"
 	vendorID := "nonexistent"
 
@@ -326,9 +340,9 @@ func TestVendorService_UpdateByBusiness_RepositoryError(t *testing.T) {
 	mockRepo := new(MockVendorRepository)
 	log := logger.New()
 
-	svc := services.NewVendorService(mockRepo, log)
+	svc := newVendorService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedVendorContext()
 	businessID := "business-123"
 	vendorID := "vendor-456"
 
@@ -352,50 +366,14 @@ func TestVendorService_UpdateByBusiness_RepositoryError(t *testing.T) {
 	mockRepo.AssertExpectations(t)
 }
 
-// TestDelete_Success tests successful vendor deletion
-func TestVendorService_Delete_Success(t *testing.T) {
-	mockRepo := new(MockVendorRepository)
-	log := logger.New()
-
-	svc := services.NewVendorService(mockRepo, log)
-
-	ctx := context.Background()
-	vendorID := "vendor-456"
-
-	mockRepo.On("Delete", ctx, vendorID).Return(nil)
-
-	err := svc.Delete(ctx, vendorID)
-
-	assert.NoError(t, err)
-	mockRepo.AssertExpectations(t)
-}
-
-// TestDelete_RepositoryError tests deletion with repository error
-func TestVendorService_Delete_RepositoryError(t *testing.T) {
-	mockRepo := new(MockVendorRepository)
-	log := logger.New()
-
-	svc := services.NewVendorService(mockRepo, log)
-
-	ctx := context.Background()
-	vendorID := "vendor-456"
-
-	mockRepo.On("Delete", ctx, vendorID).Return(errors.New("database error"))
-
-	err := svc.Delete(ctx, vendorID)
-
-	assert.Error(t, err)
-	mockRepo.AssertExpectations(t)
-}
-
 // TestDeleteByBusiness_Success tests successful scoped vendor deletion
 func TestVendorService_DeleteByBusiness_Success(t *testing.T) {
 	mockRepo := new(MockVendorRepository)
 	log := logger.New()
 
-	svc := services.NewVendorService(mockRepo, log)
+	svc := newVendorService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedVendorContext()
 	businessID := "business-123"
 	vendorID := "vendor-456"
 
@@ -419,9 +397,9 @@ func TestVendorService_DeleteByBusiness_NotFound(t *testing.T) {
 	mockRepo := new(MockVendorRepository)
 	log := logger.New()
 
-	svc := services.NewVendorService(mockRepo, log)
+	svc := newVendorService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedVendorContext()
 	businessID := "business-123"
 	vendorID := "nonexistent"
 
@@ -438,9 +416,9 @@ func TestVendorService_DeleteByBusiness_WrongBusiness(t *testing.T) {
 	mockRepo := new(MockVendorRepository)
 	log := logger.New()
 
-	svc := services.NewVendorService(mockRepo, log)
+	svc := newVendorService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedVendorContext()
 	businessID := "business-123"
 	vendorID := "vendor-456"
 
@@ -458,9 +436,9 @@ func TestVendorService_UpdateByBusiness_AllFields(t *testing.T) {
 	mockRepo := new(MockVendorRepository)
 	log := logger.New()
 
-	svc := services.NewVendorService(mockRepo, log)
+	svc := newVendorService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedVendorContext()
 	businessID := "business-123"
 	vendorID := "vendor-456"
 
@@ -510,9 +488,9 @@ func TestVendorService_Create_AllFields(t *testing.T) {
 	mockRepo := new(MockVendorRepository)
 	log := logger.New()
 
-	svc := services.NewVendorService(mockRepo, log)
+	svc := newVendorService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedVendorContext()
 	input := services.CreateVendorInput{
 		BusinessID:   "business-123",
 		Name:         "Acme Corp",
@@ -562,9 +540,9 @@ func TestVendorService_List_Pagination(t *testing.T) {
 	mockRepo := new(MockVendorRepository)
 	log := logger.New()
 
-	svc := services.NewVendorService(mockRepo, log)
+	svc := newVendorService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedVendorContext()
 	businessID := "business-123"
 
 	testCases := []struct {

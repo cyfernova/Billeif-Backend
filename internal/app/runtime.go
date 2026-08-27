@@ -520,10 +520,10 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			{
 				customers.GET("", h.Customer.List)
 				customers.GET("/:id", h.Customer.Get)
-				customers.POST("", wafUserWriteRL, h.Customer.Create)
-				customers.PUT("/:id", wafUserWriteRL, h.Customer.Update)
-				customers.DELETE("/:id", wafUserWriteRL, h.Customer.Delete)
-				customers.POST("/import", wafBulkRL, h.Customer.Import)
+				customers.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersCreate), wafUserWriteRL, h.Customer.Create)
+				customers.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersUpdate), wafUserWriteRL, h.Customer.Update)
+				customers.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersDelete), wafUserWriteRL, h.Customer.Delete)
+				customers.POST("/import", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersCreate), wafBulkRL, h.Customer.Import)
 				customers.GET("/export", h.Customer.Export)
 			}
 
@@ -531,9 +531,9 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			{
 				vendors.GET("", h.Vendor.List)
 				vendors.GET("/:id", h.Vendor.Get)
-				vendors.POST("", wafUserWriteRL, h.Vendor.Create)
-				vendors.PUT("/:id", wafUserWriteRL, h.Vendor.Update)
-				vendors.DELETE("/:id", wafUserWriteRL, h.Vendor.Delete)
+				vendors.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVendorsCreate), wafUserWriteRL, h.Vendor.Create)
+				vendors.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVendorsUpdate), wafUserWriteRL, h.Vendor.Update)
+				vendors.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVendorsDelete), wafUserWriteRL, h.Vendor.Delete)
 			}
 
 			products := protected.Group("/products")
@@ -726,8 +726,8 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 			imports := protected.Group("/imports")
 			{
-				imports.POST("/customers", wafBulkRL, h.BillingOps.CreateCustomerImportJob)
-				imports.POST("/vendors", wafBulkRL, h.BillingOps.CreateVendorImportJob)
+				imports.POST("/customers", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersCreate), wafBulkRL, h.BillingOps.CreateCustomerImportJob)
+				imports.POST("/vendors", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVendorsCreate), wafBulkRL, h.BillingOps.CreateVendorImportJob)
 				imports.POST("/products", wafBulkRL, h.BillingOps.CreateProductImportJob)
 				imports.POST("/invoices", wafBulkRL, h.BillingOps.CreateInvoiceImportJob)
 				imports.POST("/documents", wafBulkRL, h.BillingOps.CreateDocumentImportJob)
@@ -762,10 +762,10 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 				renderProfiles.GET("", h.RenderProfile.List)
 				renderProfiles.GET("/default", h.RenderProfile.GetDefault)
 				renderProfiles.GET("/:id", h.RenderProfile.Get)
-				renderProfiles.POST("", wafUserWriteRL, h.RenderProfile.Create)
-				renderProfiles.POST("/:id/default", wafUserWriteRL, h.RenderProfile.SetDefault)
-				renderProfiles.PUT("/:id", wafUserWriteRL, h.RenderProfile.Update)
-				renderProfiles.DELETE("/:id", wafUserWriteRL, h.RenderProfile.Delete)
+				renderProfiles.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRenderProfilesCreate), wafUserWriteRL, h.RenderProfile.Create)
+				renderProfiles.POST("/:id/default", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRenderProfilesUpdate), wafUserWriteRL, h.RenderProfile.SetDefault)
+				renderProfiles.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRenderProfilesUpdate), wafUserWriteRL, h.RenderProfile.Update)
+				renderProfiles.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRenderProfilesDelete), wafUserWriteRL, h.RenderProfile.Delete)
 			}
 
 			utils := protected.Group("/utils")

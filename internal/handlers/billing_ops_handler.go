@@ -445,7 +445,11 @@ func (h *BillingOpsHandler) createImportJob(c *gin.Context, jobType string) {
 		},
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		statusCode := http.StatusInternalServerError
+		if isPermissionDeniedErr(err) {
+			statusCode = http.StatusForbidden
+		}
+		c.JSON(statusCode, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusAccepted, job)

@@ -45,12 +45,17 @@ func (h *VendorHandler) Create(c *gin.Context) {
 		return
 	}
 	input.BusinessID = businessID
+	requestContextWithActor(c)
 
 	var vendor *models.Vendor
 	vendor, err := h.svc.Create(c.Request.Context(), input)
 	if err != nil {
 		log.Error("failed to create vendor", "error", err, "business_id", input.BusinessID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		statusCode := http.StatusInternalServerError
+		if isPermissionDeniedErr(err) {
+			statusCode = http.StatusForbidden
+		}
+		c.JSON(statusCode, gin.H{"error": err.Error()})
 		return
 	}
 	log.Info("vendor created", "vendor_id", vendor.ID, "business_id", vendor.BusinessID)
@@ -150,11 +155,16 @@ func (h *VendorHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	requestContextWithActor(c)
 
 	var vendor *models.Vendor
 	vendor, err := h.svc.UpdateByBusiness(c.Request.Context(), businessID, id, input)
 	if err != nil {
 		log.Error("failed to update vendor", "error", err, "vendor_id", id)
+		if isPermissionDeniedErr(err) {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
 		if isNotFoundErr(err) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "vendor not found"})
 			return
@@ -184,8 +194,13 @@ func (h *VendorHandler) Delete(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
+	requestContextWithActor(c)
 	if err := h.svc.DeleteByBusiness(c.Request.Context(), businessID, id); err != nil {
 		log.Error("failed to delete vendor", "error", err, "vendor_id", id)
+		if isPermissionDeniedErr(err) {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
 		if isNotFoundErr(err) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "vendor not found"})
 			return
