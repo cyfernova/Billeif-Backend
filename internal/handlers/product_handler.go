@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"invoice-backend/internal/middleware"
+	"context"
 	"invoice-backend/internal/models"
 	"net/http"
 
@@ -13,11 +13,22 @@ import (
 )
 
 type ProductHandler struct {
-	svc *services.ProductService
+	svc productService
 	log *logger.Logger
 }
 
-func NewProductHandler(svc *services.ProductService, log *logger.Logger) *ProductHandler {
+type productService interface {
+	Create(context.Context, services.CreateProductInput) (*models.Product, error)
+	GetByBusiness(context.Context, string, string) (*models.Product, error)
+	ListWithFilters(context.Context, string, services.ProductListFilter, int, int) ([]*models.Product, int64, error)
+	UpdateByBusiness(context.Context, string, string, services.UpdateProductInput) (*models.Product, error)
+	CloneByBusiness(context.Context, string, string) (*models.Product, error)
+	DeleteByBusiness(context.Context, string, string) error
+	GetImageUploadURLByBusiness(context.Context, string, string, string) (string, error)
+	AdjustStockByBusiness(context.Context, string, string, services.StockAdjustmentInput) (*models.Product, error)
+}
+
+func NewProductHandler(svc productService, log *logger.Logger) *ProductHandler {
 	return &ProductHandler{svc: svc, log: log}
 }
 
@@ -77,9 +88,9 @@ func (h *ProductHandler) Create(c *gin.Context) {
 func (h *ProductHandler) Get(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "get")
 
-	businessID := c.Query("business_id")
-	if businessID == "" {
-		businessID = middleware.GetBusinessID(c)
+	businessID, ok := requireEffectiveBusinessScope(c, "")
+	if !ok {
+		return
 	}
 
 	id := c.Param("id")
@@ -110,9 +121,9 @@ func (h *ProductHandler) Get(c *gin.Context) {
 func (h *ProductHandler) List(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "list")
 
-	businessID := c.Query("business_id")
-	if businessID == "" {
-		businessID = middleware.GetBusinessID(c)
+	businessID, ok := requireEffectiveBusinessScope(c, "")
+	if !ok {
+		return
 	}
 
 	page, limit := utils.ParsePagination(c)
@@ -164,9 +175,9 @@ func (h *ProductHandler) Update(c *gin.Context) {
 		return
 	}
 
-	businessID := c.Query("business_id")
-	if businessID == "" {
-		businessID = middleware.GetBusinessID(c)
+	businessID, ok := requireEffectiveBusinessScope(c, "")
+	if !ok {
+		return
 	}
 
 	var product *models.Product
@@ -188,9 +199,9 @@ func (h *ProductHandler) Update(c *gin.Context) {
 func (h *ProductHandler) Clone(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "clone")
 
-	businessID := c.Query("business_id")
-	if businessID == "" {
-		businessID = middleware.GetBusinessID(c)
+	businessID, ok := requireEffectiveBusinessScope(c, "")
+	if !ok {
+		return
 	}
 
 	product, err := h.svc.CloneByBusiness(c.Request.Context(), businessID, c.Param("id"))
@@ -222,13 +233,8 @@ func (h *ProductHandler) Clone(c *gin.Context) {
 func (h *ProductHandler) Delete(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "delete")
 
-	businessID := c.Query("business_id")
-	if businessID == "" {
-		businessID = middleware.GetBusinessID(c)
-	}
-	if businessID == "" {
-		log.Warn("business scope required")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "business scope required"})
+	businessID, ok := requireEffectiveBusinessScope(c, "")
+	if !ok {
 		return
 	}
 
@@ -261,9 +267,9 @@ func (h *ProductHandler) Delete(c *gin.Context) {
 func (h *ProductHandler) UploadImage(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "upload_image")
 
-	businessID := c.Query("business_id")
-	if businessID == "" {
-		businessID = middleware.GetBusinessID(c)
+	businessID, ok := requireEffectiveBusinessScope(c, "")
+	if !ok {
+		return
 	}
 
 	id := c.Param("id")
@@ -303,9 +309,9 @@ func (h *ProductHandler) UploadImage(c *gin.Context) {
 func (h *ProductHandler) AdjustStock(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "adjust_stock")
 
-	businessID := c.Query("business_id")
-	if businessID == "" {
-		businessID = middleware.GetBusinessID(c)
+	businessID, ok := requireEffectiveBusinessScope(c, "")
+	if !ok {
+		return
 	}
 
 	id := c.Param("id")
