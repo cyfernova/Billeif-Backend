@@ -57,10 +57,11 @@ func TestEmbeddedBundleAgainstEmptyPostgres(t *testing.T) {
 
 	ctx := context.Background()
 	const (
-		businessID = "a0000000-0000-4000-8000-000000000001"
-		customerID = "a0000000-0000-4000-8000-000000000002"
-		invoiceID  = "a0000000-0000-4000-8000-000000000003"
-		renderID   = "a0000000-0000-4000-8000-000000000004"
+		businessID        = "a0000000-0000-4000-8000-000000000001"
+		customerID        = "a0000000-0000-4000-8000-000000000002"
+		invoiceID         = "a0000000-0000-4000-8000-000000000003"
+		renderID          = "a0000000-0000-4000-8000-000000000004"
+		passwordProfileID = "a0000000-0000-4000-8000-000000000005"
 	)
 	if _, err := database.ExecContext(ctx, `
 		INSERT INTO business_profiles (id, owner_id, name, email)
@@ -146,6 +147,61 @@ func TestEmbeddedBundleAgainstEmptyPostgres(t *testing.T) {
 	}
 	if renderCount != 0 {
 		t.Fatalf("invoice-only render jobs after slice reversal = %d, want 0", renderCount)
+	}
+
+	if err := postgresMigration.migrate.Steps(4); err != nil {
+		t.Fatalf("apply embedded migrations through render profile password encryption: %v", err)
+	}
+	version, dirty, err = runner.Version()
+	if err != nil || version != 47 || dirty {
+		t.Fatalf("render profile password migration state = version %d dirty %t error %v, want version 47 clean", version, dirty, err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO render_profiles (
+			id, business_id, name, password_protected, password_ciphertext
+		) VALUES ($1, $2, 'Rollback Guard Profile', TRUE, 'rpw:v1:integration-fixture')`,
+		passwordProfileID, businessID,
+	); err != nil {
+		t.Fatalf("seed encrypted render profile rollback fixture: %v", err)
+	}
+	if err := postgresMigration.migrate.Steps(-1); err == nil {
+		t.Fatal("render profile password migration rolled back while ciphertext remained")
+	}
+	version, dirty, err = runner.Version()
+	if err != nil || version != 46 || !dirty {
+		t.Fatalf("guarded rollback state = version %d dirty %t error %v, want target version 46 dirty", version, dirty, err)
+	}
+	var ciphertextColumnCount int
+	if err := database.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM information_schema.columns
+		WHERE table_schema = 'public'
+		  AND table_name = 'render_profiles'
+		  AND column_name = 'password_ciphertext'`,
+	).Scan(&ciphertextColumnCount); err != nil {
+		t.Fatalf("check ciphertext column after guarded rollback: %v", err)
+	}
+	if ciphertextColumnCount != 1 {
+		t.Fatalf("ciphertext column count after guarded rollback = %d, want 1", ciphertextColumnCount)
+	}
+	if _, err := database.ExecContext(ctx,
+		`DELETE FROM render_profiles WHERE id = $1`,
+		passwordProfileID,
+	); err != nil {
+		t.Fatalf("remove encrypted rollback fixture: %v", err)
+	}
+	if err := postgresMigration.migrate.Force(47); err != nil {
+		t.Fatalf("clear expected dirty state after guarded rollback: %v", err)
+	}
+	if err := postgresMigration.migrate.Steps(-1); err != nil {
+		t.Fatalf("roll back render profile password migration after removing ciphertext: %v", err)
+	}
+	if err := postgresMigration.migrate.Steps(1); err != nil {
+		t.Fatalf("reapply render profile password migration after rollback validation: %v", err)
+	}
+	version, dirty, err = runner.Version()
+	if err != nil || version != 47 || dirty {
+		t.Fatalf("final PostgreSQL migration state = version %d dirty %t error %v, want version 47 clean", version, dirty, err)
 	}
 }
 

@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	canonicalInvoiceMigrationVersion = 46
-	releasedManifestPrefixDigest     = "e7c51b8069e0785e8d2881a4eb06070c3899107ad55a72166e86e26a7979e936"
+	latestMigrationVersion       = 47
+	releasedManifestPrefixDigest = "e7c51b8069e0785e8d2881a4eb06070c3899107ad55a72166e86e26a7979e936"
 )
 
 func TestCanonicalInvoiceMigrationIsAppendedWithoutChangingReleasedMigrations(t *testing.T) {
@@ -18,11 +18,11 @@ func TestCanonicalInvoiceMigrationIsAppendedWithoutChangingReleasedMigrations(t 
 	if err != nil {
 		t.Fatalf("Verify(Embedded) error = %v", err)
 	}
-	if manifest.LatestVersion != canonicalInvoiceMigrationVersion {
-		t.Fatalf("latest version = %d, want %d", manifest.LatestVersion, canonicalInvoiceMigrationVersion)
+	if manifest.LatestVersion != latestMigrationVersion {
+		t.Fatalf("latest version = %d, want %d", manifest.LatestVersion, latestMigrationVersion)
 	}
-	if len(manifest.Entries) != canonicalInvoiceMigrationVersion*2 {
-		t.Fatalf("entry count = %d, want %d", len(manifest.Entries), canonicalInvoiceMigrationVersion*2)
+	if len(manifest.Entries) != latestMigrationVersion*2 {
+		t.Fatalf("entry count = %d, want %d", len(manifest.Entries), latestMigrationVersion*2)
 	}
 
 	body, err := fs.ReadFile(Embedded, ManifestFilename)

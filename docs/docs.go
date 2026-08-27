@@ -11676,8 +11676,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/handlers.RenderProfileListResponse"
                         }
                     },
                     "500": {
@@ -11722,7 +11721,9 @@ const docTemplate = `{
                 "responses": {
                     "201": {
                         "description": "Created",
-                        "schema": {}
+                        "schema": {
+                            "$ref": "#/definitions/models.RenderProfile"
+                        }
                     },
                     "400": {
                         "description": "Bad Request",
@@ -11763,7 +11764,9 @@ const docTemplate = `{
                 "responses": {
                     "200": {
                         "description": "OK",
-                        "schema": {}
+                        "schema": {
+                            "$ref": "#/definitions/models.RenderProfile"
+                        }
                     },
                     "404": {
                         "description": "Not Found",
@@ -11813,7 +11816,9 @@ const docTemplate = `{
                 "responses": {
                     "200": {
                         "description": "OK",
-                        "schema": {}
+                        "schema": {
+                            "$ref": "#/definitions/models.RenderProfile"
+                        }
                     },
                     "404": {
                         "description": "Not Found",
@@ -11873,7 +11878,9 @@ const docTemplate = `{
                 "responses": {
                     "200": {
                         "description": "OK",
-                        "schema": {}
+                        "schema": {
+                            "$ref": "#/definitions/models.RenderProfile"
+                        }
                     },
                     "400": {
                         "description": "Bad Request",
@@ -11982,7 +11989,9 @@ const docTemplate = `{
                 "responses": {
                     "200": {
                         "description": "OK",
-                        "schema": {}
+                        "schema": {
+                            "$ref": "#/definitions/models.RenderProfile"
+                        }
                     },
                     "404": {
                         "description": "Not Found",
@@ -17774,6 +17783,26 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.RenderProfileListResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.RenderProfile"
+                    }
+                },
+                "limit": {
+                    "type": "integer"
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
         "handlers.StartA2ANegotiationRequest": {
             "type": "object",
             "required": [
@@ -19496,6 +19525,71 @@ const docTemplate = `{
                 "RenderKindFinal"
             ]
         },
+        "models.RenderProfile": {
+            "type": "object",
+            "required": [
+                "business_id"
+            ],
+            "properties": {
+                "banner_text": {
+                    "type": "string"
+                },
+                "business_id": {
+                    "type": "string"
+                },
+                "copy_allowed": {
+                    "type": "boolean"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "custom_labels": {
+                    "type": "string"
+                },
+                "font_family": {
+                    "type": "string"
+                },
+                "footer_html": {
+                    "type": "string"
+                },
+                "header_html": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_default": {
+                    "type": "boolean"
+                },
+                "layout_config": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "page_size": {
+                    "type": "string"
+                },
+                "password_configured": {
+                    "type": "boolean"
+                },
+                "password_protected": {
+                    "type": "boolean"
+                },
+                "print_allowed": {
+                    "type": "boolean"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "visibility_config": {
+                    "type": "string"
+                },
+                "watermark_text": {
+                    "type": "string"
+                }
+            }
+        },
         "models.Role": {
             "type": "object",
             "properties": {
@@ -21191,7 +21285,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "password": {
-                    "type": "string"
+                    "type": "string",
+                    "x-writeonly": true
                 },
                 "password_protected": {
                     "type": "boolean"
@@ -23348,7 +23443,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "password": {
-                    "type": "string"
+                    "type": "string",
+                    "x-writeonly": true
                 },
                 "password_protected": {
                     "type": "boolean"

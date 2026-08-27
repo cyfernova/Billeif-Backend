@@ -380,7 +380,7 @@ func (o *servicePreviewRenderOperations) loadProfile(
 	ctx context.Context,
 	businessID, profileID string,
 ) (*models.RenderProfile, error) {
-	return o.svc.Document.GetRenderProfileByBusiness(ctx, businessID, profileID)
+	return o.svc.Document.GetRenderProfileForRenderingByBusiness(ctx, businessID, profileID)
 }
 
 func (o *servicePreviewRenderOperations) render(
@@ -868,16 +868,16 @@ func resolveRenderProfile(ctx context.Context, svc *services.Container, document
 	if renderJobID != "" {
 		job, err := svc.Document.GetRenderJobByBusiness(ctx, document.BusinessID, renderJobID)
 		if err == nil && job.RenderProfileID != nil {
-			return svc.Document.GetRenderProfileByBusiness(ctx, document.BusinessID, *job.RenderProfileID)
+			return svc.Document.GetRenderProfileForRenderingByBusiness(ctx, document.BusinessID, *job.RenderProfileID)
 		}
 	}
 	if document.RenderProfileID != nil {
-		profile, err := svc.Document.GetRenderProfileByBusiness(ctx, document.BusinessID, *document.RenderProfileID)
+		profile, err := svc.Document.GetRenderProfileForRenderingByBusiness(ctx, document.BusinessID, *document.RenderProfileID)
 		if err == nil {
 			return profile, nil
 		}
 	}
-	profile, err := svc.Document.GetDefaultRenderProfileByBusiness(ctx, document.BusinessID)
+	profile, err := svc.Document.GetDefaultRenderProfileForRenderingByBusiness(ctx, document.BusinessID)
 	if err != nil {
 		return nil, nil
 	}

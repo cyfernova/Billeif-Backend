@@ -519,6 +519,7 @@ func TestProcessInvoiceQueueMessageReturnsRetryableErrorForProcessingPreview(t *
 	documentService := services.NewDocumentService(
 		nil,
 		cfg,
+		nil,
 		&queueMessageDocumentRepository{
 			document:   document,
 			job:        job,

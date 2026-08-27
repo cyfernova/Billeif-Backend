@@ -44,3 +44,4 @@
 000044_canonical_invoice_foundations
 000045_extend_invoice_deliveries
 000046_add_bargaining_round_claims
+000047_encrypt_render_profile_passwords
