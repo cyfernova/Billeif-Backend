@@ -1,6 +1,15 @@
 package handlers
 
-import "strings"
+import (
+	"errors"
+	"strings"
+
+	"invoice-backend/internal/services"
+)
+
+func isPermissionDeniedErr(err error) bool {
+	return errors.Is(err, services.ErrPermissionDenied)
+}
 
 func isNotFoundErr(err error) bool {
 	if err == nil {

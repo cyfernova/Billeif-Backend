@@ -39,7 +39,7 @@ func TestRenderProfilePasswordEncryptionIsAuthenticatedAndDomainSeparated(t *tes
 		key: base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
 	}
 	service := &DocumentService{cfg: &config.Config{}, resolver: resolver}
-	ctx := context.Background()
+	ctx := renderProfilePasswordTestContext()
 	const (
 		businessID = "11111111-1111-4111-8111-111111111111"
 		profileID  = "22222222-2222-4222-8222-222222222222"
@@ -95,7 +95,7 @@ func TestRenderProfilePasswordEncryptionIsAuthenticatedAndDomainSeparated(t *tes
 
 func TestCreateRenderProfileEncryptsPasswordAtRest(t *testing.T) {
 	service, db, resolver := newRenderProfilePasswordService(t)
-	ctx := context.Background()
+	ctx := renderProfilePasswordTestContext()
 	businessID := uuid.NewString()
 	const password = "synthetic-create-password"
 
@@ -136,7 +136,7 @@ func TestCreateRenderProfileEncryptsPasswordAtRest(t *testing.T) {
 
 func TestPublicRenderProfileReadMigratesLegacyPasswordWithoutExposingIt(t *testing.T) {
 	service, db, resolver := newRenderProfilePasswordService(t)
-	ctx := context.Background()
+	ctx := renderProfilePasswordTestContext()
 	businessID := uuid.NewString()
 	profileID := uuid.NewString()
 	const legacyPassword = "synthetic-legacy-password"
@@ -184,7 +184,7 @@ func TestPublicRenderProfileReadMigratesLegacyPasswordWithoutExposingIt(t *testi
 
 func TestLegacyMigrationRecoversFromInvalidExistingCiphertext(t *testing.T) {
 	service, db, _ := newRenderProfilePasswordService(t)
-	ctx := context.Background()
+	ctx := renderProfilePasswordTestContext()
 	businessID := uuid.NewString()
 	profileID := uuid.NewString()
 	const legacyPassword = "synthetic-recoverable-legacy-password"
@@ -217,7 +217,7 @@ func TestLegacyMigrationRecoversFromInvalidExistingCiphertext(t *testing.T) {
 
 func TestLegacyMigrationTreatsRollingDeployPlaintextAsLatestPassword(t *testing.T) {
 	service, db, _ := newRenderProfilePasswordService(t)
-	ctx := context.Background()
+	ctx := renderProfilePasswordTestContext()
 	businessID := uuid.NewString()
 	created, err := service.CreateRenderProfileByBusiness(ctx, businessID, CreateRenderProfileInput{
 		Name:              "Rolling deployment profile",
@@ -247,7 +247,7 @@ func TestLegacyMigrationTreatsRollingDeployPlaintextAsLatestPassword(t *testing.
 
 func TestLegacyMigrationCompareAndSwapDoesNotOverwriteConcurrentPassword(t *testing.T) {
 	service, db, _ := newRenderProfilePasswordService(t)
-	ctx := context.Background()
+	ctx := renderProfilePasswordTestContext()
 	businessID := uuid.NewString()
 	profileID := uuid.NewString()
 	const legacyPassword = "synthetic-stale-legacy-password"
@@ -305,7 +305,7 @@ func TestLegacyMigrationCompareAndSwapDoesNotOverwriteConcurrentPassword(t *test
 
 func TestTrustedRendererResolvesPlaintextOnlyInMemory(t *testing.T) {
 	service, db, resolver := newRenderProfilePasswordService(t)
-	ctx := context.Background()
+	ctx := renderProfilePasswordTestContext()
 	businessID := uuid.NewString()
 	const password = "synthetic-renderer-password"
 	created, err := service.CreateRenderProfileByBusiness(ctx, businessID, CreateRenderProfileInput{
@@ -354,7 +354,7 @@ func TestTrustedRendererResolvesPlaintextOnlyInMemory(t *testing.T) {
 
 func TestUpdateRenderProfileReplacesPasswordWithCiphertext(t *testing.T) {
 	service, db, resolver := newRenderProfilePasswordService(t)
-	ctx := context.Background()
+	ctx := renderProfilePasswordTestContext()
 	businessID := uuid.NewString()
 	created, err := service.CreateRenderProfileByBusiness(ctx, businessID, CreateRenderProfileInput{
 		Name:              "Rotated protected profile",
@@ -409,7 +409,7 @@ func TestUpdateRenderProfileReplacesPasswordWithCiphertext(t *testing.T) {
 
 func TestBackfillLegacyRenderProfilePasswordsEncryptsEveryStoredValue(t *testing.T) {
 	service, db, resolver := newRenderProfilePasswordService(t)
-	ctx := context.Background()
+	ctx := renderProfilePasswordTestContext()
 	businessID := uuid.NewString()
 	for _, fixture := range []struct {
 		id       string
@@ -511,12 +511,17 @@ func newRenderProfilePasswordService(t *testing.T) (*DocumentService, *gorm.DB, 
 		key: base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
 	}
 	service := &DocumentService{
-		cfg:      &config.Config{},
-		resolver: resolver,
-		repo:     postgres.NewDocumentRepository(db),
-		log:      logger.NewWithEnv("test"),
+		cfg:         &config.Config{},
+		resolver:    resolver,
+		repo:        postgres.NewDocumentRepository(db),
+		permissions: &recordingPermissionChecker{allow: true},
+		log:         logger.NewWithEnv("test"),
 	}
 	return service, db, resolver
+}
+
+func renderProfilePasswordTestContext() context.Context {
+	return ContextWithActor(context.Background(), ActorContext{UserID: "render-profile-test-user"})
 }
 
 func tamperRenderProfileCiphertext(value string) string {

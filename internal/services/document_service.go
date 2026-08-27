@@ -37,6 +37,7 @@ type DocumentService struct {
 	salesInvoices      salesInvoiceDocumentCreator
 	salesInvoiceIssuer salesInvoiceDocumentIssuer
 	sqs                *sqs.Client
+	permissions        PermissionChecker
 	log                *logger.Logger
 }
 
@@ -204,6 +205,7 @@ func NewDocumentService(
 	journals *JournalService,
 	shipping *ShippingService,
 	awsCfg *awsclients.Config,
+	permissions PermissionChecker,
 	log *logger.Logger,
 ) *DocumentService {
 	return &DocumentService{
@@ -219,6 +221,7 @@ func NewDocumentService(
 		journals:     journals,
 		shipping:     shipping,
 		sqs:          awsCfg.SQS,
+		permissions:  permissions,
 		log:          log,
 	}
 }
@@ -1080,6 +1083,9 @@ func (s *DocumentService) BackfillLegacyRenderProfilePasswords(ctx context.Conte
 }
 
 func (s *DocumentService) CreateRenderProfileByBusiness(ctx context.Context, businessID string, input CreateRenderProfileInput) (*models.RenderProfile, error) {
+	if err := requireMutationPermission(ctx, s.permissions, businessID, PermissionRenderProfilesCreate); err != nil {
+		return nil, err
+	}
 	profile := &models.RenderProfile{
 		ID:                uuid.NewString(),
 		BusinessID:        businessID,
@@ -1127,6 +1133,9 @@ func (s *DocumentService) ListRenderProfilesByBusiness(ctx context.Context, busi
 }
 
 func (s *DocumentService) UpdateRenderProfileByBusiness(ctx context.Context, businessID, profileID string, input UpdateRenderProfileInput) (*models.RenderProfile, error) {
+	if err := requireMutationPermission(ctx, s.permissions, businessID, PermissionRenderProfilesUpdate); err != nil {
+		return nil, err
+	}
 	profile, err := s.repo.GetRenderProfile(ctx, businessID, profileID)
 	if err != nil {
 		return nil, err
@@ -1276,6 +1285,9 @@ func (s *DocumentService) resolveRenderProfilePassword(
 }
 
 func (s *DocumentService) DeleteRenderProfileByBusiness(ctx context.Context, businessID, profileID string) error {
+	if err := requireMutationPermission(ctx, s.permissions, businessID, PermissionRenderProfilesDelete); err != nil {
+		return err
+	}
 	return s.repo.DeleteRenderProfile(ctx, businessID, profileID)
 }
 

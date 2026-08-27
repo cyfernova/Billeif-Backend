@@ -10,12 +10,13 @@ import (
 )
 
 type CustomerService struct {
-	repo interfaces.CustomerRepository
-	log  *logger.Logger
+	repo        interfaces.CustomerRepository
+	permissions PermissionChecker
+	log         *logger.Logger
 }
 
-func NewCustomerService(repo interfaces.CustomerRepository, log *logger.Logger) *CustomerService {
-	return &CustomerService{repo: repo, log: log}
+func NewCustomerService(repo interfaces.CustomerRepository, permissions PermissionChecker, log *logger.Logger) *CustomerService {
+	return &CustomerService{repo: repo, permissions: permissions, log: log}
 }
 
 type CreateCustomerInput struct {
@@ -43,6 +44,13 @@ type CreateCustomerInput struct {
 }
 
 func (s *CustomerService) Create(ctx context.Context, input CreateCustomerInput) (*models.Customer, error) {
+	if err := requireMutationPermission(ctx, s.permissions, input.BusinessID, PermissionCustomersCreate); err != nil {
+		return nil, err
+	}
+	return s.create(ctx, input)
+}
+
+func (s *CustomerService) create(ctx context.Context, input CreateCustomerInput) (*models.Customer, error) {
 	address := firstNonEmpty(input.Address, input.BillingAddress)
 	postalCode := firstNonEmpty(input.ZipCode, input.Pincode)
 	customer := &models.Customer{
@@ -105,6 +113,9 @@ type UpdateCustomerInput struct {
 }
 
 func (s *CustomerService) UpdateByBusiness(ctx context.Context, businessID, id string, input UpdateCustomerInput) (*models.Customer, error) {
+	if err := requireMutationPermission(ctx, s.permissions, businessID, PermissionCustomersUpdate); err != nil {
+		return nil, err
+	}
 	customer, err := s.GetByBusiness(ctx, businessID, id)
 	if err != nil {
 		return nil, err
@@ -169,11 +180,10 @@ func (s *CustomerService) UpdateByBusiness(ctx context.Context, businessID, id s
 	return customer, nil
 }
 
-func (s *CustomerService) Delete(ctx context.Context, id string) error {
-	return s.repo.Delete(ctx, id)
-}
-
 func (s *CustomerService) DeleteByBusiness(ctx context.Context, businessID, id string) error {
+	if err := requireMutationPermission(ctx, s.permissions, businessID, PermissionCustomersDelete); err != nil {
+		return err
+	}
 	customer, err := s.GetByBusiness(ctx, businessID, id)
 	if err != nil {
 		return err
@@ -182,10 +192,13 @@ func (s *CustomerService) DeleteByBusiness(ctx context.Context, businessID, id s
 }
 
 func (s *CustomerService) Import(ctx context.Context, businessID string, customers []CreateCustomerInput) (int, error) {
+	if err := requireMutationPermission(ctx, s.permissions, businessID, PermissionCustomersCreate); err != nil {
+		return 0, err
+	}
 	count := 0
 	for _, c := range customers {
 		c.BusinessID = businessID
-		if _, err := s.Create(ctx, c); err != nil {
+		if _, err := s.create(ctx, c); err != nil {
 			s.log.Warn("failed to import customer", "name", c.Name, "error", err)
 			continue
 		}

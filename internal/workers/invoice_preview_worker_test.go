@@ -533,6 +533,7 @@ func TestProcessInvoiceQueueMessageReturnsRetryableErrorForProcessingPreview(t *
 		nil,
 		nil,
 		awsCfg,
+		nil,
 		log,
 	)
 	invoiceService := services.NewInvoiceService(

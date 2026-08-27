@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -22,6 +23,12 @@ import (
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 )
+
+type renderProfilePermissionChecker struct{}
+
+func (renderProfilePermissionChecker) UserHasPermission(context.Context, string, string, string) bool {
+	return true
+}
 
 func TestRenderProfileGetResponseNeverSerializesPassword(t *testing.T) {
 	router, _, businessID, profileID, password := newRenderProfileHandlerTest(t)
@@ -246,12 +253,14 @@ func newRenderProfileHandlerTest(t *testing.T) (*gin.Engine, *gorm.DB, string, s
 		nil,
 		nil,
 		&awsclients.Config{},
+		renderProfilePermissionChecker{},
 		logger.NewWithEnv("test"),
 	)
 	handler := NewRenderProfileHandler(service, logger.NewWithEnv("test"))
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set("business_id", businessID)
+		c.Set("user_id", "render-profile-test-user")
 		c.Next()
 	})
 	router.GET("/api/v1/render-profiles", handler.List)

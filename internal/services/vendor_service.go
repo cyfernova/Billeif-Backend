@@ -10,12 +10,13 @@ import (
 )
 
 type VendorService struct {
-	repo interfaces.VendorRepository
-	log  *logger.Logger
+	repo        interfaces.VendorRepository
+	permissions PermissionChecker
+	log         *logger.Logger
 }
 
-func NewVendorService(repo interfaces.VendorRepository, log *logger.Logger) *VendorService {
-	return &VendorService{repo: repo, log: log}
+func NewVendorService(repo interfaces.VendorRepository, permissions PermissionChecker, log *logger.Logger) *VendorService {
+	return &VendorService{repo: repo, permissions: permissions, log: log}
 }
 
 type CreateVendorInput struct {
@@ -40,6 +41,9 @@ type CreateVendorInput struct {
 }
 
 func (s *VendorService) Create(ctx context.Context, input CreateVendorInput) (*models.Vendor, error) {
+	if err := requireMutationPermission(ctx, s.permissions, input.BusinessID, PermissionVendorsCreate); err != nil {
+		return nil, err
+	}
 	log := logger.FromContext(ctx).With("service", "vendor", "operation", "create", "business_id", input.BusinessID)
 	vendor := &models.Vendor{
 		BusinessID:              input.BusinessID,
@@ -107,6 +111,9 @@ type UpdateVendorInput struct {
 }
 
 func (s *VendorService) UpdateByBusiness(ctx context.Context, businessID, id string, input UpdateVendorInput) (*models.Vendor, error) {
+	if err := requireMutationPermission(ctx, s.permissions, businessID, PermissionVendorsUpdate); err != nil {
+		return nil, err
+	}
 	log := logger.FromContext(ctx).With("service", "vendor", "operation", "update", "vendor_id", id, "business_id", businessID)
 	vendor, err := s.GetByBusiness(ctx, businessID, id)
 	if err != nil {
@@ -175,17 +182,10 @@ func (s *VendorService) UpdateByBusiness(ctx context.Context, businessID, id str
 	return vendor, nil
 }
 
-func (s *VendorService) Delete(ctx context.Context, id string) error {
-	log := logger.FromContext(ctx).With("service", "vendor", "operation", "delete", "vendor_id", id)
-	if err := s.repo.Delete(ctx, id); err != nil {
-		log.Error("failed to delete vendor", "error", err)
+func (s *VendorService) DeleteByBusiness(ctx context.Context, businessID, id string) error {
+	if err := requireMutationPermission(ctx, s.permissions, businessID, PermissionVendorsDelete); err != nil {
 		return err
 	}
-	log.Info("vendor deleted", "vendor_id", id)
-	return nil
-}
-
-func (s *VendorService) DeleteByBusiness(ctx context.Context, businessID, id string) error {
 	log := logger.FromContext(ctx).With("service", "vendor", "operation", "delete", "vendor_id", id, "business_id", businessID)
 	vendor, err := s.GetByBusiness(ctx, businessID, id)
 	if err != nil {

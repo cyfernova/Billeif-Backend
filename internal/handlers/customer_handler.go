@@ -45,12 +45,17 @@ func (h *CustomerHandler) Create(c *gin.Context) {
 		return
 	}
 	input.BusinessID = businessID
+	requestContextWithActor(c)
 
 	var customer *models.Customer
 	customer, err := h.svc.Create(c.Request.Context(), input)
 	if err != nil {
 		log.Error("failed to create customer", "error", err, "business_id", input.BusinessID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		statusCode := http.StatusInternalServerError
+		if isPermissionDeniedErr(err) {
+			statusCode = http.StatusForbidden
+		}
+		c.JSON(statusCode, gin.H{"error": err.Error()})
 		return
 	}
 	log.Info("customer created", "customer_id", customer.ID, "business_id", customer.BusinessID)
@@ -150,11 +155,16 @@ func (h *CustomerHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	requestContextWithActor(c)
 
 	var customer *models.Customer
 	customer, err := h.svc.UpdateByBusiness(c.Request.Context(), businessID, id, input)
 	if err != nil {
 		log.Error("failed to update customer", "error", err, "customer_id", id)
+		if isPermissionDeniedErr(err) {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
 		if isNotFoundErr(err) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "customer not found"})
 			return
@@ -184,8 +194,13 @@ func (h *CustomerHandler) Delete(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
+	requestContextWithActor(c)
 	if err := h.svc.DeleteByBusiness(c.Request.Context(), businessID, id); err != nil {
 		log.Error("failed to delete customer", "error", err, "customer_id", id)
+		if isPermissionDeniedErr(err) {
+			c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+			return
+		}
 		if isNotFoundErr(err) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "customer not found"})
 			return
@@ -224,11 +239,16 @@ func (h *CustomerHandler) Import(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	requestContextWithActor(c)
 
 	count, err := h.svc.Import(c.Request.Context(), businessID, customers)
 	if err != nil {
 		log.Error("failed to import customers", "error", err, "business_id", businessID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		statusCode := http.StatusInternalServerError
+		if isPermissionDeniedErr(err) {
+			statusCode = http.StatusForbidden
+		}
+		c.JSON(statusCode, gin.H{"error": err.Error()})
 		return
 	}
 	log.Info("customers imported", "business_id", businessID, "imported_count", count)

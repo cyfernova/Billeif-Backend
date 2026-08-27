@@ -698,10 +698,10 @@ func setupRouter(
 			{
 				customers.GET("", h.Customer.List)
 				customers.GET("/:id", h.Customer.Get)
-				customers.POST("", userWriteRL, h.Customer.Create)
-				customers.PUT("/:id", userWriteRL, h.Customer.Update)
-				customers.DELETE("/:id", userWriteRL, h.Customer.Delete)
-				customers.POST("/import", bulkRL, h.Customer.Import)
+				customers.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersCreate), userWriteRL, h.Customer.Create)
+				customers.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersUpdate), userWriteRL, h.Customer.Update)
+				customers.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersDelete), userWriteRL, h.Customer.Delete)
+				customers.POST("/import", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersCreate), bulkRL, h.Customer.Import)
 				customers.GET("/export", h.Customer.Export)
 			}
 
@@ -709,9 +709,9 @@ func setupRouter(
 			{
 				vendors.GET("", h.Vendor.List)
 				vendors.GET("/:id", h.Vendor.Get)
-				vendors.POST("", userWriteRL, h.Vendor.Create)
-				vendors.PUT("/:id", userWriteRL, h.Vendor.Update)
-				vendors.DELETE("/:id", userWriteRL, h.Vendor.Delete)
+				vendors.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVendorsCreate), userWriteRL, h.Vendor.Create)
+				vendors.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVendorsUpdate), userWriteRL, h.Vendor.Update)
+				vendors.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVendorsDelete), userWriteRL, h.Vendor.Delete)
 			}
 
 			products := protected.Group("/products")
@@ -904,8 +904,8 @@ func setupRouter(
 
 			imports := protected.Group("/imports")
 			{
-				imports.POST("/customers", bulkRL, h.BillingOps.CreateCustomerImportJob)
-				imports.POST("/vendors", bulkRL, h.BillingOps.CreateVendorImportJob)
+				imports.POST("/customers", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersCreate), bulkRL, h.BillingOps.CreateCustomerImportJob)
+				imports.POST("/vendors", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVendorsCreate), bulkRL, h.BillingOps.CreateVendorImportJob)
 				imports.POST("/products", bulkRL, h.BillingOps.CreateProductImportJob)
 				imports.POST("/invoices", bulkRL, h.BillingOps.CreateInvoiceImportJob)
 				imports.POST("/documents", bulkRL, h.BillingOps.CreateDocumentImportJob)
@@ -940,10 +940,10 @@ func setupRouter(
 				renderProfiles.GET("", h.RenderProfile.List)
 				renderProfiles.GET("/default", h.RenderProfile.GetDefault)
 				renderProfiles.GET("/:id", h.RenderProfile.Get)
-				renderProfiles.POST("", userWriteRL, h.RenderProfile.Create)
-				renderProfiles.POST("/:id/default", userWriteRL, h.RenderProfile.SetDefault)
-				renderProfiles.PUT("/:id", userWriteRL, h.RenderProfile.Update)
-				renderProfiles.DELETE("/:id", userWriteRL, h.RenderProfile.Delete)
+				renderProfiles.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRenderProfilesCreate), userWriteRL, h.RenderProfile.Create)
+				renderProfiles.POST("/:id/default", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRenderProfilesUpdate), userWriteRL, h.RenderProfile.SetDefault)
+				renderProfiles.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRenderProfilesUpdate), userWriteRL, h.RenderProfile.Update)
+				renderProfiles.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRenderProfilesDelete), userWriteRL, h.RenderProfile.Delete)
 			}
 
 			utils := protected.Group("/utils")

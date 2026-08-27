@@ -79,6 +79,7 @@ func TestInvoiceRendererLoadsResolvedRenderProfilePassword(t *testing.T) {
 		nil,
 		nil,
 		&awsclients.Config{},
+		nil,
 		logger.NewWithEnv("test"),
 	)
 	operations := &servicePreviewRenderOperations{

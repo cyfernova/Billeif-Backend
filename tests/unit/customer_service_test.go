@@ -18,6 +18,20 @@ type MockCustomerRepo struct {
 	mock.Mock
 }
 
+type allowCustomerPermissionChecker struct{}
+
+func (allowCustomerPermissionChecker) UserHasPermission(context.Context, string, string, string) bool {
+	return true
+}
+
+func newCustomerService(repo *MockCustomerRepo, log *logger.Logger) *services.CustomerService {
+	return services.NewCustomerService(repo, allowCustomerPermissionChecker{}, log)
+}
+
+func authorizedCustomerContext() context.Context {
+	return services.ContextWithActor(context.Background(), services.ActorContext{UserID: "accountant-1", Role: "accountant"})
+}
+
 func (m *MockCustomerRepo) Create(ctx context.Context, customer *models.Customer) error {
 	args := m.Called(ctx, customer)
 	return args.Error(0)
@@ -54,9 +68,9 @@ func (m *MockCustomerRepo) Delete(ctx context.Context, id string) error {
 func TestCustomerService_Create_Success(t *testing.T) {
 	mockRepo := new(MockCustomerRepo)
 	log := logger.New()
-	svc := services.NewCustomerService(mockRepo, log)
+	svc := newCustomerService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedCustomerContext()
 	input := services.CreateCustomerInput{
 		BusinessID:  "business-123",
 		Name:        "John Doe",
@@ -94,9 +108,9 @@ func TestCustomerService_Create_Success(t *testing.T) {
 func TestCustomerService_Create_RepositoryError(t *testing.T) {
 	mockRepo := new(MockCustomerRepo)
 	log := logger.New()
-	svc := services.NewCustomerService(mockRepo, log)
+	svc := newCustomerService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedCustomerContext()
 	input := services.CreateCustomerInput{
 		BusinessID: "business-123",
 		Name:       "John Doe",
@@ -117,9 +131,9 @@ func TestCustomerService_Create_RepositoryError(t *testing.T) {
 func TestCustomerService_Create_AllFields(t *testing.T) {
 	mockRepo := new(MockCustomerRepo)
 	log := logger.New()
-	svc := services.NewCustomerService(mockRepo, log)
+	svc := newCustomerService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedCustomerContext()
 	input := services.CreateCustomerInput{
 		BusinessID:   "business-123",
 		Name:         "Acme Corp",
@@ -161,9 +175,9 @@ func TestCustomerService_Create_AllFields(t *testing.T) {
 func TestCustomerService_GetByBusiness_Success(t *testing.T) {
 	mockRepo := new(MockCustomerRepo)
 	log := logger.New()
-	svc := services.NewCustomerService(mockRepo, log)
+	svc := newCustomerService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedCustomerContext()
 	businessID := "business-123"
 	customerID := "customer-456"
 
@@ -189,9 +203,9 @@ func TestCustomerService_GetByBusiness_Success(t *testing.T) {
 func TestCustomerService_GetByBusiness_NotFound(t *testing.T) {
 	mockRepo := new(MockCustomerRepo)
 	log := logger.New()
-	svc := services.NewCustomerService(mockRepo, log)
+	svc := newCustomerService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedCustomerContext()
 	businessID := "business-123"
 	customerID := "nonexistent"
 
@@ -208,9 +222,9 @@ func TestCustomerService_GetByBusiness_NotFound(t *testing.T) {
 func TestCustomerService_List_Success(t *testing.T) {
 	mockRepo := new(MockCustomerRepo)
 	log := logger.New()
-	svc := services.NewCustomerService(mockRepo, log)
+	svc := newCustomerService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedCustomerContext()
 	businessID := "business-123"
 
 	expected := []*models.Customer{
@@ -232,9 +246,9 @@ func TestCustomerService_List_Success(t *testing.T) {
 func TestCustomerService_List_EmptyResult(t *testing.T) {
 	mockRepo := new(MockCustomerRepo)
 	log := logger.New()
-	svc := services.NewCustomerService(mockRepo, log)
+	svc := newCustomerService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedCustomerContext()
 	businessID := "business-123"
 
 	mockRepo.On("GetByBusinessID", ctx, businessID, 1, 10).Return([]*models.Customer{}, int64(0), nil)
@@ -251,9 +265,9 @@ func TestCustomerService_List_EmptyResult(t *testing.T) {
 func TestCustomerService_List_RepositoryError(t *testing.T) {
 	mockRepo := new(MockCustomerRepo)
 	log := logger.New()
-	svc := services.NewCustomerService(mockRepo, log)
+	svc := newCustomerService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedCustomerContext()
 	businessID := "business-123"
 
 	mockRepo.On("GetByBusinessID", ctx, businessID, 1, 10).Return(nil, int64(0), errors.New("database error"))
@@ -270,9 +284,9 @@ func TestCustomerService_List_RepositoryError(t *testing.T) {
 func TestCustomerService_List_Pagination(t *testing.T) {
 	mockRepo := new(MockCustomerRepo)
 	log := logger.New()
-	svc := services.NewCustomerService(mockRepo, log)
+	svc := newCustomerService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedCustomerContext()
 	businessID := "business-123"
 
 	testCases := []struct {
@@ -303,9 +317,9 @@ func TestCustomerService_List_Pagination(t *testing.T) {
 func TestCustomerService_UpdateByBusiness_Success(t *testing.T) {
 	mockRepo := new(MockCustomerRepo)
 	log := logger.New()
-	svc := services.NewCustomerService(mockRepo, log)
+	svc := newCustomerService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedCustomerContext()
 	businessID := "business-123"
 	customerID := "customer-456"
 
@@ -340,9 +354,9 @@ func TestCustomerService_UpdateByBusiness_Success(t *testing.T) {
 func TestCustomerService_UpdateByBusiness_PartialUpdate(t *testing.T) {
 	mockRepo := new(MockCustomerRepo)
 	log := logger.New()
-	svc := services.NewCustomerService(mockRepo, log)
+	svc := newCustomerService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedCustomerContext()
 	businessID := "business-123"
 	customerID := "customer-456"
 
@@ -377,9 +391,9 @@ func TestCustomerService_UpdateByBusiness_PartialUpdate(t *testing.T) {
 func TestCustomerService_UpdateByBusiness_NotFound(t *testing.T) {
 	mockRepo := new(MockCustomerRepo)
 	log := logger.New()
-	svc := services.NewCustomerService(mockRepo, log)
+	svc := newCustomerService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedCustomerContext()
 	businessID := "business-123"
 	customerID := "nonexistent"
 
@@ -400,9 +414,9 @@ func TestCustomerService_UpdateByBusiness_NotFound(t *testing.T) {
 func TestCustomerService_UpdateByBusiness_RepositoryError(t *testing.T) {
 	mockRepo := new(MockCustomerRepo)
 	log := logger.New()
-	svc := services.NewCustomerService(mockRepo, log)
+	svc := newCustomerService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedCustomerContext()
 	businessID := "business-123"
 	customerID := "customer-456"
 
@@ -430,9 +444,9 @@ func TestCustomerService_UpdateByBusiness_RepositoryError(t *testing.T) {
 func TestCustomerService_UpdateByBusiness_AllFields(t *testing.T) {
 	mockRepo := new(MockCustomerRepo)
 	log := logger.New()
-	svc := services.NewCustomerService(mockRepo, log)
+	svc := newCustomerService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedCustomerContext()
 	businessID := "business-123"
 	customerID := "customer-456"
 
@@ -477,47 +491,13 @@ func TestCustomerService_UpdateByBusiness_AllFields(t *testing.T) {
 	mockRepo.AssertExpectations(t)
 }
 
-// TestCustomerService_Delete_Success tests successful customer deletion
-func TestCustomerService_Delete_Success(t *testing.T) {
-	mockRepo := new(MockCustomerRepo)
-	log := logger.New()
-	svc := services.NewCustomerService(mockRepo, log)
-
-	ctx := context.Background()
-	customerID := "customer-456"
-
-	mockRepo.On("Delete", ctx, customerID).Return(nil)
-
-	err := svc.Delete(ctx, customerID)
-
-	assert.NoError(t, err)
-	mockRepo.AssertExpectations(t)
-}
-
-// TestCustomerService_Delete_RepositoryError tests deletion with repository error
-func TestCustomerService_Delete_RepositoryError(t *testing.T) {
-	mockRepo := new(MockCustomerRepo)
-	log := logger.New()
-	svc := services.NewCustomerService(mockRepo, log)
-
-	ctx := context.Background()
-	customerID := "customer-456"
-
-	mockRepo.On("Delete", ctx, customerID).Return(errors.New("database error"))
-
-	err := svc.Delete(ctx, customerID)
-
-	assert.Error(t, err)
-	mockRepo.AssertExpectations(t)
-}
-
 // TestCustomerService_DeleteByBusiness_Success tests successful scoped customer deletion
 func TestCustomerService_DeleteByBusiness_Success(t *testing.T) {
 	mockRepo := new(MockCustomerRepo)
 	log := logger.New()
-	svc := services.NewCustomerService(mockRepo, log)
+	svc := newCustomerService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedCustomerContext()
 	businessID := "business-123"
 	customerID := "customer-456"
 
@@ -540,9 +520,9 @@ func TestCustomerService_DeleteByBusiness_Success(t *testing.T) {
 func TestCustomerService_DeleteByBusiness_NotFound(t *testing.T) {
 	mockRepo := new(MockCustomerRepo)
 	log := logger.New()
-	svc := services.NewCustomerService(mockRepo, log)
+	svc := newCustomerService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedCustomerContext()
 	businessID := "business-123"
 	customerID := "nonexistent"
 
@@ -558,9 +538,9 @@ func TestCustomerService_DeleteByBusiness_NotFound(t *testing.T) {
 func TestCustomerService_DeleteByBusiness_WrongBusiness(t *testing.T) {
 	mockRepo := new(MockCustomerRepo)
 	log := logger.New()
-	svc := services.NewCustomerService(mockRepo, log)
+	svc := newCustomerService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedCustomerContext()
 	businessID := "business-123"
 	customerID := "customer-456"
 
@@ -577,9 +557,9 @@ func TestCustomerService_DeleteByBusiness_WrongBusiness(t *testing.T) {
 func TestCustomerService_Import_Success(t *testing.T) {
 	mockRepo := new(MockCustomerRepo)
 	log := logger.New()
-	svc := services.NewCustomerService(mockRepo, log)
+	svc := newCustomerService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedCustomerContext()
 	businessID := "business-123"
 	customers := []services.CreateCustomerInput{
 		{Name: "Customer 1", Email: "c1@example.com"},
@@ -602,9 +582,9 @@ func TestCustomerService_Import_Success(t *testing.T) {
 func TestCustomerService_Import_PartialFailure(t *testing.T) {
 	mockRepo := new(MockCustomerRepo)
 	log := logger.New()
-	svc := services.NewCustomerService(mockRepo, log)
+	svc := newCustomerService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedCustomerContext()
 	businessID := "business-123"
 	customers := []services.CreateCustomerInput{
 		{Name: "Customer 1", Email: "c1@example.com"},
@@ -636,9 +616,9 @@ func TestCustomerService_Import_PartialFailure(t *testing.T) {
 func TestCustomerService_Import_AllFailures(t *testing.T) {
 	mockRepo := new(MockCustomerRepo)
 	log := logger.New()
-	svc := services.NewCustomerService(mockRepo, log)
+	svc := newCustomerService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedCustomerContext()
 	businessID := "business-123"
 	customers := []services.CreateCustomerInput{
 		{Name: "Customer 1", Email: "c1@example.com"},
@@ -658,9 +638,9 @@ func TestCustomerService_Import_AllFailures(t *testing.T) {
 func TestCustomerService_Export_Success(t *testing.T) {
 	mockRepo := new(MockCustomerRepo)
 	log := logger.New()
-	svc := services.NewCustomerService(mockRepo, log)
+	svc := newCustomerService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedCustomerContext()
 	businessID := "business-123"
 
 	expected := []*models.Customer{
@@ -681,9 +661,9 @@ func TestCustomerService_Export_Success(t *testing.T) {
 func TestCustomerService_Export_EmptyResult(t *testing.T) {
 	mockRepo := new(MockCustomerRepo)
 	log := logger.New()
-	svc := services.NewCustomerService(mockRepo, log)
+	svc := newCustomerService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedCustomerContext()
 	businessID := "business-123"
 
 	mockRepo.On("GetByBusinessID", ctx, businessID, 1, 5000).Return([]*models.Customer{}, int64(0), nil)
@@ -699,9 +679,9 @@ func TestCustomerService_Export_EmptyResult(t *testing.T) {
 func TestCustomerService_Export_RepositoryError(t *testing.T) {
 	mockRepo := new(MockCustomerRepo)
 	log := logger.New()
-	svc := services.NewCustomerService(mockRepo, log)
+	svc := newCustomerService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedCustomerContext()
 	businessID := "business-123"
 
 	mockRepo.On("GetByBusinessID", ctx, businessID, 1, 5000).Return(nil, int64(0), errors.New("database error"))
@@ -717,9 +697,9 @@ func TestCustomerService_Export_RepositoryError(t *testing.T) {
 func TestCustomerService_UpdateByBusiness_CreditLimitOnly(t *testing.T) {
 	mockRepo := new(MockCustomerRepo)
 	log := logger.New()
-	svc := services.NewCustomerService(mockRepo, log)
+	svc := newCustomerService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedCustomerContext()
 	businessID := "business-123"
 	customerID := "customer-456"
 
@@ -751,9 +731,9 @@ func TestCustomerService_UpdateByBusiness_CreditLimitOnly(t *testing.T) {
 func TestCustomerService_UpdateByBusiness_EmptyInput(t *testing.T) {
 	mockRepo := new(MockCustomerRepo)
 	log := logger.New()
-	svc := services.NewCustomerService(mockRepo, log)
+	svc := newCustomerService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedCustomerContext()
 	businessID := "business-123"
 	customerID := "customer-456"
 
@@ -782,9 +762,9 @@ func TestCustomerService_UpdateByBusiness_EmptyInput(t *testing.T) {
 func TestCustomerService_DeleteByBusiness_RepositoryError(t *testing.T) {
 	mockRepo := new(MockCustomerRepo)
 	log := logger.New()
-	svc := services.NewCustomerService(mockRepo, log)
+	svc := newCustomerService(mockRepo, log)
 
-	ctx := context.Background()
+	ctx := authorizedCustomerContext()
 	businessID := "business-123"
 	customerID := "customer-456"
 
