@@ -139,6 +139,21 @@ func Initialize(ctx context.Context, opts InitializeOptions) (*Runtime, error) {
 
 	repos := initRepositories(db)
 	svcs := initServices(cfg, db, repos, awsClients, resolver, log)
+	migratedRenderProfilePasswords, err := backfillLegacyRenderProfilePasswords(ctx, opts.Profile, svcs.Document)
+	if err != nil {
+		if sqlDB, dbErr := db.DB(); dbErr == nil {
+			_ = sqlDB.Close()
+		}
+		log.Sync()
+		return nil, fmt.Errorf("backfill render profile passwords: %w", err)
+	}
+	if migratedRenderProfilePasswords > 0 {
+		log.Info(
+			"encrypted legacy render profile passwords",
+			"profiles",
+			migratedRenderProfilePasswords,
+		)
+	}
 	h := handlers.New(svcs, &handlers.Repositories{AP2: repos.AP2}, cfg, log, invoiceCursor)
 	router := setupRouter(cfg, svcs, h, log)
 
@@ -334,6 +349,24 @@ func initServices(cfg *config.Config, db *gorm.DB, repos *Repositories, aws *aws
 	return services.NewContainer(cfg, resolver, db, repos.User, repos.Business, repos.Customer, repos.Vendor,
 		repos.Product, repos.Document, repos.Journal, repos.Inventory, repos.Shipping, repos.Invoice, repos.Payment, repos.Ledger, repos.Reporting, repos.Team,
 		repos.Webhook, repos.Subscription, repos.AP2, aws, log)
+}
+
+type renderProfilePasswordBackfiller interface {
+	BackfillLegacyRenderProfilePasswords(context.Context) (int, error)
+}
+
+func backfillLegacyRenderProfilePasswords(
+	ctx context.Context,
+	profile config.Profile,
+	backfiller renderProfilePasswordBackfiller,
+) (int, error) {
+	if profile != config.ProfileHTTP {
+		return 0, nil
+	}
+	if backfiller == nil {
+		return 0, fmt.Errorf("render profile password backfiller is required")
+	}
+	return backfiller.BackfillLegacyRenderProfilePasswords(ctx)
 }
 
 // initSentry initializes the Sentry SDK with production configuration
