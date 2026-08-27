@@ -73,6 +73,96 @@ mock_provider "aws" {
   }
 
   override_resource {
+    target          = aws_iam_role.lambda_exec
+    override_during = plan
+    values = {
+      arn = "arn:aws:iam::928282274753:role/billeif-test-lambda-exec-role"
+      id  = "billeif-test-lambda-exec-role"
+    }
+  }
+
+  override_resource {
+    target          = aws_iam_role.lambda_http_exec
+    override_during = plan
+    values = {
+      arn = "arn:aws:iam::928282274753:role/billeif-test-lambda-http-exec-role"
+      id  = "billeif-test-lambda-http-exec-role"
+    }
+  }
+
+  override_resource {
+    target          = aws_s3_bucket.business_logos
+    override_during = plan
+    values = {
+      arn = "arn:aws:s3:::billeif-test-928282274753-business-logos"
+    }
+  }
+
+  override_resource {
+    target          = aws_s3_bucket.invoices_pdf
+    override_during = plan
+    values = {
+      arn = "arn:aws:s3:::billeif-test-928282274753-invoices-pdf"
+    }
+  }
+
+  override_resource {
+    target          = aws_s3_bucket.product_images
+    override_during = plan
+    values = {
+      arn = "arn:aws:s3:::billeif-test-928282274753-product-images"
+    }
+  }
+
+  override_resource {
+    target          = aws_s3_bucket.email_sink
+    override_during = plan
+    values = {
+      arn = "arn:aws:s3:::billeif-test-928282274753-email-sink"
+    }
+  }
+
+  override_resource {
+    target          = aws_dynamodb_table.ws_connections
+    override_during = plan
+    values = {
+      arn = "arn:aws:dynamodb:ap-south-1:928282274753:table/billeif-test-ws-connections"
+    }
+  }
+
+  override_resource {
+    target          = aws_dynamodb_table.phone_auth_cooldowns
+    override_during = plan
+    values = {
+      arn = "arn:aws:dynamodb:ap-south-1:928282274753:table/billeif-test-phone-auth-cooldowns"
+    }
+  }
+
+  override_resource {
+    target          = aws_apigatewayv2_api.websocket
+    override_during = plan
+    values = {
+      execution_arn = "arn:aws:execute-api:ap-south-1:928282274753:test-websocket-api"
+    }
+  }
+
+  override_data {
+    target          = data.aws_iam_policy_document.lambda_app
+    override_during = plan
+    values = {
+      json = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"SharedA2A\",\"Effect\":\"Allow\",\"Action\":\"sqs:SendMessage\",\"Resource\":\"arn:aws:sqs:ap-south-1:928282274753:a2a\"}]}"
+    }
+  }
+
+  override_data {
+    target          = data.aws_iam_policy_document.lambda_http_app
+    override_during = plan
+    values = {
+      json = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"HTTP\",\"Effect\":\"Allow\",\"Action\":\"sqs:SendMessage\",\"Resource\":\"arn:aws:sqs:ap-south-1:928282274753:http\"}]}"
+    }
+  }
+
+  override_resource {
     target          = aws_security_group.database_migrator
     override_during = plan
     values = {
@@ -193,6 +283,165 @@ run "ordinary_http_uses_payload_v1_with_bounded_execution" {
       aws_cloudwatch_metric_alarm.http_api_latency.datapoints_to_alarm == 2
     )
     error_message = "Billeif HTTP API handled 5xx responses and stage p95 latency must have standard two-of-three alarms."
+  }
+}
+
+run "http_execution_role_is_dedicated_and_least_privilege" {
+  command = plan
+
+  assert {
+    condition = (
+      aws_iam_role_policy.lambda_http_app.role == aws_iam_role.lambda_http_exec.id &&
+      aws_iam_role_policy.lambda_app.role == aws_iam_role.lambda_exec.id &&
+      length([
+        for statement in data.aws_iam_policy_document.lambda_http_app.statement : statement
+        if statement.sid == "HTTPQueueSend"
+      ]) == 1 &&
+      length([
+        for statement in data.aws_iam_policy_document.lambda_app.statement : statement
+        if statement.sid == "HTTPQueueSend"
+      ]) == 0
+    )
+    error_message = "The HTTP role must consume its dedicated policy document without changing the shared A2A role policy."
+  }
+
+  assert {
+    condition = (
+      length(data.aws_iam_policy_document.lambda_http_app.statement) == 16 &&
+      toset(flatten([
+        for statement in data.aws_iam_policy_document.lambda_http_app.statement : statement.actions
+        ])) == toset([
+        "dynamodb:DeleteItem",
+        "dynamodb:PutItem",
+        "dynamodb:Query",
+        "dynamodb:Scan",
+        "execute-api:ManageConnections",
+        "kms:Decrypt",
+        "s3:DeleteObject",
+        "s3:GetObject",
+        "s3:ListBucket",
+        "s3:PutObject",
+        "secretsmanager:GetSecretValue",
+        "ses:SendEmail",
+        "sqs:SendMessage",
+        "ssm:GetParameters",
+      ])
+    )
+    error_message = "The HTTP inline policy must expose only operations reached by the ordinary HTTP runtime."
+  }
+
+  assert {
+    condition = length([
+      for statement in data.aws_iam_policy_document.lambda_http_app.statement : statement
+      if statement.sid == "HTTPDatabaseHostParameter" &&
+      toset(statement.actions) == toset(["ssm:GetParameters"]) &&
+      toset(statement.resources) == toset([local.db_host_ssm_parameter_arn]) &&
+      length([
+        for condition in statement.condition : condition
+        if condition.test == "Bool" &&
+        condition.variable == "aws:SecureTransport" &&
+        toset(condition.values) == toset(["true"])
+      ]) == 1
+    ]) == 1
+    error_message = "HTTP SSM access must read only the database host parameter over secure transport."
+  }
+
+  assert {
+    condition = (
+      length([
+        for statement in data.aws_iam_policy_document.lambda_http_app.statement : statement
+        if statement.sid == "HTTPBusinessAssetWrites" &&
+        toset(statement.actions) == toset(["s3:PutObject"]) &&
+        toset(statement.resources) == toset([
+          "${aws_s3_bucket.business_logos.arn}/logos/*",
+          "${aws_s3_bucket.business_logos.arn}/profile-pictures/*",
+        ])
+      ]) == 1 &&
+      length([
+        for statement in data.aws_iam_policy_document.lambda_http_app.statement : statement
+        if statement.sid == "HTTPProductImageWrites" &&
+        toset(statement.actions) == toset(["s3:PutObject"]) &&
+        toset(statement.resources) == toset(["${aws_s3_bucket.product_images.arn}/products/*"])
+      ]) == 1 &&
+      length([
+        for statement in data.aws_iam_policy_document.lambda_http_app.statement : statement
+        if statement.sid == "HTTPFinalInvoiceReads" &&
+        toset(statement.actions) == toset(["s3:GetObject"]) &&
+        toset(statement.resources) == toset(["${aws_s3_bucket.invoices_pdf.arn}/invoices/*/*/v*/final.pdf"])
+      ]) == 1 &&
+      length([
+        for statement in data.aws_iam_policy_document.lambda_http_app.statement : statement
+        if statement.sid == "HTTPInvoiceAssetWrites" &&
+        toset(statement.actions) == toset(["s3:PutObject"]) &&
+        toset(statement.resources) == toset([
+          "${aws_s3_bucket.invoices_pdf.arn}/bulk-jobs/*",
+          "${aws_s3_bucket.invoices_pdf.arn}/gst/*",
+          "${aws_s3_bucket.invoices_pdf.arn}/signature-profiles/*",
+          "${aws_s3_bucket.invoices_pdf.arn}/????????-????-????-????-????????????/????????/????????-????-????-????-????????????",
+        ])
+      ]) == 1 &&
+      length([
+        for statement in data.aws_iam_policy_document.lambda_http_app.statement : statement
+        if statement.sid == "HTTPDriveAssetDeletes" &&
+        toset(statement.actions) == toset(["s3:DeleteObject"]) &&
+        toset(statement.resources) == toset(["${aws_s3_bucket.invoices_pdf.arn}/????????-????-????-????-????????????/????????/????????-????-????-????-????????????"])
+      ]) == 1
+    )
+    error_message = "HTTP S3 access must be action- and object-pattern-specific with no unscoped resource."
+  }
+
+  assert {
+    condition = (
+      length([
+        for statement in data.aws_iam_policy_document.lambda_http_app.statement : statement
+        if statement.sid == "HTTPEmailCaptureObjects" &&
+        toset(statement.actions) == toset(["s3:GetObject", "s3:PutObject"]) &&
+        toset(statement.resources) == toset(["${aws_s3_bucket.email_sink.arn}/emails/*"])
+      ]) == 1 &&
+      length([
+        for statement in data.aws_iam_policy_document.lambda_http_app.statement : statement
+        if statement.sid == "HTTPEmailCaptureList" &&
+        toset(statement.actions) == toset(["s3:ListBucket"]) &&
+        toset(statement.resources) == toset([aws_s3_bucket.email_sink.arn]) &&
+        length([
+          for condition in statement.condition : condition
+          if condition.test == "StringLike" &&
+          condition.variable == "s3:prefix" &&
+          toset(condition.values) == toset(["emails/*"])
+        ]) == 1
+      ]) == 1
+    )
+    error_message = "Current admin email inspection must retain only the email sink emails prefix."
+  }
+
+  assert {
+    condition = (
+      length([
+        for statement in data.aws_iam_policy_document.lambda_http_app.statement : statement
+        if statement.sid == "HTTPWebSocketTable" &&
+        toset(statement.actions) == toset(["dynamodb:DeleteItem", "dynamodb:Scan"]) &&
+        toset(statement.resources) == toset([aws_dynamodb_table.ws_connections.arn])
+      ]) == 1 &&
+      length([
+        for statement in data.aws_iam_policy_document.lambda_http_app.statement : statement
+        if statement.sid == "HTTPWebSocketUserIndex" &&
+        toset(statement.actions) == toset(["dynamodb:Query"]) &&
+        toset(statement.resources) == toset(["${aws_dynamodb_table.ws_connections.arn}/index/user_id-index"])
+      ]) == 1 &&
+      length([
+        for statement in data.aws_iam_policy_document.lambda_http_app.statement : statement
+        if statement.sid == "HTTPPhoneAuthCooldown" &&
+        toset(statement.actions) == toset(["dynamodb:PutItem"]) &&
+        toset(statement.resources) == toset([aws_dynamodb_table.phone_auth_cooldowns.arn])
+      ]) == 1 &&
+      length([
+        for statement in data.aws_iam_policy_document.lambda_http_app.statement : statement
+        if statement.sid == "HTTPWebSocketManageConnections" &&
+        toset(statement.actions) == toset(["execute-api:ManageConnections"]) &&
+        toset(statement.resources) == toset(["${aws_apigatewayv2_api.websocket.execution_arn}/${var.environment}/POST/@connections/*"])
+      ]) == 1
+    )
+    error_message = "HTTP DynamoDB and WebSocket permissions must match the exact table, index, and stage routes used by management endpoints."
   }
 }
 

@@ -411,6 +411,9 @@ func (s *ProductService) AdjustStockByBusiness(ctx context.Context, businessID, 
 
 func (s *ProductService) GetImageUploadURL(ctx context.Context, productID, contentType string, sizeBytes int64) (*PresignedUpload, error) {
 	log := logger.FromContext(ctx).With("service", "product", "operation", "get_image_upload_url", "product_id", productID)
+	if s.s3 == nil || s.s3.cfg == nil || strings.TrimSpace(s.s3.cfg.S3.BucketProducts) == "" {
+		return nil, fmt.Errorf("product image storage is not configured")
+	}
 	contentType, err := NormalizeImageUploadContentType(contentType)
 	if err != nil {
 		return nil, err
@@ -419,7 +422,7 @@ func (s *ProductService) GetImageUploadURL(ctx context.Context, productID, conte
 		return nil, err
 	}
 	key := fmt.Sprintf("products/%s/image", productID)
-	upload, err := s.s3.GeneratePresignedUpload(ctx, "product-images", key, contentType, sizeBytes, 3600)
+	upload, err := s.s3.GeneratePresignedUpload(ctx, s.s3.cfg.S3.BucketProducts, key, contentType, sizeBytes, 3600)
 	if err != nil {
 		log.Error("failed to generate image upload URL", "error", err)
 		return nil, err
