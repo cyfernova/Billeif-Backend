@@ -11607,7 +11607,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/public/store/orders/{slug}/{token}": {
+        "/public/store/{slug}/orders/{token}": {
             "get": {
                 "description": "Returns order details using a public order token",
                 "produces": [
