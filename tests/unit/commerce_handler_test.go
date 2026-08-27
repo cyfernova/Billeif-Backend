@@ -573,7 +573,7 @@ func (h *TestableCommerceHandler) PublicOrder(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, order)
+	c.JSON(http.StatusOK, services.NewPublicStoreOrderResponse(order))
 }
 
 func (h *TestableCommerceHandler) ListEntitlements(c *gin.Context) {

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
@@ -12,13 +13,18 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+type publicOrderService interface {
+	GetPublicOrder(ctx context.Context, slug, token string) (*models.StoreOrder, error)
+}
+
 type CommerceHandler struct {
-	svc *services.CommerceService
-	log *logger.Logger
+	svc          *services.CommerceService
+	publicOrders publicOrderService
+	log          *logger.Logger
 }
 
 func NewCommerceHandler(svc *services.CommerceService, log *logger.Logger) *CommerceHandler {
-	return &CommerceHandler{svc: svc, log: log}
+	return &CommerceHandler{svc: svc, publicOrders: svc, log: log}
 }
 
 // ListEntitlements godoc
@@ -1038,12 +1044,12 @@ func (h *CommerceHandler) PublicCheckout(c *gin.Context) {
 // @Produce json
 // @Param slug path string true "Storefront slug"
 // @Param token path string true "Order token"
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} services.PublicStoreOrderResponse
 // @Failure 404 {object} map[string]string
 // @Failure 500 {object} map[string]string
-// @Router /public/store/orders/{slug}/{token} [get]
+// @Router /public/store/{slug}/orders/{token} [get]
 func (h *CommerceHandler) PublicOrder(c *gin.Context) {
-	order, err := h.svc.GetPublicOrder(c.Request.Context(), c.Param("slug"), c.Param("token"))
+	order, err := h.publicOrders.GetPublicOrder(c.Request.Context(), c.Param("slug"), c.Param("token"))
 	if err != nil {
 		status := http.StatusInternalServerError
 		if isNotFoundErr(err) {
@@ -1052,7 +1058,7 @@ func (h *CommerceHandler) PublicOrder(c *gin.Context) {
 		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, order)
+	c.JSON(http.StatusOK, services.NewPublicStoreOrderResponse(order))
 }
 
 func branchRouteID(c *gin.Context) string {
