@@ -156,6 +156,8 @@ type AP2Repository interface {
 	// Bargaining Negotiations
 	CreateBargainingNegotiation(ctx context.Context, negotiation *models.BargainingNegotiation) error
 	GetBargainingNegotiationByID(ctx context.Context, id string) (*models.BargainingNegotiation, error)
+	GetBargainingNegotiationByIDForActor(ctx context.Context, id, userID, businessID string) (*models.BargainingNegotiation, error)
+	GetBargainingNegotiationByIDForActorAndAgent(ctx context.Context, id, userID, businessID, agentID string) (*models.BargainingNegotiation, error)
 	GetBargainingNegotiationBySessionID(ctx context.Context, sessionID string) (*models.BargainingNegotiation, error)
 	GetBargainingNegotiationByIDForScope(ctx context.Context, id, userID, businessID string) (*models.BargainingNegotiation, error)
 	GetBargainingNegotiationBySessionIDForScope(ctx context.Context, sessionID, userID, businessID string) (*models.BargainingNegotiation, error)

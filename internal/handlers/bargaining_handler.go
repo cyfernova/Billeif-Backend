@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"invoice-backend/internal/middleware"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
@@ -359,9 +360,21 @@ func (h *BargainingHandler) GetLLMBargainingDecision(c *gin.Context) {
 		return
 	}
 
-	decision, err := h.svc.GetLLMBargainingDecision(c.Request.Context(), agentID, agentType, negotiationID)
+	scope := services.BargainingActorScope{
+		UserID:     c.GetString("user_id"),
+		BusinessID: middleware.GetEffectiveBusinessID(c),
+	}
+	decision, err := h.svc.GetLLMBargainingDecision(c.Request.Context(), scope, agentID, agentType, negotiationID)
 	if err != nil {
 		log.Error("failed to get LLM bargaining decision", "error", err, "negotiation_id", negotiationID, "agent_id", agentID)
+		if errors.Is(err, services.ErrNegotiationNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "negotiation not found"})
+			return
+		}
+		if errors.Is(err, services.ErrInvalidBargainingAgentRole) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "agent_type does not match agent_id"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -399,9 +412,17 @@ func (h *BargainingHandler) GetLLMNegotiationSummary(c *gin.Context) {
 		return
 	}
 
-	summary, err := h.svc.GetLLMNegotiationSummary(c.Request.Context(), negotiationID)
+	scope := services.BargainingActorScope{
+		UserID:     c.GetString("user_id"),
+		BusinessID: middleware.GetEffectiveBusinessID(c),
+	}
+	summary, err := h.svc.GetLLMNegotiationSummary(c.Request.Context(), scope, negotiationID)
 	if err != nil {
 		log.Error("failed to get LLM negotiation summary", "error", err, "negotiation_id", negotiationID)
+		if errors.Is(err, services.ErrNegotiationNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "negotiation not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

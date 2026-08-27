@@ -418,6 +418,12 @@ func (m *MockAP2Repository) CreateBargainingNegotiation(ctx context.Context, neg
 func (m *MockAP2Repository) GetBargainingNegotiationByID(ctx context.Context, id string) (*models.BargainingNegotiation, error) {
 	return nil, nil
 }
+func (m *MockAP2Repository) GetBargainingNegotiationByIDForActor(ctx context.Context, id, userID, businessID string) (*models.BargainingNegotiation, error) {
+	return nil, nil
+}
+func (m *MockAP2Repository) GetBargainingNegotiationByIDForActorAndAgent(ctx context.Context, id, userID, businessID, agentID string) (*models.BargainingNegotiation, error) {
+	return nil, nil
+}
 func (m *MockAP2Repository) GetBargainingNegotiationBySessionID(ctx context.Context, sessionID string) (*models.BargainingNegotiation, error) {
 	return nil, nil
 }

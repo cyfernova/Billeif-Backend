@@ -687,6 +687,22 @@ func (m *MockMarketplaceAP2Repository) GetBargainingNegotiationByID(ctx context.
 	return args.Get(0).(*models.BargainingNegotiation), args.Error(1)
 }
 
+func (m *MockMarketplaceAP2Repository) GetBargainingNegotiationByIDForActor(ctx context.Context, id, userID, businessID string) (*models.BargainingNegotiation, error) {
+	args := m.Called(ctx, id, userID, businessID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.BargainingNegotiation), args.Error(1)
+}
+
+func (m *MockMarketplaceAP2Repository) GetBargainingNegotiationByIDForActorAndAgent(ctx context.Context, id, userID, businessID, agentID string) (*models.BargainingNegotiation, error) {
+	args := m.Called(ctx, id, userID, businessID, agentID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.BargainingNegotiation), args.Error(1)
+}
+
 func (m *MockMarketplaceAP2Repository) GetBargainingNegotiationBySessionID(ctx context.Context, sessionID string) (*models.BargainingNegotiation, error) {
 	args := m.Called(ctx, sessionID)
 	if args.Get(0) == nil {

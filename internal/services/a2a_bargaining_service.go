@@ -385,7 +385,7 @@ func (s *A2ABargainingService) RunAutonomousNegotiation(ctx context.Context, ses
 			return nil
 		}
 
-		decision, err := s.bargaining.GetLLMBargainingDecision(ctx, activeAgentID, activeAgentType, negotiationID)
+		decision, err := s.bargaining.GetLLMBargainingDecision(ctx, systemBargainingActorScope(), activeAgentID, activeAgentType, negotiation.ID)
 		if err != nil {
 			s.log.Error("LLM decision failed", "error", err, "session_id", sessionID, "round", round, "agent_id", activeAgentID)
 			s.sendWebhook(session.CallbackURL, WebhookPayload{
@@ -646,7 +646,7 @@ func (s *A2ABargainingService) RunAutonomousNegotiationRound(
 		return s.expireAutonomousNegotiation(ctx, session, sessionID, negotiationID)
 	}
 
-	decision, err := s.bargaining.GetLLMBargainingDecision(ctx, activeAgentID, activeAgentType, latestNeg.ID)
+	decision, err := s.bargaining.GetLLMBargainingDecision(ctx, systemBargainingActorScope(), activeAgentID, activeAgentType, latestNeg.ID)
 	if err != nil {
 		s.log.Error("LLM decision failed", "error", err, "session_id", sessionID, "round", nextRound, "agent_id", activeAgentID)
 		return fmt.Errorf("LLM decision failed: %w", err)
