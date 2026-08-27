@@ -284,6 +284,69 @@ type PublicStorefrontCatalogResponse struct {
 	Products   []*PublicStorefrontProduct  `json:"products"`
 }
 
+// PublicStoreOrderLineResponse contains only customer-safe line-item details.
+type PublicStoreOrderLineResponse struct {
+	Title          string  `json:"title"`
+	SKU            string  `json:"sku"`
+	Quantity       float64 `json:"quantity"`
+	UnitPrice      float64 `json:"unit_price"`
+	DiscountAmount float64 `json:"discount_amount"`
+	TaxRate        float64 `json:"tax_rate"`
+	TaxAmount      float64 `json:"tax_amount"`
+	LineTotal      float64 `json:"line_total"`
+}
+
+// PublicStoreOrderResponse contains only the order details intended for a token holder.
+type PublicStoreOrderResponse struct {
+	OrderNumber   string                          `json:"order_number"`
+	Status        string                          `json:"status"`
+	PaymentStatus string                          `json:"payment_status"`
+	PaymentMethod string                          `json:"payment_method"`
+	Currency      string                          `json:"currency"`
+	Subtotal      float64                         `json:"subtotal"`
+	DiscountTotal float64                         `json:"discount_total"`
+	TaxTotal      float64                         `json:"tax_total"`
+	ShippingTotal float64                         `json:"shipping_total"`
+	Total         float64                         `json:"total"`
+	OrderedAt     time.Time                       `json:"ordered_at"`
+	PaidAt        *time.Time                      `json:"paid_at,omitempty"`
+	CancelledAt   *time.Time                      `json:"cancelled_at,omitempty"`
+	Lines         []*PublicStoreOrderLineResponse `json:"lines"`
+}
+
+// NewPublicStoreOrderResponse maps a persistence model to the explicit public-order contract.
+func NewPublicStoreOrderResponse(order *models.StoreOrder) *PublicStoreOrderResponse {
+	lines := make([]*PublicStoreOrderLineResponse, 0, len(order.Lines))
+	for _, line := range order.Lines {
+		lines = append(lines, &PublicStoreOrderLineResponse{
+			Title:          line.Title,
+			SKU:            line.SKU,
+			Quantity:       line.Quantity,
+			UnitPrice:      line.UnitPrice,
+			DiscountAmount: line.DiscountAmount,
+			TaxRate:        line.TaxRate,
+			TaxAmount:      line.TaxAmount,
+			LineTotal:      line.LineTotal,
+		})
+	}
+	return &PublicStoreOrderResponse{
+		OrderNumber:   order.OrderNumber,
+		Status:        order.Status,
+		PaymentStatus: order.PaymentStatus,
+		PaymentMethod: order.PaymentMethod,
+		Currency:      order.Currency,
+		Subtotal:      order.Subtotal,
+		DiscountTotal: order.DiscountTotal,
+		TaxTotal:      order.TaxTotal,
+		ShippingTotal: order.ShippingTotal,
+		Total:         order.Total,
+		OrderedAt:     order.OrderedAt,
+		PaidAt:        order.PaidAt,
+		CancelledAt:   order.CancelledAt,
+		Lines:         lines,
+	}
+}
+
 func NewCommerceService(
 	cfg *config.Config,
 	db *gorm.DB,
@@ -1217,8 +1280,10 @@ func (s *CommerceService) GetPublicOrder(ctx context.Context, slug, token string
 	}
 	var order models.StoreOrder
 	if err := s.db.WithContext(ctx).
-		Preload("Lines", "deleted_at IS NULL").
-		Preload("Events", "deleted_at IS NULL").
+		Select("id", "order_number", "status", "payment_status", "payment_method", "currency", "subtotal", "discount_total", "tax_total", "shipping_total", "total", "ordered_at", "paid_at", "cancelled_at").
+		Preload("Lines", func(db *gorm.DB) *gorm.DB {
+			return db.Select("store_order_id", "title", "sku", "quantity", "unit_price", "discount_amount", "tax_rate", "tax_amount", "line_total").Where("deleted_at IS NULL")
+		}).
 		Where("storefront_id = ? AND public_token = ? AND deleted_at IS NULL", storefront.ID, token).
 		First(&order).Error; err != nil {
 		return nil, err

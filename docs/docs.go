@@ -11637,8 +11637,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/services.PublicStoreOrderResponse"
                         }
                     },
                     "404": {
@@ -22174,6 +22173,85 @@ const docTemplate = `{
                 },
                 "track_serials": {
                     "type": "boolean"
+                }
+            }
+        },
+        "services.PublicStoreOrderLineResponse": {
+            "type": "object",
+            "properties": {
+                "discount_amount": {
+                    "type": "number"
+                },
+                "line_total": {
+                    "type": "number"
+                },
+                "quantity": {
+                    "type": "number"
+                },
+                "sku": {
+                    "type": "string"
+                },
+                "tax_amount": {
+                    "type": "number"
+                },
+                "tax_rate": {
+                    "type": "number"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "unit_price": {
+                    "type": "number"
+                }
+            }
+        },
+        "services.PublicStoreOrderResponse": {
+            "type": "object",
+            "properties": {
+                "cancelled_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "discount_total": {
+                    "type": "number"
+                },
+                "lines": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/services.PublicStoreOrderLineResponse"
+                    }
+                },
+                "order_number": {
+                    "type": "string"
+                },
+                "ordered_at": {
+                    "type": "string"
+                },
+                "paid_at": {
+                    "type": "string"
+                },
+                "payment_method": {
+                    "type": "string"
+                },
+                "payment_status": {
+                    "type": "string"
+                },
+                "shipping_total": {
+                    "type": "number"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "subtotal": {
+                    "type": "number"
+                },
+                "tax_total": {
+                    "type": "number"
+                },
+                "total": {
+                    "type": "number"
                 }
             }
         },

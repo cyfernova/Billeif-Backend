@@ -1038,7 +1038,7 @@ func (h *CommerceHandler) PublicCheckout(c *gin.Context) {
 // @Produce json
 // @Param slug path string true "Storefront slug"
 // @Param token path string true "Order token"
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} services.PublicStoreOrderResponse
 // @Failure 404 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /public/store/orders/{slug}/{token} [get]
@@ -1052,7 +1052,7 @@ func (h *CommerceHandler) PublicOrder(c *gin.Context) {
 		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, order)
+	c.JSON(http.StatusOK, services.NewPublicStoreOrderResponse(order))
 }
 
 func branchRouteID(c *gin.Context) string {
