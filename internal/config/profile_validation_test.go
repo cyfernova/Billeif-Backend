@@ -218,6 +218,7 @@ func TestProductionValidationProfilesFailClosedForTheirOwnSecretIdentifiers(t *t
 func TestHTTPProfileRequiresDeepSeekProviderIdentifier(t *testing.T) {
 	cfg := validConfigForTest()
 	cfg.Environment = "production"
+	cfg.Redis = validProductionRateLimitConfigForTest()
 	cfg.Secrets.DeepSeek = ""
 	cfg.DeepSeek.APIKey = ""
 	cfg.LLM.ExaAPIKey = "exa-key"

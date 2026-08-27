@@ -2,9 +2,12 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
+
+	"invoice-backend/internal/app"
 
 	"github.com/aws/aws-lambda-go/events"
 	ginadapter "github.com/awslabs/aws-lambda-go-api-proxy/gin"
@@ -192,6 +195,25 @@ func TestProxyWithRequestDeadlinePropagatesLambdaCancellationToLazyInitializatio
 	}
 	if gotInitializationError != context.Canceled {
 		t.Fatalf("initialization error = %v, want Lambda context cancellation", gotInitializationError)
+	}
+}
+
+func TestLazyRuntimeFailsClosedWith503WhenRateLimitBackendCannotInitialize(t *testing.T) {
+	runtime := &lazyRuntimeProxy{
+		initialize: func(context.Context) (requestProxy, error) {
+			return nil, fmt.Errorf("%w: dial detail that must not be exposed", app.ErrRateLimitUnavailable)
+		},
+	}
+
+	response, err := runtime.ProxyWithContext(context.Background(), events.APIGatewayProxyRequest{})
+	if err != nil {
+		t.Fatalf("proxy request: %v", err)
+	}
+	if response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", response.StatusCode)
+	}
+	if response.Body != `{"error":"rate_limit_unavailable","message":"request could not be safely evaluated. please try again shortly"}` {
+		t.Fatalf("body = %q, want generic rate-limit outage response", response.Body)
 	}
 }
 

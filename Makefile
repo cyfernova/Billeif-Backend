@@ -250,6 +250,7 @@ test-agentcore: ## Run focused AgentCore runtime and voice protocol tests
 	go test -race -count=1 -tags=voice_live_probe ./internal/voice/webrtc
 
 test-integration: ## Run integration tests (requires local dependencies running)
+	go test -v -race -tags=integration ./internal/ratelimit
 	go test -v -tags=integration ./tests/integration/...
 
 # Migration targets (using golang-migrate CLI)
