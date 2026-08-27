@@ -430,6 +430,54 @@ run "secret_metadata_rds_lambda_iam_and_output" {
   }
 
   assert {
+    condition = length([
+      for statement in data.aws_iam_policy_document.lambda_http_app.statement : statement
+      if statement.sid == "HTTPRuntimeSecrets" &&
+      toset(statement.actions) == toset(["secretsmanager:GetSecretValue"]) &&
+      toset(statement.resources) == toset([
+        aws_db_instance.main.master_user_secret[0].secret_arn,
+        aws_secretsmanager_secret.credential_encryption.arn,
+        aws_secretsmanager_secret.razorpay.arn,
+        aws_secretsmanager_secret.llm.arn,
+        aws_secretsmanager_secret.exa.arn,
+        aws_secretsmanager_secret.gst_lookup.arn,
+        aws_secretsmanager_secret.gst_provider.arn,
+        aws_secretsmanager_secret.sarvam.arn,
+      ]) &&
+      !contains(statement.resources, aws_secretsmanager_secret.deepseek.arn)
+    ]) == 1
+    error_message = "The HTTP role must read only request-reachable runtime secrets and must not describe or read the unused DeepSeek secret."
+  }
+
+  assert {
+    condition = length([
+      for statement in data.aws_iam_policy_document.lambda_http_app.statement : statement
+      if statement.sid == "HTTPRuntimeSecretDecrypt" &&
+      toset(statement.actions) == toset(["kms:Decrypt"]) &&
+      toset(statement.resources) == toset([aws_kms_key.application_secrets.arn]) &&
+      length([
+        for condition in statement.condition : condition
+        if condition.test == "StringEquals" &&
+        condition.variable == "kms:CallerAccount" &&
+        toset(condition.values) == toset([data.aws_caller_identity.current.account_id])
+      ]) == 1 &&
+      length([
+        for condition in statement.condition : condition
+        if condition.test == "StringEquals" &&
+        condition.variable == "kms:ViaService" &&
+        toset(condition.values) == toset(["secretsmanager.ap-south-1.amazonaws.com"])
+      ]) == 1 &&
+      length([
+        for condition in statement.condition : condition
+        if condition.test == "StringEquals" &&
+        condition.variable == "kms:EncryptionContext:SecretARN" &&
+        toset(condition.values) == toset(local.http_runtime_secret_arns)
+      ]) == 1
+    ]) == 1
+    error_message = "HTTP KMS decrypt must be restricted to same-account Secrets Manager use and the exact runtime secret encryption contexts."
+  }
+
+  assert {
     condition = alltrue([
       toset([
         for key in keys(aws_lambda_function.sqs_invoice.environment[0].variables) : key
@@ -682,9 +730,8 @@ run "billeif_branding_defaults_and_public_url_inputs" {
       length([
         for statement in data.aws_iam_policy_document.invoice_cursor_http.statement : statement
         if statement.sid == "InvoiceCursorSecret" &&
-        length(statement.actions) == 2 &&
+        length(statement.actions) == 1 &&
         contains(statement.actions, "secretsmanager:GetSecretValue") &&
-        contains(statement.actions, "secretsmanager:DescribeSecret") &&
         length(statement.resources) == 1 &&
         contains(statement.resources, aws_secretsmanager_secret.billeif_invoice_cursor_hmac.arn)
       ]) == 1 &&
@@ -699,6 +746,11 @@ run "billeif_branding_defaults_and_public_url_inputs" {
           for condition in statement.condition : condition
           if condition.variable == "kms:ViaService" &&
           contains(condition.values, "secretsmanager.ap-south-1.amazonaws.com")
+        ]) == 1 &&
+        length([
+          for condition in statement.condition : condition
+          if condition.variable == "kms:CallerAccount" &&
+          contains(condition.values, data.aws_caller_identity.current.account_id)
         ]) == 1 &&
         length([
           for condition in statement.condition : condition

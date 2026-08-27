@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
@@ -345,8 +346,11 @@ func (s *BusinessService) DeleteByOwner(ctx context.Context, userID, id string) 
 
 func (s *BusinessService) GetLogoUploadURL(ctx context.Context, businessID, contentType string) (string, error) {
 	log := logger.FromContext(ctx).With("service", "business", "operation", "get_logo_upload_url", "business_id", businessID)
+	if s.s3 == nil || s.s3.cfg == nil || strings.TrimSpace(s.s3.cfg.S3.BucketLogos) == "" {
+		return "", fmt.Errorf("business logo storage is not configured")
+	}
 	key := fmt.Sprintf("logos/%s/logo", businessID)
-	url, err := s.s3.GeneratePresignedUploadURL(ctx, "business-logos", key, contentType, 3600)
+	url, err := s.s3.GeneratePresignedUploadURL(ctx, s.s3.cfg.S3.BucketLogos, key, contentType, 3600)
 	if err != nil {
 		log.Error("failed to generate business logo upload URL", "error", err)
 		return "", err

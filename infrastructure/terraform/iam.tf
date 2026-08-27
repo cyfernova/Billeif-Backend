@@ -11,9 +11,12 @@ locals {
     aws_secretsmanager_secret.exa.arn,
     aws_secretsmanager_secret.gst_lookup.arn,
     aws_secretsmanager_secret.gst_provider.arn,
-    aws_secretsmanager_secret.deepseek.arn,
     aws_secretsmanager_secret.sarvam.arn
   ]
+  a2a_runtime_secret_arns = concat(
+    local.http_runtime_secret_arns,
+    [aws_secretsmanager_secret.deepseek.arn],
+  )
   worker_runtime_secret_arns = {
     invoice = [
       aws_db_instance.main.master_user_secret[0].secret_arn,
@@ -531,7 +534,7 @@ data "aws_iam_policy_document" "lambda_app" {
       "secretsmanager:DescribeSecret",
       "secretsmanager:GetSecretValue"
     ]
-    resources = local.http_runtime_secret_arns
+    resources = local.a2a_runtime_secret_arns
 
     condition {
       test     = "Bool"
@@ -564,7 +567,7 @@ data "aws_iam_policy_document" "lambda_app" {
     condition {
       test     = "StringEquals"
       variable = "kms:EncryptionContext:SecretARN"
-      values   = local.http_runtime_secret_arns
+      values   = local.a2a_runtime_secret_arns
     }
   }
 
@@ -584,20 +587,186 @@ resource "aws_iam_role_policy" "lambda_app" {
   policy = data.aws_iam_policy_document.lambda_app.json
 }
 
+data "aws_iam_policy_document" "lambda_http_app" {
+  statement {
+    sid     = "HTTPBusinessAssetWrites"
+    effect  = "Allow"
+    actions = ["s3:PutObject"]
+    resources = [
+      "${aws_s3_bucket.business_logos.arn}/logos/*",
+      "${aws_s3_bucket.business_logos.arn}/profile-pictures/*",
+    ]
+  }
+
+  statement {
+    sid       = "HTTPProductImageWrites"
+    effect    = "Allow"
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.product_images.arn}/products/*"]
+  }
+
+  statement {
+    sid       = "HTTPFinalInvoiceReads"
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.invoices_pdf.arn}/invoices/*/*/v*/final.pdf"]
+  }
+
+  statement {
+    sid     = "HTTPInvoiceAssetWrites"
+    effect  = "Allow"
+    actions = ["s3:PutObject"]
+    resources = [
+      "${aws_s3_bucket.invoices_pdf.arn}/bulk-jobs/*",
+      "${aws_s3_bucket.invoices_pdf.arn}/gst/*",
+      "${aws_s3_bucket.invoices_pdf.arn}/signature-profiles/*",
+      "${aws_s3_bucket.invoices_pdf.arn}/????????-????-????-????-????????????/????????/????????-????-????-????-????????????",
+    ]
+  }
+
+  statement {
+    sid       = "HTTPDriveAssetDeletes"
+    effect    = "Allow"
+    actions   = ["s3:DeleteObject"]
+    resources = ["${aws_s3_bucket.invoices_pdf.arn}/????????-????-????-????-????????????/????????/????????-????-????-????-????????????"]
+  }
+
+  statement {
+    sid       = "HTTPEmailCaptureObjects"
+    effect    = "Allow"
+    actions   = ["s3:GetObject", "s3:PutObject"]
+    resources = ["${aws_s3_bucket.email_sink.arn}/emails/*"]
+  }
+
+  statement {
+    sid       = "HTTPEmailCaptureList"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.email_sink.arn]
+
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["emails/*"]
+    }
+  }
+
+  statement {
+    sid     = "HTTPQueueSend"
+    effect  = "Allow"
+    actions = ["sqs:SendMessage"]
+    resources = [
+      aws_sqs_queue.invoice_processing.arn,
+      aws_sqs_queue.gst_processing.arn,
+      aws_sqs_queue.bargaining_negotiation.arn,
+      aws_sqs_queue.email_delivery.arn,
+    ]
+  }
+
+  statement {
+    sid       = "HTTPEmailSend"
+    effect    = "Allow"
+    actions   = ["ses:SendEmail"]
+    resources = [local.ses_verified_identity_arn]
+  }
+
+  statement {
+    sid       = "HTTPWebSocketTable"
+    effect    = "Allow"
+    actions   = ["dynamodb:DeleteItem", "dynamodb:Scan"]
+    resources = [aws_dynamodb_table.ws_connections.arn]
+  }
+
+  statement {
+    sid       = "HTTPWebSocketUserIndex"
+    effect    = "Allow"
+    actions   = ["dynamodb:Query"]
+    resources = ["${aws_dynamodb_table.ws_connections.arn}/index/user_id-index"]
+  }
+
+  statement {
+    sid       = "HTTPPhoneAuthCooldown"
+    effect    = "Allow"
+    actions   = ["dynamodb:PutItem"]
+    resources = [aws_dynamodb_table.phone_auth_cooldowns.arn]
+  }
+
+  statement {
+    sid       = "HTTPDatabaseHostParameter"
+    effect    = "Allow"
+    actions   = ["ssm:GetParameters"]
+    resources = [local.db_host_ssm_parameter_arn]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["true"]
+    }
+  }
+
+  statement {
+    sid       = "HTTPRuntimeSecrets"
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = local.http_runtime_secret_arns
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["true"]
+    }
+  }
+
+  statement {
+    sid       = "HTTPRuntimeSecretDecrypt"
+    effect    = "Allow"
+    actions   = ["kms:Decrypt"]
+    resources = [aws_kms_key.application_secrets.arn]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["true"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:CallerAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["secretsmanager.${var.aws_region}.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:EncryptionContext:SecretARN"
+      values   = local.http_runtime_secret_arns
+    }
+  }
+
+  statement {
+    sid       = "HTTPWebSocketManageConnections"
+    effect    = "Allow"
+    actions   = ["execute-api:ManageConnections"]
+    resources = ["${aws_apigatewayv2_api.websocket.execution_arn}/${var.environment}/POST/@connections/*"]
+  }
+}
+
 resource "aws_iam_role_policy" "lambda_http_app" {
   name   = "${local.resource_prefix}-lambda-http-app-policy"
   role   = aws_iam_role.lambda_http_exec.id
-  policy = data.aws_iam_policy_document.lambda_app.json
+  policy = data.aws_iam_policy_document.lambda_http_app.json
 }
 
 data "aws_iam_policy_document" "invoice_cursor_http" {
   statement {
-    sid    = "InvoiceCursorSecret"
-    effect = "Allow"
-    actions = [
-      "secretsmanager:DescribeSecret",
-      "secretsmanager:GetSecretValue"
-    ]
+    sid       = "InvoiceCursorSecret"
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
     resources = [aws_secretsmanager_secret.billeif_invoice_cursor_hmac.arn]
 
     condition {
@@ -617,6 +786,12 @@ data "aws_iam_policy_document" "invoice_cursor_http" {
       test     = "Bool"
       variable = "aws:SecureTransport"
       values   = ["true"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:CallerAccount"
+      values   = [data.aws_caller_identity.current.account_id]
     }
 
     condition {
