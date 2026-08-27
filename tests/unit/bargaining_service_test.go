@@ -116,12 +116,14 @@ func TestBargainingService_CreateNegotiation_Success(t *testing.T) {
 	buyerAgentID := uuid.New().String()
 	sellerAgentID := uuid.New().String()
 	userID := uuid.New().String()
+	businessID := uuid.New().String()
 
 	buyerAgent := &models.Agent{
-		ID:     buyerAgentID,
-		Type:   "shopping",
-		Name:   "Buyer Agent",
-		Config: `{"volatility": 0.3}`,
+		ID:         buyerAgentID,
+		BusinessID: businessID,
+		Type:       "shopping",
+		Name:       "Buyer Agent",
+		Config:     `{"volatility": 0.3}`,
 	}
 
 	sellerAgent := &models.Agent{
@@ -150,6 +152,7 @@ func TestBargainingService_CreateNegotiation_Success(t *testing.T) {
 	assert.Equal(t, buyerAgentID, negotiation.BuyerAgentID)
 	assert.Equal(t, sellerAgentID, negotiation.SellerAgentID)
 	assert.Equal(t, userID, negotiation.UserID)
+	assert.Equal(t, businessID, negotiation.BusinessID)
 	assert.Equal(t, 1000.00, negotiation.InitialAmount)
 	assert.Equal(t, 1000.00, negotiation.CurrentAmount)
 	assert.Equal(t, "initiated", negotiation.Status)
@@ -248,11 +251,13 @@ func TestBargainingService_CreateNegotiation_InvalidSellerAgentType(t *testing.T
 	buyerAgentID := uuid.New().String()
 	sellerAgentID := uuid.New().String()
 	userID := uuid.New().String()
+	businessID := uuid.New().String()
 
 	buyerAgent := &models.Agent{
-		ID:   buyerAgentID,
-		Type: "shopping",
-		Name: "Buyer Agent",
+		ID:         buyerAgentID,
+		BusinessID: businessID,
+		Type:       "shopping",
+		Name:       "Buyer Agent",
 	}
 
 	sellerAgent := &models.Agent{
