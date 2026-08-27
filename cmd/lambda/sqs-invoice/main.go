@@ -37,6 +37,21 @@ func handleSQSEvent(ctx context.Context, event events.SQSEvent) (events.SQSEvent
 	if invoiceInitErr != nil {
 		return events.SQSEventResponse{}, invoiceInitErr
 	}
+	return processSQSEvent(ctx, event, func(ctx context.Context, body, owner string) error {
+		return workers.ProcessInvoiceQueueMessageWithOwner(ctx, invoiceRT.Config, invoiceRT.Svcs, invoiceRT.Log, body, owner)
+	}, invoiceRT.Log), nil
+}
+
+type invoiceMessageProcessor func(context.Context, string, string) error
+
+func processSQSEvent(
+	ctx context.Context,
+	event events.SQSEvent,
+	process invoiceMessageProcessor,
+	log interface {
+		Error(string, ...interface{})
+	},
+) events.SQSEventResponse {
 	failures := make([]events.SQSBatchItemFailure, 0)
 	requestID := ""
 	if lambdaContext, ok := lambdacontext.FromContext(ctx); ok {
@@ -47,13 +62,13 @@ func handleSQSEvent(ctx context.Context, event events.SQSEvent) (events.SQSEvent
 	}
 	for _, record := range event.Records {
 		owner := workers.NewInvoiceRenderLeaseOwner(requestID, record.MessageId)
-		if err := workers.ProcessInvoiceQueueMessageWithOwner(ctx, invoiceRT.Config, invoiceRT.Svcs, invoiceRT.Log, record.Body, owner); err != nil {
-			invoiceRT.Log.Error("failed to process invoice queue record", "message_id", record.MessageId, "error", err)
+		if err := process(ctx, record.Body, owner); err != nil {
+			log.Error("failed to process invoice queue record", "message_id", record.MessageId, "error", err)
 			failures = append(failures, events.SQSBatchItemFailure{ItemIdentifier: record.MessageId})
 		}
 	}
 
-	return events.SQSEventResponse{BatchItemFailures: failures}, nil
+	return events.SQSEventResponse{BatchItemFailures: failures}
 }
 
 func main() {

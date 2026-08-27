@@ -973,12 +973,14 @@ func (s *DocumentService) RequestRenderByBusiness(ctx context.Context, businessI
 		return nil, err
 	}
 	job := &models.DocumentRenderJob{
+		ID:              uuid.NewString(),
 		DocumentID:      models.StringPointer(document.ID),
 		BusinessID:      businessID,
 		Status:          models.RenderJobStatusQueued,
 		Locale:          coalesceString(input.Locale, document.Locale),
 		TemplateVersion: "v1",
 	}
+	job.ObjectKey = fmt.Sprintf("documents/%s/%s/%s.pdf", businessID, document.ID, job.ID)
 	if input.RenderProfileID != "" {
 		job.RenderProfileID = &input.RenderProfileID
 	} else if document.RenderProfileID != nil {
@@ -1524,6 +1526,41 @@ func (s *DocumentService) MarkRenderJobProcessing(ctx context.Context, businessI
 	job.ErrorMessage = ""
 	job.CompletedAt = nil
 	return s.repo.UpdateRenderJob(ctx, job)
+}
+
+func (s *DocumentService) ClaimGenericRender(
+	ctx context.Context,
+	businessID, jobID, owner string,
+	now, leaseUntil time.Time,
+) (interfaces.GenericRenderClaimState, error) {
+	repository, ok := s.repo.(interfaces.GenericRenderRepository)
+	if !ok {
+		return "", errors.New("generic render repository is not configured")
+	}
+	return repository.ClaimGenericRender(ctx, businessID, jobID, owner, now, leaseUntil)
+}
+
+func (s *DocumentService) FailGenericRender(
+	ctx context.Context,
+	businessID, jobID, owner, errorMessage string,
+) error {
+	repository, ok := s.repo.(interfaces.GenericRenderRepository)
+	if !ok {
+		return errors.New("generic render repository is not configured")
+	}
+	return repository.FailGenericRender(ctx, businessID, jobID, owner, errorMessage)
+}
+
+func (s *DocumentService) CompleteGenericRender(
+	ctx context.Context,
+	businessID, documentID, jobID, owner, objectKey, pdfURL, filename string,
+	now time.Time,
+) (bool, error) {
+	repository, ok := s.repo.(interfaces.GenericRenderRepository)
+	if !ok {
+		return false, errors.New("generic render repository is not configured")
+	}
+	return repository.CompleteGenericRender(ctx, businessID, documentID, jobID, owner, objectKey, pdfURL, filename, now)
 }
 
 func (s *DocumentService) FailRenderJob(ctx context.Context, businessID, jobID, errorMessage string) error {
