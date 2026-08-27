@@ -734,8 +734,6 @@ func statusCodeForAuthError(err error, fallback int) int {
 		return http.StatusConflict
 	case strings.Contains(message, "aliasexistsexception"):
 		return http.StatusConflict
-	case strings.Contains(message, "phone number not registered"):
-		return http.StatusNotFound
 	case strings.Contains(message, "phone number not verified"):
 		return http.StatusForbidden
 	case strings.Contains(message, "verify your email"):

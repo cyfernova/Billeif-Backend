@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -79,6 +80,7 @@ type mockCognitoClient struct {
 	signUp                 func(ctx context.Context, params *cognitoidentityprovider.SignUpInput) (*cognitoidentityprovider.SignUpOutput, error)
 	initiateAuth           func(ctx context.Context, params *cognitoidentityprovider.InitiateAuthInput) (*cognitoidentityprovider.InitiateAuthOutput, error)
 	respondToAuthChallenge func(ctx context.Context, params *cognitoidentityprovider.RespondToAuthChallengeInput) (*cognitoidentityprovider.RespondToAuthChallengeOutput, error)
+	resendConfirmationCode func(ctx context.Context, params *cognitoidentityprovider.ResendConfirmationCodeInput) (*cognitoidentityprovider.ResendConfirmationCodeOutput, error)
 }
 
 func (m *mockCognitoClient) ChangePassword(ctx context.Context, params *cognitoidentityprovider.ChangePasswordInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.ChangePasswordOutput, error) {
@@ -113,6 +115,9 @@ func (m *mockCognitoClient) InitiateAuth(ctx context.Context, params *cognitoide
 }
 
 func (m *mockCognitoClient) ResendConfirmationCode(ctx context.Context, params *cognitoidentityprovider.ResendConfirmationCodeInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.ResendConfirmationCodeOutput, error) {
+	if m.resendConfirmationCode != nil {
+		return m.resendConfirmationCode(ctx, params)
+	}
 	return &cognitoidentityprovider.ResendConfirmationCodeOutput{}, nil
 }
 
@@ -200,7 +205,7 @@ func TestPhoneRegisterRejectsEmailPrebinding(t *testing.T) {
 	assert.Contains(t, err.Error(), phoneAuthEmailUnsupported)
 }
 
-func TestPhoneRegisterRejectsExistingPhone(t *testing.T) {
+func TestPhoneRegisterReturnsGenericResponseForExistingPhone(t *testing.T) {
 	t.Parallel()
 
 	repo := &mockUserRepo{
@@ -208,16 +213,24 @@ func TestPhoneRegisterRejectsExistingPhone(t *testing.T) {
 			return &models.User{ID: "existing-user"}, nil
 		},
 	}
+	phoneClient := &mockCognitoClient{
+		resendConfirmationCode: func(ctx context.Context, params *cognitoidentityprovider.ResendConfirmationCodeInput) (*cognitoidentityprovider.ResendConfirmationCodeOutput, error) {
+			assert.Equal(t, "+919876543210", aws.ToString(params.Username))
+			return &cognitoidentityprovider.ResendConfirmationCodeOutput{}, nil
+		},
+	}
 
-	svc := newPhoneAuthService(t, repo, &mockCognitoClient{})
+	svc := newPhoneAuthService(t, repo, phoneClient)
 	result, err := svc.PhoneRegister(context.Background(), PhoneRegisterInput{
 		PhoneNumber: "+919876543210",
 		Name:        "Phone User",
 	})
 
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), phoneAuthConflictMessage)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Empty(t, result.UserID)
+	assert.Equal(t, "+919876543210", result.PhoneNumber)
+	assert.Equal(t, genericPhoneAuthPrompt, result.Message)
 }
 
 func TestPhoneRegisterUsesNormalizedPhoneAsUsername(t *testing.T) {
@@ -272,6 +285,48 @@ func TestPhoneRegisterDoesNotPersistUnverifiedEmail(t *testing.T) {
 		Name:        "Phone User",
 	})
 	require.NoError(t, err)
+}
+
+func TestPhoneRegisterPublicResponseDoesNotRevealPhoneExistence(t *testing.T) {
+	ctx := context.Background()
+	input := PhoneRegisterInput{PhoneNumber: "9876543210", Name: "Phone User"}
+
+	cases := []struct {
+		name   string
+		repo   *mockUserRepo
+		client *mockCognitoClient
+	}{
+		{
+			name: "new identity",
+			repo: &mockUserRepo{},
+			client: &mockCognitoClient{signUp: func(context.Context, *cognitoidentityprovider.SignUpInput) (*cognitoidentityprovider.SignUpOutput, error) {
+				return &cognitoidentityprovider.SignUpOutput{UserSub: aws.String("new-phone-sub")}, nil
+			}},
+		},
+		{
+			name: "existing identity",
+			repo: &mockUserRepo{getByPhoneNumber: func(context.Context, string) (*models.User, error) {
+				return &models.User{ID: "existing-user"}, nil
+			}},
+			client: &mockCognitoClient{},
+		},
+	}
+
+	var publicBody []byte
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newPhoneAuthService(t, tc.repo, tc.client)
+			result, err := svc.PhoneRegister(ctx, input)
+			require.NoError(t, err)
+			body, err := json.Marshal(result)
+			require.NoError(t, err)
+			if publicBody == nil {
+				publicBody = body
+			} else {
+				assert.Equal(t, string(publicBody), string(body))
+			}
+		})
+	}
 }
 
 func TestSyncGoogleUserRejectsPhonePreboundEmailRelink(t *testing.T) {
@@ -418,9 +473,56 @@ func TestPhoneLoginRejectsUnregisteredNumber(t *testing.T) {
 	svc := newPhoneAuthService(t, repo, phoneClient)
 	result, err := svc.PhoneLogin(context.Background(), PhoneLoginInput{PhoneNumber: "9876543210"})
 
-	require.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "phone number not registered")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "SMS_OTP", result.ChallengeName)
+	assert.NotEmpty(t, result.Session)
+	assert.Equal(t, genericPhoneAuthPrompt, result.Message)
+}
+
+func TestPhoneLoginPublicResponseShapeDoesNotRevealPhoneExistence(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		name   string
+		repo   *mockUserRepo
+		client *mockCognitoClient
+	}{
+		{
+			name: "existing identity",
+			repo: &mockUserRepo{getByPhoneNumber: func(context.Context, string) (*models.User, error) {
+				return &models.User{ID: "existing-user"}, nil
+			}},
+			client: &mockCognitoClient{initiateAuth: func(context.Context, *cognitoidentityprovider.InitiateAuthInput) (*cognitoidentityprovider.InitiateAuthOutput, error) {
+				return &cognitoidentityprovider.InitiateAuthOutput{ChallengeName: cognitotypes.ChallengeNameTypeSmsOtp, Session: aws.String("cognito-session")}, nil
+			}},
+		},
+		{
+			name: "unknown identity",
+			repo: &mockUserRepo{getByPhoneNumber: func(context.Context, string) (*models.User, error) {
+				return nil, errors.New("user not found")
+			}},
+			client: &mockCognitoClient{},
+		},
+	}
+
+	var publicFields map[string]interface{}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := newPhoneAuthService(t, tc.repo, tc.client).PhoneLogin(ctx, PhoneLoginInput{PhoneNumber: "9876543210"})
+			require.NoError(t, err)
+			body, err := json.Marshal(result)
+			require.NoError(t, err)
+			var fields map[string]interface{}
+			require.NoError(t, json.Unmarshal(body, &fields))
+			if publicFields == nil {
+				publicFields = fields
+				return
+			}
+			assert.Equal(t, publicFields["challenge_name"], fields["challenge_name"])
+			assert.Equal(t, publicFields["message"], fields["message"])
+			assert.NotEmpty(t, fields["session"])
+		})
+	}
 }
 
 func TestPhoneVerifyLoginReturnsTokens(t *testing.T) {
@@ -477,4 +579,17 @@ func TestClassifyPhoneAuthErrorOTPValidation(t *testing.T) {
 	expiredCodeErr := classifyPhoneAuthError(&cognitotypes.ExpiredCodeException{})
 	require.Error(t, expiredCodeErr)
 	assert.Equal(t, "OTP code expired, please request a new code", expiredCodeErr.Error())
+}
+
+func TestClassifyPhoneAuthErrorDoesNotRevealUnknownNumber(t *testing.T) {
+	t.Parallel()
+
+	for _, input := range []error{
+		&cognitotypes.UserNotFoundException{},
+		&cognitotypes.UserNotConfirmedException{},
+	} {
+		err := classifyPhoneAuthError(input)
+		require.Error(t, err)
+		assert.Equal(t, phoneAuthGenericFailure, err.Error())
+	}
 }

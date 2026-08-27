@@ -2,6 +2,7 @@ package unit
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -195,7 +196,8 @@ func TestAuthService_Register(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
-	assert.Equal(t, "Please verify your email address", result.Message)
+	assert.Empty(t, result.UserID)
+	assert.Equal(t, "If the email exists, a verification code will be sent", result.Message)
 	mockCognito.AssertExpectations(t)
 	mockUserRepo.AssertExpectations(t)
 }
@@ -229,7 +231,8 @@ func TestAuthService_Register_TriggersFallbackResendWhenDeliveryMissing(t *testi
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
-	assert.Equal(t, "Please verify your email address", result.Message)
+	assert.Empty(t, result.UserID)
+	assert.Equal(t, "If the email exists, a verification code will be sent", result.Message)
 	mockCognito.AssertExpectations(t)
 	mockUserRepo.AssertExpectations(t)
 }
@@ -259,11 +262,11 @@ func TestAuthService_Register_ExistingUnverifiedUserReturnsVerificationMessage(t
 
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
-	assert.Contains(t, result.Message, "verify your email")
+	assert.Equal(t, "If the email exists, a verification code will be sent", result.Message)
 	mockCognito.AssertExpectations(t)
 }
 
-func TestAuthService_Register_ExistingConfirmedUserReturnsConflictError(t *testing.T) {
+func TestAuthService_Register_ExistingConfirmedUserReturnsGenericResponse(t *testing.T) {
 	mockCognito := new(MockCognitoIdentityProviderAPI)
 	mockUserRepo := new(MockUserRepository)
 	log := logger.New()
@@ -288,10 +291,74 @@ func TestAuthService_Register_ExistingConfirmedUserReturnsConflictError(t *testi
 
 	result, err := svc.Register(ctx, input)
 
-	assert.Error(t, err)
-	assert.Nil(t, result)
-	assert.Contains(t, err.Error(), "email already registered")
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Empty(t, result.UserID)
+	assert.Equal(t, "If the email exists, a verification code will be sent", result.Message)
 	mockCognito.AssertExpectations(t)
+}
+
+func TestAuthService_RegisterPublicResponseDoesNotRevealEmailExistence(t *testing.T) {
+	ctx := context.Background()
+	input := services.RegisterInput{Email: "test@example.com", Password: "password123!", Name: "Test User"}
+
+	cases := []struct {
+		name      string
+		configure func(*MockCognitoIdentityProviderAPI, *MockUserRepository)
+	}{
+		{
+			name: "new identity",
+			configure: func(cognito *MockCognitoIdentityProviderAPI, repo *MockUserRepository) {
+				cognito.On("SignUp", ctx, mock.AnythingOfType("*cognitoidentityprovider.SignUpInput"), mock.Anything).Return(&cognitoidentityprovider.SignUpOutput{
+					UserSub: aws.String("new-user-sub"),
+					CodeDeliveryDetails: &types.CodeDeliveryDetailsType{
+						DeliveryMedium: types.DeliveryMediumTypeEmail,
+					},
+				}, nil)
+				repo.On("Create", ctx, mock.AnythingOfType("*models.User")).Return(nil)
+			},
+		},
+		{
+			name: "existing unverified identity",
+			configure: func(cognito *MockCognitoIdentityProviderAPI, _ *MockUserRepository) {
+				cognito.On("SignUp", ctx, mock.AnythingOfType("*cognitoidentityprovider.SignUpInput"), mock.Anything).Return(nil, &types.UsernameExistsException{})
+				cognito.On("ResendConfirmationCode", ctx, mock.AnythingOfType("*cognitoidentityprovider.ResendConfirmationCodeInput"), mock.Anything).Return(&cognitoidentityprovider.ResendConfirmationCodeOutput{}, nil)
+			},
+		},
+		{
+			name: "existing confirmed identity",
+			configure: func(cognito *MockCognitoIdentityProviderAPI, _ *MockUserRepository) {
+				cognito.On("SignUp", ctx, mock.AnythingOfType("*cognitoidentityprovider.SignUpInput"), mock.Anything).Return(nil, &types.UsernameExistsException{})
+				cognito.On("ResendConfirmationCode", ctx, mock.AnythingOfType("*cognitoidentityprovider.ResendConfirmationCodeInput"), mock.Anything).Return(nil, &types.InvalidParameterException{Message: aws.String("User is already confirmed")})
+			},
+		},
+	}
+
+	var publicBody []byte
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cognito := new(MockCognitoIdentityProviderAPI)
+			repo := new(MockUserRepository)
+			tc.configure(cognito, repo)
+			svc := services.NewAuthServiceWithMocks(&services.TestAuthConfig{CognitoClientID: "test-client-id"}, repo, cognito, nil, nil, logger.New())
+
+			result, err := svc.Register(ctx, input)
+			if err != nil {
+				t.Fatalf("register: %v", err)
+			}
+			body, err := json.Marshal(result)
+			if err != nil {
+				t.Fatalf("marshal response: %v", err)
+			}
+			if publicBody == nil {
+				publicBody = body
+			} else if string(body) != string(publicBody) {
+				t.Fatalf("public response differs: got %s, want %s", body, publicBody)
+			}
+			cognito.AssertExpectations(t)
+			repo.AssertExpectations(t)
+		})
+	}
 }
 
 // TestAuthService_Register_CognitoError tests Register when Cognito fails

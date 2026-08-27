@@ -26,20 +26,20 @@ import (
 )
 
 const (
-	phoneSignupCooldownPurpose  = "signup"
-	phoneResendCooldownPurpose  = "resend"
-	phoneLoginCooldownPurpose   = "login"
-	phoneOTPCooldownWindow      = time.Minute
-	phoneAuthDisabledMessage    = "phone authentication is not configured"
-	phoneAuthConflictMessage    = "phone number already registered"
-	phoneAuthEmailConflict      = "email already registered with another account"
-	phoneAuthEmailUnsupported   = "email cannot be set during phone registration"
-	phoneAuthRateLimitMessage   = "too many OTP requests, please wait before trying again"
-	phoneAuthGenericFailure     = "authentication failed"
-	defaultPhoneRegisterPrompt  = "OTP sent to your phone number"
-	defaultPhoneConfirmPrompt   = "phone number verified successfully"
-	defaultPhoneResendPrompt    = "verification code resent"
-	defaultPhoneChallengePrompt = "OTP sent to your phone number"
+	phoneSignupCooldownPurpose = "signup"
+	phoneResendCooldownPurpose = "resend"
+	phoneLoginCooldownPurpose  = "login"
+	phoneOTPCooldownWindow     = time.Minute
+	phoneAuthDisabledMessage   = "phone authentication is not configured"
+	phoneAuthConflictMessage   = "phone number already registered"
+	phoneAuthEmailConflict     = "email already registered with another account"
+	phoneAuthEmailUnsupported  = "email cannot be set during phone registration"
+	phoneAuthRateLimitMessage  = "too many OTP requests, please wait before trying again"
+	phoneAuthGenericFailure    = "authentication failed"
+	genericEmailAuthPrompt     = "If the email exists, a verification code will be sent"
+	genericPhoneAuthPrompt     = "If the phone number is registered, an OTP will be sent"
+	defaultPhoneConfirmPrompt  = "phone number verified successfully"
+	defaultPhoneResendPrompt   = "verification code resent"
 )
 
 var indianMobileNumberPattern = regexp.MustCompile(`^[6-9][0-9]{9}$`)
@@ -117,25 +117,21 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*Regis
 		},
 	})
 	if err != nil {
-		var usernameExists *types.UsernameExistsException
-		if errors.As(err, &usernameExists) {
+		if isCognitoIdentityExistsError(err) {
 			resendErr := s.ResendVerification(ctx, normalizedEmail)
 			if resendErr == nil || shouldIgnoreVerificationResendError(resendErr) {
 				if resendErr != nil {
 					s.log.Warn("existing signup verification resend throttled", "email", normalizedEmail, "error", resendErr)
 				}
-				return &RegisterOutput{
-					UserID:  "",
-					Message: "Account already exists. Please verify your email address",
-				}, nil
+				return &RegisterOutput{Message: genericEmailAuthPrompt}, nil
 			}
 
 			if isAlreadyConfirmedResendError(resendErr) {
-				return nil, fmt.Errorf("email already registered")
+				return &RegisterOutput{Message: genericEmailAuthPrompt}, nil
 			}
 
 			s.log.Warn("existing signup verification resend failed", "email", normalizedEmail, "error", resendErr)
-			return nil, fmt.Errorf("email already registered")
+			return &RegisterOutput{Message: genericEmailAuthPrompt}, nil
 		}
 
 		s.log.Error("cognito signup failed", "error", err)
@@ -164,8 +160,7 @@ func (s *AuthService) Register(ctx context.Context, input RegisterInput) (*Regis
 	}
 
 	return &RegisterOutput{
-		UserID:  user.ID,
-		Message: "Please verify your email address",
+		Message: genericEmailAuthPrompt,
 	}, nil
 }
 
@@ -665,12 +660,13 @@ func (s *AuthService) PhoneRegister(ctx context.Context, input PhoneRegisterInpu
 	if strings.TrimSpace(input.Email) != "" {
 		return nil, errors.New(phoneAuthEmailUnsupported)
 	}
-	if _, err := s.userRepo.GetByPhoneNumber(ctx, normalizedPhone); err == nil {
-		return nil, errors.New(phoneAuthConflictMessage)
-	}
-
 	if err := s.enforcePhoneOTPCooldown(ctx, phoneSignupCooldownPurpose, normalizedPhone); err != nil {
 		return nil, err
+	}
+
+	if _, err := s.userRepo.GetByPhoneNumber(ctx, normalizedPhone); err == nil {
+		s.resendPhoneSignupCode(ctx, normalizedPhone)
+		return genericPhoneRegisterOutput(normalizedPhone), nil
 	}
 
 	userAttributes := []types.AttributeType{
@@ -685,6 +681,10 @@ func (s *AuthService) PhoneRegister(ctx context.Context, input PhoneRegisterInpu
 		UserAttributes: userAttributes,
 	})
 	if err != nil {
+		if isCognitoIdentityExistsError(err) {
+			s.resendPhoneSignupCode(ctx, normalizedPhone)
+			return genericPhoneRegisterOutput(normalizedPhone), nil
+		}
 		s.log.Warn("phone registration failed", "phone_number", maskPhoneNumber(normalizedPhone), "error", err)
 		return nil, fmt.Errorf("phone registration failed: %w", err)
 	}
@@ -704,11 +704,34 @@ func (s *AuthService) PhoneRegister(ctx context.Context, input PhoneRegisterInpu
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
 
+	return genericPhoneRegisterOutput(normalizedPhone), nil
+}
+
+func genericPhoneRegisterOutput(phoneNumber string) *PhoneRegisterOutput {
 	return &PhoneRegisterOutput{
-		UserID:      user.ID,
-		PhoneNumber: normalizedPhone,
-		Message:     defaultPhoneRegisterPrompt,
-	}, nil
+		PhoneNumber: phoneNumber,
+		Message:     genericPhoneAuthPrompt,
+	}
+}
+
+func isCognitoIdentityExistsError(err error) bool {
+	var usernameExists *types.UsernameExistsException
+	if errors.As(err, &usernameExists) {
+		return true
+	}
+
+	var aliasExists *types.AliasExistsException
+	return errors.As(err, &aliasExists)
+}
+
+func (s *AuthService) resendPhoneSignupCode(ctx context.Context, phoneNumber string) {
+	_, err := s.cognitoPhone.ResendConfirmationCode(ctx, &cognitoidentityprovider.ResendConfirmationCodeInput{
+		ClientId: aws.String(s.cfg.Cognito.Phone.ClientID),
+		Username: aws.String(phoneNumber),
+	})
+	if err != nil {
+		s.log.Warn("existing phone signup verification resend failed", "phone_number", maskPhoneNumber(phoneNumber), "error", err)
+	}
 }
 
 func (s *AuthService) ensureCognitoRelinkAllowed(user *models.User, nextCognitoID string) error {
@@ -797,17 +820,17 @@ func (s *AuthService) PhoneLogin(ctx context.Context, input PhoneLoginInput) (*P
 		return nil, err
 	}
 
+	if err := s.enforcePhoneOTPCooldown(ctx, phoneLoginCooldownPurpose, normalizedPhone); err != nil {
+		return nil, err
+	}
+
 	// Surface a clear error before contacting Cognito when the number isn't registered locally.
 	if _, err := s.userRepo.GetByPhoneNumber(ctx, normalizedPhone); err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "user not found") {
-			return nil, fmt.Errorf("phone number not registered")
+			return genericPhoneLoginChallenge(), nil
 		}
 		s.log.Error("phone login precheck failed", "phone_number", maskPhoneNumber(normalizedPhone), "error", err)
 		return nil, errors.New(phoneAuthGenericFailure)
-	}
-
-	if err := s.enforcePhoneOTPCooldown(ctx, phoneLoginCooldownPurpose, normalizedPhone); err != nil {
-		return nil, err
 	}
 
 	result, err := s.cognitoPhone.InitiateAuth(ctx, &cognitoidentityprovider.InitiateAuthInput{
@@ -820,6 +843,9 @@ func (s *AuthService) PhoneLogin(ctx context.Context, input PhoneLoginInput) (*P
 	})
 	if err != nil {
 		s.log.Warn("phone login failed", "phone_number", maskPhoneNumber(normalizedPhone), "error", err)
+		if isPhoneIdentityUnavailableError(err) {
+			return genericPhoneLoginChallenge(), nil
+		}
 		return nil, classifyPhoneAuthError(err)
 	}
 	if result.Session == nil || *result.Session == "" {
@@ -834,8 +860,26 @@ func (s *AuthService) PhoneLogin(ctx context.Context, input PhoneLoginInput) (*P
 	return &PhoneLoginChallengeOutput{
 		ChallengeName: challengeName,
 		Session:       *result.Session,
-		Message:       defaultPhoneChallengePrompt,
+		Message:       genericPhoneAuthPrompt,
 	}, nil
+}
+
+func genericPhoneLoginChallenge() *PhoneLoginChallengeOutput {
+	return &PhoneLoginChallengeOutput{
+		ChallengeName: "SMS_OTP",
+		Session:       uuid.NewString(),
+		Message:       genericPhoneAuthPrompt,
+	}
+}
+
+func isPhoneIdentityUnavailableError(err error) bool {
+	var userNotFound *types.UserNotFoundException
+	if errors.As(err, &userNotFound) {
+		return true
+	}
+
+	var userNotConfirmed *types.UserNotConfirmedException
+	return errors.As(err, &userNotConfirmed)
 }
 
 type PhoneVerifyLoginInput struct {
@@ -1065,12 +1109,12 @@ func classifyPhoneAuthError(err error) error {
 
 	var userNotFound *types.UserNotFoundException
 	if errors.As(err, &userNotFound) {
-		return fmt.Errorf("phone number not registered")
+		return errors.New(phoneAuthGenericFailure)
 	}
 
 	var userNotConfirmed *types.UserNotConfirmedException
 	if errors.As(err, &userNotConfirmed) {
-		return fmt.Errorf("phone number not verified")
+		return errors.New(phoneAuthGenericFailure)
 	}
 
 	var codeMismatch *types.CodeMismatchException
