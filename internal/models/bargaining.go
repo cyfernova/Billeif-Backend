@@ -10,12 +10,13 @@ type BargainingNegotiation struct {
 	BuyerAgentID       string     `gorm:"not null;index" json:"buyer_agent_id" validate:"required,uuid"`
 	SellerAgentID      string     `gorm:"not null;index" json:"seller_agent_id" validate:"required,uuid"`
 	UserID             string     `gorm:"not null;index" json:"user_id" validate:"required,uuid"`
+	BusinessID         string     `gorm:"not null;index" json:"business_id" validate:"required,uuid"`
 	MarketplaceOrderID *string    `gorm:"index" json:"marketplace_order_id,omitempty" validate:"omitempty,uuid"`
 	InitialAmount      float64    `gorm:"not null;type:decimal(15,2)" json:"initial_amount" validate:"required,gt=0"`
 	CurrentAmount      float64    `gorm:"not null;type:decimal(15,2)" json:"current_amount" validate:"required,gte=0"`
 	BuyerVolatility    float64    `gorm:"not null;type:decimal(3,2)" json:"buyer_volatility" validate:"required,gte=0,lte=1"`
 	SellerVolatility   float64    `gorm:"not null;type:decimal(3,2)" json:"seller_volatility" validate:"required,gte=0,lte=1"`
-	Status             string     `gorm:"not null;size:50;default:initiated;index" json:"status" validate:"required,oneof=initiated in_progress accepted rejected expired"`
+	Status             string     `gorm:"not null;size:50;default:initiated;index" json:"status" validate:"required,oneof=initiated in_progress running accepted rejected expired completed stopped failed"`
 	Rounds             int        `gorm:"default:0" json:"rounds" validate:"gte=0"`
 	MaxRounds          int        `gorm:"default:5" json:"max_rounds" validate:"required,gte=1,lte=20"`
 	ExpiresAt          time.Time  `gorm:"not null;index" json:"expires_at"`

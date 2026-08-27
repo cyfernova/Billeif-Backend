@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,6 +28,27 @@ const (
 	interRoundDelay   = 2 * time.Second
 )
 
+var (
+	ErrA2ANegotiationNotFound = errors.New("negotiation not found")
+	ErrA2ANegotiationTerminal = errors.New("negotiation is already terminal")
+)
+
+type A2ANegotiationScope struct {
+	UserID     string
+	BusinessID string
+}
+
+func (s A2ANegotiationScope) valid() bool {
+	return strings.TrimSpace(s.UserID) != "" && strings.TrimSpace(s.BusinessID) != ""
+}
+
+func a2aScopedLookupError(operation string, err error) error {
+	if errors.Is(err, interfaces.ErrA2ANegotiationScopeNotFound) {
+		return ErrA2ANegotiationNotFound
+	}
+	return fmt.Errorf("%s: %w", operation, err)
+}
+
 type A2ABargainingService struct {
 	a2aClient     *a2a.A2AClient
 	bargaining    *BargainingService
@@ -41,11 +64,15 @@ type A2ABargainingService struct {
 }
 
 type A2ASession struct {
+	stateMu          sync.RWMutex
 	NegotiationID    string
 	DBNegotiationID  string
 	BuyerAgentID     string
 	SellerAgentID    string
 	UserID           string
+	BusinessID       string
+	BuyerAgent       *models.Agent
+	SellerAgent      *models.Agent
 	InitialAmount    float64
 	CurrentAmount    float64
 	Round            int
@@ -71,6 +98,12 @@ type A2ASessionProgress struct {
 }
 
 func (s *A2ASession) ToProgressResponse() A2ASessionProgress {
+	s.stateMu.RLock()
+	defer s.stateMu.RUnlock()
+	return s.toProgressResponseLocked()
+}
+
+func (s *A2ASession) toProgressResponseLocked() A2ASessionProgress {
 	return A2ASessionProgress{
 		NegotiationID:   s.NegotiationID,
 		NegotiationUUID: s.DBNegotiationID,
@@ -83,6 +116,36 @@ func (s *A2ASession) ToProgressResponse() A2ASessionProgress {
 		MaxRounds:       s.MaxRounds,
 		Status:          s.Status,
 	}
+}
+
+func (s *A2ASession) applyProgress(progress *A2ASessionProgress) {
+	if progress == nil {
+		return
+	}
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	if isTerminalNegotiationStatus(s.Status) && progress.Status != s.Status {
+		return
+	}
+	s.Round = progress.Round
+	s.Status = progress.Status
+	s.CurrentAmount = progress.CurrentAmount
+}
+
+func (s *A2ASession) setStatus(status string) {
+	s.stateMu.Lock()
+	s.Status = status
+	s.stateMu.Unlock()
+}
+
+func (s *A2ASession) setStatusIfActive(status string) bool {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	if isTerminalNegotiationStatus(s.Status) {
+		return false
+	}
+	s.Status = status
+	return true
 }
 
 type AutonomousNegotiationRequest struct {
@@ -126,74 +189,85 @@ func NewA2ABargainingService(a2aClient *a2a.A2AClient, bargaining *BargainingSer
 	}
 }
 
-func (s *A2ABargainingService) StartNegotiation(ctx context.Context, buyerAgentID, sellerAgentID string, initialAmount float64) (*A2ASession, error) {
-	negotiationID := generateA2ANegotiationID()
-
-	session := &A2ASession{
-		NegotiationID: negotiationID,
-		BuyerAgentID:  buyerAgentID,
-		SellerAgentID: sellerAgentID,
-		InitialAmount: initialAmount,
-		CurrentAmount: initialAmount,
-		Round:         0, //
-		MaxRounds:     5,
-		Status:        "running",
-		StartTime:     time.Now(),
-	}
-
-	s.sessionsLock.Lock()
-	s.sessions[negotiationID] = session
-	s.sessionLocks[negotiationID] = &sync.Mutex{}
-	s.sessionsLock.Unlock()
-
-	// Persist negotiation to DB so rounds survive cold starts
-	negReq := &CreateNegotiationRequest{
-		BuyerAgentID:  buyerAgentID,
-		SellerAgentID: sellerAgentID,
-		InitialAmount: initialAmount,
-		MaxRounds:     5,
-		SessionID:     &negotiationID,
-	}
-	negotiation, err := s.bargaining.CreateNegotiation(ctx, negReq)
-	if err != nil {
-		s.log.Error("failed to persist negotiation", "error", err, "negotiation_id", negotiationID)
-	} else {
-		session.DBNegotiationID = negotiation.ID
-	}
-
-	s.log.Info("A2A negotiation session started", "negotiation_id", negotiationID, "buyer_id", buyerAgentID, "seller_id", sellerAgentID, "initial_amount", initialAmount)
-
-	return session, nil
+func (s *A2ABargainingService) StartNegotiation(
+	ctx context.Context,
+	scope A2ANegotiationScope,
+	buyerAgentID,
+	sellerAgentID string,
+	initialAmount float64,
+) (*A2ASession, error) {
+	return s.startNegotiation(ctx, scope, &AutonomousNegotiationRequest{
+		BuyerAgentID: buyerAgentID, SellerAgentID: sellerAgentID,
+		InitialAmount: initialAmount, MaxRounds: 5,
+	})
 }
 
-func (s *A2ABargainingService) StartAutonomousNegotiation(ctx context.Context, req *AutonomousNegotiationRequest) (*A2ASession, error) {
-	if req != nil && req.CallbackURL != "" {
+func (s *A2ABargainingService) StartAutonomousNegotiation(
+	ctx context.Context,
+	scope A2ANegotiationScope,
+	req *AutonomousNegotiationRequest,
+) (*A2ASession, error) {
+	return s.startNegotiation(ctx, scope, req)
+}
+
+func (s *A2ABargainingService) startNegotiation(
+	ctx context.Context,
+	scope A2ANegotiationScope,
+	req *AutonomousNegotiationRequest,
+) (*A2ASession, error) {
+	if req == nil || !scope.valid() {
+		return nil, ErrA2ANegotiationNotFound
+	}
+
+	buyerAgent, err := s.ap2Repo.GetAgentByIDForOwnerAndBusiness(
+		ctx,
+		req.BuyerAgentID,
+		scope.UserID,
+		scope.BusinessID,
+	)
+	if err != nil {
+		return nil, a2aScopedLookupError("authorize buyer agent", err)
+	}
+	if buyerAgent == nil || NormalizeMarketplaceAgentType(buyerAgent.Type) != "shopping" {
+		return nil, ErrA2ANegotiationNotFound
+	}
+	sellerAgent, err := s.ap2Repo.GetAgentByIDForOwnerAndBusiness(
+		ctx,
+		req.SellerAgentID,
+		scope.BusinessID,
+		scope.BusinessID,
+	)
+	if err != nil {
+		return nil, a2aScopedLookupError("authorize seller agent", err)
+	}
+	if sellerAgent == nil || NormalizeMarketplaceAgentType(sellerAgent.Type) != "merchant" {
+		return nil, ErrA2ANegotiationNotFound
+	}
+
+	if req.CallbackURL != "" {
 		if err := validateWebhookURL(ctx, req.CallbackURL); err != nil {
 			return nil, fmt.Errorf("invalid callback URL: %w", err)
 		}
 	}
 
-	negotiationID := generateA2ANegotiationID()
-
 	maxRounds := req.MaxRounds
 	if maxRounds == 0 {
 		maxRounds = 5
 	}
-
-	// Create the database negotiation first so DBNegotiationID is available before enqueuing
-	negReq := &CreateNegotiationRequest{
-		BuyerAgentID:  req.BuyerAgentID,
-		SellerAgentID: req.SellerAgentID,
-		UserID:        req.UserID,
-		InitialAmount: req.InitialAmount,
-		MaxRounds:     maxRounds,
-		SessionID:     &negotiationID,
-	}
-
-	negotiation, err := s.bargaining.CreateNegotiation(ctx, negReq)
+	negotiationID := generateA2ANegotiationID()
+	negotiation, err := s.bargaining.CreateNegotiation(ctx, &CreateNegotiationRequest{
+		BuyerAgentID:   req.BuyerAgentID,
+		SellerAgentID:  req.SellerAgentID,
+		UserID:         scope.UserID,
+		BusinessID:     scope.BusinessID,
+		InitialAmount:  req.InitialAmount,
+		ReferencePrice: req.ReferencePrice,
+		MaxRounds:      maxRounds,
+		SessionID:      &negotiationID,
+	})
 	if err != nil {
-		s.log.Error("failed to create negotiation in database", "error", err, "session_id", negotiationID)
-		return nil, fmt.Errorf("failed to create negotiation: %w", err)
+		s.log.Error("failed to persist A2A negotiation", "error", err, "session_id", negotiationID)
+		return nil, fmt.Errorf("persist negotiation: %w", err)
 	}
 
 	session := &A2ASession{
@@ -201,13 +275,16 @@ func (s *A2ABargainingService) StartAutonomousNegotiation(ctx context.Context, r
 		DBNegotiationID:  negotiation.ID,
 		BuyerAgentID:     req.BuyerAgentID,
 		SellerAgentID:    req.SellerAgentID,
-		UserID:           req.UserID,
+		UserID:           scope.UserID,
+		BusinessID:       scope.BusinessID,
+		BuyerAgent:       buyerAgent,
+		SellerAgent:      sellerAgent,
 		InitialAmount:    req.InitialAmount,
 		CurrentAmount:    req.InitialAmount,
 		Round:            0,
 		MaxRounds:        maxRounds,
 		Status:           "running",
-		StartTime:        time.Now(),
+		StartTime:        time.Now().UTC(),
 		CallbackURL:      req.CallbackURL,
 		NegotiationReady: make(chan struct{}),
 	}
@@ -217,15 +294,13 @@ func (s *A2ABargainingService) StartAutonomousNegotiation(ctx context.Context, r
 	s.sessionLocks[negotiationID] = &sync.Mutex{}
 	s.sessionsLock.Unlock()
 
-	s.log.Info("A2A autonomous negotiation session created",
+	s.log.Info("A2A negotiation session created",
 		"session_id", negotiationID,
 		"db_negotiation_id", negotiation.ID,
 		"buyer_id", req.BuyerAgentID,
 		"seller_id", req.SellerAgentID,
-		"initial_amount", req.InitialAmount,
-		"max_rounds", maxRounds,
-		"callback_url", req.CallbackURL)
-
+		"user_id", scope.UserID,
+		"business_id", scope.BusinessID)
 	return session, nil
 }
 
@@ -237,20 +312,20 @@ func (s *A2ABargainingService) RunAutonomousNegotiation(ctx context.Context, ses
 			s.log.Error("panic in autonomous negotiation goroutine", "error", r, "session_id", sessionID)
 		}
 		if err != nil && session != nil {
-			session.Status = "failed"
+			session.setStatusIfActive("failed")
 		}
 	}()
 
 	s.sessionsLock.RLock()
 	session, exists := s.sessions[sessionID]
+	lock, lockExists := s.sessionLocks[sessionID]
 	s.sessionsLock.RUnlock()
 
 	if !exists {
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
 
-	lock, ok := s.sessionLocks[sessionID]
-	if !ok {
+	if !lockExists {
 		return fmt.Errorf("session lock not found: %s", sessionID)
 	}
 	lock.Lock()
@@ -264,55 +339,27 @@ func (s *A2ABargainingService) RunAutonomousNegotiation(ctx context.Context, ses
 
 	s.log.Info("starting autonomous negotiation loop", "session_id", sessionID)
 
-	var negotiation *models.BargainingNegotiation
-
-	// If DBNegotiationID is already set, reuse the existing negotiation
-	if session.DBNegotiationID != "" {
-		negotiation, err = s.bargaining.GetNegotiation(ctx, session.DBNegotiationID)
-		if err != nil {
-			s.log.Error("failed to get existing negotiation", "error", err, "session_id", sessionID, "db_negotiation_id", session.DBNegotiationID)
-			s.sendWebhook(session.CallbackURL, WebhookPayload{
-				Event:         "negotiation_error",
-				SessionID:     sessionID,
-				Status:        "failed",
-				BuyerAgentID:  session.BuyerAgentID,
-				SellerAgentID: session.SellerAgentID,
-			})
-			return fmt.Errorf("failed to get existing negotiation: %w", err)
-		}
-		s.log.Info("reusing existing negotiation", "session_id", sessionID, "db_negotiation_id", session.DBNegotiationID)
-	} else {
-		// DBNegotiationID not set yet, create a new negotiation
-		negReq := &CreateNegotiationRequest{
-			BuyerAgentID:  session.BuyerAgentID,
-			SellerAgentID: session.SellerAgentID,
-			UserID:        session.UserID,
-			InitialAmount: session.InitialAmount,
-			MaxRounds:     session.MaxRounds,
-			SessionID:     &sessionID,
-		}
-
-		negotiation, err = s.bargaining.CreateNegotiation(ctx, negReq)
-		if err != nil {
-			s.log.Error("failed to create negotiation", "error", err, "session_id", sessionID)
-			s.sendWebhook(session.CallbackURL, WebhookPayload{
-				Event:         "negotiation_error",
-				SessionID:     sessionID,
-				Status:        "failed",
-				BuyerAgentID:  session.BuyerAgentID,
-				SellerAgentID: session.SellerAgentID,
-			})
-			return err
-		}
-
-		session.DBNegotiationID = negotiation.ID
-		s.log.Info("created new negotiation", "session_id", sessionID, "db_negotiation_id", negotiation.ID)
+	negotiationID := session.DBNegotiationID
+	if negotiationID == "" {
+		return fmt.Errorf("no durable negotiation for session: %s", sessionID)
+	}
+	negotiation, err := s.ap2Repo.GetBargainingNegotiationBySessionAndID(ctx, sessionID, negotiationID)
+	if err != nil {
+		return a2aScopedLookupError("load autonomous negotiation", err)
+	}
+	if negotiation == nil {
+		return ErrA2ANegotiationNotFound
+	}
+	if isTerminalNegotiationStatus(negotiation.Status) {
+		session.applyProgress(bargainingNegotiationProgress(negotiation))
+		return nil
 	}
 
 	activeAgentID := session.BuyerAgentID
 	activeAgentType := "buyer"
+	maxRounds := session.ToProgressResponse().MaxRounds
 
-	for round := 1; round <= session.MaxRounds; round++ {
+	for round := 1; round <= maxRounds; round++ {
 		select {
 		case <-ctx.Done():
 			s.log.Info("autonomous negotiation cancelled", "session_id", sessionID, "round", round)
@@ -321,10 +368,24 @@ func (s *A2ABargainingService) RunAutonomousNegotiation(ctx context.Context, ses
 		}
 
 		if round > 1 {
-			time.Sleep(interRoundDelay)
+			timer := time.NewTimer(interRoundDelay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
 		}
 
-		decision, err := s.bargaining.GetLLMBargainingDecision(ctx, activeAgentID, activeAgentType, negotiation.ID)
+		progress, progressErr := s.GetAutonomousNegotiationProgress(ctx, sessionID, negotiationID)
+		if progressErr != nil {
+			return progressErr
+		}
+		if isTerminalNegotiationStatus(progress.Status) {
+			return nil
+		}
+
+		decision, err := s.bargaining.GetLLMBargainingDecision(ctx, systemBargainingActorScope(), activeAgentID, activeAgentType, negotiation.ID)
 		if err != nil {
 			s.log.Error("LLM decision failed", "error", err, "session_id", sessionID, "round", round, "agent_id", activeAgentID)
 			s.sendWebhook(session.CallbackURL, WebhookPayload{
@@ -337,6 +398,13 @@ func (s *A2ABargainingService) RunAutonomousNegotiation(ctx context.Context, ses
 			})
 			return fmt.Errorf("LLM decision failed: %w", err)
 		}
+		progress, progressErr = s.GetAutonomousNegotiationProgress(ctx, sessionID, negotiationID)
+		if progressErr != nil {
+			return progressErr
+		}
+		if isTerminalNegotiationStatus(progress.Status) {
+			return nil
+		}
 
 		counterReq := &CounterOfferRequest{
 			AgentID:        activeAgentID,
@@ -345,7 +413,7 @@ func (s *A2ABargainingService) RunAutonomousNegotiation(ctx context.Context, ses
 			Action:         decision.Action,
 		}
 
-		_, updatedNegotiation, err := s.bargaining.SubmitCounterOffer(ctx, negotiation.ID, counterReq)
+		_, updatedNegotiation, err := s.bargaining.SubmitCounterOffer(ctx, negotiationID, counterReq)
 		if err != nil {
 			s.log.Error("submit counter offer failed", "error", err, "session_id", sessionID, "round", round)
 			s.sendWebhook(session.CallbackURL, WebhookPayload{
@@ -359,8 +427,9 @@ func (s *A2ABargainingService) RunAutonomousNegotiation(ctx context.Context, ses
 			return fmt.Errorf("submit counter offer failed: %w", err)
 		}
 
-		session.CurrentAmount = updatedNegotiation.CurrentAmount
-		session.Round = round
+		updatedProgress := bargainingNegotiationProgress(updatedNegotiation)
+		updatedProgress.NegotiationID = sessionID
+		session.applyProgress(updatedProgress)
 
 		s.sendWebhook(session.CallbackURL, WebhookPayload{
 			Event:          "round_completed",
@@ -375,17 +444,18 @@ func (s *A2ABargainingService) RunAutonomousNegotiation(ctx context.Context, ses
 		})
 
 		if decision.Action == "accept" || decision.Action == "reject" || updatedNegotiation.Status == "accepted" || updatedNegotiation.Status == "rejected" {
-			session.Status = updatedNegotiation.Status
-			if session.Status == "" {
-				session.Status = decision.Action
+			status := updatedNegotiation.Status
+			if status == "" {
+				status = decision.Action
 			}
+			session.setStatus(status)
 
 			s.recordLearning(updatedNegotiation, activeAgentID, activeAgentType, decision.Action, round)
 
 			s.sendWebhook(session.CallbackURL, WebhookPayload{
 				Event:         "negotiation_completed",
 				SessionID:     sessionID,
-				Status:        session.Status,
+				Status:        status,
 				FinalAmount:   updatedNegotiation.CurrentAmount,
 				Rounds:        round,
 				BuyerAgentID:  session.BuyerAgentID,
@@ -394,7 +464,7 @@ func (s *A2ABargainingService) RunAutonomousNegotiation(ctx context.Context, ses
 
 			s.log.Info("autonomous negotiation completed",
 				"session_id", sessionID,
-				"status", session.Status,
+				"status", status,
 				"final_amount", updatedNegotiation.CurrentAmount,
 				"total_rounds", round)
 
@@ -410,28 +480,44 @@ func (s *A2ABargainingService) RunAutonomousNegotiation(ctx context.Context, ses
 		}
 	}
 
-	session.Status = "expired"
+	if err := s.ap2Repo.UpdateNegotiationStatus(ctx, negotiationID, "expired"); err != nil {
+		progress, progressErr := s.GetAutonomousNegotiationProgress(ctx, sessionID, negotiationID)
+		if progressErr == nil && isTerminalNegotiationStatus(progress.Status) {
+			return nil
+		}
+		return fmt.Errorf("expire autonomous negotiation: %w", err)
+	}
+	session.setStatusIfActive("expired")
+	sessionProgress := session.ToProgressResponse()
 	s.sendWebhook(session.CallbackURL, WebhookPayload{
 		Event:         "negotiation_completed",
 		SessionID:     sessionID,
 		Status:        "expired",
-		FinalAmount:   session.CurrentAmount,
-		Rounds:        session.MaxRounds,
+		FinalAmount:   sessionProgress.CurrentAmount,
+		Rounds:        sessionProgress.MaxRounds,
 		BuyerAgentID:  session.BuyerAgentID,
 		SellerAgentID: session.SellerAgentID,
 	})
 
-	s.log.Info("autonomous negotiation expired (max rounds)", "session_id", sessionID, "max_rounds", session.MaxRounds)
+	s.log.Info("autonomous negotiation expired (max rounds)", "session_id", sessionID, "max_rounds", sessionProgress.MaxRounds)
 	return nil
 }
 
 func (s *A2ABargainingService) RunAutonomousNegotiationRound(
 	ctx context.Context,
-	sessionID string,
+	sessionID,
+	negotiationID string,
 	expectedRound int,
 ) error {
-	if expectedRound <= 0 {
+	if sessionID == "" || negotiationID == "" || expectedRound <= 0 {
 		return fmt.Errorf("invalid expected negotiation round: %d", expectedRound)
+	}
+	progress, err := s.GetAutonomousNegotiationProgress(ctx, sessionID, negotiationID)
+	if err != nil {
+		return err
+	}
+	if isTerminalNegotiationStatus(progress.Status) {
+		return nil
 	}
 	var session *A2ASession
 	s.sessionsLock.RLock()
@@ -440,20 +526,19 @@ func (s *A2ABargainingService) RunAutonomousNegotiationRound(
 
 	if !exists {
 		// Cold start: session not in memory. Try to reload from DB.
-		var err error
-		session, err = s.reloadSessionFromDB(ctx, sessionID)
+		session, err = s.reloadSessionFromDB(ctx, sessionID, negotiationID)
 		if err != nil {
-			return fmt.Errorf("session not found: %s", sessionID)
+			return err
 		}
 	}
 
-	if session.DBNegotiationID == "" {
-		return fmt.Errorf("no database negotiation ID for session: %s", sessionID)
+	if session.DBNegotiationID != negotiationID {
+		return ErrA2ANegotiationNotFound
 	}
 
 	// Determine which round to process by checking DB rounds
 	// This must be done before claiming to know which round to atomically claim
-	rounds, err := s.ap2Repo.GetBargainingRounds(ctx, session.DBNegotiationID)
+	rounds, err := s.ap2Repo.GetBargainingRounds(ctx, negotiationID)
 	if err != nil {
 		s.log.Warn("failed to get negotiation rounds", "error", err)
 		rounds = []*models.BargainingRound{}
@@ -481,18 +566,9 @@ func (s *A2ABargainingService) RunAutonomousNegotiationRound(
 		)
 	}
 
-	if nextRound > session.MaxRounds {
-		session.Status = "expired"
-		s.sendWebhook(session.CallbackURL, WebhookPayload{
-			Event:         "negotiation_completed",
-			SessionID:     sessionID,
-			Status:        "expired",
-			FinalAmount:   session.CurrentAmount,
-			Rounds:        session.MaxRounds,
-			BuyerAgentID:  session.BuyerAgentID,
-			SellerAgentID: session.SellerAgentID,
-		})
-		return nil
+	sessionProgress := session.ToProgressResponse()
+	if nextRound > sessionProgress.MaxRounds {
+		return s.expireAutonomousNegotiation(ctx, session, sessionID, negotiationID)
 	}
 
 	// Atomically claim this specific round to prevent concurrent processing
@@ -507,14 +583,21 @@ func (s *A2ABargainingService) RunAutonomousNegotiationRound(
 
 	// Sync session state from DB before processing
 	// This ensures we use the authoritative DB round count, not stale in-memory state
-	latestNeg, err := s.bargaining.GetNegotiation(ctx, session.DBNegotiationID)
+	latestProgress, err := s.GetAutonomousNegotiationProgress(ctx, sessionID, negotiationID)
 	if err != nil {
 		return fmt.Errorf("failed to get negotiation: %w", err)
 	}
-	// Update in-memory session with authoritative DB state
-	session.Round = latestNeg.Rounds
-	session.Status = latestNeg.Status
-	session.CurrentAmount = latestNeg.CurrentAmount
+	if isTerminalNegotiationStatus(latestProgress.Status) {
+		return nil
+	}
+	latestNeg, err := s.ap2Repo.GetBargainingNegotiationBySessionAndID(ctx, sessionID, negotiationID)
+	if err != nil {
+		return a2aScopedLookupError("reload autonomous negotiation", err)
+	}
+	if latestNeg == nil {
+		return ErrA2ANegotiationNotFound
+	}
+	session.applyProgress(latestProgress)
 
 	// Re-calculate nextRound from synced DB state to stay in sync
 	// If DB rounds advanced (e.g. concurrent submission), use that
@@ -558,24 +641,22 @@ func (s *A2ABargainingService) RunAutonomousNegotiationRound(
 		}
 	}
 
-	if nextRound > session.MaxRounds {
-		session.Status = "expired"
-		s.sendWebhook(session.CallbackURL, WebhookPayload{
-			Event:         "negotiation_completed",
-			SessionID:     sessionID,
-			Status:        "expired",
-			FinalAmount:   session.CurrentAmount,
-			Rounds:        session.MaxRounds,
-			BuyerAgentID:  session.BuyerAgentID,
-			SellerAgentID: session.SellerAgentID,
-		})
-		return nil
+	sessionProgress = session.ToProgressResponse()
+	if nextRound > sessionProgress.MaxRounds {
+		return s.expireAutonomousNegotiation(ctx, session, sessionID, negotiationID)
 	}
 
-	decision, err := s.bargaining.GetLLMBargainingDecision(ctx, activeAgentID, activeAgentType, latestNeg.ID)
+	decision, err := s.bargaining.GetLLMBargainingDecision(ctx, systemBargainingActorScope(), activeAgentID, activeAgentType, latestNeg.ID)
 	if err != nil {
 		s.log.Error("LLM decision failed", "error", err, "session_id", sessionID, "round", nextRound, "agent_id", activeAgentID)
 		return fmt.Errorf("LLM decision failed: %w", err)
+	}
+	latestProgress, err = s.GetAutonomousNegotiationProgress(ctx, sessionID, negotiationID)
+	if err != nil {
+		return err
+	}
+	if isTerminalNegotiationStatus(latestProgress.Status) {
+		return nil
 	}
 
 	counterReq := &CounterOfferRequest{
@@ -591,13 +672,15 @@ func (s *A2ABargainingService) RunAutonomousNegotiationRound(
 		return fmt.Errorf("submit counter offer failed: %w", err)
 	}
 
-	session.CurrentAmount = updatedNegotiation.CurrentAmount
-	session.Round = updatedNegotiation.Rounds
+	updatedProgress := bargainingNegotiationProgress(updatedNegotiation)
+	updatedProgress.NegotiationID = sessionID
+	session.applyProgress(updatedProgress)
+	sessionProgress = session.ToProgressResponse()
 
 	s.sendWebhook(session.CallbackURL, WebhookPayload{
 		Event:          "round_completed",
 		SessionID:      sessionID,
-		Round:          session.Round,
+		Round:          sessionProgress.Round,
 		AgentID:        activeAgentID,
 		AgentType:      activeAgentType,
 		Action:         decision.Action,
@@ -607,50 +690,79 @@ func (s *A2ABargainingService) RunAutonomousNegotiationRound(
 	})
 
 	if decision.Action == "accept" || decision.Action == "reject" || updatedNegotiation.Status == "accepted" || updatedNegotiation.Status == "rejected" {
-		session.Status = updatedNegotiation.Status
-		if session.Status == "" {
-			session.Status = decision.Action
+		status := updatedNegotiation.Status
+		if status == "" {
+			status = decision.Action
 		}
+		session.setStatus(status)
+		sessionProgress = session.ToProgressResponse()
 
-		s.recordLearning(updatedNegotiation, activeAgentID, activeAgentType, decision.Action, session.Round)
+		s.recordLearning(updatedNegotiation, activeAgentID, activeAgentType, decision.Action, sessionProgress.Round)
 
 		s.sendWebhook(session.CallbackURL, WebhookPayload{
 			Event:         "negotiation_completed",
 			SessionID:     sessionID,
-			Status:        session.Status,
+			Status:        sessionProgress.Status,
 			FinalAmount:   updatedNegotiation.CurrentAmount,
-			Rounds:        session.Round,
+			Rounds:        sessionProgress.Round,
 			BuyerAgentID:  session.BuyerAgentID,
 			SellerAgentID: session.SellerAgentID,
 		})
 
 		s.log.Info("autonomous negotiation completed",
 			"session_id", sessionID,
-			"status", session.Status,
+			"status", sessionProgress.Status,
 			"final_amount", updatedNegotiation.CurrentAmount,
-			"total_rounds", session.Round)
+			"total_rounds", sessionProgress.Round)
 
 		return nil
 	}
 
 	s.log.Info("autonomous negotiation round completed, session may continue",
 		"session_id", sessionID,
-		"round", session.Round,
-		"max_rounds", session.MaxRounds,
-		"current_amount", session.CurrentAmount)
+		"round", sessionProgress.Round,
+		"max_rounds", sessionProgress.MaxRounds,
+		"current_amount", sessionProgress.CurrentAmount)
 
 	// Enqueue next round if not complete
-	if session.Round < session.MaxRounds && session.Status == "running" {
-		if err := s.EnqueueNegotiationRound(sessionID, session.DBNegotiationID, session.Round); err != nil {
+	if sessionProgress.Round < sessionProgress.MaxRounds && !isTerminalNegotiationStatus(sessionProgress.Status) {
+		if err := s.EnqueueNegotiationRound(ctx, sessionID, negotiationID, sessionProgress.Round); err != nil {
 			return fmt.Errorf(
 				"enqueue successor after bargaining round %d: %w",
-				session.Round,
+				sessionProgress.Round,
 				err,
 			)
 		}
-		s.log.Info("enqueued next round from service", "session_id", sessionID, "next_round", session.Round+1)
+		s.log.Info("enqueued next round from service", "session_id", sessionID, "next_round", sessionProgress.Round+1)
 	}
 
+	return nil
+}
+
+func (s *A2ABargainingService) expireAutonomousNegotiation(
+	ctx context.Context,
+	session *A2ASession,
+	sessionID,
+	negotiationID string,
+) error {
+	if err := s.ap2Repo.UpdateNegotiationStatus(ctx, negotiationID, "expired"); err != nil {
+		progress, progressErr := s.GetAutonomousNegotiationProgress(ctx, sessionID, negotiationID)
+		if progressErr == nil && isTerminalNegotiationStatus(progress.Status) {
+			return nil
+		}
+		return fmt.Errorf("expire autonomous negotiation: %w", err)
+	}
+	session.setStatusIfActive("expired")
+	progress := session.ToProgressResponse()
+	s.sendWebhook(session.CallbackURL, WebhookPayload{
+		Event:         "negotiation_completed",
+		SessionID:     sessionID,
+		Status:        "expired",
+		FinalAmount:   progress.CurrentAmount,
+		Rounds:        progress.MaxRounds,
+		BuyerAgentID:  session.BuyerAgentID,
+		SellerAgentID: session.SellerAgentID,
+	})
 	return nil
 }
 
@@ -663,15 +775,13 @@ func (s *A2ABargainingService) EnsureAutonomousNegotiationSuccessor(
 	if sessionID == "" || negotiationID == "" || completedRound < 1 {
 		return fmt.Errorf("invalid bargaining successor recovery")
 	}
-	progress := s.GetSessionProgress(sessionID)
-	if progress == nil {
-		progress = s.GetSessionProgressByNegotiationID(ctx, negotiationID)
-	}
-	if progress == nil {
+	progress, err := s.GetAutonomousNegotiationProgress(ctx, sessionID, negotiationID)
+	if err != nil {
 		return fmt.Errorf(
-			"session not found while recovering bargaining successor: session_id=%s negotiation_id=%s",
+			"load bargaining successor session_id=%s negotiation_id=%s: %w",
 			sessionID,
 			negotiationID,
+			err,
 		)
 	}
 	if progress.Round > completedRound {
@@ -684,20 +794,16 @@ func (s *A2ABargainingService) EnsureAutonomousNegotiationSuccessor(
 			progress.Round,
 		)
 	}
-	if progress.Round >= progress.MaxRounds ||
-		progress.Status == "completed" ||
-		progress.Status == "accepted" ||
-		progress.Status == "rejected" ||
-		progress.Status == "expired" {
+	if progress.Round >= progress.MaxRounds || isTerminalNegotiationStatus(progress.Status) {
 		return nil
 	}
-	if progress.Status != "running" {
+	if !isActiveNegotiationStatus(progress.Status) {
 		return fmt.Errorf(
 			"cannot recover bargaining successor from status %q",
 			progress.Status,
 		)
 	}
-	if err := s.EnqueueNegotiationRound(sessionID, negotiationID, completedRound); err != nil {
+	if err := s.EnqueueNegotiationRound(ctx, sessionID, negotiationID, completedRound); err != nil {
 		return fmt.Errorf("enqueue bargaining successor: %w", err)
 	}
 	return nil
@@ -705,29 +811,31 @@ func (s *A2ABargainingService) EnsureAutonomousNegotiationSuccessor(
 
 func (s *A2ABargainingService) ClaimAutonomousNegotiationRound(
 	ctx context.Context,
+	sessionID,
 	negotiationID string,
 	roundNumber int,
 	leaseOwner string,
 	now time.Time,
 	leaseExpiresAt time.Time,
 ) (bool, error) {
-	if negotiationID == "" || roundNumber < 1 || leaseOwner == "" || !leaseExpiresAt.After(now) {
+	if sessionID == "" || negotiationID == "" || roundNumber < 1 || leaseOwner == "" || !leaseExpiresAt.After(now) {
 		return false, fmt.Errorf("invalid bargaining round claim")
 	}
-	return s.ap2Repo.ClaimBargainingRound(ctx, negotiationID, roundNumber, leaseOwner, now, leaseExpiresAt)
+	return s.ap2Repo.ClaimBargainingRound(ctx, sessionID, negotiationID, roundNumber, leaseOwner, now, leaseExpiresAt)
 }
 
 func (s *A2ABargainingService) CompleteAutonomousNegotiationRound(
 	ctx context.Context,
+	sessionID,
 	negotiationID string,
 	roundNumber int,
 	leaseOwner string,
 	completedAt time.Time,
 ) (bool, error) {
-	if negotiationID == "" || roundNumber < 1 || leaseOwner == "" {
+	if sessionID == "" || negotiationID == "" || roundNumber < 1 || leaseOwner == "" {
 		return false, fmt.Errorf("invalid bargaining round completion")
 	}
-	return s.ap2Repo.CompleteBargainingRoundClaim(ctx, negotiationID, roundNumber, leaseOwner, completedAt)
+	return s.ap2Repo.CompleteBargainingRoundClaim(ctx, sessionID, negotiationID, roundNumber, leaseOwner, completedAt)
 }
 
 func (s *A2ABargainingService) recordLearning(negotiation *models.BargainingNegotiation, lastAgentID, lastAgentType, action string, rounds int) {
@@ -778,7 +886,26 @@ func (s *A2ABargainingService) recordLearning(negotiation *models.BargainingNego
 		"rounds", rounds)
 }
 
-func (s *A2ABargainingService) EnqueueNegotiationRound(sessionID, negotiationID string, currentRound int) error {
+func (s *A2ABargainingService) EnqueueNegotiationRound(
+	ctx context.Context,
+	sessionID,
+	negotiationID string,
+	currentRound int,
+) error {
+	progress, err := s.GetAutonomousNegotiationProgress(ctx, sessionID, negotiationID)
+	if err != nil {
+		return err
+	}
+	if isTerminalNegotiationStatus(progress.Status) {
+		return nil
+	}
+	if progress.Round != currentRound {
+		return fmt.Errorf(
+			"negotiation round changed before queueing: expected=%d actual=%d",
+			currentRound,
+			progress.Round,
+		)
+	}
 	if s.sqs == nil || s.cfg == nil {
 		err := fmt.Errorf("SQS not configured: sqs=%v, cfg=%v", s.sqs == nil, s.cfg == nil)
 		s.log.Error("cannot enqueue negotiation round", "error", err, "session_id", sessionID)
@@ -803,7 +930,7 @@ func (s *A2ABargainingService) EnqueueNegotiationRound(sessionID, negotiationID 
 		return fmt.Errorf("failed to marshal queue message: %w", err)
 	}
 
-	_, err = s.sqs.SendMessage(context.Background(), &sqs.SendMessageInput{
+	_, err = s.sqs.SendMessage(ctx, &sqs.SendMessageInput{
 		QueueUrl:    aws.String(s.cfg.SQS.BargainingQueue),
 		MessageBody: aws.String(string(body)),
 	})
@@ -870,111 +997,229 @@ func (s *A2ABargainingService) sendWebhook(callbackURL string, payload WebhookPa
 	s.log.Warn("webhook delivery failed after retries", "url", callbackURL, "event", payload.Event, "error", lastErr)
 }
 
-func (s *A2ABargainingService) GetSessionProgress(sessionID string) *A2ASessionProgress {
-	s.sessionsLock.RLock()
-	session, exists := s.sessions[sessionID]
-	s.sessionsLock.RUnlock()
-
-	if exists {
-		// Sync in-memory session with DB state to catch external modifications
-		dbProgress := s.getDBProgressBySessionID(sessionID)
-		if dbProgress != nil {
-			session.Round = dbProgress.Round
-			session.Status = dbProgress.Status
-			session.CurrentAmount = dbProgress.CurrentAmount
-		}
-		// Return pointer to the actual in-memory session's progress (not a copy)
-		progress := session.ToProgressResponse()
-		return &progress
+func (s *A2ABargainingService) GetSessionProgress(
+	ctx context.Context,
+	scope A2ANegotiationScope,
+	sessionID string,
+) (*A2ASessionProgress, error) {
+	if !scope.valid() || strings.TrimSpace(sessionID) == "" {
+		return nil, ErrA2ANegotiationNotFound
 	}
-
-	// Fall back to DB lookup (handles Lambda cold starts where in-memory session is lost)
-	dbProgress := s.getDBProgressBySessionID(sessionID)
-	return dbProgress
-}
-
-func (s *A2ABargainingService) getDBProgressBySessionID(sessionID string) *A2ASessionProgress {
-	neg, err := s.ap2Repo.GetBargainingNegotiationBySessionID(context.Background(), sessionID)
-	if err != nil || neg == nil {
-		return nil
-	}
-
-	sessionIDStr := ""
-	if neg.SessionID != nil {
-		sessionIDStr = *neg.SessionID
-	}
-
-	return &A2ASessionProgress{
-		NegotiationID:   sessionIDStr,
-		NegotiationUUID: neg.ID,
-		BuyerAgentID:    neg.BuyerAgentID,
-		SellerAgentID:   neg.SellerAgentID,
-		UserID:          neg.UserID,
-		InitialAmount:   neg.InitialAmount,
-		CurrentAmount:   neg.CurrentAmount,
-		Round:           neg.Rounds,
-		MaxRounds:       neg.MaxRounds,
-		Status:          neg.Status,
-	}
-}
-
-func (s *A2ABargainingService) StopNegotiation(sessionID string) {
-	s.sessionsLock.Lock()
-	if session, exists := s.sessions[sessionID]; exists {
-		session.Status = "stopped"
-		s.log.Info("A2A negotiation session stopped", "session_id", sessionID)
-	}
-	s.sessionsLock.Unlock()
-}
-
-func (s *A2ABargainingService) GetSessionProgressByNegotiationID(ctx context.Context, negotiationID string) *A2ASessionProgress {
-	// Try to find in-memory session by DB negotiation ID
-	s.sessionsLock.RLock()
-	for _, session := range s.sessions {
-		if session.DBNegotiationID == negotiationID {
-			s.sessionsLock.RUnlock()
-			// Validate session state against DB to avoid stale in-memory data
-			dbProgress := s.getDBProgress(ctx, negotiationID)
-			if dbProgress != nil {
-				session.Round = dbProgress.Round
-				session.Status = dbProgress.Status
-				session.CurrentAmount = dbProgress.CurrentAmount
-			}
-			progress := session.ToProgressResponse()
-			return &progress
-		}
-	}
-	s.sessionsLock.RUnlock()
-
-	// Fall back to DB lookup
-	dbProgress := s.getDBProgress(ctx, negotiationID)
-	return dbProgress
-}
-
-func (s *A2ABargainingService) getDBProgress(ctx context.Context, negotiationID string) *A2ASessionProgress {
-	neg, err := s.bargaining.GetNegotiation(ctx, negotiationID)
-	if err != nil || neg == nil {
-		return nil
-	}
-	return &A2ASessionProgress{
-		NegotiationID:   "",
-		NegotiationUUID: neg.ID,
-		BuyerAgentID:    neg.BuyerAgentID,
-		SellerAgentID:   neg.SellerAgentID,
-		UserID:          neg.UserID,
-		InitialAmount:   neg.InitialAmount,
-		CurrentAmount:   neg.CurrentAmount,
-		Round:           neg.Rounds,
-		MaxRounds:       neg.MaxRounds,
-		Status:          neg.Status,
-	}
-}
-
-func (s *A2ABargainingService) reloadSessionFromDB(ctx context.Context, sessionID string) (*A2ASession, error) {
-	// Try to find negotiation by session_id in DB
-	neg, err := s.ap2Repo.GetBargainingNegotiationBySessionID(ctx, sessionID)
+	negotiation, err := s.ap2Repo.GetBargainingNegotiationBySessionIDForScope(
+		ctx,
+		sessionID,
+		scope.UserID,
+		scope.BusinessID,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("negotiation not found for session_id: %s", sessionID)
+		return nil, a2aScopedLookupError("load negotiation progress by session", err)
+	}
+	if negotiation == nil {
+		return nil, ErrA2ANegotiationNotFound
+	}
+	progress := bargainingNegotiationProgress(negotiation)
+	s.syncCachedProgress(progress)
+	return progress, nil
+}
+
+func (s *A2ABargainingService) GetAutonomousNegotiationProgress(
+	ctx context.Context,
+	sessionID,
+	negotiationID string,
+) (*A2ASessionProgress, error) {
+	if strings.TrimSpace(sessionID) == "" || strings.TrimSpace(negotiationID) == "" {
+		return nil, ErrA2ANegotiationNotFound
+	}
+	negotiation, err := s.ap2Repo.GetBargainingNegotiationBySessionAndID(ctx, sessionID, negotiationID)
+	if err != nil {
+		return nil, a2aScopedLookupError("load autonomous negotiation progress", err)
+	}
+	if negotiation == nil {
+		return nil, ErrA2ANegotiationNotFound
+	}
+	progress := bargainingNegotiationProgress(negotiation)
+	s.syncCachedProgress(progress)
+	return progress, nil
+}
+
+func (s *A2ABargainingService) GetSessionProgressByNegotiationID(
+	ctx context.Context,
+	scope A2ANegotiationScope,
+	negotiationID string,
+) (*A2ASessionProgress, error) {
+	if !scope.valid() || strings.TrimSpace(negotiationID) == "" {
+		return nil, ErrA2ANegotiationNotFound
+	}
+	negotiation, err := s.ap2Repo.GetBargainingNegotiationByIDForScope(
+		ctx,
+		negotiationID,
+		scope.UserID,
+		scope.BusinessID,
+	)
+	if err != nil {
+		return nil, a2aScopedLookupError("load negotiation progress by ID", err)
+	}
+	if negotiation == nil {
+		return nil, ErrA2ANegotiationNotFound
+	}
+	progress := bargainingNegotiationProgress(negotiation)
+	s.syncCachedProgress(progress)
+	return progress, nil
+}
+
+func (s *A2ABargainingService) StopNegotiation(
+	ctx context.Context,
+	scope A2ANegotiationScope,
+	sessionID string,
+) error {
+	if !scope.valid() || strings.TrimSpace(sessionID) == "" {
+		return ErrA2ANegotiationNotFound
+	}
+	negotiation, err := s.ap2Repo.GetBargainingNegotiationBySessionIDForScope(
+		ctx,
+		sessionID,
+		scope.UserID,
+		scope.BusinessID,
+	)
+	if err != nil {
+		return a2aScopedLookupError("load negotiation before stop", err)
+	}
+	if negotiation == nil {
+		return ErrA2ANegotiationNotFound
+	}
+	if negotiation.Status == "stopped" {
+		s.setCachedStatus(sessionID, negotiation.ID, "stopped")
+		return nil
+	}
+	if isTerminalNegotiationStatus(negotiation.Status) {
+		return ErrA2ANegotiationTerminal
+	}
+
+	stopped, err := s.ap2Repo.StopBargainingNegotiationForScope(
+		ctx,
+		negotiation.ID,
+		scope.UserID,
+		scope.BusinessID,
+		time.Now().UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("stop negotiation: %w", err)
+	}
+	if !stopped {
+		latest, latestErr := s.ap2Repo.GetBargainingNegotiationBySessionIDForScope(
+			ctx,
+			sessionID,
+			scope.UserID,
+			scope.BusinessID,
+		)
+		if latestErr != nil {
+			return a2aScopedLookupError("reload negotiation after stop race", latestErr)
+		}
+		if latest == nil {
+			return ErrA2ANegotiationNotFound
+		}
+		if latest.Status != "stopped" {
+			return ErrA2ANegotiationTerminal
+		}
+	}
+	s.setCachedStatus(sessionID, negotiation.ID, "stopped")
+	s.log.Info("A2A negotiation session stopped", "session_id", sessionID, "negotiation_id", negotiation.ID)
+	return nil
+}
+
+func (s *A2ABargainingService) StopAutonomousNegotiation(
+	ctx context.Context,
+	sessionID,
+	negotiationID string,
+) error {
+	negotiation, err := s.ap2Repo.GetBargainingNegotiationBySessionAndID(ctx, sessionID, negotiationID)
+	if err != nil {
+		return a2aScopedLookupError("load autonomous negotiation before stop", err)
+	}
+	if negotiation == nil {
+		return ErrA2ANegotiationNotFound
+	}
+	if negotiation.Status == "stopped" {
+		s.setCachedStatus(sessionID, negotiationID, "stopped")
+		return nil
+	}
+	if isTerminalNegotiationStatus(negotiation.Status) {
+		return nil
+	}
+	stopped, err := s.ap2Repo.StopBargainingNegotiationBySessionAndID(
+		ctx,
+		sessionID,
+		negotiationID,
+		time.Now().UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("stop autonomous negotiation: %w", err)
+	}
+	if !stopped {
+		latest, latestErr := s.ap2Repo.GetBargainingNegotiationBySessionAndID(ctx, sessionID, negotiationID)
+		if latestErr != nil {
+			return a2aScopedLookupError("reload autonomous negotiation after stop race", latestErr)
+		}
+		if latest == nil {
+			return ErrA2ANegotiationNotFound
+		}
+		if !isTerminalNegotiationStatus(latest.Status) {
+			return fmt.Errorf("stop autonomous negotiation: concurrent state change")
+		}
+		s.setCachedStatus(sessionID, negotiationID, latest.Status)
+		return nil
+	}
+	s.setCachedStatus(sessionID, negotiationID, "stopped")
+	return nil
+}
+
+func bargainingNegotiationProgress(negotiation *models.BargainingNegotiation) *A2ASessionProgress {
+	sessionID := ""
+	if negotiation.SessionID != nil {
+		sessionID = *negotiation.SessionID
+	}
+	return &A2ASessionProgress{
+		NegotiationID:   sessionID,
+		NegotiationUUID: negotiation.ID,
+		BuyerAgentID:    negotiation.BuyerAgentID,
+		SellerAgentID:   negotiation.SellerAgentID,
+		UserID:          negotiation.UserID,
+		InitialAmount:   negotiation.InitialAmount,
+		CurrentAmount:   negotiation.CurrentAmount,
+		Round:           negotiation.Rounds,
+		MaxRounds:       negotiation.MaxRounds,
+		Status:          negotiation.Status,
+	}
+}
+
+func (s *A2ABargainingService) syncCachedProgress(progress *A2ASessionProgress) {
+	if progress == nil {
+		return
+	}
+	s.sessionsLock.RLock()
+	session := s.sessions[progress.NegotiationID]
+	s.sessionsLock.RUnlock()
+	if session != nil && session.DBNegotiationID == progress.NegotiationUUID {
+		session.applyProgress(progress)
+	}
+}
+
+func (s *A2ABargainingService) setCachedStatus(sessionID, negotiationID, status string) {
+	s.sessionsLock.RLock()
+	session := s.sessions[sessionID]
+	s.sessionsLock.RUnlock()
+	if session != nil && session.DBNegotiationID == negotiationID {
+		session.setStatus(status)
+	}
+}
+
+func (s *A2ABargainingService) reloadSessionFromDB(ctx context.Context, sessionID, negotiationID string) (*A2ASession, error) {
+	neg, err := s.ap2Repo.GetBargainingNegotiationBySessionAndID(ctx, sessionID, negotiationID)
+	if err != nil {
+		return nil, a2aScopedLookupError("reload autonomous negotiation session", err)
+	}
+	if neg == nil {
+		return nil, ErrA2ANegotiationNotFound
 	}
 
 	// Check if negotiation is still active
@@ -994,6 +1239,7 @@ func (s *A2ABargainingService) reloadSessionFromDB(ctx context.Context, sessionI
 		BuyerAgentID:     neg.BuyerAgentID,
 		SellerAgentID:    neg.SellerAgentID,
 		UserID:           neg.UserID,
+		BusinessID:       neg.BusinessID,
 		InitialAmount:    neg.InitialAmount,
 		CurrentAmount:    neg.CurrentAmount,
 		Round:            len(rounds),

@@ -5,12 +5,85 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
+
+func TestS3ServiceGeneratePresignedUploadBindsKeyContentTypeAndLength(t *testing.T) {
+	client := s3.NewFromConfig(aws.Config{
+		Region:      "us-east-1",
+		Credentials: credentials.NewStaticCredentialsProvider("test", "test", ""),
+	}, func(options *s3.Options) {
+		options.BaseEndpoint = aws.String("https://storage.example.com")
+		options.UsePathStyle = true
+	})
+	service := &S3Service{client: client}
+
+	result, err := service.GeneratePresignedUpload(
+		context.Background(),
+		"private-uploads",
+		"businesses/business-123/products/product-456/image",
+		"image/png",
+		4096,
+		900,
+	)
+	if err != nil {
+		t.Fatalf("generate presigned upload: %v", err)
+	}
+
+	parsed, err := url.Parse(result.UploadURL)
+	if err != nil {
+		t.Fatalf("parse presigned URL: %v", err)
+	}
+	if got, want := parsed.EscapedPath(), "/private-uploads/businesses/business-123/products/product-456/image"; got != want {
+		t.Fatalf("object path = %q, want %q", got, want)
+	}
+	signedHeaders := strings.Split(parsed.Query().Get("X-Amz-SignedHeaders"), ";")
+	for _, required := range []string{"content-length", "content-type", "host"} {
+		if !containsSignedHeader(signedHeaders, required) {
+			t.Fatalf("signed headers %v do not include %q", signedHeaders, required)
+		}
+	}
+	if got := result.RequiredHeaders["Content-Type"]; got != "image/png" {
+		t.Fatalf("required Content-Type = %q, want image/png", got)
+	}
+	if got := result.RequiredHeaders["Content-Length"]; got != "4096" {
+		t.Fatalf("required Content-Length = %q, want 4096", got)
+	}
+}
+
+func TestS3ServiceGeneratePresignedUploadRejectsNonPositiveLength(t *testing.T) {
+	client := s3.NewFromConfig(aws.Config{
+		Region:      "us-east-1",
+		Credentials: credentials.NewStaticCredentialsProvider("test", "test", ""),
+	})
+	service := &S3Service{client: client}
+
+	for name, sizeBytes := range map[string]int64{"zero": 0, "negative": -1} {
+		t.Run(name, func(t *testing.T) {
+			result, err := service.GeneratePresignedUpload(
+				context.Background(), "bucket", "key", "image/png", sizeBytes, 900,
+			)
+			if err == nil || result != nil {
+				t.Fatalf("GeneratePresignedUpload(size=%d) = %#v, %v; want rejection", sizeBytes, result, err)
+			}
+		})
+	}
+}
+
+func containsSignedHeader(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
 
 func TestS3ServiceUploadIfAbsentUsesConditionalCreate(t *testing.T) {
 	status := http.StatusOK

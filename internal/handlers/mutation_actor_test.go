@@ -76,7 +76,7 @@ func mutationActorRouter(includeUser bool) *gin.Engine {
 	customer := NewCustomerHandler(services.NewCustomerService(&handlerActorCustomerRepository{}, checker, log), log)
 	vendor := NewVendorHandler(services.NewVendorService(&handlerActorVendorRepository{}, checker, log), log)
 	documents := services.NewDocumentService(
-		nil, nil, &handlerActorRenderRepository{}, nil, nil, nil, nil, nil, nil, nil,
+		nil, nil, nil, &handlerActorRenderRepository{}, nil, nil, nil, nil, nil, nil, nil,
 		&awsclients.Config{}, checker, log,
 	)
 	renderProfile := NewRenderProfileHandler(documents, log)

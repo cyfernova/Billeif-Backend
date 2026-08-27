@@ -204,7 +204,7 @@ func TestRenderProfileServiceDeniesUnauthorizedMutationsBeforeRepository(t *test
 		t.Run(test.name, func(t *testing.T) {
 			repository := &countingRenderProfileRepository{}
 			checker := &recordingPermissionChecker{}
-			service := NewDocumentService(nil, nil, repository, nil, nil, nil, nil, nil, nil, nil, &awsclients.Config{}, checker, logger.New())
+			service := NewDocumentService(nil, nil, nil, repository, nil, nil, nil, nil, nil, nil, nil, &awsclients.Config{}, checker, logger.New())
 			err := test.mutate(service)
 			assertPermissionDeniedBeforeRepository(t, err, repository.calls, checker, test.permission)
 		})

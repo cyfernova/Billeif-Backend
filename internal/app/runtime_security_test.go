@@ -16,9 +16,9 @@ func TestPaymentRoutesRequirePaymentPermissions(t *testing.T) {
 	requiredFragments := []string{
 		`payments.GET("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsView), h.Payment.List)`,
 		`payments.GET("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsView), h.Payment.Get)`,
-		`payments.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), wafUserWriteRL, h.Payment.Create)`,
-		`payments.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), wafUserWriteRL, h.Payment.Update)`,
-		`payments.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), wafUserWriteRL, h.Payment.Delete)`,
+		`payments.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), userWriteRL, h.Payment.Create)`,
+		`payments.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), userWriteRL, h.Payment.Update)`,
+		`payments.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), userWriteRL, h.Payment.Delete)`,
 	}
 	for _, fragment := range requiredFragments {
 		if !strings.Contains(routes, fragment) {
@@ -35,19 +35,19 @@ func TestPartyAndRenderProfileMutationRoutesRequireExactPermissions(t *testing.T
 	routes := string(source)
 
 	requiredFragments := []string{
-		`customers.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersCreate), wafUserWriteRL, h.Customer.Create)`,
-		`customers.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersUpdate), wafUserWriteRL, h.Customer.Update)`,
-		`customers.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersDelete), wafUserWriteRL, h.Customer.Delete)`,
-		`customers.POST("/import", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersCreate), wafBulkRL, h.Customer.Import)`,
-		`vendors.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVendorsCreate), wafUserWriteRL, h.Vendor.Create)`,
-		`vendors.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVendorsUpdate), wafUserWriteRL, h.Vendor.Update)`,
-		`vendors.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVendorsDelete), wafUserWriteRL, h.Vendor.Delete)`,
-		`imports.POST("/customers", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersCreate), wafBulkRL, h.BillingOps.CreateCustomerImportJob)`,
-		`imports.POST("/vendors", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVendorsCreate), wafBulkRL, h.BillingOps.CreateVendorImportJob)`,
-		`renderProfiles.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRenderProfilesCreate), wafUserWriteRL, h.RenderProfile.Create)`,
-		`renderProfiles.POST("/:id/default", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRenderProfilesUpdate), wafUserWriteRL, h.RenderProfile.SetDefault)`,
-		`renderProfiles.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRenderProfilesUpdate), wafUserWriteRL, h.RenderProfile.Update)`,
-		`renderProfiles.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRenderProfilesDelete), wafUserWriteRL, h.RenderProfile.Delete)`,
+		`customers.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersCreate), userWriteRL, h.Customer.Create)`,
+		`customers.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersUpdate), userWriteRL, h.Customer.Update)`,
+		`customers.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersDelete), userWriteRL, h.Customer.Delete)`,
+		`customers.POST("/import", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersCreate), bulkRL, h.Customer.Import)`,
+		`vendors.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVendorsCreate), userWriteRL, h.Vendor.Create)`,
+		`vendors.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVendorsUpdate), userWriteRL, h.Vendor.Update)`,
+		`vendors.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVendorsDelete), userWriteRL, h.Vendor.Delete)`,
+		`imports.POST("/customers", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersCreate), bulkRL, h.BillingOps.CreateCustomerImportJob)`,
+		`imports.POST("/vendors", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVendorsCreate), bulkRL, h.BillingOps.CreateVendorImportJob)`,
+		`renderProfiles.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRenderProfilesCreate), userWriteRL, h.RenderProfile.Create)`,
+		`renderProfiles.POST("/:id/default", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRenderProfilesUpdate), userWriteRL, h.RenderProfile.SetDefault)`,
+		`renderProfiles.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRenderProfilesUpdate), userWriteRL, h.RenderProfile.Update)`,
+		`renderProfiles.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRenderProfilesDelete), userWriteRL, h.RenderProfile.Delete)`,
 	}
 	for _, fragment := range requiredFragments {
 		if !strings.Contains(routes, fragment) {
@@ -64,7 +64,7 @@ func TestVoiceSessionRoutesUsePermissionThenExistingRateLimiter(t *testing.T) {
 	routes := string(source)
 	required := []string{
 		`voiceSessions.Use(middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVoiceUse))`,
-		`voiceSessions.Use(wafUserHeavyRL)`,
+		`voiceSessions.Use(userHeavyRL)`,
 		`voiceSessions.POST("", h.VoiceSession.Create)`,
 		`voiceSessions.GET("/:session_id", h.VoiceSession.Get)`,
 		`voiceSessions.POST("/:session_id/resume", h.VoiceSession.Resume)`,
@@ -136,16 +136,16 @@ func TestInvoiceAndDocumentRoutesRequireDocumentPermissions(t *testing.T) {
 		`group.GET("/:id/pdf", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), handler.GetPDF)`,
 		`invoices.GET("", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.List)`,
 		`invoices.GET("/:id", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.Get)`,
-		`invoices.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Invoice.Create)`,
-		`invoices.POST("/:id/previews", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), wafUserHeavyRL, h.Invoice.Preview)`,
-		`invoices.PATCH("/:id/draft", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Invoice.UpdateDraft)`,
+		`invoices.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userWriteRL, h.Invoice.Create)`,
+		`invoices.POST("/:id/previews", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), userHeavyRL, h.Invoice.Preview)`,
+		`invoices.PATCH("/:id/draft", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userWriteRL, h.Invoice.UpdateDraft)`,
 		`invoices.GET("/:id/renders/:render_job_id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.GetRenderStatus)`,
 		`invoices.GET("/:id/pdf", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.GetPDF)`,
-		`invoices.POST("/:id/deliveries", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Invoice.Deliver)`,
+		`invoices.POST("/:id/deliveries", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userWriteRL, h.Invoice.Deliver)`,
 		`invoices.GET("/:id/deliveries/:delivery_id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.GetDeliveryStatus)`,
-		`documents.POST("/merge", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserHeavyRL, h.DocumentUtility.Merge)`,
+		`documents.POST("/merge", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userHeavyRL, h.DocumentUtility.Merge)`,
 		`documents.GET("/:id/history", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.DocumentUtility.History)`,
-		`documents.POST("/:id/einvoice", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserHeavyRL, h.DocumentUtility.GenerateEInvoice)`,
+		`documents.POST("/:id/einvoice", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userHeavyRL, h.DocumentUtility.GenerateEInvoice)`,
 		`documents.GET("/:id/pdf", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.DocumentUtility.GetPDF)`,
 	}
 	for _, fragment := range requiredFragments {
@@ -218,9 +218,9 @@ func TestJournalTaxAndPOSRoutesRequireFineGrainedPermissions(t *testing.T) {
 	routes := string(source)
 
 	requiredFragments := []string{
-		`journals.POST("", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Journal.Create)`,
-		`journals.POST("/:id/post", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Journal.Post)`,
-		`journals.POST("/:id/reverse", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Journal.Reverse)`,
+		`journals.POST("", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userWriteRL, h.Journal.Create)`,
+		`journals.POST("/:id/post", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userWriteRL, h.Journal.Post)`,
+		`journals.POST("/:id/reverse", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userWriteRL, h.Journal.Reverse)`,
 		`tax.GET("/integrations", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionTaxIntegrationsManage), h.Tax.ListIntegrationAccounts)`,
 		`tax.POST("/integrations/:id/validate", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionTaxIntegrationsManage), h.Tax.ValidateIntegrationAccount)`,
 		`tax.POST("/gstr-2b/import", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), h.Tax.ImportGSTR2B)`,

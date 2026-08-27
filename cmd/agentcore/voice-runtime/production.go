@@ -119,6 +119,13 @@ func loadProductionRuntimeDependencies(ctx context.Context, environment runtimeE
 		_ = observedProviders.Close()
 		return runtimeDependencies{}, ErrInvalidRuntimeEnvironment
 	}
+	currentSessions, err := composition.NewHTTPSessionAuthorizer(composition.HTTPSessionAuthorizerConfig{
+		Origin: environment.apiOrigin,
+	})
+	if err != nil {
+		_ = observedProviders.Close()
+		return runtimeDependencies{}, ErrInvalidRuntimeEnvironment
+	}
 
 	dynamoClient := dynamodb.NewFromConfig(awsConfig, func(options *dynamodb.Options) {
 		options.BaseEndpoint = aws.String("https://dynamodb." + environment.region + ".amazonaws.com")
@@ -131,17 +138,19 @@ func loadProductionRuntimeDependencies(ctx context.Context, environment runtimeE
 	})
 	outputs, err := newProductionSpeechOutputFactory(ctx, observedProviders, sessions, telemetryEmitter)
 	if err != nil {
+		_ = currentSessions.Close()
 		_ = observedProviders.Close()
 		return runtimeDependencies{}, ErrInvalidRuntimeEnvironment
 	}
 	return runtimeDependencies{
-		Authorization: authorization, Sessions: sessions, LeaseRenewer: sessions, ICE: ice, STT: observedProviders, Chat: observedProviders,
+		Authorization: authorization, CurrentSessions: currentSessions,
+		Sessions: sessions, LeaseRenewer: sessions, ICE: ice, STT: observedProviders, Chat: observedProviders,
 		Outputs: outputs,
 		Decoders: composition.DecoderFactoryFunc(func() (audio.Decoder, error) {
 			return audio.NewLibopusDecoder()
 		}),
 		Metrics: signalingMetrics,
-		Closers: []io.Closer{observedProviders},
+		Closers: []io.Closer{currentSessions, observedProviders},
 	}, nil
 }
 

@@ -102,7 +102,7 @@ func NewContainer(
 	inventorySvc := NewInventoryService(db, inventoryRepo, productRepo, businessRepo, teamRepo, log)
 	journalSvc := NewJournalService(journalRepo, ledgerRepo, log)
 	shippingSvc := NewShippingService(cfg, shippingRepo, customerRepo, vendorRepo, log)
-	documentSvc := NewDocumentService(db, cfg, documentRepo, businessRepo, customerRepo, vendorRepo, productRepo, inventorySvc, journalSvc, shippingSvc, aws, businessAuthSvc, log)
+	documentSvc := NewDocumentService(db, cfg, resolver, documentRepo, businessRepo, customerRepo, vendorRepo, productRepo, inventorySvc, journalSvc, shippingSvc, aws, businessAuthSvc, log)
 	barcodeSvc := NewBarcodeService(db, log)
 	projectSvc := NewProjectService(db, log)
 	reportSvc := NewReportService(cfg, reportingRepo, log)

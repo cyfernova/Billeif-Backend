@@ -79,7 +79,7 @@ var scannerUserAgentIndicators = []string{
 }
 
 // ThreatDetection annotates and logs high-signal exploit probes without blocking
-// requests. WAF/rate-limit layers remain responsible for enforcement.
+// requests. Rate-limit middleware remains responsible for enforcement.
 func ThreatDetection() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		categories, severity := detectRequestThreats(c.Request.Method, c.Request.URL.EscapedPath(), c.Request.URL.RawQuery, c.Request.UserAgent())

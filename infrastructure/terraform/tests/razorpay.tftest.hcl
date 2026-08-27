@@ -12,7 +12,7 @@ mock_provider "aws" {
 
   mock_resource "aws_lambda_invocation" {
     defaults = {
-      result = "{\"status\":\"applied\",\"version\":46,\"latest_version\":46,\"dirty\":false,\"manifest_checksum\":\"c8ee4f07d7b006e5fed9890e052d1f567a11a65c1c9460c31387d343ed4a1602\"}"
+      result = "{\"status\":\"applied\",\"version\":48,\"latest_version\":48,\"dirty\":false,\"manifest_checksum\":\"9a2241873f45c1cf45b4ab15787a8f7407f7024e2d1306bb8ad0f2425680ceba\"}"
     }
   }
 
@@ -94,6 +94,72 @@ mock_provider "aws" {
         kms_key_id = "arn:aws:kms:ap-south-1:928282274753:key/application-secrets"
         secret_arn = "arn:aws:secretsmanager:ap-south-1:928282274753:secret:rds-managed"
       }]
+    }
+  }
+
+  override_resource {
+    target          = aws_sqs_queue.invoice_processing
+    override_during = plan
+    values = {
+      arn = "arn:aws:sqs:ap-south-1:928282274753:billeif-test-test-invoice-processing-queue"
+    }
+  }
+
+  override_resource {
+    target          = aws_sqs_queue.gst_processing
+    override_during = plan
+    values = {
+      arn = "arn:aws:sqs:ap-south-1:928282274753:billeif-test-test-gst-processing-queue"
+    }
+  }
+
+  override_resource {
+    target          = aws_sqs_queue.bargaining_negotiation
+    override_during = plan
+    values = {
+      arn = "arn:aws:sqs:ap-south-1:928282274753:billeif-test-test-bargaining-negotiation-queue"
+    }
+  }
+
+  override_resource {
+    target          = aws_sqs_queue.invoice_processing_dlq
+    override_during = plan
+    values = {
+      arn = "arn:aws:sqs:ap-south-1:928282274753:billeif-test-test-invoice-processing-dlq"
+    }
+  }
+
+  override_resource {
+    target          = aws_sqs_queue.gst_processing_dlq
+    override_during = plan
+    values = {
+      arn = "arn:aws:sqs:ap-south-1:928282274753:billeif-test-test-gst-processing-dlq"
+    }
+  }
+
+  override_resource {
+    target          = aws_sqs_queue.bargaining_negotiation_dlq
+    override_during = plan
+    values = {
+      arn = "arn:aws:sqs:ap-south-1:928282274753:billeif-test-test-bargaining-negotiation-dlq"
+    }
+  }
+
+  override_resource {
+    target          = aws_s3_bucket.invoices_pdf
+    override_during = plan
+    values = {
+      arn = "arn:aws:s3:::billeif-test-test-invoices-pdf"
+      id  = "billeif-test-test-invoices-pdf"
+    }
+  }
+
+  override_resource {
+    target          = aws_s3_bucket.email_sink
+    override_during = plan
+    values = {
+      arn = "arn:aws:s3:::billeif-test-test-email-sink"
+      id  = "billeif-test-test-email-sink"
     }
   }
 
@@ -442,7 +508,7 @@ run "secret_metadata_rds_lambda_iam_and_output" {
       toset([
         for key in keys(aws_lambda_function.sqs_bargaining.environment[0].variables) : key
         if endswith(key, "_SECRET_ARN")
-      ]) == toset(["CREDENTIAL_ENCRYPTION_SECRET_ARN", "DATABASE_SECRET_ARN", "EXA_SECRET_ARN", "LLM_SECRET_ARN"]),
+      ]) == toset(["DATABASE_SECRET_ARN", "EXA_SECRET_ARN", "LLM_SECRET_ARN"]),
       toset([
         for key in keys(aws_lambda_function.ws_handler.environment[0].variables) : key
         if endswith(key, "_SECRET_ARN")
@@ -453,22 +519,177 @@ run "secret_metadata_rds_lambda_iam_and_output" {
 
   assert {
     condition = alltrue([
-      length([
-        for statement in data.aws_iam_policy_document.lambda_worker_app["invoice"].statement : statement
-        if statement.sid == "WorkerSecrets" && length(statement.resources) == 2
-      ]) == 1,
-      length([
-        for statement in data.aws_iam_policy_document.lambda_worker_app["gst"].statement : statement
-        if statement.sid == "WorkerSecrets" &&
-        length(statement.resources) == 3 &&
-        contains(statement.resources, aws_secretsmanager_secret.gst_provider.arn)
-      ]) == 1,
-      length([
-        for statement in data.aws_iam_policy_document.lambda_worker_app["bargaining"].statement : statement
-        if statement.sid == "WorkerSecrets" && length(statement.resources) == 4
+      for worker, queue_arn in {
+        invoice    = aws_sqs_queue.invoice_processing.arn
+        gst        = aws_sqs_queue.gst_processing.arn
+        bargaining = aws_sqs_queue.bargaining_negotiation.arn
+        } : length([
+          for statement in data.aws_iam_policy_document.lambda_worker_app[worker].statement : statement
+          if statement.sid == "WorkerQueueConsume" &&
+          toset(statement.actions) == toset([
+            "sqs:DeleteMessage",
+            "sqs:GetQueueAttributes",
+            "sqs:ReceiveMessage",
+          ]) &&
+          toset(statement.resources) == toset([queue_arn])
       ]) == 1
     ])
-    error_message = "Worker roles must have entrypoint-specific secret access."
+    error_message = "Each worker role must consume exactly its own queue with only the Lambda SQS poller actions."
+  }
+
+  assert {
+    condition = (
+      length([
+        for statement in data.aws_iam_policy_document.lambda_worker_app["bargaining"].statement : statement
+        if statement.sid == "WorkerQueueSelfSend" &&
+        toset(statement.actions) == toset(["sqs:SendMessage"]) &&
+        toset(statement.resources) == toset([aws_sqs_queue.bargaining_negotiation.arn])
+      ]) == 1 &&
+      alltrue([
+        for worker in ["invoice", "gst"] : alltrue([
+          for statement in data.aws_iam_policy_document.lambda_worker_app[worker].statement :
+          !contains(statement.actions, "sqs:SendMessage")
+        ])
+      ])
+    )
+    error_message = "Only the bargaining worker may self-send, and only to the bargaining queue."
+  }
+
+  assert {
+    condition = (
+      length([
+        for statement in data.aws_iam_policy_document.lambda_worker_app["invoice"].statement : statement
+        if statement.sid == "WorkerStorageRead" &&
+        toset(statement.actions) == toset(["s3:GetObject"]) &&
+        toset(statement.resources) == toset(["${aws_s3_bucket.invoices_pdf.arn}/invoices/*"])
+      ]) == 1 &&
+      length([
+        for statement in data.aws_iam_policy_document.lambda_worker_app["invoice"].statement : statement
+        if statement.sid == "WorkerStorageWrite" &&
+        toset(statement.actions) == toset(["s3:PutObject"]) &&
+        toset(statement.resources) == toset([
+          "${aws_s3_bucket.invoices_pdf.arn}/documents/*",
+          "${aws_s3_bucket.invoices_pdf.arn}/invoices/*",
+        ])
+      ]) == 1 &&
+      length([
+        for statement in data.aws_iam_policy_document.lambda_worker_app["gst"].statement : statement
+        if statement.sid == "WorkerStorageWrite" &&
+        toset(statement.actions) == toset(["s3:PutObject"]) &&
+        toset(statement.resources) == toset(["${aws_s3_bucket.invoices_pdf.arn}/gst/*"])
+      ]) == 1 &&
+      alltrue([
+        for statement in data.aws_iam_policy_document.lambda_worker_app["gst"].statement :
+        !contains(statement.actions, "s3:GetObject") &&
+        !contains(statement.actions, "s3:DeleteObject")
+      ]) &&
+      alltrue([
+        for statement in data.aws_iam_policy_document.lambda_worker_app["bargaining"].statement :
+        alltrue([for action in statement.actions : !startswith(action, "s3:")])
+      ])
+    )
+    error_message = "Worker storage must be limited to the exact invoice, document, or GST prefixes used by that worker, with no bargaining S3 access."
+  }
+
+  assert {
+    condition = alltrue([
+      for worker, allowed in {
+        invoice = {
+          queues = [aws_sqs_queue.invoice_processing.arn]
+          storage = [
+            "${aws_s3_bucket.invoices_pdf.arn}/documents/*",
+            "${aws_s3_bucket.invoices_pdf.arn}/invoices/*",
+          ]
+          secrets = [
+            aws_db_instance.main.master_user_secret[0].secret_arn,
+            aws_secretsmanager_secret.credential_encryption.arn,
+          ]
+        }
+        gst = {
+          queues  = [aws_sqs_queue.gst_processing.arn]
+          storage = ["${aws_s3_bucket.invoices_pdf.arn}/gst/*"]
+          secrets = [
+            aws_db_instance.main.master_user_secret[0].secret_arn,
+            aws_secretsmanager_secret.credential_encryption.arn,
+            aws_secretsmanager_secret.gst_provider.arn,
+          ]
+        }
+        bargaining = {
+          queues  = [aws_sqs_queue.bargaining_negotiation.arn]
+          storage = []
+          secrets = [
+            aws_db_instance.main.master_user_secret[0].secret_arn,
+            aws_secretsmanager_secret.exa.arn,
+            aws_secretsmanager_secret.llm.arn,
+          ]
+        }
+        } : alltrue([
+          for statement in data.aws_iam_policy_document.lambda_worker_app[worker].statement : (
+            (
+              alltrue([for action in statement.actions : !startswith(action, "sqs:")]) ||
+              alltrue([for resource in statement.resources : contains(allowed.queues, resource)])
+            ) &&
+            (
+              alltrue([for action in statement.actions : !startswith(action, "s3:")]) ||
+              alltrue([for resource in statement.resources : contains(allowed.storage, resource)])
+            ) &&
+            (
+              alltrue([for action in statement.actions : !startswith(action, "secretsmanager:")]) ||
+              alltrue([for resource in statement.resources : contains(allowed.secrets, resource)])
+            )
+          )
+      ])
+    ])
+    error_message = "Worker policies must not include sibling queues, any DLQ, out-of-profile storage, or out-of-profile secrets."
+  }
+
+  assert {
+    condition = alltrue(flatten([
+      for worker in ["invoice", "gst", "bargaining"] : [
+        for statement in data.aws_iam_policy_document.lambda_worker_app[worker].statement : alltrue([
+          for action in statement.actions : !contains([
+            "kms:DescribeKey",
+            "s3:DeleteObject",
+            "secretsmanager:DescribeSecret",
+            "sqs:ChangeMessageVisibility",
+          ], action)
+        ])
+      ]
+    ]))
+    error_message = "Worker policies must omit unused queue, storage, secret metadata, and KMS metadata actions."
+  }
+
+  assert {
+    condition = alltrue([
+      for worker, secret_arns in {
+        invoice = [
+          aws_db_instance.main.master_user_secret[0].secret_arn,
+          aws_secretsmanager_secret.credential_encryption.arn,
+        ]
+        gst = [
+          aws_db_instance.main.master_user_secret[0].secret_arn,
+          aws_secretsmanager_secret.credential_encryption.arn,
+          aws_secretsmanager_secret.gst_provider.arn,
+        ]
+        bargaining = [
+          aws_db_instance.main.master_user_secret[0].secret_arn,
+          aws_secretsmanager_secret.exa.arn,
+          aws_secretsmanager_secret.llm.arn,
+        ]
+        } : length([
+          for statement in data.aws_iam_policy_document.lambda_worker_app[worker].statement : statement
+          if statement.sid == "WorkerSecrets" &&
+          toset(statement.actions) == toset(["secretsmanager:GetSecretValue"]) &&
+          toset(statement.resources) == toset(secret_arns) &&
+          length([
+            for condition in statement.condition : condition
+            if condition.variable == "aws:SecureTransport" &&
+            condition.test == "Bool" &&
+            toset(condition.values) == toset(["true"])
+          ]) == 1
+      ]) == 1
+    ])
+    error_message = "Worker roles must read only their exact database and provider secret sets."
   }
 
   assert {
@@ -486,15 +707,38 @@ run "secret_metadata_rds_lambda_iam_and_output" {
         ]) == 1
       ],
       [
-        for worker in ["invoice", "gst", "bargaining"] :
+        for worker, secret_arns in {
+          invoice = [
+            aws_db_instance.main.master_user_secret[0].secret_arn,
+            aws_secretsmanager_secret.credential_encryption.arn,
+          ]
+          gst = [
+            aws_db_instance.main.master_user_secret[0].secret_arn,
+            aws_secretsmanager_secret.credential_encryption.arn,
+            aws_secretsmanager_secret.gst_provider.arn,
+          ]
+          bargaining = [
+            aws_db_instance.main.master_user_secret[0].secret_arn,
+            aws_secretsmanager_secret.exa.arn,
+            aws_secretsmanager_secret.llm.arn,
+          ]
+        } :
         length([
           for statement in data.aws_iam_policy_document.lambda_worker_app[worker].statement : statement
           if statement.sid == "WorkerSecretsKMS" &&
+          toset(statement.actions) == toset(["kms:Decrypt"]) &&
+          toset(statement.resources) == toset([aws_kms_key.application_secrets.arn]) &&
           length([
             for condition in statement.condition : condition
             if condition.variable == "kms:ViaService" &&
             condition.test == "StringEquals" &&
-            contains(condition.values, "secretsmanager.ap-south-1.amazonaws.com")
+            toset(condition.values) == toset(["secretsmanager.ap-south-1.amazonaws.com"])
+          ]) == 1 &&
+          length([
+            for condition in statement.condition : condition
+            if condition.variable == "kms:EncryptionContext:SecretARN" &&
+            condition.test == "StringEquals" &&
+            toset(condition.values) == toset(secret_arns)
           ]) == 1
         ]) == 1
       ]

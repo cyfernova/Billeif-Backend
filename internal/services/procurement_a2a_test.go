@@ -226,6 +226,25 @@ func TestFetchA2AAgentCardRejectsPrivateWellKnownURLWithoutRequest(t *testing.T)
 	}
 }
 
+func TestFetchA2AAgentCardRejectsOversizedResponse(t *testing.T) {
+	oldClient := a2aAgentCardHTTPClient
+	a2aAgentCardHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			ContentLength: -1,
+			Header:        make(http.Header),
+			Body:          io.NopCloser(strings.NewReader(`{"name":"Merchant"}` + strings.Repeat(" ", 1<<20))),
+			Request:       req,
+		}, nil
+	})}
+	defer func() { a2aAgentCardHTTPClient = oldClient }()
+
+	_, err := fetchA2AAgentCard(context.Background(), "https://seller.example/.well-known/agent-card.json")
+	if err == nil || !strings.Contains(err.Error(), "A2A response body exceeds") {
+		t.Fatalf("expected oversized response error, got %v", err)
+	}
+}
+
 func TestNegotiationEvaluationHonorsExplicitRequestMaxRounds(t *testing.T) {
 	service := &ProcurementService{}
 

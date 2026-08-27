@@ -18,10 +18,11 @@ import (
 )
 
 var (
-	ErrNegotiationNotFound = errors.New("negotiation not found")
-	ErrNegotiationExpired  = errors.New("negotiation has expired")
-	ErrMaxRoundsExceeded   = errors.New("maximum negotiation rounds exceeded")
-	ErrInvalidAmount       = errors.New("invalid amount proposed")
+	ErrNegotiationNotFound        = errors.New("negotiation not found")
+	ErrNegotiationExpired         = errors.New("negotiation has expired")
+	ErrMaxRoundsExceeded          = errors.New("maximum negotiation rounds exceeded")
+	ErrInvalidAmount              = errors.New("invalid amount proposed")
+	ErrInvalidBargainingAgentRole = errors.New("agent type does not match negotiation participant")
 )
 
 type BargainingService struct {
@@ -31,6 +32,18 @@ type BargainingService struct {
 	mentee       *MenteeService
 	llm          *LLMService
 	log          *logger.Logger
+}
+
+// BargainingActorScope is the authenticated actor and effective business scope
+// used to authorize LLM bargaining operations.
+type BargainingActorScope struct {
+	UserID     string
+	BusinessID string
+	system     bool
+}
+
+func systemBargainingActorScope() BargainingActorScope {
+	return BargainingActorScope{system: true}
 }
 
 func NewBargainingService(ap2Repo interfaces.AP2Repository, a2aClient *a2a.A2AClient, agentService *AgentService, mentee *MenteeService, llm *LLMService, log *logger.Logger) *BargainingService {
@@ -48,6 +61,7 @@ type CreateNegotiationRequest struct {
 	BuyerAgentID       string                 `json:"buyer_agent_id" validate:"required,uuid"`
 	SellerAgentID      string                 `json:"seller_agent_id" validate:"required,uuid"`
 	UserID             string                 `json:"user_id" validate:"required,uuid"`
+	BusinessID         string                 `json:"business_id" validate:"omitempty,uuid"`
 	InitialAmount      float64                `json:"initial_amount" validate:"required,gt=0"`
 	ReferencePrice     float64                `json:"reference_price" validate:"omitempty,gt=0"`
 	MarketplaceOrderID *string                `json:"marketplace_order_id,omitempty"`
@@ -80,6 +94,13 @@ func (s *BargainingService) CreateNegotiation(ctx context.Context, req *CreateNe
 	if NormalizeMarketplaceAgentType(sellerAgent.Type) != "merchant" {
 		return nil, fmt.Errorf("seller agent must be a merchant agent")
 	}
+	businessID := strings.TrimSpace(req.BusinessID)
+	if businessID == "" {
+		businessID = buyerAgent.BusinessID
+	}
+	if businessID == "" || buyerAgent.BusinessID != businessID {
+		return nil, fmt.Errorf("buyer agent not found")
+	}
 
 	buyerVolatility := getAgentVolatilityInternal(buyerAgent)
 	sellerVolatility := getAgentVolatilityInternal(sellerAgent)
@@ -109,6 +130,7 @@ func (s *BargainingService) CreateNegotiation(ctx context.Context, req *CreateNe
 		BuyerAgentID:       req.BuyerAgentID,
 		SellerAgentID:      req.SellerAgentID,
 		UserID:             req.UserID,
+		BusinessID:         businessID,
 		MarketplaceOrderID: req.MarketplaceOrderID,
 		InitialAmount:      req.InitialAmount,
 		CurrentAmount:      req.InitialAmount,
@@ -136,9 +158,12 @@ func (s *BargainingService) GetNegotiation(ctx context.Context, negotiationID st
 	if err != nil {
 		return nil, ErrNegotiationNotFound
 	}
+	return s.checkNegotiationExpiration(ctx, negotiationID, negotiation)
+}
 
+func (s *BargainingService) checkNegotiationExpiration(ctx context.Context, negotiationID string, negotiation *models.BargainingNegotiation) (*models.BargainingNegotiation, error) {
 	if negotiation.ExpiresAt.Before(time.Now()) {
-		if negotiation.Status != "completed" && negotiation.Status != "accepted" && negotiation.Status != "rejected" {
+		if !isTerminalNegotiationStatus(negotiation.Status) {
 			if err := s.ap2Repo.UpdateNegotiationStatus(ctx, negotiationID, "expired"); err == nil {
 				negotiation.Status = "expired"
 			}
@@ -147,6 +172,29 @@ func (s *BargainingService) GetNegotiation(ctx context.Context, negotiationID st
 	}
 
 	return negotiation, nil
+}
+
+func (s *BargainingService) getLLMNegotiationForActor(ctx context.Context, scope BargainingActorScope, negotiationID, agentID string) (*models.BargainingNegotiation, error) {
+	var (
+		negotiation *models.BargainingNegotiation
+		err         error
+	)
+	if scope.system {
+		negotiation, err = s.ap2Repo.GetBargainingNegotiationByID(ctx, negotiationID)
+	} else {
+		if strings.TrimSpace(scope.UserID) == "" {
+			return nil, ErrNegotiationNotFound
+		}
+		if agentID == "" {
+			negotiation, err = s.ap2Repo.GetBargainingNegotiationByIDForActor(ctx, negotiationID, scope.UserID, scope.BusinessID)
+		} else {
+			negotiation, err = s.ap2Repo.GetBargainingNegotiationByIDForActorAndAgent(ctx, negotiationID, scope.UserID, scope.BusinessID, agentID)
+		}
+	}
+	if err != nil {
+		return nil, ErrNegotiationNotFound
+	}
+	return s.checkNegotiationExpiration(ctx, negotiationID, negotiation)
 }
 
 func (s *BargainingService) GetNegotiationsByUser(ctx context.Context, userID string, page, limit int) ([]*models.BargainingNegotiation, int64, error) {
@@ -163,7 +211,7 @@ func (s *BargainingService) SubmitCounterOffer(ctx context.Context, negotiationI
 		return nil, nil, ErrNegotiationExpired
 	}
 
-	if negotiation.Status == "accepted" || negotiation.Status == "rejected" {
+	if isTerminalNegotiationStatus(negotiation.Status) {
 		return nil, nil, errors.New("negotiation already completed")
 	}
 
@@ -295,6 +343,7 @@ func (s *BargainingService) SubmitCounterOffer(ctx context.Context, negotiationI
 
 		negotiation.CurrentAmount = req.ProposedAmount
 		negotiation.Rounds++
+		negotiation.Status = "in_progress"
 
 		s.log.Info("counteroffer submitted", "negotiation_id", negotiationID, "agent_type", agentType, "amount", req.ProposedAmount, "round", negotiation.Rounds)
 
@@ -472,6 +521,24 @@ func (s *BargainingService) skipA2ANotifications(negotiation *models.BargainingN
 	return ok && value
 }
 
+func isTerminalNegotiationStatus(status string) bool {
+	switch status {
+	case "accepted", "rejected", "expired", "completed", "stopped", "failed":
+		return true
+	default:
+		return false
+	}
+}
+
+func isActiveNegotiationStatus(status string) bool {
+	switch status {
+	case "initiated", "in_progress", "running":
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *BargainingService) resolveNegotiationAgents(ctx context.Context, negotiation *models.BargainingNegotiation) (*models.Agent, *models.Agent, error) {
 	buyerAgent := negotiation.BuyerAgent
 	if buyerAgent == nil || buyerAgent.ID == "" {
@@ -605,14 +672,25 @@ type LLMBargainingResponse struct {
 	Confidence     float64 `json:"confidence"`
 }
 
-func (s *BargainingService) GetLLMBargainingDecision(ctx context.Context, agentID, agentType, negotiationID string) (*LLMBargainingResponse, error) {
+func (s *BargainingService) GetLLMBargainingDecision(ctx context.Context, scope BargainingActorScope, agentID, agentType, negotiationID string) (*LLMBargainingResponse, error) {
+	negotiation, err := s.getLLMNegotiationForActor(ctx, scope, negotiationID, agentID)
+	if err != nil {
+		return nil, err
+	}
+	resolvedAgentType := ""
+	switch agentID {
+	case negotiation.BuyerAgentID:
+		resolvedAgentType = "buyer"
+	case negotiation.SellerAgentID:
+		resolvedAgentType = "seller"
+	default:
+		return nil, ErrNegotiationNotFound
+	}
+	if agentType != resolvedAgentType {
+		return nil, ErrInvalidBargainingAgentRole
+	}
 	if s.llm == nil {
 		return nil, fmt.Errorf("LLM service not available")
-	}
-
-	negotiation, err := s.GetNegotiation(ctx, negotiationID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get negotiation: %w", err)
 	}
 
 	rounds, err := s.ap2Repo.GetBargainingRounds(ctx, negotiationID)
@@ -628,13 +706,11 @@ func (s *BargainingService) GetLLMBargainingDecision(ctx context.Context, agentI
 
 	var agent *models.Agent
 
-	switch agentID {
-	case negotiation.BuyerAgentID:
+	switch resolvedAgentType {
+	case "buyer":
 		agent = buyerAgent
-	case negotiation.SellerAgentID:
+	case "seller":
 		agent = sellerAgent
-	default:
-		return nil, errors.New("agent is not part of this negotiation")
 	}
 
 	agentConfig := make(map[string]interface{})
@@ -793,14 +869,13 @@ State: round %d/%d
 	return &result, nil
 }
 
-func (s *BargainingService) GetLLMNegotiationSummary(ctx context.Context, negotiationID string) (string, error) {
+func (s *BargainingService) GetLLMNegotiationSummary(ctx context.Context, scope BargainingActorScope, negotiationID string) (string, error) {
+	negotiation, err := s.getLLMNegotiationForActor(ctx, scope, negotiationID, "")
+	if err != nil {
+		return "", err
+	}
 	if s.llm == nil {
 		return "", fmt.Errorf("LLM service not available")
-	}
-
-	negotiation, err := s.GetNegotiation(ctx, negotiationID)
-	if err != nil {
-		return "", fmt.Errorf("failed to get negotiation: %w", err)
 	}
 
 	rounds, err := s.ap2Repo.GetBargainingRounds(ctx, negotiationID)
@@ -959,6 +1034,13 @@ func (s *BargainingServiceTestable) CreateNegotiation(ctx context.Context, req *
 	if NormalizeMarketplaceAgentType(sellerAgent.Type) != "merchant" {
 		return nil, fmt.Errorf("seller agent must be a merchant agent")
 	}
+	businessID := strings.TrimSpace(req.BusinessID)
+	if businessID == "" {
+		businessID = buyerAgent.BusinessID
+	}
+	if businessID == "" || buyerAgent.BusinessID != businessID {
+		return nil, fmt.Errorf("buyer agent not found")
+	}
 
 	buyerVolatility := getAgentVolatilityInternal(buyerAgent)
 	sellerVolatility := getAgentVolatilityInternal(sellerAgent)
@@ -988,6 +1070,7 @@ func (s *BargainingServiceTestable) CreateNegotiation(ctx context.Context, req *
 		BuyerAgentID:       req.BuyerAgentID,
 		SellerAgentID:      req.SellerAgentID,
 		UserID:             req.UserID,
+		BusinessID:         businessID,
 		MarketplaceOrderID: req.MarketplaceOrderID,
 		InitialAmount:      req.InitialAmount,
 		CurrentAmount:      req.InitialAmount,
@@ -1016,7 +1099,7 @@ func (s *BargainingServiceTestable) GetNegotiation(ctx context.Context, negotiat
 	}
 
 	if negotiation.ExpiresAt.Before(time.Now()) {
-		if negotiation.Status != "completed" && negotiation.Status != "accepted" && negotiation.Status != "rejected" {
+		if !isTerminalNegotiationStatus(negotiation.Status) {
 			if err := s.ap2Repo.UpdateNegotiationStatus(ctx, negotiationID, "expired"); err == nil {
 				negotiation.Status = "expired"
 			}
@@ -1048,7 +1131,7 @@ func (s *BargainingServiceTestable) SubmitCounterOffer(ctx context.Context, nego
 		return nil, nil, ErrNegotiationExpired
 	}
 
-	if negotiation.Status == "accepted" || negotiation.Status == "rejected" {
+	if isTerminalNegotiationStatus(negotiation.Status) {
 		return nil, nil, errors.New("negotiation already completed")
 	}
 
@@ -1172,6 +1255,7 @@ func (s *BargainingServiceTestable) SubmitCounterOffer(ctx context.Context, nego
 
 		negotiation.CurrentAmount = req.ProposedAmount
 		negotiation.Rounds++
+		negotiation.Status = "in_progress"
 
 		return round, negotiation, nil
 	}

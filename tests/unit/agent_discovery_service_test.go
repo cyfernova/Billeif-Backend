@@ -2,6 +2,7 @@ package unit
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -214,6 +215,14 @@ func (m *MockAP2Repository) GetAgentByID(ctx context.Context, id string) (*model
 	}
 	return args.Get(0).(*models.Agent), args.Error(1)
 }
+
+func (m *MockAP2Repository) GetAgentByIDForOwnerAndBusiness(ctx context.Context, id, ownerID, businessID string) (*models.Agent, error) {
+	args := m.Called(ctx, id, ownerID, businessID)
+	if value := args.Get(0); value != nil {
+		return value.(*models.Agent), args.Error(1)
+	}
+	return nil, args.Error(1)
+}
 func (m *MockAP2Repository) HasAgentOwnership(ctx context.Context, ownerID, agentID string) (bool, error) {
 	return false, nil
 }
@@ -259,7 +268,7 @@ func (m *MockAP2Repository) CreateAgentCapability(ctx context.Context, capabilit
 func (m *MockAP2Repository) GetCapabilitiesByAgent(ctx context.Context, agentID string) ([]*models.AgentCapability, error) {
 	return nil, nil
 }
-func (m *MockAP2Repository) DeleteCapability(ctx context.Context, id string) error {
+func (m *MockAP2Repository) DeleteCapability(ctx context.Context, agentID, capabilityID string) error {
 	return nil
 }
 func (m *MockAP2Repository) CreatePaymentCredential(ctx context.Context, credential *models.PaymentCredential) error {
@@ -355,6 +364,9 @@ func (m *MockAP2Repository) CreateOrder(ctx context.Context, order *models.Marke
 func (m *MockAP2Repository) GetOrderByID(ctx context.Context, id string) (*models.MarketplaceOrder, error) {
 	return nil, nil
 }
+func (m *MockAP2Repository) GetOrderByIDForUser(ctx context.Context, id, userID string) (*models.MarketplaceOrder, error) {
+	return nil, nil
+}
 func (m *MockAP2Repository) GetOrdersByUser(ctx context.Context, userID string, page, limit int) ([]*models.MarketplaceOrder, int64, error) {
 	return nil, 0, nil
 }
@@ -406,8 +418,38 @@ func (m *MockAP2Repository) CreateBargainingNegotiation(ctx context.Context, neg
 func (m *MockAP2Repository) GetBargainingNegotiationByID(ctx context.Context, id string) (*models.BargainingNegotiation, error) {
 	return nil, nil
 }
+func (m *MockAP2Repository) GetBargainingNegotiationByIDForActor(ctx context.Context, id, userID, businessID string) (*models.BargainingNegotiation, error) {
+	return nil, nil
+}
+func (m *MockAP2Repository) GetBargainingNegotiationByIDForActorAndAgent(ctx context.Context, id, userID, businessID, agentID string) (*models.BargainingNegotiation, error) {
+	return nil, nil
+}
 func (m *MockAP2Repository) GetBargainingNegotiationBySessionID(ctx context.Context, sessionID string) (*models.BargainingNegotiation, error) {
 	return nil, nil
+}
+
+func (m *MockAP2Repository) GetBargainingNegotiationByIDForScope(ctx context.Context, id, userID, businessID string) (*models.BargainingNegotiation, error) {
+	args := m.Called(ctx, id, userID, businessID)
+	if value := args.Get(0); value != nil {
+		return value.(*models.BargainingNegotiation), args.Error(1)
+	}
+	return nil, args.Error(1)
+}
+
+func (m *MockAP2Repository) GetBargainingNegotiationBySessionIDForScope(ctx context.Context, sessionID, userID, businessID string) (*models.BargainingNegotiation, error) {
+	args := m.Called(ctx, sessionID, userID, businessID)
+	if value := args.Get(0); value != nil {
+		return value.(*models.BargainingNegotiation), args.Error(1)
+	}
+	return nil, args.Error(1)
+}
+
+func (m *MockAP2Repository) GetBargainingNegotiationBySessionAndID(ctx context.Context, sessionID, id string) (*models.BargainingNegotiation, error) {
+	args := m.Called(ctx, sessionID, id)
+	if value := args.Get(0); value != nil {
+		return value.(*models.BargainingNegotiation), args.Error(1)
+	}
+	return nil, args.Error(1)
 }
 func (m *MockAP2Repository) GetNegotiationsByUser(ctx context.Context, userID string, page, limit int) ([]*models.BargainingNegotiation, int64, error) {
 	return nil, 0, nil
@@ -427,6 +469,14 @@ func (m *MockAP2Repository) UpdateNegotiationAmountAndRounds(ctx context.Context
 func (m *MockAP2Repository) CompleteNegotiation(ctx context.Context, id, status string, finalAmount float64, completedAt *time.Time) error {
 	return nil
 }
+
+func (m *MockAP2Repository) StopBargainingNegotiationForScope(ctx context.Context, id, userID, businessID string, completedAt time.Time) (bool, error) {
+	args := m.Called(ctx, id, userID, businessID, completedAt)
+	return args.Bool(0), args.Error(1)
+}
+func (m *MockAP2Repository) StopBargainingNegotiationBySessionAndID(ctx context.Context, sessionID, id string, completedAt time.Time) (bool, error) {
+	return false, nil
+}
 func (m *MockAP2Repository) CreateBargainingRound(ctx context.Context, round *models.BargainingRound) error {
 	return nil
 }
@@ -436,10 +486,10 @@ func (m *MockAP2Repository) GetBargainingRounds(ctx context.Context, negotiation
 func (m *MockAP2Repository) GetBargainingRoundsByAgent(ctx context.Context, agentID string, page, limit int) ([]*models.BargainingRound, int64, error) {
 	return nil, 0, nil
 }
-func (m *MockAP2Repository) ClaimBargainingRound(ctx context.Context, negotiationID string, roundNumber int, leaseOwner string, now, leaseExpiresAt time.Time) (bool, error) {
+func (m *MockAP2Repository) ClaimBargainingRound(ctx context.Context, sessionID, negotiationID string, roundNumber int, leaseOwner string, now, leaseExpiresAt time.Time) (bool, error) {
 	return false, nil
 }
-func (m *MockAP2Repository) CompleteBargainingRoundClaim(ctx context.Context, negotiationID string, roundNumber int, leaseOwner string, completedAt time.Time) (bool, error) {
+func (m *MockAP2Repository) CompleteBargainingRoundClaim(ctx context.Context, sessionID, negotiationID string, roundNumber int, leaseOwner string, completedAt time.Time) (bool, error) {
 	return false, nil
 }
 
@@ -468,8 +518,9 @@ func TestAgentDiscoveryService_RegisterAgent(t *testing.T) {
 
 	mockRepo.On("RegisterAgent", ctx, mock.AnythingOfType("*models.AgentRegistry")).Return(nil)
 	mockRepo.On("CreateDiscoveryAudit", ctx, mock.AnythingOfType("*models.AgentDiscoveryAudit")).Return(nil)
+	mockRepo.On("GetAgentByID", ctx, agentID).Return(&models.Agent{ID: agentID, OwnerID: "owner-1"}, nil)
 
-	registry, err := svc.RegisterAgent(ctx, req)
+	registry, err := svc.RegisterAgent(ctx, services.AgentRegistrationActor{UserID: "owner-1"}, req)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, registry)
@@ -494,12 +545,130 @@ func TestAgentDiscoveryService_RegisterAgent_MissingEndpoint(t *testing.T) {
 		AgentType: "shopping",
 		// Missing A2AEndpoint
 	}
+	mockRepo.On("GetAgentByID", ctx, req.AgentID).Return(&models.Agent{ID: req.AgentID, OwnerID: "owner-1"}, nil)
 
-	registry, err := svc.RegisterAgent(ctx, req)
+	registry, err := svc.RegisterAgent(ctx, services.AgentRegistrationActor{UserID: "owner-1"}, req)
 
 	assert.Error(t, err)
 	assert.Nil(t, registry)
 	assert.Contains(t, err.Error(), "a2a endpoint is required")
+}
+
+func TestAgentDiscoveryService_RegistrationAuthorizesSourceAgent(t *testing.T) {
+	ctx := context.Background()
+	agentID := uuid.New().String()
+	repositoryFailure := errors.New("repository unavailable")
+
+	tests := []struct {
+		name           string
+		register       func(*services.AgentDiscoveryService, services.AgentRegistrationActor, string) (*models.AgentRegistry, error)
+		agent          *models.Agent
+		actor          services.AgentRegistrationActor
+		wantRegistered bool
+		lookupErr      error
+		wantErr        error
+	}{
+		{
+			name: "direct registration allows personal owner",
+			register: func(svc *services.AgentDiscoveryService, actor services.AgentRegistrationActor, id string) (*models.AgentRegistry, error) {
+				return svc.RegisterAgent(ctx, actor, &services.RegisterAgentRequest{AgentID: id, Name: "source agent", A2AEndpoint: "https://agent.example.com/a2a", AgentType: "shopping"})
+			},
+			agent:          &models.Agent{ID: agentID, OwnerID: "owner-1", BusinessID: "business-2"},
+			actor:          services.AgentRegistrationActor{UserID: "owner-1", BusinessID: "business-1"},
+			wantRegistered: true,
+		},
+		{
+			name: "direct registration allows effective business",
+			register: func(svc *services.AgentDiscoveryService, actor services.AgentRegistrationActor, id string) (*models.AgentRegistry, error) {
+				return svc.RegisterAgent(ctx, actor, &services.RegisterAgentRequest{AgentID: id, Name: "source agent", A2AEndpoint: "https://agent.example.com/a2a", AgentType: "merchant"})
+			},
+			agent:          &models.Agent{ID: agentID, OwnerID: "other-owner", BusinessID: "business-1"},
+			actor:          services.AgentRegistrationActor{UserID: "owner-1", BusinessID: "business-1"},
+			wantRegistered: true,
+		},
+		{
+			name: "agents table registration allows personal owner",
+			register: func(svc *services.AgentDiscoveryService, actor services.AgentRegistrationActor, id string) (*models.AgentRegistry, error) {
+				return svc.RegisterAgentFromAgentsTable(ctx, actor, id)
+			},
+			agent:          &models.Agent{ID: agentID, OwnerID: "owner-1", BusinessID: "business-2", Name: "source agent", Type: "shopping"},
+			actor:          services.AgentRegistrationActor{UserID: "owner-1", BusinessID: "business-1"},
+			wantRegistered: true,
+		},
+		{
+			name: "agents table registration allows effective business",
+			register: func(svc *services.AgentDiscoveryService, actor services.AgentRegistrationActor, id string) (*models.AgentRegistry, error) {
+				return svc.RegisterAgentFromAgentsTable(ctx, actor, id)
+			},
+			agent:          &models.Agent{ID: agentID, OwnerID: "other-owner", BusinessID: "business-1", Name: "merchant agent", Type: "merchant"},
+			actor:          services.AgentRegistrationActor{UserID: "owner-1", BusinessID: "business-1"},
+			wantRegistered: true,
+		},
+		{
+			name: "direct registration hides cross user agent",
+			register: func(svc *services.AgentDiscoveryService, actor services.AgentRegistrationActor, id string) (*models.AgentRegistry, error) {
+				return svc.RegisterAgent(ctx, actor, &services.RegisterAgentRequest{AgentID: id, Name: "source agent", A2AEndpoint: "https://agent.example.com/a2a", AgentType: "shopping"})
+			},
+			agent:          &models.Agent{ID: agentID, OwnerID: "other-owner", BusinessID: "other-business"},
+			actor:          services.AgentRegistrationActor{UserID: "owner-1", BusinessID: "business-1"},
+			wantRegistered: false,
+			wantErr:        services.ErrAgentRegistrationNotFound,
+		},
+		{
+			name: "agents table registration hides cross business agent",
+			register: func(svc *services.AgentDiscoveryService, actor services.AgentRegistrationActor, id string) (*models.AgentRegistry, error) {
+				return svc.RegisterAgentFromAgentsTable(ctx, actor, id)
+			},
+			agent:          &models.Agent{ID: agentID, OwnerID: "other-owner", BusinessID: "other-business", Name: "foreign agent", Type: "merchant"},
+			actor:          services.AgentRegistrationActor{UserID: "owner-1", BusinessID: "business-1"},
+			wantRegistered: false,
+			wantErr:        services.ErrAgentRegistrationNotFound,
+		},
+		{
+			name: "direct registration returns repository failure",
+			register: func(svc *services.AgentDiscoveryService, actor services.AgentRegistrationActor, id string) (*models.AgentRegistry, error) {
+				return svc.RegisterAgent(ctx, actor, &services.RegisterAgentRequest{AgentID: id, Name: "source agent", A2AEndpoint: "https://agent.example.com/a2a", AgentType: "shopping"})
+			},
+			actor:          services.AgentRegistrationActor{UserID: "owner-1", BusinessID: "business-1"},
+			wantRegistered: false,
+			lookupErr:      repositoryFailure,
+			wantErr:        repositoryFailure,
+		},
+		{
+			name: "agents table registration returns repository failure",
+			register: func(svc *services.AgentDiscoveryService, actor services.AgentRegistrationActor, id string) (*models.AgentRegistry, error) {
+				return svc.RegisterAgentFromAgentsTable(ctx, actor, id)
+			},
+			actor:          services.AgentRegistrationActor{UserID: "owner-1", BusinessID: "business-1"},
+			wantRegistered: false,
+			lookupErr:      repositoryFailure,
+			wantErr:        repositoryFailure,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockRepo := new(MockAP2Repository)
+			svc := services.NewAgentDiscoveryService(mockRepo, new(MockProductRepository), nil, logger.New())
+			mockRepo.On("GetAgentByID", ctx, agentID).Return(tt.agent, tt.lookupErr)
+			if tt.wantRegistered {
+				mockRepo.On("RegisterAgent", ctx, mock.AnythingOfType("*models.AgentRegistry")).Return(nil)
+				mockRepo.On("CreateDiscoveryAudit", ctx, mock.AnythingOfType("*models.AgentDiscoveryAudit")).Return(nil).Maybe()
+			}
+
+			registry, err := tt.register(svc, tt.actor, agentID)
+
+			if tt.wantRegistered {
+				assert.NoError(t, err)
+				assert.NotNil(t, registry)
+			} else {
+				assert.ErrorIs(t, err, tt.wantErr)
+				assert.Nil(t, registry)
+				mockRepo.AssertNotCalled(t, "RegisterAgent", mock.Anything, mock.Anything)
+			}
+			mockRepo.AssertExpectations(t)
+		})
+	}
 }
 
 // TestAgentDiscoveryService_DiscoverAgents tests agent discovery with filters
@@ -793,8 +962,9 @@ func TestAgentDiscoveryService_DiscoveryCapabilitiesForType_Merchant(t *testing.
 
 	mockRepo.On("RegisterAgent", ctx, mock.AnythingOfType("*models.AgentRegistry")).Return(nil)
 	mockRepo.On("CreateDiscoveryAudit", ctx, mock.AnythingOfType("*models.AgentDiscoveryAudit")).Return(nil)
+	mockRepo.On("GetAgentByID", ctx, agentID).Return(&models.Agent{ID: agentID, OwnerID: "owner-1"}, nil)
 
-	registry, err := svc.RegisterAgent(ctx, req)
+	registry, err := svc.RegisterAgent(ctx, services.AgentRegistrationActor{UserID: "owner-1"}, req)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, registry)
@@ -826,8 +996,9 @@ func TestAgentDiscoveryService_DiscoveryCapabilitiesForType_Shopping(t *testing.
 
 	mockRepo.On("RegisterAgent", ctx, mock.AnythingOfType("*models.AgentRegistry")).Return(nil)
 	mockRepo.On("CreateDiscoveryAudit", ctx, mock.AnythingOfType("*models.AgentDiscoveryAudit")).Return(nil)
+	mockRepo.On("GetAgentByID", ctx, agentID).Return(&models.Agent{ID: agentID, OwnerID: "owner-1"}, nil)
 
-	registry, err := svc.RegisterAgent(ctx, req)
+	registry, err := svc.RegisterAgent(ctx, services.AgentRegistrationActor{UserID: "owner-1"}, req)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, registry)
@@ -857,8 +1028,9 @@ func TestNormalizeMarketplaceAgentType_BuyerToShopping(t *testing.T) {
 
 	mockRepo.On("RegisterAgent", ctx, mock.AnythingOfType("*models.AgentRegistry")).Return(nil)
 	mockRepo.On("CreateDiscoveryAudit", ctx, mock.AnythingOfType("*models.AgentDiscoveryAudit")).Return(nil)
+	mockRepo.On("GetAgentByID", ctx, agentID).Return(&models.Agent{ID: agentID, OwnerID: "owner-1"}, nil)
 
-	registry, err := svc.RegisterAgent(ctx, req)
+	registry, err := svc.RegisterAgent(ctx, services.AgentRegistrationActor{UserID: "owner-1"}, req)
 
 	assert.NoError(t, err)
 	assert.Equal(t, "shopping", registry.AgentType)
@@ -886,8 +1058,9 @@ func TestNormalizeMarketplaceAgentType_SellerToMerchant(t *testing.T) {
 
 	mockRepo.On("RegisterAgent", ctx, mock.AnythingOfType("*models.AgentRegistry")).Return(nil)
 	mockRepo.On("CreateDiscoveryAudit", ctx, mock.AnythingOfType("*models.AgentDiscoveryAudit")).Return(nil)
+	mockRepo.On("GetAgentByID", ctx, agentID).Return(&models.Agent{ID: agentID, OwnerID: "owner-1"}, nil)
 
-	registry, err := svc.RegisterAgent(ctx, req)
+	registry, err := svc.RegisterAgent(ctx, services.AgentRegistrationActor{UserID: "owner-1"}, req)
 
 	assert.NoError(t, err)
 	assert.Equal(t, "merchant", registry.AgentType)

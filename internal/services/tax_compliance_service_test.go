@@ -3,10 +3,12 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +18,8 @@ import (
 	postgresrepo "invoice-backend/internal/repositories/postgres"
 	"invoice-backend/pkg/logger"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -105,6 +109,105 @@ func TestTaxComplianceService_FetchGSTINSkipsProviderForInvalidFormat(t *testing
 	require.False(t, called)
 	require.Equal(t, "local_fallback", result.Source)
 	require.Equal(t, "invalid GSTIN format", result.ProviderMessage)
+}
+
+func TestTaxComplianceService_HandleJobErrorUsesQueueRedeliveryForRetriableErrors(t *testing.T) {
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(`CREATE TABLE gst_submission_jobs (
+		id TEXT PRIMARY KEY,
+		business_id TEXT NOT NULL,
+		document_id TEXT NOT NULL,
+		operation TEXT NOT NULL,
+		status TEXT NOT NULL,
+		idempotency_key TEXT NOT NULL,
+		queue_message_id TEXT,
+		attempt_count INTEGER,
+		next_attempt_at DATETIME,
+		last_attempt_at DATETIME,
+		succeeded_at DATETIME,
+		last_error TEXT,
+		error_class TEXT,
+		request_payload TEXT,
+		result_payload TEXT,
+		source TEXT,
+		created_at DATETIME,
+		updated_at DATETIME,
+		deleted_at DATETIME
+	)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE gst_submission_attempts (
+		id TEXT PRIMARY KEY,
+		gst_job_id TEXT NOT NULL,
+		business_id TEXT NOT NULL,
+		document_id TEXT NOT NULL,
+		attempt_number INTEGER NOT NULL,
+		status TEXT NOT NULL,
+		error_class TEXT,
+		error_message TEXT,
+		request_payload TEXT,
+		result_payload TEXT,
+		created_at DATETIME,
+		updated_at DATETIME,
+		deleted_at DATETIME
+	)`).Error)
+
+	var sendCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		sendCalls.Add(1)
+		w.Header().Set("Content-Type", "application/x-amz-json-1.0")
+		_, _ = w.Write([]byte(`{"MessageId":"message-1"}`))
+	}))
+	defer server.Close()
+
+	job := &models.GSTSubmissionJob{
+		ID:             "job-1",
+		BusinessID:     "business-1",
+		DocumentID:     "document-1",
+		Operation:      models.GSTOperationGenerateEInvoice,
+		Status:         models.GSTJobStatusProcessing,
+		IdempotencyKey: "gst-job-1",
+		AttemptCount:   1,
+		RequestPayload: `{}`,
+		ResultPayload:  `{}`,
+	}
+	attempt := &models.GSTSubmissionAttempt{
+		ID:             "attempt-1",
+		GSTJobID:       job.ID,
+		BusinessID:     job.BusinessID,
+		DocumentID:     job.DocumentID,
+		AttemptNumber:  1,
+		Status:         models.GSTJobStatusProcessing,
+		RequestPayload: `{}`,
+		ResultPayload:  `{}`,
+	}
+	require.NoError(t, db.Create(job).Error)
+	require.NoError(t, db.Create(attempt).Error)
+
+	svc := &TaxComplianceService{
+		cfg: &config.Config{SQS: config.SQSConfig{GSTQueue: server.URL + "/gst"}},
+		db:  db,
+		sqs: sqs.New(sqs.Options{
+			BaseEndpoint:                     aws.String(server.URL),
+			Credentials:                      aws.AnonymousCredentials{},
+			DisableMessageChecksumValidation: true,
+			Region:                           "ap-south-1",
+		}),
+		log: logger.New(),
+	}
+	providerErr := errors.New("provider temporarily unavailable")
+
+	err = svc.handleJobError(context.Background(), job, attempt, providerErr)
+
+	require.ErrorIs(t, err, providerErr)
+	require.Zero(t, sendCalls.Load())
+	require.Equal(t, models.GSTJobStatusRetrying, job.Status)
+	require.Equal(t, models.GSTErrorClassRetriable, job.ErrorClass)
+	require.NotNil(t, job.NextAttemptAt)
+	require.Equal(t, providerErr.Error(), job.LastError)
+	require.Equal(t, models.GSTJobStatusFailed, attempt.Status)
+	require.Equal(t, models.GSTErrorClassRetriable, attempt.ErrorClass)
+	require.Equal(t, providerErr.Error(), attempt.ErrorMessage)
 }
 
 func TestTaxComplianceService_BuildGSTR1Report(t *testing.T) {
