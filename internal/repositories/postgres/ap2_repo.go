@@ -239,7 +239,7 @@ func (r *ap2Repository) GetAgentByID(ctx context.Context, id string) (*models.Ag
 		Where("id = ? AND deleted_at IS NULL", id).
 		First(&agent).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, errors.New("agent not found")
+		return nil, interfaces.ErrAgentNotFound
 	}
 	return &agent, err
 }

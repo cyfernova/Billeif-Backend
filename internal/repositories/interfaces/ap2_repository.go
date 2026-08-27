@@ -9,6 +9,7 @@ import (
 )
 
 var (
+	ErrAgentNotFound                  = errors.New("agent not found")
 	ErrA2ANegotiationScopeNotFound    = errors.New("A2A negotiation scope not found")
 	ErrBargainingNegotiationNotActive = errors.New("bargaining negotiation is not active")
 )

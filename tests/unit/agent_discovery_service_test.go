@@ -2,6 +2,7 @@ package unit
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -511,8 +512,9 @@ func TestAgentDiscoveryService_RegisterAgent(t *testing.T) {
 
 	mockRepo.On("RegisterAgent", ctx, mock.AnythingOfType("*models.AgentRegistry")).Return(nil)
 	mockRepo.On("CreateDiscoveryAudit", ctx, mock.AnythingOfType("*models.AgentDiscoveryAudit")).Return(nil)
+	mockRepo.On("GetAgentByID", ctx, agentID).Return(&models.Agent{ID: agentID, OwnerID: "owner-1"}, nil)
 
-	registry, err := svc.RegisterAgent(ctx, req)
+	registry, err := svc.RegisterAgent(ctx, services.AgentRegistrationActor{UserID: "owner-1"}, req)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, registry)
@@ -537,12 +539,130 @@ func TestAgentDiscoveryService_RegisterAgent_MissingEndpoint(t *testing.T) {
 		AgentType: "shopping",
 		// Missing A2AEndpoint
 	}
+	mockRepo.On("GetAgentByID", ctx, req.AgentID).Return(&models.Agent{ID: req.AgentID, OwnerID: "owner-1"}, nil)
 
-	registry, err := svc.RegisterAgent(ctx, req)
+	registry, err := svc.RegisterAgent(ctx, services.AgentRegistrationActor{UserID: "owner-1"}, req)
 
 	assert.Error(t, err)
 	assert.Nil(t, registry)
 	assert.Contains(t, err.Error(), "a2a endpoint is required")
+}
+
+func TestAgentDiscoveryService_RegistrationAuthorizesSourceAgent(t *testing.T) {
+	ctx := context.Background()
+	agentID := uuid.New().String()
+	repositoryFailure := errors.New("repository unavailable")
+
+	tests := []struct {
+		name           string
+		register       func(*services.AgentDiscoveryService, services.AgentRegistrationActor, string) (*models.AgentRegistry, error)
+		agent          *models.Agent
+		actor          services.AgentRegistrationActor
+		wantRegistered bool
+		lookupErr      error
+		wantErr        error
+	}{
+		{
+			name: "direct registration allows personal owner",
+			register: func(svc *services.AgentDiscoveryService, actor services.AgentRegistrationActor, id string) (*models.AgentRegistry, error) {
+				return svc.RegisterAgent(ctx, actor, &services.RegisterAgentRequest{AgentID: id, Name: "source agent", A2AEndpoint: "https://agent.example.com/a2a", AgentType: "shopping"})
+			},
+			agent:          &models.Agent{ID: agentID, OwnerID: "owner-1", BusinessID: "business-2"},
+			actor:          services.AgentRegistrationActor{UserID: "owner-1", BusinessID: "business-1"},
+			wantRegistered: true,
+		},
+		{
+			name: "direct registration allows effective business",
+			register: func(svc *services.AgentDiscoveryService, actor services.AgentRegistrationActor, id string) (*models.AgentRegistry, error) {
+				return svc.RegisterAgent(ctx, actor, &services.RegisterAgentRequest{AgentID: id, Name: "source agent", A2AEndpoint: "https://agent.example.com/a2a", AgentType: "merchant"})
+			},
+			agent:          &models.Agent{ID: agentID, OwnerID: "other-owner", BusinessID: "business-1"},
+			actor:          services.AgentRegistrationActor{UserID: "owner-1", BusinessID: "business-1"},
+			wantRegistered: true,
+		},
+		{
+			name: "agents table registration allows personal owner",
+			register: func(svc *services.AgentDiscoveryService, actor services.AgentRegistrationActor, id string) (*models.AgentRegistry, error) {
+				return svc.RegisterAgentFromAgentsTable(ctx, actor, id)
+			},
+			agent:          &models.Agent{ID: agentID, OwnerID: "owner-1", BusinessID: "business-2", Name: "source agent", Type: "shopping"},
+			actor:          services.AgentRegistrationActor{UserID: "owner-1", BusinessID: "business-1"},
+			wantRegistered: true,
+		},
+		{
+			name: "agents table registration allows effective business",
+			register: func(svc *services.AgentDiscoveryService, actor services.AgentRegistrationActor, id string) (*models.AgentRegistry, error) {
+				return svc.RegisterAgentFromAgentsTable(ctx, actor, id)
+			},
+			agent:          &models.Agent{ID: agentID, OwnerID: "other-owner", BusinessID: "business-1", Name: "merchant agent", Type: "merchant"},
+			actor:          services.AgentRegistrationActor{UserID: "owner-1", BusinessID: "business-1"},
+			wantRegistered: true,
+		},
+		{
+			name: "direct registration hides cross user agent",
+			register: func(svc *services.AgentDiscoveryService, actor services.AgentRegistrationActor, id string) (*models.AgentRegistry, error) {
+				return svc.RegisterAgent(ctx, actor, &services.RegisterAgentRequest{AgentID: id, Name: "source agent", A2AEndpoint: "https://agent.example.com/a2a", AgentType: "shopping"})
+			},
+			agent:          &models.Agent{ID: agentID, OwnerID: "other-owner", BusinessID: "other-business"},
+			actor:          services.AgentRegistrationActor{UserID: "owner-1", BusinessID: "business-1"},
+			wantRegistered: false,
+			wantErr:        services.ErrAgentRegistrationNotFound,
+		},
+		{
+			name: "agents table registration hides cross business agent",
+			register: func(svc *services.AgentDiscoveryService, actor services.AgentRegistrationActor, id string) (*models.AgentRegistry, error) {
+				return svc.RegisterAgentFromAgentsTable(ctx, actor, id)
+			},
+			agent:          &models.Agent{ID: agentID, OwnerID: "other-owner", BusinessID: "other-business", Name: "foreign agent", Type: "merchant"},
+			actor:          services.AgentRegistrationActor{UserID: "owner-1", BusinessID: "business-1"},
+			wantRegistered: false,
+			wantErr:        services.ErrAgentRegistrationNotFound,
+		},
+		{
+			name: "direct registration returns repository failure",
+			register: func(svc *services.AgentDiscoveryService, actor services.AgentRegistrationActor, id string) (*models.AgentRegistry, error) {
+				return svc.RegisterAgent(ctx, actor, &services.RegisterAgentRequest{AgentID: id, Name: "source agent", A2AEndpoint: "https://agent.example.com/a2a", AgentType: "shopping"})
+			},
+			actor:          services.AgentRegistrationActor{UserID: "owner-1", BusinessID: "business-1"},
+			wantRegistered: false,
+			lookupErr:      repositoryFailure,
+			wantErr:        repositoryFailure,
+		},
+		{
+			name: "agents table registration returns repository failure",
+			register: func(svc *services.AgentDiscoveryService, actor services.AgentRegistrationActor, id string) (*models.AgentRegistry, error) {
+				return svc.RegisterAgentFromAgentsTable(ctx, actor, id)
+			},
+			actor:          services.AgentRegistrationActor{UserID: "owner-1", BusinessID: "business-1"},
+			wantRegistered: false,
+			lookupErr:      repositoryFailure,
+			wantErr:        repositoryFailure,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockRepo := new(MockAP2Repository)
+			svc := services.NewAgentDiscoveryService(mockRepo, new(MockProductRepository), nil, logger.New())
+			mockRepo.On("GetAgentByID", ctx, agentID).Return(tt.agent, tt.lookupErr)
+			if tt.wantRegistered {
+				mockRepo.On("RegisterAgent", ctx, mock.AnythingOfType("*models.AgentRegistry")).Return(nil)
+				mockRepo.On("CreateDiscoveryAudit", ctx, mock.AnythingOfType("*models.AgentDiscoveryAudit")).Return(nil).Maybe()
+			}
+
+			registry, err := tt.register(svc, tt.actor, agentID)
+
+			if tt.wantRegistered {
+				assert.NoError(t, err)
+				assert.NotNil(t, registry)
+			} else {
+				assert.ErrorIs(t, err, tt.wantErr)
+				assert.Nil(t, registry)
+				mockRepo.AssertNotCalled(t, "RegisterAgent", mock.Anything, mock.Anything)
+			}
+			mockRepo.AssertExpectations(t)
+		})
+	}
 }
 
 // TestAgentDiscoveryService_DiscoverAgents tests agent discovery with filters
@@ -836,8 +956,9 @@ func TestAgentDiscoveryService_DiscoveryCapabilitiesForType_Merchant(t *testing.
 
 	mockRepo.On("RegisterAgent", ctx, mock.AnythingOfType("*models.AgentRegistry")).Return(nil)
 	mockRepo.On("CreateDiscoveryAudit", ctx, mock.AnythingOfType("*models.AgentDiscoveryAudit")).Return(nil)
+	mockRepo.On("GetAgentByID", ctx, agentID).Return(&models.Agent{ID: agentID, OwnerID: "owner-1"}, nil)
 
-	registry, err := svc.RegisterAgent(ctx, req)
+	registry, err := svc.RegisterAgent(ctx, services.AgentRegistrationActor{UserID: "owner-1"}, req)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, registry)
@@ -869,8 +990,9 @@ func TestAgentDiscoveryService_DiscoveryCapabilitiesForType_Shopping(t *testing.
 
 	mockRepo.On("RegisterAgent", ctx, mock.AnythingOfType("*models.AgentRegistry")).Return(nil)
 	mockRepo.On("CreateDiscoveryAudit", ctx, mock.AnythingOfType("*models.AgentDiscoveryAudit")).Return(nil)
+	mockRepo.On("GetAgentByID", ctx, agentID).Return(&models.Agent{ID: agentID, OwnerID: "owner-1"}, nil)
 
-	registry, err := svc.RegisterAgent(ctx, req)
+	registry, err := svc.RegisterAgent(ctx, services.AgentRegistrationActor{UserID: "owner-1"}, req)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, registry)
@@ -900,8 +1022,9 @@ func TestNormalizeMarketplaceAgentType_BuyerToShopping(t *testing.T) {
 
 	mockRepo.On("RegisterAgent", ctx, mock.AnythingOfType("*models.AgentRegistry")).Return(nil)
 	mockRepo.On("CreateDiscoveryAudit", ctx, mock.AnythingOfType("*models.AgentDiscoveryAudit")).Return(nil)
+	mockRepo.On("GetAgentByID", ctx, agentID).Return(&models.Agent{ID: agentID, OwnerID: "owner-1"}, nil)
 
-	registry, err := svc.RegisterAgent(ctx, req)
+	registry, err := svc.RegisterAgent(ctx, services.AgentRegistrationActor{UserID: "owner-1"}, req)
 
 	assert.NoError(t, err)
 	assert.Equal(t, "shopping", registry.AgentType)
@@ -929,8 +1052,9 @@ func TestNormalizeMarketplaceAgentType_SellerToMerchant(t *testing.T) {
 
 	mockRepo.On("RegisterAgent", ctx, mock.AnythingOfType("*models.AgentRegistry")).Return(nil)
 	mockRepo.On("CreateDiscoveryAudit", ctx, mock.AnythingOfType("*models.AgentDiscoveryAudit")).Return(nil)
+	mockRepo.On("GetAgentByID", ctx, agentID).Return(&models.Agent{ID: agentID, OwnerID: "owner-1"}, nil)
 
-	registry, err := svc.RegisterAgent(ctx, req)
+	registry, err := svc.RegisterAgent(ctx, services.AgentRegistrationActor{UserID: "owner-1"}, req)
 
 	assert.NoError(t, err)
 	assert.Equal(t, "merchant", registry.AgentType)
