@@ -326,8 +326,9 @@ func (h *ShoppingAgentHandler) ListOrders(c *gin.Context) {
 // @Router /agents/shopping/orders/{id} [get]
 func (h *ShoppingAgentHandler) TrackOrder(c *gin.Context) {
 	orderID := c.Param("id")
+	userID := c.GetString("user_id")
 
-	order, err := h.svc.TrackOrder(c.Request.Context(), orderID)
+	order, err := h.svc.TrackOrder(c.Request.Context(), orderID, userID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "order not found"})
 		return

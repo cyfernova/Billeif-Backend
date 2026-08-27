@@ -18,6 +18,77 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
+func TestS3ServiceGeneratePresignedUploadBindsKeyContentTypeAndLength(t *testing.T) {
+	client := s3.NewFromConfig(aws.Config{
+		Region:      "us-east-1",
+		Credentials: credentials.NewStaticCredentialsProvider("test", "test", ""),
+	}, func(options *s3.Options) {
+		options.BaseEndpoint = aws.String("https://storage.example.com")
+		options.UsePathStyle = true
+	})
+	service := &S3Service{client: client}
+
+	result, err := service.GeneratePresignedUpload(
+		context.Background(),
+		"private-uploads",
+		"businesses/business-123/products/product-456/image",
+		"image/png",
+		4096,
+		900,
+	)
+	if err != nil {
+		t.Fatalf("generate presigned upload: %v", err)
+	}
+
+	parsed, err := url.Parse(result.UploadURL)
+	if err != nil {
+		t.Fatalf("parse presigned URL: %v", err)
+	}
+	if got, want := parsed.EscapedPath(), "/private-uploads/businesses/business-123/products/product-456/image"; got != want {
+		t.Fatalf("object path = %q, want %q", got, want)
+	}
+	signedHeaders := strings.Split(parsed.Query().Get("X-Amz-SignedHeaders"), ";")
+	for _, required := range []string{"content-length", "content-type", "host"} {
+		if !containsSignedHeader(signedHeaders, required) {
+			t.Fatalf("signed headers %v do not include %q", signedHeaders, required)
+		}
+	}
+	if got := result.RequiredHeaders["Content-Type"]; got != "image/png" {
+		t.Fatalf("required Content-Type = %q, want image/png", got)
+	}
+	if got := result.RequiredHeaders["Content-Length"]; got != "4096" {
+		t.Fatalf("required Content-Length = %q, want 4096", got)
+	}
+}
+
+func TestS3ServiceGeneratePresignedUploadRejectsNonPositiveLength(t *testing.T) {
+	client := s3.NewFromConfig(aws.Config{
+		Region:      "us-east-1",
+		Credentials: credentials.NewStaticCredentialsProvider("test", "test", ""),
+	})
+	service := &S3Service{client: client}
+
+	for name, sizeBytes := range map[string]int64{"zero": 0, "negative": -1} {
+		t.Run(name, func(t *testing.T) {
+			result, err := service.GeneratePresignedUpload(
+				context.Background(), "bucket", "key", "image/png", sizeBytes, 900,
+			)
+			if err == nil || result != nil {
+				t.Fatalf("GeneratePresignedUpload(size=%d) = %#v, %v; want rejection", sizeBytes, result, err)
+			}
+		})
+	}
+}
+
+func containsSignedHeader(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
 func TestS3ServiceUploadIfAbsentUsesConditionalCreate(t *testing.T) {
 	status := http.StatusOK
 	existing := []byte("pdf")
@@ -91,31 +162,31 @@ func TestAssetPresignersUseConfiguredDeploymentBuckets(t *testing.T) {
 	tests := []struct {
 		name       string
 		wantBucket string
-		presign    func(context.Context) (string, error)
+		presign    func(context.Context) (*PresignedUpload, error)
 	}{
 		{
 			name:       "business logo",
 			wantBucket: logoBucket,
-			presign: func(ctx context.Context) (string, error) {
-				return NewBusinessService(nil, storage, log).GetLogoUploadURL(ctx, "business-id", "image/png")
+			presign: func(ctx context.Context) (*PresignedUpload, error) {
+				return NewBusinessService(nil, storage, log).GetLogoUploadURL(ctx, "business-id", "image/png", 1024)
 			},
 		},
 		{
 			name:       "product image",
 			wantBucket: productBucket,
-			presign: func(ctx context.Context) (string, error) {
-				return NewProductService(nil, nil, storage, nil, log).GetImageUploadURL(ctx, "product-id", "image/png")
+			presign: func(ctx context.Context) (*PresignedUpload, error) {
+				return NewProductService(nil, nil, storage, nil, log).GetImageUploadURL(ctx, "product-id", "image/png", 1024)
 			},
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			signedURL, err := test.presign(context.Background())
+			upload, err := test.presign(context.Background())
 			if err != nil {
 				t.Fatalf("presign configured bucket: %v", err)
 			}
-			parsed, err := url.Parse(signedURL)
+			parsed, err := url.Parse(upload.UploadURL)
 			if err != nil {
 				t.Fatalf("parse presigned URL: %v", err)
 			}

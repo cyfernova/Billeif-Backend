@@ -120,6 +120,58 @@ func TestDocumentRepositoryClaimPreviewRenderReclaimsExpiredLeaseForNewOwner(t *
 	}
 }
 
+func TestDocumentRepositoryClaimGenericRenderAtomicallyClaimsQueuedJob(t *testing.T) {
+	database, mock, closeDatabase := newStrictIssueSQLMockRepository(t)
+	defer closeDatabase()
+	repository := &documentRepository{db: database.db}
+	businessID, jobID := uuid.NewString(), uuid.NewString()
+	owner := "sqs-message-owner-a"
+	now := time.Date(2026, time.July, 30, 12, 0, 0, 0, time.UTC)
+	leaseUntil := now.Add(2 * time.Minute)
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE "document_render_jobs" SET .*"attempts"=attempts \+ 1.*"lease_expires_at"=\$[0-9]+.*"lease_owner"=\$[0-9]+.*"status"=\$[0-9]+.*WHERE .*id = \$[0-9]+ AND business_id = \$[0-9]+ AND kind = \$[0-9]+ AND \(status IN \(\$[0-9]+,\$[0-9]+\) OR \(status = \$[0-9]+ AND \(lease_expires_at IS NULL OR lease_expires_at <= \$[0-9]+\)\)\) AND deleted_at IS NULL`).
+		WithArgs(nil, "", leaseUntil, owner, models.RenderJobStatusProcessing, sqlmock.AnyArg(), jobID, businessID, models.RenderKindPreview, models.RenderJobStatusQueued, models.RenderJobStatusFailed, models.RenderJobStatusProcessing, now).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	state, err := repository.ClaimGenericRender(context.Background(), businessID, jobID, owner, now, leaseUntil)
+	if err != nil || state != interfaces.GenericRenderClaimed {
+		t.Fatalf("claim state/error = %q/%v, want claimed", state, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations: %v", err)
+	}
+}
+
+func TestDocumentRepositoryClaimGenericRenderReportsConcurrentOwner(t *testing.T) {
+	database, mock, closeDatabase := newStrictIssueSQLMockRepository(t)
+	defer closeDatabase()
+	repository := &documentRepository{db: database.db}
+	businessID, jobID := uuid.NewString(), uuid.NewString()
+	owner := "sqs-message-owner-b"
+	now := time.Date(2026, time.July, 30, 12, 0, 0, 0, time.UTC)
+	leaseUntil := now.Add(2 * time.Minute)
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE "document_render_jobs" SET .*"attempts"=attempts \+ 1.*"lease_expires_at"=\$[0-9]+.*"lease_owner"=\$[0-9]+.*"status"=\$[0-9]+.*WHERE .*id = \$[0-9]+ AND business_id = \$[0-9]+ AND kind = \$[0-9]+ AND \(status IN \(\$[0-9]+,\$[0-9]+\) OR \(status = \$[0-9]+ AND \(lease_expires_at IS NULL OR lease_expires_at <= \$[0-9]+\)\)\) AND deleted_at IS NULL`).
+		WithArgs(nil, "", leaseUntil, owner, models.RenderJobStatusProcessing, sqlmock.AnyArg(), jobID, businessID, models.RenderKindPreview, models.RenderJobStatusQueued, models.RenderJobStatusFailed, models.RenderJobStatusProcessing, now).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+	mock.ExpectQuery(`SELECT .* FROM "document_render_jobs".*id = \$1 AND business_id = \$2 AND kind = \$3 AND deleted_at IS NULL`).
+		WithArgs(jobID, businessID, models.RenderKindPreview, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "business_id", "kind", "status"}).
+			AddRow(jobID, businessID, models.RenderKindPreview, models.RenderJobStatusProcessing))
+
+	state, err := repository.ClaimGenericRender(context.Background(), businessID, jobID, owner, now, leaseUntil)
+	if err != nil || state != interfaces.GenericRenderAlreadyProcessing {
+		t.Fatalf("claim state/error = %q/%v, want already processing", state, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations: %v", err)
+	}
+}
+
 func TestDocumentRepositoryClaimFinalRenderReclaimsExpiredLeaseForNewOwner(t *testing.T) {
 	invoiceRepository, mock, closeDatabase := newStrictIssueSQLMockRepository(t)
 	defer closeDatabase()

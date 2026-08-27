@@ -17,6 +17,32 @@ func TestLegacyRolePermissionsIncludePaymentBoundaries(t *testing.T) {
 	}
 }
 
+func TestLegacyRolesSeparatePartyAndRenderProfileMutations(t *testing.T) {
+	mutationPermissions := []string{
+		"customers.create",
+		"customers.update",
+		"customers.delete",
+		"vendors.create",
+		"vendors.update",
+		"vendors.delete",
+		"render_profiles.create",
+		"render_profiles.update",
+		"render_profiles.delete",
+	}
+
+	for _, permission := range mutationPermissions {
+		if !hasPermission(legacyRolePermissions("admin"), permission) {
+			t.Errorf("legacy admin must receive %q through its wildcard", permission)
+		}
+		if !hasPermission(legacyRolePermissions("accountant"), permission) {
+			t.Errorf("legacy accountant must receive %q", permission)
+		}
+		if hasPermission(legacyRolePermissions("viewer"), permission) {
+			t.Errorf("legacy viewer must not receive %q", permission)
+		}
+	}
+}
+
 func TestVoicePermissionIsLimitedToOwnerAndLegacyAdmin(t *testing.T) {
 	if !hasPermission(legacyRolePermissions("admin"), PermissionVoiceUse) {
 		t.Fatal("legacy admin must receive voice:use")
@@ -42,7 +68,7 @@ func TestBranchScopeAllowsOnlyListedBranches(t *testing.T) {
 
 func hasPermission(permissions []string, target string) bool {
 	for _, permission := range permissions {
-		if permission == target {
+		if permission == target || permission == "*" {
 			return true
 		}
 	}

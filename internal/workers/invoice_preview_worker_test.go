@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -100,8 +101,10 @@ type fakePreviewRenderOperations struct {
 	completeKey         string
 	completeName        string
 	completed           bool
-	genericError        error
-	genericRendered     bool
+	genericRenderCalls  int
+	genericClaimStore   *fakeGenericClaimStore
+	genericCompleted    bool
+	genericCompleteKey  string
 	finalClaimState     interfaces.FinalRenderClaimState
 	finalSnapshot       *models.Document
 	finalCompleted      bool
@@ -111,6 +114,13 @@ type fakePreviewRenderOperations struct {
 	liveRenderCalls     int
 	finalRenderCalls    int
 	uploadedContent     []byte
+}
+
+type fakeGenericClaimStore struct {
+	mu      sync.Mutex
+	claimed bool
+	started chan struct{}
+	release chan struct{}
 }
 
 func (f *fakePreviewRenderOperations) canonicalRenderLeaseOwner() string {
@@ -155,8 +165,17 @@ func (f *fakePreviewRenderOperations) render(
 	document *models.Document,
 	_ *models.RenderProfile,
 ) ([]byte, string, error) {
+	if f.genericClaimStore != nil && f.genericClaimStore.started != nil {
+		select {
+		case <-f.genericClaimStore.started:
+		default:
+			close(f.genericClaimStore.started)
+		}
+		<-f.genericClaimStore.release
+	}
 	f.rendered = true
 	f.renderedDocument = document
+	f.genericRenderCalls++
 	f.liveRenderCalls++
 	if f.liveComplianceState != "" {
 		return []byte("live compliance: " + f.liveComplianceState), "invoice-preview.pdf", nil
@@ -234,13 +253,35 @@ func (f *fakePreviewRenderOperations) fail(context.Context, string, string, stri
 	return nil
 }
 
-func (f *fakePreviewRenderOperations) renderGeneric(
-	context.Context,
-	*models.Document,
-	*models.DocumentRenderJob,
-) error {
-	f.genericRendered = true
-	return f.genericError
+func (f *fakePreviewRenderOperations) claimGeneric(
+	_ context.Context,
+	_, _ string,
+	_ string,
+	_, _ time.Time,
+) (interfaces.GenericRenderClaimState, error) {
+	if f.genericClaimStore == nil {
+		return interfaces.GenericRenderClaimed, nil
+	}
+	f.genericClaimStore.mu.Lock()
+	defer f.genericClaimStore.mu.Unlock()
+	if f.genericClaimStore.claimed {
+		return interfaces.GenericRenderAlreadyProcessing, nil
+	}
+	f.genericClaimStore.claimed = true
+	return interfaces.GenericRenderClaimed, nil
+}
+
+func (f *fakePreviewRenderOperations) completeGeneric(
+	_ context.Context,
+	_, _, _, _, objectKey, _, _ string,
+) (bool, error) {
+	f.genericCompleted = true
+	f.genericCompleteKey = objectKey
+	return true, nil
+}
+
+func (f *fakePreviewRenderOperations) failGeneric(context.Context, string, string, string, string) error {
+	return nil
 }
 
 func (f *fakePreviewRenderOperations) claimFinal(
@@ -519,6 +560,7 @@ func TestProcessInvoiceQueueMessageReturnsRetryableErrorForProcessingPreview(t *
 	documentService := services.NewDocumentService(
 		nil,
 		cfg,
+		nil,
 		&queueMessageDocumentRepository{
 			document:   document,
 			job:        job,
@@ -532,6 +574,7 @@ func TestProcessInvoiceQueueMessageReturnsRetryableErrorForProcessingPreview(t *
 		nil,
 		nil,
 		awsCfg,
+		nil,
 		log,
 	)
 	invoiceService := services.NewInvoiceService(
@@ -567,6 +610,73 @@ func TestProcessInvoiceQueueMessageReturnsRetryableErrorForProcessingPreview(t *
 	var retryable *PreviewRenderInProgressError
 	if !errors.As(err, &retryable) || !retryable.Retryable() {
 		t.Fatalf("queue processing error = %T %v, want typed retryable error", err, err)
+	}
+}
+
+func TestProcessInvoiceQueueMessageDropsRetiredLegacyPDFWithoutWork(t *testing.T) {
+	log := logger.NewWithEnv("test")
+	cfg := &config.Config{}
+	body := `{"type":"generate_pdf","invoice_id":"legacy-invoice"}`
+
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := ProcessInvoiceQueueMessageWithOwner(
+			context.Background(),
+			cfg,
+			&services.Container{},
+			log,
+			body,
+			"owner",
+		); err != nil {
+			t.Fatalf("retired legacy delivery %d: %v", attempt+1, err)
+		}
+	}
+}
+
+func TestProcessInvoiceQueueMessageNoOpsCompletedGenericReplay(t *testing.T) {
+	documentID := uuid.NewString()
+	businessID := uuid.NewString()
+	jobID := uuid.NewString()
+	document := &models.Document{ID: documentID, BusinessID: businessID}
+	job := &models.DocumentRenderJob{
+		ID:         jobID,
+		DocumentID: models.StringPointer(documentID),
+		BusinessID: businessID,
+		Kind:       models.RenderKindPreview,
+		Status:     models.RenderJobStatusCompleted,
+	}
+	cfg := &config.Config{}
+	log := logger.NewWithEnv("test")
+	documentService := services.NewDocumentService(
+		nil,
+		cfg,
+		nil,
+		&queueMessageDocumentRepository{document: document, job: job},
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		&awsclients.Config{},
+		nil,
+		log,
+	)
+	body := fmt.Sprintf(
+		`{"type":"generate_document_pdf","document_id":%q,"render_job_id":%q}`,
+		documentID,
+		jobID,
+	)
+
+	if err := ProcessInvoiceQueueMessageWithOwner(
+		context.Background(),
+		cfg,
+		&services.Container{Document: documentService},
+		log,
+		body,
+		"owner",
+	); err != nil {
+		t.Fatalf("completed generic replay: %v", err)
 	}
 }
 
@@ -797,10 +907,8 @@ func TestProcessDocumentRenderJobFailsFinalOnVersionDriftBeforeAndAfterRender(t 
 
 func TestProcessDocumentRenderJobRoutesCanonicalPreviewToPrivateRenderer(t *testing.T) {
 	document, job, version := validPreviewWorkerFixture()
-	legacyRendererReached := errors.New("legacy generic renderer reached")
 	operations := &fakePreviewRenderOperations{
 		invoiceVersions: []int{version, version},
-		genericError:    legacyRendererReached,
 	}
 
 	if err := processDocumentRenderJob(
@@ -812,16 +920,13 @@ func TestProcessDocumentRenderJobRoutesCanonicalPreviewToPrivateRenderer(t *test
 	); err != nil {
 		t.Fatalf("process canonical preview: %v", err)
 	}
-	if operations.genericRendered {
-		t.Fatal("canonical preview entered legacy generic renderer")
-	}
 	if !operations.rendered || !operations.completed ||
 		operations.uploadKey == job.ObjectKey || operations.completeKey != operations.uploadKey {
 		t.Fatalf("canonical preview workflow state: %#v", operations)
 	}
 }
 
-func TestProcessDocumentRenderJobRoutesRequestRenderGenericShapeToLegacyRenderer(t *testing.T) {
+func TestProcessDocumentRenderJobRoutesRequestRenderGenericShapeToClaimedRenderer(t *testing.T) {
 	businessID := uuid.NewString()
 	documentID := uuid.NewString()
 	jobID := uuid.NewString()
@@ -832,6 +937,7 @@ func TestProcessDocumentRenderJobRoutesRequestRenderGenericShapeToLegacyRenderer
 		BusinessID: businessID,
 		Kind:       models.RenderKindPreview,
 		Status:     models.RenderJobStatusQueued,
+		ObjectKey:  fmt.Sprintf("documents/%s/%s/%s.pdf", businessID, documentID, jobID),
 	}
 	var envelope InvoiceMessage
 	body := fmt.Sprintf(
@@ -842,8 +948,7 @@ func TestProcessDocumentRenderJobRoutesRequestRenderGenericShapeToLegacyRenderer
 	if err := json.Unmarshal([]byte(body), &envelope); err != nil {
 		t.Fatalf("decode RequestRenderByBusiness-shaped envelope: %v", err)
 	}
-	legacyRendererReached := errors.New("legacy generic renderer reached")
-	operations := &fakePreviewRenderOperations{genericError: legacyRendererReached}
+	operations := &fakePreviewRenderOperations{}
 
 	err := processDocumentRenderJob(
 		context.Background(),
@@ -853,11 +958,100 @@ func TestProcessDocumentRenderJobRoutesRequestRenderGenericShapeToLegacyRenderer
 		operations,
 	)
 
-	if !errors.Is(err, legacyRendererReached) || !operations.genericRendered {
-		t.Fatalf("generic render result = %T %v, want legacy renderer sentinel", err, err)
+	if err != nil || !operations.rendered || !operations.genericCompleted {
+		t.Fatalf("generic render result/state = %v/%#v, want claimed renderer completion", err, operations)
 	}
-	if operations.versionCalls != 0 || operations.processing || operations.rendered {
-		t.Fatalf("generic job entered canonical preview path: %#v", operations)
+	if operations.versionCalls != 0 || operations.processing || operations.uploadKey == "" {
+		t.Fatalf("generic job workflow state: %#v", operations)
+	}
+}
+
+func TestProcessDocumentRenderJobNoOpsCompletedOrObsoleteGenericDuplicate(t *testing.T) {
+	for _, status := range []string{models.RenderJobStatusCompleted, models.RenderJobStatusObsolete} {
+		t.Run(status, func(t *testing.T) {
+			businessID := uuid.NewString()
+			documentID := uuid.NewString()
+			jobID := uuid.NewString()
+			document := &models.Document{ID: documentID, BusinessID: businessID}
+			job := &models.DocumentRenderJob{
+				ID:         jobID,
+				DocumentID: models.StringPointer(documentID),
+				BusinessID: businessID,
+				Kind:       models.RenderKindPreview,
+				Status:     status,
+			}
+			operations := &fakePreviewRenderOperations{}
+
+			if err := processDocumentRenderJob(context.Background(), document, job, 0, operations); err != nil {
+				t.Fatalf("terminal generic duplicate: %v", err)
+			}
+			if operations.rendered || operations.uploadKey != "" {
+				t.Fatalf("terminal generic duplicate performed work: %#v", operations)
+			}
+		})
+	}
+}
+
+func TestProcessDocumentRenderJobGenericReplayRendersOnce(t *testing.T) {
+	businessID := uuid.NewString()
+	documentID := uuid.NewString()
+	job := &models.DocumentRenderJob{
+		ID:         uuid.NewString(),
+		DocumentID: models.StringPointer(documentID),
+		BusinessID: businessID,
+		Kind:       models.RenderKindPreview,
+		Status:     models.RenderJobStatusQueued,
+	}
+	document := &models.Document{ID: documentID, BusinessID: businessID}
+	operations := &fakePreviewRenderOperations{}
+
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := processDocumentRenderJob(context.Background(), document, job, 0, operations); err != nil {
+			t.Fatalf("generic replay %d: %v", attempt+1, err)
+		}
+		job.Status = models.RenderJobStatusCompleted
+	}
+	if operations.genericRenderCalls != 1 {
+		t.Fatalf("generic render calls = %d, want one for replay", operations.genericRenderCalls)
+	}
+}
+
+func TestProcessDocumentRenderJobConcurrentGenericDuplicateClaimsOnce(t *testing.T) {
+	businessID := uuid.NewString()
+	documentID := uuid.NewString()
+	job := &models.DocumentRenderJob{
+		ID:         uuid.NewString(),
+		DocumentID: models.StringPointer(documentID),
+		BusinessID: businessID,
+		Kind:       models.RenderKindPreview,
+		Status:     models.RenderJobStatusQueued,
+	}
+	document := &models.Document{ID: documentID, BusinessID: businessID}
+	store := &fakeGenericClaimStore{started: make(chan struct{}), release: make(chan struct{})}
+	first := &fakePreviewRenderOperations{owner: "owner-a", genericClaimStore: store}
+	second := &fakePreviewRenderOperations{owner: "owner-b", genericClaimStore: store}
+	results := make(chan error, 2)
+
+	go func() {
+		results <- processDocumentRenderJob(context.Background(), document, job, 0, first)
+	}()
+	<-store.started
+	go func() {
+		results <- processDocumentRenderJob(context.Background(), document, job, 0, second)
+	}()
+	secondResult := <-results
+	close(store.release)
+	firstResult := <-results
+
+	var retryable *GenericRenderInProgressError
+	if !errors.As(secondResult, &retryable) || !retryable.Retryable() {
+		t.Fatalf("concurrent duplicate result = %T %v, want retryable in-progress error", secondResult, secondResult)
+	}
+	if firstResult != nil {
+		t.Fatalf("original generic render result = %v", firstResult)
+	}
+	if first.genericRenderCalls != 1 || second.genericRenderCalls != 0 || !first.genericCompleted || second.genericCompleted {
+		t.Fatalf("generic concurrent work = first(render=%d,complete=%t), second(render=%d,complete=%t)", first.genericRenderCalls, first.genericCompleted, second.genericRenderCalls, second.genericCompleted)
 	}
 }
 

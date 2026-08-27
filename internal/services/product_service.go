@@ -409,26 +409,33 @@ func (s *ProductService) AdjustStockByBusiness(ctx context.Context, businessID, 
 	return product, nil
 }
 
-func (s *ProductService) GetImageUploadURL(ctx context.Context, productID, contentType string) (string, error) {
+func (s *ProductService) GetImageUploadURL(ctx context.Context, productID, contentType string, sizeBytes int64) (*PresignedUpload, error) {
 	log := logger.FromContext(ctx).With("service", "product", "operation", "get_image_upload_url", "product_id", productID)
 	if s.s3 == nil || s.s3.cfg == nil || strings.TrimSpace(s.s3.cfg.S3.BucketProducts) == "" {
-		return "", fmt.Errorf("product image storage is not configured")
+		return nil, fmt.Errorf("product image storage is not configured")
+	}
+	contentType, err := NormalizeImageUploadContentType(contentType)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateUploadSize("product image", sizeBytes, MaxProductImageUploadBytes); err != nil {
+		return nil, err
 	}
 	key := fmt.Sprintf("products/%s/image", productID)
-	url, err := s.s3.GeneratePresignedUploadURL(ctx, s.s3.cfg.S3.BucketProducts, key, contentType, 3600)
+	upload, err := s.s3.GeneratePresignedUpload(ctx, s.s3.cfg.S3.BucketProducts, key, contentType, sizeBytes, 3600)
 	if err != nil {
 		log.Error("failed to generate image upload URL", "error", err)
-		return "", err
+		return nil, err
 	}
 	log.Debug("generated image upload URL", "product_id", productID)
-	return url, nil
+	return upload, nil
 }
 
-func (s *ProductService) GetImageUploadURLByBusiness(ctx context.Context, businessID, productID, contentType string) (string, error) {
+func (s *ProductService) GetImageUploadURLByBusiness(ctx context.Context, businessID, productID, contentType string, sizeBytes int64) (*PresignedUpload, error) {
 	if _, err := s.GetByBusiness(ctx, businessID, productID); err != nil {
-		return "", err
+		return nil, err
 	}
-	return s.GetImageUploadURL(ctx, productID, contentType)
+	return s.GetImageUploadURL(ctx, productID, contentType, sizeBytes)
 }
 
 func (s *ProductService) UpdateImageURL(ctx context.Context, businessID, productID, imageURL string) error {
@@ -839,7 +846,7 @@ type ProductServiceTestable struct {
 
 // S3ServiceTestable is the testable interface for S3 operations
 type S3ServiceTestable interface {
-	GeneratePresignedUploadURL(ctx context.Context, bucket, key, contentType string, expiresIn int64) (string, error)
+	GeneratePresignedUpload(ctx context.Context, bucket, key, contentType string, sizeBytes, expiresIn int64) (*PresignedUpload, error)
 }
 
 // ProductRepositoryTestable is the testable interface for ProductRepository
@@ -970,12 +977,19 @@ func (s *ProductServiceTestable) AdjustStockByBusiness(ctx context.Context, busi
 }
 
 // GetImageUploadURLByBusiness generates presigned URL for product image
-func (s *ProductServiceTestable) GetImageUploadURLByBusiness(ctx context.Context, businessID, productID, contentType string) (string, error) {
+func (s *ProductServiceTestable) GetImageUploadURLByBusiness(ctx context.Context, businessID, productID, contentType string, sizeBytes int64) (*PresignedUpload, error) {
 	if _, err := s.GetByBusiness(ctx, businessID, productID); err != nil {
-		return "", err
+		return nil, err
+	}
+	contentType, err := NormalizeImageUploadContentType(contentType)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateUploadSize("product image", sizeBytes, MaxProductImageUploadBytes); err != nil {
+		return nil, err
 	}
 	key := fmt.Sprintf("products/%s/image", productID)
-	return s.s3.GeneratePresignedUploadURL(ctx, "product-images", key, contentType, 3600)
+	return s.s3.GeneratePresignedUpload(ctx, "product-images", key, contentType, sizeBytes, 3600)
 }
 
 // UpdateImageURL updates product image URL

@@ -169,7 +169,11 @@ func ProcessInvoiceQueueMessageWithOwner(ctx context.Context, cfg *config.Config
 
 	switch msg.Type {
 	case "generate_pdf":
-		return generateInvoicePDF(ctx, cfg, svc, msg.InvoiceID)
+		// The legacy invoice-only renderer has no durable job identity or producer.
+		// Treat old deliveries as retired terminal messages so replay cannot trigger
+		// rendering or storage work. Returning nil allows the queue transport to ack.
+		log.Warn("dropping retired legacy invoice message", "type", msg.Type)
+		return nil
 	case "generate_document_pdf":
 		return generateDocumentPDF(ctx, cfg, svc, log, msg.DocumentID, msg.RenderJobID, msg.InvoiceVersion, owner)
 	default:
@@ -177,36 +181,6 @@ func ProcessInvoiceQueueMessageWithOwner(ctx context.Context, cfg *config.Config
 	}
 
 	return nil
-}
-
-func generateInvoicePDF(ctx context.Context, cfg *config.Config, svc *services.Container, invoiceID string) error {
-	invoice, err := svc.Invoice.GetForWorker(ctx, invoiceID)
-	if err != nil {
-		return err
-	}
-
-	document, err := svc.Document.GetForWorker(ctx, invoiceID)
-	if err != nil || (document.DocumentType != models.DocumentTypeSalesInvoice && document.DocumentType != models.DocumentTypeBillOfSupply) {
-		document = legacyInvoiceDocument(invoice)
-	}
-
-	profile, err := resolveRenderProfile(ctx, svc, document, "")
-	if err != nil {
-		return err
-	}
-
-	pdfContent, filename, err := renderDocumentPDF(ctx, svc, document, profile)
-	if err != nil {
-		return err
-	}
-
-	key := path.Join("invoices", invoiceID, filename)
-	if err := svc.S3.Upload(ctx, cfg.S3.BucketInvoices, key, pdfContent, "application/pdf"); err != nil {
-		return err
-	}
-
-	pdfURL := svc.S3.GetObjectURL(cfg.S3.BucketInvoices, key)
-	return svc.Invoice.UpdatePDFUrl(ctx, invoiceID, pdfURL)
 }
 
 func generateDocumentPDF(
@@ -248,6 +222,18 @@ func (e *PreviewRenderInProgressError) Retryable() bool {
 	return true
 }
 
+type GenericRenderInProgressError struct {
+	JobID string
+}
+
+func (e *GenericRenderInProgressError) Error() string {
+	return fmt.Sprintf("generic render job %q is already processing", e.JobID)
+}
+
+func (e *GenericRenderInProgressError) Retryable() bool {
+	return true
+}
+
 type FinalRenderInProgressError struct {
 	JobID string
 }
@@ -274,13 +260,9 @@ func processDocumentRenderJob(
 	case models.RenderKindPreview:
 		isGenericDocumentRender := expectedInvoiceVersion == 0 &&
 			job.InvoiceID == nil &&
-			job.SourceInvoiceVersion == nil &&
-			job.ObjectKey == ""
+			job.SourceInvoiceVersion == nil
 		if isGenericDocumentRender {
-			if operations == nil {
-				return errors.New("generic document renderer is not configured")
-			}
-			return operations.renderGeneric(ctx, document, job)
+			return processGenericRender(ctx, document, job, operations)
 		}
 		if expectedInvoiceVersion < 1 ||
 			job.SourceInvoiceVersion == nil ||
@@ -320,7 +302,16 @@ type previewRenderOperations interface {
 		claimedObjectKey, selectedObjectKey, filename string,
 	) (bool, error)
 	fail(ctx context.Context, businessID, jobID, owner, message string) error
-	renderGeneric(ctx context.Context, document *models.Document, job *models.DocumentRenderJob) error
+	claimGeneric(
+		ctx context.Context,
+		businessID, jobID, owner string,
+		now, leaseUntil time.Time,
+	) (interfaces.GenericRenderClaimState, error)
+	completeGeneric(
+		ctx context.Context,
+		businessID, documentID, jobID, owner, objectKey, filename, documentType string,
+	) (bool, error)
+	failGeneric(ctx context.Context, businessID, jobID, owner, message string) error
 	claimFinal(
 		ctx context.Context,
 		businessID, jobID string,
@@ -380,7 +371,7 @@ func (o *servicePreviewRenderOperations) loadProfile(
 	ctx context.Context,
 	businessID, profileID string,
 ) (*models.RenderProfile, error) {
-	return o.svc.Document.GetRenderProfileByBusiness(ctx, businessID, profileID)
+	return o.svc.Document.GetRenderProfileForRenderingByBusiness(ctx, businessID, profileID)
 }
 
 func (o *servicePreviewRenderOperations) render(
@@ -458,6 +449,46 @@ func (o *servicePreviewRenderOperations) fail(
 	return o.svc.Document.FailPreviewRender(ctx, businessID, jobID, owner, message)
 }
 
+func (o *servicePreviewRenderOperations) claimGeneric(
+	ctx context.Context,
+	businessID, jobID, owner string,
+	now, leaseUntil time.Time,
+) (interfaces.GenericRenderClaimState, error) {
+	return o.svc.Document.ClaimGenericRender(ctx, businessID, jobID, owner, now, leaseUntil)
+}
+
+func (o *servicePreviewRenderOperations) completeGeneric(
+	ctx context.Context,
+	businessID, documentID, jobID, owner, objectKey, filename, documentType string,
+) (bool, error) {
+	pdfURL := o.svc.S3.GetObjectURL(o.cfg.S3.BucketInvoices, objectKey)
+	completed, err := o.svc.Document.CompleteGenericRender(
+		ctx,
+		businessID,
+		documentID,
+		jobID,
+		owner,
+		objectKey,
+		pdfURL,
+		filename,
+		time.Now().UTC(),
+	)
+	if err != nil || !completed || documentType != models.DocumentTypeSalesInvoice || o.svc.Invoice == nil {
+		return completed, err
+	}
+	if err := o.svc.Invoice.UpdatePDFUrl(ctx, documentID, pdfURL); err != nil {
+		o.log.Warn("failed to sync rendered sales invoice PDF to legacy invoice", "document_id", documentID, "error", err)
+	}
+	return completed, nil
+}
+
+func (o *servicePreviewRenderOperations) failGeneric(
+	ctx context.Context,
+	businessID, jobID, owner, message string,
+) error {
+	return o.svc.Document.FailGenericRender(ctx, businessID, jobID, owner, message)
+}
+
 func (o *servicePreviewRenderOperations) claimFinal(
 	ctx context.Context,
 	businessID, jobID string,
@@ -506,72 +537,6 @@ func (o *servicePreviewRenderOperations) failFinal(
 	businessID, jobID, owner, message string,
 ) error {
 	return o.svc.Document.FailFinalRender(ctx, businessID, jobID, owner, message)
-}
-
-func (o *servicePreviewRenderOperations) renderGeneric(
-	ctx context.Context,
-	document *models.Document,
-	job *models.DocumentRenderJob,
-) error {
-	if err := o.svc.Document.MarkRenderJobProcessing(ctx, document.BusinessID, job.ID); err != nil {
-		o.log.Warn(
-			"failed to mark render job processing",
-			"document_id",
-			document.ID,
-			"render_job_id",
-			job.ID,
-			"error",
-			err,
-		)
-	}
-
-	profile, err := resolveRenderProfile(ctx, o.svc, document, job.ID)
-	if err != nil {
-		_ = o.svc.Document.FailRenderJob(ctx, document.BusinessID, job.ID, err.Error())
-		return err
-	}
-
-	pdfContent, filename, err := renderDocumentPDF(ctx, o.svc, document, profile)
-	if err != nil {
-		_ = o.svc.Document.FailRenderJob(ctx, document.BusinessID, job.ID, err.Error())
-		return err
-	}
-
-	key := path.Join("documents", document.ID, filename)
-	if err := o.svc.S3.Upload(
-		ctx,
-		o.cfg.S3.BucketInvoices,
-		key,
-		pdfContent,
-		"application/pdf",
-	); err != nil {
-		_ = o.svc.Document.FailRenderJob(ctx, document.BusinessID, job.ID, err.Error())
-		return err
-	}
-
-	pdfURL := o.svc.S3.GetObjectURL(o.cfg.S3.BucketInvoices, key)
-	if err := o.svc.Document.UpdateRenderedPDF(
-		ctx,
-		document.ID,
-		job.ID,
-		pdfURL,
-		filename,
-	); err != nil {
-		_ = o.svc.Document.FailRenderJob(ctx, document.BusinessID, job.ID, err.Error())
-		return err
-	}
-	if document.DocumentType == models.DocumentTypeSalesInvoice {
-		if err := o.svc.Invoice.UpdatePDFUrl(ctx, document.ID, pdfURL); err != nil {
-			o.log.Warn(
-				"failed to sync rendered sales invoice PDF to legacy invoice",
-				"document_id",
-				document.ID,
-				"error",
-				err,
-			)
-		}
-	}
-	return nil
 }
 
 func processFinalRender(
@@ -714,6 +679,96 @@ func processFinalRender(
 	); err != nil {
 		_ = operations.failFinal(ctx, document.BusinessID, job.ID, owner, err.Error())
 		return fmt.Errorf("complete private invoice final: %w", err)
+	}
+	return nil
+}
+
+func processGenericRender(
+	ctx context.Context,
+	document *models.Document,
+	job *models.DocumentRenderJob,
+	operations previewRenderOperations,
+) error {
+	if document == nil || job == nil || operations == nil ||
+		document.ID == "" || document.BusinessID == "" || job.ID == "" ||
+		job.BusinessID != document.BusinessID || job.Kind != models.RenderKindPreview ||
+		job.DocumentID == nil || *job.DocumentID != document.ID {
+		return errors.New("generic render job identity mismatch")
+	}
+	if job.Status == models.RenderJobStatusCompleted || job.Status == models.RenderJobStatusObsolete {
+		return nil
+	}
+	owner := operations.canonicalRenderLeaseOwner()
+	if owner == "" {
+		return errors.New("generic render lease owner is required")
+	}
+	expectedObjectKey := path.Join("documents", document.BusinessID, document.ID, job.ID+".pdf")
+	if job.ObjectKey != "" && job.ObjectKey != expectedObjectKey {
+		return errors.New("generic render object key mismatch")
+	}
+	claimNow := time.Now().UTC()
+	claimState, err := operations.claimGeneric(
+		ctx,
+		document.BusinessID,
+		job.ID,
+		owner,
+		claimNow,
+		claimNow.Add(canonicalRenderLeaseDuration),
+	)
+	if err != nil {
+		return fmt.Errorf("claim generic render: %w", err)
+	}
+	switch claimState {
+	case interfaces.GenericRenderClaimed:
+	case interfaces.GenericRenderAlreadyProcessing:
+		return &GenericRenderInProgressError{JobID: job.ID}
+	case interfaces.GenericRenderAlreadyCompleted, interfaces.GenericRenderAlreadyObsolete:
+		return nil
+	default:
+		return fmt.Errorf("claim generic render returned unknown state %q", claimState)
+	}
+
+	var profile *models.RenderProfile
+	if job.RenderProfileID != nil {
+		profile, err = operations.loadProfile(ctx, document.BusinessID, *job.RenderProfileID)
+		if err != nil {
+			_ = operations.failGeneric(ctx, document.BusinessID, job.ID, owner, err.Error())
+			return fmt.Errorf("load generic render profile: %w", err)
+		}
+	}
+	content, filename, err := operations.render(ctx, document, profile)
+	if err != nil {
+		_ = operations.failGeneric(ctx, document.BusinessID, job.ID, owner, err.Error())
+		return fmt.Errorf("render generic document: %w", err)
+	}
+	if filename == "" {
+		err := errors.New("generic renderer returned empty filename")
+		_ = operations.failGeneric(ctx, document.BusinessID, job.ID, owner, err.Error())
+		return err
+	}
+	if err := operations.verifyLease(ctx, document.BusinessID, job.ID, models.RenderKindPreview, owner, time.Now().UTC()); err != nil {
+		return fmt.Errorf("verify generic render lease before publish: %w", err)
+	}
+	if err := operations.uploadFinalIfAbsent(ctx, expectedObjectKey, content); err != nil {
+		_ = operations.failGeneric(ctx, document.BusinessID, job.ID, owner, err.Error())
+		return fmt.Errorf("upload generic document: %w", err)
+	}
+	completed, err := operations.completeGeneric(
+		ctx,
+		document.BusinessID,
+		document.ID,
+		job.ID,
+		owner,
+		expectedObjectKey,
+		filename,
+		document.DocumentType,
+	)
+	if err != nil {
+		_ = operations.failGeneric(ctx, document.BusinessID, job.ID, owner, err.Error())
+		return fmt.Errorf("complete generic document: %w", err)
+	}
+	if !completed {
+		return errors.New("complete generic document lost render lease")
 	}
 	return nil
 }
@@ -862,75 +917,6 @@ func processPreviewRender(
 		return fmt.Errorf("complete private invoice preview: %w", err)
 	}
 	return nil
-}
-
-func resolveRenderProfile(ctx context.Context, svc *services.Container, document *models.Document, renderJobID string) (*models.RenderProfile, error) {
-	if renderJobID != "" {
-		job, err := svc.Document.GetRenderJobByBusiness(ctx, document.BusinessID, renderJobID)
-		if err == nil && job.RenderProfileID != nil {
-			return svc.Document.GetRenderProfileByBusiness(ctx, document.BusinessID, *job.RenderProfileID)
-		}
-	}
-	if document.RenderProfileID != nil {
-		profile, err := svc.Document.GetRenderProfileByBusiness(ctx, document.BusinessID, *document.RenderProfileID)
-		if err == nil {
-			return profile, nil
-		}
-	}
-	profile, err := svc.Document.GetDefaultRenderProfileByBusiness(ctx, document.BusinessID)
-	if err != nil {
-		return nil, nil
-	}
-	return profile, nil
-}
-
-func legacyInvoiceDocument(invoice *services.Invoice) *models.Document {
-	document := &models.Document{
-		ID:                    invoice.ID,
-		BusinessID:            invoice.BusinessID,
-		DocumentType:          models.DocumentTypeSalesInvoice,
-		PartyType:             models.DocumentPartyTypeCustomer,
-		PartyID:               invoice.CustomerID,
-		Status:                models.DocumentStatusIssued,
-		DraftState:            models.DocumentDraftStateFinal,
-		TaxMode:               models.DocumentTaxModeNonGST,
-		GSTTreatment:          models.DocumentGSTTreatmentRegular,
-		SerialNumber:          models.StringValue(invoice.InvoiceNo),
-		IssueDate:             invoice.InvoiceDate,
-		DueDate:               &invoice.DueDate,
-		Currency:              invoice.Currency,
-		Locale:                "en-IN",
-		RenderProfileID:       invoice.RenderProfileID,
-		Notes:                 invoice.Notes,
-		Subtotal:              invoice.Subtotal,
-		DiscountTotal:         invoice.Discount,
-		TaxTotal:              invoice.Tax,
-		Total:                 invoice.Total,
-		PaidAmount:            invoice.PaidAmount,
-		BalanceDue:            invoice.BalanceDue,
-		ProfitSnapshotEnabled: true,
-	}
-	if invoice.Tax > 0 {
-		document.TaxMode = models.DocumentTaxModeGST
-	}
-	for _, item := range invoice.Items {
-		document.Lines = append(document.Lines, &models.DocumentLine{
-			ID:                item.ID,
-			DocumentID:        invoice.ID,
-			ProductID:         item.ProductID,
-			Description:       item.Description,
-			Quantity:          item.Quantity,
-			RemainingQuantity: item.Quantity,
-			UnitPrice:         item.UnitPrice,
-			DiscountAmount:    item.Discount,
-			TaxRate:           item.TaxRate,
-			TaxAmount:         item.Total - ((item.Quantity * item.UnitPrice) - item.Discount),
-			LineSubtotal:      (item.Quantity * item.UnitPrice) - item.Discount,
-			LineTotal:         item.Total,
-			StockEffect:       "out",
-		})
-	}
-	return document
 }
 
 type GSTQueueMessage struct {

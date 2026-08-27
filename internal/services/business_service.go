@@ -344,26 +344,33 @@ func (s *BusinessService) DeleteByOwner(ctx context.Context, userID, id string) 
 	return nil
 }
 
-func (s *BusinessService) GetLogoUploadURL(ctx context.Context, businessID, contentType string) (string, error) {
+func (s *BusinessService) GetLogoUploadURL(ctx context.Context, businessID, contentType string, sizeBytes int64) (*PresignedUpload, error) {
 	log := logger.FromContext(ctx).With("service", "business", "operation", "get_logo_upload_url", "business_id", businessID)
 	if s.s3 == nil || s.s3.cfg == nil || strings.TrimSpace(s.s3.cfg.S3.BucketLogos) == "" {
-		return "", fmt.Errorf("business logo storage is not configured")
+		return nil, fmt.Errorf("business logo storage is not configured")
+	}
+	contentType, err := NormalizeImageUploadContentType(contentType)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateUploadSize("business logo", sizeBytes, MaxBusinessLogoUploadBytes); err != nil {
+		return nil, err
 	}
 	key := fmt.Sprintf("logos/%s/logo", businessID)
-	url, err := s.s3.GeneratePresignedUploadURL(ctx, s.s3.cfg.S3.BucketLogos, key, contentType, 3600)
+	upload, err := s.s3.GeneratePresignedUpload(ctx, s.s3.cfg.S3.BucketLogos, key, contentType, sizeBytes, 3600)
 	if err != nil {
 		log.Error("failed to generate business logo upload URL", "error", err)
-		return "", err
+		return nil, err
 	}
 	log.Debug("generated business logo upload URL")
-	return url, nil
+	return upload, nil
 }
 
-func (s *BusinessService) GetLogoUploadURLByOwner(ctx context.Context, userID, businessID, contentType string) (string, error) {
+func (s *BusinessService) GetLogoUploadURLByOwner(ctx context.Context, userID, businessID, contentType string, sizeBytes int64) (*PresignedUpload, error) {
 	if _, err := s.GetByOwner(ctx, userID, businessID); err != nil {
-		return "", err
+		return nil, err
 	}
-	return s.GetLogoUploadURL(ctx, businessID, contentType)
+	return s.GetLogoUploadURL(ctx, businessID, contentType, sizeBytes)
 }
 
 func (s *BusinessService) UpdateLogoURL(ctx context.Context, businessID, logoURL string) error {
@@ -391,7 +398,7 @@ type BusinessServiceTestable struct {
 
 // BusinessS3ServiceTestable is the testable interface for S3 operations
 type BusinessS3ServiceTestable interface {
-	GeneratePresignedUploadURL(ctx context.Context, bucket, key, contentType string, expiresIn int64) (string, error)
+	GeneratePresignedUpload(ctx context.Context, bucket, key, contentType string, sizeBytes, expiresIn int64) (*PresignedUpload, error)
 }
 
 // BusinessRepositoryTestable is the testable interface for BusinessRepository
@@ -566,17 +573,24 @@ func (s *BusinessServiceTestable) DeleteByOwner(ctx context.Context, userID, id 
 }
 
 // GetLogoUploadURL generates a presigned URL for logo upload (testable version)
-func (s *BusinessServiceTestable) GetLogoUploadURL(ctx context.Context, businessID, contentType string) (string, error) {
+func (s *BusinessServiceTestable) GetLogoUploadURL(ctx context.Context, businessID, contentType string, sizeBytes int64) (*PresignedUpload, error) {
+	contentType, err := NormalizeImageUploadContentType(contentType)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateUploadSize("business logo", sizeBytes, MaxBusinessLogoUploadBytes); err != nil {
+		return nil, err
+	}
 	key := fmt.Sprintf("logos/%s/logo", businessID)
-	return s.s3.GeneratePresignedUploadURL(ctx, "business-logos", key, contentType, 3600)
+	return s.s3.GeneratePresignedUpload(ctx, "business-logos", key, contentType, sizeBytes, 3600)
 }
 
 // GetLogoUploadURLByOwner generates a presigned URL for logo upload scoped to owner (testable version)
-func (s *BusinessServiceTestable) GetLogoUploadURLByOwner(ctx context.Context, userID, businessID, contentType string) (string, error) {
+func (s *BusinessServiceTestable) GetLogoUploadURLByOwner(ctx context.Context, userID, businessID, contentType string, sizeBytes int64) (*PresignedUpload, error) {
 	if _, err := s.GetByOwner(ctx, userID, businessID); err != nil {
-		return "", err
+		return nil, err
 	}
-	return s.GetLogoUploadURL(ctx, businessID, contentType)
+	return s.GetLogoUploadURL(ctx, businessID, contentType, sizeBytes)
 }
 
 // UpdateLogoURL updates the logo URL for a business (testable version)

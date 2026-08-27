@@ -57,7 +57,7 @@ func SecretKindsForEntrypoint(entrypoint string) []SecretKind {
 	case "sqs-gst":
 		kinds = []SecretKind{SecretCredentialEncryption, SecretGSTProvider}
 	case "sqs-bargaining":
-		kinds = []SecretKind{SecretCredentialEncryption, SecretLLM, SecretExa}
+		kinds = []SecretKind{SecretLLM, SecretExa}
 	case "outbox":
 		kinds = nil
 	}

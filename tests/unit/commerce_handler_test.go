@@ -573,7 +573,7 @@ func (h *TestableCommerceHandler) PublicOrder(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, order)
+	c.JSON(http.StatusOK, services.NewPublicStoreOrderResponse(order))
 }
 
 func (h *TestableCommerceHandler) ListEntitlements(c *gin.Context) {
@@ -2642,6 +2642,32 @@ func TestCreateDriveUpload_UnauthorizedUser(t *testing.T) {
 	if res.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", res.Code)
 	}
+}
+
+func TestCreateDriveUpload_RejectsSizeAbove25MiB(t *testing.T) {
+	mockSvc := new(MockCommerceService)
+	handler := NewTestableCommerceHandler(mockSvc, logger.New())
+	router := gin.New()
+	router.POST("/drive/presign", func(c *gin.Context) {
+		c.Set("business_id", "biz-123")
+		c.Set("user_id", "user-1")
+		handler.CreateDriveUpload(c)
+	})
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":         "file.pdf",
+		"content_type": "application/pdf",
+		"size_bytes":   25*1024*1024 + 1,
+	})
+	request := httptest.NewRequest(http.MethodPost, "/drive/presign", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", response.Code, response.Body.String())
+	}
+	mockSvc.AssertNotCalled(t, "CreateDriveUpload", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 // =============================================================================

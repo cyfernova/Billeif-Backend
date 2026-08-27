@@ -91,6 +91,7 @@ func NewContainer(
 	log *logger.Logger,
 ) *Container {
 	s3Svc := NewS3Service(cfg, aws, log)
+	businessAuthSvc := NewBusinessAuthService(db, businessRepo, teamRepo, log)
 	emailSvc := NewEmailService(cfg, aws, s3Svc, log).WithDB(db)
 	ap2Signer, _ := ap2.NewSignatureService()
 	ap2MandateSigner := ap2.NewMandateSigner(ap2Signer)
@@ -101,7 +102,7 @@ func NewContainer(
 	inventorySvc := NewInventoryService(db, inventoryRepo, productRepo, businessRepo, teamRepo, log)
 	journalSvc := NewJournalService(journalRepo, ledgerRepo, log)
 	shippingSvc := NewShippingService(cfg, shippingRepo, customerRepo, vendorRepo, log)
-	documentSvc := NewDocumentService(db, cfg, documentRepo, businessRepo, customerRepo, vendorRepo, productRepo, inventorySvc, journalSvc, shippingSvc, aws, log)
+	documentSvc := NewDocumentService(db, cfg, resolver, documentRepo, businessRepo, customerRepo, vendorRepo, productRepo, inventorySvc, journalSvc, shippingSvc, aws, businessAuthSvc, log)
 	barcodeSvc := NewBarcodeService(db, log)
 	projectSvc := NewProjectService(db, log)
 	reportSvc := NewReportService(cfg, reportingRepo, log)
@@ -159,7 +160,7 @@ func NewContainer(
 	}
 	documentSvc.salesInvoices = newInvoiceSalesDocumentCreator(invoiceSvc)
 	documentSvc.salesInvoiceIssuer = newInvoiceSalesDocumentIssuer(invoiceSvc)
-	billingOpsSvc := NewBillingOpsService(cfg, db, customerRepo, vendorRepo, productRepo, invoiceSvc, documentSvc, s3Svc, log)
+	billingOpsSvc := NewBillingOpsService(cfg, db, customerRepo, vendorRepo, productRepo, invoiceSvc, documentSvc, s3Svc, businessAuthSvc, log)
 	documentSvc.AttachTaxComplianceService(taxComplianceSvc)
 	taxComplianceSvc.AttachDocumentService(documentSvc)
 	posSvc := NewPOSService(db, documentSvc, barcodeSvc, inventorySvc, taxComplianceSvc.entitlements, log)
@@ -178,10 +179,10 @@ func NewContainer(
 
 	return &Container{
 		Auth:                NewAuthService(cfg, userRepo, aws, emailSvc, s3Svc, log),
-		BusinessAuth:        NewBusinessAuthService(db, businessRepo, teamRepo, log),
+		BusinessAuth:        businessAuthSvc,
 		Business:            NewBusinessService(businessRepo, s3Svc, log),
-		Customer:            NewCustomerService(customerRepo, log),
-		Vendor:              NewVendorService(vendorRepo, log),
+		Customer:            NewCustomerService(customerRepo, businessAuthSvc, log),
+		Vendor:              NewVendorService(vendorRepo, businessAuthSvc, log),
 		Product:             NewProductService(db, productRepo, s3Svc, inventorySvc, log),
 		Project:             projectSvc,
 		Inventory:           inventorySvc,

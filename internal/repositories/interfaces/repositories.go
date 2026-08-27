@@ -206,6 +206,8 @@ type DocumentRepository interface {
 	ListRenderProfiles(ctx context.Context, businessID string, page, limit int) ([]*models.RenderProfile, int64, error)
 	GetRenderProfile(ctx context.Context, businessID, id string) (*models.RenderProfile, error)
 	GetDefaultRenderProfile(ctx context.Context, businessID string) (*models.RenderProfile, error)
+	ListLegacyRenderProfiles(ctx context.Context, limit int) ([]*models.RenderProfile, error)
+	MigrateRenderProfilePassword(ctx context.Context, businessID, id, legacyPassword, ciphertext string) (bool, error)
 	UpdateRenderProfile(ctx context.Context, profile *models.RenderProfile) error
 	DeleteRenderProfile(ctx context.Context, businessID, id string) error
 	CreateRenderJob(ctx context.Context, job *models.DocumentRenderJob) error
@@ -248,6 +250,29 @@ const (
 	PreviewRenderAlreadyCompleted  PreviewRenderClaimState = "completed"
 	PreviewRenderAlreadyObsolete   PreviewRenderClaimState = "obsolete"
 )
+
+type GenericRenderClaimState string
+
+const (
+	GenericRenderClaimed           GenericRenderClaimState = "claimed"
+	GenericRenderAlreadyProcessing GenericRenderClaimState = "processing"
+	GenericRenderAlreadyCompleted  GenericRenderClaimState = "completed"
+	GenericRenderAlreadyObsolete   GenericRenderClaimState = "obsolete"
+)
+
+type GenericRenderRepository interface {
+	ClaimGenericRender(
+		ctx context.Context,
+		businessID, jobID, owner string,
+		now, leaseUntil time.Time,
+	) (GenericRenderClaimState, error)
+	FailGenericRender(ctx context.Context, businessID, jobID, owner, errorMessage string) error
+	CompleteGenericRender(
+		ctx context.Context,
+		businessID, documentID, jobID, owner, objectKey, pdfURL, filename string,
+		now time.Time,
+	) (bool, error)
+}
 
 type FinalRenderClaimState string
 

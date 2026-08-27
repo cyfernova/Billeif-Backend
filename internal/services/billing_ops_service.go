@@ -29,6 +29,7 @@ type BillingOpsService struct {
 	invoices     *InvoiceService
 	documents    *DocumentService
 	s3           *S3Service
+	permissions  PermissionChecker
 	log          *logger.Logger
 }
 
@@ -60,6 +61,7 @@ func NewBillingOpsService(
 	invoices *InvoiceService,
 	documents *DocumentService,
 	s3 *S3Service,
+	permissions PermissionChecker,
 	log *logger.Logger,
 ) *BillingOpsService {
 	return &BillingOpsService{
@@ -71,6 +73,7 @@ func NewBillingOpsService(
 		invoices:     invoices,
 		documents:    documents,
 		s3:           s3,
+		permissions:  permissions,
 		log:          log,
 	}
 }
@@ -861,6 +864,16 @@ type CreateBulkJobInput struct {
 }
 
 func (s *BillingOpsService) CreateBulkJob(ctx context.Context, input CreateBulkJobInput) (*models.BulkJob, error) {
+	switch input.JobType {
+	case models.BulkJobTypeImportCustomers:
+		if err := requireMutationPermission(ctx, s.permissions, input.BusinessID, PermissionCustomersCreate); err != nil {
+			return nil, err
+		}
+	case models.BulkJobTypeImportVendors:
+		if err := requireMutationPermission(ctx, s.permissions, input.BusinessID, PermissionVendorsCreate); err != nil {
+			return nil, err
+		}
+	}
 	if s.db == nil {
 		return nil, fmt.Errorf("database is not configured")
 	}

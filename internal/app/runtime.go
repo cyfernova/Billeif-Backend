@@ -5,9 +5,12 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	_ "time/tzdata"
@@ -16,6 +19,7 @@ import (
 	"invoice-backend/internal/config"
 	"invoice-backend/internal/handlers"
 	"invoice-backend/internal/middleware"
+	"invoice-backend/internal/ratelimit"
 	"invoice-backend/internal/repositories/interfaces"
 	postgresrepo "invoice-backend/internal/repositories/postgres"
 	"invoice-backend/internal/services"
@@ -59,17 +63,25 @@ type InitializeOptions struct {
 type Runtime struct {
 	Config *config.Config
 
-	Log     *logger.Logger
-	DB      *gorm.DB
-	AWS     *awsclients.Config
-	Repos   *Repositories
-	Svcs    *services.Container
-	H       *handlers.Handler
-	Router  *gin.Engine
-	Worker  *workers.Worker
-	WAF     *middleware.WAFRateLimiter
-	Secrets *config.RuntimeResolver
+	Log         *logger.Logger
+	DB          *gorm.DB
+	AWS         *awsclients.Config
+	Repos       *Repositories
+	Svcs        *services.Container
+	H           *handlers.Handler
+	Router      *gin.Engine
+	Worker      *workers.Worker
+	RateLimiter rateLimitBackend
+	Secrets     *config.RuntimeResolver
 }
+
+type rateLimitBackend interface {
+	ratelimit.Limiter
+	Close() error
+}
+
+// ErrRateLimitUnavailable marks HTTP runtime startup failures that must fail closed.
+var ErrRateLimitUnavailable = errors.New("distributed rate-limit backend unavailable")
 
 func Initialize(ctx context.Context, opts InitializeOptions) (*Runtime, error) {
 	bootstrapLog := logger.New().Named("bootstrap")
@@ -110,6 +122,17 @@ func Initialize(ctx context.Context, opts InitializeOptions) (*Runtime, error) {
 		log.Sync()
 		return nil, fmt.Errorf("initialize AWS clients: %w", err)
 	}
+	rateLimiter, err := initializeRateLimiter(ctx, cfg, opts.Profile, awsClients)
+	if err != nil {
+		log.Sync()
+		return nil, fmt.Errorf("%w: initialize distributed rate limiter: %w", ErrRateLimitUnavailable, err)
+	}
+	clientIdentities, err := middleware.NewClientIdentityResolver(cfg.Environment, cfg.Redis.TrustedProxyCIDR)
+	if err != nil {
+		_ = rateLimiter.Close()
+		log.Sync()
+		return nil, fmt.Errorf("initialize client identity resolver: %w", err)
+	}
 
 	resolver, err := config.NewRuntimeResolver(config.RuntimeResolverOptions{
 		Clients: config.RuntimeResolvers{
@@ -120,6 +143,7 @@ func Initialize(ctx context.Context, opts InitializeOptions) (*Runtime, error) {
 		ParameterNames:    []string{cfg.SSM.DatabaseHostParam},
 	})
 	if err != nil {
+		_ = rateLimiter.Close()
 		log.Sync()
 		return nil, fmt.Errorf("initialize runtime resolver: %w", err)
 	}
@@ -127,37 +151,49 @@ func Initialize(ctx context.Context, opts InitializeOptions) (*Runtime, error) {
 	if opts.Profile == config.ProfileHTTP && strings.TrimSpace(cfg.Secrets.InvoiceCursorHMAC) != "" {
 		invoiceCursor, err = resolver.InvoiceCursorCodec(ctx, cfg.Secrets.InvoiceCursorHMAC)
 		if err != nil {
+			_ = rateLimiter.Close()
 			log.Sync()
 			return nil, fmt.Errorf("initialize invoice cursor codec: %w", err)
 		}
 	}
 	db, err := initDatabase(cfg, resolver, log, opts.Profile)
 	if err != nil {
+		_ = rateLimiter.Close()
 		log.Sync()
 		return nil, fmt.Errorf("connect database: %w", err)
 	}
 
 	repos := initRepositories(db)
 	svcs := initServices(cfg, db, repos, awsClients, resolver, log)
+	migratedRenderProfilePasswords, err := backfillLegacyRenderProfilePasswords(ctx, opts.Profile, svcs.Document)
+	if err != nil {
+		if sqlDB, dbErr := db.DB(); dbErr == nil {
+			_ = sqlDB.Close()
+		}
+		log.Sync()
+		return nil, fmt.Errorf("backfill render profile passwords: %w", err)
+	}
+	if migratedRenderProfilePasswords > 0 {
+		log.Info(
+			"encrypted legacy render profile passwords",
+			"profiles",
+			migratedRenderProfilePasswords,
+		)
+	}
 	h := handlers.New(svcs, &handlers.Repositories{AP2: repos.AP2}, cfg, log, invoiceCursor)
-	router := setupRouter(cfg, svcs, h, log)
+	router := setupRouter(cfg, svcs, h, log, rateLimiter, clientIdentities)
 
 	rt := &Runtime{
-		Config:  cfg,
-		Log:     log,
-		DB:      db,
-		AWS:     awsClients,
-		Repos:   repos,
-		Svcs:    svcs,
-		H:       h,
-		Router:  router,
-		Secrets: resolver,
-	}
-
-	// Initialize WAF rate limiter if enabled
-	if cfg.AWS.WAF.Enabled && awsClients.WAF != nil {
-		rt.WAF = middleware.NewWAFRateLimiter(awsClients.WAF, cfg.AWS.WAF)
-		log.Info("AWS WAF rate limiting enabled", "web_acl_arn", cfg.AWS.WAF.WebACLArn)
+		Config:      cfg,
+		Log:         log,
+		DB:          db,
+		AWS:         awsClients,
+		Repos:       repos,
+		Svcs:        svcs,
+		H:           h,
+		Router:      router,
+		RateLimiter: rateLimiter,
+		Secrets:     resolver,
 	}
 
 	if opts.EnableWorker {
@@ -168,7 +204,57 @@ func Initialize(ctx context.Context, opts InitializeOptions) (*Runtime, error) {
 	return rt, nil
 }
 
+func initializeRateLimiter(
+	ctx context.Context,
+	cfg *config.Config,
+	profile config.Profile,
+	awsClients *awsclients.Config,
+) (rateLimitBackend, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("configuration is required")
+	}
+	if profile != "" && profile != config.ProfileHTTP {
+		return ratelimit.DisabledLimiter{}, nil
+	}
+	if strings.TrimSpace(cfg.Redis.Host) == "" {
+		if logger.IsProductionEnvironment(cfg.Environment) {
+			return nil, fmt.Errorf("distributed rate-limit backend is required for production HTTP")
+		}
+		return ratelimit.DisabledLimiter{}, nil
+	}
+	if awsClients == nil {
+		return nil, fmt.Errorf("AWS client configuration is required")
+	}
+
+	var credentials ratelimit.CredentialsProvider
+	var err error
+	if cfg.Redis.IAMAuthEnabled {
+		credentials, err = ratelimit.NewIAMCredentialsProvider(ratelimit.IAMCredentialsOptions{
+			Region:      cfg.AWS.Region,
+			UserID:      cfg.Redis.UserID,
+			CacheName:   cfg.Redis.CacheName,
+			Credentials: awsClients.SDKConfig.Credentials,
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return ratelimit.NewRedisLimiter(ctx, ratelimit.RedisOptions{
+		Address:             net.JoinHostPort(strings.TrimSpace(cfg.Redis.Host), strconv.Itoa(cfg.Redis.Port)),
+		Username:            cfg.Redis.UserID,
+		Password:            cfg.Redis.Password,
+		ClusterMode:         cfg.Redis.ClusterMode,
+		TLSEnabled:          cfg.Redis.TLSEnabled,
+		CredentialsProvider: credentials,
+		DecisionTimeout:     cfg.Redis.DecisionTimeout,
+	})
+}
+
 func (r *Runtime) Close() {
+	if r.RateLimiter != nil {
+		_ = r.RateLimiter.Close()
+	}
 	if r.Worker != nil {
 		r.Worker.Stop()
 	}
@@ -336,6 +422,24 @@ func initServices(cfg *config.Config, db *gorm.DB, repos *Repositories, aws *aws
 		repos.Webhook, repos.Subscription, repos.AP2, aws, log)
 }
 
+type renderProfilePasswordBackfiller interface {
+	BackfillLegacyRenderProfilePasswords(context.Context) (int, error)
+}
+
+func backfillLegacyRenderProfilePasswords(
+	ctx context.Context,
+	profile config.Profile,
+	backfiller renderProfilePasswordBackfiller,
+) (int, error) {
+	if profile != config.ProfileHTTP {
+		return 0, nil
+	}
+	if backfiller == nil {
+		return 0, fmt.Errorf("render profile password backfiller is required")
+	}
+	return backfiller.BackfillLegacyRenderProfilePasswords(ctx)
+}
+
 // initSentry initializes the Sentry SDK with production configuration
 func initSentry(cfg *config.Config, log *logger.Logger) error {
 	if cfg.Sentry.DSN == "" {
@@ -377,8 +481,23 @@ func initSentry(cfg *config.Config, log *logger.Logger) error {
 	return nil
 }
 
-func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handler, log *logger.Logger) *gin.Engine {
+func setupRouter(
+	cfg *config.Config,
+	svcs *services.Container,
+	h *handlers.Handler,
+	log *logger.Logger,
+	rateLimiter ratelimit.Limiter,
+	clientIdentities *middleware.ClientIdentityResolver,
+) *gin.Engine {
 	router := gin.New()
+	trustedProxies := []string(nil)
+	if trustedProxyCIDR := strings.TrimSpace(cfg.Redis.TrustedProxyCIDR); trustedProxyCIDR != "" {
+		trustedProxies = []string{trustedProxyCIDR}
+	}
+	if err := router.SetTrustedProxies(trustedProxies); err != nil {
+		_ = router.SetTrustedProxies(nil)
+		log.Error("invalid trusted proxy configuration; forwarding headers disabled", "error", err)
+	}
 
 	// Add Sentry middleware first for request context
 	if cfg.Sentry.DSN != "" {
@@ -424,36 +543,96 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			}
 		}
 
-		loginRL := middleware.AuthRateLimit(5, time.Minute)
-		sensitiveRL := middleware.AuthRateLimit(3, time.Hour)
+		rateLimit := func(policies ...middleware.RateLimitPolicy) gin.HandlerFunc {
+			return middleware.DistributedRateLimit(rateLimiter, clientIdentities, policies...)
+		}
+		loginPolicy := middleware.RateLimitPolicy{
+			Namespace: "auth/login", Limit: 5, Window: time.Minute, IP: true, AuthTarget: true,
+			Message: "rate limit exceeded. please try again later",
+		}
+		sensitivePolicy := middleware.RateLimitPolicy{
+			Namespace: "auth/sensitive", Limit: 3, Window: time.Hour, IP: true, AuthTarget: true,
+			Message: "rate limit exceeded. please try again later",
+		}
+		commonPolicy := middleware.RateLimitPolicy{
+			Namespace: "common", Limit: 100, Window: time.Minute, IP: true, User: true,
+		}
+		bulkPolicy := middleware.RateLimitPolicy{
+			Namespace: "bulk", Limit: 20, Window: time.Minute, IP: true, User: true,
+		}
+		llmPolicy := middleware.RateLimitPolicy{
+			Namespace: "llm", Limit: 30, Window: time.Minute, IP: true, User: true,
+		}
+		websocketPolicy := middleware.RateLimitPolicy{
+			Namespace: "websocket", Limit: 10, Window: time.Minute, IP: true, User: true,
+		}
+		userWritePolicy := middleware.RateLimitPolicy{
+			Namespace: "user/write", Limit: 100, Window: time.Minute, IP: true, User: true, RequireUser: true,
+		}
+		userHeavyPolicy := middleware.RateLimitPolicy{
+			Namespace: "user/heavy", Limit: 100, Window: time.Minute, IP: true, User: true, RequireUser: true,
+		}
+		userReportPolicy := middleware.RateLimitPolicy{
+			Namespace: "user/report", Limit: 100, Window: time.Minute, IP: true, User: true, RequireUser: true,
+		}
+		agentCreationPolicy := middleware.RateLimitPolicy{
+			Namespace: "agent/creation", Limit: 10, Window: time.Hour, IP: true, User: true, RequireUser: true,
+			Message: "maximum 10 agents per hour. Please try again in an hour",
+		}
+		shoppingIntentPolicy := middleware.RateLimitPolicy{
+			Namespace: "shopping/intent", Limit: 100, Window: time.Minute, IP: true, User: true, RequireUser: true,
+		}
+		paymentPolicy := middleware.RateLimitPolicy{
+			Namespace: "payment/processing", Limit: 20, Window: time.Minute, IP: true, User: true, RequireUser: true,
+		}
+		razorpayOrderPolicy := middleware.RateLimitPolicy{
+			Namespace: "razorpay/order", Limit: 10, Window: time.Minute, IP: true, User: true, RequireUser: true,
+		}
+		razorpayVerifyPolicy := middleware.RateLimitPolicy{
+			Namespace: "razorpay/verify", Limit: 20, Window: time.Minute, IP: true, User: true, RequireUser: true,
+		}
+		razorpayWebhookPolicy := middleware.RateLimitPolicy{
+			Namespace: "razorpay/webhook", Limit: 120, Window: time.Minute, IP: true,
+		}
+		reportSharePolicy := middleware.RateLimitPolicy{
+			Namespace: "report/share", Limit: 20, Window: time.Minute, IP: true,
+		}
+		storefrontCatalogPolicy := middleware.RateLimitPolicy{
+			Namespace: "storefront/catalog", Limit: 120, Window: time.Minute, IP: true,
+		}
+		storefrontCheckoutPolicy := middleware.RateLimitPolicy{
+			Namespace: "storefront/checkout", Limit: 20, Window: time.Minute, IP: true,
+		}
+		storefrontCouponPolicy := middleware.RateLimitPolicy{
+			Namespace: "storefront/coupon", Limit: 40, Window: time.Minute, IP: true,
+		}
 
-		// WAF rate limiting (falls back to in-memory if WAF disabled)
-		wafLoginRL := middleware.WAFRateLimit(svcs.AWS, cfg.AWS.WAF, time.Minute, 5)
-		wafSensitiveRL := middleware.WAFRateLimit(svcs.AWS, cfg.AWS.WAF, time.Hour, 3)
-		wafCommonRL := middleware.WAFCommonRateLimit(svcs.AWS, cfg.AWS.WAF)
-		wafBulkRL := middleware.WAFBulkRateLimit(svcs.AWS, cfg.AWS.WAF)
-		wafLLMRL := middleware.WAFLLMRateLimit(svcs.AWS, cfg.AWS.WAF)
-		wafWSRL := middleware.WAFWebSocketRateLimit(svcs.AWS, cfg.AWS.WAF)
-		wafUserWriteRL := middleware.WAFUserWriteRateLimit(svcs.AWS, cfg.AWS.WAF)
-		wafUserHeavyRL := middleware.WAFUserHeavyRateLimit(svcs.AWS, cfg.AWS.WAF)
-		wafUserReportRL := middleware.WAFUserReportRateLimit(svcs.AWS, cfg.AWS.WAF)
+		loginRL := rateLimit(loginPolicy)
+		sensitiveRL := rateLimit(sensitivePolicy)
+		commonRL := rateLimit(commonPolicy)
+		bulkRL := rateLimit(bulkPolicy)
+		llmRL := rateLimit(llmPolicy)
+		websocketRL := rateLimit(websocketPolicy)
+		userWriteRL := rateLimit(userWritePolicy)
+		userHeavyRL := rateLimit(userHeavyPolicy)
+		userReportRL := rateLimit(userReportPolicy)
 
 		auth := api.Group("/auth")
 		{
-			auth.POST("/register", sensitiveRL, wafSensitiveRL, h.Auth.Register)
-			auth.POST("/login", loginRL, wafLoginRL, h.Auth.Login)
+			auth.POST("/register", sensitiveRL, h.Auth.Register)
+			auth.POST("/login", loginRL, h.Auth.Login)
 			auth.POST("/logout", h.Auth.Logout)
 			auth.POST("/refresh", h.Auth.Refresh)
-			auth.POST("/phone/register", sensitiveRL, wafSensitiveRL, h.Auth.PhoneRegister)
-			auth.POST("/phone/confirm", sensitiveRL, wafSensitiveRL, h.Auth.PhoneConfirm)
-			auth.POST("/phone/resend-confirmation", sensitiveRL, wafSensitiveRL, h.Auth.PhoneResendConfirmation)
-			auth.POST("/phone/login", loginRL, wafLoginRL, h.Auth.PhoneLogin)
-			auth.POST("/phone/verify-login", sensitiveRL, wafSensitiveRL, h.Auth.PhoneVerifyLogin)
+			auth.POST("/phone/register", sensitiveRL, h.Auth.PhoneRegister)
+			auth.POST("/phone/confirm", sensitiveRL, h.Auth.PhoneConfirm)
+			auth.POST("/phone/resend-confirmation", sensitiveRL, h.Auth.PhoneResendConfirmation)
+			auth.POST("/phone/login", loginRL, h.Auth.PhoneLogin)
+			auth.POST("/phone/verify-login", sensitiveRL, h.Auth.PhoneVerifyLogin)
 			auth.POST("/phone/refresh", h.Auth.PhoneRefresh)
-			auth.POST("/forgot-password", sensitiveRL, wafSensitiveRL, h.Auth.ForgotPassword)
-			auth.POST("/reset-password", sensitiveRL, wafSensitiveRL, h.Auth.ResetPassword)
+			auth.POST("/forgot-password", sensitiveRL, h.Auth.ForgotPassword)
+			auth.POST("/reset-password", sensitiveRL, h.Auth.ResetPassword)
 			auth.POST("/verify-email", h.Auth.VerifyEmail)
-			auth.POST("/resend-verification", sensitiveRL, wafSensitiveRL, h.Auth.ResendVerification)
+			auth.POST("/resend-verification", sensitiveRL, h.Auth.ResendVerification)
 			// POST /auth/google needs to be protected because we need to validate the ID token
 			// However, typically "login" endpoints are public.
 			// But here, the flow is: Frontend gets token -> Backend validates token -> Backend syncs user.
@@ -474,21 +653,20 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 		public := api.Group("/public")
 		{
-			public.GET("/report-shares/:token/metadata", middleware.ReportShareRateLimit(), h.Report.PublicMetadata)
-			public.POST("/report-shares/:token/access", middleware.ReportShareRateLimit(), h.Report.PublicAccess)
+			public.GET("/report-shares/:token/metadata", rateLimit(reportSharePolicy), h.Report.PublicMetadata)
+			public.POST("/report-shares/:token/access", rateLimit(reportSharePolicy), h.Report.PublicAccess)
 
 			store := public.Group("/store/:slug")
-			store.Use(middleware.StorefrontCatalogRateLimit())
 			{
-				store.GET("/catalog", h.Commerce.PublicCatalog)
-				store.GET("/categories", h.Commerce.PublicCategories)
-				store.POST("/coupons/validate", middleware.StorefrontCouponRateLimit(), h.Commerce.PublicValidateCoupon)
-				store.POST("/checkout", middleware.StorefrontCheckoutRateLimit(), h.Commerce.PublicCheckout)
-				store.GET("/orders/:token", h.Commerce.PublicOrder)
+				store.GET("/catalog", rateLimit(storefrontCatalogPolicy), h.Commerce.PublicCatalog)
+				store.GET("/categories", rateLimit(storefrontCatalogPolicy), h.Commerce.PublicCategories)
+				store.POST("/coupons/validate", rateLimit(storefrontCatalogPolicy, storefrontCouponPolicy), h.Commerce.PublicValidateCoupon)
+				store.POST("/checkout", rateLimit(storefrontCatalogPolicy, storefrontCheckoutPolicy), h.Commerce.PublicCheckout)
+				store.GET("/orders/:token", rateLimit(storefrontCatalogPolicy), h.Commerce.PublicOrder)
 			}
 		}
 
-		api.POST("/webhooks/razorpay", middleware.RazorpayWebhookRateLimit(), wafCommonRL, h.RazorpayPayment.Webhook)
+		api.POST("/webhooks/razorpay", rateLimit(razorpayWebhookPolicy, commonPolicy), h.RazorpayPayment.Webhook)
 
 		protected := api.Group("")
 		protected.Use(middleware.Auth(cfg.Cognito, log))
@@ -510,9 +688,9 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			{
 				businesses.GET("", h.Business.List)
 				businesses.GET("/:id", h.Business.Get)
-				businesses.POST("", wafUserWriteRL, h.Business.Create)
-				businesses.PUT("/:id", wafUserWriteRL, h.Business.Update)
-				businesses.DELETE("/:id", wafUserWriteRL, h.Business.Delete)
+				businesses.POST("", userWriteRL, h.Business.Create)
+				businesses.PUT("/:id", userWriteRL, h.Business.Update)
+				businesses.DELETE("/:id", userWriteRL, h.Business.Delete)
 				businesses.POST("/:id/logo", h.Business.UploadLogo)
 			}
 
@@ -520,10 +698,10 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			{
 				customers.GET("", h.Customer.List)
 				customers.GET("/:id", h.Customer.Get)
-				customers.POST("", wafUserWriteRL, h.Customer.Create)
-				customers.PUT("/:id", wafUserWriteRL, h.Customer.Update)
-				customers.DELETE("/:id", wafUserWriteRL, h.Customer.Delete)
-				customers.POST("/import", wafBulkRL, h.Customer.Import)
+				customers.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersCreate), userWriteRL, h.Customer.Create)
+				customers.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersUpdate), userWriteRL, h.Customer.Update)
+				customers.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersDelete), userWriteRL, h.Customer.Delete)
+				customers.POST("/import", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersCreate), bulkRL, h.Customer.Import)
 				customers.GET("/export", h.Customer.Export)
 			}
 
@@ -531,21 +709,21 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			{
 				vendors.GET("", h.Vendor.List)
 				vendors.GET("/:id", h.Vendor.Get)
-				vendors.POST("", wafUserWriteRL, h.Vendor.Create)
-				vendors.PUT("/:id", wafUserWriteRL, h.Vendor.Update)
-				vendors.DELETE("/:id", wafUserWriteRL, h.Vendor.Delete)
+				vendors.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVendorsCreate), userWriteRL, h.Vendor.Create)
+				vendors.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVendorsUpdate), userWriteRL, h.Vendor.Update)
+				vendors.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVendorsDelete), userWriteRL, h.Vendor.Delete)
 			}
 
 			products := protected.Group("/products")
 			{
 				products.GET("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsView), h.Product.List)
 				products.GET("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsView), h.Product.Get)
-				products.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), wafUserWriteRL, h.Product.Create)
-				products.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), wafUserWriteRL, h.Product.Update)
-				products.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), wafUserWriteRL, h.Product.Delete)
-				products.POST("/:id/clone", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), wafUserWriteRL, h.Product.Clone)
+				products.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), userWriteRL, h.Product.Create)
+				products.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), userWriteRL, h.Product.Update)
+				products.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), userWriteRL, h.Product.Delete)
+				products.POST("/:id/clone", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), userWriteRL, h.Product.Clone)
 				products.POST("/:id/image", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), h.Product.UploadImage)
-				products.POST("/:id/stock", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), wafUserWriteRL, h.Product.AdjustStock)
+				products.POST("/:id/stock", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), userWriteRL, h.Product.AdjustStock)
 			}
 
 			projects := protected.Group("/projects")
@@ -563,9 +741,9 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 				reports.GET("/shares/history", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsShare), h.Report.ShareHistory)
 				reports.GET("/preferences/:key", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Report.GetPreference)
 				reports.PUT("/preferences/:key", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Report.SavePreference)
-				reports.POST("/:key/query", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), wafUserReportRL, h.Report.Query)
-				reports.POST("/:key/export", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsExport), wafUserReportRL, h.Report.Export)
-				reports.POST("/:key/share", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsShare), wafUserHeavyRL, h.Report.CreateShare)
+				reports.POST("/:key/query", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), userReportRL, h.Report.Query)
+				reports.POST("/:key/export", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsExport), userReportRL, h.Report.Export)
+				reports.POST("/:key/share", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsShare), userHeavyRL, h.Report.CreateShare)
 			}
 
 			warehouses := protected.Group("/warehouses")
@@ -640,47 +818,47 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			{
 				invoices.GET("", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.List)
 				invoices.GET("/:id", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.Get)
-				invoices.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Invoice.Create)
-				invoices.POST("/:id/issue", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Invoice.Issue)
-				invoices.POST("/:id/previews", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), wafUserHeavyRL, h.Invoice.Preview)
-				invoices.PATCH("/:id/draft", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Invoice.UpdateDraft)
-				invoices.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Invoice.Update)
-				invoices.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Invoice.Delete)
-				invoices.POST("/bulk-actions", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserHeavyRL, h.BillingOps.CreateInvoiceBulkAction)
+				invoices.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userWriteRL, h.Invoice.Create)
+				invoices.POST("/:id/issue", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userWriteRL, h.Invoice.Issue)
+				invoices.POST("/:id/previews", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), userHeavyRL, h.Invoice.Preview)
+				invoices.PATCH("/:id/draft", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userWriteRL, h.Invoice.UpdateDraft)
+				invoices.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userWriteRL, h.Invoice.Update)
+				invoices.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userWriteRL, h.Invoice.Delete)
+				invoices.POST("/bulk-actions", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userHeavyRL, h.BillingOps.CreateInvoiceBulkAction)
 				invoices.GET("/:id/renders/:render_job_id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.GetRenderStatus)
 				invoices.GET("/:id/pdf", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.GetPDF)
-				invoices.POST("/:id/deliveries", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Invoice.Deliver)
+				invoices.POST("/:id/deliveries", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userWriteRL, h.Invoice.Deliver)
 				invoices.GET("/:id/deliveries/:delivery_id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.GetDeliveryStatus)
-				invoices.POST("/:id/einvoice", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserHeavyRL, h.Invoice.GenerateEInvoice)
+				invoices.POST("/:id/einvoice", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userHeavyRL, h.Invoice.GenerateEInvoice)
 			}
 
 			payments := protected.Group("/payments")
 			{
 				payments.GET("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsView), h.Payment.List)
-				payments.POST("/razorpay/order", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), middleware.RazorpayCreateOrderRateLimit(), wafUserHeavyRL, h.RazorpayPayment.CreateOrder)
-				payments.POST("/razorpay/verify", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), middleware.RazorpayVerifyRateLimit(), wafUserHeavyRL, h.RazorpayPayment.VerifyPayment)
+				payments.POST("/razorpay/order", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), rateLimit(razorpayOrderPolicy, userHeavyPolicy), h.RazorpayPayment.CreateOrder)
+				payments.POST("/razorpay/verify", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), rateLimit(razorpayVerifyPolicy, userHeavyPolicy), h.RazorpayPayment.VerifyPayment)
 				payments.GET("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsView), h.Payment.Get)
-				payments.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), wafUserWriteRL, h.Payment.Create)
-				payments.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), wafUserWriteRL, h.Payment.Update)
-				payments.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), wafUserWriteRL, h.Payment.Delete)
+				payments.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), userWriteRL, h.Payment.Create)
+				payments.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), userWriteRL, h.Payment.Update)
+				payments.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), userWriteRL, h.Payment.Delete)
 			}
 
 			documents := protected.Group("/documents")
 			{
-				documents.POST("/merge", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserHeavyRL, h.DocumentUtility.Merge)
-				documents.POST("/bulk-actions", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserHeavyRL, h.BillingOps.CreateDocumentBulkAction)
-				documents.POST("/:id/convert", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserHeavyRL, h.DocumentUtility.Convert)
-				documents.POST("/:id/duplicate", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserHeavyRL, h.DocumentUtility.Duplicate)
+				documents.POST("/merge", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userHeavyRL, h.DocumentUtility.Merge)
+				documents.POST("/bulk-actions", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userHeavyRL, h.BillingOps.CreateDocumentBulkAction)
+				documents.POST("/:id/convert", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userHeavyRL, h.DocumentUtility.Convert)
+				documents.POST("/:id/duplicate", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userHeavyRL, h.DocumentUtility.Duplicate)
 				documents.GET("/:id/history", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.DocumentUtility.History)
 				documents.GET("/:id/compliance", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.DocumentUtility.GetComplianceStatus)
-				documents.POST("/:id/einvoice", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserHeavyRL, h.DocumentUtility.GenerateEInvoice)
+				documents.POST("/:id/einvoice", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userHeavyRL, h.DocumentUtility.GenerateEInvoice)
 				documents.GET("/:id/einvoice", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.DocumentUtility.GetEInvoice)
-				documents.POST("/:id/einvoice/cancel", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserHeavyRL, h.DocumentUtility.CancelEInvoice)
-				documents.POST("/:id/ewaybill", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserHeavyRL, h.DocumentUtility.GenerateEWayBill)
+				documents.POST("/:id/einvoice/cancel", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userHeavyRL, h.DocumentUtility.CancelEInvoice)
+				documents.POST("/:id/ewaybill", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userHeavyRL, h.DocumentUtility.GenerateEWayBill)
 				documents.GET("/:id/ewaybill", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.DocumentUtility.GetEWayBill)
 				documents.GET("/:id/ewaybill/pdf", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.DocumentUtility.GetEWayBillPDF)
-				documents.PATCH("/:id/ewaybill/part-b", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserHeavyRL, h.DocumentUtility.UpdateEWayPartB)
-				documents.POST("/:id/ewaybill/multi-vehicle", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserHeavyRL, h.DocumentUtility.InitiateMultiVehicle)
+				documents.PATCH("/:id/ewaybill/part-b", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userHeavyRL, h.DocumentUtility.UpdateEWayPartB)
+				documents.POST("/:id/ewaybill/multi-vehicle", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userHeavyRL, h.DocumentUtility.InitiateMultiVehicle)
 				documents.POST("/:id/render", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.DocumentUtility.Render)
 				documents.GET("/:id/pdf", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.DocumentUtility.GetPDF)
 			}
@@ -689,9 +867,9 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			{
 				priceLists.GET("", h.BillingOps.ListPriceLists)
 				priceLists.GET("/:id", h.BillingOps.GetPriceList)
-				priceLists.POST("", wafUserWriteRL, h.BillingOps.CreatePriceList)
-				priceLists.PUT("/:id", wafUserWriteRL, h.BillingOps.UpdatePriceList)
-				priceLists.DELETE("/:id", wafUserWriteRL, h.BillingOps.DeletePriceList)
+				priceLists.POST("", userWriteRL, h.BillingOps.CreatePriceList)
+				priceLists.PUT("/:id", userWriteRL, h.BillingOps.UpdatePriceList)
+				priceLists.DELETE("/:id", userWriteRL, h.BillingOps.DeletePriceList)
 			}
 
 			partyGroups := protected.Group("/party-groups")
@@ -699,9 +877,9 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 				partyGroups.GET("", h.BillingOps.ListPartyGroups)
 				partyGroups.GET("/:id", h.BillingOps.GetPartyGroup)
 				partyGroups.GET("/:id/ledger", h.BillingOps.GetPartyGroupLedger)
-				partyGroups.POST("", wafUserWriteRL, h.BillingOps.CreatePartyGroup)
-				partyGroups.PUT("/:id", wafUserWriteRL, h.BillingOps.UpdatePartyGroup)
-				partyGroups.DELETE("/:id", wafUserWriteRL, h.BillingOps.DeletePartyGroup)
+				partyGroups.POST("", userWriteRL, h.BillingOps.CreatePartyGroup)
+				partyGroups.PUT("/:id", userWriteRL, h.BillingOps.UpdatePartyGroup)
+				partyGroups.DELETE("/:id", userWriteRL, h.BillingOps.DeletePartyGroup)
 			}
 
 			activityLogs := protected.Group("/activity-logs")
@@ -726,11 +904,11 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 			imports := protected.Group("/imports")
 			{
-				imports.POST("/customers", wafBulkRL, h.BillingOps.CreateCustomerImportJob)
-				imports.POST("/vendors", wafBulkRL, h.BillingOps.CreateVendorImportJob)
-				imports.POST("/products", wafBulkRL, h.BillingOps.CreateProductImportJob)
-				imports.POST("/invoices", wafBulkRL, h.BillingOps.CreateInvoiceImportJob)
-				imports.POST("/documents", wafBulkRL, h.BillingOps.CreateDocumentImportJob)
+				imports.POST("/customers", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersCreate), bulkRL, h.BillingOps.CreateCustomerImportJob)
+				imports.POST("/vendors", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVendorsCreate), bulkRL, h.BillingOps.CreateVendorImportJob)
+				imports.POST("/products", bulkRL, h.BillingOps.CreateProductImportJob)
+				imports.POST("/invoices", bulkRL, h.BillingOps.CreateInvoiceImportJob)
+				imports.POST("/documents", bulkRL, h.BillingOps.CreateDocumentImportJob)
 			}
 
 			invoiceSubscriptions := protected.Group("/invoice-subscriptions")
@@ -750,11 +928,11 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 			{
 				journals.GET("", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Journal.List)
 				journals.GET("/:id", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Journal.Get)
-				journals.POST("", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Journal.Create)
-				journals.PUT("/:id", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Journal.Update)
-				journals.DELETE("/:id", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Journal.Delete)
-				journals.POST("/:id/post", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Journal.Post)
-				journals.POST("/:id/reverse", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), wafUserWriteRL, h.Journal.Reverse)
+				journals.POST("", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userWriteRL, h.Journal.Create)
+				journals.PUT("/:id", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userWriteRL, h.Journal.Update)
+				journals.DELETE("/:id", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userWriteRL, h.Journal.Delete)
+				journals.POST("/:id/post", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userWriteRL, h.Journal.Post)
+				journals.POST("/:id/reverse", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userWriteRL, h.Journal.Reverse)
 			}
 
 			renderProfiles := protected.Group("/render-profiles")
@@ -762,10 +940,10 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 				renderProfiles.GET("", h.RenderProfile.List)
 				renderProfiles.GET("/default", h.RenderProfile.GetDefault)
 				renderProfiles.GET("/:id", h.RenderProfile.Get)
-				renderProfiles.POST("", wafUserWriteRL, h.RenderProfile.Create)
-				renderProfiles.POST("/:id/default", wafUserWriteRL, h.RenderProfile.SetDefault)
-				renderProfiles.PUT("/:id", wafUserWriteRL, h.RenderProfile.Update)
-				renderProfiles.DELETE("/:id", wafUserWriteRL, h.RenderProfile.Delete)
+				renderProfiles.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRenderProfilesCreate), userWriteRL, h.RenderProfile.Create)
+				renderProfiles.POST("/:id/default", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRenderProfilesUpdate), userWriteRL, h.RenderProfile.SetDefault)
+				renderProfiles.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRenderProfilesUpdate), userWriteRL, h.RenderProfile.Update)
+				renderProfiles.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRenderProfilesDelete), userWriteRL, h.RenderProfile.Delete)
 			}
 
 			utils := protected.Group("/utils")
@@ -895,29 +1073,29 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 			agents := protected.Group("/agents")
 			{
-				agents.POST("", middleware.AgentCreationRateLimit(), wafBulkRL, h.Agent.CreateAgent)
+				agents.POST("", rateLimit(agentCreationPolicy, bulkPolicy), h.Agent.CreateAgent)
 				agents.GET("", h.Agent.ListAgents)
 				agents.GET("/:id", h.Agent.GetAgent)
 				agents.PUT("/:id", h.Agent.UpdateAgent)
 				agents.DELETE("/:id", h.Agent.DeleteAgent)
-				agents.POST("/:id/start", wafBulkRL, h.Procurement.StartAgent)
-				agents.POST("/:id/procurement-runs", wafBulkRL, h.Procurement.CreateProcurementRun)
+				agents.POST("/:id/start", bulkRL, h.Procurement.StartAgent)
+				agents.POST("/:id/procurement-runs", bulkRL, h.Procurement.CreateProcurementRun)
 				agents.GET("/:id/procurement-runs/:run_id", h.Procurement.GetProcurementRun)
 				agents.POST("/:id/procurement-runs/:run_id/cancel", h.Procurement.CancelProcurementRun)
 				agents.GET("/:id/capabilities", h.Agent.GetAgentCapabilities)
-				agents.POST("/:id/capabilities", wafBulkRL, h.Agent.AddCapability)
+				agents.POST("/:id/capabilities", bulkRL, h.Agent.AddCapability)
 				agents.DELETE("/:id/capabilities/:capability_id", h.Agent.RemoveCapability)
 				agents.GET("/active", h.Agent.GetActiveAgents)
 				agents.GET("/type/:type", h.Agent.GetAgentByType)
 				agents.POST("/validate-permissions/:id", h.Agent.ValidateAgentPermissions)
-				agents.POST("/ideate", wafLLMRL, h.ShoppingAgent.GenerateIdeas)
+				agents.POST("/ideate", llmRL, h.ShoppingAgent.GenerateIdeas)
 
 				shopping := agents.Group("/shopping")
 				{
-					shopping.GET("/search", wafCommonRL, h.ShoppingAgent.SearchProducts)
-					shopping.POST("/cart", middleware.ShoppingIntentRateLimit(), h.ShoppingAgent.CreateCart)
-					shopping.POST("/cart/add", middleware.ShoppingIntentRateLimit(), h.ShoppingAgent.AddToCart)
-					shopping.POST("/checkout", middleware.PaymentRateLimit(), wafBulkRL, h.ShoppingAgent.Checkout)
+					shopping.GET("/search", commonRL, h.ShoppingAgent.SearchProducts)
+					shopping.POST("/cart", rateLimit(shoppingIntentPolicy), h.ShoppingAgent.CreateCart)
+					shopping.POST("/cart/add", rateLimit(shoppingIntentPolicy), h.ShoppingAgent.AddToCart)
+					shopping.POST("/checkout", rateLimit(paymentPolicy, bulkPolicy), h.ShoppingAgent.Checkout)
 					shopping.GET("/cart/:id", h.ShoppingAgent.GetCart)
 					shopping.GET("/carts", h.ShoppingAgent.ListCarts)
 					shopping.GET("/orders", h.ShoppingAgent.ListOrders)
@@ -961,16 +1139,16 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 
 			marketplace := protected.Group("/marketplace")
 			{
-				marketplace.GET("/products", wafCommonRL, h.Marketplace.ListProducts)
-				marketplace.GET("/products/search", wafCommonRL, h.Marketplace.SearchProducts)
+				marketplace.GET("/products", commonRL, h.Marketplace.ListProducts)
+				marketplace.GET("/products/search", commonRL, h.Marketplace.SearchProducts)
 				marketplace.GET("/products/:id", h.Marketplace.GetProduct)
 				marketplace.GET("/products/available", h.Marketplace.GetAvailableProducts)
 				marketplace.GET("/merchant/products", h.Marketplace.GetMerchantProducts)
-				marketplace.POST("/merchant/products", wafBulkRL, h.Marketplace.AddProduct)
+				marketplace.POST("/merchant/products", bulkRL, h.Marketplace.AddProduct)
 				marketplace.PUT("/merchant/products/:id", h.Marketplace.UpdateProduct)
 				marketplace.GET("/orders", h.Marketplace.GetUserOrders)
 				marketplace.GET("/orders/status/:status", h.Marketplace.GetOrdersByStatus)
-				marketplace.GET("/stats", wafCommonRL, h.Marketplace.GetMarketplaceStats)
+				marketplace.GET("/stats", commonRL, h.Marketplace.GetMarketplaceStats)
 			}
 		}
 
@@ -1011,21 +1189,21 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 		{
 			llm.GET("/chat/conversations", h.LLM.ListChatConversations)
 			llm.GET("/chat/conversations/:id/messages", h.LLM.ListChatMessages)
-			llm.POST("/chat", wafLLMRL, h.LLM.Chat)
-			llm.POST("/agent-assist", wafLLMRL, h.LLM.AgentAssist)
+			llm.POST("/chat", llmRL, h.LLM.Chat)
+			llm.POST("/agent-assist", llmRL, h.LLM.AgentAssist)
 		}
 
 		// Voice endpoints
 		voice := protected.Group("/voice")
 		{
-			voice.POST("/text-to-speech", wafLLMRL, h.SarvamTTS.Synthesize)
+			voice.POST("/text-to-speech", llmRL, h.SarvamTTS.Synthesize)
 			voice.GET("/text-to-speech/languages", h.SarvamTTS.ListLanguages)
 		}
 
 		if svcs.VoiceSession != nil && h.VoiceSession != nil {
 			voiceSessions := protected.Group("/voice/sessions")
 			voiceSessions.Use(middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVoiceUse))
-			voiceSessions.Use(wafUserHeavyRL)
+			voiceSessions.Use(userHeavyRL)
 			voiceSessions.POST("", h.VoiceSession.Create)
 			voiceSessions.GET("/:session_id", h.VoiceSession.Get)
 			voiceSessions.POST("/:session_id/resume", h.VoiceSession.Resume)
@@ -1063,7 +1241,7 @@ func setupRouter(cfg *config.Config, svcs *services.Container, h *handlers.Handl
 		ws := protected.Group("/ws")
 		{
 			// WebSocket connection
-			ws.GET("", wafWSRL, h.WebSocket.HandleConnection)
+			ws.GET("", websocketRL, h.WebSocket.HandleConnection)
 
 			// WebSocket management endpoints
 			ws.GET("/stats", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionNotificationsManage), h.WebSocket.GetStats)
