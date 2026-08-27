@@ -337,6 +337,19 @@ func TestServiceDoesNotLeakForeignSession(t *testing.T) {
 	}
 }
 
+func TestBranchlessScopeIsExactAndAllBranchScopeStillAdmitsIt(t *testing.T) {
+	exact := Scope{UserID: "user", BusinessID: "business", AllowBranchless: true}
+	if !scopeAllowsBranch(exact, "") {
+		t.Fatal("exact branchless scope did not admit a branchless session")
+	}
+	if scopeAllowsBranch(exact, "cbd6e793-62e6-4c32-a106-065709caf460") {
+		t.Fatal("exact branchless scope broadened into branch access")
+	}
+	if !scopeAllowsBranch(Scope{UserID: "user", BusinessID: "business", AllBranches: true}, "") {
+		t.Fatal("current all-branch HTTP scope must continue to admit branchless sessions")
+	}
+}
+
 func testConfig() Config {
 	return Config{
 		TableName: "voice-sessions", AgentRuntimeARN: "arn:aws:bedrock-agentcore:ap-south-1:123456789012:runtime/test",

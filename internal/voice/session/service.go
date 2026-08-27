@@ -310,7 +310,7 @@ func scopeAllowsBranch(scope Scope, branchID string) bool {
 		return true
 	}
 	if branchID == "" {
-		return false
+		return scope.AllowBranchless
 	}
 	for _, allowedBranchID := range scope.AllowedBranchIDs {
 		if branchID == allowedBranchID {

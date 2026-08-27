@@ -17,7 +17,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
-	"github.com/aws/aws-sdk-go-v2/service/wafv2"
 )
 
 type Config struct {
@@ -31,7 +30,6 @@ type Config struct {
 	SSM       *ssm.Client
 	SQS       *sqs.Client
 	SNS       *sns.Client
-	WAF       *wafv2.Client
 }
 
 func New(ctx context.Context, cfg appconfig.AWSConfig, log *logger.Logger) (*Config, error) {
@@ -85,11 +83,6 @@ func New(ctx context.Context, cfg appconfig.AWSConfig, log *logger.Logger) (*Con
 			}
 		}),
 		SNS: sns.NewFromConfig(awsCfg, func(o *sns.Options) {
-			if cfg.Endpoint != "" {
-				o.BaseEndpoint = aws.String(cfg.Endpoint)
-			}
-		}),
-		WAF: wafv2.NewFromConfig(awsCfg, func(o *wafv2.Options) {
 			if cfg.Endpoint != "" {
 				o.BaseEndpoint = aws.String(cfg.Endpoint)
 			}

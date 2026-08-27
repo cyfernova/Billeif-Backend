@@ -114,27 +114,25 @@ type DatabaseConfig struct {
 }
 
 type RedisConfig struct {
-	Host     string `mapstructure:"HOST"`
-	Port     int    `mapstructure:"PORT"`
-	Password string `mapstructure:"PASSWORD"`
-	DB       int    `mapstructure:"DB"`
+	Host             string        `mapstructure:"HOST"`
+	Port             int           `mapstructure:"PORT"`
+	Password         string        `mapstructure:"PASSWORD"`
+	DB               int           `mapstructure:"DB"`
+	UserID           string        `mapstructure:"USER_ID"`
+	CacheName        string        `mapstructure:"CACHE_NAME"`
+	TLSEnabled       bool          `mapstructure:"TLS_ENABLED"`
+	IAMAuthEnabled   bool          `mapstructure:"IAM_AUTH_ENABLED"`
+	ClusterMode      bool          `mapstructure:"CLUSTER_MODE"`
+	DecisionTimeout  time.Duration `mapstructure:"DECISION_TIMEOUT"`
+	TrustedProxyCIDR string        `mapstructure:"TRUSTED_PROXY_CIDR"`
 }
 
 type AWSConfig struct {
-	Region       string    `mapstructure:"REGION"`
-	AccessKey    string    `mapstructure:"ACCESS_KEY_ID"`
-	SecretKey    string    `mapstructure:"SECRET_ACCESS_KEY"`
-	SessionToken string    `mapstructure:"SESSION_TOKEN"`
-	Endpoint     string    `mapstructure:"ENDPOINT"`
-	WAF          WAFConfig `mapstructure:"WAF"`
-}
-
-type WAFConfig struct {
-	Enabled          bool   `mapstructure:"ENABLED"`
-	WebACLArn        string `mapstructure:"WEB_ACL_ARN"`
-	RateLimitHeader  string `mapstructure:"RATE_LIMIT_HEADER"`
-	BlockedResponse  string `mapstructure:"BLOCKED_RESPONSE"`
-	HeaderMatchCount int    `mapstructure:"HEADER_MATCH_COUNT"`
+	Region       string `mapstructure:"REGION"`
+	AccessKey    string `mapstructure:"ACCESS_KEY_ID"`
+	SecretKey    string `mapstructure:"SECRET_ACCESS_KEY"`
+	SessionToken string `mapstructure:"SESSION_TOKEN"`
+	Endpoint     string `mapstructure:"ENDPOINT"`
 }
 
 type SSMConfig struct {
@@ -327,16 +325,18 @@ func LoadForProfile(profile Profile) (*Config, error) {
 	_ = viper.BindEnv("REDIS.PORT", "REDIS_PORT")
 	_ = viper.BindEnv("REDIS.PASSWORD", "REDIS_PASSWORD")
 	_ = viper.BindEnv("REDIS.DB", "REDIS_DB")
+	_ = viper.BindEnv("REDIS.USER_ID", "REDIS_USER_ID")
+	_ = viper.BindEnv("REDIS.CACHE_NAME", "REDIS_CACHE_NAME")
+	_ = viper.BindEnv("REDIS.TLS_ENABLED", "REDIS_TLS_ENABLED")
+	_ = viper.BindEnv("REDIS.IAM_AUTH_ENABLED", "REDIS_IAM_AUTH_ENABLED")
+	_ = viper.BindEnv("REDIS.CLUSTER_MODE", "REDIS_CLUSTER_MODE")
+	_ = viper.BindEnv("REDIS.DECISION_TIMEOUT", "RATE_LIMIT_DECISION_TIMEOUT")
+	_ = viper.BindEnv("REDIS.TRUSTED_PROXY_CIDR", "RATE_LIMIT_TRUSTED_PROXY_CIDR")
 	_ = viper.BindEnv("AWS.REGION", "AWS_REGION")
 	_ = viper.BindEnv("AWS.ACCESS_KEY_ID", "AWS_ACCESS_KEY_ID")
 	_ = viper.BindEnv("AWS.SECRET_ACCESS_KEY", "AWS_SECRET_ACCESS_KEY")
 	_ = viper.BindEnv("AWS.SESSION_TOKEN", "AWS_SESSION_TOKEN")
 	_ = viper.BindEnv("AWS.ENDPOINT", "AWS_ENDPOINT")
-	_ = viper.BindEnv("AWS.WAF.ENABLED", "WAF_ENABLED")
-	_ = viper.BindEnv("AWS.WAF.WEB_ACL_ARN", "WAF_WEB_ACL_ARN")
-	_ = viper.BindEnv("AWS.WAF.RATE_LIMIT_HEADER", "WAF_RATE_LIMIT_HEADER")
-	_ = viper.BindEnv("AWS.WAF.BLOCKED_RESPONSE", "WAF_BLOCKED_RESPONSE")
-	_ = viper.BindEnv("AWS.WAF.HEADER_MATCH_COUNT", "WAF_HEADER_MATCH_COUNT")
 	_ = viper.BindEnv("SSM.DATABASE_HOST_PARAM", "DATABASE_HOST_SSM_PARAM")
 	_ = viper.BindEnv("SECRETS.DATABASE", "DATABASE_SECRET_ARN")
 	_ = viper.BindEnv("SECRETS.CREDENTIAL_ENCRYPTION", "CREDENTIAL_ENCRYPTION_SECRET_ARN")
@@ -501,6 +501,16 @@ func applyFlatEnvFileFallbacks(cfg *Config) {
 	setIfEmpty(&cfg.Database.Password, "DATABASE_PASSWORD")
 	setIfEmpty(&cfg.Database.Name, "DATABASE_NAME")
 	setIfEmpty(&cfg.Database.SSLMode, "DATABASE_SSL_MODE")
+	setIfEmpty(&cfg.Redis.Host, "REDIS_HOST")
+	setIfZeroInt(&cfg.Redis.Port, "REDIS_PORT")
+	setIfEmpty(&cfg.Redis.Password, "REDIS_PASSWORD")
+	setIfEmpty(&cfg.Redis.UserID, "REDIS_USER_ID")
+	setIfEmpty(&cfg.Redis.CacheName, "REDIS_CACHE_NAME")
+	setIfFalseBool(&cfg.Redis.TLSEnabled, "REDIS_TLS_ENABLED")
+	setIfFalseBool(&cfg.Redis.IAMAuthEnabled, "REDIS_IAM_AUTH_ENABLED")
+	setIfFalseBool(&cfg.Redis.ClusterMode, "REDIS_CLUSTER_MODE")
+	setIfZeroDuration(&cfg.Redis.DecisionTimeout, "RATE_LIMIT_DECISION_TIMEOUT")
+	setIfEmpty(&cfg.Redis.TrustedProxyCIDR, "RATE_LIMIT_TRUSTED_PROXY_CIDR")
 
 	setIfEmpty(&cfg.AWS.Region, "AWS_REGION")
 	setIfEmpty(&cfg.AWS.AccessKey, "AWS_ACCESS_KEY_ID")
@@ -617,6 +627,13 @@ func setIfZeroDuration(target *time.Duration, key string) {
 	*target = viper.GetDuration(key)
 }
 
+func setIfFalseBool(target *bool, key string) {
+	if target == nil || *target || !viper.IsSet(key) {
+		return
+	}
+	*target = viper.GetBool(key)
+}
+
 func setDefaults(cfg *Config) {
 	if cfg.Environment == "" {
 		cfg.Environment = "dev"
@@ -654,6 +671,9 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Redis.Port == 0 {
 		cfg.Redis.Port = 6379
+	}
+	if cfg.Redis.DecisionTimeout == 0 {
+		cfg.Redis.DecisionTimeout = 250 * time.Millisecond
 	}
 	if cfg.AWS.Region == "" {
 		cfg.AWS.Region = "us-east-1"
@@ -762,12 +782,6 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.GSTLookup.Timeout == 0 {
 		cfg.GSTLookup.Timeout = 15
-	}
-	if cfg.AWS.WAF.HeaderMatchCount == 0 {
-		cfg.AWS.WAF.HeaderMatchCount = 100
-	}
-	if cfg.AWS.WAF.BlockedResponse == "" {
-		cfg.AWS.WAF.BlockedResponse = "rate limit exceeded"
 	}
 }
 

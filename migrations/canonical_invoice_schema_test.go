@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	canonicalInvoiceMigrationVersion = 46
-	releasedManifestPrefixDigest     = "e7c51b8069e0785e8d2881a4eb06070c3899107ad55a72166e86e26a7979e936"
+	latestMigrationVersion       = 48
+	releasedManifestPrefixDigest = "e7c51b8069e0785e8d2881a4eb06070c3899107ad55a72166e86e26a7979e936"
 )
 
 func TestCanonicalInvoiceMigrationIsAppendedWithoutChangingReleasedMigrations(t *testing.T) {
@@ -18,11 +18,11 @@ func TestCanonicalInvoiceMigrationIsAppendedWithoutChangingReleasedMigrations(t 
 	if err != nil {
 		t.Fatalf("Verify(Embedded) error = %v", err)
 	}
-	if manifest.LatestVersion != canonicalInvoiceMigrationVersion {
-		t.Fatalf("latest version = %d, want %d", manifest.LatestVersion, canonicalInvoiceMigrationVersion)
+	if manifest.LatestVersion != latestMigrationVersion {
+		t.Fatalf("latest version = %d, want %d", manifest.LatestVersion, latestMigrationVersion)
 	}
-	if len(manifest.Entries) != canonicalInvoiceMigrationVersion*2 {
-		t.Fatalf("entry count = %d, want %d", len(manifest.Entries), canonicalInvoiceMigrationVersion*2)
+	if len(manifest.Entries) != latestMigrationVersion*2 {
+		t.Fatalf("entry count = %d, want %d", len(manifest.Entries), latestMigrationVersion*2)
 	}
 
 	body, err := fs.ReadFile(Embedded, ManifestFilename)
@@ -156,6 +156,63 @@ func TestBargainingRoundClaimsAreDurableAndLeaseBound(t *testing.T) {
 	)
 	down := migrationSQL(t, "000046_add_bargaining_round_claims.down.sql")
 	requireSQLFragments(t, down, "DROP TABLE IF EXISTS bargaining_round_claims")
+}
+
+func TestA2ANegotiationScopeMigrationFollowsRenderProfilePasswordMigration(t *testing.T) {
+	passwordUp := migrationSQL(t, "000047_encrypt_render_profile_passwords.up.sql")
+	scopeUp := migrationSQL(t, "000048_scope_a2a_bargaining_negotiations.up.sql")
+
+	requireSQLFragments(t, passwordUp, "ADD COLUMN password_ciphertext")
+	requireSQLFragments(t, scopeUp, "ADD COLUMN business_id UUID")
+}
+
+func TestA2ANegotiationScopeMigrationBackfillsAndFreezesOwnership(t *testing.T) {
+	up := migrationSQL(t, "000048_scope_a2a_bargaining_negotiations.up.sql")
+	requireSQLFragments(t, up,
+		"ADD COLUMN business_id UUID",
+		"CREATE FUNCTION populate_bargaining_business_scope",
+		"BEFORE INSERT ON bargaining_negotiations",
+		"SELECT business_id INTO NEW.business_id",
+		"SET business_id = buyer.business_id",
+		"FROM agents AS buyer",
+		"ALTER COLUMN business_id SET NOT NULL",
+		"ADD CONSTRAINT bargaining_negotiations_business_id_fkey",
+		"NOT VALID",
+		"VALIDATE CONSTRAINT bargaining_negotiations_business_id_fkey",
+		"CREATE UNIQUE INDEX idx_bargaining_negotiations_session_unique",
+		"WHERE session_id IS NOT NULL",
+		"CREATE FUNCTION prevent_bargaining_scope_mutation",
+		"OLD.user_id IS DISTINCT FROM NEW.user_id",
+		"OLD.business_id IS DISTINCT FROM NEW.business_id",
+		"OLD.session_id IS NOT NULL",
+		"CREATE TRIGGER trigger_bargaining_scope_immutable",
+	)
+
+	addColumn := strings.Index(up, "ADD COLUMN business_id")
+	backfill := strings.Index(up, "SET business_id = buyer.business_id")
+	setNotNull := strings.Index(up, "ALTER COLUMN business_id SET NOT NULL")
+	if addColumn < 0 || backfill < addColumn || setNotNull < backfill {
+		t.Fatal("business scope migration must expand, backfill, then enforce NOT NULL")
+	}
+}
+
+func TestA2ANegotiationScopeRollbackPreservesTerminalMeaning(t *testing.T) {
+	down := migrationSQL(t, "000048_scope_a2a_bargaining_negotiations.down.sql")
+	requireSQLFragments(t, down,
+		"DROP TRIGGER IF EXISTS trigger_populate_bargaining_business_scope",
+		"DROP FUNCTION IF EXISTS populate_bargaining_business_scope",
+		"DROP TRIGGER IF EXISTS trigger_bargaining_scope_immutable",
+		"DROP FUNCTION IF EXISTS prevent_bargaining_scope_mutation",
+		"SET status = 'expired'",
+		"WHERE status = 'stopped'",
+		"DROP CONSTRAINT IF EXISTS bargaining_negotiations_business_id_fkey",
+		"DROP COLUMN IF EXISTS business_id",
+	)
+	statusCompatibility := strings.Index(down, "SET status = 'expired'")
+	dropColumn := strings.Index(down, "DROP COLUMN IF EXISTS business_id")
+	if statusCompatibility < 0 || dropColumn < statusCompatibility {
+		t.Fatal("rollback must preserve stopped terminal meaning before removing scope")
+	}
 }
 
 func TestCanonicalInvoiceMigrationKeepsOneFinalRenderForever(t *testing.T) {

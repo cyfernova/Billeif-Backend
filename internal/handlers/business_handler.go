@@ -202,13 +202,16 @@ func (h *BusinessHandler) Delete(c *gin.Context) {
 
 // UploadLogo generates a presigned URL for logo upload
 // @Summary Upload business logo
-// @Description Returns a presigned S3 URL to upload a business logo.
+// @Description Returns a presigned S3 URL and the exact headers required to upload a business logo. Uploads are limited to 5 MiB.
 // @Tags Businesses
 // @Produce json
 // @Security BearerAuth
 // @Param id path string true "Business ID"
 // @Param Content-Type header string false "MIME type (default: image/png)"
-// @Success 200 {object} map[string]string
+// @Param size_bytes query int true "Exact upload size in bytes" minimum(1) maximum(5242880)
+// @Success 200 {object} services.PresignedUpload
+// @Failure 400 {object} map[string]string
+// @Failure 413 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /business-profiles/{id}/logo [post]
 func (h *BusinessHandler) UploadLogo(c *gin.Context) {
@@ -222,8 +225,12 @@ func (h *BusinessHandler) UploadLogo(c *gin.Context) {
 	if !ok2 {
 		return
 	}
+	sizeBytes, ok := requireUploadSizeBytes(c, services.MaxBusinessLogoUploadBytes)
+	if !ok {
+		return
+	}
 
-	url, err := h.svc.GetLogoUploadURLByOwner(c.Request.Context(), userID, id, contentType)
+	upload, err := h.svc.GetLogoUploadURLByOwner(c.Request.Context(), userID, id, contentType, sizeBytes)
 	if err != nil {
 		log.Error("failed to generate business logo upload URL", "error", err, "business_id", id)
 		if isNotFoundErr(err) {
@@ -235,5 +242,5 @@ func (h *BusinessHandler) UploadLogo(c *gin.Context) {
 	}
 	log.Info("business logo upload URL generated", "business_id", id)
 
-	c.JSON(http.StatusOK, gin.H{"upload_url": url})
+	c.JSON(http.StatusOK, upload)
 }

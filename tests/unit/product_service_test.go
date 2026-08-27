@@ -64,9 +64,12 @@ type MockS3Service struct {
 	mock.Mock
 }
 
-func (m *MockS3Service) GeneratePresignedUploadURL(ctx context.Context, bucket, key, contentType string, expiresIn int64) (string, error) {
-	args := m.Called(ctx, bucket, key, contentType, expiresIn)
-	return args.String(0), args.Error(1)
+func (m *MockS3Service) GeneratePresignedUpload(ctx context.Context, bucket, key, contentType string, sizeBytes, expiresIn int64) (*services.PresignedUpload, error) {
+	args := m.Called(ctx, bucket, key, contentType, sizeBytes, expiresIn)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*services.PresignedUpload), args.Error(1)
 }
 
 // TestCreateProduct_Success tests successful product creation
@@ -780,15 +783,21 @@ func TestProductService_GetImageUploadURLByBusiness_Success(t *testing.T) {
 		Name:       "Widget",
 	}
 
-	expectedURL := "https://s3.example.com/products/product-456/image?signature=abc"
+	expected := &services.PresignedUpload{
+		UploadURL: "https://s3.example.com/products/product-456/image?signature=abc",
+		RequiredHeaders: map[string]string{
+			"Content-Length": "4096",
+			"Content-Type":   contentType,
+		},
+	}
 
 	mockRepo.On("GetByID", ctx, productID, businessID).Return(existing, nil)
-	mockS3.On("GeneratePresignedUploadURL", ctx, "product-images", "products/product-456/image", contentType, int64(3600)).Return(expectedURL, nil)
+	mockS3.On("GeneratePresignedUpload", ctx, "product-images", "products/product-456/image", contentType, int64(4096), int64(3600)).Return(expected, nil)
 
-	url, err := svc.GetImageUploadURLByBusiness(ctx, businessID, productID, contentType)
+	result, err := svc.GetImageUploadURLByBusiness(ctx, businessID, productID, contentType, 4096)
 
 	assert.NoError(t, err)
-	assert.Equal(t, expectedURL, url)
+	assert.Equal(t, expected, result)
 	mockRepo.AssertExpectations(t)
 	mockS3.AssertExpectations(t)
 }
@@ -807,10 +816,10 @@ func TestProductService_GetImageUploadURLByBusiness_ProductNotFound(t *testing.T
 
 	mockRepo.On("GetByID", ctx, productID, businessID).Return(nil, errors.New("product not found"))
 
-	url, err := svc.GetImageUploadURLByBusiness(ctx, businessID, productID, "image/jpeg")
+	result, err := svc.GetImageUploadURLByBusiness(ctx, businessID, productID, "image/jpeg", 4096)
 
 	assert.Error(t, err)
-	assert.Empty(t, url)
+	assert.Nil(t, result)
 	mockRepo.AssertExpectations(t)
 }
 
@@ -833,14 +842,57 @@ func TestProductService_GetImageUploadURLByBusiness_S3Error(t *testing.T) {
 	}
 
 	mockRepo.On("GetByID", ctx, productID, businessID).Return(existing, nil)
-	mockS3.On("GeneratePresignedUploadURL", ctx, "product-images", "products/product-456/image", "image/jpeg", int64(3600)).Return("", errors.New("S3 error"))
+	mockS3.On("GeneratePresignedUpload", ctx, "product-images", "products/product-456/image", "image/jpeg", int64(4096), int64(3600)).Return((*services.PresignedUpload)(nil), errors.New("S3 error"))
 
-	url, err := svc.GetImageUploadURLByBusiness(ctx, businessID, productID, "image/jpeg")
+	result, err := svc.GetImageUploadURLByBusiness(ctx, businessID, productID, "image/jpeg", 4096)
 
 	assert.Error(t, err)
-	assert.Empty(t, url)
+	assert.Nil(t, result)
 	mockRepo.AssertExpectations(t)
 	mockS3.AssertExpectations(t)
+}
+
+func TestProductService_GetImageUploadURLByBusiness_RejectsInvalidSize(t *testing.T) {
+	for name, sizeBytes := range map[string]int64{
+		"missing or zero": 0,
+		"above 5 MiB":     5*1024*1024 + 1,
+	} {
+		t.Run(name, func(t *testing.T) {
+			mockRepo := new(MockProductRepositoryProd)
+			mockS3 := new(MockS3Service)
+			svc := services.NewProductServiceForTesting(mockRepo, mockS3, logger.New())
+			ctx := context.Background()
+			mockRepo.On("GetByID", ctx, "product-456", "business-123").Return(&models.Product{
+				ID:         "product-456",
+				BusinessID: "business-123",
+			}, nil)
+
+			result, err := svc.GetImageUploadURLByBusiness(ctx, "business-123", "product-456", "image/png", sizeBytes)
+
+			assert.Error(t, err)
+			assert.Nil(t, result)
+			mockRepo.AssertExpectations(t)
+			mockS3.AssertNotCalled(t, "GeneratePresignedUpload", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+		})
+	}
+}
+
+func TestProductService_GetImageUploadURLByBusiness_RejectsUnsupportedContentTypeAfterBusinessCheck(t *testing.T) {
+	mockRepo := new(MockProductRepositoryProd)
+	mockS3 := new(MockS3Service)
+	svc := services.NewProductServiceForTesting(mockRepo, mockS3, logger.New())
+	ctx := context.Background()
+	mockRepo.On("GetByID", ctx, "product-456", "business-123").Return(&models.Product{
+		ID:         "product-456",
+		BusinessID: "business-123",
+	}, nil)
+
+	result, err := svc.GetImageUploadURLByBusiness(ctx, "business-123", "product-456", "text/html", 4096)
+
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	mockRepo.AssertExpectations(t)
+	mockS3.AssertNotCalled(t, "GeneratePresignedUpload", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 // TestUpdateImageURL_Success tests successful image URL update

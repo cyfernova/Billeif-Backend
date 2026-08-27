@@ -32,6 +32,14 @@ func (m *MockMarketplaceAP2Repository) GetAgentByID(ctx context.Context, id stri
 	return args.Get(0).(*models.Agent), args.Error(1)
 }
 
+func (m *MockMarketplaceAP2Repository) GetAgentByIDForOwnerAndBusiness(ctx context.Context, id, ownerID, businessID string) (*models.Agent, error) {
+	args := m.Called(ctx, id, ownerID, businessID)
+	if value := args.Get(0); value != nil {
+		return value.(*models.Agent), args.Error(1)
+	}
+	return nil, args.Error(1)
+}
+
 func (m *MockMarketplaceAP2Repository) HasAgentOwnership(ctx context.Context, ownerID, agentID string) (bool, error) {
 	args := m.Called(ctx, ownerID, agentID)
 	return args.Bool(0), args.Error(1)
@@ -113,8 +121,8 @@ func (m *MockMarketplaceAP2Repository) GetCapabilitiesByAgent(ctx context.Contex
 	return args.Get(0).([]*models.AgentCapability), args.Error(1)
 }
 
-func (m *MockMarketplaceAP2Repository) DeleteCapability(ctx context.Context, id string) error {
-	args := m.Called(ctx, id)
+func (m *MockMarketplaceAP2Repository) DeleteCapability(ctx context.Context, agentID, capabilityID string) error {
+	args := m.Called(ctx, agentID, capabilityID)
 	return args.Error(0)
 }
 
@@ -312,6 +320,14 @@ func (m *MockMarketplaceAP2Repository) CommitMarketplaceInventory(ctx context.Co
 
 func (m *MockMarketplaceAP2Repository) GetOrderByID(ctx context.Context, id string) (*models.MarketplaceOrder, error) {
 	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.MarketplaceOrder), args.Error(1)
+}
+
+func (m *MockMarketplaceAP2Repository) GetOrderByIDForUser(ctx context.Context, id, userID string) (*models.MarketplaceOrder, error) {
+	args := m.Called(ctx, id, userID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -679,6 +695,30 @@ func (m *MockMarketplaceAP2Repository) GetBargainingNegotiationBySessionID(ctx c
 	return args.Get(0).(*models.BargainingNegotiation), args.Error(1)
 }
 
+func (m *MockMarketplaceAP2Repository) GetBargainingNegotiationByIDForScope(ctx context.Context, id, userID, businessID string) (*models.BargainingNegotiation, error) {
+	args := m.Called(ctx, id, userID, businessID)
+	if value := args.Get(0); value != nil {
+		return value.(*models.BargainingNegotiation), args.Error(1)
+	}
+	return nil, args.Error(1)
+}
+
+func (m *MockMarketplaceAP2Repository) GetBargainingNegotiationBySessionIDForScope(ctx context.Context, sessionID, userID, businessID string) (*models.BargainingNegotiation, error) {
+	args := m.Called(ctx, sessionID, userID, businessID)
+	if value := args.Get(0); value != nil {
+		return value.(*models.BargainingNegotiation), args.Error(1)
+	}
+	return nil, args.Error(1)
+}
+
+func (m *MockMarketplaceAP2Repository) GetBargainingNegotiationBySessionAndID(ctx context.Context, sessionID, id string) (*models.BargainingNegotiation, error) {
+	args := m.Called(ctx, sessionID, id)
+	if value := args.Get(0); value != nil {
+		return value.(*models.BargainingNegotiation), args.Error(1)
+	}
+	return nil, args.Error(1)
+}
+
 func (m *MockMarketplaceAP2Repository) GetNegotiationsByUser(ctx context.Context, userID string, page, limit int) ([]*models.BargainingNegotiation, int64, error) {
 	args := m.Called(ctx, userID, page, limit)
 	return args.Get(0).([]*models.BargainingNegotiation), args.Get(1).(int64), args.Error(2)
@@ -709,6 +749,14 @@ func (m *MockMarketplaceAP2Repository) CompleteNegotiation(ctx context.Context, 
 	return args.Error(0)
 }
 
+func (m *MockMarketplaceAP2Repository) StopBargainingNegotiationForScope(ctx context.Context, id, userID, businessID string, completedAt time.Time) (bool, error) {
+	args := m.Called(ctx, id, userID, businessID, completedAt)
+	return args.Bool(0), args.Error(1)
+}
+func (m *MockMarketplaceAP2Repository) StopBargainingNegotiationBySessionAndID(ctx context.Context, sessionID, id string, completedAt time.Time) (bool, error) {
+	return false, nil
+}
+
 // Bargaining Rounds
 func (m *MockMarketplaceAP2Repository) CreateBargainingRound(ctx context.Context, round *models.BargainingRound) error {
 	args := m.Called(ctx, round)
@@ -728,13 +776,13 @@ func (m *MockMarketplaceAP2Repository) GetBargainingRoundsByAgent(ctx context.Co
 	return args.Get(0).([]*models.BargainingRound), args.Get(1).(int64), args.Error(2)
 }
 
-func (m *MockMarketplaceAP2Repository) ClaimBargainingRound(ctx context.Context, negotiationID string, roundNumber int, leaseOwner string, now, leaseExpiresAt time.Time) (bool, error) {
-	args := m.Called(ctx, negotiationID, roundNumber, leaseOwner, now, leaseExpiresAt)
+func (m *MockMarketplaceAP2Repository) ClaimBargainingRound(ctx context.Context, sessionID, negotiationID string, roundNumber int, leaseOwner string, now, leaseExpiresAt time.Time) (bool, error) {
+	args := m.Called(ctx, sessionID, negotiationID, roundNumber, leaseOwner, now, leaseExpiresAt)
 	return args.Bool(0), args.Error(1)
 }
 
-func (m *MockMarketplaceAP2Repository) CompleteBargainingRoundClaim(ctx context.Context, negotiationID string, roundNumber int, leaseOwner string, completedAt time.Time) (bool, error) {
-	args := m.Called(ctx, negotiationID, roundNumber, leaseOwner, completedAt)
+func (m *MockMarketplaceAP2Repository) CompleteBargainingRoundClaim(ctx context.Context, sessionID, negotiationID string, roundNumber int, leaseOwner string, completedAt time.Time) (bool, error) {
+	args := m.Called(ctx, sessionID, negotiationID, roundNumber, leaseOwner, completedAt)
 	return args.Bool(0), args.Error(1)
 }
 

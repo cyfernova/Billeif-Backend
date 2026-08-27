@@ -20,7 +20,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sns v1.39.19
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.42.29
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.68.8
-	github.com/aws/aws-sdk-go-v2/service/wafv2 v1.72.0
 	github.com/awslabs/aws-lambda-go-api-proxy v0.16.2
 	github.com/boombuler/barcode v1.1.0
 	github.com/getsentry/sentry-go v0.46.2
@@ -40,6 +39,7 @@ require (
 	github.com/pion/rtp v1.10.4
 	github.com/pion/sdp/v3 v3.0.19
 	github.com/pion/turn/v5 v5.0.12
+	github.com/redis/go-redis/v9 v9.22.0
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
@@ -57,6 +57,7 @@ require (
 )
 
 require (
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/pion/datachannel v1.6.2 // indirect
 	github.com/pion/dtls/v3 v3.1.5 // indirect
 	github.com/pion/mdns/v2 v2.1.0 // indirect

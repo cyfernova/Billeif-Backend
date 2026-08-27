@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"invoice-backend/internal/models"
@@ -82,8 +83,8 @@ func (m *MockAgentService) GetAgentCapabilities(ctx context.Context, agentID str
 	return args.Get(0).([]models.AgentCapability), args.Error(1)
 }
 
-func (m *MockAgentService) RemoveCapability(ctx context.Context, capabilityID string) error {
-	args := m.Called(ctx, capabilityID)
+func (m *MockAgentService) RemoveCapability(ctx context.Context, agentID, capabilityID string) error {
+	args := m.Called(ctx, agentID, capabilityID)
 	return args.Error(0)
 }
 
@@ -927,7 +928,7 @@ func TestRemoveCapability_Success(t *testing.T) {
 
 	agent := &models.Agent{ID: "agent-123", Name: "Test Agent", OwnerID: "user-123"}
 	mockSvc.On("GetAgentByID", mock.Anything, "agent-123").Return(agent, nil)
-	mockSvc.On("RemoveCapability", mock.Anything, "cap-1").Return(nil)
+	mockSvc.On("RemoveCapability", mock.Anything, "agent-123", "cap-1").Return(nil)
 
 	router := gin.New()
 	router.DELETE("/agents/:id/capabilities/:capability_id", func(c *gin.Context) {
@@ -953,7 +954,7 @@ func TestRemoveCapability_InternalError(t *testing.T) {
 
 	agent := &models.Agent{ID: "agent-123", Name: "Test Agent", OwnerID: "user-123"}
 	mockSvc.On("GetAgentByID", mock.Anything, "agent-123").Return(agent, nil)
-	mockSvc.On("RemoveCapability", mock.Anything, "cap-1").Return(errors.New("remove failed"))
+	mockSvc.On("RemoveCapability", mock.Anything, "agent-123", "cap-1").Return(errors.New("remove failed"))
 
 	router := gin.New()
 	router.DELETE("/agents/:id/capabilities/:capability_id", func(c *gin.Context) {
@@ -969,6 +970,31 @@ func TestRemoveCapability_InternalError(t *testing.T) {
 		t.Fatalf("expected 500, got %d", res.Code)
 	}
 
+	mockSvc.AssertExpectations(t)
+}
+
+func TestRemoveCapability_CrossAgentCapabilityNotFound(t *testing.T) {
+	mockSvc := new(MockAgentService)
+	log := logger.New()
+	handler := NewAgentHandlerTestable(mockSvc, log)
+
+	agent := &models.Agent{ID: "agent-a", Name: "Agent A", OwnerID: "user-123"}
+	mockSvc.On("GetAgentByID", mock.Anything, "agent-a").Return(agent, nil)
+	mockSvc.On("RemoveCapability", mock.Anything, "agent-a", "cap-owned-by-agent-b").Return(errors.New("capability not found"))
+
+	router := gin.New()
+	router.DELETE("/agents/:id/capabilities/:capability_id", func(c *gin.Context) {
+		createTestContext(c, "user-123", "")
+		handler.RemoveCapability(c)
+	})
+
+	req := httptest.NewRequest(http.MethodDelete, "/agents/agent-a/capabilities/cap-owned-by-agent-b", nil)
+	res := httptest.NewRecorder()
+	router.ServeHTTP(res, req)
+
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for a capability owned by another agent, got %d: %s", res.Code, res.Body.String())
+	}
 	mockSvc.AssertExpectations(t)
 }
 
@@ -1771,8 +1797,12 @@ func (h *AgentHandlerTestable) RemoveCapability(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.RemoveCapability(c.Request.Context(), capabilityID); err != nil {
+	if err := h.svc.RemoveCapability(c.Request.Context(), id, capabilityID); err != nil {
 		h.log.Error("failed to remove capability", "error", err, "capability_id", capabilityID)
+		if strings.Contains(strings.ToLower(err.Error()), "not found") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "capability not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

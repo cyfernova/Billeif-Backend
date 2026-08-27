@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -11,17 +13,24 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+type a2aBargainingService interface {
+	StartNegotiation(context.Context, services.A2ANegotiationScope, string, string, float64) (*services.A2ASession, error)
+	StartAutonomousNegotiation(context.Context, services.A2ANegotiationScope, *services.AutonomousNegotiationRequest) (*services.A2ASession, error)
+	GetSessionProgress(context.Context, services.A2ANegotiationScope, string) (*services.A2ASessionProgress, error)
+	GetSessionProgressByNegotiationID(context.Context, services.A2ANegotiationScope, string) (*services.A2ASessionProgress, error)
+	StopNegotiation(context.Context, services.A2ANegotiationScope, string) error
+	EnqueueNegotiationRound(context.Context, string, string, int) error
+}
+
 type A2ABargainingHandler struct {
-	a2aBargaining *services.A2ABargainingService
-	agentService  *services.AgentService
+	a2aBargaining a2aBargainingService
 	cfg           *config.Config
 	log           *logger.Logger
 }
 
-func NewA2ABargainingHandler(a2aBargaining *services.A2ABargainingService, agentService *services.AgentService, cfg *config.Config, log *logger.Logger) *A2ABargainingHandler {
+func NewA2ABargainingHandler(a2aBargaining a2aBargainingService, _ *services.AgentService, cfg *config.Config, log *logger.Logger) *A2ABargainingHandler {
 	return &A2ABargainingHandler{
 		a2aBargaining: a2aBargaining,
-		agentService:  agentService,
 		cfg:           cfg,
 		log:           log,
 	}
@@ -41,7 +50,7 @@ type StartAutonomousNegotiationRequest struct {
 	ReferencePrice float64 `json:"reference_price" binding:"omitempty,gt=0"`
 	MaxRounds      int     `json:"max_rounds" binding:"omitempty,gte=1,lte=20"`
 	CallbackURL    string  `json:"callback_url"`
-	UserID         string  `json:"user_id" binding:"omitempty,uuid"`
+	UserID         string  `json:"user_id"`
 }
 
 type A2ANegotiationSession struct {
@@ -93,34 +102,14 @@ func (h *A2ABargainingHandler) StartNegotiation(c *gin.Context) {
 		return
 	}
 
-	buyerAgent, err := h.agentService.GetAgentByID(c.Request.Context(), req.BuyerAgentID)
-	if err != nil {
-		log.Error("buyer agent not found", "agent_id", req.BuyerAgentID, "error", err)
-		c.JSON(http.StatusNotFound, gin.H{"error": "buyer agent not found"})
-		return
-	}
-
-	sellerAgent, err := h.agentService.GetAgentByID(c.Request.Context(), req.SellerAgentID)
-	if err != nil {
-		log.Error("seller agent not found", "agent_id", req.SellerAgentID, "error", err)
-		c.JSON(http.StatusNotFound, gin.H{"error": "seller agent not found"})
-		return
-	}
-
-	if buyerAgent.Type != "shopping" {
-		log.Warn("buyer agent must be shopping type", "agent_type", buyerAgent.Type)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "buyer agent must be of type 'shopping'"})
-		return
-	}
-
-	if sellerAgent.Type != "merchant" {
-		log.Warn("seller agent must be merchant type", "agent_type", sellerAgent.Type)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "seller agent must be of type 'merchant'"})
+	scope, ok := a2aNegotiationScope(c)
+	if !ok {
 		return
 	}
 
 	session, err := h.a2aBargaining.StartNegotiation(
 		c.Request.Context(),
+		scope,
 		req.BuyerAgentID,
 		req.SellerAgentID,
 		req.InitialAmount,
@@ -128,6 +117,13 @@ func (h *A2ABargainingHandler) StartNegotiation(c *gin.Context) {
 
 	if err != nil {
 		log.Error("failed to start A2A negotiation", "error", err)
+		h.writeServiceError(c, err, "failed to start negotiation")
+		return
+	}
+	buyerAgent := session.BuyerAgent
+	sellerAgent := session.SellerAgent
+	if buyerAgent == nil || sellerAgent == nil {
+		log.Error("authorized negotiation agents missing from session", "session_id", session.NegotiationID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start negotiation"})
 		return
 	}
@@ -197,29 +193,8 @@ func (h *A2ABargainingHandler) StartAutonomousNegotiation(c *gin.Context) {
 		return
 	}
 
-	buyerAgent, err := h.agentService.GetAgentByID(c.Request.Context(), req.BuyerAgentID)
-	if err != nil {
-		log.Error("buyer agent not found", "agent_id", req.BuyerAgentID, "error", err)
-		c.JSON(http.StatusNotFound, gin.H{"error": "buyer agent not found"})
-		return
-	}
-
-	sellerAgent, err := h.agentService.GetAgentByID(c.Request.Context(), req.SellerAgentID)
-	if err != nil {
-		log.Error("seller agent not found", "agent_id", req.SellerAgentID, "error", err)
-		c.JSON(http.StatusNotFound, gin.H{"error": "seller agent not found"})
-		return
-	}
-
-	if buyerAgent.Type != "shopping" {
-		log.Warn("buyer agent must be shopping type", "agent_type", buyerAgent.Type)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "buyer agent must be of type 'shopping'"})
-		return
-	}
-
-	if sellerAgent.Type != "merchant" {
-		log.Warn("seller agent must be merchant type", "agent_type", sellerAgent.Type)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "seller agent must be of type 'merchant'"})
+	scope, ok := a2aNegotiationScope(c)
+	if !ok {
 		return
 	}
 
@@ -237,22 +212,12 @@ func (h *A2ABargainingHandler) StartAutonomousNegotiation(c *gin.Context) {
 		ReferencePrice: req.ReferencePrice,
 		MaxRounds:      maxRounds,
 		CallbackURL:    req.CallbackURL,
-		UserID: func() string {
-			if req.UserID != "" {
-				return req.UserID
-			}
-			return c.GetString("user_id")
-		}(),
 	}
 
-	session, err := h.a2aBargaining.StartAutonomousNegotiation(c.Request.Context(), autoReq)
+	session, err := h.a2aBargaining.StartAutonomousNegotiation(c.Request.Context(), scope, autoReq)
 	if err != nil {
 		log.Error("failed to start autonomous negotiation", "error", err)
-		if strings.Contains(err.Error(), "invalid callback URL") {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start negotiation"})
+		h.writeServiceError(c, err, "failed to start negotiation")
 		return
 	}
 
@@ -263,7 +228,7 @@ func (h *A2ABargainingHandler) StartAutonomousNegotiation(c *gin.Context) {
 		"callback_url", req.CallbackURL)
 
 	// Enqueue first round to SQS worker
-	if err := h.a2aBargaining.EnqueueNegotiationRound(session.NegotiationID, session.DBNegotiationID, 0); err != nil {
+	if err := h.a2aBargaining.EnqueueNegotiationRound(c.Request.Context(), session.NegotiationID, session.DBNegotiationID, 0); err != nil {
 		log.Error("failed to enqueue negotiation round", "error", err, "session_id", session.NegotiationID)
 	}
 
@@ -296,10 +261,13 @@ func (h *A2ABargainingHandler) GetSessionProgress(c *gin.Context) {
 		return
 	}
 
-	progress := h.a2aBargaining.GetSessionProgress(sessionID)
-
-	if progress == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "negotiation session not found"})
+	scope, ok := a2aNegotiationScope(c)
+	if !ok {
+		return
+	}
+	progress, err := h.a2aBargaining.GetSessionProgress(c.Request.Context(), scope, sessionID)
+	if err != nil {
+		h.writeServiceError(c, err, "failed to get negotiation progress")
 		return
 	}
 
@@ -329,10 +297,13 @@ func (h *A2ABargainingHandler) GetNegotiationProgress(c *gin.Context) {
 		return
 	}
 
-	progress := h.a2aBargaining.GetSessionProgressByNegotiationID(c.Request.Context(), negotiationID)
-
-	if progress == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "negotiation not found"})
+	scope, ok := a2aNegotiationScope(c)
+	if !ok {
+		return
+	}
+	progress, err := h.a2aBargaining.GetSessionProgressByNegotiationID(c.Request.Context(), scope, negotiationID)
+	if err != nil {
+		h.writeServiceError(c, err, "failed to get negotiation progress")
 		return
 	}
 
@@ -361,7 +332,14 @@ func (h *A2ABargainingHandler) StopNegotiation(c *gin.Context) {
 		return
 	}
 
-	h.a2aBargaining.StopNegotiation(sessionID)
+	scope, ok := a2aNegotiationScope(c)
+	if !ok {
+		return
+	}
+	if err := h.a2aBargaining.StopNegotiation(c.Request.Context(), scope, sessionID); err != nil {
+		h.writeServiceError(c, err, "failed to stop negotiation")
+		return
+	}
 
 	log.Info("A2A negotiation stopped", "session_id", sessionID)
 
@@ -370,4 +348,29 @@ func (h *A2ABargainingHandler) StopNegotiation(c *gin.Context) {
 		"session_id": sessionID,
 		"status":     "stopped",
 	})
+}
+
+func a2aNegotiationScope(c *gin.Context) (services.A2ANegotiationScope, bool) {
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return services.A2ANegotiationScope{}, false
+	}
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return services.A2ANegotiationScope{}, false
+	}
+	return services.A2ANegotiationScope{UserID: userID, BusinessID: businessID}, true
+}
+
+func (h *A2ABargainingHandler) writeServiceError(c *gin.Context, err error, fallback string) {
+	switch {
+	case errors.Is(err, services.ErrA2ANegotiationNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": "negotiation not found"})
+	case errors.Is(err, services.ErrA2ANegotiationTerminal):
+		c.JSON(http.StatusConflict, gin.H{"error": "negotiation is already terminal"})
+	case strings.Contains(err.Error(), "invalid callback URL"):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fallback})
+	}
 }

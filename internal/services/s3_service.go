@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"time"
 
 	"invoice-backend/internal/config"
@@ -26,6 +27,11 @@ type S3Service struct {
 
 var ErrConditionalWriteContentMismatch = errors.New("existing object content does not match conditional upload")
 
+type PresignedUpload struct {
+	UploadURL       string            `json:"upload_url"`
+	RequiredHeaders map[string]string `json:"required_headers"`
+}
+
 func NewS3Service(cfg *config.Config, aws *awsclients.Config, log *logger.Logger) *S3Service {
 	return &S3Service{
 		cfg:    cfg,
@@ -34,24 +40,46 @@ func NewS3Service(cfg *config.Config, aws *awsclients.Config, log *logger.Logger
 	}
 }
 
-func (s *S3Service) GeneratePresignedUploadURL(ctx context.Context, bucket, key, contentType string, expiresIn int64) (string, error) {
+func (s *S3Service) GeneratePresignedUpload(
+	ctx context.Context,
+	bucket string,
+	key string,
+	contentType string,
+	contentLength int64,
+	expiresIn int64,
+) (*PresignedUpload, error) {
+	if contentLength <= 0 {
+		return nil, fmt.Errorf("content length must be positive")
+	}
 	log := logger.FromContext(ctx).With("service", "s3", "operation", "presign_upload", "bucket", bucket, "key", key)
 	start := time.Now()
 	presignClient := s3.NewPresignClient(s.client)
 
 	request, err := presignClient.PresignPutObject(ctx, &s3.PutObjectInput{
-		Bucket:      aws.String(bucket),
-		Key:         aws.String(key),
-		ContentType: aws.String(contentType),
+		Bucket:        aws.String(bucket),
+		Key:           aws.String(key),
+		ContentLength: aws.Int64(contentLength),
+		ContentType:   aws.String(contentType),
 	}, s3.WithPresignExpires(time.Duration(expiresIn)*time.Second))
-
 	if err != nil {
 		log.Error("failed to generate S3 upload URL", "error", err)
-		return "", fmt.Errorf("failed to generate presigned URL: %w", err)
+		return nil, fmt.Errorf("failed to generate presigned URL: %w", err)
+	}
+	requiredHeaders := map[string]string{
+		"Content-Length": strconv.FormatInt(contentLength, 10),
+		"Content-Type":   contentType,
+	}
+	for name, expected := range requiredHeaders {
+		if signed := request.SignedHeader.Get(name); signed != expected {
+			return nil, fmt.Errorf("presigned upload did not bind %s", name)
+		}
 	}
 
 	log.Debug("generated S3 upload URL", "expires_in_seconds", expiresIn, "duration_ms", time.Since(start).Milliseconds())
-	return request.URL, nil
+	return &PresignedUpload{
+		UploadURL:       request.URL,
+		RequiredHeaders: requiredHeaders,
+	}, nil
 }
 
 func (s *S3Service) GeneratePresignedDownloadURL(ctx context.Context, bucket, key string, expiresIn int64) (string, error) {
