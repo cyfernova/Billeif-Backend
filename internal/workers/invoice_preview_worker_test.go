@@ -102,6 +102,7 @@ type fakePreviewRenderOperations struct {
 	completed           bool
 	genericError        error
 	genericRendered     bool
+	genericRenderCalls  int
 	finalClaimState     interfaces.FinalRenderClaimState
 	finalSnapshot       *models.Document
 	finalCompleted      bool
@@ -235,11 +236,13 @@ func (f *fakePreviewRenderOperations) fail(context.Context, string, string, stri
 }
 
 func (f *fakePreviewRenderOperations) renderGeneric(
-	context.Context,
-	*models.Document,
-	*models.DocumentRenderJob,
+	_ context.Context,
+	_ *models.Document,
+	job *models.DocumentRenderJob,
 ) error {
 	f.genericRendered = true
+	f.genericRenderCalls++
+	job.Status = models.RenderJobStatusCompleted
 	return f.genericError
 }
 
@@ -949,6 +952,29 @@ func TestProcessDocumentRenderJobNoOpsCompletedOrObsoleteGenericDuplicate(t *tes
 				t.Fatalf("terminal generic duplicate performed work: %#v", operations)
 			}
 		})
+	}
+}
+
+func TestProcessDocumentRenderJobGenericReplayRendersOnce(t *testing.T) {
+	businessID := uuid.NewString()
+	documentID := uuid.NewString()
+	job := &models.DocumentRenderJob{
+		ID:         uuid.NewString(),
+		DocumentID: models.StringPointer(documentID),
+		BusinessID: businessID,
+		Kind:       models.RenderKindPreview,
+		Status:     models.RenderJobStatusQueued,
+	}
+	document := &models.Document{ID: documentID, BusinessID: businessID}
+	operations := &fakePreviewRenderOperations{}
+
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := processDocumentRenderJob(context.Background(), document, job, 0, operations); err != nil {
+			t.Fatalf("generic replay %d: %v", attempt+1, err)
+		}
+	}
+	if operations.genericRenderCalls != 1 {
+		t.Fatalf("generic render calls = %d, want one for replay", operations.genericRenderCalls)
 	}
 }
 
