@@ -3298,7 +3298,7 @@ const docTemplate = `{
                 ]
             },
             "post": {
-                "description": "Returns a presigned S3 URL to upload a profile picture.",
+                "description": "Returns a presigned S3 URL and the exact headers required to upload a profile picture. The non-multipart presign flow requires size_bytes; uploads are limited to 5 MiB.",
                 "produces": [
                     "application/json"
                 ],
@@ -3312,11 +3312,35 @@ const docTemplate = `{
                         "description": "MIME type (default: image/png)",
                         "name": "Content-Type",
                         "in": "header"
+                    },
+                    {
+                        "maximum": 5242880,
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "Exact upload size in bytes",
+                        "name": "size_bytes",
+                        "in": "query",
+                        "required": true
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/services.PresignedUpload"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "413": {
+                        "description": "Request Entity Too Large",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -4898,7 +4922,7 @@ const docTemplate = `{
         },
         "/business-profiles/{id}/logo": {
             "post": {
-                "description": "Returns a presigned S3 URL to upload a business logo.",
+                "description": "Returns a presigned S3 URL and the exact headers required to upload a business logo. Uploads are limited to 5 MiB.",
                 "produces": [
                     "application/json"
                 ],
@@ -4919,11 +4943,35 @@ const docTemplate = `{
                         "description": "MIME type (default: image/png)",
                         "name": "Content-Type",
                         "in": "header"
+                    },
+                    {
+                        "maximum": 5242880,
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "Exact upload size in bytes",
+                        "name": "size_bytes",
+                        "in": "query",
+                        "required": true
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/services.PresignedUpload"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "413": {
+                        "description": "Request Entity Too Large",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -7027,7 +7075,7 @@ const docTemplate = `{
         },
         "/drive/presign": {
             "post": {
-                "description": "Creates a presigned URL for uploading a drive asset",
+                "description": "Creates a presigned URL and exact required headers for uploading a drive asset up to 25 MiB",
                 "consumes": [
                     "application/json"
                 ],
@@ -7053,8 +7101,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/services.DriveUploadSession"
                         }
                     },
                     "400": {
@@ -10931,7 +10978,7 @@ const docTemplate = `{
         },
         "/products/{id}/image": {
             "post": {
-                "description": "Returns a presigned S3 URL to upload a product image.",
+                "description": "Returns a presigned S3 URL and the exact headers required to upload a product image. Uploads are limited to 5 MiB.",
                 "produces": [
                     "application/json"
                 ],
@@ -10952,11 +10999,35 @@ const docTemplate = `{
                         "description": "MIME type (default: image/png)",
                         "name": "Content-Type",
                         "in": "header"
+                    },
+                    {
+                        "maximum": 5242880,
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "Exact upload size in bytes",
+                        "name": "size_bytes",
+                        "in": "query",
+                        "required": true
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/services.PresignedUpload"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "413": {
+                        "description": "Request Entity Too Large",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -18662,6 +18733,50 @@ const docTemplate = `{
                 }
             }
         },
+        "models.DriveAsset": {
+            "type": "object",
+            "properties": {
+                "bucket": {
+                    "type": "string"
+                },
+                "business_id": {
+                    "type": "string"
+                },
+                "category": {
+                    "type": "string"
+                },
+                "content_type": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "folder_path": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "object_key": {
+                    "type": "string"
+                },
+                "size_bytes": {
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "uploaded_by": {
+                    "type": "string"
+                }
+            }
+        },
         "models.Invoice": {
             "type": "object",
             "required": [
@@ -20818,7 +20933,7 @@ const docTemplate = `{
                 },
                 "size_bytes": {
                     "type": "integer",
-                    "minimum": 0
+                    "maximum": 26214400
                 }
             }
         },
@@ -21507,6 +21622,23 @@ const docTemplate = `{
                 }
             }
         },
+        "services.DriveUploadSession": {
+            "type": "object",
+            "properties": {
+                "asset": {
+                    "$ref": "#/definitions/models.DriveAsset"
+                },
+                "required_headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "upload_url": {
+                    "type": "string"
+                }
+            }
+        },
         "services.ExecuteAssemblyComponentMovementInput": {
             "type": "object",
             "required": [
@@ -22099,6 +22231,20 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "variant_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.PresignedUpload": {
+            "type": "object",
+            "properties": {
+                "required_headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "upload_url": {
                     "type": "string"
                 }
             }

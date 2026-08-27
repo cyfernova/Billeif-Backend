@@ -255,13 +255,16 @@ func (h *ProductHandler) Delete(c *gin.Context) {
 
 // UploadImage generates a presigned URL for product image upload
 // @Summary Upload product image
-// @Description Returns a presigned S3 URL to upload a product image.
+// @Description Returns a presigned S3 URL and the exact headers required to upload a product image. Uploads are limited to 5 MiB.
 // @Tags Products
 // @Produce json
 // @Security BearerAuth
 // @Param id path string true "Product ID"
 // @Param Content-Type header string false "MIME type (default: image/png)"
-// @Success 200 {object} map[string]string
+// @Param size_bytes query int true "Exact upload size in bytes" minimum(1) maximum(5242880)
+// @Success 200 {object} services.PresignedUpload
+// @Failure 400 {object} map[string]string
+// @Failure 413 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /products/{id}/image [post]
 func (h *ProductHandler) UploadImage(c *gin.Context) {
@@ -277,8 +280,12 @@ func (h *ProductHandler) UploadImage(c *gin.Context) {
 	if !ok2 {
 		return
 	}
+	sizeBytes, ok := requireUploadSizeBytes(c, services.MaxProductImageUploadBytes)
+	if !ok {
+		return
+	}
 
-	url, err := h.svc.GetImageUploadURLByBusiness(c.Request.Context(), businessID, id, contentType)
+	upload, err := h.svc.GetImageUploadURLByBusiness(c.Request.Context(), businessID, id, contentType, sizeBytes)
 	if err != nil {
 		log.Error("failed to generate product image upload URL", "error", err, "product_id", id)
 		if isNotFoundErr(err) {
@@ -290,7 +297,7 @@ func (h *ProductHandler) UploadImage(c *gin.Context) {
 	}
 	log.Info("product image upload URL generated", "product_id", id)
 
-	c.JSON(http.StatusOK, gin.H{"upload_url": url})
+	c.JSON(http.StatusOK, upload)
 }
 
 // AdjustStock adjusts the stock level of a product

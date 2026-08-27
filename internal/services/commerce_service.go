@@ -154,12 +154,10 @@ type CreateDriveAssetInput struct {
 	Name        string                 `json:"name" binding:"required"`
 	FolderPath  string                 `json:"folder_path,omitempty"`
 	ContentType string                 `json:"content_type" binding:"required"`
-	SizeBytes   int64                  `json:"size_bytes" binding:"required,gte=0"`
+	SizeBytes   int64                  `json:"size_bytes" binding:"required,gt=0,lte=26214400"`
 	Category    string                 `json:"category,omitempty"`
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 }
-
-const maxDriveAssetUploadBytes = int64(25 * 1024 * 1024)
 
 var allowedDriveAssetContentTypes = map[string]struct{}{
 	"image/jpeg":      {},
@@ -173,8 +171,8 @@ func validateDriveAssetUpload(input CreateDriveAssetInput) (string, error) {
 	if _, ok := allowedDriveAssetContentTypes[contentType]; !ok {
 		return "", fmt.Errorf("unsupported drive asset content type")
 	}
-	if input.SizeBytes <= 0 || input.SizeBytes > maxDriveAssetUploadBytes {
-		return "", fmt.Errorf("drive asset size must be between 1 byte and %d bytes", maxDriveAssetUploadBytes)
+	if err := validateUploadSize("drive asset", input.SizeBytes, MaxDriveAssetUploadBytes); err != nil {
+		return "", err
 	}
 	return contentType, nil
 }
@@ -209,8 +207,9 @@ type CouponValidationResult struct {
 }
 
 type DriveUploadSession struct {
-	Asset     *models.DriveAsset `json:"asset"`
-	UploadURL string             `json:"upload_url"`
+	Asset           *models.DriveAsset `json:"asset"`
+	UploadURL       string             `json:"upload_url"`
+	RequiredHeaders map[string]string  `json:"required_headers"`
 }
 
 type WhatsAppConfigResponse struct {
@@ -1340,11 +1339,15 @@ func (s *CommerceService) CreateDriveUpload(ctx context.Context, businessID, use
 	if err := s.db.WithContext(ctx).Create(asset).Error; err != nil {
 		return nil, err
 	}
-	uploadURL, err := s.s3.GeneratePresignedUploadURL(ctx, asset.Bucket, asset.ObjectKey, contentType, 900)
+	upload, err := s.s3.GeneratePresignedUpload(ctx, asset.Bucket, asset.ObjectKey, contentType, input.SizeBytes, 900)
 	if err != nil {
 		return nil, err
 	}
-	return &DriveUploadSession{Asset: asset, UploadURL: uploadURL}, nil
+	return &DriveUploadSession{
+		Asset:           asset,
+		UploadURL:       upload.UploadURL,
+		RequiredHeaders: upload.RequiredHeaders,
+	}, nil
 }
 
 func (s *CommerceService) UpdateDriveAsset(ctx context.Context, businessID, assetID string, input UpdateDriveAssetInput) (*models.DriveAsset, error) {
