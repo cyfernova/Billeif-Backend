@@ -3,6 +3,7 @@ package postgres_test
 import (
 	"context"
 	"errors"
+	"regexp"
 	"testing"
 	"time"
 
@@ -10,9 +11,50 @@ import (
 	"invoice-backend/internal/repositories/interfaces"
 	postgresrepo "invoice-backend/internal/repositories/postgres"
 
+	"github.com/DATA-DOG/go-sqlmock"
+	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
+
+func TestGetOrderByIDForUserUsesOwnerPredicate(t *testing.T) {
+	sqlDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("open sqlmock: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := sqlDB.Close(); err != nil {
+			t.Errorf("close sqlmock: %v", err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Errorf("SQL expectations: %v", err)
+		}
+	})
+
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), &gorm.Config{
+		Logger: gormlogger.Default.LogMode(gormlogger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("open gorm: %v", err)
+	}
+
+	orderID := "order-1"
+	userID := "user-1"
+	query := regexp.QuoteMeta(`SELECT * FROM "marketplace_orders" WHERE id = $1 AND user_id = $2 ORDER BY "marketplace_orders"."id" LIMIT $3`)
+	mock.ExpectQuery(query).
+		WithArgs(orderID, userID, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id"}).AddRow(orderID, userID))
+	mock.ExpectClose()
+
+	order, err := postgresrepo.NewAP2Repository(db).GetOrderByIDForUser(context.Background(), orderID, userID)
+	if err != nil {
+		t.Fatalf("get owned order: %v", err)
+	}
+	if order.ID != orderID || order.UserID != userID {
+		t.Fatalf("order = %#v, want order %q owned by %q", order, orderID, userID)
+	}
+}
 
 func TestBargainingRoundClaimIsDurableLeaseBoundAndCompletable(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})

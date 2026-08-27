@@ -62,9 +62,9 @@ func (s *recordingProductService) DeleteByBusiness(_ context.Context, businessID
 	return s.serviceError
 }
 
-func (s *recordingProductService) GetImageUploadURLByBusiness(_ context.Context, businessID, _, _ string) (string, error) {
+func (s *recordingProductService) GetImageUploadURLByBusiness(_ context.Context, businessID, _, _ string, _ int64) (*services.PresignedUpload, error) {
 	s.record("upload_image", businessID)
-	return "https://example.test/upload", s.serviceError
+	return &services.PresignedUpload{UploadURL: "https://example.test/upload"}, s.serviceError
 }
 
 func (s *recordingProductService) AdjustStockByBusiness(_ context.Context, businessID, _ string, _ services.StockAdjustmentInput) (*models.Product, error) {
@@ -145,7 +145,7 @@ func TestProductHandler_UsesValidatedBusinessScopeForEveryOperation(t *testing.T
 		{name: "update", method: http.MethodPut, path: "/products/product-1", body: `{}`, scopeHeader: "business-b", permission: services.PermissionProductsManage, call: (*ProductHandler).Update, want: "update"},
 		{name: "clone", method: http.MethodPost, path: "/products/product-1/clone", scopeHeader: "business-b", permission: services.PermissionProductsManage, call: (*ProductHandler).Clone, want: "clone"},
 		{name: "delete", method: http.MethodDelete, path: "/products/product-1", scopeHeader: "business-b", permission: services.PermissionProductsManage, call: (*ProductHandler).Delete, want: "delete"},
-		{name: "upload image", method: http.MethodPost, path: "/products/product-1/image", scopeHeader: "business-b", permission: services.PermissionProductsManage, call: (*ProductHandler).UploadImage, want: "upload_image"},
+		{name: "upload image", method: http.MethodPost, path: "/products/product-1/image?size_bytes=4096", scopeHeader: "business-b", permission: services.PermissionProductsManage, call: (*ProductHandler).UploadImage, want: "upload_image"},
 		{name: "adjust stock", method: http.MethodPost, path: "/products/product-1/stock", body: `{"quantity":1}`, scopeHeader: "business-b", permission: services.PermissionProductsManage, call: (*ProductHandler).AdjustStock, want: "adjust_stock"},
 		{name: "create body scope", method: http.MethodPost, path: "/products", body: `{"business_id":"business-b","name":"Widget","price":1}`, permission: services.PermissionProductsManage, call: (*ProductHandler).Create, want: "create"},
 	}

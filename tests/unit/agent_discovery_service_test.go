@@ -363,6 +363,9 @@ func (m *MockAP2Repository) CreateOrder(ctx context.Context, order *models.Marke
 func (m *MockAP2Repository) GetOrderByID(ctx context.Context, id string) (*models.MarketplaceOrder, error) {
 	return nil, nil
 }
+func (m *MockAP2Repository) GetOrderByIDForUser(ctx context.Context, id, userID string) (*models.MarketplaceOrder, error) {
+	return nil, nil
+}
 func (m *MockAP2Repository) GetOrdersByUser(ctx context.Context, userID string, page, limit int) ([]*models.MarketplaceOrder, int64, error) {
 	return nil, 0, nil
 }

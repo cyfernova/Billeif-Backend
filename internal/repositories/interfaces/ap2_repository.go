@@ -102,6 +102,7 @@ type AP2Repository interface {
 	// Marketplace Orders
 	CreateOrder(ctx context.Context, order *models.MarketplaceOrder) error
 	GetOrderByID(ctx context.Context, id string) (*models.MarketplaceOrder, error)
+	GetOrderByIDForUser(ctx context.Context, id, userID string) (*models.MarketplaceOrder, error)
 	GetOrdersByUser(ctx context.Context, userID string, page, limit int) ([]*models.MarketplaceOrder, int64, error)
 	GetOrdersByUserAndStatus(ctx context.Context, userID, status string, page, limit int) ([]*models.MarketplaceOrder, int64, error)
 	GetOrdersByAgent(ctx context.Context, agentID string, page, limit int) ([]*models.MarketplaceOrder, int64, error)

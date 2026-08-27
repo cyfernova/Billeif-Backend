@@ -326,6 +326,14 @@ func (m *MockMarketplaceAP2Repository) GetOrderByID(ctx context.Context, id stri
 	return args.Get(0).(*models.MarketplaceOrder), args.Error(1)
 }
 
+func (m *MockMarketplaceAP2Repository) GetOrderByIDForUser(ctx context.Context, id, userID string) (*models.MarketplaceOrder, error) {
+	args := m.Called(ctx, id, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.MarketplaceOrder), args.Error(1)
+}
+
 func (m *MockMarketplaceAP2Repository) GetOrdersByUser(ctx context.Context, userID string, page, limit int) ([]*models.MarketplaceOrder, int64, error) {
 	args := m.Called(ctx, userID, page, limit)
 	var orders []*models.MarketplaceOrder

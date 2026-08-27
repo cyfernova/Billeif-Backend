@@ -24,7 +24,7 @@ type productService interface {
 	UpdateByBusiness(context.Context, string, string, services.UpdateProductInput) (*models.Product, error)
 	CloneByBusiness(context.Context, string, string) (*models.Product, error)
 	DeleteByBusiness(context.Context, string, string) error
-	GetImageUploadURLByBusiness(context.Context, string, string, string) (string, error)
+	GetImageUploadURLByBusiness(context.Context, string, string, string, int64) (*services.PresignedUpload, error)
 	AdjustStockByBusiness(context.Context, string, string, services.StockAdjustmentInput) (*models.Product, error)
 }
 
