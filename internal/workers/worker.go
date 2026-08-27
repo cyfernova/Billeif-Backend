@@ -169,7 +169,11 @@ func ProcessInvoiceQueueMessageWithOwner(ctx context.Context, cfg *config.Config
 
 	switch msg.Type {
 	case "generate_pdf":
-		return generateInvoicePDF(ctx, cfg, svc, msg.InvoiceID)
+		// The legacy invoice-only renderer has no durable job identity or producer.
+		// Treat old deliveries as retired terminal messages so replay cannot trigger
+		// rendering or storage work. Returning nil allows the queue transport to ack.
+		log.Warn("dropping retired legacy invoice message", "type", msg.Type)
+		return nil
 	case "generate_document_pdf":
 		return generateDocumentPDF(ctx, cfg, svc, log, msg.DocumentID, msg.RenderJobID, msg.InvoiceVersion, owner)
 	default:
@@ -177,36 +181,6 @@ func ProcessInvoiceQueueMessageWithOwner(ctx context.Context, cfg *config.Config
 	}
 
 	return nil
-}
-
-func generateInvoicePDF(ctx context.Context, cfg *config.Config, svc *services.Container, invoiceID string) error {
-	invoice, err := svc.Invoice.GetForWorker(ctx, invoiceID)
-	if err != nil {
-		return err
-	}
-
-	document, err := svc.Document.GetForWorker(ctx, invoiceID)
-	if err != nil || (document.DocumentType != models.DocumentTypeSalesInvoice && document.DocumentType != models.DocumentTypeBillOfSupply) {
-		document = legacyInvoiceDocument(invoice)
-	}
-
-	profile, err := resolveRenderProfile(ctx, svc, document, "")
-	if err != nil {
-		return err
-	}
-
-	pdfContent, filename, err := renderDocumentPDF(ctx, svc, document, profile)
-	if err != nil {
-		return err
-	}
-
-	key := path.Join("invoices", invoiceID, filename)
-	if err := svc.S3.Upload(ctx, cfg.S3.BucketInvoices, key, pdfContent, "application/pdf"); err != nil {
-		return err
-	}
-
-	pdfURL := svc.S3.GetObjectURL(cfg.S3.BucketInvoices, key)
-	return svc.Invoice.UpdatePDFUrl(ctx, invoiceID, pdfURL)
 }
 
 func generateDocumentPDF(
@@ -882,55 +856,6 @@ func resolveRenderProfile(ctx context.Context, svc *services.Container, document
 		return nil, nil
 	}
 	return profile, nil
-}
-
-func legacyInvoiceDocument(invoice *services.Invoice) *models.Document {
-	document := &models.Document{
-		ID:                    invoice.ID,
-		BusinessID:            invoice.BusinessID,
-		DocumentType:          models.DocumentTypeSalesInvoice,
-		PartyType:             models.DocumentPartyTypeCustomer,
-		PartyID:               invoice.CustomerID,
-		Status:                models.DocumentStatusIssued,
-		DraftState:            models.DocumentDraftStateFinal,
-		TaxMode:               models.DocumentTaxModeNonGST,
-		GSTTreatment:          models.DocumentGSTTreatmentRegular,
-		SerialNumber:          models.StringValue(invoice.InvoiceNo),
-		IssueDate:             invoice.InvoiceDate,
-		DueDate:               &invoice.DueDate,
-		Currency:              invoice.Currency,
-		Locale:                "en-IN",
-		RenderProfileID:       invoice.RenderProfileID,
-		Notes:                 invoice.Notes,
-		Subtotal:              invoice.Subtotal,
-		DiscountTotal:         invoice.Discount,
-		TaxTotal:              invoice.Tax,
-		Total:                 invoice.Total,
-		PaidAmount:            invoice.PaidAmount,
-		BalanceDue:            invoice.BalanceDue,
-		ProfitSnapshotEnabled: true,
-	}
-	if invoice.Tax > 0 {
-		document.TaxMode = models.DocumentTaxModeGST
-	}
-	for _, item := range invoice.Items {
-		document.Lines = append(document.Lines, &models.DocumentLine{
-			ID:                item.ID,
-			DocumentID:        invoice.ID,
-			ProductID:         item.ProductID,
-			Description:       item.Description,
-			Quantity:          item.Quantity,
-			RemainingQuantity: item.Quantity,
-			UnitPrice:         item.UnitPrice,
-			DiscountAmount:    item.Discount,
-			TaxRate:           item.TaxRate,
-			TaxAmount:         item.Total - ((item.Quantity * item.UnitPrice) - item.Discount),
-			LineSubtotal:      (item.Quantity * item.UnitPrice) - item.Discount,
-			LineTotal:         item.Total,
-			StockEffect:       "out",
-		})
-	}
-	return document
 }
 
 type GSTQueueMessage struct {

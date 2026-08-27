@@ -570,6 +570,25 @@ func TestProcessInvoiceQueueMessageReturnsRetryableErrorForProcessingPreview(t *
 	}
 }
 
+func TestProcessInvoiceQueueMessageDropsRetiredLegacyPDFWithoutWork(t *testing.T) {
+	log := logger.NewWithEnv("test")
+	cfg := &config.Config{}
+	body := `{"type":"generate_pdf","invoice_id":"legacy-invoice"}`
+
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := ProcessInvoiceQueueMessageWithOwner(
+			context.Background(),
+			cfg,
+			&services.Container{},
+			log,
+			body,
+			"owner",
+		); err != nil {
+			t.Fatalf("retired legacy delivery %d: %v", attempt+1, err)
+		}
+	}
+}
+
 func TestProcessPreviewRenderTreatsCompletedAndObsoleteClaimsAsSuccessfulNoOps(t *testing.T) {
 	tests := []struct {
 		name       string
