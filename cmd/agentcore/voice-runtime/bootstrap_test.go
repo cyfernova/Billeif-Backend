@@ -100,6 +100,7 @@ func TestRuntimeDependencyValidationRejectsTypedNilInterfaces(t *testing.T) {
 		mutate func(*runtimeDependencies)
 	}{
 		{name: "authorization", mutate: func(value *runtimeDependencies) { value.Authorization = (*bootstrapAuthorization)(nil) }},
+		{name: "current session authorization", mutate: func(value *runtimeDependencies) { value.CurrentSessions = (*bootstrapCurrentSessions)(nil) }},
 		{name: "sessions", mutate: func(value *runtimeDependencies) { value.Sessions = (*bootstrapSessions)(nil) }},
 		{name: "lease renewer", mutate: func(value *runtimeDependencies) { value.LeaseRenewer = (*bootstrapSessions)(nil) }},
 		{name: "ice", mutate: func(value *runtimeDependencies) { value.ICE = (*bootstrapICE)(nil) }},
@@ -333,14 +334,15 @@ func TestProductionSpeechOutputFactoryRejectsTypedNilDependencies(t *testing.T) 
 
 func bootstrapRuntimeDependencies() runtimeDependencies {
 	return runtimeDependencies{
-		Authorization: bootstrapAuthorization{},
-		Sessions:      bootstrapSessions{},
-		LeaseRenewer:  bootstrapSessions{},
-		ICE:           bootstrapICE{},
-		STT:           bootstrapSTT{},
-		Chat:          bootstrapChat{},
-		Outputs:       composition.ControlOutputFactory{},
-		Metrics:       bootstrapSignalingMetrics{},
+		Authorization:   bootstrapAuthorization{},
+		CurrentSessions: bootstrapCurrentSessions{},
+		Sessions:        bootstrapSessions{},
+		LeaseRenewer:    bootstrapSessions{},
+		ICE:             bootstrapICE{},
+		STT:             bootstrapSTT{},
+		Chat:            bootstrapChat{},
+		Outputs:         composition.ControlOutputFactory{},
+		Metrics:         bootstrapSignalingMetrics{},
 		Decoders: composition.DecoderFactoryFunc(func() (audio.Decoder, error) {
 			return bootstrapDecoder{}, nil
 		}),
@@ -387,6 +389,12 @@ type bootstrapAuthorization struct{}
 
 func (bootstrapAuthorization) Resolve(context.Context, string) (webrtc.TrustedIdentity, error) {
 	return webrtc.TrustedIdentity{}, webrtc.ErrSignalingUnauthorized
+}
+
+type bootstrapCurrentSessions struct{}
+
+func (bootstrapCurrentSessions) Authorize(context.Context, string, string) (webrtc.CurrentSessionAuthorization, error) {
+	return webrtc.CurrentSessionAuthorization{}, webrtc.ErrCurrentSessionUnauthorized
 }
 
 type bootstrapSessions struct{}

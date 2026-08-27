@@ -371,7 +371,7 @@ func (o *servicePreviewRenderOperations) loadProfile(
 	ctx context.Context,
 	businessID, profileID string,
 ) (*models.RenderProfile, error) {
-	return o.svc.Document.GetRenderProfileByBusiness(ctx, businessID, profileID)
+	return o.svc.Document.GetRenderProfileForRenderingByBusiness(ctx, businessID, profileID)
 }
 
 func (o *servicePreviewRenderOperations) render(

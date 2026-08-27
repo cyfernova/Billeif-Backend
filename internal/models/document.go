@@ -247,26 +247,29 @@ func (DocumentLink) TableName() string {
 }
 
 type RenderProfile struct {
-	ID                string         `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
-	BusinessID        string         `gorm:"not null;index" json:"business_id" validate:"required,uuid"`
-	Name              string         `gorm:"not null;size:100" json:"name"`
-	HeaderHTML        string         `gorm:"type:text" json:"header_html,omitempty"`
-	FooterHTML        string         `gorm:"type:text" json:"footer_html,omitempty"`
-	WatermarkText     string         `gorm:"size:255" json:"watermark_text,omitempty"`
-	BannerText        string         `gorm:"size:255" json:"banner_text,omitempty"`
-	FontFamily        string         `gorm:"size:80;default:'Noto Sans'" json:"font_family,omitempty"`
-	PageSize          string         `gorm:"size:20;default:'A4'" json:"page_size,omitempty"`
-	LayoutConfig      string         `gorm:"type:jsonb;default:'{}'" json:"layout_config,omitempty"`
-	PasswordProtected bool           `gorm:"default:false" json:"password_protected"`
-	Password          string         `gorm:"size:255" json:"password,omitempty"`
-	CopyAllowed       bool           `gorm:"default:true" json:"copy_allowed"`
-	PrintAllowed      bool           `gorm:"default:true" json:"print_allowed"`
-	CustomLabels      string         `gorm:"type:jsonb;default:'{}'" json:"custom_labels,omitempty"`
-	VisibilityConfig  string         `gorm:"type:jsonb;default:'{}'" json:"visibility_config,omitempty"`
-	IsDefault         bool           `gorm:"default:false" json:"is_default"`
-	CreatedAt         time.Time      `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt         time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
-	DeletedAt         gorm.DeletedAt `gorm:"index" json:"-"`
+	ID                 string         `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
+	BusinessID         string         `gorm:"not null;index" json:"business_id" validate:"required,uuid"`
+	Name               string         `gorm:"not null;size:100" json:"name"`
+	HeaderHTML         string         `gorm:"type:text" json:"header_html,omitempty"`
+	FooterHTML         string         `gorm:"type:text" json:"footer_html,omitempty"`
+	WatermarkText      string         `gorm:"size:255" json:"watermark_text,omitempty"`
+	BannerText         string         `gorm:"size:255" json:"banner_text,omitempty"`
+	FontFamily         string         `gorm:"size:80;default:'Noto Sans'" json:"font_family,omitempty"`
+	PageSize           string         `gorm:"size:20;default:'A4'" json:"page_size,omitempty"`
+	LayoutConfig       string         `gorm:"type:jsonb;default:'{}'" json:"layout_config,omitempty"`
+	PasswordProtected  bool           `gorm:"default:false" json:"password_protected"`
+	Password           string         `gorm:"-" json:"-" swaggerignore:"true"`
+	LegacyPassword     *string        `gorm:"column:password;size:255" json:"-" swaggerignore:"true"`
+	PasswordCiphertext *string        `gorm:"column:password_ciphertext;type:text" json:"-" swaggerignore:"true"`
+	PasswordConfigured bool           `gorm:"-" json:"password_configured"`
+	CopyAllowed        bool           `gorm:"default:true" json:"copy_allowed"`
+	PrintAllowed       bool           `gorm:"default:true" json:"print_allowed"`
+	CustomLabels       string         `gorm:"type:jsonb;default:'{}'" json:"custom_labels,omitempty"`
+	VisibilityConfig   string         `gorm:"type:jsonb;default:'{}'" json:"visibility_config,omitempty"`
+	IsDefault          bool           `gorm:"default:false" json:"is_default"`
+	CreatedAt          time.Time      `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt          time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
+	DeletedAt          gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 func (RenderProfile) TableName() string {

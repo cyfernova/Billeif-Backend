@@ -80,6 +80,7 @@ func (errWithSecretMaterial) Error() string { return "provider failed with " + s
 func validProductionHTTPConfigForCursorTest() *Config {
 	cfg := validConfigForTest()
 	cfg.Environment = "production"
+	cfg.Redis = validProductionRateLimitConfigForTest()
 	cfg.Secrets.InvoiceCursorHMAC = "cursor-secret"
 	cfg.LLM.ExaAPIKey = "exa-key"
 	cfg.GSTLookup.APIKey = "gst-lookup-key"

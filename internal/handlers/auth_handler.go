@@ -13,7 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const maxProfilePictureBytes int64 = 5 * 1024 * 1024
+const maxProfilePictureBytes int64 = services.MaxProfilePictureUploadBytes
 
 type AuthHandler struct {
 	svc *services.AuthService
@@ -534,12 +534,15 @@ func (h *AuthHandler) GoogleLogin(c *gin.Context) {
 
 // UploadProfilePicture generates a presigned URL for profile picture upload
 // @Summary Upload profile picture
-// @Description Returns a presigned S3 URL to upload a profile picture.
+// @Description Returns a presigned S3 URL and the exact headers required to upload a profile picture. The non-multipart presign flow requires size_bytes; uploads are limited to 5 MiB.
 // @Tags Authentication
 // @Produce json
 // @Security BearerAuth
 // @Param Content-Type header string false "MIME type (default: image/png)"
-// @Success 200 {object} map[string]string
+// @Param size_bytes query int true "Exact upload size in bytes" minimum(1) maximum(5242880)
+// @Success 200 {object} services.PresignedUpload
+// @Failure 400 {object} map[string]string
+// @Failure 413 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /auth/profile-picture [post]
 func (h *AuthHandler) UploadProfilePicture(c *gin.Context) {
@@ -557,14 +560,18 @@ func (h *AuthHandler) UploadProfilePicture(c *gin.Context) {
 	if !ok {
 		return
 	}
+	sizeBytes, ok := requireUploadSizeBytes(c, services.MaxProfilePictureUploadBytes)
+	if !ok {
+		return
+	}
 
-	url, err := h.svc.GetProfilePictureUploadURL(c.Request.Context(), userID, contentType)
+	upload, err := h.svc.GetProfilePictureUploadURL(c.Request.Context(), userID, contentType, sizeBytes)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"upload_url": url})
+	c.JSON(http.StatusOK, upload)
 }
 
 func (h *AuthHandler) uploadProfilePictureFile(c *gin.Context, userID string) {
@@ -605,8 +612,9 @@ func (h *AuthHandler) uploadProfilePictureFile(c *gin.Context, userID string) {
 	if contentType == "" || contentType == "application/octet-stream" {
 		contentType = http.DetectContentType(data)
 	}
-	if !allowedImageTypes[contentType] {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported content type; allowed: image/png, image/jpeg, image/gif, image/webp, image/svg+xml"})
+	contentType, err = services.NormalizeImageUploadContentType(contentType)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 

@@ -24,6 +24,7 @@ import (
 type DocumentService struct {
 	db                 *gorm.DB
 	cfg                *config.Config
+	resolver           ProviderConfigResolver
 	repo               interfaces.DocumentRepository
 	businessRepo       interfaces.BusinessRepository
 	customerRepo       interfaces.CustomerRepository
@@ -36,6 +37,7 @@ type DocumentService struct {
 	salesInvoices      salesInvoiceDocumentCreator
 	salesInvoiceIssuer salesInvoiceDocumentIssuer
 	sqs                *sqs.Client
+	permissions        PermissionChecker
 	log                *logger.Logger
 }
 
@@ -164,7 +166,7 @@ type CreateRenderProfileInput struct {
 	PageSize          string                 `json:"page_size"`
 	LayoutConfig      map[string]interface{} `json:"layout_config,omitempty"`
 	PasswordProtected bool                   `json:"password_protected"`
-	Password          string                 `json:"password"`
+	Password          string                 `json:"password" extensions:"x-writeOnly"`
 	CopyAllowed       *bool                  `json:"copy_allowed"`
 	PrintAllowed      *bool                  `json:"print_allowed"`
 	CustomLabels      map[string]interface{} `json:"custom_labels,omitempty"`
@@ -182,7 +184,7 @@ type UpdateRenderProfileInput struct {
 	PageSize          string                 `json:"page_size"`
 	LayoutConfig      map[string]interface{} `json:"layout_config,omitempty"`
 	PasswordProtected *bool                  `json:"password_protected"`
-	Password          string                 `json:"password"`
+	Password          string                 `json:"password" extensions:"x-writeOnly"`
 	CopyAllowed       *bool                  `json:"copy_allowed"`
 	PrintAllowed      *bool                  `json:"print_allowed"`
 	CustomLabels      map[string]interface{} `json:"custom_labels,omitempty"`
@@ -193,6 +195,7 @@ type UpdateRenderProfileInput struct {
 func NewDocumentService(
 	db *gorm.DB,
 	cfg *config.Config,
+	resolver ProviderConfigResolver,
 	repo interfaces.DocumentRepository,
 	businessRepo interfaces.BusinessRepository,
 	customerRepo interfaces.CustomerRepository,
@@ -202,11 +205,13 @@ func NewDocumentService(
 	journals *JournalService,
 	shipping *ShippingService,
 	awsCfg *awsclients.Config,
+	permissions PermissionChecker,
 	log *logger.Logger,
 ) *DocumentService {
 	return &DocumentService{
 		db:           db,
 		cfg:          cfg,
+		resolver:     resolver,
 		repo:         repo,
 		businessRepo: businessRepo,
 		customerRepo: customerRepo,
@@ -216,6 +221,7 @@ func NewDocumentService(
 		journals:     journals,
 		shipping:     shipping,
 		sqs:          awsCfg.SQS,
+		permissions:  permissions,
 		log:          log,
 	}
 }
@@ -1007,15 +1013,83 @@ func (s *DocumentService) GetRenderJobByBusiness(ctx context.Context, businessID
 }
 
 func (s *DocumentService) GetRenderProfileByBusiness(ctx context.Context, businessID, profileID string) (*models.RenderProfile, error) {
-	return s.repo.GetRenderProfile(ctx, businessID, profileID)
+	profile, err := s.repo.GetRenderProfile(ctx, businessID, profileID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.migrateLegacyRenderProfilePassword(ctx, profile); err != nil {
+		return nil, err
+	}
+	return publicRenderProfile(profile), nil
 }
 
 func (s *DocumentService) GetDefaultRenderProfileByBusiness(ctx context.Context, businessID string) (*models.RenderProfile, error) {
-	return s.repo.GetDefaultRenderProfile(ctx, businessID)
+	profile, err := s.repo.GetDefaultRenderProfile(ctx, businessID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.migrateLegacyRenderProfilePassword(ctx, profile); err != nil {
+		return nil, err
+	}
+	return publicRenderProfile(profile), nil
+}
+
+// GetRenderProfileForRenderingByBusiness is the trusted renderer boundary. It
+// returns plaintext password material only in the transient, non-serializable
+// Password field of the returned copy.
+func (s *DocumentService) GetRenderProfileForRenderingByBusiness(
+	ctx context.Context,
+	businessID, profileID string,
+) (*models.RenderProfile, error) {
+	profile, err := s.repo.GetRenderProfile(ctx, businessID, profileID)
+	if err != nil {
+		return nil, err
+	}
+	return s.resolveRenderProfilePassword(ctx, profile)
+}
+
+// GetDefaultRenderProfileForRenderingByBusiness is the default-profile form
+// of the trusted renderer boundary.
+func (s *DocumentService) GetDefaultRenderProfileForRenderingByBusiness(
+	ctx context.Context,
+	businessID string,
+) (*models.RenderProfile, error) {
+	profile, err := s.repo.GetDefaultRenderProfile(ctx, businessID)
+	if err != nil {
+		return nil, err
+	}
+	return s.resolveRenderProfilePassword(ctx, profile)
+}
+
+// BackfillLegacyRenderProfilePasswords encrypts all released plaintext rows in
+// bounded batches. It returns only a count so secret material cannot reach
+// startup logs or metrics.
+func (s *DocumentService) BackfillLegacyRenderProfilePasswords(ctx context.Context) (int, error) {
+	const batchSize = 100
+	migrated := 0
+	for {
+		profiles, err := s.repo.ListLegacyRenderProfiles(ctx, batchSize)
+		if err != nil {
+			return migrated, fmt.Errorf("list legacy render profile passwords: %w", err)
+		}
+		if len(profiles) == 0 {
+			return migrated, nil
+		}
+		for _, profile := range profiles {
+			if err := s.migrateLegacyRenderProfilePassword(ctx, profile); err != nil {
+				return migrated, err
+			}
+			migrated++
+		}
+	}
 }
 
 func (s *DocumentService) CreateRenderProfileByBusiness(ctx context.Context, businessID string, input CreateRenderProfileInput) (*models.RenderProfile, error) {
+	if err := requireMutationPermission(ctx, s.permissions, businessID, PermissionRenderProfilesCreate); err != nil {
+		return nil, err
+	}
 	profile := &models.RenderProfile{
+		ID:                uuid.NewString(),
 		BusinessID:        businessID,
 		Name:              input.Name,
 		HeaderHTML:        input.HeaderHTML,
@@ -1026,27 +1100,52 @@ func (s *DocumentService) CreateRenderProfileByBusiness(ctx context.Context, bus
 		PageSize:          coalesceString(input.PageSize, "A4"),
 		LayoutConfig:      mustMarshalMap(input.LayoutConfig),
 		PasswordProtected: input.PasswordProtected,
-		Password:          input.Password,
 		CopyAllowed:       boolValueOrDefault(input.CopyAllowed, true),
 		PrintAllowed:      boolValueOrDefault(input.PrintAllowed, true),
 		CustomLabels:      mustMarshalMap(input.CustomLabels),
 		VisibilityConfig:  mustMarshalMap(input.VisibilityConfig),
 		IsDefault:         input.IsDefault,
 	}
+	if input.Password != "" {
+		ciphertext, err := s.encryptRenderProfilePassword(ctx, businessID, profile.ID, input.Password)
+		if err != nil {
+			return nil, err
+		}
+		profile.PasswordCiphertext = &ciphertext
+	}
 	if err := s.repo.CreateRenderProfile(ctx, profile); err != nil {
 		return nil, err
 	}
-	return profile, nil
+	return publicRenderProfile(profile), nil
 }
 
 func (s *DocumentService) ListRenderProfilesByBusiness(ctx context.Context, businessID string, page, limit int) ([]*models.RenderProfile, int64, error) {
-	return s.repo.ListRenderProfiles(ctx, businessID, page, limit)
+	profiles, total, err := s.repo.ListRenderProfiles(ctx, businessID, page, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	result := make([]*models.RenderProfile, len(profiles))
+	for i, profile := range profiles {
+		if err := s.migrateLegacyRenderProfilePassword(ctx, profile); err != nil {
+			return nil, 0, err
+		}
+		result[i] = publicRenderProfile(profile)
+	}
+	return result, total, nil
 }
 
 func (s *DocumentService) UpdateRenderProfileByBusiness(ctx context.Context, businessID, profileID string, input UpdateRenderProfileInput) (*models.RenderProfile, error) {
+	if err := requireMutationPermission(ctx, s.permissions, businessID, PermissionRenderProfilesUpdate); err != nil {
+		return nil, err
+	}
 	profile, err := s.repo.GetRenderProfile(ctx, businessID, profileID)
 	if err != nil {
 		return nil, err
+	}
+	if input.Password == "" {
+		if err := s.migrateLegacyRenderProfilePassword(ctx, profile); err != nil {
+			return nil, err
+		}
 	}
 	if input.Name != "" {
 		profile.Name = input.Name
@@ -1076,7 +1175,12 @@ func (s *DocumentService) UpdateRenderProfileByBusiness(ctx context.Context, bus
 		profile.PasswordProtected = *input.PasswordProtected
 	}
 	if input.Password != "" {
-		profile.Password = input.Password
+		ciphertext, err := s.encryptRenderProfilePassword(ctx, businessID, profile.ID, input.Password)
+		if err != nil {
+			return nil, err
+		}
+		profile.PasswordCiphertext = &ciphertext
+		profile.LegacyPassword = nil
 	}
 	if input.CopyAllowed != nil {
 		profile.CopyAllowed = *input.CopyAllowed
@@ -1096,10 +1200,96 @@ func (s *DocumentService) UpdateRenderProfileByBusiness(ctx context.Context, bus
 	if err := s.repo.UpdateRenderProfile(ctx, profile); err != nil {
 		return nil, err
 	}
-	return profile, nil
+	return publicRenderProfile(profile), nil
+}
+
+func publicRenderProfile(profile *models.RenderProfile) *models.RenderProfile {
+	if profile == nil {
+		return nil
+	}
+	result := *profile
+	result.PasswordConfigured = renderProfilePasswordConfigured(profile)
+	result.Password = ""
+	result.LegacyPassword = nil
+	result.PasswordCiphertext = nil
+	return &result
+}
+
+func renderProfilePasswordConfigured(profile *models.RenderProfile) bool {
+	return profile != nil &&
+		((profile.PasswordCiphertext != nil && *profile.PasswordCiphertext != "") ||
+			(profile.LegacyPassword != nil && *profile.LegacyPassword != "") ||
+			profile.Password != "")
+}
+
+func (s *DocumentService) migrateLegacyRenderProfilePassword(
+	ctx context.Context,
+	profile *models.RenderProfile,
+) error {
+	if profile == nil || profile.LegacyPassword == nil || *profile.LegacyPassword == "" {
+		return nil
+	}
+	ciphertext, err := s.encryptRenderProfilePassword(
+		ctx,
+		profile.BusinessID,
+		profile.ID,
+		*profile.LegacyPassword,
+	)
+	if err != nil {
+		return fmt.Errorf("migrate legacy render profile password: %w", err)
+	}
+	migrated, err := s.repo.MigrateRenderProfilePassword(
+		ctx,
+		profile.BusinessID,
+		profile.ID,
+		*profile.LegacyPassword,
+		ciphertext,
+	)
+	if err != nil {
+		return fmt.Errorf("store migrated render profile password: %w", err)
+	}
+	if !migrated {
+		return errors.New("render profile password changed during migration")
+	}
+	profile.PasswordCiphertext = &ciphertext
+	profile.LegacyPassword = nil
+	return nil
+}
+
+func (s *DocumentService) resolveRenderProfilePassword(
+	ctx context.Context,
+	profile *models.RenderProfile,
+) (*models.RenderProfile, error) {
+	if profile == nil {
+		return nil, nil
+	}
+	plaintext := ""
+	if profile.LegacyPassword != nil && *profile.LegacyPassword != "" {
+		plaintext = *profile.LegacyPassword
+	} else if profile.PasswordCiphertext != nil && *profile.PasswordCiphertext != "" {
+		var err error
+		plaintext, err = s.decryptRenderProfilePassword(
+			ctx,
+			profile.BusinessID,
+			profile.ID,
+			*profile.PasswordCiphertext,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt render profile password: %w", err)
+		}
+	}
+	if err := s.migrateLegacyRenderProfilePassword(ctx, profile); err != nil {
+		return nil, err
+	}
+	result := publicRenderProfile(profile)
+	result.Password = plaintext
+	return result, nil
 }
 
 func (s *DocumentService) DeleteRenderProfileByBusiness(ctx context.Context, businessID, profileID string) error {
+	if err := requireMutationPermission(ctx, s.permissions, businessID, PermissionRenderProfilesDelete); err != nil {
+		return err
+	}
 	return s.repo.DeleteRenderProfile(ctx, businessID, profileID)
 }
 

@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 
+	"invoice-backend/internal/models"
 	"invoice-backend/internal/services"
 	"invoice-backend/internal/utils"
 	"invoice-backend/pkg/logger"
@@ -15,6 +16,13 @@ type RenderProfileHandler struct {
 	log *logger.Logger
 }
 
+type RenderProfileListResponse struct {
+	Data  []*models.RenderProfile `json:"data"`
+	Total int64                   `json:"total"`
+	Page  int                     `json:"page"`
+	Limit int                     `json:"limit"`
+}
+
 func NewRenderProfileHandler(svc *services.DocumentService, log *logger.Logger) *RenderProfileHandler {
 	return &RenderProfileHandler{svc: svc, log: log}
 }
@@ -25,7 +33,7 @@ func NewRenderProfileHandler(svc *services.DocumentService, log *logger.Logger) 
 // @Tags Render Profiles
 // @Produce json
 // @Security BearerAuth
-// @Success 200 {object} map[string]interface{}
+// @Success 200 {object} RenderProfileListResponse
 // @Failure 500 {object} map[string]string
 // @Router /render-profiles [get]
 func (h *RenderProfileHandler) List(c *gin.Context) {
@@ -39,7 +47,7 @@ func (h *RenderProfileHandler) List(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": profiles, "total": total, "page": page, "limit": limit})
+	c.JSON(http.StatusOK, RenderProfileListResponse{Data: profiles, Total: total, Page: page, Limit: limit})
 }
 
 // Get retrieves a render profile by ID
@@ -49,7 +57,7 @@ func (h *RenderProfileHandler) List(c *gin.Context) {
 // @Produce json
 // @Security BearerAuth
 // @Param id path string true "Render Profile ID"
-// @Success 200 {object} interface{}
+// @Success 200 {object} models.RenderProfile
 // @Failure 404 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /render-profiles/{id} [get]
@@ -72,7 +80,7 @@ func (h *RenderProfileHandler) Get(c *gin.Context) {
 // @Tags Render Profiles
 // @Produce json
 // @Security BearerAuth
-// @Success 200 {object} interface{}
+// @Success 200 {object} models.RenderProfile
 // @Failure 404 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /render-profiles/default [get]
@@ -97,7 +105,7 @@ func (h *RenderProfileHandler) GetDefault(c *gin.Context) {
 // @Produce json
 // @Security BearerAuth
 // @Param input body services.CreateRenderProfileInput true "Render profile details"
-// @Success 201 {object} interface{}
+// @Success 201 {object} models.RenderProfile
 // @Failure 400 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /render-profiles [post]
@@ -111,9 +119,14 @@ func (h *RenderProfileHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	requestContextWithActor(c)
 	profile, err := h.svc.CreateRenderProfileByBusiness(c.Request.Context(), businessID, input)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		statusCode := http.StatusInternalServerError
+		if isPermissionDeniedErr(err) {
+			statusCode = http.StatusForbidden
+		}
+		c.JSON(statusCode, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusCreated, profile)
@@ -128,7 +141,7 @@ func (h *RenderProfileHandler) Create(c *gin.Context) {
 // @Security BearerAuth
 // @Param id path string true "Render Profile ID"
 // @Param input body services.UpdateRenderProfileInput true "Render profile update details"
-// @Success 200 {object} interface{}
+// @Success 200 {object} models.RenderProfile
 // @Failure 400 {object} map[string]string
 // @Failure 404 {object} map[string]string
 // @Failure 500 {object} map[string]string
@@ -143,10 +156,13 @@ func (h *RenderProfileHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	requestContextWithActor(c)
 	profile, err := h.svc.UpdateRenderProfileByBusiness(c.Request.Context(), businessID, c.Param("id"), input)
 	if err != nil {
 		statusCode := http.StatusInternalServerError
-		if isNotFoundErr(err) {
+		if isPermissionDeniedErr(err) {
+			statusCode = http.StatusForbidden
+		} else if isNotFoundErr(err) {
 			statusCode = http.StatusNotFound
 		}
 		c.JSON(statusCode, gin.H{"error": err.Error()})
@@ -162,7 +178,7 @@ func (h *RenderProfileHandler) Update(c *gin.Context) {
 // @Produce json
 // @Security BearerAuth
 // @Param id path string true "Render Profile ID"
-// @Success 200 {object} interface{}
+// @Success 200 {object} models.RenderProfile
 // @Failure 404 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /render-profiles/{id}/default [post]
@@ -172,12 +188,15 @@ func (h *RenderProfileHandler) SetDefault(c *gin.Context) {
 		return
 	}
 	value := true
+	requestContextWithActor(c)
 	profile, err := h.svc.UpdateRenderProfileByBusiness(c.Request.Context(), businessID, c.Param("id"), services.UpdateRenderProfileInput{
 		IsDefault: &value,
 	})
 	if err != nil {
 		statusCode := http.StatusInternalServerError
-		if isNotFoundErr(err) {
+		if isPermissionDeniedErr(err) {
+			statusCode = http.StatusForbidden
+		} else if isNotFoundErr(err) {
 			statusCode = http.StatusNotFound
 		}
 		c.JSON(statusCode, gin.H{"error": err.Error()})
@@ -202,9 +221,12 @@ func (h *RenderProfileHandler) Delete(c *gin.Context) {
 	if !ok {
 		return
 	}
+	requestContextWithActor(c)
 	if err := h.svc.DeleteRenderProfileByBusiness(c.Request.Context(), businessID, c.Param("id")); err != nil {
 		statusCode := http.StatusInternalServerError
-		if isNotFoundErr(err) {
+		if isPermissionDeniedErr(err) {
+			statusCode = http.StatusForbidden
+		} else if isNotFoundErr(err) {
 			statusCode = http.StatusNotFound
 		}
 		c.JSON(statusCode, gin.H{"error": err.Error()})

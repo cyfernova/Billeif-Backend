@@ -560,6 +560,7 @@ func TestProcessInvoiceQueueMessageReturnsRetryableErrorForProcessingPreview(t *
 	documentService := services.NewDocumentService(
 		nil,
 		cfg,
+		nil,
 		&queueMessageDocumentRepository{
 			document:   document,
 			job:        job,
@@ -573,6 +574,7 @@ func TestProcessInvoiceQueueMessageReturnsRetryableErrorForProcessingPreview(t *
 		nil,
 		nil,
 		awsCfg,
+		nil,
 		log,
 	)
 	invoiceService := services.NewInvoiceService(
@@ -647,6 +649,7 @@ func TestProcessInvoiceQueueMessageNoOpsCompletedGenericReplay(t *testing.T) {
 	documentService := services.NewDocumentService(
 		nil,
 		cfg,
+		nil,
 		&queueMessageDocumentRepository{document: document, job: job},
 		nil,
 		nil,
@@ -656,6 +659,7 @@ func TestProcessInvoiceQueueMessageNoOpsCompletedGenericReplay(t *testing.T) {
 		nil,
 		nil,
 		&awsclients.Config{},
+		nil,
 		log,
 	)
 	body := fmt.Sprintf(

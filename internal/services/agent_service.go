@@ -303,8 +303,8 @@ func (s *AgentService) AddCapability(ctx context.Context, agentID, capabilityTyp
 	return s.ap2Repo.CreateAgentCapability(ctx, agentCapability)
 }
 
-func (s *AgentService) RemoveCapability(ctx context.Context, capabilityID string) error {
-	return s.ap2Repo.DeleteCapability(ctx, capabilityID)
+func (s *AgentService) RemoveCapability(ctx context.Context, agentID, capabilityID string) error {
+	return s.ap2Repo.DeleteCapability(ctx, agentID, capabilityID)
 }
 
 type AgentCapability struct {

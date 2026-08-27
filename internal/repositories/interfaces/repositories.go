@@ -206,6 +206,8 @@ type DocumentRepository interface {
 	ListRenderProfiles(ctx context.Context, businessID string, page, limit int) ([]*models.RenderProfile, int64, error)
 	GetRenderProfile(ctx context.Context, businessID, id string) (*models.RenderProfile, error)
 	GetDefaultRenderProfile(ctx context.Context, businessID string) (*models.RenderProfile, error)
+	ListLegacyRenderProfiles(ctx context.Context, limit int) ([]*models.RenderProfile, error)
+	MigrateRenderProfilePassword(ctx context.Context, businessID, id, legacyPassword, ciphertext string) (bool, error)
 	UpdateRenderProfile(ctx context.Context, profile *models.RenderProfile) error
 	DeleteRenderProfile(ctx context.Context, businessID, id string) error
 	CreateRenderJob(ctx context.Context, job *models.DocumentRenderJob) error

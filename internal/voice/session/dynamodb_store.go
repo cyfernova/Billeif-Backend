@@ -480,7 +480,7 @@ func classifyExpiredRelease(current *Session, expectedLease, cutoff time.Time) (
 func sessionScope(value *Session) Scope {
 	scope := Scope{UserID: value.UserID, BusinessID: value.BusinessID}
 	if value.BranchID == "" {
-		scope.AllBranches = true
+		scope.AllowBranchless = true
 	} else {
 		scope.AllowedBranchIDs = []string{value.BranchID}
 	}

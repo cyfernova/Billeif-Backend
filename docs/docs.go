@@ -3298,7 +3298,7 @@ const docTemplate = `{
                 ]
             },
             "post": {
-                "description": "Returns a presigned S3 URL to upload a profile picture.",
+                "description": "Returns a presigned S3 URL and the exact headers required to upload a profile picture. The non-multipart presign flow requires size_bytes; uploads are limited to 5 MiB.",
                 "produces": [
                     "application/json"
                 ],
@@ -3312,11 +3312,35 @@ const docTemplate = `{
                         "description": "MIME type (default: image/png)",
                         "name": "Content-Type",
                         "in": "header"
+                    },
+                    {
+                        "maximum": 5242880,
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "Exact upload size in bytes",
+                        "name": "size_bytes",
+                        "in": "query",
+                        "required": true
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/services.PresignedUpload"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "413": {
+                        "description": "Request Entity Too Large",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -4898,7 +4922,7 @@ const docTemplate = `{
         },
         "/business-profiles/{id}/logo": {
             "post": {
-                "description": "Returns a presigned S3 URL to upload a business logo.",
+                "description": "Returns a presigned S3 URL and the exact headers required to upload a business logo. Uploads are limited to 5 MiB.",
                 "produces": [
                     "application/json"
                 ],
@@ -4919,11 +4943,35 @@ const docTemplate = `{
                         "description": "MIME type (default: image/png)",
                         "name": "Content-Type",
                         "in": "header"
+                    },
+                    {
+                        "maximum": 5242880,
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "Exact upload size in bytes",
+                        "name": "size_bytes",
+                        "in": "query",
+                        "required": true
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/services.PresignedUpload"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "413": {
+                        "description": "Request Entity Too Large",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -5926,6 +5974,15 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -7027,7 +7084,7 @@ const docTemplate = `{
         },
         "/drive/presign": {
             "post": {
-                "description": "Creates a presigned URL for uploading a drive asset",
+                "description": "Creates a presigned URL and exact required headers for uploading a drive asset up to 25 MiB",
                 "consumes": [
                     "application/json"
                 ],
@@ -7053,8 +7110,7 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/services.DriveUploadSession"
                         }
                     },
                     "400": {
@@ -10931,7 +10987,7 @@ const docTemplate = `{
         },
         "/products/{id}/image": {
             "post": {
-                "description": "Returns a presigned S3 URL to upload a product image.",
+                "description": "Returns a presigned S3 URL and the exact headers required to upload a product image. Uploads are limited to 5 MiB.",
                 "produces": [
                     "application/json"
                 ],
@@ -10952,11 +11008,35 @@ const docTemplate = `{
                         "description": "MIME type (default: image/png)",
                         "name": "Content-Type",
                         "in": "header"
+                    },
+                    {
+                        "maximum": 5242880,
+                        "minimum": 1,
+                        "type": "integer",
+                        "description": "Exact upload size in bytes",
+                        "name": "size_bytes",
+                        "in": "query",
+                        "required": true
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/services.PresignedUpload"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "413": {
+                        "description": "Request Entity Too Large",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -11607,7 +11687,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/public/store/orders/{slug}/{token}": {
+        "/public/store/{slug}/orders/{token}": {
             "get": {
                 "description": "Returns order details using a public order token",
                 "produces": [
@@ -11637,8 +11717,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/services.PublicStoreOrderResponse"
                         }
                     },
                     "404": {
@@ -11676,8 +11755,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/handlers.RenderProfileListResponse"
                         }
                     },
                     "500": {
@@ -11722,7 +11800,9 @@ const docTemplate = `{
                 "responses": {
                     "201": {
                         "description": "Created",
-                        "schema": {}
+                        "schema": {
+                            "$ref": "#/definitions/models.RenderProfile"
+                        }
                     },
                     "400": {
                         "description": "Bad Request",
@@ -11763,7 +11843,9 @@ const docTemplate = `{
                 "responses": {
                     "200": {
                         "description": "OK",
-                        "schema": {}
+                        "schema": {
+                            "$ref": "#/definitions/models.RenderProfile"
+                        }
                     },
                     "404": {
                         "description": "Not Found",
@@ -11813,7 +11895,9 @@ const docTemplate = `{
                 "responses": {
                     "200": {
                         "description": "OK",
-                        "schema": {}
+                        "schema": {
+                            "$ref": "#/definitions/models.RenderProfile"
+                        }
                     },
                     "404": {
                         "description": "Not Found",
@@ -11873,7 +11957,9 @@ const docTemplate = `{
                 "responses": {
                     "200": {
                         "description": "OK",
-                        "schema": {}
+                        "schema": {
+                            "$ref": "#/definitions/models.RenderProfile"
+                        }
                     },
                     "400": {
                         "description": "Bad Request",
@@ -11982,7 +12068,9 @@ const docTemplate = `{
                 "responses": {
                     "200": {
                         "description": "OK",
-                        "schema": {}
+                        "schema": {
+                            "$ref": "#/definitions/models.RenderProfile"
+                        }
                     },
                     "404": {
                         "description": "Not Found",
@@ -17774,6 +17862,26 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.RenderProfileListResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.RenderProfile"
+                    }
+                },
+                "limit": {
+                    "type": "integer"
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
         "handlers.StartA2ANegotiationRequest": {
             "type": "object",
             "required": [
@@ -18188,6 +18296,7 @@ const docTemplate = `{
         "models.BargainingNegotiation": {
             "type": "object",
             "required": [
+                "business_id",
                 "buyer_agent_id",
                 "buyer_volatility",
                 "current_amount",
@@ -18199,6 +18308,9 @@ const docTemplate = `{
                 "user_id"
             ],
             "properties": {
+                "business_id": {
+                    "type": "string"
+                },
                 "buyer_agent": {
                     "$ref": "#/definitions/models.Agent"
                 },
@@ -18263,9 +18375,13 @@ const docTemplate = `{
                     "enum": [
                         "initiated",
                         "in_progress",
+                        "running",
                         "accepted",
                         "rejected",
-                        "expired"
+                        "expired",
+                        "completed",
+                        "stopped",
+                        "failed"
                     ]
                 },
                 "updated_at": {
@@ -18622,6 +18738,50 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.DriveAsset": {
+            "type": "object",
+            "properties": {
+                "bucket": {
+                    "type": "string"
+                },
+                "business_id": {
+                    "type": "string"
+                },
+                "category": {
+                    "type": "string"
+                },
+                "content_type": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "folder_path": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "object_key": {
+                    "type": "string"
+                },
+                "size_bytes": {
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "uploaded_by": {
                     "type": "string"
                 }
             }
@@ -19495,6 +19655,71 @@ const docTemplate = `{
                 "RenderKindPreview",
                 "RenderKindFinal"
             ]
+        },
+        "models.RenderProfile": {
+            "type": "object",
+            "required": [
+                "business_id"
+            ],
+            "properties": {
+                "banner_text": {
+                    "type": "string"
+                },
+                "business_id": {
+                    "type": "string"
+                },
+                "copy_allowed": {
+                    "type": "boolean"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "custom_labels": {
+                    "type": "string"
+                },
+                "font_family": {
+                    "type": "string"
+                },
+                "footer_html": {
+                    "type": "string"
+                },
+                "header_html": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_default": {
+                    "type": "boolean"
+                },
+                "layout_config": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "page_size": {
+                    "type": "string"
+                },
+                "password_configured": {
+                    "type": "boolean"
+                },
+                "password_protected": {
+                    "type": "boolean"
+                },
+                "print_allowed": {
+                    "type": "boolean"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "visibility_config": {
+                    "type": "string"
+                },
+                "watermark_text": {
+                    "type": "string"
+                }
+            }
         },
         "models.Role": {
             "type": "object",
@@ -20717,7 +20942,7 @@ const docTemplate = `{
                 },
                 "size_bytes": {
                     "type": "integer",
-                    "minimum": 0
+                    "maximum": 26214400
                 }
             }
         },
@@ -21191,7 +21416,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "password": {
-                    "type": "string"
+                    "type": "string",
+                    "x-writeonly": true
                 },
                 "password_protected": {
                     "type": "boolean"
@@ -21402,6 +21628,23 @@ const docTemplate = `{
                 },
                 "replayed": {
                     "type": "boolean"
+                }
+            }
+        },
+        "services.DriveUploadSession": {
+            "type": "object",
+            "properties": {
+                "asset": {
+                    "$ref": "#/definitions/models.DriveAsset"
+                },
+                "required_headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "upload_url": {
+                    "type": "string"
                 }
             }
         },
@@ -22001,6 +22244,20 @@ const docTemplate = `{
                 }
             }
         },
+        "services.PresignedUpload": {
+            "type": "object",
+            "properties": {
+                "required_headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "upload_url": {
+                    "type": "string"
+                }
+            }
+        },
         "services.PreviewInvoiceResult": {
             "type": "object",
             "properties": {
@@ -22174,6 +22431,85 @@ const docTemplate = `{
                 },
                 "track_serials": {
                     "type": "boolean"
+                }
+            }
+        },
+        "services.PublicStoreOrderLineResponse": {
+            "type": "object",
+            "properties": {
+                "discount_amount": {
+                    "type": "number"
+                },
+                "line_total": {
+                    "type": "number"
+                },
+                "quantity": {
+                    "type": "number"
+                },
+                "sku": {
+                    "type": "string"
+                },
+                "tax_amount": {
+                    "type": "number"
+                },
+                "tax_rate": {
+                    "type": "number"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "unit_price": {
+                    "type": "number"
+                }
+            }
+        },
+        "services.PublicStoreOrderResponse": {
+            "type": "object",
+            "properties": {
+                "cancelled_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "discount_total": {
+                    "type": "number"
+                },
+                "lines": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/services.PublicStoreOrderLineResponse"
+                    }
+                },
+                "order_number": {
+                    "type": "string"
+                },
+                "ordered_at": {
+                    "type": "string"
+                },
+                "paid_at": {
+                    "type": "string"
+                },
+                "payment_method": {
+                    "type": "string"
+                },
+                "payment_status": {
+                    "type": "string"
+                },
+                "shipping_total": {
+                    "type": "number"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "subtotal": {
+                    "type": "number"
+                },
+                "tax_total": {
+                    "type": "number"
+                },
+                "total": {
+                    "type": "number"
                 }
             }
         },
@@ -23348,7 +23684,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "password": {
-                    "type": "string"
+                    "type": "string",
+                    "x-writeonly": true
                 },
                 "password_protected": {
                     "type": "boolean"

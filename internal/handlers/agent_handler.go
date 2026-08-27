@@ -393,8 +393,12 @@ func (h *AgentHandler) RemoveCapability(c *gin.Context) {
 	}
 	capabilityID := c.Param("capability_id")
 
-	if err := h.svc.RemoveCapability(c.Request.Context(), capabilityID); err != nil {
+	if err := h.svc.RemoveCapability(c.Request.Context(), id, capabilityID); err != nil {
 		log.Error("failed to remove capability", "error", err, "capability_id", capabilityID)
+		if isNotFoundErr(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "capability not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
