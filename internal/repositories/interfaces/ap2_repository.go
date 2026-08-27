@@ -2,10 +2,13 @@ package interfaces
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"invoice-backend/internal/models"
 )
+
+var ErrAgentNotFound = errors.New("agent not found")
 
 type AP2Repository interface {
 	// Intent Mandates
