@@ -833,7 +833,7 @@ func (s *TaxComplianceService) handleJobError(ctx context.Context, job *models.G
 			"error":       err.Error(),
 			"retry_at":    next,
 		})
-		return s.dispatchGSTJob(ctx, job)
+		return err
 	}
 
 	status := models.GSTJobStatusFailed

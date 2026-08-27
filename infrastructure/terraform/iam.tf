@@ -26,10 +26,32 @@ locals {
     ]
     bargaining = [
       aws_db_instance.main.master_user_secret[0].secret_arn,
-      aws_secretsmanager_secret.credential_encryption.arn,
       aws_secretsmanager_secret.llm.arn,
       aws_secretsmanager_secret.exa.arn
     ]
+  }
+  worker_queue_arns = {
+    invoice    = aws_sqs_queue.invoice_processing.arn
+    gst        = aws_sqs_queue.gst_processing.arn
+    bargaining = aws_sqs_queue.bargaining_negotiation.arn
+  }
+  worker_self_send_queue_arns = {
+    invoice    = []
+    gst        = []
+    bargaining = [aws_sqs_queue.bargaining_negotiation.arn]
+  }
+  worker_storage_read_arns = {
+    invoice    = ["${aws_s3_bucket.invoices_pdf.arn}/invoices/*"]
+    gst        = []
+    bargaining = []
+  }
+  worker_storage_write_arns = {
+    invoice = [
+      "${aws_s3_bucket.invoices_pdf.arn}/documents/*",
+      "${aws_s3_bucket.invoices_pdf.arn}/invoices/*",
+    ]
+    gst        = ["${aws_s3_bucket.invoices_pdf.arn}/gst/*"]
+    bargaining = []
   }
 }
 
@@ -643,37 +665,44 @@ data "aws_iam_policy_document" "lambda_worker_app" {
   for_each = local.worker_runtime_secret_arns
 
   statement {
-    sid    = "WorkerQueues"
+    sid    = "WorkerQueueConsume"
     effect = "Allow"
     actions = [
-      "sqs:ReceiveMessage",
       "sqs:DeleteMessage",
       "sqs:GetQueueAttributes",
-      "sqs:ChangeMessageVisibility",
-      "sqs:SendMessage"
+      "sqs:ReceiveMessage",
     ]
-    resources = [
-      aws_sqs_queue.invoice_processing.arn,
-      aws_sqs_queue.gst_processing.arn,
-      aws_sqs_queue.bargaining_negotiation.arn,
-      aws_sqs_queue.invoice_processing_dlq.arn,
-      aws_sqs_queue.gst_processing_dlq.arn,
-      aws_sqs_queue.bargaining_negotiation_dlq.arn,
-    ]
+    resources = [local.worker_queue_arns[each.key]]
   }
 
-  statement {
-    sid    = "WorkerDocuments"
-    effect = "Allow"
-    actions = [
-      "s3:GetObject",
-      "s3:PutObject",
-      "s3:DeleteObject"
-    ]
-    resources = [
-      "${aws_s3_bucket.invoices_pdf.arn}/*",
-      "${aws_s3_bucket.email_sink.arn}/*"
-    ]
+  dynamic "statement" {
+    for_each = length(local.worker_self_send_queue_arns[each.key]) > 0 ? [true] : []
+    content {
+      sid       = "WorkerQueueSelfSend"
+      effect    = "Allow"
+      actions   = ["sqs:SendMessage"]
+      resources = local.worker_self_send_queue_arns[each.key]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = length(local.worker_storage_read_arns[each.key]) > 0 ? [true] : []
+    content {
+      sid       = "WorkerStorageRead"
+      effect    = "Allow"
+      actions   = ["s3:GetObject"]
+      resources = local.worker_storage_read_arns[each.key]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = length(local.worker_storage_write_arns[each.key]) > 0 ? [true] : []
+    content {
+      sid       = "WorkerStorageWrite"
+      effect    = "Allow"
+      actions   = ["s3:PutObject"]
+      resources = local.worker_storage_write_arns[each.key]
+    }
   }
 
   dynamic "statement" {
@@ -695,12 +724,9 @@ data "aws_iam_policy_document" "lambda_worker_app" {
   dynamic "statement" {
     for_each = length(each.value) > 0 ? [true] : []
     content {
-      sid    = "WorkerSecrets"
-      effect = "Allow"
-      actions = [
-        "secretsmanager:DescribeSecret",
-        "secretsmanager:GetSecretValue"
-      ]
+      sid       = "WorkerSecrets"
+      effect    = "Allow"
+      actions   = ["secretsmanager:GetSecretValue"]
       resources = each.value
 
       condition {
@@ -714,12 +740,9 @@ data "aws_iam_policy_document" "lambda_worker_app" {
   dynamic "statement" {
     for_each = length(each.value) > 0 ? [true] : []
     content {
-      sid    = "WorkerSecretsKMS"
-      effect = "Allow"
-      actions = [
-        "kms:Decrypt",
-        "kms:DescribeKey"
-      ]
+      sid       = "WorkerSecretsKMS"
+      effect    = "Allow"
+      actions   = ["kms:Decrypt"]
       resources = [aws_kms_key.application_secrets.arn]
 
       condition {
