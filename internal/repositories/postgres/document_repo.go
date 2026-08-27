@@ -343,6 +343,143 @@ func (r *documentRepository) GetRenderJob(ctx context.Context, businessID, jobID
 	return &job, err
 }
 
+func (r *documentRepository) ClaimGenericRender(
+	ctx context.Context,
+	businessID, jobID, owner string,
+	now, leaseUntil time.Time,
+) (interfaces.GenericRenderClaimState, error) {
+	if businessID == "" || jobID == "" || !validRenderLeaseOwner(owner) || !leaseUntil.After(now) {
+		return "", errors.New("claim generic render requires exact job identity")
+	}
+	result := r.db.WithContext(ctx).
+		Model(&models.DocumentRenderJob{}).
+		Where(
+			"id = ? AND business_id = ? AND kind = ? AND (status IN ? OR (status = ? AND (lease_expires_at IS NULL OR lease_expires_at <= ?))) AND deleted_at IS NULL",
+			jobID,
+			businessID,
+			models.RenderKindPreview,
+			[]string{models.RenderJobStatusQueued, models.RenderJobStatusFailed},
+			models.RenderJobStatusProcessing,
+			now,
+		).
+		Updates(map[string]interface{}{
+			"status":           models.RenderJobStatusProcessing,
+			"attempts":         gorm.Expr("attempts + 1"),
+			"error_message":    "",
+			"completed_at":     nil,
+			"lease_owner":      owner,
+			"lease_expires_at": leaseUntil,
+		})
+	if result.Error != nil {
+		return "", fmt.Errorf("claim generic render job: %w", result.Error)
+	}
+	if result.RowsAffected == 1 {
+		return interfaces.GenericRenderClaimed, nil
+	}
+
+	var job models.DocumentRenderJob
+	if err := r.db.WithContext(ctx).
+		Select("id", "business_id", "kind", "status").
+		Where("id = ? AND business_id = ? AND kind = ? AND deleted_at IS NULL", jobID, businessID, models.RenderKindPreview).
+		First(&job).Error; err != nil {
+		return "", fmt.Errorf("load unclaimed generic render job: %w", err)
+	}
+	switch job.Status {
+	case models.RenderJobStatusProcessing:
+		return interfaces.GenericRenderAlreadyProcessing, nil
+	case models.RenderJobStatusCompleted:
+		return interfaces.GenericRenderAlreadyCompleted, nil
+	case models.RenderJobStatusObsolete:
+		return interfaces.GenericRenderAlreadyObsolete, nil
+	default:
+		return "", fmt.Errorf("generic render job was not claimable from status %q", job.Status)
+	}
+}
+
+func (r *documentRepository) FailGenericRender(
+	ctx context.Context,
+	businessID, jobID, owner, errorMessage string,
+) error {
+	if businessID == "" || jobID == "" || !validRenderLeaseOwner(owner) {
+		return errors.New("fail generic render requires exact job identity")
+	}
+	result := r.db.WithContext(ctx).
+		Model(&models.DocumentRenderJob{}).
+		Where(
+			"id = ? AND business_id = ? AND kind = ? AND status = ? AND lease_owner = ? AND deleted_at IS NULL",
+			jobID,
+			businessID,
+			models.RenderKindPreview,
+			models.RenderJobStatusProcessing,
+			owner,
+		).
+		Updates(map[string]interface{}{
+			"status":           models.RenderJobStatusFailed,
+			"error_message":    errorMessage,
+			"completed_at":     nil,
+			"lease_owner":      nil,
+			"lease_expires_at": nil,
+		})
+	if result.Error != nil {
+		return fmt.Errorf("fail generic render job: %w", result.Error)
+	}
+	return nil
+}
+
+func (r *documentRepository) CompleteGenericRender(
+	ctx context.Context,
+	businessID, documentID, jobID, owner, objectKey, pdfURL, filename string,
+	now time.Time,
+) (bool, error) {
+	if businessID == "" || documentID == "" || jobID == "" || !validRenderLeaseOwner(owner) || objectKey == "" || pdfURL == "" || filename == "" {
+		return false, errors.New("complete generic render requires exact job identity")
+	}
+	completed := false
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&models.DocumentRenderJob{}).
+			Where(
+				"id = ? AND business_id = ? AND kind = ? AND status = ? AND lease_owner = ? AND lease_expires_at > ? AND deleted_at IS NULL",
+				jobID,
+				businessID,
+				models.RenderKindPreview,
+				models.RenderJobStatusProcessing,
+				owner,
+				now,
+			).
+			Updates(map[string]interface{}{
+				"status":           models.RenderJobStatusCompleted,
+				"object_key":       objectKey,
+				"output_url":       pdfURL,
+				"output_filename":  filename,
+				"completed_at":     now,
+				"error_message":    "",
+				"lease_owner":      nil,
+				"lease_expires_at": nil,
+			})
+		if result.Error != nil {
+			return fmt.Errorf("complete generic render job: %w", result.Error)
+		}
+		if result.RowsAffected != 1 {
+			return nil
+		}
+		documentResult := tx.Model(&models.Document{}).
+			Where("id = ? AND business_id = ? AND deleted_at IS NULL", documentID, businessID).
+			Updates(map[string]interface{}{"pdf_url": pdfURL, "pdf_filename": filename})
+		if documentResult.Error != nil {
+			return fmt.Errorf("update generic rendered document: %w", documentResult.Error)
+		}
+		if documentResult.RowsAffected != 1 {
+			return errors.New("generic render document not found")
+		}
+		completed = true
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return completed, nil
+}
+
 func (r *documentRepository) GetInvoiceRenderJob(
 	ctx context.Context,
 	businessID, invoiceID, jobID string,

@@ -249,6 +249,29 @@ const (
 	PreviewRenderAlreadyObsolete   PreviewRenderClaimState = "obsolete"
 )
 
+type GenericRenderClaimState string
+
+const (
+	GenericRenderClaimed           GenericRenderClaimState = "claimed"
+	GenericRenderAlreadyProcessing GenericRenderClaimState = "processing"
+	GenericRenderAlreadyCompleted  GenericRenderClaimState = "completed"
+	GenericRenderAlreadyObsolete   GenericRenderClaimState = "obsolete"
+)
+
+type GenericRenderRepository interface {
+	ClaimGenericRender(
+		ctx context.Context,
+		businessID, jobID, owner string,
+		now, leaseUntil time.Time,
+	) (GenericRenderClaimState, error)
+	FailGenericRender(ctx context.Context, businessID, jobID, owner, errorMessage string) error
+	CompleteGenericRender(
+		ctx context.Context,
+		businessID, documentID, jobID, owner, objectKey, pdfURL, filename string,
+		now time.Time,
+	) (bool, error)
+}
+
 type FinalRenderClaimState string
 
 const (
