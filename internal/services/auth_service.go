@@ -431,9 +431,16 @@ func (s *AuthService) UpdateProfile(ctx context.Context, userID string, input Up
 	return user, nil
 }
 
-func (s *AuthService) GetProfilePictureUploadURL(ctx context.Context, userID, contentType string) (string, error) {
+func (s *AuthService) GetProfilePictureUploadURL(ctx context.Context, userID, contentType string, sizeBytes int64) (*PresignedUpload, error) {
+	contentType, err := NormalizeImageUploadContentType(contentType)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateUploadSize("profile picture", sizeBytes, MaxProfilePictureUploadBytes); err != nil {
+		return nil, err
+	}
 	key := s.profilePictureKey(userID, contentType)
-	return s.s3.GeneratePresignedUploadURL(ctx, s.profilePictureBucket(), key, contentType, 3600)
+	return s.s3.GeneratePresignedUpload(ctx, s.profilePictureBucket(), key, contentType, sizeBytes, 3600)
 }
 
 func (s *AuthService) UploadProfilePicture(ctx context.Context, userID string, data []byte, contentType string) (*models.User, error) {

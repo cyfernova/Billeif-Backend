@@ -984,7 +984,7 @@ func (peer *Peer) SendOpus(payload []byte) error {
 		return ErrPeerState
 	}
 	packet := &rtp.Packet{
-		Header: rtp.Header{Version: 2, PayloadType: uint8(opusPayloadType), SequenceNumber: sequence, Timestamp: timestamp},
+		Header:  rtp.Header{Version: 2, PayloadType: uint8(opusPayloadType), SequenceNumber: sequence, Timestamp: timestamp},
 		Payload: payload,
 	}
 	if err := track.WriteRTP(packet); err != nil {

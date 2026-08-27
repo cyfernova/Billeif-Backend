@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"invoice-backend/internal/middleware"
+	"context"
 	"invoice-backend/internal/models"
 	"net/http"
 
@@ -13,11 +13,22 @@ import (
 )
 
 type ProductHandler struct {
-	svc *services.ProductService
+	svc productService
 	log *logger.Logger
 }
 
-func NewProductHandler(svc *services.ProductService, log *logger.Logger) *ProductHandler {
+type productService interface {
+	Create(context.Context, services.CreateProductInput) (*models.Product, error)
+	GetByBusiness(context.Context, string, string) (*models.Product, error)
+	ListWithFilters(context.Context, string, services.ProductListFilter, int, int) ([]*models.Product, int64, error)
+	UpdateByBusiness(context.Context, string, string, services.UpdateProductInput) (*models.Product, error)
+	CloneByBusiness(context.Context, string, string) (*models.Product, error)
+	DeleteByBusiness(context.Context, string, string) error
+	GetImageUploadURLByBusiness(context.Context, string, string, string, int64) (*services.PresignedUpload, error)
+	AdjustStockByBusiness(context.Context, string, string, services.StockAdjustmentInput) (*models.Product, error)
+}
+
+func NewProductHandler(svc productService, log *logger.Logger) *ProductHandler {
 	return &ProductHandler{svc: svc, log: log}
 }
 
@@ -77,9 +88,9 @@ func (h *ProductHandler) Create(c *gin.Context) {
 func (h *ProductHandler) Get(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "get")
 
-	businessID := c.Query("business_id")
-	if businessID == "" {
-		businessID = middleware.GetBusinessID(c)
+	businessID, ok := requireEffectiveBusinessScope(c, "")
+	if !ok {
+		return
 	}
 
 	id := c.Param("id")
@@ -110,9 +121,9 @@ func (h *ProductHandler) Get(c *gin.Context) {
 func (h *ProductHandler) List(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "list")
 
-	businessID := c.Query("business_id")
-	if businessID == "" {
-		businessID = middleware.GetBusinessID(c)
+	businessID, ok := requireEffectiveBusinessScope(c, "")
+	if !ok {
+		return
 	}
 
 	page, limit := utils.ParsePagination(c)
@@ -164,9 +175,9 @@ func (h *ProductHandler) Update(c *gin.Context) {
 		return
 	}
 
-	businessID := c.Query("business_id")
-	if businessID == "" {
-		businessID = middleware.GetBusinessID(c)
+	businessID, ok := requireEffectiveBusinessScope(c, "")
+	if !ok {
+		return
 	}
 
 	var product *models.Product
@@ -188,9 +199,9 @@ func (h *ProductHandler) Update(c *gin.Context) {
 func (h *ProductHandler) Clone(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "clone")
 
-	businessID := c.Query("business_id")
-	if businessID == "" {
-		businessID = middleware.GetBusinessID(c)
+	businessID, ok := requireEffectiveBusinessScope(c, "")
+	if !ok {
+		return
 	}
 
 	product, err := h.svc.CloneByBusiness(c.Request.Context(), businessID, c.Param("id"))
@@ -222,13 +233,8 @@ func (h *ProductHandler) Clone(c *gin.Context) {
 func (h *ProductHandler) Delete(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "delete")
 
-	businessID := c.Query("business_id")
-	if businessID == "" {
-		businessID = middleware.GetBusinessID(c)
-	}
-	if businessID == "" {
-		log.Warn("business scope required")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "business scope required"})
+	businessID, ok := requireEffectiveBusinessScope(c, "")
+	if !ok {
 		return
 	}
 
@@ -249,21 +255,24 @@ func (h *ProductHandler) Delete(c *gin.Context) {
 
 // UploadImage generates a presigned URL for product image upload
 // @Summary Upload product image
-// @Description Returns a presigned S3 URL to upload a product image.
+// @Description Returns a presigned S3 URL and the exact headers required to upload a product image. Uploads are limited to 5 MiB.
 // @Tags Products
 // @Produce json
 // @Security BearerAuth
 // @Param id path string true "Product ID"
 // @Param Content-Type header string false "MIME type (default: image/png)"
-// @Success 200 {object} map[string]string
+// @Param size_bytes query int true "Exact upload size in bytes" minimum(1) maximum(5242880)
+// @Success 200 {object} services.PresignedUpload
+// @Failure 400 {object} map[string]string
+// @Failure 413 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /products/{id}/image [post]
 func (h *ProductHandler) UploadImage(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "upload_image")
 
-	businessID := c.Query("business_id")
-	if businessID == "" {
-		businessID = middleware.GetBusinessID(c)
+	businessID, ok := requireEffectiveBusinessScope(c, "")
+	if !ok {
+		return
 	}
 
 	id := c.Param("id")
@@ -271,8 +280,12 @@ func (h *ProductHandler) UploadImage(c *gin.Context) {
 	if !ok2 {
 		return
 	}
+	sizeBytes, ok := requireUploadSizeBytes(c, services.MaxProductImageUploadBytes)
+	if !ok {
+		return
+	}
 
-	url, err := h.svc.GetImageUploadURLByBusiness(c.Request.Context(), businessID, id, contentType)
+	upload, err := h.svc.GetImageUploadURLByBusiness(c.Request.Context(), businessID, id, contentType, sizeBytes)
 	if err != nil {
 		log.Error("failed to generate product image upload URL", "error", err, "product_id", id)
 		if isNotFoundErr(err) {
@@ -284,7 +297,7 @@ func (h *ProductHandler) UploadImage(c *gin.Context) {
 	}
 	log.Info("product image upload URL generated", "product_id", id)
 
-	c.JSON(http.StatusOK, gin.H{"upload_url": url})
+	c.JSON(http.StatusOK, upload)
 }
 
 // AdjustStock adjusts the stock level of a product
@@ -303,9 +316,9 @@ func (h *ProductHandler) UploadImage(c *gin.Context) {
 func (h *ProductHandler) AdjustStock(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("product_handler").With("operation", "adjust_stock")
 
-	businessID := c.Query("business_id")
-	if businessID == "" {
-		businessID = middleware.GetBusinessID(c)
+	businessID, ok := requireEffectiveBusinessScope(c, "")
+	if !ok {
+		return
 	}
 
 	id := c.Param("id")

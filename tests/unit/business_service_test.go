@@ -55,9 +55,12 @@ type MockBusinessS3Service struct {
 	mock.Mock
 }
 
-func (m *MockBusinessS3Service) GeneratePresignedUploadURL(ctx context.Context, bucket, key, contentType string, expiresIn int64) (string, error) {
-	args := m.Called(ctx, bucket, key, contentType, expiresIn)
-	return args.String(0), args.Error(1)
+func (m *MockBusinessS3Service) GeneratePresignedUpload(ctx context.Context, bucket, key, contentType string, sizeBytes, expiresIn int64) (*services.PresignedUpload, error) {
+	args := m.Called(ctx, bucket, key, contentType, sizeBytes, expiresIn)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*services.PresignedUpload), args.Error(1)
 }
 
 // TestBusinessService_Create_Success tests successful business creation
@@ -711,14 +714,14 @@ func TestBusinessService_GetLogoUploadURL_Success(t *testing.T) {
 	ctx := context.Background()
 	businessID := "business-123"
 	contentType := "image/png"
-	expectedURL := "https://s3.example.com/presigned-url"
+	expected := &services.PresignedUpload{UploadURL: "https://s3.example.com/presigned-url"}
 
-	mockS3.On("GeneratePresignedUploadURL", ctx, "business-logos", "logos/business-123/logo", contentType, int64(3600)).Return(expectedURL, nil)
+	mockS3.On("GeneratePresignedUpload", ctx, "business-logos", "logos/business-123/logo", contentType, int64(4096), int64(3600)).Return(expected, nil)
 
-	url, err := svc.GetLogoUploadURL(ctx, businessID, contentType)
+	result, err := svc.GetLogoUploadURL(ctx, businessID, contentType, 4096)
 
 	assert.NoError(t, err)
-	assert.Equal(t, expectedURL, url)
+	assert.Equal(t, expected, result)
 	mockS3.AssertExpectations(t)
 }
 
@@ -734,12 +737,12 @@ func TestBusinessService_GetLogoUploadURL_S3Error(t *testing.T) {
 	businessID := "business-123"
 	contentType := "image/png"
 
-	mockS3.On("GeneratePresignedUploadURL", ctx, "business-logos", "logos/business-123/logo", contentType, int64(3600)).Return("", errors.New("S3 error"))
+	mockS3.On("GeneratePresignedUpload", ctx, "business-logos", "logos/business-123/logo", contentType, int64(4096), int64(3600)).Return((*services.PresignedUpload)(nil), errors.New("S3 error"))
 
-	url, err := svc.GetLogoUploadURL(ctx, businessID, contentType)
+	result, err := svc.GetLogoUploadURL(ctx, businessID, contentType, 4096)
 
 	assert.Error(t, err)
-	assert.Empty(t, url)
+	assert.Nil(t, result)
 	mockS3.AssertExpectations(t)
 }
 
@@ -755,7 +758,7 @@ func TestBusinessService_GetLogoUploadURLByOwner_Success(t *testing.T) {
 	userID := "user-123"
 	businessID := "business-456"
 	contentType := "image/png"
-	expectedURL := "https://s3.example.com/presigned-url"
+	expected := &services.PresignedUpload{UploadURL: "https://s3.example.com/presigned-url"}
 
 	business := &models.BusinessProfile{
 		ID:      businessID,
@@ -764,12 +767,12 @@ func TestBusinessService_GetLogoUploadURLByOwner_Success(t *testing.T) {
 	}
 
 	mockRepo.On("GetByID", ctx, businessID).Return(business, nil)
-	mockS3.On("GeneratePresignedUploadURL", ctx, "business-logos", "logos/business-456/logo", contentType, int64(3600)).Return(expectedURL, nil)
+	mockS3.On("GeneratePresignedUpload", ctx, "business-logos", "logos/business-456/logo", contentType, int64(4096), int64(3600)).Return(expected, nil)
 
-	url, err := svc.GetLogoUploadURLByOwner(ctx, userID, businessID, contentType)
+	result, err := svc.GetLogoUploadURLByOwner(ctx, userID, businessID, contentType, 4096)
 
 	assert.NoError(t, err)
-	assert.Equal(t, expectedURL, url)
+	assert.Equal(t, expected, result)
 	mockRepo.AssertExpectations(t)
 	mockS3.AssertExpectations(t)
 }
@@ -789,11 +792,54 @@ func TestBusinessService_GetLogoUploadURLByOwner_NotFound(t *testing.T) {
 
 	mockRepo.On("GetByID", ctx, businessID).Return(nil, errors.New("business not found"))
 
-	url, err := svc.GetLogoUploadURLByOwner(ctx, userID, businessID, contentType)
+	result, err := svc.GetLogoUploadURLByOwner(ctx, userID, businessID, contentType, 4096)
 
 	assert.Error(t, err)
-	assert.Empty(t, url)
+	assert.Nil(t, result)
 	mockRepo.AssertExpectations(t)
+}
+
+func TestBusinessService_GetLogoUploadURLByOwner_RejectsInvalidSizeAfterOwnerCheck(t *testing.T) {
+	for name, sizeBytes := range map[string]int64{
+		"missing or zero": 0,
+		"above 5 MiB":     5*1024*1024 + 1,
+	} {
+		t.Run(name, func(t *testing.T) {
+			mockRepo := new(MockBusinessRepository)
+			mockS3 := new(MockBusinessS3Service)
+			svc := services.NewBusinessServiceForTesting(mockRepo, mockS3, logger.New())
+			ctx := context.Background()
+			mockRepo.On("GetByID", ctx, "business-456").Return(&models.BusinessProfile{
+				ID:      "business-456",
+				OwnerID: "user-123",
+			}, nil)
+
+			result, err := svc.GetLogoUploadURLByOwner(ctx, "user-123", "business-456", "image/png", sizeBytes)
+
+			assert.Error(t, err)
+			assert.Nil(t, result)
+			mockRepo.AssertExpectations(t)
+			mockS3.AssertNotCalled(t, "GeneratePresignedUpload", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+		})
+	}
+}
+
+func TestBusinessService_GetLogoUploadURLByOwner_RejectsUnsupportedContentTypeAfterOwnerCheck(t *testing.T) {
+	mockRepo := new(MockBusinessRepository)
+	mockS3 := new(MockBusinessS3Service)
+	svc := services.NewBusinessServiceForTesting(mockRepo, mockS3, logger.New())
+	ctx := context.Background()
+	mockRepo.On("GetByID", ctx, "business-456").Return(&models.BusinessProfile{
+		ID:      "business-456",
+		OwnerID: "user-123",
+	}, nil)
+
+	result, err := svc.GetLogoUploadURLByOwner(ctx, "user-123", "business-456", "text/html", 4096)
+
+	assert.Error(t, err)
+	assert.Nil(t, result)
+	mockRepo.AssertExpectations(t)
+	mockS3.AssertNotCalled(t, "GeneratePresignedUpload", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 // TestBusinessService_UpdateLogoURL_Success tests successful logo URL update

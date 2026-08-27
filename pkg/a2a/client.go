@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -52,7 +51,7 @@ func (c *A2AClient) SendMessage(ctx context.Context, receiverEndpoint string, re
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := ReadResponseBody(resp)
 	if err != nil {
 		return nil, fmt.Errorf("read A2A response: %w", err)
 	}

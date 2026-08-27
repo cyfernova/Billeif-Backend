@@ -1,10 +1,14 @@
 package app
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"invoice-backend/internal/config"
 	"invoice-backend/internal/handlers"
+	"invoice-backend/internal/middleware"
+	"invoice-backend/internal/ratelimit"
 	"invoice-backend/internal/services"
 	"invoice-backend/pkg/awsclients"
 	"invoice-backend/pkg/logger"
@@ -15,12 +19,7 @@ import (
 func TestProtectedDeleteRoutesRequireIDParam(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	router := setupRouter(
-		&config.Config{AllowedOrigins: []string{"http://localhost:3000"}},
-		&services.Container{AWS: &awsclients.Config{}},
-		&handlers.Handler{},
-		logger.New(),
-	)
+	router := setupTestRouter(t)
 
 	routes := map[string]bool{}
 	for _, route := range router.Routes() {
@@ -51,12 +50,7 @@ func TestProtectedDeleteRoutesRequireIDParam(t *testing.T) {
 func TestLegacyInvoiceSendRouteIsNotRegistered(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	router := setupRouter(
-		&config.Config{AllowedOrigins: []string{"http://localhost:3000"}},
-		&services.Container{AWS: &awsclients.Config{}},
-		&handlers.Handler{},
-		logger.New(),
-	)
+	router := setupTestRouter(t)
 
 	routes := map[string]bool{}
 	for _, route := range router.Routes() {
@@ -83,4 +77,37 @@ func TestLegacyInvoiceSendRouteIsNotRegistered(t *testing.T) {
 	if !routes["GET /api/v1/invoices/:id/deliveries/:delivery_id"] {
 		t.Fatal("tenant-scoped invoice delivery status route must be registered")
 	}
+}
+
+func TestRouterDoesNotLetGinTrustCallerForwardingHeaders(t *testing.T) {
+	router := setupTestRouter(t)
+	router.GET("/__test/client-ip", func(c *gin.Context) {
+		c.String(http.StatusOK, c.ClientIP())
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/__test/client-ip", nil)
+	request.RemoteAddr = "198.51.100.24:443"
+	request.Header.Set("X-Forwarded-For", "203.0.113.11")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK || response.Body.String() != "198.51.100.24" {
+		t.Fatalf("Gin client identity = status %d body %q, want server-observed peer", response.Code, response.Body.String())
+	}
+}
+
+func setupTestRouter(t *testing.T) *gin.Engine {
+	t.Helper()
+	identities, err := middleware.NewClientIdentityResolver("development", "")
+	if err != nil {
+		t.Fatalf("create client identity resolver: %v", err)
+	}
+	return setupRouter(
+		&config.Config{AllowedOrigins: []string{"http://localhost:3000"}},
+		&services.Container{AWS: &awsclients.Config{}},
+		&handlers.Handler{},
+		logger.New(),
+		ratelimit.DisabledLimiter{},
+		identities,
+	)
 }

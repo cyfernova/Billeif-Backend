@@ -117,9 +117,8 @@ locals {
       GST_PROVIDER_SECRET_ARN          = aws_secretsmanager_secret.gst_provider.arn
     })
     bargaining = merge(local.database_runtime_env, {
-      CREDENTIAL_ENCRYPTION_SECRET_ARN = aws_secretsmanager_secret.credential_encryption.arn
-      LLM_SECRET_ARN                   = aws_secretsmanager_secret.llm.arn
-      EXA_SECRET_ARN                   = aws_secretsmanager_secret.exa.arn
+      LLM_SECRET_ARN = aws_secretsmanager_secret.llm.arn
+      EXA_SECRET_ARN = aws_secretsmanager_secret.exa.arn
     })
   }
 }
@@ -340,7 +339,7 @@ resource "aws_lambda_function" "api_http" {
   }
 
   environment {
-    variables = merge(local.common_lambda_env, local.http_secret_env, local.http_cursor_secret_env, local.voice_http_lambda_env, {
+    variables = merge(local.common_lambda_env, local.http_secret_env, local.http_cursor_secret_env, local.voice_http_lambda_env, local.rate_limit_http_env, {
       WEBSOCKET_API_ENDPOINT = local.websocket_api_invoke_url
       SERVER_BASE_URL        = local.http_api_invoke_url
     })
@@ -365,6 +364,7 @@ resource "aws_lambda_function" "api_http" {
     aws_bedrockagentcore_agent_runtime_endpoint.voice_prod,
     aws_iam_role_policy.lambda_http_app,
     aws_iam_role_policy.invoice_cursor_http,
+    aws_iam_role_policy.rate_limit_connect,
     aws_iam_role_policy_attachment.lambda_http_basic,
     aws_iam_role_policy_attachment.lambda_http_vpc_access,
   ]

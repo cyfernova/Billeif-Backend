@@ -34,7 +34,6 @@ func TestProductionValidationProfilesRequireOnlyEntrypointConfiguration(t *testi
 			name:    "bargaining",
 			profile: ProfileBargaining,
 			mutate: func(cfg *Config) {
-				cfg.Secrets.CredentialEncryption = "credential-secret"
 				cfg.Secrets.LLM = "llm-secret"
 				cfg.Secrets.Exa = "exa-secret"
 				cfg.LLM.APIURL = "https://llm.example.test/chat"
@@ -93,6 +92,16 @@ func TestProductionValidationProfilesRequireOnlyEntrypointConfiguration(t *testi
 	}
 }
 
+func TestProductionValidationBargainingProfileDoesNotRequireUnusedCredentialSecret(t *testing.T) {
+	cfg := completeProductionWorkerProfileConfig(ProfileBargaining)
+	cfg.Secrets.CredentialEncryption = ""
+	cfg.Credentials.EncryptionKey = ""
+
+	if err := ValidateForProfile(cfg, ProfileBargaining); err != nil {
+		t.Fatalf("profile required unused credential-encryption secret: %v", err)
+	}
+}
+
 func TestProductionValidationProfilesRejectMissingConcreteEntrypointDependencies(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -107,10 +116,22 @@ func TestProductionValidationProfilesRejectMissingConcreteEntrypointDependencies
 			want:    "S3_BUCKET_INVOICES",
 		},
 		{
+			name:    "invoice render profile credential encryption secret",
+			profile: ProfileInvoice,
+			mutate:  func(cfg *Config) { cfg.Secrets.CredentialEncryption = "" },
+			want:    "CREDENTIAL_ENCRYPTION_SECRET_ARN",
+		},
+		{
 			name:    "GST persistence bucket",
 			profile: ProfileGST,
 			mutate:  func(cfg *Config) { cfg.S3.BucketInvoices = "" },
 			want:    "S3_BUCKET_INVOICES",
+		},
+		{
+			name:    "GST credential encryption secret",
+			profile: ProfileGST,
+			mutate:  func(cfg *Config) { cfg.Secrets.CredentialEncryption = "" },
+			want:    "CREDENTIAL_ENCRYPTION_SECRET_ARN",
 		},
 		{
 			name:    "bargaining continuation queue",
@@ -167,7 +188,7 @@ func TestProductionValidationProfilesFailClosedForTheirOwnSecretIdentifiers(t *t
 				AWS:         AWSConfig{Region: "ap-south-1"},
 				Database:    DatabaseConfig{Port: 5432, Name: "invoice", SSLMode: "require"},
 			}
-			if tc.profile == ProfileGST || tc.profile == ProfileBargaining {
+			if tc.profile == ProfileGST {
 				cfg.Secrets.CredentialEncryption = "credential-secret"
 			}
 			if tc.profile == ProfileInvoice || tc.profile == ProfileGST {
@@ -197,6 +218,7 @@ func TestProductionValidationProfilesFailClosedForTheirOwnSecretIdentifiers(t *t
 func TestHTTPProfileRequiresDeepSeekProviderIdentifier(t *testing.T) {
 	cfg := validConfigForTest()
 	cfg.Environment = "production"
+	cfg.Redis = validProductionRateLimitConfigForTest()
 	cfg.Secrets.DeepSeek = ""
 	cfg.DeepSeek.APIKey = ""
 	cfg.LLM.ExaAPIKey = "exa-key"
@@ -228,17 +250,18 @@ func TestLoadForProfileAcceptsScopedProductionWorkerAndWebSocketEnvironments(t *
 		profile Profile
 		secrets map[string]string
 	}{
-		{ProfileInvoice, map[string]string{"CREDENTIAL_ENCRYPTION_SECRET_ARN": "credential-secret"}},
+		{ProfileInvoice, map[string]string{
+			"CREDENTIAL_ENCRYPTION_SECRET_ARN": "credential-secret",
+		}},
 		{ProfileGST, map[string]string{
 			"CREDENTIAL_ENCRYPTION_SECRET_ARN": "credential-secret",
 			"GST_PROVIDER_SECRET_ARN":          "gst-provider-secret",
 		}},
 		{ProfileBargaining, map[string]string{
-			"CREDENTIAL_ENCRYPTION_SECRET_ARN": "credential-secret",
-			"LLM_SECRET_ARN":                   "llm-secret",
-			"EXA_SECRET_ARN":                   "exa-secret",
-			"LLM_API_URL":                      "https://llm.example.test/chat",
-			"LLM_MODEL":                        "production-model",
+			"LLM_SECRET_ARN": "llm-secret",
+			"EXA_SECRET_ARN": "exa-secret",
+			"LLM_API_URL":    "https://llm.example.test/chat",
+			"LLM_MODEL":      "production-model",
 		}},
 		{ProfileWebSocket, nil},
 		{ProfileMigration, nil},
@@ -324,6 +347,10 @@ func completeProductionWorkerProfileConfig(profile Profile) *Config {
 	if profile == ProfileGST {
 		cfg.Secrets.LLM = ""
 		cfg.Secrets.Exa = ""
+	}
+	if profile == ProfileBargaining {
+		cfg.Secrets.CredentialEncryption = ""
+		cfg.Secrets.GSTProvider = ""
 	}
 	return cfg
 }
