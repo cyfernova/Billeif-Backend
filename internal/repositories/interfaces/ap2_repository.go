@@ -2,9 +2,16 @@ package interfaces
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"invoice-backend/internal/models"
+)
+
+var (
+	ErrAgentNotFound                  = errors.New("agent not found")
+	ErrA2ANegotiationScopeNotFound    = errors.New("A2A negotiation scope not found")
+	ErrBargainingNegotiationNotActive = errors.New("bargaining negotiation is not active")
 )
 
 type AP2Repository interface {
@@ -36,6 +43,7 @@ type AP2Repository interface {
 	// Agents
 	CreateAgent(ctx context.Context, agent *models.Agent) error
 	GetAgentByID(ctx context.Context, id string) (*models.Agent, error)
+	GetAgentByIDForOwnerAndBusiness(ctx context.Context, id, ownerID, businessID string) (*models.Agent, error)
 	HasAgentOwnership(ctx context.Context, ownerID, agentID string) (bool, error)
 	GetAgentsByUser(ctx context.Context, userID string, page, limit int) ([]*models.Agent, int64, error)
 	GetAgentsByBusiness(ctx context.Context, businessID string, page, limit int) ([]*models.Agent, int64, error)
@@ -53,7 +61,7 @@ type AP2Repository interface {
 	// Agent Capabilities
 	CreateAgentCapability(ctx context.Context, capability *models.AgentCapability) error
 	GetCapabilitiesByAgent(ctx context.Context, agentID string) ([]*models.AgentCapability, error)
-	DeleteCapability(ctx context.Context, id string) error
+	DeleteCapability(ctx context.Context, agentID, capabilityID string) error
 
 	// Credentials
 	CreatePaymentCredential(ctx context.Context, credential *models.PaymentCredential) error
@@ -95,6 +103,7 @@ type AP2Repository interface {
 	// Marketplace Orders
 	CreateOrder(ctx context.Context, order *models.MarketplaceOrder) error
 	GetOrderByID(ctx context.Context, id string) (*models.MarketplaceOrder, error)
+	GetOrderByIDForUser(ctx context.Context, id, userID string) (*models.MarketplaceOrder, error)
 	GetOrdersByUser(ctx context.Context, userID string, page, limit int) ([]*models.MarketplaceOrder, int64, error)
 	GetOrdersByUserAndStatus(ctx context.Context, userID, status string, page, limit int) ([]*models.MarketplaceOrder, int64, error)
 	GetOrdersByAgent(ctx context.Context, agentID string, page, limit int) ([]*models.MarketplaceOrder, int64, error)
@@ -150,17 +159,22 @@ type AP2Repository interface {
 	GetBargainingNegotiationByIDForActor(ctx context.Context, id, userID, businessID string) (*models.BargainingNegotiation, error)
 	GetBargainingNegotiationByIDForActorAndAgent(ctx context.Context, id, userID, businessID, agentID string) (*models.BargainingNegotiation, error)
 	GetBargainingNegotiationBySessionID(ctx context.Context, sessionID string) (*models.BargainingNegotiation, error)
+	GetBargainingNegotiationByIDForScope(ctx context.Context, id, userID, businessID string) (*models.BargainingNegotiation, error)
+	GetBargainingNegotiationBySessionIDForScope(ctx context.Context, sessionID, userID, businessID string) (*models.BargainingNegotiation, error)
+	GetBargainingNegotiationBySessionAndID(ctx context.Context, sessionID, id string) (*models.BargainingNegotiation, error)
 	GetNegotiationsByUser(ctx context.Context, userID string, page, limit int) ([]*models.BargainingNegotiation, int64, error)
 	GetNegotiationsByAgent(ctx context.Context, agentID string, page, limit int) ([]*models.BargainingNegotiation, int64, error)
 	GetNegotiationsInProgress(ctx context.Context, limit int) ([]*models.BargainingNegotiation, error)
 	UpdateNegotiationStatus(ctx context.Context, id, status string) error
 	UpdateNegotiationAmountAndRounds(ctx context.Context, id string, amount float64, rounds int, status string) error
 	CompleteNegotiation(ctx context.Context, id, status string, finalAmount float64, completedAt *time.Time) error
+	StopBargainingNegotiationForScope(ctx context.Context, id, userID, businessID string, completedAt time.Time) (bool, error)
+	StopBargainingNegotiationBySessionAndID(ctx context.Context, sessionID, id string, completedAt time.Time) (bool, error)
 
 	// Bargaining Rounds
 	CreateBargainingRound(ctx context.Context, round *models.BargainingRound) error
 	GetBargainingRounds(ctx context.Context, negotiationID string) ([]*models.BargainingRound, error)
 	GetBargainingRoundsByAgent(ctx context.Context, agentID string, page, limit int) ([]*models.BargainingRound, int64, error)
-	ClaimBargainingRound(ctx context.Context, negotiationID string, roundNumber int, leaseOwner string, now, leaseExpiresAt time.Time) (bool, error)
-	CompleteBargainingRoundClaim(ctx context.Context, negotiationID string, roundNumber int, leaseOwner string, completedAt time.Time) (bool, error)
+	ClaimBargainingRound(ctx context.Context, sessionID, negotiationID string, roundNumber int, leaseOwner string, now, leaseExpiresAt time.Time) (bool, error)
+	CompleteBargainingRoundClaim(ctx context.Context, sessionID, negotiationID string, roundNumber int, leaseOwner string, completedAt time.Time) (bool, error)
 }

@@ -9,6 +9,7 @@ import (
 
 	"invoice-backend/pkg/logger"
 
+	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -23,6 +24,8 @@ type ap2Repository struct {
 }
 
 const defaultUnpaginatedQueryLimit = 500
+
+var activeBargainingStatuses = []string{"initiated", "in_progress", "running"}
 
 func NewAP2Repository(db *gorm.DB) interfaces.AP2Repository {
 	return &ap2Repository{
@@ -236,7 +239,20 @@ func (r *ap2Repository) GetAgentByID(ctx context.Context, id string) (*models.Ag
 		Where("id = ? AND deleted_at IS NULL", id).
 		First(&agent).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, errors.New("agent not found")
+		return nil, interfaces.ErrAgentNotFound
+	}
+	return &agent, err
+}
+
+func (r *ap2Repository) GetAgentByIDForOwnerAndBusiness(ctx context.Context, id, ownerID, businessID string) (*models.Agent, error) {
+	var agent models.Agent
+	err := r.db.WithContext(ctx).
+		Preload("AgentCapabilities").
+		Preload("MarketplaceProducts").
+		Where("id = ? AND owner_id = ? AND business_id = ? AND is_active = ? AND deleted_at IS NULL", id, ownerID, businessID, true).
+		First(&agent).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, interfaces.ErrA2ANegotiationScopeNotFound
 	}
 	return &agent, err
 }
@@ -472,8 +488,17 @@ func (r *ap2Repository) GetCapabilitiesByAgent(ctx context.Context, agentID stri
 	return result, nil
 }
 
-func (r *ap2Repository) DeleteCapability(ctx context.Context, id string) error {
-	return r.db.WithContext(ctx).Delete(&models.AgentCapability{}, id).Error
+func (r *ap2Repository) DeleteCapability(ctx context.Context, agentID, capabilityID string) error {
+	result := r.db.WithContext(ctx).
+		Where("agent_id = ? AND id = ?", agentID, capabilityID).
+		Delete(&models.AgentCapability{})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("capability not found")
+	}
+	return nil
 }
 
 // Credentials
@@ -857,6 +882,15 @@ func (r *ap2Repository) GetOrderByID(ctx context.Context, id string) (*models.Ma
 	return &order, err
 }
 
+func (r *ap2Repository) GetOrderByIDForUser(ctx context.Context, id, userID string) (*models.MarketplaceOrder, error) {
+	var order models.MarketplaceOrder
+	err := r.db.WithContext(ctx).Preload("CartMandate").Where("id = ? AND user_id = ?", id, userID).First(&order).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, errors.New("order not found")
+	}
+	return &order, err
+}
+
 func (r *ap2Repository) GetOrdersByUser(ctx context.Context, userID string, page, limit int) ([]*models.MarketplaceOrder, int64, error) {
 	var orders []models.MarketplaceOrder
 	var total int64
@@ -1148,6 +1182,39 @@ func (r *ap2Repository) GetBargainingNegotiationBySessionID(ctx context.Context,
 	return &negotiation, err
 }
 
+func (r *ap2Repository) GetBargainingNegotiationByIDForScope(ctx context.Context, id, userID, businessID string) (*models.BargainingNegotiation, error) {
+	var negotiation models.BargainingNegotiation
+	err := r.db.WithContext(ctx).
+		Where("id = ? AND user_id = ? AND business_id = ?", id, userID, businessID).
+		First(&negotiation).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, interfaces.ErrA2ANegotiationScopeNotFound
+	}
+	return &negotiation, err
+}
+
+func (r *ap2Repository) GetBargainingNegotiationBySessionIDForScope(ctx context.Context, sessionID, userID, businessID string) (*models.BargainingNegotiation, error) {
+	var negotiation models.BargainingNegotiation
+	err := r.db.WithContext(ctx).
+		Where("session_id = ? AND user_id = ? AND business_id = ?", sessionID, userID, businessID).
+		First(&negotiation).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, interfaces.ErrA2ANegotiationScopeNotFound
+	}
+	return &negotiation, err
+}
+
+func (r *ap2Repository) GetBargainingNegotiationBySessionAndID(ctx context.Context, sessionID, id string) (*models.BargainingNegotiation, error) {
+	var negotiation models.BargainingNegotiation
+	err := r.db.WithContext(ctx).
+		Where("session_id = ? AND id = ?", sessionID, id).
+		First(&negotiation).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, interfaces.ErrA2ANegotiationScopeNotFound
+	}
+	return &negotiation, err
+}
+
 func (r *ap2Repository) GetNegotiationsByUser(ctx context.Context, userID string, page, limit int) ([]*models.BargainingNegotiation, int64, error) {
 	var negotiations []models.BargainingNegotiation
 	var total int64
@@ -1228,38 +1295,126 @@ func (r *ap2Repository) GetNegotiationsByAgent(ctx context.Context, agentID stri
 func (r *ap2Repository) UpdateNegotiationStatus(ctx context.Context, id, status string) error {
 	updates := map[string]interface{}{"status": status}
 	if status == "expired" {
-		updates["completed_at"] = gorm.Expr("NOW()")
+		updates["completed_at"] = time.Now().UTC()
 	}
-	return r.db.WithContext(ctx).Model(&models.BargainingNegotiation{}).Where("id = ?", id).Updates(updates).Error
+	result := r.db.WithContext(ctx).
+		Model(&models.BargainingNegotiation{}).
+		Where("id = ? AND status IN ?", id, activeBargainingStatuses).
+		Updates(updates)
+	return bargainingMutationError(result)
 }
 
 func (r *ap2Repository) UpdateNegotiationAmountAndRounds(ctx context.Context, id string, amount float64, rounds int, status string) error {
-	return r.db.WithContext(ctx).Model(&models.BargainingNegotiation{}).
-		Where("id = ?", id).
+	result := r.db.WithContext(ctx).Model(&models.BargainingNegotiation{}).
+		Where("id = ? AND status IN ?", id, activeBargainingStatuses).
 		Updates(map[string]interface{}{
 			"current_amount": amount,
 			"rounds":         rounds,
 			"status":         status,
-		}).Error
+		})
+	return bargainingMutationError(result)
 }
 
 func (r *ap2Repository) CompleteNegotiation(ctx context.Context, id, status string, finalAmount float64, completedAt *time.Time) error {
-	return r.db.WithContext(ctx).Model(&models.BargainingNegotiation{}).
-		Where("id = ?", id).
+	result := r.db.WithContext(ctx).Model(&models.BargainingNegotiation{}).
+		Where("id = ? AND status IN ?", id, activeBargainingStatuses).
 		Updates(map[string]interface{}{
 			"status":         status,
 			"current_amount": finalAmount,
 			"completed_at":   completedAt,
-		}).Error
+		})
+	return bargainingMutationError(result)
+}
+
+func bargainingMutationError(result *gorm.DB) error {
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return interfaces.ErrBargainingNegotiationNotActive
+	}
+	return nil
+}
+
+func (r *ap2Repository) StopBargainingNegotiationForScope(
+	ctx context.Context,
+	id,
+	userID,
+	businessID string,
+	completedAt time.Time,
+) (bool, error) {
+	result := r.db.WithContext(ctx).
+		Model(&models.BargainingNegotiation{}).
+		Where("id = ? AND user_id = ? AND business_id = ?", id, userID, businessID).
+		Where("status IN ?", activeBargainingStatuses).
+		Updates(map[string]interface{}{
+			"status":       "stopped",
+			"completed_at": completedAt,
+		})
+	return result.RowsAffected == 1, result.Error
+}
+
+func (r *ap2Repository) StopBargainingNegotiationBySessionAndID(
+	ctx context.Context,
+	sessionID,
+	id string,
+	completedAt time.Time,
+) (bool, error) {
+	result := r.db.WithContext(ctx).
+		Model(&models.BargainingNegotiation{}).
+		Where("session_id = ? AND id = ?", sessionID, id).
+		Where("status IN ?", activeBargainingStatuses).
+		Updates(map[string]interface{}{
+			"status":       "stopped",
+			"completed_at": completedAt,
+		})
+	return result.RowsAffected == 1, result.Error
 }
 
 // Bargaining Rounds
 func (r *ap2Repository) CreateBargainingRound(ctx context.Context, round *models.BargainingRound) error {
-	return r.db.WithContext(ctx).Create(round).Error
+	if round.ID == "" {
+		round.ID = uuid.NewString()
+	}
+	result := r.db.WithContext(ctx).Exec(`
+		INSERT INTO bargaining_rounds (
+			id,
+			negotiation_id,
+			agent_id,
+			round_number,
+			proposed_amount,
+			previous_amount,
+			agent_type,
+			action,
+			reason,
+			volatility_factor,
+			metadata,
+			created_at
+		)
+		SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+		FROM bargaining_negotiations
+		WHERE id = ? AND status IN ('initiated', 'in_progress', 'running')
+	`,
+		round.ID,
+		round.NegotiationID,
+		round.AgentID,
+		round.RoundNumber,
+		round.ProposedAmount,
+		round.PreviousAmount,
+		round.AgentType,
+		round.Action,
+		round.Reason,
+		round.VolatilityFactor,
+		round.Metadata,
+		time.Now().UTC(),
+		round.NegotiationID,
+	)
+	return bargainingMutationError(result)
 }
 
 func (r *ap2Repository) ClaimBargainingRound(
 	ctx context.Context,
+	sessionID string,
 	negotiationID string,
 	roundNumber int,
 	leaseOwner string,
@@ -1276,7 +1431,11 @@ func (r *ap2Repository) ClaimBargainingRound(
 			created_at,
 			updated_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?)
+		SELECT ?, ?, ?, ?, ?, ?
+		FROM bargaining_negotiations
+		WHERE id = ?
+			AND session_id = ?
+			AND status IN ('initiated', 'in_progress', 'running')
 		ON CONFLICT (negotiation_id, round_number) DO UPDATE
 		SET
 			lease_owner = EXCLUDED.lease_owner,
@@ -1285,7 +1444,7 @@ func (r *ap2Repository) ClaimBargainingRound(
 		WHERE bargaining_round_claims.completed_at IS NULL
 			AND bargaining_round_claims.lease_expires_at <= EXCLUDED.updated_at
 		RETURNING lease_owner
-	`, negotiationID, roundNumber, leaseOwner, leaseExpiresAt, now, now).Scan(&claimedOwner).Error
+	`, negotiationID, roundNumber, leaseOwner, leaseExpiresAt, now, now, negotiationID, sessionID).Scan(&claimedOwner).Error
 	if err != nil {
 		return false, err
 	}
@@ -1294,6 +1453,7 @@ func (r *ap2Repository) ClaimBargainingRound(
 
 func (r *ap2Repository) CompleteBargainingRoundClaim(
 	ctx context.Context,
+	sessionID string,
 	negotiationID string,
 	roundNumber int,
 	leaseOwner string,
@@ -1306,7 +1466,12 @@ func (r *ap2Repository) CompleteBargainingRoundClaim(
 			AND round_number = ?
 			AND lease_owner = ?
 			AND completed_at IS NULL
-	`, completedAt, completedAt, negotiationID, roundNumber, leaseOwner)
+			AND EXISTS (
+				SELECT 1
+				FROM bargaining_negotiations
+				WHERE id = ? AND session_id = ?
+			)
+	`, completedAt, completedAt, negotiationID, roundNumber, leaseOwner, negotiationID, sessionID)
 	return result.RowsAffected == 1, result.Error
 }
 

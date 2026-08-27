@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"invoice-backend/internal/middleware"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/services"
 	"invoice-backend/pkg/logger"
@@ -49,10 +51,14 @@ func (h *AgentDiscoveryHandler) GetAgentCard(c *gin.Context) {
 // @Param input body services.RegisterAgentRequest true "Agent registration details"
 // @Success 201 {object} map[string]interface{}
 // @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /discovery/agents/register [post]
 func (h *AgentDiscoveryHandler) RegisterAgent(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
 
 	var req services.RegisterAgentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -60,8 +66,12 @@ func (h *AgentDiscoveryHandler) RegisterAgent(c *gin.Context) {
 		return
 	}
 
-	registry, err := h.discovery.RegisterAgent(c.Request.Context(), &req)
+	registry, err := h.discovery.RegisterAgent(c.Request.Context(), discoveryRegistrationActor(c, userID), &req)
 	if err != nil {
+		if errors.Is(err, services.ErrAgentRegistrationNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+			return
+		}
 		h.log.Error("failed to register agent", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to register agent"})
 		return
@@ -708,8 +718,17 @@ func (h *AgentDiscoveryHandler) RegisterAgentFromAgents(c *gin.Context) {
 		return
 	}
 
-	registry, err := h.discovery.RegisterAgentFromAgentsTable(c.Request.Context(), agentID)
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
+
+	registry, err := h.discovery.RegisterAgentFromAgentsTable(c.Request.Context(), discoveryRegistrationActor(c, userID), agentID)
 	if err != nil {
+		if errors.Is(err, services.ErrAgentRegistrationNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+			return
+		}
 		h.log.Error("failed to register agent from agents table", "error", err, "agent_id", agentID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -722,6 +741,13 @@ func (h *AgentDiscoveryHandler) RegisterAgentFromAgents(c *gin.Context) {
 		"agent_name":  registry.AgentName,
 		"agent_type":  registry.AgentType,
 	})
+}
+
+func discoveryRegistrationActor(c *gin.Context, userID string) services.AgentRegistrationActor {
+	return services.AgentRegistrationActor{
+		UserID:     userID,
+		BusinessID: middleware.GetEffectiveBusinessID(c),
+	}
 }
 
 // DiscoverAgentsByBudget discovers merchant agents with price within budget

@@ -30,14 +30,66 @@ func TestSetDefaultsProductionDoesNotInstallWildcardOrigin(t *testing.T) {
 	}
 }
 
-func TestSetDefaultsProductionPreservesExplicitWAFEnabled(t *testing.T) {
-	cfg := &Config{Environment: "production"}
-	cfg.AWS.WAF.Enabled = true
+func TestProductionHTTPRateLimitRequiresDistributedTLSIAMBackend(t *testing.T) {
+	cfg := validConfigForTest()
+	cfg.Environment = "production"
+	cfg.Secrets.InvoiceCursorHMAC = "invoice-cursor-secret"
+	cfg.LLM.ExaAPIKey = "not-a-real-exa-key"
+	cfg.GSTLookup.APIKey = "not-a-real-gst-lookup-key"
+	cfg.GST.APIToken = "not-a-real-gst-provider-token"
+	cfg.DeepSeek.APIKey = "not-a-real-deepseek-key"
 
-	setDefaults(cfg)
+	err := ValidateForProfile(cfg, ProfileHTTP)
+	if err == nil || !strings.Contains(err.Error(), "REDIS_HOST") {
+		t.Fatalf("production HTTP config error = %v, want missing distributed rate-limit backend", err)
+	}
+}
 
-	if !cfg.AWS.WAF.Enabled {
-		t.Fatal("expected production WAF setting to preserve explicit enabled value")
+func TestValidateProductionRateLimitRejectsUnsafeBackendConfiguration(t *testing.T) {
+	valid := validProductionRateLimitConfigForTest()
+	tests := []struct {
+		name   string
+		mutate func(*RedisConfig)
+		want   string
+	}{
+		{name: "port", mutate: func(cfg *RedisConfig) { cfg.Port = 0 }, want: "REDIS_PORT"},
+		{name: "IAM user", mutate: func(cfg *RedisConfig) { cfg.UserID = "" }, want: "REDIS_USER_ID"},
+		{name: "cache name", mutate: func(cfg *RedisConfig) { cfg.CacheName = "" }, want: "REDIS_CACHE_NAME"},
+		{name: "TLS", mutate: func(cfg *RedisConfig) { cfg.TLSEnabled = false }, want: "REDIS_TLS_ENABLED"},
+		{name: "IAM auth", mutate: func(cfg *RedisConfig) { cfg.IAMAuthEnabled = false }, want: "REDIS_IAM_AUTH_ENABLED"},
+		{name: "cluster mode", mutate: func(cfg *RedisConfig) { cfg.ClusterMode = false }, want: "REDIS_CLUSTER_MODE"},
+		{name: "password", mutate: func(cfg *RedisConfig) { cfg.Password = "long-lived-secret" }, want: "REDIS_PASSWORD"},
+		{name: "database", mutate: func(cfg *RedisConfig) { cfg.DB = 1 }, want: "REDIS_DB"},
+		{name: "production proxy", mutate: func(cfg *RedisConfig) { cfg.TrustedProxyCIDR = "127.0.0.1/32" }, want: "RATE_LIMIT_TRUSTED_PROXY_CIDR"},
+		{name: "decision timeout", mutate: func(cfg *RedisConfig) { cfg.DecisionTimeout = 0 }, want: "RATE_LIMIT_DECISION_TIMEOUT"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := valid
+			tc.mutate(&cfg)
+			err := validateProductionRateLimit(cfg)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("validateProductionRateLimit() error = %v, want %s", err, tc.want)
+			}
+		})
+	}
+
+	if err := validateProductionRateLimit(valid); err != nil {
+		t.Fatalf("valid production rate-limit backend rejected: %v", err)
+	}
+}
+
+func validProductionRateLimitConfigForTest() RedisConfig {
+	return RedisConfig{
+		Host:            "cache.example.test",
+		Port:            6379,
+		UserID:          "billeif-http",
+		CacheName:       "billeif-production-rate-limit",
+		TLSEnabled:      true,
+		IAMAuthEnabled:  true,
+		ClusterMode:     true,
+		DecisionTimeout: 250 * time.Millisecond,
 	}
 }
 
@@ -221,6 +273,9 @@ func TestApplyFlatEnvFileFallbacksCopiesFlatKeys(t *testing.T) {
 	viper.Set("AWS_REGION", "us-east-1")
 	viper.Set("JWT_ACCESS_TOKEN_EXPIRY", "1h")
 	viper.Set("S3_BUCKET_LOGOS", "logos")
+	viper.Set("REDIS_TLS_ENABLED", "true")
+	viper.Set("REDIS_IAM_AUTH_ENABLED", "true")
+	viper.Set("REDIS_CLUSTER_MODE", "true")
 
 	cfg := &Config{}
 	applyFlatEnvFileFallbacks(cfg)
@@ -236,6 +291,9 @@ func TestApplyFlatEnvFileFallbacksCopiesFlatKeys(t *testing.T) {
 	}
 	if cfg.S3.BucketLogos != "logos" {
 		t.Fatalf("expected flat S3_BUCKET_LOGOS to populate S3 config, got %q", cfg.S3.BucketLogos)
+	}
+	if !cfg.Redis.TLSEnabled || !cfg.Redis.IAMAuthEnabled || !cfg.Redis.ClusterMode {
+		t.Fatalf("expected flat Redis security flags to populate Redis config, got %#v", cfg.Redis)
 	}
 }
 

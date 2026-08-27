@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -14,6 +15,15 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/datatypes"
 )
+
+var ErrAgentRegistrationNotFound = errors.New("agent not found")
+
+// AgentRegistrationActor is the authenticated identity and effective business scope
+// authorized by request middleware for a discovery registration operation.
+type AgentRegistrationActor struct {
+	UserID     string
+	BusinessID string
+}
 
 // AgentDiscoveryService handles agent discovery operations
 type AgentDiscoveryService struct {
@@ -148,11 +158,10 @@ func (s *AgentDiscoveryService) BuildAgentRegistryFromAgent(ctx context.Context,
 }
 
 // RegisterAgentFromAgentsTable looks up an agent by ID from the agents table and registers it in discovery
-func (s *AgentDiscoveryService) RegisterAgentFromAgentsTable(ctx context.Context, agentID string) (*models.AgentRegistry, error) {
-	// Look up the agent in the agents table
-	agent, err := s.ap2Repo.GetAgentByID(ctx, agentID)
+func (s *AgentDiscoveryService) RegisterAgentFromAgentsTable(ctx context.Context, actor AgentRegistrationActor, agentID string) (*models.AgentRegistry, error) {
+	agent, err := s.authorizeAgentRegistration(ctx, actor, agentID)
 	if err != nil {
-		return nil, fmt.Errorf("agent not found in agents table: %w", err)
+		return nil, err
 	}
 
 	// Build registry entry from agent
@@ -171,7 +180,16 @@ func (s *AgentDiscoveryService) RegisterAgentFromAgentsTable(ctx context.Context
 }
 
 // RegisterAgent registers a new agent in the discovery registry
-func (s *AgentDiscoveryService) RegisterAgent(ctx context.Context, req *RegisterAgentRequest) (*models.AgentRegistry, error) {
+func (s *AgentDiscoveryService) RegisterAgent(ctx context.Context, actor AgentRegistrationActor, req *RegisterAgentRequest) (*models.AgentRegistry, error) {
+	agent, err := s.authorizeAgentRegistration(ctx, actor, req.AgentID)
+	if err != nil {
+		return nil, err
+	}
+	agentUUID, err := uuid.Parse(agent.ID)
+	if err != nil {
+		return nil, ErrAgentRegistrationNotFound
+	}
+
 	req.AgentType = NormalizeMarketplaceAgentType(req.AgentType)
 	req.Capabilities = discoveryCapabilitiesForType(req.AgentType, req.Capabilities)
 
@@ -207,7 +225,7 @@ func (s *AgentDiscoveryService) RegisterAgent(ctx context.Context, req *Register
 
 	registry := &models.AgentRegistry{
 		ID:                 uuid.New(),
-		AgentID:            uuid.MustParse(req.AgentID),
+		AgentID:            agentUUID,
 		AgentName:          req.Name,
 		AgentDescription:   &req.Description,
 		AgentType:          req.AgentType,
@@ -242,6 +260,22 @@ func (s *AgentDiscoveryService) RegisterAgent(ctx context.Context, req *Register
 	s.createAuditLog(ctx, registry.ID, "registered", "system", nil, datatypes.JSON(cardJSON))
 
 	return registry, nil
+}
+
+func (s *AgentDiscoveryService) authorizeAgentRegistration(ctx context.Context, actor AgentRegistrationActor, agentID string) (*models.Agent, error) {
+	agent, err := s.ap2Repo.GetAgentByID(ctx, agentID)
+	if errors.Is(err, interfaces.ErrAgentNotFound) || (err == nil && agent == nil) {
+		return nil, ErrAgentRegistrationNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get source agent for registration: %w", err)
+	}
+
+	if actor.UserID == "" || (agent.OwnerID != actor.UserID && (actor.BusinessID == "" || agent.BusinessID != actor.BusinessID)) {
+		return nil, ErrAgentRegistrationNotFound
+	}
+
+	return agent, nil
 }
 
 // DiscoverAgents searches for agents matching criteria

@@ -28,15 +28,16 @@ var (
 )
 
 type ShoppingAgentService struct {
-	ap2Repo            interfaces.AP2Repository
-	agentSvc           *AgentService
-	intentSvc          *IntentProcessingService
-	signer             *ap2.SignatureService
-	mandateSvc         *ap2.MandateService
-	verifier           *ap2.MandateVerifier
-	a2aClient          *a2a.A2AClient
-	a2aMessageEndpoint string
-	log                *logger.Logger
+	ap2Repo             interfaces.AP2Repository
+	agentSvc            *AgentService
+	intentSvc           *IntentProcessingService
+	signer              *ap2.SignatureService
+	mandateSvc          *ap2.MandateService
+	verifier            *ap2.MandateVerifier
+	a2aClient           *a2a.A2AClient
+	a2aMessageEndpoint  string
+	agentCardHTTPClient *http.Client
+	log                 *logger.Logger
 }
 
 func NewShoppingAgentService(
@@ -54,15 +55,16 @@ func NewShoppingAgentService(
 	}
 
 	return &ShoppingAgentService{
-		ap2Repo:            ap2Repo,
-		agentSvc:           agentSvc,
-		intentSvc:          intentSvc,
-		signer:             signer,
-		mandateSvc:         mandateSvc,
-		a2aClient:          a2aClient,
-		a2aMessageEndpoint: a2aMessageEndpoint,
-		verifier:           ap2.NewMandateVerifier(),
-		log:                log,
+		ap2Repo:             ap2Repo,
+		agentSvc:            agentSvc,
+		intentSvc:           intentSvc,
+		signer:              signer,
+		mandateSvc:          mandateSvc,
+		a2aClient:           a2aClient,
+		a2aMessageEndpoint:  a2aMessageEndpoint,
+		agentCardHTTPClient: newWebhookDeliveryHTTPClient(10 * time.Second),
+		verifier:            ap2.NewMandateVerifier(),
+		log:                 log,
 	}
 }
 
@@ -290,8 +292,8 @@ func (s *ShoppingAgentService) GetProductDetails(ctx context.Context, productID 
 	return s.ap2Repo.GetMarketplaceProductByID(ctx, productID)
 }
 
-func (s *ShoppingAgentService) TrackOrder(ctx context.Context, orderID string) (*models.MarketplaceOrder, error) {
-	return s.ap2Repo.GetOrderByID(ctx, orderID)
+func (s *ShoppingAgentService) TrackOrder(ctx context.Context, orderID, userID string) (*models.MarketplaceOrder, error) {
+	return s.ap2Repo.GetOrderByIDForUser(ctx, orderID, userID)
 }
 
 func (s *ShoppingAgentService) CreateIntentMandate(ctx context.Context, req *ShoppingIntentRequest) (*models.IntentMandate, error) {
@@ -423,8 +425,10 @@ func (s *ShoppingAgentService) validateCartTotal(ctx context.Context, cartMandat
 // QueryMerchantAgentsA2A fetches latest A2A Agent Cards from merchant agent well-known endpoints.
 func (s *ShoppingAgentService) QueryMerchantAgentsA2A(ctx context.Context, merchantAgentEndpoints []string) (map[string]*a2a.AgentCard, error) {
 	cards := make(map[string]*a2a.AgentCard)
-	client := newWebhookDeliveryHTTPClient(10 * time.Second)
-
+	client := s.agentCardHTTPClient
+	if client == nil {
+		client = newWebhookDeliveryHTTPClient(10 * time.Second)
+	}
 	for _, endpoint := range merchantAgentEndpoints {
 		cardURL := strings.TrimRight(endpoint, "/") + "/.well-known/agent-card.json"
 		if err := validateWebhookURL(ctx, cardURL); err != nil {
@@ -440,8 +444,14 @@ func (s *ShoppingAgentService) QueryMerchantAgentsA2A(ctx context.Context, merch
 			s.log.Warn("failed to fetch merchant agent card", "endpoint", endpoint, "error", err)
 			continue
 		}
+		body, err := a2a.ReadResponseBody(resp)
+		if err != nil {
+			resp.Body.Close()
+			s.log.Warn("failed to decode merchant agent card", "endpoint", endpoint, "error", err)
+			continue
+		}
 		var card a2a.AgentCard
-		if err := json.NewDecoder(resp.Body).Decode(&card); err != nil {
+		if err := json.Unmarshal(body, &card); err != nil {
 			resp.Body.Close()
 			s.log.Warn("failed to decode merchant agent card", "endpoint", endpoint, "error", err)
 			continue

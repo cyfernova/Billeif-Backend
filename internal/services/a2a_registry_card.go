@@ -313,8 +313,13 @@ func fetchA2AAgentCard(ctx context.Context, wellKnownURI string) (*a2a.AgentCard
 		return nil, fmt.Errorf("fetch agent card: unexpected status %d", resp.StatusCode)
 	}
 
+	body, err := a2a.ReadResponseBody(resp)
+	if err != nil {
+		return nil, fmt.Errorf("read agent card response: %w", err)
+	}
+
 	var card a2a.AgentCard
-	if err := json.NewDecoder(resp.Body).Decode(&card); err == nil && card.Name != "" {
+	if err := json.Unmarshal(body, &card); err == nil && card.Name != "" {
 		return normalizeParsedAgentCard(&card, nil), nil
 	}
 

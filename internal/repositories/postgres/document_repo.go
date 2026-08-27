@@ -289,6 +289,59 @@ func (r *documentRepository) GetDefaultRenderProfile(ctx context.Context, busine
 	return &profile, err
 }
 
+func (r *documentRepository) ListLegacyRenderProfiles(
+	ctx context.Context,
+	limit int,
+) ([]*models.RenderProfile, error) {
+	var profiles []models.RenderProfile
+	if err := r.db.WithContext(ctx).
+		Unscoped().
+		Where("password IS NOT NULL AND password <> ''").
+		Order("id ASC").
+		Limit(limit).
+		Find(&profiles).Error; err != nil {
+		return nil, err
+	}
+	result := make([]*models.RenderProfile, len(profiles))
+	for i := range profiles {
+		result[i] = &profiles[i]
+	}
+	return result, nil
+}
+
+func (r *documentRepository) MigrateRenderProfilePassword(
+	ctx context.Context,
+	businessID, id, legacyPassword, ciphertext string,
+) (bool, error) {
+	migrated := false
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var current models.RenderProfile
+		if err := tx.Unscoped().
+			Select("id", "password").
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND business_id = ?", id, businessID).
+			First(&current).Error; err != nil {
+			return err
+		}
+		if current.LegacyPassword == nil || *current.LegacyPassword != legacyPassword {
+			return nil
+		}
+		result := tx.Unscoped().
+			Model(&models.RenderProfile{}).
+			Where("id = ? AND business_id = ?", id, businessID).
+			Updates(map[string]interface{}{
+				"password":            nil,
+				"password_ciphertext": ciphertext,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		migrated = result.RowsAffected == 1
+		return nil
+	})
+	return migrated, err
+}
+
 func (r *documentRepository) UpdateRenderProfile(ctx context.Context, profile *models.RenderProfile) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if profile.IsDefault {
@@ -301,21 +354,22 @@ func (r *documentRepository) UpdateRenderProfile(ctx context.Context, profile *m
 		return tx.Model(&models.RenderProfile{}).
 			Where("id = ? AND business_id = ? AND deleted_at IS NULL", profile.ID, profile.BusinessID).
 			Updates(map[string]interface{}{
-				"name":               profile.Name,
-				"header_html":        profile.HeaderHTML,
-				"footer_html":        profile.FooterHTML,
-				"watermark_text":     profile.WatermarkText,
-				"banner_text":        profile.BannerText,
-				"font_family":        profile.FontFamily,
-				"page_size":          profile.PageSize,
-				"layout_config":      profile.LayoutConfig,
-				"password_protected": profile.PasswordProtected,
-				"password":           profile.Password,
-				"copy_allowed":       profile.CopyAllowed,
-				"print_allowed":      profile.PrintAllowed,
-				"custom_labels":      profile.CustomLabels,
-				"visibility_config":  profile.VisibilityConfig,
-				"is_default":         profile.IsDefault,
+				"name":                profile.Name,
+				"header_html":         profile.HeaderHTML,
+				"footer_html":         profile.FooterHTML,
+				"watermark_text":      profile.WatermarkText,
+				"banner_text":         profile.BannerText,
+				"font_family":         profile.FontFamily,
+				"page_size":           profile.PageSize,
+				"layout_config":       profile.LayoutConfig,
+				"password_protected":  profile.PasswordProtected,
+				"password":            profile.LegacyPassword,
+				"password_ciphertext": profile.PasswordCiphertext,
+				"copy_allowed":        profile.CopyAllowed,
+				"print_allowed":       profile.PrintAllowed,
+				"custom_labels":       profile.CustomLabels,
+				"visibility_config":   profile.VisibilityConfig,
+				"is_default":          profile.IsDefault,
 			}).Error
 	})
 }

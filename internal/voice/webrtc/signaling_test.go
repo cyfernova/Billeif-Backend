@@ -288,9 +288,9 @@ func TestSignalingAttachUsesTrustedSessionAndPersistedChannel(t *testing.T) {
 
 	require.Equal(t, "Bearer authorization-canary", resolver.authorization)
 	require.Equal(t, voicesession.Scope{
-		UserID:      logicalSession.UserID,
-		BusinessID:  logicalSession.BusinessID,
-		AllBranches: true,
+		UserID:          logicalSession.UserID,
+		BusinessID:      logicalSession.BusinessID,
+		AllowBranchless: true,
 	}, lookup.scope)
 	require.Equal(t, logicalSession.ID, lookup.sessionID)
 	require.Equal(t, channels[7], ice.channelARN)
@@ -373,6 +373,237 @@ func TestSignalingOfferCandidateRestartFlowAndExactSequences(t *testing.T) {
 
 	require.Equal(t, 409, invokeSignaling(t, service, logicalSession, restartBody(logicalSession.ID, 5, "duplicate-sensitive-offer")).StatusCode)
 	require.Equal(t, 409, invokeSignaling(t, service, logicalSession, restartBody(logicalSession.ID, 7, "out-of-order-sensitive-offer")).StatusCode)
+}
+
+func TestSignalingUsesCurrentServerAuthorizationForExactBranchScope(t *testing.T) {
+	const branchID = "cbd6e793-62e6-4c32-a106-065709caf460"
+	logicalSession := validSignalingSession()
+	logicalSession.BranchID = branchID
+	current := &fakeCurrentSessionAuthorizer{authorization: CurrentSessionAuthorization{BranchID: branchID}}
+	lookup := &fakeSessionLookup{value: logicalSession}
+	service := newTestSignalingService(t, testChannelARNs(requiredKVSChannelCount), SignalingDependencies{
+		Authorization: &fakeAuthorizationResolver{identity: TrustedIdentity{
+			UserID: logicalSession.UserID, BusinessID: logicalSession.BusinessID, ClientID: "client",
+		}},
+		CurrentSessions: current,
+		Sessions:        lookup,
+		ICE:             &fakeICECredentialSource{credentials: validSignalingCredentials()},
+		Activities:      newFakeActivitySource(),
+		Peers:           &fakePeerFactory{peer: newFakeSignalingPeer()},
+	})
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+
+	require.Equal(t, http.StatusOK, invokeSignaling(t, service, logicalSession, attachBody(1)).StatusCode)
+	require.Equal(t, voicesession.Scope{
+		UserID: logicalSession.UserID, BusinessID: logicalSession.BusinessID,
+		AllowedBranchIDs: []string{branchID},
+	}, lookup.scopeSnapshot())
+	require.False(t, lookup.scopeSnapshot().AllBranches, "identity claims must never recreate all-branch access")
+	require.Equal(t, "Bearer authorization-sensitive-canary", current.authorizationSnapshot())
+	require.Equal(t, logicalSession.ID, current.sessionIDSnapshot())
+}
+
+func TestSignalingUsesExactBranchlessScopeOnlyAfterCurrentServerAuthorization(t *testing.T) {
+	logicalSession := validSignalingSession()
+	logicalSession.BranchID = ""
+	lookup := &fakeSessionLookup{value: logicalSession}
+	service := newTestSignalingService(t, testChannelARNs(requiredKVSChannelCount), SignalingDependencies{
+		Authorization: &fakeAuthorizationResolver{identity: TrustedIdentity{
+			UserID: logicalSession.UserID, BusinessID: logicalSession.BusinessID, ClientID: "client",
+		}},
+		CurrentSessions: &fakeCurrentSessionAuthorizer{authorization: CurrentSessionAuthorization{}},
+		Sessions:        lookup,
+		ICE:             &fakeICECredentialSource{credentials: validSignalingCredentials()},
+		Activities:      newFakeActivitySource(),
+		Peers:           &fakePeerFactory{peer: newFakeSignalingPeer()},
+	})
+	t.Cleanup(func() { require.NoError(t, service.Close()) })
+
+	require.Equal(t, http.StatusOK, invokeSignaling(t, service, logicalSession, attachBody(1)).StatusCode)
+	require.Equal(t, voicesession.Scope{
+		UserID: logicalSession.UserID, BusinessID: logicalSession.BusinessID, AllowBranchless: true,
+	}, lookup.scopeSnapshot())
+	require.False(t, lookup.scopeSnapshot().AllBranches, "a branchless authorization must remain exact, not all-branch")
+}
+
+func TestSignalingRejectsCurrentAuthorizationThatDisagreesWithDurableBranch(t *testing.T) {
+	const durableBranchID = "cbd6e793-62e6-4c32-a106-065709caf460"
+	for _, test := range []struct {
+		name            string
+		currentBranchID string
+	}{
+		{name: "missing branch", currentBranchID: ""},
+		{name: "other branch", currentBranchID: "ced6e793-62e6-4c32-a106-065709caf461"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			logicalSession := validSignalingSession()
+			logicalSession.BranchID = durableBranchID
+			lookup := &fakeSessionLookup{value: logicalSession}
+			ice := &fakeICECredentialSource{credentials: validSignalingCredentials()}
+			activities := newFakeActivitySource()
+			peers := &fakePeerFactory{peer: newFakeSignalingPeer()}
+			service := newTestSignalingService(t, testChannelARNs(requiredKVSChannelCount), SignalingDependencies{
+				Authorization: &fakeAuthorizationResolver{identity: TrustedIdentity{
+					UserID: logicalSession.UserID, BusinessID: logicalSession.BusinessID, ClientID: "client",
+				}},
+				CurrentSessions: &fakeCurrentSessionAuthorizer{authorization: CurrentSessionAuthorization{BranchID: test.currentBranchID}},
+				Sessions:        lookup,
+				ICE:             ice,
+				Activities:      activities,
+				Peers:           peers,
+			})
+			t.Cleanup(func() { require.NoError(t, service.Close()) })
+
+			response := invokeSignaling(t, service, logicalSession, attachBody(1))
+			require.Equal(t, http.StatusNotFound, response.StatusCode)
+			require.Equal(t, 1, lookup.callCount(), "exact-scope lookup may race but must be cross-checked")
+			require.Zero(t, ice.callCount())
+			require.Empty(t, activities.calls())
+			require.Zero(t, peers.callCount())
+		})
+	}
+}
+
+func TestSignalingCurrentAuthorizationPrecedesEveryUserSignalingSideEffect(t *testing.T) {
+	const branchID = "cbd6e793-62e6-4c32-a106-065709caf460"
+	tests := []struct {
+		name    string
+		prepare func(*testing.T, *SignalingService, *voicesession.Session)
+		body    func(*voicesession.Session) string
+	}{
+		{name: "initial attach", body: func(*voicesession.Session) string { return attachBody(1) }},
+		{
+			name: "reconnect attach",
+			prepare: func(t *testing.T, service *SignalingService, session *voicesession.Session) {
+				require.Equal(t, http.StatusOK, invokeSignaling(t, service, session, attachBody(1)).StatusCode)
+				require.Equal(t, http.StatusOK, invokeSignaling(t, service, session, offerBody(session.ID, 2, "initial-offer")).StatusCode)
+			},
+			body: func(*voicesession.Session) string { return attachBody(3) },
+		},
+		{
+			name: "offer",
+			prepare: func(t *testing.T, service *SignalingService, session *voicesession.Session) {
+				require.Equal(t, http.StatusOK, invokeSignaling(t, service, session, attachBody(1)).StatusCode)
+			},
+			body: func(session *voicesession.Session) string { return offerBody(session.ID, 2, "revoked-offer-canary") },
+		},
+		{
+			name: "candidate",
+			prepare: func(t *testing.T, service *SignalingService, session *voicesession.Session) {
+				require.Equal(t, http.StatusOK, invokeSignaling(t, service, session, attachBody(1)).StatusCode)
+			},
+			body: func(session *voicesession.Session) string {
+				return candidateBody(session.ID, 2, "revoked-candidate-canary", "revoked-ufrag")
+			},
+		},
+		{
+			name: "restart",
+			prepare: func(t *testing.T, service *SignalingService, session *voicesession.Session) {
+				require.Equal(t, http.StatusOK, invokeSignaling(t, service, session, attachBody(1)).StatusCode)
+				require.Equal(t, http.StatusOK, invokeSignaling(t, service, session, offerBody(session.ID, 2, "initial-offer")).StatusCode)
+			},
+			body: func(session *voicesession.Session) string {
+				return restartBody(session.ID, 3, "revoked-restart-canary")
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			logicalSession := validSignalingSession()
+			logicalSession.BranchID = branchID
+			current := &fakeCurrentSessionAuthorizer{authorization: CurrentSessionAuthorization{BranchID: branchID}}
+			lookup := &fakeSessionLookup{value: logicalSession}
+			ice := &fakeICECredentialSource{credentials: validSignalingCredentials()}
+			activities := newFakeActivitySource()
+			peer := newFakeSignalingPeer()
+			peers := &fakePeerFactory{peer: peer}
+			bindings := &fakeSTTBindingFactory{}
+			service := newTestSignalingService(t, testChannelARNs(requiredKVSChannelCount), SignalingDependencies{
+				Authorization: &fakeAuthorizationResolver{identity: TrustedIdentity{
+					UserID: logicalSession.UserID, BusinessID: logicalSession.BusinessID, ClientID: "client",
+				}},
+				CurrentSessions: current,
+				Sessions:        lookup,
+				ICE:             ice,
+				Activities:      activities,
+				Peers:           peers,
+				STTBindings:     bindings,
+			})
+			t.Cleanup(func() { require.NoError(t, service.Close()) })
+			if test.prepare != nil {
+				test.prepare(t, service, logicalSession)
+			}
+
+			beforeLookup := lookup.callCount()
+			beforeICE := ice.callCount()
+			beforeActivities := len(activities.calls())
+			beforePeers := peers.callCount()
+			beforeBindings := len(bindings.configsSnapshot())
+			beforeAnswers := len(peer.answerCalls())
+			beforeCandidates := len(peer.candidateCalls())
+			beforeRefreshes := len(peer.refreshes())
+			current.setError(ErrCurrentSessionUnauthorized)
+
+			response := invokeSignaling(t, service, logicalSession, test.body(logicalSession))
+			require.Equal(t, http.StatusNotFound, response.StatusCode)
+			assertSanitized(t, response.Body, "revoked-offer-canary", "revoked-candidate-canary", "revoked-restart-canary", branchID)
+			require.Equal(t, beforeLookup, lookup.callCount(), "durable lookup must follow current authorization")
+			require.Equal(t, beforeICE, ice.callCount(), "ICE allocation/refresh must not run after current authorization fails")
+			require.Equal(t, beforeActivities, len(activities.calls()), "persistent activity and lease composition must not start")
+			require.Equal(t, beforePeers, peers.callCount(), "peer construction must not run")
+			require.Equal(t, beforeBindings, len(bindings.configsSnapshot()), "STT/lease binding must not run")
+			require.Equal(t, beforeAnswers, len(peer.answerCalls()), "offer/restart must not reach the peer")
+			require.Equal(t, beforeCandidates, len(peer.candidateCalls()), "candidate must not reach the peer")
+			require.Equal(t, beforeRefreshes, len(peer.refreshes()), "reconnect must not refresh peer ICE")
+		})
+	}
+}
+
+func TestSignalingFailsClosedForCurrentAuthorizationDependencyFailures(t *testing.T) {
+	tests := []struct {
+		name          string
+		branchID      string
+		authorization CurrentSessionAuthorization
+		err           error
+		panicValue    any
+		wantStatus    int
+	}{
+		{name: "revoked branch", branchID: "cbd6e793-62e6-4c32-a106-065709caf460", err: ErrCurrentSessionUnauthorized, wantStatus: http.StatusNotFound},
+		{name: "branchless all-branch downgrade", err: ErrCurrentSessionUnauthorized, wantStatus: http.StatusNotFound},
+		{name: "upstream unavailable", err: ErrCurrentSessionUnavailable, wantStatus: http.StatusServiceUnavailable},
+		{name: "upstream panic", panicValue: "current-authorization-sensitive-canary", wantStatus: http.StatusServiceUnavailable},
+		{name: "invalid upstream branch", authorization: CurrentSessionAuthorization{BranchID: "../other"}, wantStatus: http.StatusServiceUnavailable},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			logicalSession := validSignalingSession()
+			logicalSession.BranchID = test.branchID
+			lookup := &fakeSessionLookup{value: logicalSession}
+			ice := &fakeICECredentialSource{credentials: validSignalingCredentials()}
+			activities := newFakeActivitySource()
+			peers := &fakePeerFactory{peer: newFakeSignalingPeer()}
+			service := newTestSignalingService(t, testChannelARNs(requiredKVSChannelCount), SignalingDependencies{
+				Authorization: &fakeAuthorizationResolver{identity: TrustedIdentity{
+					UserID: logicalSession.UserID, BusinessID: logicalSession.BusinessID, ClientID: "client",
+				}},
+				CurrentSessions: &fakeCurrentSessionAuthorizer{authorization: test.authorization, err: test.err, panicValue: test.panicValue},
+				Sessions:        lookup,
+				ICE:             ice,
+				Activities:      activities,
+				Peers:           peers,
+			})
+			t.Cleanup(func() { require.NoError(t, service.Close()) })
+
+			response := invokeSignaling(t, service, logicalSession, attachBody(1))
+			require.Equal(t, test.wantStatus, response.StatusCode)
+			assertSanitized(t, response.Body, "current-authorization-sensitive-canary", logicalSession.BranchID)
+			require.Zero(t, lookup.callCount())
+			require.Zero(t, ice.callCount())
+			require.Empty(t, activities.calls())
+			require.Zero(t, peers.callCount())
+		})
+	}
 }
 
 func TestSignalingMetricsRecordKVSFailuresAndSuccessfulICERestarts(t *testing.T) {
@@ -624,12 +855,13 @@ func TestSignalingReservesCapacityBeforeRequestingCredentials(t *testing.T) {
 	config := validSignalingConfig(testChannelARNs(12))
 	config.MaxPeers = 1
 	service, err := NewSignalingService(config, SignalingDependencies{
-		Authorization: resolver,
-		Sessions:      lookup,
-		ICE:           ice,
-		Activities:    newFakeActivitySource(),
-		Peers:         &fakePeerFactory{peer: newFakeSignalingPeer()},
-		STTBindings:   &fakeSTTBindingFactory{},
+		Authorization:   resolver,
+		CurrentSessions: &fakeCurrentSessionAuthorizer{},
+		Sessions:        lookup,
+		ICE:             ice,
+		Activities:      newFakeActivitySource(),
+		Peers:           &fakePeerFactory{peer: newFakeSignalingPeer()},
+		STTBindings:     &fakeSTTBindingFactory{},
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
@@ -892,11 +1124,12 @@ func TestSignalingDelegatesCandidateBoundsPerICEGeneration(t *testing.T) {
 		Authorization: &fakeAuthorizationResolver{identity: TrustedIdentity{
 			UserID: logicalSession.UserID, BusinessID: logicalSession.BusinessID, ClientID: "client",
 		}},
-		Sessions:    &fakeSessionLookup{value: logicalSession},
-		ICE:         &fakeICECredentialSource{credentials: validSignalingCredentials()},
-		Activities:  newFakeActivitySource(),
-		Peers:       &fakePeerFactory{peer: peer},
-		STTBindings: &fakeSTTBindingFactory{},
+		CurrentSessions: &fakeCurrentSessionAuthorizer{},
+		Sessions:        &fakeSessionLookup{value: logicalSession},
+		ICE:             &fakeICECredentialSource{credentials: validSignalingCredentials()},
+		Activities:      newFakeActivitySource(),
+		Peers:           &fakePeerFactory{peer: peer},
+		STTBindings:     &fakeSTTBindingFactory{},
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
@@ -938,11 +1171,12 @@ func TestSignalingAttachTimeoutAndCloseReleasePersistentActivity(t *testing.T) {
 		Authorization: &fakeAuthorizationResolver{identity: TrustedIdentity{
 			UserID: logicalSession.UserID, BusinessID: logicalSession.BusinessID, ClientID: "client",
 		}},
-		Sessions:    &fakeSessionLookup{value: logicalSession},
-		ICE:         &fakeICECredentialSource{credentials: validSignalingCredentials()},
-		Activities:  activity,
-		Peers:       &fakePeerFactory{peer: peer},
-		STTBindings: &fakeSTTBindingFactory{},
+		CurrentSessions: &fakeCurrentSessionAuthorizer{},
+		Sessions:        &fakeSessionLookup{value: logicalSession},
+		ICE:             &fakeICECredentialSource{credentials: validSignalingCredentials()},
+		Activities:      activity,
+		Peers:           &fakePeerFactory{peer: peer},
+		STTBindings:     &fakeSTTBindingFactory{},
 	})
 	require.NoError(t, err)
 	require.Equal(t, 200, invokeSignaling(t, service, logicalSession, attachBody(1)).StatusCode)
@@ -969,12 +1203,13 @@ func TestSignalingBoundsTrackedTombstonesAndPreservesActiveState(t *testing.T) {
 	config.MaxPeers = 1
 	config.MaxTrackedSessions = 2
 	service, err := NewSignalingService(config, SignalingDependencies{
-		Authorization: &fakeAuthorizationResolver{identity: TrustedIdentity{UserID: "user-123", BusinessID: "business-456", ClientID: "client"}},
-		Sessions:      lookup,
-		ICE:           &fakeICECredentialSource{credentials: validSignalingCredentials()},
-		Activities:    newFakeActivitySource(),
-		Peers:         &fakePeerFactory{peer: newFakeSignalingPeer()},
-		STTBindings:   &fakeSTTBindingFactory{},
+		Authorization:   &fakeAuthorizationResolver{identity: TrustedIdentity{UserID: "user-123", BusinessID: "business-456", ClientID: "client"}},
+		CurrentSessions: &fakeCurrentSessionAuthorizer{},
+		Sessions:        lookup,
+		ICE:             &fakeICECredentialSource{credentials: validSignalingCredentials()},
+		Activities:      newFakeActivitySource(),
+		Peers:           &fakePeerFactory{peer: newFakeSignalingPeer()},
+		STTBindings:     &fakeSTTBindingFactory{},
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
@@ -1076,11 +1311,12 @@ func TestSignalingPeerMethodPanicIsTerminalAndReleasesCapacity(t *testing.T) {
 		Authorization: &fakeAuthorizationResolver{identity: TrustedIdentity{
 			UserID: logicalSession.UserID, BusinessID: logicalSession.BusinessID, ClientID: "client",
 		}},
-		Sessions:    &fakeSessionLookup{value: logicalSession},
-		ICE:         &fakeICECredentialSource{credentials: validSignalingCredentials()},
-		Activities:  activities,
-		Peers:       &fakePeerFactory{peers: []SignalingPeer{panickingPeer, healthyPeer}},
-		STTBindings: &fakeSTTBindingFactory{},
+		CurrentSessions: &fakeCurrentSessionAuthorizer{},
+		Sessions:        &fakeSessionLookup{value: logicalSession},
+		ICE:             &fakeICECredentialSource{credentials: validSignalingCredentials()},
+		Activities:      activities,
+		Peers:           &fakePeerFactory{peers: []SignalingPeer{panickingPeer, healthyPeer}},
+		STTBindings:     &fakeSTTBindingFactory{},
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
@@ -1408,11 +1644,12 @@ func TestSignalingRequiresFreshICEBeforeOfferAndPreservesSequenceForRefresh(t *t
 		Authorization: &fakeAuthorizationResolver{identity: TrustedIdentity{
 			UserID: logicalSession.UserID, BusinessID: logicalSession.BusinessID, ClientID: "client",
 		}},
-		Sessions:    &fakeSessionLookup{value: logicalSession},
-		ICE:         ice,
-		Activities:  newFakeActivitySource(),
-		Peers:       &fakePeerFactory{peer: peer},
-		STTBindings: &fakeSTTBindingFactory{},
+		CurrentSessions: &fakeCurrentSessionAuthorizer{},
+		Sessions:        &fakeSessionLookup{value: logicalSession},
+		ICE:             ice,
+		Activities:      newFakeActivitySource(),
+		Peers:           &fakePeerFactory{peer: peer},
+		STTBindings:     &fakeSTTBindingFactory{},
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
@@ -1445,11 +1682,12 @@ func TestSignalingRechecksICEFreshnessAfterAnswerGathering(t *testing.T) {
 		Authorization: &fakeAuthorizationResolver{identity: TrustedIdentity{
 			UserID: logicalSession.UserID, BusinessID: logicalSession.BusinessID, ClientID: "client",
 		}},
-		Sessions:    &fakeSessionLookup{value: logicalSession},
-		ICE:         &fakeICECredentialSource{credentials: validSignalingCredentials()},
-		Activities:  newFakeActivitySource(),
-		Peers:       &fakePeerFactory{peer: peer},
-		STTBindings: &fakeSTTBindingFactory{},
+		CurrentSessions: &fakeCurrentSessionAuthorizer{},
+		Sessions:        &fakeSessionLookup{value: logicalSession},
+		ICE:             &fakeICECredentialSource{credentials: validSignalingCredentials()},
+		Activities:      newFakeActivitySource(),
+		Peers:           &fakePeerFactory{peer: peer},
+		STTBindings:     &fakeSTTBindingFactory{},
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
@@ -1628,6 +1866,9 @@ func validSignalingConfig(channels []string) SignalingConfig {
 
 func newTestSignalingService(t *testing.T, channels []string, dependencies SignalingDependencies) *SignalingService {
 	t.Helper()
+	if dependencies.CurrentSessions == nil {
+		dependencies.CurrentSessions = &fakeCurrentSessionAuthorizer{}
+	}
 	if dependencies.STTBindings == nil {
 		dependencies.STTBindings = &fakeSTTBindingFactory{}
 	}
@@ -1642,11 +1883,12 @@ func validSignalingDependencies(logicalSession *voicesession.Session, peer Signa
 			identity:   TrustedIdentity{UserID: logicalSession.UserID, BusinessID: logicalSession.BusinessID, ClientID: "client"},
 			panicValue: authorizationPanic,
 		},
-		Sessions:    &fakeSessionLookup{value: logicalSession, panicValue: sessionPanic},
-		ICE:         &fakeICECredentialSource{credentials: validSignalingCredentials(), panicValue: icePanic},
-		Activities:  &fakeActivitySource{ctx: context.Background(), closer: newRecordingCloser(), panicValue: activityPanic},
-		Peers:       &fakePeerFactory{peer: peer},
-		STTBindings: &fakeSTTBindingFactory{},
+		CurrentSessions: &fakeCurrentSessionAuthorizer{authorization: CurrentSessionAuthorization{BranchID: logicalSession.BranchID}},
+		Sessions:        &fakeSessionLookup{value: logicalSession, panicValue: sessionPanic},
+		ICE:             &fakeICECredentialSource{credentials: validSignalingCredentials(), panicValue: icePanic},
+		Activities:      &fakeActivitySource{ctx: context.Background(), closer: newRecordingCloser(), panicValue: activityPanic},
+		Peers:           &fakePeerFactory{peer: peer},
+		STTBindings:     &fakeSTTBindingFactory{},
 	}
 }
 
@@ -1872,6 +2114,47 @@ type fakeAuthorizationResolver struct {
 	panicValue    any
 }
 
+type fakeCurrentSessionAuthorizer struct {
+	mu sync.Mutex
+
+	authorizationValue string
+	sessionID          string
+	authorization      CurrentSessionAuthorization
+	err                error
+	calls              int
+	panicValue         any
+}
+
+func (authorizer *fakeCurrentSessionAuthorizer) Authorize(_ context.Context, authorization, sessionID string) (CurrentSessionAuthorization, error) {
+	authorizer.mu.Lock()
+	defer authorizer.mu.Unlock()
+	if authorizer.panicValue != nil {
+		panic(authorizer.panicValue)
+	}
+	authorizer.authorizationValue = authorization
+	authorizer.sessionID = sessionID
+	authorizer.calls++
+	return authorizer.authorization, authorizer.err
+}
+
+func (authorizer *fakeCurrentSessionAuthorizer) setError(err error) {
+	authorizer.mu.Lock()
+	defer authorizer.mu.Unlock()
+	authorizer.err = err
+}
+
+func (authorizer *fakeCurrentSessionAuthorizer) authorizationSnapshot() string {
+	authorizer.mu.Lock()
+	defer authorizer.mu.Unlock()
+	return authorizer.authorizationValue
+}
+
+func (authorizer *fakeCurrentSessionAuthorizer) sessionIDSnapshot() string {
+	authorizer.mu.Lock()
+	defer authorizer.mu.Unlock()
+	return authorizer.sessionID
+}
+
 func (resolver *fakeAuthorizationResolver) Resolve(_ context.Context, authorization string) (TrustedIdentity, error) {
 	resolver.mu.Lock()
 	defer resolver.mu.Unlock()
@@ -1915,6 +2198,20 @@ func (lookup *fakeSessionLookup) Get(_ context.Context, scope voicesession.Scope
 	return &cloned, lookup.err
 }
 
+func (lookup *fakeSessionLookup) scopeSnapshot() voicesession.Scope {
+	lookup.mu.Lock()
+	defer lookup.mu.Unlock()
+	scope := lookup.scope
+	scope.AllowedBranchIDs = append([]string(nil), scope.AllowedBranchIDs...)
+	return scope
+}
+
+func (lookup *fakeSessionLookup) callCount() int {
+	lookup.mu.Lock()
+	defer lookup.mu.Unlock()
+	return lookup.calls
+}
+
 type fakeICECredentialSource struct {
 	mu          sync.Mutex
 	credentials TURNCredentials
@@ -1939,6 +2236,12 @@ func (source *fakeICECredentialSource) setCredentials(credentials TURNCredential
 	source.mu.Lock()
 	defer source.mu.Unlock()
 	source.credentials = credentials
+}
+
+func (source *fakeICECredentialSource) callCount() int {
+	source.mu.Lock()
+	defer source.mu.Unlock()
+	return source.calls
 }
 
 type recordingCloser struct {
@@ -2035,6 +2338,12 @@ func (factory *fakePeerFactory) Create(config PeerConfig) (SignalingPeer, error)
 		return peer, factory.err
 	}
 	return factory.peer, factory.err
+}
+
+func (factory *fakePeerFactory) callCount() int {
+	factory.mu.Lock()
+	defer factory.mu.Unlock()
+	return len(factory.calls)
 }
 
 type fakeSignalingPeer struct {

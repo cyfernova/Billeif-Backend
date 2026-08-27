@@ -50,6 +50,7 @@ type Scope struct {
 	UserID           string
 	BusinessID       string
 	AllBranches      bool
+	AllowBranchless  bool
 	AllowedBranchIDs []string
 }
 
