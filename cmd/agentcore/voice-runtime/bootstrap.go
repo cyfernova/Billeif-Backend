@@ -65,17 +65,18 @@ type runtimeEnvironment struct {
 }
 
 type runtimeDependencies struct {
-	Authorization webrtc.AuthorizationResolver
-	Sessions      webrtc.SessionLookup
-	LeaseRenewer  voicesession.LeaseRenewer
-	ICE           webrtc.ICECredentialSource
-	STT           sarvam.STTOpener
-	Chat          sarvam.ChatStreamer
-	Outputs       composition.OutputFactory
-	Decoders      composition.DecoderFactory
-	Peers         webrtc.PeerFactory
-	Metrics       webrtc.SignalingMetrics
-	Closers       []io.Closer
+	Authorization   webrtc.AuthorizationResolver
+	CurrentSessions webrtc.CurrentSessionAuthorizer
+	Sessions        webrtc.SessionLookup
+	LeaseRenewer    voicesession.LeaseRenewer
+	ICE             webrtc.ICECredentialSource
+	STT             sarvam.STTOpener
+	Chat            sarvam.ChatStreamer
+	Outputs         composition.OutputFactory
+	Decoders        composition.DecoderFactory
+	Peers           webrtc.PeerFactory
+	Metrics         webrtc.SignalingMetrics
+	Closers         []io.Closer
 }
 
 func loadRuntimeEnvironment(lookup environmentLookup) (runtimeEnvironment, error) {
@@ -212,7 +213,8 @@ func newRuntimeApplication(environment runtimeEnvironment, dependencies runtimeD
 		MaxPeers: int(environment.globalLimit), MaxTrackedSessions: int(environment.globalLimit * 2),
 		MaxPendingCandidates: 64, MaxCandidateBytes: 2 << 10, MaxControlQueue: 64,
 	}, webrtc.SignalingDependencies{
-		Authorization: dependencies.Authorization, Sessions: dependencies.Sessions, ICE: dependencies.ICE,
+		Authorization: dependencies.Authorization, CurrentSessions: dependencies.CurrentSessions,
+		Sessions: dependencies.Sessions, ICE: dependencies.ICE,
 		Activities: application, Peers: dependencies.Peers, STTBindings: bindingFactory,
 		Metrics: dependencies.Metrics,
 	})
@@ -305,7 +307,7 @@ func (closer *runtimeOrderedCloser) Close() error {
 }
 
 func validRuntimeDependencies(value runtimeDependencies) bool {
-	return !nilRuntimeInterface(value.Authorization) && !nilRuntimeInterface(value.Sessions) &&
+	return !nilRuntimeInterface(value.Authorization) && !nilRuntimeInterface(value.CurrentSessions) && !nilRuntimeInterface(value.Sessions) &&
 		!nilRuntimeInterface(value.LeaseRenewer) &&
 		!nilRuntimeInterface(value.ICE) && !nilRuntimeInterface(value.STT) &&
 		!nilRuntimeInterface(value.Chat) && !nilRuntimeInterface(value.Outputs) && !nilRuntimeInterface(value.Decoders) &&

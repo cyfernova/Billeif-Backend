@@ -18,6 +18,8 @@ import (
 	"invoice-backend/internal/voice/protocol"
 	"invoice-backend/internal/voice/runtime"
 	voicesession "invoice-backend/internal/voice/session"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -37,11 +39,13 @@ const (
 )
 
 var (
-	ErrInvalidSignalingConfig = errors.New("invalid voice signaling configuration")
-	ErrSignalingUnauthorized  = errors.New("voice signaling authorization rejected")
-	ErrSignalingClose         = errors.New("close voice signaling peers")
-	errSignalingPeerPanicked  = errors.New("voice signaling peer operation failed")
-	errSTTBindingFactoryPanic = errors.New("voice STT binding construction failed")
+	ErrInvalidSignalingConfig     = errors.New("invalid voice signaling configuration")
+	ErrSignalingUnauthorized      = errors.New("voice signaling authorization rejected")
+	ErrCurrentSessionUnauthorized = errors.New("current voice session authorization rejected")
+	ErrCurrentSessionUnavailable  = errors.New("current voice session authorization unavailable")
+	ErrSignalingClose             = errors.New("close voice signaling peers")
+	errSignalingPeerPanicked      = errors.New("voice signaling peer operation failed")
+	errSTTBindingFactoryPanic     = errors.New("voice STT binding construction failed")
 )
 
 // TrustedIdentity contains only the claims the authorization boundary has
@@ -56,6 +60,20 @@ type TrustedIdentity struct {
 // exposing it to the signaling service's retained state.
 type AuthorizationResolver interface {
 	Resolve(context.Context, string) (TrustedIdentity, error)
+}
+
+// CurrentSessionAuthorization is a resource-specific authorization result
+// obtained from the authenticated HTTP API. An empty BranchID means the API
+// authorized this exact branchless session; it never grants all-branch access.
+type CurrentSessionAuthorization struct {
+	BranchID string
+}
+
+// CurrentSessionAuthorizer rechecks the caller's current server-derived
+// business and branch permissions for one logical session on every signaling
+// invocation. It must not infer branch access from identity claims alone.
+type CurrentSessionAuthorizer interface {
+	Authorize(context.Context, string, string) (CurrentSessionAuthorization, error)
 }
 
 // SessionLookup resolves a logical voice session through the tenant-safe
@@ -160,14 +178,15 @@ type SignalingConfig struct {
 }
 
 type SignalingDependencies struct {
-	Authorization AuthorizationResolver
-	Sessions      SessionLookup
-	ICE           ICECredentialSource
-	Activities    PersistentActivitySource
-	Peers         PeerFactory
-	STTBindings   STTBindingFactory
-	Metrics       SignalingMetrics
-	HandleControl func(context.Context, protocol.ControlMessage) error
+	Authorization   AuthorizationResolver
+	CurrentSessions CurrentSessionAuthorizer
+	Sessions        SessionLookup
+	ICE             ICECredentialSource
+	Activities      PersistentActivitySource
+	Peers           PeerFactory
+	STTBindings     STTBindingFactory
+	Metrics         SignalingMetrics
+	HandleControl   func(context.Context, protocol.ControlMessage) error
 }
 
 type signalingConfig struct {
@@ -193,15 +212,16 @@ type signalingConfig struct {
 // lifecycle binding per active peer. It never keeps Authorization, SDP,
 // candidates, TURN response credentials, audio, or transcripts in its state.
 type SignalingService struct {
-	config        signalingConfig
-	authorization AuthorizationResolver
-	sessions      SessionLookup
-	ice           ICECredentialSource
-	activities    PersistentActivitySource
-	peers         PeerFactory
-	sttBindings   STTBindingFactory
-	metrics       SignalingMetrics
-	handleControl func(context.Context, protocol.ControlMessage) error
+	config          signalingConfig
+	authorization   AuthorizationResolver
+	currentSessions CurrentSessionAuthorizer
+	sessions        SessionLookup
+	ice             ICECredentialSource
+	activities      PersistentActivitySource
+	peers           PeerFactory
+	sttBindings     STTBindingFactory
+	metrics         SignalingMetrics
+	handleControl   func(context.Context, protocol.ControlMessage) error
 
 	mu          sync.Mutex
 	closing     bool
@@ -374,7 +394,7 @@ func NewSignalingService(config SignalingConfig, dependencies SignalingDependenc
 	if err != nil {
 		return nil, err
 	}
-	if dependencies.Authorization == nil || dependencies.Sessions == nil || dependencies.ICE == nil || dependencies.Activities == nil || isNilInterface(dependencies.STTBindings) {
+	if dependencies.Authorization == nil || isNilInterface(dependencies.CurrentSessions) || dependencies.Sessions == nil || dependencies.ICE == nil || dependencies.Activities == nil || isNilInterface(dependencies.STTBindings) {
 		return nil, ErrInvalidSignalingConfig
 	}
 	if dependencies.Peers == nil {
@@ -384,18 +404,19 @@ func NewSignalingService(config SignalingConfig, dependencies SignalingDependenc
 		dependencies.HandleControl = func(context.Context, protocol.ControlMessage) error { return nil }
 	}
 	return &SignalingService{
-		config:        normalized,
-		authorization: dependencies.Authorization,
-		sessions:      dependencies.Sessions,
-		ice:           dependencies.ICE,
-		activities:    dependencies.Activities,
-		peers:         dependencies.Peers,
-		sttBindings:   dependencies.STTBindings,
-		metrics:       dependencies.Metrics,
-		handleControl: dependencies.HandleControl,
-		states:        make(map[signalingSessionKey]*signalingSessionState, normalized.maxTrackedSessions),
-		recency:       list.New(),
-		done:          make(chan struct{}),
+		config:          normalized,
+		authorization:   dependencies.Authorization,
+		currentSessions: dependencies.CurrentSessions,
+		sessions:        dependencies.Sessions,
+		ice:             dependencies.ICE,
+		activities:      dependencies.Activities,
+		peers:           dependencies.Peers,
+		sttBindings:     dependencies.STTBindings,
+		metrics:         dependencies.Metrics,
+		handleControl:   dependencies.HandleControl,
+		states:          make(map[signalingSessionKey]*signalingSessionState, normalized.maxTrackedSessions),
+		recency:         list.New(),
+		done:            make(chan struct{}),
 	}, nil
 }
 
@@ -560,18 +581,27 @@ func (service *SignalingService) invoke(ctx context.Context, invocation runtime.
 		return runtime.InvocationResponse{}, fail(http.StatusNotFound)
 	}
 
-	logicalSession, err := service.sessions.Get(ctx, voicesession.Scope{
-		UserID:      identity.UserID,
-		BusinessID:  identity.BusinessID,
-		AllBranches: true,
-	}, request.SessionID)
+	currentAuthorization, err := safelyAuthorizeCurrentSession(
+		service.currentSessions, ctx, invocation.Authorization, request.SessionID,
+	)
+	if err != nil {
+		if errors.Is(err, ErrCurrentSessionUnauthorized) {
+			return runtime.InvocationResponse{}, fail(http.StatusNotFound)
+		}
+		return runtime.InvocationResponse{}, fail(http.StatusServiceUnavailable)
+	}
+	if !validCurrentSessionAuthorization(currentAuthorization) {
+		return runtime.InvocationResponse{}, fail(http.StatusServiceUnavailable)
+	}
+
+	logicalSession, err := service.sessions.Get(ctx, currentSessionScope(identity, currentAuthorization), request.SessionID)
 	if err != nil {
 		if errors.Is(err, voicesession.ErrNotFound) || errors.Is(err, voicesession.ErrBranchForbidden) {
 			return runtime.InvocationResponse{}, fail(http.StatusNotFound)
 		}
 		return runtime.InvocationResponse{}, fail(http.StatusServiceUnavailable)
 	}
-	if err := service.validateDurableSession(invocation, request, identity, logicalSession); err != nil {
+	if err := service.validateDurableSession(invocation, request, identity, currentAuthorization, logicalSession); err != nil {
 		return runtime.InvocationResponse{}, err
 	}
 
@@ -799,11 +829,44 @@ func validTrustedIdentity(identity TrustedIdentity) bool {
 	return safeBoundedValue(identity.UserID, 256) && safeBoundedValue(identity.BusinessID, 256) && safeBoundedValue(identity.ClientID, 256)
 }
 
-func (service *SignalingService) validateDurableSession(invocation runtime.InvocationRequest, request signalingRequest, identity TrustedIdentity, value *voicesession.Session) error {
+func validCurrentSessionAuthorization(authorization CurrentSessionAuthorization) bool {
+	if authorization.BranchID == "" {
+		return true
+	}
+	parsed, err := uuid.Parse(authorization.BranchID)
+	return err == nil && parsed.String() == authorization.BranchID
+}
+
+func currentSessionScope(identity TrustedIdentity, authorization CurrentSessionAuthorization) voicesession.Scope {
+	scope := voicesession.Scope{UserID: identity.UserID, BusinessID: identity.BusinessID}
+	if authorization.BranchID == "" {
+		scope.AllowBranchless = true
+	} else {
+		scope.AllowedBranchIDs = []string{authorization.BranchID}
+	}
+	return scope
+}
+
+func safelyAuthorizeCurrentSession(
+	authorizer CurrentSessionAuthorizer,
+	ctx context.Context,
+	authorization string,
+	sessionID string,
+) (result CurrentSessionAuthorization, err error) {
+	defer func() {
+		if recover() != nil {
+			result = CurrentSessionAuthorization{}
+			err = ErrCurrentSessionUnavailable
+		}
+	}()
+	return authorizer.Authorize(ctx, authorization, sessionID)
+}
+
+func (service *SignalingService) validateDurableSession(invocation runtime.InvocationRequest, request signalingRequest, identity TrustedIdentity, current CurrentSessionAuthorization, value *voicesession.Session) error {
 	if value == nil {
 		return fail(http.StatusServiceUnavailable)
 	}
-	if value.ID != request.SessionID || value.UserID != identity.UserID || value.BusinessID != identity.BusinessID {
+	if value.ID != request.SessionID || value.UserID != identity.UserID || value.BusinessID != identity.BusinessID || value.BranchID != current.BranchID {
 		return fail(http.StatusNotFound)
 	}
 	if invocation.RuntimeID != service.config.runtimeID || invocation.AWSRegion != service.config.awsRegion ||
