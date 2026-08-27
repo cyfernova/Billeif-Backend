@@ -31,6 +31,11 @@ func ValidateForProfile(cfg *Config, profile Profile) error {
 			return err
 		}
 		if isProductionEnv(cfg.Environment) {
+			if profile != ProfileA2A {
+				if err := validateProductionRateLimit(cfg.Redis); err != nil {
+					return err
+				}
+			}
 			if profile != ProfileA2A && strings.TrimSpace(cfg.Secrets.InvoiceCursorHMAC) == "" {
 				return fmt.Errorf("INVOICE_CURSOR_HMAC_SECRET_ARN is required")
 			}
@@ -106,6 +111,43 @@ func ValidateForProfile(cfg *Config, profile Profile) error {
 	default:
 		return fmt.Errorf("unknown configuration profile %q", profile)
 	}
+}
+
+func validateProductionRateLimit(cfg RedisConfig) error {
+	if strings.TrimSpace(cfg.Host) == "" {
+		return fmt.Errorf("REDIS_HOST is required for production HTTP rate limiting")
+	}
+	if cfg.Port <= 0 || cfg.Port > 65535 {
+		return fmt.Errorf("REDIS_PORT must be a valid TCP port for production HTTP rate limiting")
+	}
+	if strings.TrimSpace(cfg.UserID) == "" {
+		return fmt.Errorf("REDIS_USER_ID is required for production IAM authentication")
+	}
+	if strings.TrimSpace(cfg.CacheName) == "" {
+		return fmt.Errorf("REDIS_CACHE_NAME is required for production IAM authentication")
+	}
+	if !cfg.TLSEnabled {
+		return fmt.Errorf("REDIS_TLS_ENABLED must be true in production")
+	}
+	if !cfg.IAMAuthEnabled {
+		return fmt.Errorf("REDIS_IAM_AUTH_ENABLED must be true in production")
+	}
+	if !cfg.ClusterMode {
+		return fmt.Errorf("REDIS_CLUSTER_MODE must be true for the production serverless cache")
+	}
+	if strings.TrimSpace(cfg.Password) != "" {
+		return fmt.Errorf("REDIS_PASSWORD must be empty when production IAM authentication is enabled")
+	}
+	if cfg.DB != 0 {
+		return fmt.Errorf("REDIS_DB must be 0 in production cluster mode")
+	}
+	if strings.TrimSpace(cfg.TrustedProxyCIDR) != "" {
+		return fmt.Errorf("RATE_LIMIT_TRUSTED_PROXY_CIDR is local-only and must be empty in production")
+	}
+	if cfg.DecisionTimeout <= 0 {
+		return fmt.Errorf("RATE_LIMIT_DECISION_TIMEOUT must be positive in production")
+	}
+	return nil
 }
 
 func validateProfileDependencies(cfg *Config, profile Profile) error {

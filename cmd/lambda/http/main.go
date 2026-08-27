@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -46,6 +48,13 @@ func (r *lazyRuntimeProxy) ProxyWithContext(ctx context.Context, req events.APIG
 		r.proxy, r.initErr = r.initialize(ctx)
 	})
 	if r.initErr != nil {
+		if errors.Is(r.initErr, app.ErrRateLimitUnavailable) {
+			return events.APIGatewayProxyResponse{
+				StatusCode: http.StatusServiceUnavailable,
+				Headers:    map[string]string{"Content-Type": "application/json"},
+				Body:       `{"error":"rate_limit_unavailable","message":"request could not be safely evaluated. please try again shortly"}`,
+			}, nil
+		}
 		return events.APIGatewayProxyResponse{StatusCode: 500, Body: r.initErr.Error()}, nil
 	}
 	return r.proxy(ctx, req)
