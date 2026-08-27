@@ -290,8 +290,8 @@ func (s *ShoppingAgentService) GetProductDetails(ctx context.Context, productID 
 	return s.ap2Repo.GetMarketplaceProductByID(ctx, productID)
 }
 
-func (s *ShoppingAgentService) TrackOrder(ctx context.Context, orderID string) (*models.MarketplaceOrder, error) {
-	return s.ap2Repo.GetOrderByID(ctx, orderID)
+func (s *ShoppingAgentService) TrackOrder(ctx context.Context, orderID, userID string) (*models.MarketplaceOrder, error) {
+	return s.ap2Repo.GetOrderByIDForUser(ctx, orderID, userID)
 }
 
 func (s *ShoppingAgentService) CreateIntentMandate(ctx context.Context, req *ShoppingIntentRequest) (*models.IntentMandate, error) {

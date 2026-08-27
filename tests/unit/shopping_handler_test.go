@@ -82,8 +82,8 @@ func (m *MockShoppingService) GetUserOrders(ctx context.Context, userID string, 
 	return args.Get(0).([]*models.MarketplaceOrder), args.Get(1).(int64), args.Error(2)
 }
 
-func (m *MockShoppingService) TrackOrder(ctx context.Context, orderID string) (*models.MarketplaceOrder, error) {
-	args := m.Called(ctx, orderID)
+func (m *MockShoppingService) TrackOrder(ctx context.Context, orderID, userID string) (*models.MarketplaceOrder, error) {
+	args := m.Called(ctx, orderID, userID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -342,8 +342,9 @@ func (h *ShoppingHandlerTestable) ListOrders(c *gin.Context) {
 
 func (h *ShoppingHandlerTestable) TrackOrder(c *gin.Context) {
 	orderID := c.Param("id")
+	userID := c.GetString("user_id")
 
-	order, err := h.svc.TrackOrder(c.Request.Context(), orderID)
+	order, err := h.svc.TrackOrder(c.Request.Context(), orderID, userID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "order not found"})
 		return
@@ -1082,7 +1083,7 @@ func TestTrackOrder_Success(t *testing.T) {
 		Status:      "shipped",
 	}
 
-	mockSvc.On("TrackOrder", mock.Anything, "order-123").Return(order, nil)
+	mockSvc.On("TrackOrder", mock.Anything, "order-123", "user-123").Return(order, nil)
 
 	router := gin.New()
 	router.GET("/agents/shopping/orders/:id", func(c *gin.Context) {
@@ -1106,7 +1107,7 @@ func TestTrackOrder_NotFound(t *testing.T) {
 	log := logger.New()
 	handler := NewShoppingHandlerTestable(mockSvc, log)
 
-	mockSvc.On("TrackOrder", mock.Anything, "nonexistent").Return(nil, errors.New("order not found"))
+	mockSvc.On("TrackOrder", mock.Anything, "nonexistent", "user-123").Return(nil, errors.New("order not found"))
 
 	router := gin.New()
 	router.GET("/agents/shopping/orders/:id", func(c *gin.Context) {

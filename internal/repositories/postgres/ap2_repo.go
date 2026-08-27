@@ -857,6 +857,15 @@ func (r *ap2Repository) GetOrderByID(ctx context.Context, id string) (*models.Ma
 	return &order, err
 }
 
+func (r *ap2Repository) GetOrderByIDForUser(ctx context.Context, id, userID string) (*models.MarketplaceOrder, error) {
+	var order models.MarketplaceOrder
+	err := r.db.WithContext(ctx).Preload("CartMandate").Where("id = ? AND user_id = ?", id, userID).First(&order).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, errors.New("order not found")
+	}
+	return &order, err
+}
+
 func (r *ap2Repository) GetOrdersByUser(ctx context.Context, userID string, page, limit int) ([]*models.MarketplaceOrder, int64, error) {
 	var orders []models.MarketplaceOrder
 	var total int64
