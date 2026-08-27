@@ -1083,6 +1083,58 @@ func (r *ap2Repository) GetBargainingNegotiationByID(ctx context.Context, id str
 	return &negotiation, err
 }
 
+// GetBargainingNegotiationByIDForActor returns a negotiation only when the
+// actor owns it or an active negotiation agent belongs to the actor's effective
+// business scope. The query intentionally treats inaccessible and missing
+// negotiations alike.
+func (r *ap2Repository) GetBargainingNegotiationByIDForActor(ctx context.Context, id, userID, businessID string) (*models.BargainingNegotiation, error) {
+	var negotiation models.BargainingNegotiation
+	err := r.db.WithContext(ctx).
+		Preload("BuyerAgent").
+		Preload("SellerAgent").
+		Where("bargaining_negotiations.id = ?", id).
+		Where(`bargaining_negotiations.user_id = ? OR (
+			? <> '' AND EXISTS (
+				SELECT 1 FROM agents
+				WHERE agents.id IN (bargaining_negotiations.buyer_agent_id, bargaining_negotiations.seller_agent_id)
+					AND agents.business_id = ?
+					AND agents.deleted_at IS NULL
+			)
+		)`, userID, businessID, businessID).
+		First(&negotiation).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, errors.New("negotiation not found")
+	}
+	return &negotiation, err
+}
+
+// GetBargainingNegotiationByIDForActorAndAgent returns a negotiation only when
+// the requested participant belongs to the actor's active business scope or
+// the actor owns the negotiation. It keeps the requested agent tied to the
+// negotiation in the repository query so a business cannot request decisions
+// for the opposite participant.
+func (r *ap2Repository) GetBargainingNegotiationByIDForActorAndAgent(ctx context.Context, id, userID, businessID, agentID string) (*models.BargainingNegotiation, error) {
+	var negotiation models.BargainingNegotiation
+	err := r.db.WithContext(ctx).
+		Preload("BuyerAgent").
+		Preload("SellerAgent").
+		Where("bargaining_negotiations.id = ?", id).
+		Where("bargaining_negotiations.buyer_agent_id = ? OR bargaining_negotiations.seller_agent_id = ?", agentID, agentID).
+		Where(`bargaining_negotiations.user_id = ? OR (
+			? <> '' AND EXISTS (
+				SELECT 1 FROM agents
+				WHERE agents.id = ?
+					AND agents.business_id = ?
+					AND agents.deleted_at IS NULL
+			)
+		)`, userID, businessID, agentID, businessID).
+		First(&negotiation).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, errors.New("negotiation not found")
+	}
+	return &negotiation, err
+}
+
 func (r *ap2Repository) GetBargainingNegotiationBySessionID(ctx context.Context, sessionID string) (*models.BargainingNegotiation, error) {
 	var negotiation models.BargainingNegotiation
 	err := r.db.WithContext(ctx).
