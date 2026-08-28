@@ -36,7 +36,7 @@ require (
 	github.com/pion/ice/v4 v4.3.0
 	github.com/pion/interceptor v0.1.45
 	github.com/pion/logging v0.2.4
-	github.com/pion/rtp v1.10.4
+	github.com/pion/rtp v1.10.5
 	github.com/pion/sdp/v3 v3.0.19
 	github.com/pion/turn/v5 v5.0.12
 	github.com/redis/go-redis/v9 v9.22.0
