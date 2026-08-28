@@ -215,12 +215,12 @@ run "rate_limit_backend_is_private_tls_valkey_with_iam_only_rbac" {
     condition = (
       length(aws_security_group.rate_limit_valkey.ingress) == 1 &&
       one(aws_security_group.rate_limit_valkey.ingress).from_port == 6379 &&
-      one(aws_security_group.rate_limit_valkey.ingress).to_port == 6379 &&
+      one(aws_security_group.rate_limit_valkey.ingress).to_port == 6380 &&
       one(aws_security_group.rate_limit_valkey.ingress).protocol == "tcp" &&
       toset(one(aws_security_group.rate_limit_valkey.ingress).security_groups) == toset([aws_security_group.lambda.id]) &&
       length(coalesce(one(aws_security_group.rate_limit_valkey.ingress).cidr_blocks, [])) == 0
     )
-    error_message = "Valkey ingress must allow only TLS cache traffic from the application Lambda security group."
+    error_message = "Valkey ingress must allow both serverless cache ports only from the application Lambda security group."
   }
 }
 
@@ -236,7 +236,7 @@ run "http_lambda_alone_receives_required_backend_configuration" {
       aws_lambda_function.api_http.environment[0].variables.REDIS_TLS_ENABLED == "true" &&
       aws_lambda_function.api_http.environment[0].variables.REDIS_IAM_AUTH_ENABLED == "true" &&
       aws_lambda_function.api_http.environment[0].variables.REDIS_CLUSTER_MODE == "true" &&
-      aws_lambda_function.api_http.environment[0].variables.RATE_LIMIT_DECISION_TIMEOUT == "250ms" &&
+      aws_lambda_function.api_http.environment[0].variables.RATE_LIMIT_DECISION_TIMEOUT == "2s" &&
       !contains(keys(aws_lambda_function.api_http.environment[0].variables), "REDIS_PASSWORD") &&
       !contains(keys(aws_lambda_function.api_http.environment[0].variables), "RATE_LIMIT_TRUSTED_PROXY_CIDR") &&
       alltrue([
