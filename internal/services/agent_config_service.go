@@ -26,6 +26,10 @@ type AgentConfigService struct {
 }
 
 func NewAgentConfigService(wellKnownDir string, log *logger.Logger) *AgentConfigService {
+	if os.Getenv("AWS_LAMBDA_FUNCTION_NAME") != "" && !filepath.IsAbs(wellKnownDir) {
+		wellKnownDir = filepath.Join(os.TempDir(), wellKnownDir)
+	}
+
 	svc := &AgentConfigService{
 		wellKnownDir: wellKnownDir,
 		configs:      make(map[string]*models.WellKnownAgentConfig),

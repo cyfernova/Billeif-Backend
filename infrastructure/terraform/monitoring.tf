@@ -404,7 +404,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_cpu_high" {
   ok_actions          = [aws_sns_topic.alerts.arn]
 
   dimensions = {
-    DBInstanceIdentifier = aws_db_instance.main.id
+    DBInstanceIdentifier = aws_db_instance.main.identifier
   }
 }
 
@@ -424,7 +424,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_storage_low" {
   ok_actions          = [aws_sns_topic.alerts.arn]
 
   dimensions = {
-    DBInstanceIdentifier = aws_db_instance.main.id
+    DBInstanceIdentifier = aws_db_instance.main.identifier
   }
 }
 
@@ -444,7 +444,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_connections_high" {
   ok_actions          = [aws_sns_topic.alerts.arn]
 
   dimensions = {
-    DBInstanceIdentifier = aws_db_instance.main.id
+    DBInstanceIdentifier = aws_db_instance.main.identifier
   }
 }
 
@@ -464,7 +464,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_memory_low" {
   ok_actions          = [aws_sns_topic.alerts.arn]
 
   dimensions = {
-    DBInstanceIdentifier = aws_db_instance.main.id
+    DBInstanceIdentifier = aws_db_instance.main.identifier
   }
 }
 
@@ -484,7 +484,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_cpu_credits_low" {
   ok_actions          = [aws_sns_topic.alerts.arn]
 
   dimensions = {
-    DBInstanceIdentifier = aws_db_instance.main.id
+    DBInstanceIdentifier = aws_db_instance.main.identifier
   }
 }
 
@@ -561,7 +561,7 @@ resource "aws_cloudwatch_dashboard" "main" {
           title  = "RDS Performance"
           region = var.aws_region
           metrics = [
-            ["AWS/RDS", "CPUUtilization", "DBInstanceIdentifier", aws_db_instance.main.id],
+            ["AWS/RDS", "CPUUtilization", "DBInstanceIdentifier", aws_db_instance.main.identifier],
             [".", "DatabaseConnections", ".", ".", { yAxis = "right" }]
           ]
           stat   = "Average"

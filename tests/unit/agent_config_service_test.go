@@ -2,6 +2,8 @@ package unit
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -15,6 +17,18 @@ import (
 func setupTestDir(t *testing.T) string {
 	tmpDir := t.TempDir()
 	return tmpDir
+}
+
+func TestAgentConfigServiceUsesLambdaWritableStorage(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("AWS_LAMBDA_FUNCTION_NAME", "billeif-test-api-http")
+	t.Setenv("TMPDIR", tmpDir)
+
+	services.NewAgentConfigService(".well-known", logger.New())
+
+	if _, err := os.Stat(filepath.Join(tmpDir, ".well-known")); err != nil {
+		t.Fatalf("expected Lambda agent config directory under temporary storage: %v", err)
+	}
 }
 
 func TestAgentConfigService_CreateDefaultBuyerConfig(t *testing.T) {

@@ -219,7 +219,7 @@ func (s *DashboardService) financeSummary(ctx context.Context, businessID string
 		ActiveSubscriptionCount: s.countOptional(ctx, "invoice_subscriptions", "business_id = ? AND deleted_at IS NULL AND status = ?", businessID, "active"),
 		PartyGroupCount:         s.countOptional(ctx, "party_groups", "business_id = ? AND deleted_at IS NULL", businessID),
 		ProjectCount:            s.countOptional(ctx, "projects", "business_id = ? AND deleted_at IS NULL", businessID),
-		ActiveProjectCount:      s.countOptional(ctx, "projects", "business_id = ? AND deleted_at IS NULL AND status = ?", businessID, "active"),
+		ActiveProjectCount:      s.countOptional(ctx, "projects", "business_id = ? AND deleted_at IS NULL AND is_active = ?", businessID, true),
 		TeamMemberCount:         s.countOptional(ctx, "team_members", "business_id = ? AND deleted_at IS NULL", businessID),
 		EInvoiceCount:           s.countOptional(ctx, "einvoice_records", "business_id = ? AND deleted_at IS NULL", businessID),
 		InventoryAlertCount:     lowStockProducts,

@@ -34,6 +34,10 @@ func TestDashboardServiceSummaryScopesByBusiness(t *testing.T) {
 	execDashboardSQL(t, db, `INSERT INTO payments (id, business_id, amount, payment_date, deleted_at) VALUES ('pay-1', 'biz-1', 50, ?, NULL), ('pay-2', 'biz-2', 900, ?, NULL)`, now, now)
 	execDashboardSQL(t, db, `INSERT INTO products (id, business_id, is_active, stock_level, low_stock_threshold, deleted_at) VALUES ('prod-1', 'biz-1', 1, 2, 5, NULL), ('prod-2', 'biz-2', 1, 20, 5, NULL)`)
 	execDashboardSQL(t, db, `INSERT INTO product_categories (id, business_id, name, is_active, sort_order, deleted_at) VALUES ('cat-1', 'biz-1', 'Hardware', 1, 1, NULL)`)
+	execDashboardSQL(t, db, `INSERT INTO projects (id, business_id, is_active, deleted_at) VALUES
+		('project-active', 'biz-1', 1, NULL),
+		('project-inactive', 'biz-1', 0, NULL),
+		('project-other-business', 'biz-2', 1, NULL)`)
 	execDashboardSQL(t, db, `INSERT INTO storefronts (id, business_id, deleted_at) VALUES ('store-1', 'biz-1', NULL), ('store-2', 'biz-2', NULL)`)
 	execDashboardSQL(t, db, `INSERT INTO store_orders (id, business_id, status, total, deleted_at) VALUES ('order-1', 'biz-1', 'pending', 125, NULL), ('order-2', 'biz-2', 'pending', 500, NULL)`)
 	execDashboardSQL(t, db, `INSERT INTO agents (id, business_id, is_active, deleted_at) VALUES ('agent-1', 'biz-1', 1, NULL), ('agent-2', 'biz-2', 1, NULL)`)
@@ -59,6 +63,9 @@ func TestDashboardServiceSummaryScopesByBusiness(t *testing.T) {
 	}
 	if summary.Finance.TotalPayable != 325 {
 		t.Fatalf("expected payables from purchase and expense documents, got %+v", summary.Finance)
+	}
+	if summary.Finance.ProjectCount != 2 || summary.Finance.ActiveProjectCount != 1 {
+		t.Fatalf("expected project counts to use the is_active schema, got %+v", summary.Finance)
 	}
 	if summary.Inventory.ProductCount != 1 || summary.Inventory.LowStockProducts != 1 || len(summary.Inventory.Categories) != 1 {
 		t.Fatalf("inventory summary was not scoped correctly: %+v", summary.Inventory)
@@ -88,6 +95,7 @@ func newDashboardTestDB(t *testing.T) *gorm.DB {
 		`CREATE TABLE payments (id TEXT PRIMARY KEY, business_id TEXT, amount REAL, payment_date DATETIME, deleted_at DATETIME)`,
 		`CREATE TABLE products (id TEXT PRIMARY KEY, business_id TEXT, is_active BOOLEAN, stock_level INTEGER, low_stock_threshold INTEGER, deleted_at DATETIME)`,
 		`CREATE TABLE product_categories (id TEXT PRIMARY KEY, business_id TEXT, name TEXT, is_active BOOLEAN, sort_order INTEGER, deleted_at DATETIME)`,
+		`CREATE TABLE projects (id TEXT PRIMARY KEY, business_id TEXT, is_active BOOLEAN, deleted_at DATETIME)`,
 		`CREATE TABLE storefronts (id TEXT PRIMARY KEY, business_id TEXT, deleted_at DATETIME)`,
 		`CREATE TABLE store_orders (id TEXT PRIMARY KEY, business_id TEXT, status TEXT, total REAL, deleted_at DATETIME)`,
 		`CREATE TABLE agents (id TEXT PRIMARY KEY, business_id TEXT, is_active BOOLEAN, deleted_at DATETIME)`,

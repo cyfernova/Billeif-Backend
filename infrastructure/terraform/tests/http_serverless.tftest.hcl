@@ -64,7 +64,9 @@ mock_provider "aws" {
     target          = aws_db_instance.main
     override_during = plan
     values = {
-      address = "database.internal"
+      id         = "db-INTERNALRESOURCEID"
+      identifier = "billeif-test-postgres"
+      address    = "database.internal"
       master_user_secret = [{
         kms_key_id = "arn:aws:kms:ap-south-1:928282274753:key/application-secrets"
         secret_arn = "arn:aws:secretsmanager:ap-south-1:928282274753:secret:rds-managed"
@@ -283,6 +285,19 @@ run "ordinary_http_uses_payload_v1_with_bounded_execution" {
       aws_cloudwatch_metric_alarm.http_api_latency.datapoints_to_alarm == 2
     )
     error_message = "Billeif HTTP API handled 5xx responses and stage p95 latency must have standard two-of-three alarms."
+  }
+
+  assert {
+    condition = (
+      aws_cloudwatch_metric_alarm.rds_cpu_high.dimensions.DBInstanceIdentifier == aws_db_instance.main.identifier &&
+      aws_cloudwatch_metric_alarm.rds_storage_low.dimensions.DBInstanceIdentifier == aws_db_instance.main.identifier &&
+      aws_cloudwatch_metric_alarm.rds_connections_high.dimensions.DBInstanceIdentifier == aws_db_instance.main.identifier &&
+      aws_cloudwatch_metric_alarm.rds_memory_low.dimensions.DBInstanceIdentifier == aws_db_instance.main.identifier &&
+      aws_cloudwatch_metric_alarm.rds_cpu_credits_low.dimensions.DBInstanceIdentifier == aws_db_instance.main.identifier &&
+      strcontains(aws_cloudwatch_dashboard.main.dashboard_body, aws_db_instance.main.identifier) &&
+      !strcontains(aws_cloudwatch_dashboard.main.dashboard_body, aws_db_instance.main.id)
+    )
+    error_message = "RDS alarms and dashboards must select metrics by DBInstanceIdentifier, not by the internal RDS resource ID."
   }
 }
 
