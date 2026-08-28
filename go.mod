@@ -22,8 +22,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.68.8
 	github.com/awslabs/aws-lambda-go-api-proxy v0.16.2
 	github.com/boombuler/barcode v1.1.0
-	github.com/getsentry/sentry-go v0.46.2
-	github.com/getsentry/sentry-go/gin v0.46.2
+	github.com/getsentry/sentry-go v0.48.0
+	github.com/getsentry/sentry-go/gin v0.48.0
 	github.com/gin-contrib/cors v1.7.7
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-co-op/gocron v1.37.0
@@ -135,7 +135,6 @@ require (
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/quic-go/quic-go v0.59.1 // indirect
 	github.com/robfig/cron/v3 v3.0.1 // indirect
-	github.com/rogpeppe/go-internal v1.13.1 // indirect
 	github.com/sagikazarmark/locafero v0.12.0 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
