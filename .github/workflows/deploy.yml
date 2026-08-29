@@ -30,7 +30,7 @@ jobs:
 
     steps:
       - name: Checkout full history
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
 
@@ -81,26 +81,26 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "20"
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 10.29.3
 
       - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v4
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
         with:
           terraform_version: 1.13.5
           terraform_wrapper: false
@@ -115,7 +115,7 @@ jobs:
         run: make test-agentcore
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Build AgentCore ARM64 binary
         run: make build-agentcore
@@ -127,7 +127,7 @@ jobs:
             --tag billeif-voice-runtime:ci \
             --load .
           test "$(docker inspect billeif-voice-runtime:ci --format '{{.Os}}/{{.Architecture}} {{.Config.User}}')" = "linux/arm64 10001:10001"
-          docker pull --platform linux/arm64 curlimages/curl:8.16.0
+          docker pull --platform linux/arm64 curlimages/curl:8.16.0@sha256:463eaf6072688fe96ac64fa623fe73e1dbe25d8ad6c34404a669ad3ce1f104b6
           docker network create --internal billeif-voice-offline-ci
           trap 'docker rm --force billeif-voice-runtime-ci >/dev/null 2>&1 || true; docker network rm billeif-voice-offline-ci >/dev/null 2>&1 || true' EXIT
           docker run --detach --name billeif-voice-runtime-ci \
@@ -157,7 +157,7 @@ jobs:
           for attempt in $(seq 1 30); do
             response="$(docker run --rm --platform linux/arm64 \
               --network billeif-voice-offline-ci \
-              curlimages/curl:8.16.0 \
+              curlimages/curl:8.16.0@sha256:463eaf6072688fe96ac64fa623fe73e1dbe25d8ad6c34404a669ad3ce1f104b6 \
               --silent --fail http://billeif-voice-runtime-ci:8080/ping || true)"
             if test "${response}" = '{"status":"Healthy"}'; then
               exit 0
@@ -235,26 +235,26 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "20"
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 10.29.3
 
       - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v4
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
         with:
           terraform_version: 1.13.5
           terraform_wrapper: false
@@ -289,7 +289,7 @@ jobs:
           fi
 
       - name: Configure AWS credentials with OIDC
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6
         with:
           aws-region: ${{ env.AWS_REGION }}
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
@@ -350,13 +350,13 @@ jobs:
 
       - name: Set up QEMU for AgentCore voice publishing
         if: env.PUBLISH_VOICE_AGENTCORE_IMAGE == 'true'
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
         with:
           platforms: arm64
 
       - name: Set up Docker Buildx for AgentCore voice
         if: env.PUBLISH_VOICE_AGENTCORE_IMAGE == 'true'
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Publish immutable AgentCore ARM64 image
         if: env.PUBLISH_VOICE_AGENTCORE_IMAGE == 'true'

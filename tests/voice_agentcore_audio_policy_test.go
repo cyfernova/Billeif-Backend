@@ -10,7 +10,8 @@ func TestAgentCoreProductionImageFailsClosedWithoutARM64Libopus(t *testing.T) {
 
 	dockerfile := readRepositoryFile(t, "deploy", "agentcore", "Dockerfile")
 	for _, required := range []string{
-		"FROM --platform=$TARGETPLATFORM golang:1.25-bookworm AS build",
+		"FROM --platform=$TARGETPLATFORM golang:1.25-bookworm@sha256:",
+		" AS build",
 		"libopus-dev",
 		"pkg-config",
 		"CGO_ENABLED=1",
@@ -99,8 +100,8 @@ func TestAgentCoreBuildAndCIExerciseOnlyTheCodecEnabledImage(t *testing.T) {
 	}
 	verifyJob := workflow[verifyStart:deployStart]
 	nativeARM64 := strings.Contains(verifyJob, "runs-on: ubuntu-24.04-arm")
-	qemuIndex := strings.Index(verifyJob, "docker/setup-qemu-action@v3")
-	buildxIndex := strings.Index(verifyJob, "docker/setup-buildx-action@v3")
+	qemuIndex := strings.Index(verifyJob, "docker/setup-qemu-action@")
+	buildxIndex := strings.Index(verifyJob, "docker/setup-buildx-action@")
 	makeBuildIndex := strings.Index(verifyJob, "run: make build-agentcore")
 	if buildxIndex < 0 || makeBuildIndex < 0 || buildxIndex > makeBuildIndex || (!nativeARM64 && (qemuIndex < 0 || qemuIndex > makeBuildIndex)) {
 		t.Fatal("CI must use native ARM64 or configure ARM64 emulation, then configure Buildx before build-agentcore")
@@ -140,9 +141,9 @@ func TestAgentCoreBuildAndCIExerciseOnlyTheCodecEnabledImage(t *testing.T) {
 		}
 	}
 	publishIndex := strings.Index(workflow, "--push .")
-	deployQEMUIndex := strings.LastIndex(workflow, "docker/setup-qemu-action@v3")
-	deployBuildxIndex := strings.LastIndex(workflow, "docker/setup-buildx-action@v3")
-	if strings.Count(workflow, "docker/setup-qemu-action@v3") != 1 || publishIndex < 0 ||
+	deployQEMUIndex := strings.LastIndex(workflow, "docker/setup-qemu-action@")
+	deployBuildxIndex := strings.LastIndex(workflow, "docker/setup-buildx-action@")
+	if strings.Count(workflow, "docker/setup-qemu-action@") != 1 || publishIndex < 0 ||
 		deployQEMUIndex > publishIndex || deployBuildxIndex > publishIndex || deployQEMUIndex > deployBuildxIndex {
 		t.Fatal("the separately hosted deploy job must configure ARM64 emulation before publishing")
 	}
