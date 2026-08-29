@@ -37,7 +37,7 @@ func TestDeployWorkflowLaunchSafetyPolicy(t *testing.T) {
 	if env := mappingValue(root, "env"); env != nil && containsSecretTerraformVariable(env) {
 		t.Fatal("workflow/global environment must not expose secret Terraform variables")
 	}
-
+// 
 	jobs := requiredMap(t, root, "jobs")
 	verify := requiredMap(t, jobs, "verify")
 	if env := mappingValue(verify, "env"); env != nil && containsTerraformVariable(env) {
