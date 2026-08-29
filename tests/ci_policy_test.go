@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -8,6 +9,11 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+)
+
+var (
+	fullCommitSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	imageDigest   = regexp.MustCompile(`@sha256:[0-9a-f]{64}$`)
 )
 
 func TestDeployWorkflowLaunchSafetyPolicy(t *testing.T) {
@@ -57,6 +63,76 @@ func TestDeployWorkflowLaunchSafetyPolicy(t *testing.T) {
 	requireOIDCOnlyDeploy(t, deploy)
 	requireAmbientAWSCredentials(t, deploy)
 	requireDeployTerraformInputs(t, root, deploy)
+}
+
+func TestSupplyChainReferencesAreImmutable(t *testing.T) {
+	workflowRoot := filepath.Join("..", ".github", "workflows")
+	err := filepath.WalkDir(workflowRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || (filepath.Ext(path) != ".yml" && filepath.Ext(path) != ".yaml") {
+			return nil
+		}
+		contents, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		var document yaml.Node
+		if unmarshalErr := yaml.Unmarshal(contents, &document); unmarshalErr != nil {
+			return unmarshalErr
+		}
+		assertImmutableActionReferences(t, path, &document)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("inspect workflow action references: %v", err)
+	}
+
+	dockerfile := filepath.Join("..", "deploy", "agentcore", "Dockerfile")
+	contents, err := os.ReadFile(dockerfile)
+	if err != nil {
+		t.Fatalf("read production Dockerfile: %v", err)
+	}
+	for lineNumber, line := range strings.Split(string(contents), "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) == 0 || strings.ToUpper(fields[0]) != "FROM" {
+			continue
+		}
+		image := fields[1]
+		if strings.HasPrefix(image, "--platform=") {
+			if len(fields) < 3 {
+				t.Fatalf("%s:%d has malformed FROM instruction", dockerfile, lineNumber+1)
+			}
+			image = fields[2]
+		}
+		if image != "scratch" && !imageDigest.MatchString(image) {
+			t.Errorf("%s:%d production image %q must be pinned to an exact sha256 digest", dockerfile, lineNumber+1, image)
+		}
+	}
+}
+
+func assertImmutableActionReferences(t *testing.T, path string, node *yaml.Node) {
+	t.Helper()
+	if node == nil {
+		return
+	}
+	if node.Kind == yaml.MappingNode {
+		for index := 0; index < len(node.Content); index += 2 {
+			key, value := node.Content[index], node.Content[index+1]
+			if key.Value == "uses" && value.Kind == yaml.ScalarNode && !strings.HasPrefix(value.Value, "./") {
+				separator := strings.LastIndex(value.Value, "@")
+				if separator < 0 || !fullCommitSHA.MatchString(value.Value[separator+1:]) {
+					t.Errorf("%s:%d external action %q must be pinned to a full commit SHA", path, value.Line, value.Value)
+				}
+			}
+			assertImmutableActionReferences(t, path, value)
+		}
+		return
+	}
+	for _, child := range node.Content {
+		assertImmutableActionReferences(t, path, child)
+	}
 }
 
 func TestDeployWorkflowBackgroundProcessingDefaultsToDisabled(t *testing.T) {
