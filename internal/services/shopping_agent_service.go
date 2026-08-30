@@ -25,6 +25,9 @@ var (
 	ErrMandateExpired        = errors.New("mandate has expired")
 	ErrCartTotalMismatch     = errors.New("cart total does not match line items")
 	ErrIntentMandateNotFound = errors.New("intent mandate not found")
+	ErrCartMandateUnsigned   = errors.New("cart mandate has not been signed by the merchant")
+	ErrCartSignatureInvalid  = errors.New("cart mandate signature is invalid")
+	ErrCartAlreadyProcessed  = errors.New("cart mandate has already been processed")
 )
 
 type ShoppingAgentService struct {
@@ -191,11 +194,24 @@ func (s *ShoppingAgentService) CompleteCheckout(ctx context.Context, req *Checko
 		return nil, err
 	}
 
-	// TODO: Verify cart mandate signature and validity
-	// if err := s.verifier.VerifyCartMandate(cartMandate, cartMandate.Signature, cartMandate.PublicKey); err != nil {
-	//	s.log.Warn("cart mandate verification failed", "mandate_id", cartMandate.ID, "error", err)
-	//	return nil, fmt.Errorf("cart mandate verification failed: %w", err)
-	// }
+	if cartMandate.Status != "signed" || cartMandate.MerchantSignature == nil || cartMandate.MerchantSignaturePublicKey == nil {
+		return nil, ErrCartMandateUnsigned
+	}
+	trustedKey := s.signer.GetPublicKey()
+	if cartMandate.SignaturePublicKey != trustedKey || *cartMandate.MerchantSignaturePublicKey != trustedKey {
+		return nil, fmt.Errorf("%w: untrusted signing key", ErrCartSignatureInvalid)
+	}
+	if err := ap2.VerifyCartMandateSignature(cartMandate, "buyer", cartMandate.Signature, cartMandate.SignaturePublicKey); err != nil {
+		s.log.Warn("buyer cart mandate verification failed", "mandate_id", cartMandate.ID, "error", err)
+		return nil, fmt.Errorf("%w: buyer signature", ErrCartSignatureInvalid)
+	}
+	if err := ap2.VerifyCartMandateSignature(cartMandate, "merchant", *cartMandate.MerchantSignature, *cartMandate.MerchantSignaturePublicKey); err != nil {
+		s.log.Warn("merchant cart mandate verification failed", "mandate_id", cartMandate.ID, "error", err)
+		return nil, fmt.Errorf("%w: merchant signature", ErrCartSignatureInvalid)
+	}
+	if len(cartMandate.PaymentMandates) != 0 {
+		return nil, ErrCartAlreadyProcessed
+	}
 
 	// CRITICAL: Verify cart total matches line items
 	if err := s.validateCartTotal(ctx, cartMandate); err != nil {
@@ -342,26 +358,13 @@ func (s *ShoppingAgentService) GetShoppingAgentCapabilities(ctx context.Context,
 }
 
 func (s *ShoppingAgentService) CreateCartMandate(ctx context.Context, req *CreateCartMandateRequest) (*models.CartMandate, error) {
-	signaturePayload := map[string]interface{}{
-		"user_id":     req.UserID,
-		"agent_id":    req.ShoppingAgentID,
-		"merchant_id": req.MerchantID,
-		"intent_id":   req.IntentMandateID,
-		"items":       req.Items,
-		"created_at":  time.Now().UTC(),
-	}
-	signature, err := s.signer.SignData([]byte(fmt.Sprintf("%v", signaturePayload)))
-	if err != nil {
-		return nil, fmt.Errorf("failed to sign cart mandate: %w", err)
-	}
-
 	cartReq := &ap2.CartMandateRequest{
 		IntentMandateID:    req.IntentMandateID,
 		UserID:             req.UserID,
 		AgentID:            req.ShoppingAgentID,
 		MerchantID:         req.MerchantID,
 		Items:              req.Items,
-		Signature:          signature,
+		Signature:          "pending-signature",
 		ExpirationDuration: s.getDefaultExpiration(),
 	}
 
@@ -369,6 +372,13 @@ func (s *ShoppingAgentService) CreateCartMandate(ctx context.Context, req *Creat
 	if err != nil {
 		return nil, err
 	}
+	cartMandate.ID = uuid.NewString()
+	signature, publicKey, err := ap2.SignCartMandate(s.signer, cartMandate, "buyer")
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign cart mandate: %w", err)
+	}
+	cartMandate.Signature = signature
+	cartMandate.SignaturePublicKey = publicKey
 
 	if err := s.ap2Repo.CreateCartMandate(ctx, cartMandate); err != nil {
 		return nil, fmt.Errorf("failed to save cart mandate: %w", err)

@@ -142,13 +142,21 @@ func (r *ap2Repository) UpdateCartMandate(ctx context.Context, mandate *models.C
 	return r.db.WithContext(ctx).Save(mandate).Error
 }
 
-func (r *ap2Repository) SignCartMandate(ctx context.Context, id, signature string) error {
-	return r.db.WithContext(ctx).Model(&models.CartMandate{}).
-		Where("id = ?", id).
+func (r *ap2Repository) SignCartMandate(ctx context.Context, id, merchantID, signature, publicKey string) error {
+	result := r.db.WithContext(ctx).Model(&models.CartMandate{}).
+		Where("id = ? AND merchant_id = ? AND status = ?", id, merchantID, "pending").
 		Updates(map[string]interface{}{
-			"merchant_signature": signature,
-			"status":             "signed",
-		}).Error
+			"merchant_signature":            signature,
+			"merchant_signature_public_key": publicKey,
+			"status":                        "signed",
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return errors.New("cart mandate is not pending or does not belong to merchant")
+	}
+	return nil
 }
 
 func (r *ap2Repository) GetPendingCartMandates(ctx context.Context, merchantID string) ([]*models.CartMandate, error) {
