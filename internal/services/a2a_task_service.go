@@ -375,11 +375,14 @@ func (s *A2ATaskService) executeTask(ctx context.Context, task *a2a.Task, req *a
 		}
 
 		if cartID != "" && merchantAgentID != "" {
-			signature, err := s.signer.SignData([]byte(fmt.Sprintf("%s:%s:%s", cartID, merchantAgentID, task.ID)))
+			ownsMerchant, err := s.ap2Repo.HasAgentOwnership(ctx, task.UserID, merchantAgentID)
 			if err != nil {
-				return a2a.Message{}, nil, fmt.Errorf("sign merchant cart task: %w", err)
+				return a2a.Message{}, nil, fmt.Errorf("authorize merchant cart task: %w", err)
 			}
-			if err := s.merchantSvc.RespondToCart(ctx, cartID, merchantAgentID, "signed", signature); err != nil {
+			if !ownsMerchant {
+				return a2a.Message{}, nil, ErrUnauthorized
+			}
+			if err := s.merchantSvc.RespondToCart(ctx, cartID, merchantAgentID, "signed"); err != nil {
 				return a2a.Message{}, nil, fmt.Errorf("process merchant cart task: %w", err)
 			}
 

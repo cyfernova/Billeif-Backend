@@ -780,11 +780,7 @@ func (s *ProcurementService) completePurchase(ctx context.Context, run *models.P
 	}
 
 	if !merchantSigned {
-		signature, err := s.signMerchantCart(cartMandate.ID, merchantID, run.ID)
-		if err != nil {
-			return err
-		}
-		if err := s.merchantSvc.RespondToCart(ctx, cartMandate.ID, merchantID, "signed", signature); err != nil {
+		if err := s.merchantSvc.RespondToCart(ctx, cartMandate.ID, merchantID, "signed"); err != nil {
 			return fmt.Errorf("merchant sign cart: %w", err)
 		}
 	}
@@ -958,14 +954,6 @@ func (s *ProcurementService) updateRunStatus(ctx context.Context, run *models.Pr
 
 func (s *ProcurementService) refreshRun(ctx context.Context, run *models.ProcurementRun) (*models.ProcurementRun, error) {
 	return s.ap2Repo.GetProcurementRunByID(ctx, run.ID, run.UserID)
-}
-
-func (s *ProcurementService) signMerchantCart(cartMandateID, merchantID, runID string) (string, error) {
-	signature, err := s.signer.SignData([]byte(fmt.Sprintf("%s:%s:%s", cartMandateID, merchantID, runID)))
-	if err != nil {
-		return "", fmt.Errorf("sign merchant cart: %w", err)
-	}
-	return signature, nil
 }
 
 type negotiationEvaluation struct {

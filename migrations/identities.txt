@@ -46,3 +46,4 @@
 000046_add_bargaining_round_claims
 000047_encrypt_render_profile_passwords
 000048_scope_a2a_bargaining_negotiations
+000049_verify_cart_mandate_signatures

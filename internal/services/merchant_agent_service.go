@@ -8,6 +8,7 @@ import (
 
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
+	"invoice-backend/pkg/ap2"
 	"invoice-backend/pkg/logger"
 )
 
@@ -18,12 +19,14 @@ var (
 
 type MerchantAgentService struct {
 	ap2Repo interfaces.AP2Repository
+	signer  *ap2.SignatureService
 	log     *logger.Logger
 }
 
-func NewMerchantAgentService(ap2Repo interfaces.AP2Repository, log *logger.Logger) *MerchantAgentService {
+func NewMerchantAgentService(ap2Repo interfaces.AP2Repository, signer *ap2.SignatureService, log *logger.Logger) *MerchantAgentService {
 	return &MerchantAgentService{
 		ap2Repo: ap2Repo,
+		signer:  signer,
 		log:     log,
 	}
 }
@@ -233,21 +236,37 @@ func (s *MerchantAgentService) GetPendingCarts(ctx context.Context, merchantAgen
 	return s.ap2Repo.GetPendingCartMandates(ctx, merchantAgentID)
 }
 
-func (s *MerchantAgentService) RespondToCart(ctx context.Context, cartMandateID, merchantAgentID, status, merchantSignature string) error {
+func (s *MerchantAgentService) RespondToCart(ctx context.Context, cartMandateID, merchantAgentID, status string) error {
 	cartMandate, err := s.ap2Repo.GetCartMandateByMerchant(ctx, cartMandateID, merchantAgentID)
 	if err != nil {
 		return fmt.Errorf("cart mandate not found: %w", err)
 	}
 
-	if status == "signed" && merchantSignature != "" {
-		if err := s.ap2Repo.SignCartMandate(ctx, cartMandateID, merchantSignature); err != nil {
+	if status == "signed" {
+		if cartMandate.Status != "pending" {
+			return errors.New("cart mandate is not pending")
+		}
+		merchantSignature, publicKey, err := ap2.SignCartMandate(s.signer, cartMandate, "merchant")
+		if err != nil {
+			return fmt.Errorf("failed to create merchant signature: %w", err)
+		}
+		if err := ap2.VerifyCartMandateSignature(cartMandate, "merchant", merchantSignature, publicKey); err != nil {
+			return fmt.Errorf("failed to verify merchant signature: %w", err)
+		}
+		if err := s.ap2Repo.SignCartMandate(ctx, cartMandateID, merchantAgentID, merchantSignature, publicKey); err != nil {
 			s.log.Error("failed to sign cart mandate", "error", err, "cart_mandate_id", cartMandateID)
 			return fmt.Errorf("failed to sign cart: %w", err)
 		}
 	} else if status == "rejected" {
+		if cartMandate.Status != "pending" {
+			return errors.New("cart mandate is not pending")
+		}
+		cartMandate.Status = "rejected"
 		if err := s.ap2Repo.UpdateCartMandate(ctx, cartMandate); err != nil {
 			return fmt.Errorf("failed to reject cart: %w", err)
 		}
+	} else {
+		return errors.New("unsupported cart response status")
 	}
 
 	s.log.Info("responded to cart mandate", "cart_mandate_id", cartMandateID, "status", status)
