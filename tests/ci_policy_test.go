@@ -43,6 +43,7 @@ func TestDeployWorkflowLaunchSafetyPolicy(t *testing.T) {
 	if env := mappingValue(verify, "env"); env != nil && containsTerraformVariable(env) {
 		t.Fatal("verification job must not inherit deployment Terraform variables")
 	}
+	// 
 
 	secretScan := requiredMap(t, jobs, "secret-scan")
 	requireSecretScan(t, secretScan)
