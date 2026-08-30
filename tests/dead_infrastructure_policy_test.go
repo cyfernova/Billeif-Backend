@@ -289,7 +289,7 @@ func mockedPlanResourceAddresses() (map[string][]string, error) {
 	command := exec.Command(
 		terraform,
 		"test",
-		"-filter=tests/migrator.tftest.hcl",
+		"-filter="+filepath.Join("tests", "migrator.tftest.hcl"),
 		"-json",
 		"-verbose",
 	)
