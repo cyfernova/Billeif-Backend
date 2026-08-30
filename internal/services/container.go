@@ -120,7 +120,7 @@ func NewContainer(
 	a2aTaskSvc := NewA2ATaskService(db, log, a2aPushSvc)
 	workflowSvc := NewWorkflowService(db, log, emailSvc, a2aPushSvc)
 	bargainingSvc := NewBargainingService(ap2Repo, a2aClient, agentSvc, menteeSvc, llmSvc, log)
-	merchantAgentSvc := NewMerchantAgentService(ap2Repo, log)
+	merchantAgentSvc := NewMerchantAgentService(ap2Repo, ap2Signer, log)
 	agentConfigSvc := NewAgentConfigService(".well-known", log)
 	sellerNegotiationSvc := NewSellerNegotiationService(ap2Repo, agentConfigSvc, log)
 	a2aBargainingSvc := NewA2ABargainingService(a2aClient, bargainingSvc, menteeSvc, ap2Repo, aws.SQS, cfg, log)

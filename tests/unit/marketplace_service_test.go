@@ -421,8 +421,8 @@ func (m *MockMarketplaceAP2Repository) UpdateCartMandate(ctx context.Context, ma
 	return args.Error(0)
 }
 
-func (m *MockMarketplaceAP2Repository) SignCartMandate(ctx context.Context, id, signature string) error {
-	args := m.Called(ctx, id, signature)
+func (m *MockMarketplaceAP2Repository) SignCartMandate(ctx context.Context, id, merchantID, signature, publicKey string) error {
+	args := m.Called(ctx, id, merchantID, signature, publicKey)
 	return args.Error(0)
 }
 

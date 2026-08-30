@@ -181,7 +181,7 @@ func (m *MockAP2Repository) GetCartMandatesByUser(ctx context.Context, userID st
 func (m *MockAP2Repository) UpdateCartMandate(ctx context.Context, mandate *models.CartMandate) error {
 	return nil
 }
-func (m *MockAP2Repository) SignCartMandate(ctx context.Context, id, signature string) error {
+func (m *MockAP2Repository) SignCartMandate(ctx context.Context, id, merchantID, signature, publicKey string) error {
 	return nil
 }
 func (m *MockAP2Repository) GetPendingCartMandates(ctx context.Context, merchantID string) ([]*models.CartMandate, error) {
