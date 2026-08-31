@@ -13,6 +13,7 @@ import (
 	"invoice-backend/internal/models"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -180,20 +181,22 @@ type ExecuteAssemblyInput struct {
 }
 
 type InventoryTimelineEntry struct {
-	ID              string                 `json:"id"`
-	ProductID       string                 `json:"product_id"`
-	VariantID       *string                `json:"variant_id,omitempty"`
-	ProductName     string                 `json:"product_name,omitempty"`
-	VariantName     string                 `json:"variant_name,omitempty"`
-	WarehouseID     *string                `json:"warehouse_id,omitempty"`
-	WarehouseName   string                 `json:"warehouse_name,omitempty"`
-	Direction       string                 `json:"direction"`
-	TransactionType string                 `json:"transaction_type"`
-	Quantity        float64                `json:"quantity"`
-	UnitCost        float64                `json:"unit_cost"`
-	Reason          string                 `json:"reason,omitempty"`
-	RecordedAt      time.Time              `json:"recorded_at"`
-	Metadata        map[string]interface{} `json:"metadata,omitempty"`
+	ID                  string                 `json:"id"`
+	ProductID           string                 `json:"product_id"`
+	VariantID           *string                `json:"variant_id,omitempty"`
+	ProductName         string                 `json:"product_name,omitempty"`
+	VariantName         string                 `json:"variant_name,omitempty"`
+	WarehouseID         *string                `json:"warehouse_id,omitempty"`
+	WarehouseName       string                 `json:"warehouse_name,omitempty"`
+	SourceWarehouseID   *string                `json:"source_warehouse_id,omitempty"`
+	SourceWarehouseName string                 `json:"source_warehouse_name,omitempty"`
+	Direction           string                 `json:"direction"`
+	TransactionType     string                 `json:"transaction_type"`
+	Quantity            float64                `json:"quantity"`
+	UnitCost            float64                `json:"unit_cost"`
+	Reason              string                 `json:"reason,omitempty"`
+	RecordedAt          time.Time              `json:"recorded_at"`
+	Metadata            map[string]interface{} `json:"metadata,omitempty"`
 }
 
 type InventoryValuationRow struct {
@@ -883,9 +886,19 @@ func (s *InventoryService) RecordAdjustment(ctx context.Context, input Inventory
 
 func (s *InventoryService) TransferStock(ctx context.Context, input InventoryTransferInput) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if input.FromWarehouseID == input.ToWarehouseID {
+		fromWarehouseID, err := s.resolveWarehouseIDTx(tx, input.BusinessID, input.FromWarehouseID)
+		if err != nil {
+			return err
+		}
+		toWarehouseID, err := s.resolveWarehouseIDTx(tx, input.BusinessID, input.ToWarehouseID)
+		if err != nil {
+			return err
+		}
+		if fromWarehouseID == toWarehouseID {
 			return fmt.Errorf("source and destination warehouses must differ")
 		}
+		input.FromWarehouseID = fromWarehouseID
+		input.ToWarehouseID = toWarehouseID
 		product, variant, err := s.resolveVariantTx(tx, input.BusinessID, input.ProductID, input.VariantID)
 		if err != nil {
 			return err
@@ -1025,6 +1038,8 @@ func (s *InventoryService) GetTimeline(ctx context.Context, filter InventoryTime
 			COALESCE(pv.name, '') AS variant_name,
 			sm.warehouse_id,
 			COALESCE(w.name, '') AS warehouse_name,
+			sm.source_warehouse_id,
+			COALESCE(sw.name, '') AS source_warehouse_name,
 			sm.direction,
 			sm.transaction_type,
 			sm.quantity,
@@ -1032,9 +1047,10 @@ func (s *InventoryService) GetTimeline(ctx context.Context, filter InventoryTime
 			sm.reason,
 			sm.metadata,
 			sm.recorded_at`).
-		Joins("JOIN products p ON p.id = sm.product_id").
-		Joins("LEFT JOIN product_variants pv ON pv.id = sm.variant_id").
-		Joins("LEFT JOIN warehouses w ON w.id = sm.warehouse_id").
+		Joins("JOIN products p ON p.id = sm.product_id AND p.business_id = sm.business_id").
+		Joins("LEFT JOIN product_variants pv ON pv.id = sm.variant_id AND pv.business_id = sm.business_id").
+		Joins("LEFT JOIN warehouses w ON w.id = sm.warehouse_id AND w.business_id = sm.business_id").
+		Joins("LEFT JOIN warehouses sw ON sw.id = sm.source_warehouse_id AND sw.business_id = sm.business_id").
 		Where("sm.business_id = ? AND sm.deleted_at IS NULL", filter.BusinessID).
 		Order("sm.recorded_at DESC").
 		Limit(filter.Limit)
@@ -1062,20 +1078,22 @@ func (s *InventoryService) GetTimeline(ctx context.Context, filter InventoryTime
 		query = query.Where("sm.recorded_at <= ?", *filter.DateTo)
 	}
 	rows := []struct {
-		ID              string
-		ProductID       string
-		VariantID       *string
-		ProductName     string
-		VariantName     string
-		WarehouseID     *string
-		WarehouseName   string
-		Direction       string
-		TransactionType string
-		Quantity        float64
-		UnitCost        float64
-		Reason          string
-		Metadata        string
-		RecordedAt      time.Time
+		ID                  string
+		ProductID           string
+		VariantID           *string
+		ProductName         string
+		VariantName         string
+		WarehouseID         *string
+		WarehouseName       string
+		SourceWarehouseID   *string
+		SourceWarehouseName string
+		Direction           string
+		TransactionType     string
+		Quantity            float64
+		UnitCost            float64
+		Reason              string
+		Metadata            string
+		RecordedAt          time.Time
 	}{}
 	if err := query.Scan(&rows).Error; err != nil {
 		return nil, err
@@ -1083,20 +1101,22 @@ func (s *InventoryService) GetTimeline(ctx context.Context, filter InventoryTime
 	result := make([]InventoryTimelineEntry, 0, len(rows))
 	for _, row := range rows {
 		entry := InventoryTimelineEntry{
-			ID:              row.ID,
-			ProductID:       row.ProductID,
-			VariantID:       row.VariantID,
-			ProductName:     row.ProductName,
-			VariantName:     row.VariantName,
-			WarehouseID:     row.WarehouseID,
-			WarehouseName:   row.WarehouseName,
-			Direction:       row.Direction,
-			TransactionType: row.TransactionType,
-			Quantity:        row.Quantity,
-			UnitCost:        row.UnitCost,
-			Reason:          row.Reason,
-			Metadata:        unmarshalJSONMap(row.Metadata),
-			RecordedAt:      row.RecordedAt,
+			ID:                  row.ID,
+			ProductID:           row.ProductID,
+			VariantID:           row.VariantID,
+			ProductName:         row.ProductName,
+			VariantName:         row.VariantName,
+			WarehouseID:         row.WarehouseID,
+			WarehouseName:       row.WarehouseName,
+			SourceWarehouseID:   row.SourceWarehouseID,
+			SourceWarehouseName: row.SourceWarehouseName,
+			Direction:           row.Direction,
+			TransactionType:     row.TransactionType,
+			Quantity:            row.Quantity,
+			UnitCost:            row.UnitCost,
+			Reason:              row.Reason,
+			Metadata:            unmarshalJSONMap(row.Metadata),
+			RecordedAt:          row.RecordedAt,
 		}
 		result = append(result, entry)
 	}
@@ -1640,7 +1660,7 @@ func (s *InventoryService) applySimpleBalanceTx(tx *gorm.DB, input simpleBalance
 		batchID = &input.Batch.ID
 	}
 	var balance models.InventoryBalance
-	err := tx.Where("business_id = ? AND product_id = ? AND variant_id = ? AND warehouse_id = ? AND batch_key = ? AND deleted_at IS NULL",
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("business_id = ? AND product_id = ? AND variant_id = ? AND warehouse_id = ? AND batch_key = ? AND deleted_at IS NULL",
 		input.BusinessID, input.ProductID, input.VariantID, input.WarehouseID, batchKey).
 		First(&balance).Error
 	if err != nil {

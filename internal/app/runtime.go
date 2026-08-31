@@ -775,7 +775,6 @@ func setupRouter(
 				inventory.POST("/adjustments", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), h.Inventory.CreateAdjustment)
 				inventory.GET("/transfers", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Inventory.ListTransfers)
 				inventory.POST("/transfers", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), h.Inventory.CreateTransfer)
-				inventory.POST("/transfers/:id/complete", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), h.Inventory.CompleteTransfer)
 				inventory.POST("/resets", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), h.Inventory.ResetStock)
 				inventory.GET("/timeline", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Inventory.Timeline)
 				inventory.GET("/valuation", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Inventory.Valuation)
@@ -805,6 +804,7 @@ func setupRouter(
 
 			registerDocumentResource := func(path string, handler *handlers.DocumentHandler) {
 				group := protected.Group(path)
+				group.Use(middleware.RequireAllBranches())
 				group.GET("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), handler.List)
 				group.GET("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), handler.Get)
 				group.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), handler.Create)
@@ -829,6 +829,7 @@ func setupRouter(
 
 			invoices := protected.Group("/invoices")
 			{
+				invoices.Use(middleware.RequireAllBranches())
 				invoices.GET("", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.List)
 				invoices.GET("/:id", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.Get)
 				invoices.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userWriteRL, h.Invoice.Create)
@@ -847,6 +848,7 @@ func setupRouter(
 
 			payments := protected.Group("/payments")
 			{
+				payments.Use(middleware.RequireAllBranches())
 				payments.GET("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsView), h.Payment.List)
 				payments.POST("/razorpay/order", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), rateLimit(razorpayOrderPolicy, userHeavyPolicy), h.RazorpayPayment.CreateOrder)
 				payments.POST("/razorpay/verify", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), rateLimit(razorpayVerifyPolicy, userHeavyPolicy), h.RazorpayPayment.VerifyPayment)
@@ -859,6 +861,7 @@ func setupRouter(
 
 			documents := protected.Group("/documents")
 			{
+				documents.Use(middleware.RequireAllBranches())
 				documents.POST("/merge", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userHeavyRL, h.DocumentUtility.Merge)
 				documents.POST("/bulk-actions", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userHeavyRL, h.BillingOps.CreateDocumentBulkAction)
 				documents.POST("/:id/convert", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userHeavyRL, h.DocumentUtility.Convert)

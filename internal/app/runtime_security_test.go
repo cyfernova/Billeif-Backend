@@ -28,6 +28,43 @@ func TestPaymentRoutesRequirePaymentPermissions(t *testing.T) {
 	}
 }
 
+func TestBusinessWideFinancialAndDocumentRoutesRequireAllBranches(t *testing.T) {
+	source, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatalf("read runtime routes: %v", err)
+	}
+
+	routes := string(source)
+	for _, fragment := range []string{
+		"group.Use(middleware.RequireAllBranches())",
+		"invoices.Use(middleware.RequireAllBranches())",
+		"payments.Use(middleware.RequireAllBranches())",
+		"documents.Use(middleware.RequireAllBranches())",
+	} {
+		if !strings.Contains(routes, fragment) {
+			t.Fatalf("business-wide financial/document group lacks all-branch guard: %s", fragment)
+		}
+	}
+}
+
+func TestInventoryRoutesDoNotExposeFakeTransferCompletion(t *testing.T) {
+	source, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatalf("read runtime routes: %v", err)
+	}
+	if strings.Contains(string(source), `inventory.POST("/transfers/:id/complete"`) {
+		t.Fatal("inventory transfers are posted atomically and must not expose a no-op completion command")
+	}
+
+	handlerSource, err := os.ReadFile("../handlers/inventory_handler.go")
+	if err != nil {
+		t.Fatalf("read inventory handler: %v", err)
+	}
+	if strings.Contains(string(handlerSource), "func (h *InventoryHandler) CompleteTransfer") {
+		t.Fatal("inventory handler must not report completion without a persisted state transition")
+	}
+}
+
 func TestPartyAndRenderProfileMutationRoutesRequireExactPermissions(t *testing.T) {
 	source, err := os.ReadFile("runtime.go")
 	if err != nil {

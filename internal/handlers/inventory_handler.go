@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"invoice-backend/internal/middleware"
+	"invoice-backend/internal/models"
 	"invoice-backend/internal/services"
 	"invoice-backend/pkg/logger"
 
@@ -322,23 +323,7 @@ func (h *InventoryHandler) ListTransfers(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	transfers := make([]gin.H, 0, len(rows))
-	for _, row := range rows {
-		if row.TransactionType != "transfer" || row.Direction != "out" {
-			continue
-		}
-		transfers = append(transfers, gin.H{
-			"id":                row.ID,
-			"product_id":        row.ProductID,
-			"product_name":      row.ProductName,
-			"from_warehouse_id": row.WarehouseID,
-			"from_warehouse":    row.WarehouseName,
-			"quantity":          row.Quantity,
-			"status":            "completed",
-			"created_at":        row.RecordedAt,
-			"completed_at":      row.RecordedAt,
-		})
-	}
+	transfers := completedTransferRecords(rows)
 	start := (page - 1) * limit
 	if start > len(transfers) {
 		start = len(transfers)
@@ -356,8 +341,41 @@ func (h *InventoryHandler) ListTransfers(c *gin.Context) {
 	})
 }
 
-func (h *InventoryHandler) CompleteTransfer(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"id": c.Param("id"), "status": "completed"})
+type inventoryTransferRecord struct {
+	ID              string    `json:"id"`
+	ProductID       string    `json:"product_id"`
+	ProductName     string    `json:"product_name"`
+	FromWarehouseID string    `json:"from_warehouse_id"`
+	FromWarehouse   string    `json:"from_warehouse"`
+	ToWarehouseID   string    `json:"to_warehouse_id"`
+	ToWarehouse     string    `json:"to_warehouse"`
+	Quantity        float64   `json:"quantity"`
+	Status          string    `json:"status"`
+	CreatedAt       time.Time `json:"created_at"`
+	CompletedAt     time.Time `json:"completed_at"`
+}
+
+func completedTransferRecords(rows []services.InventoryTimelineEntry) []inventoryTransferRecord {
+	transfers := make([]inventoryTransferRecord, 0, len(rows))
+	for _, row := range rows {
+		if row.TransactionType != models.InventoryTransactionTypeTransfer || row.Direction != models.StockMoveDirectionIn {
+			continue
+		}
+		transfers = append(transfers, inventoryTransferRecord{
+			ID: row.ID, ProductID: row.ProductID, ProductName: row.ProductName,
+			FromWarehouseID: inventoryStringValue(row.SourceWarehouseID), FromWarehouse: row.SourceWarehouseName,
+			ToWarehouseID: inventoryStringValue(row.WarehouseID), ToWarehouse: row.WarehouseName,
+			Quantity: row.Quantity, Status: "completed", CreatedAt: row.RecordedAt, CompletedAt: row.RecordedAt,
+		})
+	}
+	return transfers
+}
+
+func inventoryStringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func (h *InventoryHandler) ResetStock(c *gin.Context) {
