@@ -112,69 +112,32 @@ func (s *RazorpayPaymentService) CreateOrder(ctx context.Context, businessID, us
 	}
 
 	idempotencyKey := strings.TrimSpace(input.IdempotencyKey)
-	var attempt models.PaymentAttempt
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var existing models.PaymentAttempt
-		findErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("user_id = ? AND business_id = ? AND idempotency_key = ?", userID, businessID, idempotencyKey).
-			First(&existing).Error
-		switch {
-		case findErr == nil:
-			if existing.Status == models.PaymentAttemptStatusPaid {
-				return fmt.Errorf("payment attempt is already paid")
-			}
-			if existing.TargetType != target.TargetType || existing.TargetID != target.TargetID || existing.AmountPaise != amountPaise || existing.Currency != currency {
-				return fmt.Errorf("idempotency key was already used for a different payment target")
-			}
-			if existing.RazorpayOrderID == "" {
-				return fmt.Errorf("payment attempt is still being initialized")
-			}
-			attempt = existing
-			return nil
-		case !errors.Is(findErr, gorm.ErrRecordNotFound):
-			return findErr
-		}
-
-		attempt = models.PaymentAttempt{
-			ID:             uuid.NewString(),
-			UserID:         userID,
-			BusinessID:     businessID,
-			TargetType:     target.TargetType,
-			TargetID:       target.TargetID,
-			AmountPaise:    amountPaise,
-			Currency:       currency,
-			Status:         models.PaymentAttemptStatusCreated,
-			IdempotencyKey: idempotencyKey,
-		}
-		if err := tx.Create(&attempt).Error; err != nil {
-			return err
-		}
-
-		order, err := client.CreateOrder(ctx, razorpay.OrderParams{
-			Amount:   amountPaise,
-			Currency: currency,
-			Receipt:  truncateReceipt(attempt.ID),
-			Notes: map[string]string{
-				"payment_attempt_id": attempt.ID,
-				"business_id":        businessID,
-				"target_type":        target.TargetType,
-				"target_id":          target.TargetID,
-			},
-		})
-		if err != nil {
-			return err
-		}
-		if order.ID == "" {
-			return fmt.Errorf("razorpay did not return an order id")
-		}
-
-		attempt.RazorpayOrderID = order.ID
-		attempt.Status = models.PaymentAttemptStatusCreated
-		return tx.Save(&attempt).Error
-	})
+	if idempotencyKey == "" {
+		return nil, fmt.Errorf("idempotency_key is required")
+	}
+	attempt, existed, err := s.claimPaymentAttempt(ctx, businessID, userID, idempotencyKey, target, amountPaise, currency)
 	if err != nil {
 		s.log.Warn("failed to create Razorpay payment order", "business_id", businessID, "user_id", userID, "target_type", input.TargetType, "error", err)
 		return nil, err
+	}
+	if attempt.RazorpayOrderID == "" {
+		var order *razorpay.Order
+		if existed {
+			order, err = s.recoverRazorpayOrder(ctx, client, attempt)
+			if err == nil && order == nil {
+				err = fmt.Errorf("payment attempt is still being initialized")
+			}
+		} else {
+			order, err = s.createRazorpayOrder(ctx, client, attempt)
+		}
+		if err != nil {
+			s.log.Warn("failed to initialize Razorpay payment order", "payment_attempt_id", attempt.ID, "business_id", businessID, "error", err)
+			return nil, err
+		}
+		attempt, err = s.attachRazorpayOrder(ctx, attempt, order)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	s.log.Info("Razorpay payment order ready", "payment_attempt_id", attempt.ID, "business_id", businessID, "target_type", attempt.TargetType, "razorpay_order_id", attempt.RazorpayOrderID)
@@ -185,6 +148,130 @@ func (s *RazorpayPaymentService) CreateOrder(ctx context.Context, businessID, us
 		Amount:           attempt.AmountPaise,
 		Currency:         attempt.Currency,
 	}, nil
+}
+
+func (s *RazorpayPaymentService) claimPaymentAttempt(
+	ctx context.Context,
+	businessID, userID, idempotencyKey string,
+	target resolvedPaymentTarget,
+	amountPaise int64,
+	currency string,
+) (*models.PaymentAttempt, bool, error) {
+	candidate := models.PaymentAttempt{
+		ID: uuid.NewString(), UserID: userID, BusinessID: businessID,
+		TargetType: target.TargetType, TargetID: target.TargetID,
+		AmountPaise: amountPaise, Currency: currency,
+		Status: models.PaymentAttemptStatusCreated, IdempotencyKey: idempotencyKey,
+	}
+	var attempt models.PaymentAttempt
+	existed := false
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Omit("RazorpayOrderID", "RazorpayPaymentID", "FailureReason", "PaidAt").Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "user_id"}, {Name: "business_id"}, {Name: "idempotency_key"}},
+			DoNothing: true,
+		}).Create(&candidate)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 1 {
+			attempt = candidate
+			return nil
+		}
+		existed = true
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("user_id = ? AND business_id = ? AND idempotency_key = ?", userID, businessID, idempotencyKey).
+			First(&attempt).Error; err != nil {
+			return err
+		}
+		if attempt.Status == models.PaymentAttemptStatusPaid {
+			return fmt.Errorf("payment attempt is already paid")
+		}
+		if attempt.TargetType != target.TargetType || attempt.TargetID != target.TargetID || attempt.AmountPaise != amountPaise || !strings.EqualFold(attempt.Currency, currency) {
+			return fmt.Errorf("idempotency key was already used for a different payment target")
+		}
+		return nil
+	})
+	return &attempt, existed, err
+}
+
+func (s *RazorpayPaymentService) createRazorpayOrder(ctx context.Context, client *razorpay.Client, attempt *models.PaymentAttempt) (*razorpay.Order, error) {
+	order, createErr := client.CreateOrder(ctx, razorpay.OrderParams{
+		Amount: attempt.AmountPaise, Currency: attempt.Currency, Receipt: truncateReceipt(attempt.ID),
+		Notes: map[string]string{
+			"payment_attempt_id": attempt.ID,
+			"business_id":        attempt.BusinessID,
+			"target_type":        attempt.TargetType,
+			"target_id":          attempt.TargetID,
+		},
+	})
+	if createErr == nil {
+		return validateRecoveredRazorpayOrder(attempt, order)
+	}
+	recovered, recoverErr := s.recoverRazorpayOrder(ctx, client, attempt)
+	if recoverErr != nil {
+		return nil, fmt.Errorf("create Razorpay order: %w; reconcile order: %v", createErr, recoverErr)
+	}
+	if recovered == nil {
+		return nil, createErr
+	}
+	return recovered, nil
+}
+
+func (s *RazorpayPaymentService) recoverRazorpayOrder(ctx context.Context, client *razorpay.Client, attempt *models.PaymentAttempt) (*razorpay.Order, error) {
+	receipt := truncateReceipt(attempt.ID)
+	orders, err := client.FetchOrdersByReceipt(ctx, receipt)
+	if err != nil {
+		return nil, err
+	}
+	var recovered *razorpay.Order
+	for index := range orders {
+		if orders[index].Receipt != receipt {
+			continue
+		}
+		if recovered != nil {
+			return nil, fmt.Errorf("multiple Razorpay orders found for unique receipt")
+		}
+		recovered = &orders[index]
+	}
+	if recovered == nil {
+		return nil, nil
+	}
+	return validateRecoveredRazorpayOrder(attempt, recovered)
+}
+
+func validateRecoveredRazorpayOrder(attempt *models.PaymentAttempt, order *razorpay.Order) (*razorpay.Order, error) {
+	if order == nil || strings.TrimSpace(order.ID) == "" {
+		return nil, fmt.Errorf("razorpay did not return an order id")
+	}
+	if order.Receipt != truncateReceipt(attempt.ID) || order.Amount != attempt.AmountPaise || !strings.EqualFold(order.Currency, attempt.Currency) {
+		return nil, fmt.Errorf("Razorpay order does not match payment attempt")
+	}
+	return order, nil
+}
+
+func (s *RazorpayPaymentService) attachRazorpayOrder(ctx context.Context, claimed *models.PaymentAttempt, order *razorpay.Order) (*models.PaymentAttempt, error) {
+	var attempt models.PaymentAttempt
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", claimed.ID).First(&attempt).Error; err != nil {
+			return err
+		}
+		if attempt.BusinessID != claimed.BusinessID || attempt.UserID != claimed.UserID {
+			return fmt.Errorf("payment attempt not found")
+		}
+		if attempt.RazorpayOrderID != "" {
+			if attempt.RazorpayOrderID != order.ID {
+				return fmt.Errorf("payment attempt already references a different Razorpay order")
+			}
+			return nil
+		}
+		if _, err := validateRecoveredRazorpayOrder(&attempt, order); err != nil {
+			return err
+		}
+		attempt.RazorpayOrderID = order.ID
+		attempt.Status = models.PaymentAttemptStatusCreated
+		return tx.Save(&attempt).Error
+	})
+	return &attempt, err
 }
 
 type resolvedPaymentTarget struct {

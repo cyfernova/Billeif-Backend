@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -100,6 +101,12 @@ type Order struct {
 	CreatedAtEpoch int64             `json:"created_at"`
 }
 
+type OrderCollection struct {
+	Entity string  `json:"entity"`
+	Count  int     `json:"count"`
+	Items  []Order `json:"items"`
+}
+
 type Payment struct {
 	ID               string `json:"id"`
 	Entity           string `json:"entity"`
@@ -130,6 +137,21 @@ func (c *Client) FetchOrder(ctx context.Context, orderID string) (*Order, error)
 		return nil, err
 	}
 	return &order, nil
+}
+
+func (c *Client) FetchOrdersByReceipt(ctx context.Context, receipt string) ([]Order, error) {
+	receipt = strings.TrimSpace(receipt)
+	if receipt == "" {
+		return nil, fmt.Errorf("Razorpay order receipt is required")
+	}
+	query := url.Values{}
+	query.Set("receipt", receipt)
+	query.Set("count", "100")
+	var collection OrderCollection
+	if err := c.request(ctx, http.MethodGet, "/orders?"+query.Encode(), nil, &collection); err != nil {
+		return nil, err
+	}
+	return collection.Items, nil
 }
 
 func (c *Client) FetchPayment(ctx context.Context, paymentID string) (*Payment, error) {
