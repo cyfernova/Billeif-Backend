@@ -15,21 +15,71 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestResolveTrustedPOSCheckoutCartRejectsClientLinesFallback(t *testing.T) {
-	_, err := resolveTrustedPOSCheckoutCart(POSSessionCart{}, CheckoutPOSCartInput{
-		Lines: []POSSessionCartLine{{
-			ProductID: "product-1",
-			Quantity:  1,
-			UnitPrice: 1,
-		}},
-	})
-	if err == nil {
-		t.Fatal("expected client-supplied POS fallback lines to be rejected")
+func TestResolveTrustedPOSCheckoutCartReloadsAuthoritativeClientCommand(t *testing.T) {
+	service := newPOSCatalogCheckoutFixture(t)
+	seedPOSCatalogProduct(t, service.db, "business-1", "warehouse-1", "product-1")
+
+	cart, err := service.resolveTrustedPOSCheckoutCart(
+		context.Background(),
+		"business-1",
+		"warehouse-1",
+		POSSessionCart{},
+		CheckoutPOSCartInput{Lines: []POSSessionCartLine{{
+			ProductID:   "product-1",
+			Name:        "Spoofed name",
+			Description: "Spoofed description",
+			Quantity:    2,
+			UnitPrice:   0.01,
+			TaxRate:     99,
+			Metadata:    map[string]interface{}{"discount": 250},
+		}}},
+	)
+	if err != nil {
+		t.Fatalf("resolve trusted POS command: %v", err)
+	}
+	if len(cart.Items) != 1 {
+		t.Fatalf("cart items = %d, want 1", len(cart.Items))
+	}
+	line := cart.Items[0]
+	if line.Name != "Trusted product" || line.Description != "Trusted product" {
+		t.Fatalf("catalog description was not authoritative: %#v", line)
+	}
+	if line.UnitPrice != 125 || line.TaxRate != 18 || line.Quantity != 2 {
+		t.Fatalf("catalog money fields were not authoritative: %#v", line)
+	}
+	if len(line.Metadata) != 0 {
+		t.Fatalf("client metadata reached trusted cart: %#v", line.Metadata)
+	}
+	if cart.Total != 295 {
+		t.Fatalf("trusted cart total = %.2f, want 295.00", cart.Total)
+	}
+}
+
+func TestResolveTrustedPOSCheckoutCartRejectsCrossTenantAndInvalidQuantity(t *testing.T) {
+	service := newPOSCatalogCheckoutFixture(t)
+	seedPOSCatalogProduct(t, service.db, "business-2", "warehouse-2", "product-other")
+
+	for name, line := range map[string]POSSessionCartLine{
+		"cross tenant product": {ProductID: "product-other", Quantity: 1},
+		"zero quantity":        {ProductID: "product-other", Quantity: 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := service.resolveTrustedPOSCheckoutCart(
+				context.Background(),
+				"business-1",
+				"warehouse-1",
+				POSSessionCart{},
+				CheckoutPOSCartInput{Lines: []POSSessionCartLine{line}},
+			)
+			if err == nil {
+				t.Fatal("expected untrusted POS command to be rejected")
+			}
+		})
 	}
 }
 
 func TestResolveTrustedPOSCheckoutCartUsesServerCart(t *testing.T) {
-	cart, err := resolveTrustedPOSCheckoutCart(POSSessionCart{
+	cart, err := (&POSService{}).resolveTrustedPOSCheckoutCart(context.Background(), "business-1", "warehouse-1", POSSessionCart{
 		Items: []POSSessionCartLine{{
 			ProductID: "product-1",
 			Quantity:  2,
@@ -45,7 +95,85 @@ func TestResolveTrustedPOSCheckoutCartUsesServerCart(t *testing.T) {
 	}
 }
 
-func TestPOSCheckoutMapsActivePayloadToCanonicalUnnumberedDraft(t *testing.T) {
+func newPOSCatalogCheckoutFixture(t *testing.T) *POSService {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open POS catalog database: %v", err)
+	}
+	statements := []string{
+		`CREATE TABLE products (
+			id TEXT PRIMARY KEY,
+			business_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			sku TEXT NOT NULL,
+			barcode TEXT,
+			price REAL NOT NULL,
+			mrp REAL DEFAULT 0,
+			hsn_sac_code TEXT,
+			uqc_code TEXT,
+			gst_metadata TEXT DEFAULT '{}',
+			default_cess_rate REAL DEFAULT 0,
+			unit TEXT,
+			is_active NUMERIC DEFAULT 1,
+			deleted_at DATETIME
+		)`,
+		`CREATE TABLE product_variants (
+			id TEXT PRIMARY KEY,
+			business_id TEXT NOT NULL,
+			product_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			sku TEXT NOT NULL,
+			barcode TEXT,
+			attributes TEXT DEFAULT '{}',
+			price REAL DEFAULT 0,
+			mrp REAL DEFAULT 0,
+			default_cess_rate REAL DEFAULT 0,
+			is_active NUMERIC DEFAULT 1,
+			deleted_at DATETIME
+		)`,
+		`CREATE TABLE product_warehouse_catalogs (
+			id TEXT PRIMARY KEY,
+			business_id TEXT NOT NULL,
+			product_id TEXT NOT NULL,
+			warehouse_id TEXT NOT NULL,
+			is_visible NUMERIC DEFAULT 1,
+			is_active NUMERIC DEFAULT 1,
+			price_override REAL,
+			deleted_at DATETIME
+		)`,
+	}
+	for _, statement := range statements {
+		if err := db.Exec(statement).Error; err != nil {
+			t.Fatalf("create POS catalog table: %v", err)
+		}
+	}
+	return &POSService{db: db}
+}
+
+func seedPOSCatalogProduct(t *testing.T, db *gorm.DB, businessID, warehouseID, productID string) {
+	t.Helper()
+	if err := db.Exec(
+		`INSERT INTO products (id, business_id, name, sku, price, mrp, hsn_sac_code, uqc_code, gst_metadata, default_cess_rate, unit, is_active)
+		 VALUES (?, ?, 'Trusted product', 'TRUST-1', 125, 150, '0902', 'PCS', '{"tax_rate":18}', 0, 'PCS', 1)`,
+		productID,
+		businessID,
+	).Error; err != nil {
+		t.Fatalf("seed POS product: %v", err)
+	}
+	if err := db.Exec(
+		`INSERT INTO product_warehouse_catalogs (id, business_id, product_id, warehouse_id, is_visible, is_active)
+		 VALUES (?, ?, ?, ?, 1, 1)`,
+		uuid.NewString(),
+		businessID,
+		productID,
+		warehouseID,
+	).Error; err != nil {
+		t.Fatalf("seed POS warehouse catalog: %v", err)
+	}
+}
+
+func TestPOSCheckoutCreatesAndIssuesCanonicalInvoice(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open POS test database: %v", err)
@@ -98,7 +226,11 @@ func TestPOSCheckoutMapsActivePayloadToCanonicalUnnumberedDraft(t *testing.T) {
 
 	log := logger.New()
 	creator := &canonicalInvoiceCreatorFake{}
-	documents := &DocumentService{salesInvoices: newInvoiceSalesDocumentCreator(creator)}
+	issuer := &posSalesDocumentIssuerFake{}
+	documents := &DocumentService{
+		salesInvoices:      newInvoiceSalesDocumentCreator(creator),
+		salesInvoiceIssuer: issuer,
+	}
 	inventory := NewInventoryService(
 		db,
 		nil,
@@ -135,6 +267,13 @@ func TestPOSCheckoutMapsActivePayloadToCanonicalUnnumberedDraft(t *testing.T) {
 	if creator.calls != 1 {
 		t.Fatalf("canonical creator calls = %d, want 1", creator.calls)
 	}
+	if issuer.calls != 1 || issuer.invoiceID != document.ID {
+		t.Fatalf("canonical issuer calls/invoice = %d/%q, want 1/%q", issuer.calls, issuer.invoiceID, document.ID)
+	}
+	if issuer.input.IdempotencyKey != idempotencyKey || issuer.input.ExpectedVersion != 1 ||
+		issuer.input.DocumentType != "bill_of_supply" || issuer.input.Series != "POS" {
+		t.Fatalf("canonical POS issue command = %#v", issuer.input)
+	}
 	if creator.input.IdempotencyKey != idempotencyKey ||
 		creator.input.Origin != models.InvoiceOriginPOS ||
 		creator.input.Currency != "INR" ||
@@ -149,12 +288,44 @@ func TestPOSCheckoutMapsActivePayloadToCanonicalUnnumberedDraft(t *testing.T) {
 	if sourceLinkage["source"] != "pos" || sourceLinkage["pos_session"] != sessionID {
 		t.Fatalf("canonical POS source linkage = %#v", sourceLinkage)
 	}
-	if document.Status != models.DocumentStatusDraft ||
-		document.DraftState != models.DocumentDraftStateDraft ||
-		document.SerialNumber != "" {
-		t.Fatalf("POS canonical lifecycle = status %q state %q number %q, want unnumbered draft",
+	if document.Status != models.DocumentStatusIssued ||
+		document.DraftState != models.DocumentDraftStateFinal ||
+		document.SerialNumber != "POS/26-27/000001" {
+		t.Fatalf("POS canonical lifecycle = status %q state %q number %q, want issued invoice",
 			document.Status, document.DraftState, document.SerialNumber)
 	}
+}
+
+type posSalesDocumentIssuerFake struct {
+	calls     int
+	invoiceID string
+	input     IssueInvoiceInput
+}
+
+func (f *posSalesDocumentIssuerFake) IssueSalesInvoiceDocument(
+	_ context.Context,
+	businessID, invoiceID string,
+	input IssueInvoiceInput,
+) (*IssueInvoiceResult, error) {
+	f.calls++
+	f.invoiceID = invoiceID
+	f.input = input
+	issuedAt := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
+	invoiceNumber := "POS/26-27/000001"
+	return &IssueInvoiceResult{
+		Invoice: &models.Invoice{
+			ID:          invoiceID,
+			BusinessID:  businessID,
+			Status:      models.InvoiceStatusIssued,
+			Version:     2,
+			InvoiceNo:   &invoiceNumber,
+			IssuedAt:    &issuedAt,
+			InvoiceDate: issuedAt,
+			Currency:    "INR",
+			TaxProfile:  `{"gst_treatment":"exempt","bill_of_supply":true}`,
+		},
+		FinalRender: &models.DocumentRenderJob{},
+	}, nil
 }
 
 type fixedSubscriptionRepository struct {

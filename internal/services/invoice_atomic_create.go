@@ -201,5 +201,15 @@ func customerPartySnapshot(customer *models.Customer) models.PartySnapshot {
 }
 
 func invoiceDocumentProjection(invoice *models.Invoice) *models.Document {
-	return invoiceprojection.Build(invoice)
+	document := invoiceprojection.Build(invoice)
+	if invoice == nil || invoice.Status == models.InvoiceStatusDraft {
+		return document
+	}
+	document.Status = legacyInvoiceStatusToDocument(invoice.Status)
+	document.DraftState = models.DocumentDraftStateFinal
+	document.SerialNumber = models.StringValue(invoice.InvoiceNo)
+	if invoice.IssuedAt != nil {
+		document.IssueDate = *invoice.IssuedAt
+	}
+	return document
 }

@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
 	"invoice-backend/internal/idempotency"
+	"invoice-backend/internal/invoiceissue"
 	"invoice-backend/internal/models"
 	"invoice-backend/pkg/logger"
 
@@ -381,7 +383,7 @@ func (s *POSService) Checkout(ctx context.Context, businessID, userID, sessionID
 	}
 
 	cart := s.readCart(session)
-	cart, err = resolveTrustedPOSCheckoutCart(cart, input)
+	cart, err = s.resolveTrustedPOSCheckoutCart(ctx, businessID, posStringValue(session.WarehouseID), cart, input)
 	if err != nil {
 		return nil, err
 	}
@@ -412,6 +414,22 @@ func (s *POSService) Checkout(ctx context.Context, businessID, userID, sessionID
 	if err != nil {
 		return nil, err
 	}
+	issueResult, err := s.documents.IssueSalesDocumentByBusiness(
+		ctx,
+		businessID,
+		models.DocumentTypeSalesInvoice,
+		document.ID,
+		IssueInvoiceInput{
+			IdempotencyKey:  idempotencyKey,
+			ExpectedVersion: 1,
+			DocumentType:    posInvoiceDocumentType(createInput.TaxProfile),
+			Series:          "POS",
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	document = invoiceDocumentProjection(issueResult.Invoice)
 
 	session.LastCheckedOutDocumentID = &document.ID
 	session.CartPayload = mustMarshalAny(POSSessionCart{Items: []POSSessionCartLine{}}, "{}")
@@ -476,6 +494,7 @@ func canonicalPOSCheckoutInput(session *models.POSSession, idempotencyKey string
 		Notes:          coalesceString(input.Notes, fmt.Sprintf("POS checkout from session %s", session.ID)),
 		TaxProfile: TaxProfileInput{
 			GSTTreatment:          gstTreatment,
+			BillOfSupply:          gstTreatment == models.DocumentGSTTreatmentComposition || gstTreatment == models.DocumentGSTTreatmentExempt,
 			PlaceOfSupply:         input.PlaceOfSupply,
 			SupplyType:            "sale",
 			CounterpartyGSTIN:     input.PartyGSTIN,
@@ -497,6 +516,13 @@ func canonicalPOSCheckoutInput(session *models.POSSession, idempotencyKey string
 		},
 		Items: items,
 	}, nil
+}
+
+func posInvoiceDocumentType(profile TaxProfileInput) string {
+	if profile.BillOfSupply || profile.GSTTreatment == models.DocumentGSTTreatmentComposition || profile.GSTTreatment == models.DocumentGSTTreatmentExempt {
+		return invoiceissue.DocumentTypeBillOfSupply
+	}
+	return invoiceissue.DocumentTypeTaxInvoice
 }
 
 func canonicalPOSGSTTreatment(taxMode, gstTreatment string) (string, error) {
@@ -645,15 +671,72 @@ func (s *POSService) readCart(session *models.POSSession) POSSessionCart {
 	return cart
 }
 
-func resolveTrustedPOSCheckoutCart(cart POSSessionCart, input CheckoutPOSCartInput) (POSSessionCart, error) {
-	if len(cart.Items) == 0 && len(input.Lines) > 0 {
-		return POSSessionCart{}, fmt.Errorf("pos checkout requires server-side cart items")
+func (s *POSService) resolveTrustedPOSCheckoutCart(
+	ctx context.Context,
+	businessID, warehouseID string,
+	cart POSSessionCart,
+	input CheckoutPOSCartInput,
+) (POSSessionCart, error) {
+	if len(cart.Items) > 0 {
+		recalculatePOSCart(&cart)
+		return cart, nil
 	}
-	if len(cart.Items) == 0 {
+	if len(input.Lines) == 0 {
 		return POSSessionCart{}, fmt.Errorf("pos cart is empty")
 	}
-	recalculatePOSCart(&cart)
-	return cart, nil
+	if s == nil || s.db == nil {
+		return POSSessionCart{}, fmt.Errorf("pos catalog is unavailable")
+	}
+
+	trusted := POSSessionCart{Items: make([]POSSessionCartLine, 0, len(input.Lines))}
+	for _, command := range input.Lines {
+		productID := strings.TrimSpace(command.ProductID)
+		quantity := command.Quantity
+		if productID == "" || quantity <= 0 || math.IsNaN(quantity) || math.IsInf(quantity, 0) {
+			return POSSessionCart{}, fmt.Errorf("pos item is unavailable")
+		}
+
+		var product models.Product
+		if err := s.db.WithContext(ctx).
+			Select("id", "business_id", "name", "sku", "barcode", "price", "mrp", "hsn_sac_code", "uqc_code", "gst_metadata", "default_cess_rate", "unit", "is_active").
+			Where("id = ? AND business_id = ? AND deleted_at IS NULL AND is_active = TRUE", productID, businessID).
+			First(&product).Error; err != nil {
+			return POSSessionCart{}, fmt.Errorf("pos item is unavailable")
+		}
+
+		var warehouseCatalog models.ProductWarehouseCatalog
+		if err := s.db.WithContext(ctx).
+			Select("id", "business_id", "product_id", "warehouse_id", "price_override", "is_visible", "is_active").
+			Where("business_id = ? AND product_id = ? AND warehouse_id = ? AND deleted_at IS NULL AND is_active = TRUE AND is_visible = TRUE", businessID, productID, warehouseID).
+			First(&warehouseCatalog).Error; err != nil {
+			return POSSessionCart{}, fmt.Errorf("pos item is unavailable")
+		}
+
+		lookup := map[string]interface{}{"product": product}
+		variantID := strings.TrimSpace(command.VariantID)
+		if variantID != "" {
+			var variant models.ProductVariant
+			if err := s.db.WithContext(ctx).
+				Select("id", "business_id", "product_id", "name", "sku", "barcode", "attributes", "price", "mrp", "default_cess_rate", "is_active").
+				Where("id = ? AND product_id = ? AND business_id = ? AND deleted_at IS NULL AND is_active = TRUE", variantID, productID, businessID).
+				First(&variant).Error; err != nil {
+				return POSSessionCart{}, fmt.Errorf("pos item is unavailable")
+			}
+			lookup["variant"] = variant
+		}
+
+		line, err := s.lookupToCartLine(ctx, businessID, lookup)
+		if err != nil {
+			return POSSessionCart{}, err
+		}
+		line.Quantity = quantity
+		if warehouseCatalog.PriceOverride != nil {
+			line.UnitPrice = *warehouseCatalog.PriceOverride
+		}
+		trusted.Items = append(trusted.Items, line)
+	}
+	recalculatePOSCart(&trusted)
+	return trusted, nil
 }
 
 func (s *POSService) productVisibleInWarehouse(ctx context.Context, businessID, productID, warehouseID string) bool {
@@ -663,7 +746,7 @@ func (s *POSService) productVisibleInWarehouse(ctx context.Context, businessID, 
 	var count int64
 	if err := s.db.WithContext(ctx).
 		Model(&models.ProductWarehouseCatalog{}).
-		Where("business_id = ? AND product_id = ? AND warehouse_id = ? AND deleted_at IS NULL AND COALESCE(is_visible, TRUE) = TRUE", businessID, productID, warehouseID).
+		Where("business_id = ? AND product_id = ? AND warehouse_id = ? AND deleted_at IS NULL AND COALESCE(is_active, TRUE) = TRUE AND COALESCE(is_visible, TRUE) = TRUE", businessID, productID, warehouseID).
 		Count(&count).Error; err != nil {
 		return false
 	}
