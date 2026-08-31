@@ -310,14 +310,6 @@ func AuthWithTokenUse(cfg config.CognitoConfig, log *logger.Logger, allowedToken
 	return func(c *gin.Context) {
 		reqLog := logger.FromContext(c.Request.Context()).Named("auth_middleware")
 		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" && websocketUpgradeRequested(c) {
-			authHeader = c.Query("authorization")
-			if authHeader == "" {
-				if token := c.Query("access_token"); token != "" {
-					authHeader = "Bearer " + token
-				}
-			}
-		}
 		tokenString, err := parseAuthorizationHeader(authHeader)
 		if err != nil {
 			reqLog.Warn("token validation failed", "error", err)
@@ -351,10 +343,6 @@ func AuthWithTokenUse(cfg config.CognitoConfig, log *logger.Logger, allowedToken
 
 		c.Next()
 	}
-}
-
-func websocketUpgradeRequested(c *gin.Context) bool {
-	return strings.EqualFold(c.GetHeader("Upgrade"), "websocket")
 }
 
 func GetUserID(c *gin.Context) string {

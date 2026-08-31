@@ -2,13 +2,15 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
 
 	"invoice-backend/internal/app"
 	"invoice-backend/internal/config"
-	"invoice-backend/internal/middleware"
+	"invoice-backend/internal/models"
+	"invoice-backend/internal/repositories/interfaces"
 	postgresrepo "invoice-backend/internal/repositories/postgres"
 	"invoice-backend/internal/services"
 	"invoice-backend/pkg/awsclients"
@@ -20,16 +22,20 @@ import (
 )
 
 var (
-	wsInitOnce sync.Once
-	wsCfg      *config.Config
-	wsSvc      *services.WebSocketConnectionService
-	wsAuthSvc  businessAccessChecker
-	wsLog      *logger.Logger
-	wsInitErr  error
+	wsInitOnce  sync.Once
+	wsSvc       websocketConnectionRegistry
+	wsTicketSvc websocketTicketConsumer
+	wsLog       *logger.Logger
+	wsInitErr   error
 )
 
-type businessAccessChecker interface {
-	UserHasBusinessAccess(ctx context.Context, userID, businessID string) bool
+type websocketTicketConsumer interface {
+	Consume(ctx context.Context, ticketValue string) (*models.WebSocketTicket, error)
+}
+
+type websocketConnectionRegistry interface {
+	RegisterConnectionWithBusiness(ctx context.Context, connectionID, userID, businessID string) error
+	UnregisterConnection(ctx context.Context, connectionID string) error
 }
 
 func initWSRuntime() {
@@ -62,9 +68,9 @@ func initWSRuntime() {
 		wsInitErr = fmt.Errorf("initialize websocket credential resolver: %w", err)
 		return
 	}
-	authSvc, err := initWebSocketBusinessAuth(cfg, resolver, log)
+	ticketSvc, err := initWebSocketTicketService(cfg, resolver, log)
 	if err != nil {
-		wsInitErr = fmt.Errorf("initialize websocket business auth: %w", err)
+		wsInitErr = fmt.Errorf("initialize websocket ticket service: %w", err)
 		return
 	}
 
@@ -74,9 +80,8 @@ func initWSRuntime() {
 		return
 	}
 
-	wsCfg = cfg
 	wsSvc = svc
-	wsAuthSvc = authSvc
+	wsTicketSvc = ticketSvc
 	wsLog = log
 }
 
@@ -89,28 +94,7 @@ func handleWebSocket(ctx context.Context, req events.APIGatewayWebsocketProxyReq
 	connectionID := req.RequestContext.ConnectionID
 	switch req.RequestContext.RouteKey {
 	case "$connect":
-		authToken := extractAuthToken(req)
-		if authToken == "" {
-			return events.APIGatewayProxyResponse{StatusCode: 401, Body: "missing auth token"}, nil
-		}
-
-		claims, err := parseClaims(authToken)
-		if err != nil {
-			wsLog.Warn("websocket connect auth failed", "error", err)
-			return events.APIGatewayProxyResponse{StatusCode: 401, Body: "invalid auth token"}, nil
-		}
-
-		businessID, response, ok := authorizeWebSocketBusinessScope(ctx, req, claims, connectionID)
-		if !ok {
-			return response, nil
-		}
-
-		if err := wsSvc.RegisterConnectionWithBusiness(ctx, connectionID, claims.Subject, businessID); err != nil {
-			wsLog.Error("failed to register websocket connection", "connection_id", connectionID, "error", err)
-			return events.APIGatewayProxyResponse{StatusCode: 500, Body: "failed to register connection"}, nil
-		}
-
-		return events.APIGatewayProxyResponse{StatusCode: 200, Body: "connected"}, nil
+		return handleWebSocketConnect(ctx, req, wsTicketSvc, wsSvc, wsLog), nil
 
 	case "$disconnect":
 		if err := wsSvc.UnregisterConnection(ctx, connectionID); err != nil {
@@ -127,78 +111,51 @@ func handleWebSocket(ctx context.Context, req events.APIGatewayWebsocketProxyReq
 	}
 }
 
-func parseClaims(token string) (*middleware.CognitoClaims, error) {
-	if strings.Contains(strings.ToLower(token), "bearer ") {
-		return middleware.ValidateCognitoAuthorization(wsCfg.Cognito, token)
+func handleWebSocketConnect(
+	ctx context.Context,
+	req events.APIGatewayWebsocketProxyRequest,
+	tickets websocketTicketConsumer,
+	connections websocketConnectionRegistry,
+	log *logger.Logger,
+) events.APIGatewayProxyResponse {
+	connectionID := req.RequestContext.ConnectionID
+	ticketValue := extractWebSocketTicket(req)
+	if ticketValue == "" {
+		return events.APIGatewayProxyResponse{StatusCode: 401, Body: "missing websocket ticket"}
 	}
-	return middleware.ValidateCognitoToken(wsCfg.Cognito, token)
+	if tickets == nil || connections == nil {
+		return events.APIGatewayProxyResponse{StatusCode: 500, Body: "websocket services are unavailable"}
+	}
+	ticket, err := tickets.Consume(ctx, ticketValue)
+	if err != nil {
+		if errors.Is(err, interfaces.ErrWebSocketTicketInvalid) {
+			log.Warn("websocket connect ticket rejected", "connection_id", connectionID)
+			return events.APIGatewayProxyResponse{StatusCode: 401, Body: "invalid websocket ticket"}
+		}
+		log.Error("websocket connect ticket consume failed", "connection_id", connectionID, "error", err)
+		return events.APIGatewayProxyResponse{StatusCode: 500, Body: "failed to validate websocket ticket"}
+	}
+
+	if err := connections.RegisterConnectionWithBusiness(ctx, connectionID, ticket.Subject, ticket.BusinessID); err != nil {
+		log.Error("failed to register websocket connection", "connection_id", connectionID, "error", err)
+		return events.APIGatewayProxyResponse{StatusCode: 500, Body: "failed to register connection"}
+	}
+	return events.APIGatewayProxyResponse{StatusCode: 200, Body: "connected"}
 }
 
-func initWebSocketBusinessAuth(cfg *config.Config, resolver *config.RuntimeResolver, log *logger.Logger) (*services.BusinessAuthService, error) {
+func initWebSocketTicketService(cfg *config.Config, resolver *config.RuntimeResolver, log *logger.Logger) (*services.WebSocketTicketService, error) {
 	db, err := app.OpenDatabase(cfg, resolver, log)
 	if err != nil {
 		return nil, fmt.Errorf("connect database: %w", err)
 	}
-
-	return services.NewBusinessAuthService(
-		db,
-		postgresrepo.NewBusinessRepository(db),
-		postgresrepo.NewTeamMemberRepository(db),
-		log,
+	return services.NewWebSocketTicketService(
+		postgresrepo.NewWebSocketTicketRepository(db),
+		services.WebSocketTicketServiceOptions{},
 	), nil
 }
 
-func authorizeWebSocketBusinessScope(ctx context.Context, req events.APIGatewayWebsocketProxyRequest, claims *middleware.CognitoClaims, connectionID string) (string, events.APIGatewayProxyResponse, bool) {
-	if claims == nil {
-		return "", events.APIGatewayProxyResponse{StatusCode: 401, Body: "invalid auth token"}, false
-	}
-
-	requestedBusinessID := firstNonEmpty(req.QueryStringParameters["business_id"], req.Headers["business_id"], req.Headers["x-business-id"], claims.BusinessID)
-	if requestedBusinessID == "" {
-		wsLog.Warn("websocket connect missing business scope", "connection_id", connectionID, "user_id", claims.Subject)
-		return "", events.APIGatewayProxyResponse{StatusCode: 403, Body: "business scope required"}, false
-	}
-	if claims.BusinessID != "" && requestedBusinessID != claims.BusinessID {
-		wsLog.Warn("websocket connect business mismatch", "connection_id", connectionID, "user_id", claims.Subject)
-		return "", events.APIGatewayProxyResponse{StatusCode: 403, Body: "business_id does not match authenticated scope"}, false
-	}
-	if wsAuthSvc == nil {
-		wsLog.Error("websocket business auth is not configured", "connection_id", connectionID, "user_id", claims.Subject)
-		return "", events.APIGatewayProxyResponse{StatusCode: 500, Body: "business authorization is not configured"}, false
-	}
-	if !wsAuthSvc.UserHasBusinessAccess(ctx, claims.Subject, requestedBusinessID) {
-		wsLog.Warn("websocket connect business access denied", "connection_id", connectionID, "user_id", claims.Subject, "business_id", requestedBusinessID)
-		return "", events.APIGatewayProxyResponse{StatusCode: 403, Body: "access denied to this business"}, false
-	}
-	return requestedBusinessID, events.APIGatewayProxyResponse{}, true
-}
-
-func extractAuthToken(req events.APIGatewayWebsocketProxyRequest) string {
-	if h, ok := req.Headers["Authorization"]; ok && h != "" {
-		return h
-	}
-	if h, ok := req.Headers["authorization"]; ok && h != "" {
-		return h
-	}
-	if t, ok := req.QueryStringParameters["access_token"]; ok && t != "" {
-		return t
-	}
-	if t, ok := req.QueryStringParameters["authorization"]; ok && t != "" {
-		return t
-	}
-	if t, ok := req.QueryStringParameters["token"]; ok && t != "" {
-		return t
-	}
-	return ""
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
+func extractWebSocketTicket(req events.APIGatewayWebsocketProxyRequest) string {
+	return strings.TrimSpace(req.QueryStringParameters["ticket"])
 }
 
 func main() {

@@ -47,3 +47,4 @@
 000047_encrypt_render_profile_passwords
 000048_scope_a2a_bargaining_negotiations
 000049_verify_cart_mandate_signatures
+000050_websocket_tickets

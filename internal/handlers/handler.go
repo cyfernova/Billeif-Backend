@@ -57,6 +57,7 @@ type Handler struct {
 	AgentDiscovery  *AgentDiscoveryHandler
 	Intent          *IntentHandler
 	WebSocket       *WebSocketHandler
+	WebSocketTicket *WebSocketTicketHandler
 	LLM             *LLMHandler
 	SarvamTTS       *SarvamTTSHandler
 	VoiceSession    *VoiceSessionHandler
@@ -135,7 +136,8 @@ func New(
 		Marketplace:     NewMarketplaceHandler(svcs.Marketplace, repos.AP2, log),
 		AgentDiscovery:  NewAgentDiscoveryHandler(svcs.AgentDiscovery, log),
 		Intent:          NewIntentHandler(svcs.IntentProcessing, log),
-		WebSocket:       NewWebSocketHandler(wsHub, svcs.WebSocketConnection, log),
+		WebSocket:       NewWebSocketHandler(wsHub, svcs.WebSocketConnection, svcs.WebSocketTicket, log),
+		WebSocketTicket: NewWebSocketTicketHandler(svcs.WebSocketTicket, log),
 		LLM:             NewLLMHandler(svcs.LLM, svcs.LLMChatHistory, log),
 		SarvamTTS:       NewSarvamTTSHandler(svcs.SarvamTTS, log),
 		VoiceSession:    NewVoiceSessionHandler(svcs.VoiceSession, log),
