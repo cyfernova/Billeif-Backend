@@ -13,6 +13,12 @@ Parameters:
     Type: String
     Default: dev
     AllowedPattern: "[a-z0-9-]+"
+  TerraformStateBucketName:
+    Type: String
+    Description: Existing S3 bucket used exclusively for Terraform state
+  TerraformStateLockTableName:
+    Type: String
+    Description: Existing DynamoDB table used exclusively for Terraform state locking
 
 Resources:
   WorkloadPermissionsBoundary:
@@ -23,9 +29,71 @@ Resources:
       PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - Sid: AllowApplicationServices
+          - Sid: AllowRequiredWorkloadActions
             Effect: Allow
-            Action: "*"
+            Action:
+              - bedrock-agentcore:GetWorkloadAccessTokenForUserId
+              - bedrock-agentcore:StopRuntimeSession
+              - cloudwatch:PutMetricData
+              - cognito-idp:AdminConfirmSignUp
+              - cognito-idp:AdminCreateUser
+              - cognito-idp:AdminDeleteUser
+              - cognito-idp:ChangePassword
+              - cognito-idp:ConfirmForgotPassword
+              - cognito-idp:ConfirmSignUp
+              - cognito-idp:ForgotPassword
+              - cognito-idp:GlobalSignOut
+              - cognito-idp:InitiateAuth
+              - cognito-idp:ListUsers
+              - cognito-idp:ResendConfirmationCode
+              - cognito-idp:SignUp
+              - dynamodb:DeleteItem
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:Query
+              - dynamodb:Scan
+              - dynamodb:TransactWriteItems
+              - dynamodb:UpdateItem
+              - ec2:AssignPrivateIpAddresses
+              - ec2:CreateNetworkInterface
+              - ec2:DeleteNetworkInterface
+              - ec2:DescribeNetworkInterfaces
+              - ec2:DescribeSubnets
+              - ec2:UnassignPrivateIpAddresses
+              - ecr:BatchCheckLayerAvailability
+              - ecr:BatchGetImage
+              - ecr:GetAuthorizationToken
+              - ecr:GetDownloadUrlForLayer
+              - elasticache:Connect
+              - execute-api:ManageConnections
+              - kinesisvideo:DescribeSignalingChannel
+              - kinesisvideo:GetIceServerConfig
+              - kinesisvideo:GetSignalingChannelEndpoint
+              - kms:Decrypt
+              - kms:DescribeKey
+              - lambda:InvokeFunction
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:DescribeLogGroups
+              - logs:DescribeLogStreams
+              - logs:PutLogEvents
+              - logs:PutMetricFilter
+              - logs:PutRetentionPolicy
+              - s3:DeleteObject
+              - s3:GetObject
+              - s3:ListBucket
+              - s3:PutObject
+              - secretsmanager:DescribeSecret
+              - secretsmanager:GetSecretValue
+              - ses:SendEmail
+              - ses:SendRawEmail
+              - sns:Publish
+              - sqs:ChangeMessageVisibility
+              - sqs:DeleteMessage
+              - sqs:GetQueueAttributes
+              - sqs:ReceiveMessage
+              - sqs:SendMessage
+              - ssm:GetParameters
             Resource: "*"
           - Sid: DenyIdentityAndOrganizationAdministration
             Effect: Deny
@@ -40,6 +108,332 @@ Resources:
               - sts:AssumeRoleWithSAML
               - sts:AssumeRoleWithWebIdentity
               - sts:GetFederationToken
+            Resource: "*"
+
+  CoreInfrastructureDeploymentPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "${ProjectName}-${Environment}-core-infrastructure-deployment"
+      Description: Terraform control-plane permissions for network and application infrastructure
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ManageCoreInfrastructure
+            Effect: Allow
+            Action:
+              - acm:AddTagsToCertificate
+              - acm:DeleteCertificate
+              - acm:DescribeCertificate
+              - acm:ListTagsForCertificate
+              - acm:RequestCertificate
+              - apigateway:DELETE
+              - apigateway:GET
+              - apigateway:PATCH
+              - apigateway:POST
+              - apigateway:PUT
+              - bedrock-agentcore:CreateAgentRuntime
+              - bedrock-agentcore:CreateAgentRuntimeEndpoint
+              - bedrock-agentcore:DeleteAgentRuntime
+              - bedrock-agentcore:DeleteAgentRuntimeEndpoint
+              - bedrock-agentcore:GetAgentRuntime
+              - bedrock-agentcore:GetAgentRuntimeEndpoint
+              - bedrock-agentcore:ListAgentRuntimeEndpoints
+              - bedrock-agentcore:TagResource
+              - bedrock-agentcore:UntagResource
+              - bedrock-agentcore:UpdateAgentRuntime
+              - bedrock-agentcore:UpdateAgentRuntimeEndpoint
+              - budgets:CreateBudget
+              - budgets:DeleteBudget
+              - budgets:DescribeBudget
+              - budgets:ModifyBudget
+              - cloudformation:CreateStack
+              - cloudformation:DeleteStack
+              - cloudformation:DescribeStacks
+              - cloudformation:ListStackResources
+              - cloudformation:UpdateStack
+              - cloudwatch:DeleteAlarms
+              - cloudwatch:DeleteDashboards
+              - cloudwatch:DescribeAlarms
+              - cloudwatch:GetDashboard
+              - cloudwatch:ListTagsForResource
+              - cloudwatch:PutDashboard
+              - cloudwatch:PutMetricAlarm
+              - cloudwatch:TagResource
+              - cloudwatch:UntagResource
+              - cognito-idp:AddCustomAttributes
+              - cognito-idp:CreateGroup
+              - cognito-idp:CreateIdentityProvider
+              - cognito-idp:CreateResourceServer
+              - cognito-idp:CreateUserPool
+              - cognito-idp:CreateUserPoolClient
+              - cognito-idp:CreateUserPoolDomain
+              - cognito-idp:DeleteGroup
+              - cognito-idp:DeleteIdentityProvider
+              - cognito-idp:DeleteResourceServer
+              - cognito-idp:DeleteUserPool
+              - cognito-idp:DeleteUserPoolClient
+              - cognito-idp:DeleteUserPoolDomain
+              - cognito-idp:DescribeIdentityProvider
+              - cognito-idp:DescribeResourceServer
+              - cognito-idp:DescribeUserPool
+              - cognito-idp:DescribeUserPoolClient
+              - cognito-idp:DescribeUserPoolDomain
+              - cognito-idp:GetGroup
+              - cognito-idp:ListGroups
+              - cognito-idp:ListIdentityProviders
+              - cognito-idp:ListResourceServers
+              - cognito-idp:ListTagsForResource
+              - cognito-idp:TagResource
+              - cognito-idp:UntagResource
+              - cognito-idp:UpdateGroup
+              - cognito-idp:UpdateIdentityProvider
+              - cognito-idp:UpdateResourceServer
+              - cognito-idp:UpdateUserPool
+              - cognito-idp:UpdateUserPoolClient
+              - dynamodb:CreateTable
+              - dynamodb:DeleteTable
+              - dynamodb:DescribeContinuousBackups
+              - dynamodb:DescribeTable
+              - dynamodb:DescribeTimeToLive
+              - dynamodb:ListTagsOfResource
+              - dynamodb:TagResource
+              - dynamodb:UntagResource
+              - dynamodb:UpdateContinuousBackups
+              - dynamodb:UpdateTable
+              - dynamodb:UpdateTimeToLive
+              - ec2:AllocateAddress
+              - ec2:AssociateAddress
+              - ec2:AssociateRouteTable
+              - ec2:AttachInternetGateway
+              - ec2:AuthorizeSecurityGroupEgress
+              - ec2:AuthorizeSecurityGroupIngress
+              - ec2:CreateInternetGateway
+              - ec2:CreateRoute
+              - ec2:CreateRouteTable
+              - ec2:CreateSecurityGroup
+              - ec2:CreateSubnet
+              - ec2:CreateTags
+              - ec2:CreateVpc
+              - ec2:CreateVpcEndpoint
+              - ec2:DeleteInternetGateway
+              - ec2:DeleteRoute
+              - ec2:DeleteRouteTable
+              - ec2:DeleteSecurityGroup
+              - ec2:DeleteSubnet
+              - ec2:DeleteTags
+              - ec2:DeleteVpc
+              - ec2:DeleteVpcEndpoints
+              - ec2:DescribeAddresses
+              - ec2:DescribeAvailabilityZones
+              - ec2:DescribeImages
+              - ec2:DescribeInstances
+              - ec2:DescribeInternetGateways
+              - ec2:DescribeRouteTables
+              - ec2:DescribeSecurityGroups
+              - ec2:DescribeSubnets
+              - ec2:DescribeTags
+              - ec2:DescribeVpcAttribute
+              - ec2:DescribeVpcEndpoints
+              - ec2:DescribeVpcs
+              - ec2:DetachInternetGateway
+              - ec2:DisassociateAddress
+              - ec2:DisassociateRouteTable
+              - ec2:ModifyInstanceAttribute
+              - ec2:ModifySubnetAttribute
+              - ec2:ModifyVpcAttribute
+              - ec2:ModifyVpcEndpoint
+              - ec2:ReleaseAddress
+              - ec2:ReplaceRoute
+              - ec2:RevokeSecurityGroupEgress
+              - ec2:RevokeSecurityGroupIngress
+              - ec2:RunInstances
+              - ec2:StartInstances
+              - ec2:StopInstances
+              - ec2:TerminateInstances
+              - ecr:BatchCheckLayerAvailability
+              - ecr:BatchGetImage
+              - ecr:CompleteLayerUpload
+              - ecr:CreateRepository
+              - ecr:DeleteLifecyclePolicy
+              - ecr:DeleteRepository
+              - ecr:DescribeImages
+              - ecr:DescribeRepositories
+              - ecr:GetAuthorizationToken
+              - ecr:GetDownloadUrlForLayer
+              - ecr:GetLifecyclePolicy
+              - ecr:GetRepositoryPolicy
+              - ecr:InitiateLayerUpload
+              - ecr:ListImages
+              - ecr:ListTagsForResource
+              - ecr:PutImage
+              - ecr:PutLifecyclePolicy
+              - ecr:TagResource
+              - ecr:UntagResource
+              - ecr:UploadLayerPart
+              - elasticache:CreateServerlessCache
+              - elasticache:CreateUser
+              - elasticache:CreateUserGroup
+              - elasticache:DeleteServerlessCache
+              - elasticache:DeleteUser
+              - elasticache:DeleteUserGroup
+              - elasticache:DescribeServerlessCaches
+              - elasticache:DescribeUsers
+              - elasticache:DescribeUserGroups
+              - elasticache:ListTagsForResource
+              - elasticache:TagResource
+              - elasticache:UntagResource
+              - elasticache:UpdateServerlessCache
+              - elasticache:ModifyUser
+              - elasticache:ModifyUserGroup
+            Resource: "*"
+
+  ServiceInfrastructureDeploymentPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "${ProjectName}-${Environment}-service-infrastructure-deployment"
+      Description: Terraform control-plane permissions for application AWS services
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ManageServiceInfrastructure
+            Effect: Allow
+            Action:
+              - kms:CancelKeyDeletion
+              - kms:CreateAlias
+              - kms:CreateKey
+              - kms:DeleteAlias
+              - kms:DescribeKey
+              - kms:DisableKey
+              - kms:EnableKey
+              - kms:EnableKeyRotation
+              - kms:GetKeyPolicy
+              - kms:GetKeyRotationStatus
+              - kms:ListAliases
+              - kms:ListResourceTags
+              - kms:ScheduleKeyDeletion
+              - kms:TagResource
+              - kms:UntagResource
+              - kms:UpdateAlias
+              - kms:UpdateKeyDescription
+              - lambda:AddPermission
+              - lambda:CreateEventSourceMapping
+              - lambda:CreateFunction
+              - lambda:DeleteEventSourceMapping
+              - lambda:DeleteFunction
+              - lambda:GetEventSourceMapping
+              - lambda:GetFunction
+              - lambda:GetFunctionCodeSigningConfig
+              - lambda:GetPolicy
+              - lambda:ListTags
+              - lambda:PublishVersion
+              - lambda:RemovePermission
+              - lambda:TagResource
+              - lambda:UntagResource
+              - lambda:UpdateEventSourceMapping
+              - lambda:UpdateFunctionCode
+              - lambda:UpdateFunctionConfiguration
+              - logs:CreateLogGroup
+              - logs:DeleteLogGroup
+              - logs:DeleteMetricFilter
+              - logs:DescribeLogGroups
+              - logs:DescribeMetricFilters
+              - logs:ListTagsForResource
+              - logs:PutMetricFilter
+              - logs:PutRetentionPolicy
+              - logs:TagResource
+              - logs:UntagResource
+              - rds:AddTagsToResource
+              - rds:CreateDBInstance
+              - rds:CreateDBProxy
+              - rds:CreateDBSubnetGroup
+              - rds:DeleteDBInstance
+              - rds:DeleteDBProxy
+              - rds:DeleteDBSubnetGroup
+              - rds:DeregisterDBProxyTargets
+              - rds:DescribeDBInstances
+              - rds:DescribeDBProxies
+              - rds:DescribeDBProxyTargetGroups
+              - rds:DescribeDBProxyTargets
+              - rds:DescribeDBSubnetGroups
+              - rds:ListTagsForResource
+              - rds:ModifyDBInstance
+              - rds:ModifyDBProxy
+              - rds:ModifyDBProxyTargetGroup
+              - rds:ModifyDBSubnetGroup
+              - rds:RegisterDBProxyTargets
+              - rds:RemoveTagsFromResource
+              - s3:CreateBucket
+              - s3:DeleteBucket
+              - s3:GetBucketAcl
+              - s3:GetBucketCORS
+              - s3:GetBucketLifecycleConfiguration
+              - s3:GetBucketLocation
+              - s3:GetBucketLogging
+              - s3:GetBucketPublicAccessBlock
+              - s3:GetBucketTagging
+              - s3:GetBucketVersioning
+              - s3:GetEncryptionConfiguration
+              - s3:ListAllMyBuckets
+              - s3:PutBucketCORS
+              - s3:PutBucketLifecycleConfiguration
+              - s3:PutBucketPublicAccessBlock
+              - s3:PutBucketTagging
+              - s3:PutBucketVersioning
+              - s3:PutEncryptionConfiguration
+              - scheduler:CreateSchedule
+              - scheduler:DeleteSchedule
+              - scheduler:GetSchedule
+              - scheduler:ListTagsForResource
+              - scheduler:TagResource
+              - scheduler:UntagResource
+              - scheduler:UpdateSchedule
+              - secretsmanager:CreateSecret
+              - secretsmanager:DeleteSecret
+              - secretsmanager:DescribeSecret
+              - secretsmanager:ListSecretVersionIds
+              - secretsmanager:ListSecrets
+              - secretsmanager:PutSecretValue
+              - secretsmanager:RemoveRegionsFromReplication
+              - secretsmanager:ReplicateSecretToRegions
+              - secretsmanager:RestoreSecret
+              - secretsmanager:RotateSecret
+              - secretsmanager:TagResource
+              - secretsmanager:UntagResource
+              - secretsmanager:UpdateSecret
+              - ses:CreateConfigurationSet
+              - ses:CreateConfigurationSetEventDestination
+              - ses:DeleteConfigurationSet
+              - ses:DeleteConfigurationSetEventDestination
+              - ses:DescribeConfigurationSet
+              - ses:GetIdentityVerificationAttributes
+              - ses:ListIdentities
+              - ses:UpdateConfigurationSetEventDestination
+              - sns:CreateTopic
+              - sns:DeleteTopic
+              - sns:GetSubscriptionAttributes
+              - sns:GetTopicAttributes
+              - sns:ListSubscriptionsByTopic
+              - sns:ListTagsForResource
+              - sns:Subscribe
+              - sns:TagResource
+              - sns:Unsubscribe
+              - sns:UntagResource
+              - sqs:CreateQueue
+              - sqs:DeleteQueue
+              - sqs:GetQueueAttributes
+              - sqs:GetQueueUrl
+              - sqs:ListQueueTags
+              - sqs:ListQueues
+              - sqs:TagQueue
+              - sqs:UntagQueue
+              - ssm:AddTagsToResource
+              - ssm:CreateAssociation
+              - ssm:DeleteAssociation
+              - ssm:DeleteParameter
+              - ssm:DescribeAssociation
+              - ssm:ListTagsForResource
+              - ssm:PutParameter
+              - ssm:RemoveTagsFromResource
             Resource: "*"
 
   ProductionDeploymentRole:
@@ -65,12 +459,54 @@ Resources:
                 "token.actions.githubusercontent.com:workflow": Terraform Deploy
                 "token.actions.githubusercontent.com:ref": refs/heads/main
       ManagedPolicyArns:
-        - !Sub "arn:${AWS::Partition}:iam::aws:policy/PowerUserAccess"
+        - !Ref CoreInfrastructureDeploymentPolicy
+        - !Ref ServiceInfrastructureDeploymentPolicy
       Policies:
-        - PolicyName: !Sub "${ProjectName}-${Environment}-bounded-iam-deployment"
+        - PolicyName: !Sub "${ProjectName}-${Environment}-application-deployment"
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
+              - Sid: ManageDatabaseHostParameter
+                Effect: Allow
+                Action:
+                  - ssm:DeleteParameter
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:ListTagsForResource
+                  - ssm:PutParameter
+                Resource: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ProjectName}/${Environment}/db/host"
+              - Sid: ManageTerraformStateBucket
+                Effect: Allow
+                Action:
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${TerraformStateBucketName}"
+              - Sid: ManageTerraformStateObjects
+                Effect: Allow
+                Action:
+                  - s3:DeleteObject
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${TerraformStateBucketName}/*"
+              - Sid: ManageTerraformStateLock
+                Effect: Allow
+                Action:
+                  - dynamodb:DeleteItem
+                  - dynamodb:DescribeTable
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                Resource: !Sub "arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${TerraformStateLockTableName}"
+              - Sid: ManageLambdaArtifacts
+                Effect: Allow
+                Action:
+                  - s3:DeleteObject
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: !Sub "arn:${AWS::Partition}:s3:::${ProjectName}-${Environment}-${AWS::AccountId}-lambda-artifacts/lambda/*"
+              - Sid: InvokeDatabaseMigrator
+                Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-${Environment}-database-migrator"
               - Sid: ReadBilleifIAM
                 Effect: Allow
                 Action:
@@ -97,52 +533,106 @@ Resources:
                   - iam:ListOpenIDConnectProviders
                   - iam:ListRoles
                 Resource: "*"
-              - Sid: CreateBoundaryConstrainedRoles
+              - Sid: PassLambdaRolesToLambda
                 Effect: Allow
-                Action:
-                  - iam:CreateRole
-                  - iam:PutRolePermissionsBoundary
-                Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-*"
+                Action: iam:PassRole
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-cognito-phone-custom-sms-role"
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-database-migrator-exec-role"
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-email-delivery-exec-role"
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-lambda-bargaining-worker-exec-role"
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-lambda-exec-role"
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-lambda-gst-worker-exec-role"
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-lambda-http-exec-role"
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-lambda-invoice-worker-exec-role"
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-lambda-websocket-exec-role"
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-outbox-dispatcher-exec-role"
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-ses-feedback-exec-role"
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-voice-reconciler-role"
                 Condition:
                   StringEquals:
-                    "iam:PermissionsBoundary": !Ref WorkloadPermissionsBoundary
-              - Sid: ManageBilleifWorkloadRoles
+                    "iam:PassedToService": lambda.amazonaws.com
+              - Sid: PassEC2RolesToEC2
                 Effect: Allow
+                Action: iam:PassRole
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-nat-instance-role"
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-rds-tunnel-role"
+                Condition:
+                  StringEquals:
+                    "iam:PassedToService": ec2.amazonaws.com
+              - Sid: PassAgentCoreRoleToAgentCore
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-voice-agentcore-runtime-role"
+                Condition:
+                  StringEquals:
+                    "iam:PassedToService": bedrock-agentcore.amazonaws.com
+              - Sid: PassSchedulerRolesToScheduler
+                Effect: Allow
+                Action: iam:PassRole
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-outbox-scheduler-exec-role"
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-voice-reconciler-scheduler-role"
+                Condition:
+                  StringEquals:
+                    "iam:PassedToService": scheduler.amazonaws.com
+              - Sid: PassAPIGatewayRoleToAPIGateway
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-apigateway-cloudwatch-role"
+                Condition:
+                  StringEquals:
+                    "iam:PassedToService": apigateway.amazonaws.com
+              - Sid: PassCognitoRoleToCognito
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-cognito-phone-sms-role"
+                Condition:
+                  StringEquals:
+                    "iam:PassedToService": cognito-idp.amazonaws.com
+              - Sid: PassRDSRoleToRDS
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-rds-proxy-role"
+                Condition:
+                  StringEquals:
+                    "iam:PassedToService": rds.amazonaws.com
+              - Sid: DenyWorkloadIAMMutation
+                Effect: Deny
                 Action:
+                  - iam:AddRoleToInstanceProfile
                   - iam:AttachRolePolicy
+                  - iam:CreateInstanceProfile
+                  - iam:CreateRole
+                  - iam:DeleteInstanceProfile
                   - iam:DeleteRole
+                  - iam:DeleteRolePermissionsBoundary
                   - iam:DeleteRolePolicy
                   - iam:DetachRolePolicy
+                  - iam:PutRolePermissionsBoundary
                   - iam:PutRolePolicy
+                  - iam:RemoveRoleFromInstanceProfile
+                  - iam:TagInstanceProfile
                   - iam:TagRole
+                  - iam:UntagInstanceProfile
                   - iam:UntagRole
                   - iam:UpdateAssumeRolePolicy
                   - iam:UpdateRole
-                Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-*"
-              - Sid: ManageBilleifInstanceProfiles
-                Effect: Allow
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-*"
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:instance-profile/${ProjectName}-${Environment}-*"
+              - Sid: DenyResourcePolicyDelegation
+                Effect: Deny
                 Action:
-                  - iam:AddRoleToInstanceProfile
-                  - iam:CreateInstanceProfile
-                  - iam:DeleteInstanceProfile
-                  - iam:RemoveRoleFromInstanceProfile
-                  - iam:TagInstanceProfile
-                  - iam:UntagInstanceProfile
-                Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:instance-profile/${ProjectName}-${Environment}-*"
-              - Sid: PassBilleifRolesToApprovedServices
-                Effect: Allow
-                Action: iam:PassRole
-                Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-*"
-                Condition:
-                  StringEquals:
-                    "iam:PassedToService":
-                      - apigateway.amazonaws.com
-                      - bedrock-agentcore.amazonaws.com
-                      - cognito-idp.amazonaws.com
-                      - ec2.amazonaws.com
-                      - lambda.amazonaws.com
-                      - rds.amazonaws.com
-                      - scheduler.amazonaws.com
+                  - kms:PutKeyPolicy
+                  - s3:DeleteBucketPolicy
+                  - s3:PutBucketPolicy
+                  - secretsmanager:DeleteResourcePolicy
+                  - secretsmanager:PutResourcePolicy
+                  - sns:SetTopicAttributes
+                  - sqs:SetQueueAttributes
+                Resource: "*"
               - Sid: DenyDeploymentRoleSelfMutation
                 Effect: Deny
                 Action: iam:*
