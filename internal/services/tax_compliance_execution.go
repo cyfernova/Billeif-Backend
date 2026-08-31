@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"path"
 	"strings"
 	"time"
 
@@ -387,7 +386,10 @@ func (s *TaxComplianceService) GetEWayBillPDFByDocument(ctx context.Context, bus
 		if s.s3 == nil || s.cfg == nil {
 			return "", fmt.Errorf("s3 storage is not configured for e-way bill pdf upload")
 		}
-		key := path.Join("gst", documentID, "ewaybill.pdf")
+		key, keyErr := tenantArtifactObjectKey("gst", businessID, documentID, "ewaybill.pdf")
+		if keyErr != nil {
+			return "", keyErr
+		}
 		if err := s.s3.Upload(ctx, s.cfg.S3.BucketInvoices, key, result.PDFContent, "application/pdf"); err != nil {
 			return "", err
 		}
@@ -654,7 +656,7 @@ func (s *TaxComplianceService) applyEInvoiceResult(ctx context.Context, document
 		record.IntegrationAccountID = &account.ID
 	}
 	if result.SignedQRCodePayload != "" && s.s3 != nil {
-		if qrURL, err := s.persistQRCode(ctx, document.ID, result.SignedQRCodePayload); err == nil {
+		if qrURL, err := s.persistQRCode(ctx, document.BusinessID, document.ID, result.SignedQRCodePayload); err == nil {
 			record.QRCodeURL = qrURL
 		}
 	}
@@ -1018,7 +1020,7 @@ func (s *TaxComplianceService) buildEWayBillPayload(ctx context.Context, documen
 	}, nil
 }
 
-func (s *TaxComplianceService) persistQRCode(ctx context.Context, documentID, payload string) (string, error) {
+func (s *TaxComplianceService) persistQRCode(ctx context.Context, businessID, documentID, payload string) (string, error) {
 	if strings.TrimSpace(payload) == "" {
 		return "", nil
 	}
@@ -1029,7 +1031,10 @@ func (s *TaxComplianceService) persistQRCode(ctx context.Context, documentID, pa
 	if err != nil {
 		return "", err
 	}
-	key := path.Join("gst", documentID, "qr.png")
+	key, err := tenantArtifactObjectKey("gst", businessID, documentID, "qr.png")
+	if err != nil {
+		return "", err
+	}
 	if err := s.s3.Upload(ctx, s.cfg.S3.BucketInvoices, key, pngBytes, "image/png"); err != nil {
 		return "", err
 	}

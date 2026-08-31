@@ -409,8 +409,8 @@ func (s *ProductService) AdjustStockByBusiness(ctx context.Context, businessID, 
 	return product, nil
 }
 
-func (s *ProductService) GetImageUploadURL(ctx context.Context, productID, contentType string, sizeBytes int64) (*PresignedUpload, error) {
-	log := logger.FromContext(ctx).With("service", "product", "operation", "get_image_upload_url", "product_id", productID)
+func (s *ProductService) getImageUploadURL(ctx context.Context, businessID, productID, contentType string, sizeBytes int64) (*PresignedUpload, error) {
+	log := logger.FromContext(ctx).With("service", "product", "operation", "get_image_upload_url", "business_id", businessID, "product_id", productID)
 	if s.s3 == nil || s.s3.cfg == nil || strings.TrimSpace(s.s3.cfg.S3.BucketProducts) == "" {
 		return nil, fmt.Errorf("product image storage is not configured")
 	}
@@ -421,7 +421,7 @@ func (s *ProductService) GetImageUploadURL(ctx context.Context, productID, conte
 	if err := validateUploadSize("product image", sizeBytes, MaxProductImageUploadBytes); err != nil {
 		return nil, err
 	}
-	key := fmt.Sprintf("products/%s/image", productID)
+	key := fmt.Sprintf("products/%s/%s/image", businessID, productID)
 	upload, err := s.s3.GeneratePresignedUpload(ctx, s.s3.cfg.S3.BucketProducts, key, contentType, sizeBytes, 3600)
 	if err != nil {
 		log.Error("failed to generate image upload URL", "error", err)
@@ -435,7 +435,7 @@ func (s *ProductService) GetImageUploadURLByBusiness(ctx context.Context, busine
 	if _, err := s.GetByBusiness(ctx, businessID, productID); err != nil {
 		return nil, err
 	}
-	return s.GetImageUploadURL(ctx, productID, contentType, sizeBytes)
+	return s.getImageUploadURL(ctx, businessID, productID, contentType, sizeBytes)
 }
 
 func (s *ProductService) UpdateImageURL(ctx context.Context, businessID, productID, imageURL string) error {
@@ -988,7 +988,7 @@ func (s *ProductServiceTestable) GetImageUploadURLByBusiness(ctx context.Context
 	if err := validateUploadSize("product image", sizeBytes, MaxProductImageUploadBytes); err != nil {
 		return nil, err
 	}
-	key := fmt.Sprintf("products/%s/image", productID)
+	key := fmt.Sprintf("products/%s/%s/image", businessID, productID)
 	return s.s3.GeneratePresignedUpload(ctx, "product-images", key, contentType, sizeBytes, 3600)
 }
 

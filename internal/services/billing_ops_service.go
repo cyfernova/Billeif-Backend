@@ -679,7 +679,10 @@ func (s *BillingOpsService) CreateSignatureProfile(ctx context.Context, input Cr
 		IsActive:      true,
 	}
 	if len(input.FileContent) > 0 && s.s3 != nil && s.cfg != nil {
-		key := path.Join("signature-profiles", input.BusinessID, uuid.NewString(), input.FileName)
+		key, err := tenantArtifactObjectKey("signature-profiles", input.BusinessID, uuid.NewString(), input.FileName)
+		if err != nil {
+			return nil, err
+		}
 		if err := s.s3.Upload(ctx, s.cfg.S3.BucketInvoices, key, input.FileContent, "application/x-pkcs12"); err != nil {
 			return nil, err
 		}
@@ -897,7 +900,10 @@ func (s *BillingOpsService) CreateBulkJob(ctx context.Context, input CreateBulkJ
 	now := time.Now().UTC()
 	job.QueuedAt = &now
 	if len(input.FileContent) > 0 && s.s3 != nil && s.cfg != nil {
-		key := path.Join("bulk-jobs", input.BusinessID, uuid.NewString(), input.FileName)
+		key, err := tenantArtifactObjectKey("bulk-jobs", input.BusinessID, uuid.NewString(), input.FileName)
+		if err != nil {
+			return nil, err
+		}
 		if err := s.s3.Upload(ctx, s.cfg.S3.BucketInvoices, key, input.FileContent, input.ContentType); err != nil {
 			return nil, err
 		}

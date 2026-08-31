@@ -548,7 +548,7 @@ func (h *CommerceHandler) ListStorefrontCoupons(c *gin.Context) {
 		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
-	coupons, err := h.svc.ListStorefrontCoupons(c.Request.Context(), c.Param("id"))
+	coupons, err := h.svc.ListStorefrontCoupons(c.Request.Context(), businessID, c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -589,7 +589,7 @@ func (h *CommerceHandler) CreateStorefrontCoupon(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	coupon, err := h.svc.CreateStorefrontCoupon(c.Request.Context(), c.Param("id"), input)
+	coupon, err := h.svc.CreateStorefrontCoupon(c.Request.Context(), businessID, c.Param("id"), input)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -631,7 +631,7 @@ func (h *CommerceHandler) UpdateStorefrontCoupon(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	coupon, err := h.svc.UpdateStorefrontCoupon(c.Request.Context(), c.Param("id"), c.Param("coupon_id"), input)
+	coupon, err := h.svc.UpdateStorefrontCoupon(c.Request.Context(), businessID, c.Param("id"), c.Param("coupon_id"), input)
 	if err != nil {
 		status := http.StatusBadRequest
 		if isNotFoundErr(err) {

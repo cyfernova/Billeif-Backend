@@ -822,6 +822,9 @@ func (s *CommerceService) UpdateStorefrontSettings(ctx context.Context, business
 }
 
 func (s *CommerceService) ListStorefrontProducts(ctx context.Context, businessID, storefrontID string) ([]*StorefrontCatalogItem, error) {
+	if err := requireOwnedStorefrontTx(s.db.WithContext(ctx), businessID, storefrontID); err != nil {
+		return nil, err
+	}
 	var storefrontProducts []*models.StorefrontProduct
 	if err := s.db.WithContext(ctx).
 		Where("storefront_id = ? AND deleted_at IS NULL", storefrontID).
@@ -848,6 +851,9 @@ func (s *CommerceService) ReplaceStorefrontProducts(ctx context.Context, busines
 		return nil, err
 	}
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := requireOwnedStorefrontTx(tx, businessID, storefrontID); err != nil {
+			return err
+		}
 		for _, input := range inputs {
 			product, err := s.productRepo.GetByID(ctx, input.ProductID, businessID)
 			if err != nil {
@@ -902,7 +908,10 @@ func (s *CommerceService) ReplaceStorefrontProducts(ctx context.Context, busines
 	return s.ListStorefrontProducts(ctx, businessID, storefrontID)
 }
 
-func (s *CommerceService) ListStorefrontCoupons(ctx context.Context, storefrontID string) ([]*models.StorefrontCoupon, error) {
+func (s *CommerceService) ListStorefrontCoupons(ctx context.Context, businessID, storefrontID string) ([]*models.StorefrontCoupon, error) {
+	if err := requireOwnedStorefrontTx(s.db.WithContext(ctx), businessID, storefrontID); err != nil {
+		return nil, err
+	}
 	var coupons []*models.StorefrontCoupon
 	if err := s.db.WithContext(ctx).
 		Where("storefront_id = ? AND deleted_at IS NULL", storefrontID).
@@ -913,7 +922,7 @@ func (s *CommerceService) ListStorefrontCoupons(ctx context.Context, storefrontI
 	return coupons, nil
 }
 
-func (s *CommerceService) CreateStorefrontCoupon(ctx context.Context, storefrontID string, input UpsertStorefrontCouponInput) (*models.StorefrontCoupon, error) {
+func (s *CommerceService) CreateStorefrontCoupon(ctx context.Context, businessID, storefrontID string, input UpsertStorefrontCouponInput) (*models.StorefrontCoupon, error) {
 	coupon := &models.StorefrontCoupon{
 		StorefrontID:          storefrontID,
 		Code:                  strings.ToUpper(strings.TrimSpace(input.Code)),
@@ -928,42 +937,59 @@ func (s *CommerceService) CreateStorefrontCoupon(ctx context.Context, storefront
 		IsActive:              boolValueOrDefault(input.IsActive, true),
 		Metadata:              mustMarshalMap(input.Metadata),
 	}
-	if err := s.db.WithContext(ctx).Create(coupon).Error; err != nil {
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := requireOwnedStorefrontTx(tx, businessID, storefrontID); err != nil {
+			return err
+		}
+		return tx.Create(coupon).Error
+	}); err != nil {
 		return nil, err
 	}
 	return coupon, nil
 }
 
-func (s *CommerceService) UpdateStorefrontCoupon(ctx context.Context, storefrontID, couponID string, input UpsertStorefrontCouponInput) (*models.StorefrontCoupon, error) {
+func (s *CommerceService) UpdateStorefrontCoupon(ctx context.Context, businessID, storefrontID, couponID string, input UpsertStorefrontCouponInput) (*models.StorefrontCoupon, error) {
 	var coupon models.StorefrontCoupon
-	if err := s.db.WithContext(ctx).
-		Where("id = ? AND storefront_id = ? AND deleted_at IS NULL", couponID, storefrontID).
-		First(&coupon).Error; err != nil {
-		return nil, err
-	}
-	coupon.Code = strings.ToUpper(strings.TrimSpace(firstNonEmpty(input.Code, coupon.Code)))
-	if input.DiscountType != "" {
-		coupon.DiscountType = input.DiscountType
-	}
-	if input.DiscountValue > 0 {
-		coupon.DiscountValue = input.DiscountValue
-	}
-	coupon.MinimumOrderValue = input.MinimumOrderValue
-	coupon.MaxDiscountAmount = input.MaxDiscountAmount
-	coupon.UsageLimit = input.UsageLimit
-	coupon.UsageLimitPerCustomer = input.UsageLimitPerCustomer
-	coupon.StartsAt = input.StartsAt
-	coupon.EndsAt = input.EndsAt
-	if input.IsActive != nil {
-		coupon.IsActive = *input.IsActive
-	}
-	if input.Metadata != nil {
-		coupon.Metadata = mustMarshalMap(input.Metadata)
-	}
-	if err := s.db.WithContext(ctx).Save(&coupon).Error; err != nil {
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := requireOwnedStorefrontTx(tx, businessID, storefrontID); err != nil {
+			return err
+		}
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND storefront_id = ? AND deleted_at IS NULL", couponID, storefrontID).
+			First(&coupon).Error; err != nil {
+			return err
+		}
+		coupon.Code = strings.ToUpper(strings.TrimSpace(firstNonEmpty(input.Code, coupon.Code)))
+		if input.DiscountType != "" {
+			coupon.DiscountType = input.DiscountType
+		}
+		if input.DiscountValue > 0 {
+			coupon.DiscountValue = input.DiscountValue
+		}
+		coupon.MinimumOrderValue = input.MinimumOrderValue
+		coupon.MaxDiscountAmount = input.MaxDiscountAmount
+		coupon.UsageLimit = input.UsageLimit
+		coupon.UsageLimitPerCustomer = input.UsageLimitPerCustomer
+		coupon.StartsAt = input.StartsAt
+		coupon.EndsAt = input.EndsAt
+		if input.IsActive != nil {
+			coupon.IsActive = *input.IsActive
+		}
+		if input.Metadata != nil {
+			coupon.Metadata = mustMarshalMap(input.Metadata)
+		}
+		return tx.Save(&coupon).Error
+	}); err != nil {
 		return nil, err
 	}
 	return &coupon, nil
+}
+
+func requireOwnedStorefrontTx(tx *gorm.DB, businessID, storefrontID string) error {
+	var storefront models.Storefront
+	return tx.Select("id").
+		Where("id = ? AND business_id = ? AND deleted_at IS NULL", storefrontID, businessID).
+		First(&storefront).Error
 }
 
 func (s *CommerceService) ListStorefrontOrders(ctx context.Context, businessID, storefrontID, status string, page, limit int) ([]*models.StoreOrder, int64, error) {

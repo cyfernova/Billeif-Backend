@@ -162,11 +162,13 @@ func TestAssetPresignersUseConfiguredDeploymentBuckets(t *testing.T) {
 	tests := []struct {
 		name       string
 		wantBucket string
+		wantPath   string
 		presign    func(context.Context) (*PresignedUpload, error)
 	}{
 		{
 			name:       "business logo",
 			wantBucket: logoBucket,
+			wantPath:   "/logos/business-id/logo",
 			presign: func(ctx context.Context) (*PresignedUpload, error) {
 				return NewBusinessService(nil, storage, log).GetLogoUploadURL(ctx, "business-id", "image/png", 1024)
 			},
@@ -174,8 +176,9 @@ func TestAssetPresignersUseConfiguredDeploymentBuckets(t *testing.T) {
 		{
 			name:       "product image",
 			wantBucket: productBucket,
+			wantPath:   "/products/business-id/product-id/image",
 			presign: func(ctx context.Context) (*PresignedUpload, error) {
-				return NewProductService(nil, nil, storage, nil, log).GetImageUploadURL(ctx, "product-id", "image/png", 1024)
+				return NewProductService(nil, nil, storage, nil, log).getImageUploadURL(ctx, "business-id", "product-id", "image/png", 1024)
 			},
 		},
 	}
@@ -192,6 +195,9 @@ func TestAssetPresignersUseConfiguredDeploymentBuckets(t *testing.T) {
 			}
 			if !strings.HasPrefix(parsed.Host, test.wantBucket+".") {
 				t.Fatalf("presigned host = %q, want configured bucket %q", parsed.Host, test.wantBucket)
+			}
+			if parsed.Path != test.wantPath {
+				t.Fatalf("presigned path = %q, want tenant-scoped path %q", parsed.Path, test.wantPath)
 			}
 		})
 	}
