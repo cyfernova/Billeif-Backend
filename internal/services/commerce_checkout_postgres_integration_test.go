@@ -26,11 +26,19 @@ func TestStorefrontCheckoutPostgresSerializesClaimOrderAndReservation(t *testing
 		&models.PartyGroup{},
 		&models.PartyGroupMember{},
 		&models.Storefront{},
+		&models.StorefrontDomain{},
 		&models.StorefrontCategory{},
 		&models.StorefrontProduct{},
 		&models.Document{},
 		&models.DocumentLine{},
 		&models.DocumentRevision{},
+		&models.DocumentSequence{},
+		&models.RenderProfile{},
+		&models.DocumentRenderJob{},
+		&models.Invoice{},
+		&models.InvoiceItem{},
+		&models.OutboxEvent{},
+		&models.ActivityLog{},
 		&models.InventoryReservation{},
 		&models.APIIdempotencyKey{},
 		&models.StorefrontCoupon{},
@@ -59,6 +67,16 @@ func TestStorefrontCheckoutPostgresSerializesClaimOrderAndReservation(t *testing
 		db: database, businessRepo: businessRepo, customerRepo: customerRepo,
 		productRepo: productRepo, inventory: inventory, log: logger.New(),
 	}
+	invoiceRepo := postgresrepo.NewInvoiceRepository(database)
+	if configurer, ok := invoiceRepo.(invoiceIssueStockEffectConfigurer); ok {
+		configurer.ConfigureInvoiceIssueStockEffect(inventory.ApplyDocumentTx)
+	}
+	invoiceService := NewInvoiceService(
+		database, nil, invoiceRepo, businessRepo, productRepo, customerRepo, documents,
+		nil, nil, nil, logger.New(),
+	)
+	documents.salesInvoices = newInvoiceSalesDocumentCreator(invoiceService)
+	documents.salesInvoiceIssuer = newInvoiceSalesDocumentIssuer(invoiceService)
 	service := &CommerceService{
 		db: database, businessRepo: businessRepo, customerRepo: customerRepo, productRepo: productRepo,
 		inventory: inventory, documents: documents, log: logger.New(),
@@ -104,6 +122,39 @@ func TestStorefrontCheckoutPostgresSerializesClaimOrderAndReservation(t *testing
 	changed.Items = []CheckoutItemInput{{ProductID: fixture.productID, Quantity: 61}}
 	_, err = service.Checkout(context.Background(), storefront.Slug, key, changed)
 	require.ErrorContains(t, err, "different checkout request")
+
+	actorID := uuid.NewString()
+	approvalContext := ContextWithActor(context.Background(), ActorContext{UserID: actorID, Role: "owner"})
+	approvalResults := make(chan *models.StoreOrder, 2)
+	approvalErrors := make(chan error, 2)
+	startApproval := make(chan struct{})
+	for index := 0; index < 2; index++ {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			<-startApproval
+			approved, approveErr := service.ApproveStoreOrder(approvalContext, fixture.businessID, storefront.ID, replay.Order.ID)
+			approvalResults <- approved
+			approvalErrors <- approveErr
+		}()
+	}
+	close(startApproval)
+	group.Wait()
+	close(approvalResults)
+	close(approvalErrors)
+	var invoiceID string
+	for approveErr := range approvalErrors {
+		require.NoError(t, approveErr)
+	}
+	for approved := range approvalResults {
+		require.NotNil(t, approved)
+		require.NotNil(t, approved.SalesInvoiceID)
+		if invoiceID == "" {
+			invoiceID = *approved.SalesInvoiceID
+		}
+		require.Equal(t, invoiceID, *approved.SalesInvoiceID)
+	}
+	assertStorefrontApprovalCounts(t, database, fixture, replay.Order.ID, invoiceID)
 }
 
 func assertStorefrontCheckoutCounts(t *testing.T, database *gorm.DB, fixture inventoryTransferFixture, storefrontID string, reserved float64) {
@@ -124,4 +175,25 @@ func assertStorefrontCheckoutCounts(t *testing.T, database *gorm.DB, fixture inv
 	var balance models.InventoryBalance
 	require.NoError(t, database.Where("business_id = ? AND warehouse_id = ?", fixture.businessID, fixture.sourceID).First(&balance).Error)
 	require.Equal(t, reserved, balance.Reserved)
+}
+
+func assertStorefrontApprovalCounts(t *testing.T, database *gorm.DB, fixture inventoryTransferFixture, orderID, invoiceID string) {
+	t.Helper()
+	var invoice models.Invoice
+	require.NoError(t, database.Where("id = ? AND business_id = ?", invoiceID, fixture.businessID).First(&invoice).Error)
+	require.Equal(t, models.InvoiceStatusIssued, invoice.Status)
+	var invoiceCount int64
+	require.NoError(t, database.Model(&models.Invoice{}).Where("business_id = ?", fixture.businessID).Count(&invoiceCount).Error)
+	require.Equal(t, int64(1), invoiceCount)
+	var order models.StoreOrder
+	require.NoError(t, database.Where("id = ?", orderID).First(&order).Error)
+	require.Equal(t, models.StoreOrderStatusConfirmed, order.Status)
+	require.Equal(t, invoiceID, models.StringValue(order.SalesInvoiceID))
+	var approvedEvents int64
+	require.NoError(t, database.Model(&models.StoreOrderEvent{}).Where("store_order_id = ? AND event_type = ?", orderID, "store_order.approved").Count(&approvedEvents).Error)
+	require.Equal(t, int64(1), approvedEvents)
+	var balance models.InventoryBalance
+	require.NoError(t, database.Where("business_id = ? AND warehouse_id = ?", fixture.businessID, fixture.sourceID).First(&balance).Error)
+	require.Equal(t, float64(40), balance.OnHand)
+	require.Zero(t, balance.Reserved)
 }

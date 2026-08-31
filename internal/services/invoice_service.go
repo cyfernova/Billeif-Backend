@@ -218,6 +218,11 @@ func normalizedInvoiceCreateOrigin(input CreateInvoiceInput) (models.InvoiceOrig
 			return "", &idempotency.InvalidPayloadError{}
 		}
 		return input.Origin, nil
+	case models.InvoiceOriginStorefront:
+		if hasSubscriptionOrigin || strings.TrimSpace(input.CustomerID) == "" || !input.BuyerSnapshot.IsEmpty() {
+			return "", &idempotency.InvalidPayloadError{}
+		}
+		return input.Origin, nil
 	case models.InvoiceOriginSubscription:
 		if !hasSubscriptionOrigin || !input.BuyerSnapshot.IsEmpty() {
 			return "", &idempotency.InvalidPayloadError{}

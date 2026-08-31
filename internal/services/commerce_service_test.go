@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -255,6 +256,70 @@ func TestStorefrontCheckoutClaimAllowsOneWorkerAndReplaysCompletedOrder(t *testi
 	require.NoError(t, err)
 	require.False(t, claimed)
 	require.Equal(t, orderID, replayID)
+}
+
+func TestCanonicalStorefrontInvoiceInputUsesStableOrderIdentity(t *testing.T) {
+	orderID := "11111111-1111-4111-8111-111111111111"
+	customerID := "22222222-2222-4222-8222-222222222222"
+	productID := "33333333-3333-4333-8333-333333333333"
+	warehouseID := "44444444-4444-4444-8444-444444444444"
+	order := &models.StoreOrder{
+		ID: orderID, BusinessID: "55555555-5555-4555-8555-555555555555",
+		CustomerID: &customerID, Currency: "INR", Notes: "Store order", OrderedAt: time.Now().UTC(),
+		Lines: []*models.StoreOrderLine{{
+			ProductID: &productID, WarehouseID: &warehouseID, Title: "Tea", Quantity: 2,
+			UnitPrice: 125, TaxRate: 18,
+		}},
+	}
+	business := &models.BusinessProfile{DefaultGSTTreatment: models.DocumentGSTTreatmentRegular}
+	key := storefrontInvoiceIdempotencyKey(orderID)
+
+	input, err := canonicalStorefrontInvoiceInput(order, business, key)
+	require.NoError(t, err)
+	require.Equal(t, models.InvoiceOriginStorefront, input.Origin)
+	require.Equal(t, key, input.IdempotencyKey)
+	require.Equal(t, customerID, input.CustomerID)
+	require.Len(t, input.Items, 1)
+	require.Equal(t, productID, input.Items[0].ProductID)
+	require.Equal(t, warehouseID, input.Items[0].WarehouseID)
+	require.Equal(t, orderID, input.TaxProfile.SourceLinkage["store_order_id"])
+	require.Equal(t, "5d1a65e4-dfa9-58fa-98d4-18f2f60b4a1f", key)
+
+	origin, err := normalizedInvoiceCreateOrigin(input)
+	require.NoError(t, err)
+	require.Equal(t, models.InvoiceOriginStorefront, origin)
+}
+
+func TestStorefrontApprovalUsesCanonicalCreateAndIssueCommands(t *testing.T) {
+	businessID := uuid.NewString()
+	orderID := uuid.NewString()
+	customerID := uuid.NewString()
+	productID := uuid.NewString()
+	creator := &canonicalInvoiceCreatorFake{}
+	issuer := &posSalesDocumentIssuerFake{}
+	documents := &DocumentService{
+		salesInvoices:      newInvoiceSalesDocumentCreator(creator),
+		salesInvoiceIssuer: issuer,
+	}
+	service := &CommerceService{
+		businessRepo: atomicBusinessRepositoryFake{business: &models.BusinessProfile{
+			ID: businessID, Currency: "INR", DefaultGSTTreatment: models.DocumentGSTTreatmentExempt,
+		}},
+		documents: documents,
+	}
+	order := &models.StoreOrder{
+		ID: orderID, BusinessID: businessID, CustomerID: &customerID, Currency: "INR", OrderedAt: time.Now().UTC(),
+		Lines: []*models.StoreOrderLine{{ProductID: &productID, Title: "Tea", Quantity: 1, UnitPrice: 100}},
+	}
+
+	invoiceID, err := service.createSalesInvoiceForOrder(context.Background(), order)
+	require.NoError(t, err)
+	require.Equal(t, issuer.invoiceID, invoiceID)
+	require.Equal(t, models.InvoiceOriginStorefront, creator.input.Origin)
+	require.Equal(t, storefrontInvoiceIdempotencyKey(orderID), creator.input.IdempotencyKey)
+	require.Equal(t, creator.input.IdempotencyKey, issuer.input.IdempotencyKey)
+	require.Equal(t, "bill_of_supply", issuer.input.DocumentType)
+	require.Equal(t, "WEB", issuer.input.Series)
 }
 
 func TestNormalizePublicPaymentMethodRejectsUnsupportedMethods(t *testing.T) {

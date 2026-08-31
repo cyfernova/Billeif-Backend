@@ -24,6 +24,7 @@ type salesInvoiceDocumentIssuer interface {
 type salesInvoiceDocumentCreator interface {
 	CreateSalesInvoiceDocument(ctx context.Context, businessID string, input CreateDocumentInput) (*models.Document, error)
 	createPOSSalesInvoiceDocument(ctx context.Context, businessID string, input CreateInvoiceInput) (*models.Document, error)
+	createStorefrontSalesInvoiceDocument(ctx context.Context, businessID string, input CreateInvoiceInput) (*models.Document, error)
 }
 
 type invoiceSalesDocumentIssuer struct {
@@ -123,6 +124,14 @@ func (c *invoiceSalesDocumentCreator) CreateSalesInvoiceDocument(ctx context.Con
 func (c *invoiceSalesDocumentCreator) createPOSSalesInvoiceDocument(ctx context.Context, businessID string, input CreateInvoiceInput) (*models.Document, error) {
 	input.Origin = models.InvoiceOriginPOS
 	if strings.TrimSpace(input.CustomerID) == "" && input.BuyerSnapshot.IsEmpty() {
+		return nil, &idempotency.InvalidPayloadError{}
+	}
+	return c.createInvoiceDocument(ctx, businessID, input)
+}
+
+func (c *invoiceSalesDocumentCreator) createStorefrontSalesInvoiceDocument(ctx context.Context, businessID string, input CreateInvoiceInput) (*models.Document, error) {
+	input.Origin = models.InvoiceOriginStorefront
+	if strings.TrimSpace(input.CustomerID) == "" || !input.BuyerSnapshot.IsEmpty() {
 		return nil, &idempotency.InvalidPayloadError{}
 	}
 	return c.createInvoiceDocument(ctx, businessID, input)

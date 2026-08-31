@@ -422,7 +422,7 @@ func (s *POSService) Checkout(ctx context.Context, businessID, userID, sessionID
 		IssueInvoiceInput{
 			IdempotencyKey:  idempotencyKey,
 			ExpectedVersion: 1,
-			DocumentType:    posInvoiceDocumentType(createInput.TaxProfile),
+			DocumentType:    invoiceDocumentTypeForTaxProfile(createInput.TaxProfile),
 			Series:          "POS",
 		},
 	)
@@ -518,7 +518,7 @@ func canonicalPOSCheckoutInput(session *models.POSSession, idempotencyKey string
 	}, nil
 }
 
-func posInvoiceDocumentType(profile TaxProfileInput) string {
+func invoiceDocumentTypeForTaxProfile(profile TaxProfileInput) string {
 	if profile.BillOfSupply || profile.GSTTreatment == models.DocumentGSTTreatmentComposition || profile.GSTTreatment == models.DocumentGSTTreatmentExempt {
 		return invoiceissue.DocumentTypeBillOfSupply
 	}

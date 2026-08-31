@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"invoice-backend/internal/config"
+	"invoice-backend/internal/idempotency"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/logger"
@@ -996,32 +997,54 @@ func (s *CommerceService) ListStorefrontOrders(ctx context.Context, businessID, 
 }
 
 func (s *CommerceService) ApproveStoreOrder(ctx context.Context, businessID, storefrontID, orderID string) (*models.StoreOrder, error) {
-	order, storefront, err := s.getStoreOrderForBusiness(ctx, businessID, storefrontID, orderID)
+	storefront, err := s.GetStorefront(ctx, businessID, storefrontID)
 	if err != nil {
 		return nil, err
 	}
-	if order.Status == models.StoreOrderStatusCancelled {
-		return nil, fmt.Errorf("cancelled orders cannot be approved")
-	}
-	if order.SalesInvoiceID == nil || *order.SalesInvoiceID == "" {
-		invoiceID, err := s.createSalesInvoiceForOrder(ctx, order)
-		if err != nil {
-			return nil, err
+	var order models.StoreOrder
+	transitioned := false
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Preload("Lines", "deleted_at IS NULL").
+			Where("id = ? AND business_id = ? AND storefront_id = ? AND deleted_at IS NULL", orderID, businessID, storefrontID).
+			First(&order).Error; err != nil {
+			return err
 		}
-		order.SalesInvoiceID = stringPointer(invoiceID)
-	}
-	order.Status = models.StoreOrderStatusConfirmed
-	if order.PaymentStatus == models.StoreOrderPaymentStatusPaid {
-		order.Status = models.StoreOrderStatusPaid
-	}
-	if err := s.db.WithContext(ctx).Save(order).Error; err != nil {
+		if order.Status == models.StoreOrderStatusCancelled {
+			return fmt.Errorf("cancelled orders cannot be approved")
+		}
+		if order.SalesInvoiceID == nil || *order.SalesInvoiceID == "" {
+			invoiceID, err := s.createSalesInvoiceForOrder(ctx, &order)
+			if err != nil {
+				return err
+			}
+			order.SalesInvoiceID = stringPointer(invoiceID)
+		}
+		nextStatus := models.StoreOrderStatusConfirmed
+		if order.PaymentStatus == models.StoreOrderPaymentStatusPaid {
+			nextStatus = models.StoreOrderStatusPaid
+		}
+		transitioned = order.Status != nextStatus
+		order.Status = nextStatus
+		if err := tx.Save(&order).Error; err != nil {
+			return err
+		}
+		if !transitioned {
+			return nil
+		}
+		return tx.Create(&models.StoreOrderEvent{
+			StoreOrderID: order.ID,
+			EventType:    "store_order.approved",
+			Status:       order.Status,
+			Payload:      mustMarshalMap(map[string]interface{}{"storefront_id": storefront.ID}),
+		}).Error
+	}); err != nil {
 		return nil, err
 	}
-	_ = s.recordStoreOrderEvent(ctx, order.ID, "store_order.approved", order.Status, map[string]interface{}{
-		"storefront_id": storefront.ID,
-	})
-	s.queueStoreOrderNotification(ctx, order, "store_order.paid")
-	return order, nil
+	if transitioned {
+		s.queueStoreOrderNotification(ctx, &order, "store_order.approved")
+	}
+	return &order, nil
 }
 
 func (s *CommerceService) CancelStoreOrder(ctx context.Context, businessID, storefrontID, orderID, reason string) (*models.StoreOrder, error) {
@@ -2073,11 +2096,90 @@ func (s *CommerceService) resolveCoupon(ctx context.Context, storefront *models.
 }
 
 func (s *CommerceService) createSalesInvoiceForOrder(ctx context.Context, order *models.StoreOrder) (string, error) {
-	document, err := s.createStoreOrderDocument(ctx, order, models.DocumentTypeSalesInvoice)
+	business, err := s.businessRepo.GetByID(ctx, order.BusinessID)
 	if err != nil {
 		return "", err
 	}
-	return document.ID, nil
+	idempotencyKey := storefrontInvoiceIdempotencyKey(order.ID)
+	input, err := canonicalStorefrontInvoiceInput(order, business, idempotencyKey)
+	if err != nil {
+		return "", err
+	}
+	document, err := s.documents.createStorefrontSalesInvoice(ctx, order.BusinessID, input)
+	if err != nil {
+		return "", err
+	}
+	issueResult, err := s.documents.IssueSalesDocumentByBusiness(
+		ctx,
+		order.BusinessID,
+		models.DocumentTypeSalesInvoice,
+		document.ID,
+		IssueInvoiceInput{
+			IdempotencyKey:  idempotencyKey,
+			ExpectedVersion: 1,
+			DocumentType:    invoiceDocumentTypeForTaxProfile(input.TaxProfile),
+			Series:          "WEB",
+		},
+	)
+	if err != nil {
+		return "", err
+	}
+	return issueResult.Invoice.ID, nil
+}
+
+func storefrontInvoiceIdempotencyKey(orderID string) string {
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte("storefront-invoice:"+strings.TrimSpace(orderID))).String()
+}
+
+func canonicalStorefrontInvoiceInput(
+	order *models.StoreOrder,
+	business *models.BusinessProfile,
+	idempotencyKey string,
+) (CreateInvoiceInput, error) {
+	if order == nil || business == nil || strings.TrimSpace(order.ID) == "" ||
+		order.CustomerID == nil || strings.TrimSpace(*order.CustomerID) == "" || len(order.Lines) == 0 {
+		return CreateInvoiceInput{}, &idempotency.InvalidPayloadError{}
+	}
+	if _, err := uuid.Parse(strings.TrimSpace(idempotencyKey)); err != nil {
+		return CreateInvoiceInput{}, &idempotency.InvalidKeyError{}
+	}
+	items := make([]CreateInvoiceItemInput, 0, len(order.Lines))
+	for _, line := range order.Lines {
+		if line == nil || line.ProductID == nil || strings.TrimSpace(*line.ProductID) == "" || line.Quantity <= 0 {
+			return CreateInvoiceInput{}, &idempotency.InvalidPayloadError{}
+		}
+		items = append(items, CreateInvoiceItemInput{
+			ProductID:   strings.TrimSpace(*line.ProductID),
+			VariantID:   strings.TrimSpace(derefString(line.VariantID)),
+			WarehouseID: strings.TrimSpace(derefString(line.WarehouseID)),
+			Description: line.Title,
+			Quantity:    line.Quantity,
+			UnitPrice:   line.UnitPrice,
+			Discount:    line.DiscountAmount,
+			TaxRate:     line.TaxRate,
+		})
+	}
+	gstTreatment := firstNonEmpty(business.DefaultGSTTreatment, models.DocumentGSTTreatmentRegular)
+	return CreateInvoiceInput{
+		IdempotencyKey: strings.TrimSpace(idempotencyKey),
+		Origin:         models.InvoiceOriginStorefront,
+		CustomerID:     strings.TrimSpace(*order.CustomerID),
+		Currency:       defaultCurrency(firstNonEmpty(order.Currency, business.Currency)),
+		InvoiceDate:    order.OrderedAt,
+		DueDate:        order.OrderedAt,
+		Notes:          order.Notes,
+		TaxProfile: TaxProfileInput{
+			GSTTreatment: gstTreatment,
+			BillOfSupply: gstTreatment == models.DocumentGSTTreatmentComposition || gstTreatment == models.DocumentGSTTreatmentExempt,
+			SupplyType:   "sale",
+			SourceLinkage: map[string]interface{}{
+				"source":                  "storefront",
+				"store_order_id":          order.ID,
+				"sales_order_document_id": derefString(order.SalesOrderID),
+			},
+		},
+		Items: items,
+	}, nil
 }
 
 func (s *CommerceService) buildStoreOrderDocument(
@@ -2139,38 +2241,6 @@ func createStoreOrderDocumentRevisionTx(
 			"payment_status": paymentStatus,
 		}),
 	}).Error
-}
-
-func (s *CommerceService) createStoreOrderDocument(ctx context.Context, order *models.StoreOrder, documentType string) (*models.Document, error) {
-	var lines []*models.StoreOrderLine
-	if err := s.db.WithContext(ctx).
-		Where("store_order_id = ? AND deleted_at IS NULL", order.ID).
-		Order("created_at ASC").
-		Find(&lines).Error; err != nil {
-		return nil, err
-	}
-	document, err := s.buildStoreOrderDocument(ctx, order, lines, documentType)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.db.WithContext(ctx).Create(document).Error; err != nil {
-		return nil, err
-	}
-	if err := s.documents.syncDocumentWithholdings(ctx, document, nil); err != nil {
-		return nil, err
-	}
-	if err := s.documents.applyPostCreateSideEffects(ctx, document); err != nil {
-		return nil, err
-	}
-	s.documents.recordRevision(ctx, document, "created", map[string]interface{}{
-		"origin":         "storefront",
-		"store_order_id": order.ID,
-		"payment_status": order.PaymentStatus,
-	})
-	_ = recordActivityLog(ctx, s.db, order.BusinessID, "document", document.ID, "created", "storefront order", document, nil, map[string]interface{}{
-		"store_order_id": order.ID,
-	})
-	return document, nil
 }
 
 func (s *CommerceService) getStoreOrderForBusiness(ctx context.Context, businessID, storefrontID, orderID string) (*models.StoreOrder, *models.Storefront, error) {
