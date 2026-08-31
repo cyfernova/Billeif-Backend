@@ -104,7 +104,7 @@ func NewContainer(
 	a2aSigner, _ := ap2.NewSignatureService()
 	a2aClient := a2a.NewA2AClient(a2aSigner, log)
 	inventorySvc := NewInventoryService(db, inventoryRepo, productRepo, businessRepo, teamRepo, log)
-	journalSvc := NewJournalService(journalRepo, ledgerRepo, log)
+	journalSvc := NewJournalService(db, journalRepo, log)
 	shippingSvc := NewShippingService(cfg, shippingRepo, customerRepo, vendorRepo, log)
 	documentSvc := NewDocumentService(db, cfg, resolver, documentRepo, businessRepo, customerRepo, vendorRepo, productRepo, inventorySvc, journalSvc, shippingSvc, aws, businessAuthSvc, log)
 	barcodeSvc := NewBarcodeService(db, log)

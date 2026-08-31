@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"time"
@@ -9,16 +10,19 @@ import (
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/logger"
+
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type JournalService struct {
-	repo       interfaces.JournalRepository
-	ledgerRepo interfaces.LedgerRepository
-	log        *logger.Logger
+	db   *gorm.DB
+	repo interfaces.JournalRepository
+	log  *logger.Logger
 }
 
-func NewJournalService(repo interfaces.JournalRepository, ledgerRepo interfaces.LedgerRepository, log *logger.Logger) *JournalService {
-	return &JournalService{repo: repo, ledgerRepo: ledgerRepo, log: log}
+func NewJournalService(db *gorm.DB, repo interfaces.JournalRepository, log *logger.Logger) *JournalService {
+	return &JournalService{db: db, repo: repo, log: log}
 }
 
 type CreateJournalLineInput struct {
@@ -48,24 +52,30 @@ func (s *JournalService) CreateByBusiness(ctx context.Context, businessID string
 	if err != nil {
 		return nil, err
 	}
-	if err := s.repo.Create(ctx, journal); err != nil {
-		return nil, err
-	}
 	if journal.Status == models.JournalStatusPosted {
-		if err := s.projectLedger(ctx, journal); err != nil {
-			return nil, err
-		}
 		now := time.Now()
 		journal.PostedAt = &now
-		if err := s.repo.Update(ctx, journal); err != nil {
-			return nil, err
+	}
+	if err := s.requireDatabase(); err != nil {
+		return nil, err
+	}
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := createJournalTx(tx, journal); err != nil {
+			return err
 		}
+		if journal.Status == models.JournalStatusPosted {
+			return projectJournalLedgerTx(tx, journal)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	return journal, nil
 }
 
 func (s *JournalService) buildJournal(ctx context.Context, businessID string, input CreateJournalInput) (*models.Journal, error) {
-	var debitTotal, creditTotal float64
+	_ = ctx
+	totals := make(map[string]struct{ debit, credit int64 })
 	journal := &models.Journal{
 		BusinessID:  businessID,
 		Name:        input.Name,
@@ -81,25 +91,40 @@ func (s *JournalService) buildJournal(ctx context.Context, businessID string, in
 	if journal.Status == "" {
 		journal.Status = models.JournalStatusDraft
 	}
+	if journal.Status != models.JournalStatusDraft && journal.Status != models.JournalStatusPosted {
+		return nil, fmt.Errorf("unsupported journal status")
+	}
 	for _, line := range input.Lines {
-		if line.EntryType == "debit" {
-			debitTotal += line.Amount
-		} else {
-			creditTotal += line.Amount
+		if line.EntryType != "debit" && line.EntryType != "credit" {
+			return nil, fmt.Errorf("unsupported journal entry type")
 		}
+		minor, err := journalMinorUnits(line.Amount)
+		if err != nil {
+			return nil, err
+		}
+		currency := defaultCurrency(line.Currency)
+		total := totals[currency]
+		if line.EntryType == "debit" {
+			total.debit += minor
+		} else {
+			total.credit += minor
+		}
+		totals[currency] = total
 		journal.Lines = append(journal.Lines, &models.JournalLine{
 			AccountCode: line.AccountCode,
 			AccountName: line.AccountName,
 			EntryType:   line.EntryType,
-			Amount:      line.Amount,
-			Currency:    defaultCurrency(line.Currency),
+			Amount:      float64(minor) / 100,
+			Currency:    currency,
 			Description: line.Description,
 			DocumentID:  line.DocumentID,
 			Metadata:    mustMarshalMap(line.Metadata),
 		})
 	}
-	if math.Abs(debitTotal-creditTotal) > 0.005 {
-		return nil, fmt.Errorf("journal is not balanced")
+	for _, total := range totals {
+		if total.debit != total.credit {
+			return nil, fmt.Errorf("journal is not balanced")
+		}
 	}
 	return journal, nil
 }
@@ -113,116 +138,141 @@ func (s *JournalService) List(ctx context.Context, businessID string, page, limi
 }
 
 func (s *JournalService) UpdateByBusiness(ctx context.Context, businessID, id string, input CreateJournalInput) (*models.Journal, error) {
-	existing, err := s.repo.GetByID(ctx, id, businessID)
-	if err != nil {
-		return nil, err
-	}
-	if existing.Status != models.JournalStatusDraft {
-		return nil, fmt.Errorf("only draft journals can be updated")
-	}
 	rebuilt, err := s.buildJournal(ctx, businessID, input)
 	if err != nil {
 		return nil, err
 	}
-	existing.Name = rebuilt.Name
-	existing.Reference = rebuilt.Reference
-	existing.ProjectID = rebuilt.ProjectID
-	existing.Status = rebuilt.Status
-	existing.PostingDate = rebuilt.PostingDate
-	existing.Notes = rebuilt.Notes
-	existing.Lines = rebuilt.Lines
-	if err := s.repo.Update(ctx, existing); err != nil {
+	if err := s.requireDatabase(); err != nil {
 		return nil, err
 	}
-	if existing.Status == models.JournalStatusPosted {
-		now := time.Now()
-		existing.PostedAt = &now
-		if err := s.projectLedger(ctx, existing); err != nil {
-			return nil, err
+	var existing models.Journal
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := loadJournalForUpdateTx(tx, businessID, id, &existing); err != nil {
+			return err
 		}
-		if err := s.repo.Update(ctx, existing); err != nil {
-			return nil, err
+		if existing.Status != models.JournalStatusDraft {
+			return fmt.Errorf("only draft journals can be updated")
 		}
+		existing.Name = rebuilt.Name
+		existing.Reference = rebuilt.Reference
+		existing.ProjectID = rebuilt.ProjectID
+		existing.Status = rebuilt.Status
+		existing.PostingDate = rebuilt.PostingDate
+		existing.Notes = rebuilt.Notes
+		existing.Lines = rebuilt.Lines
+		if existing.Status == models.JournalStatusPosted {
+			now := time.Now()
+			existing.PostedAt = &now
+		}
+		if err := replaceDraftJournalTx(tx, &existing); err != nil {
+			return err
+		}
+		if existing.Status == models.JournalStatusPosted {
+			return projectJournalLedgerTx(tx, &existing)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
-	return existing, nil
+	return &existing, nil
 }
 
 func (s *JournalService) DeleteByBusiness(ctx context.Context, businessID, id string) error {
-	journal, err := s.repo.GetByID(ctx, id, businessID)
-	if err != nil {
+	if err := s.requireDatabase(); err != nil {
 		return err
 	}
-	if journal.Status != models.JournalStatusDraft {
-		return fmt.Errorf("only draft journals can be deleted")
-	}
-	return s.repo.Delete(ctx, id)
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var journal models.Journal
+		if err := loadJournalForUpdateTx(tx, businessID, id, &journal); err != nil {
+			return err
+		}
+		if journal.Status != models.JournalStatusDraft {
+			return fmt.Errorf("only draft journals can be deleted")
+		}
+		return tx.Where("id = ? AND business_id = ?", id, businessID).Delete(&models.Journal{}).Error
+	})
 }
 
 func (s *JournalService) PostByBusiness(ctx context.Context, businessID, id string) (*models.Journal, error) {
-	journal, err := s.repo.GetByID(ctx, id, businessID)
-	if err != nil {
+	if err := s.requireDatabase(); err != nil {
 		return nil, err
 	}
-	if journal.Status != models.JournalStatusDraft {
-		return nil, fmt.Errorf("journal already posted")
-	}
-	now := time.Now()
-	journal.Status = models.JournalStatusPosted
-	journal.PostedAt = &now
-	if err := s.repo.Update(ctx, journal); err != nil {
+	var journal models.Journal
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := loadJournalForUpdateTx(tx, businessID, id, &journal); err != nil {
+			return err
+		}
+		if journal.Status != models.JournalStatusDraft {
+			return fmt.Errorf("journal already posted")
+		}
+		now := time.Now()
+		journal.Status = models.JournalStatusPosted
+		journal.PostedAt = &now
+		if err := tx.Model(&models.Journal{}).
+			Where("id = ? AND business_id = ? AND status = ?", id, businessID, models.JournalStatusDraft).
+			Updates(map[string]interface{}{"status": journal.Status, "posted_at": journal.PostedAt}).Error; err != nil {
+			return err
+		}
+		return projectJournalLedgerTx(tx, &journal)
+	}); err != nil {
 		return nil, err
 	}
-	if err := s.projectLedger(ctx, journal); err != nil {
-		return nil, err
-	}
-	return journal, nil
+	return &journal, nil
 }
 
 func (s *JournalService) ReverseByBusiness(ctx context.Context, businessID, id string) (*models.Journal, error) {
-	journal, err := s.repo.GetByID(ctx, id, businessID)
-	if err != nil {
+	if err := s.requireDatabase(); err != nil {
 		return nil, err
 	}
-	if journal.Status != models.JournalStatusPosted {
-		return nil, fmt.Errorf("only posted journals can be reversed")
-	}
-	reversal := &models.Journal{
-		BusinessID:   businessID,
-		Name:         "Reversal: " + journal.Name,
-		Reference:    journal.Reference,
-		ProjectID:    journal.ProjectID,
-		Status:       models.JournalStatusPosted,
-		PostingDate:  time.Now(),
-		Notes:        "Auto reversal",
-		ReversalOfID: &journal.ID,
-	}
-	for _, line := range journal.Lines {
-		entryType := "debit"
-		if line.EntryType == "debit" {
-			entryType = "credit"
+	var reversal *models.Journal
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var journal models.Journal
+		if err := loadJournalForUpdateTx(tx, businessID, id, &journal); err != nil {
+			return err
 		}
-		reversal.Lines = append(reversal.Lines, &models.JournalLine{
-			AccountCode: line.AccountCode,
-			AccountName: line.AccountName,
-			EntryType:   entryType,
-			Amount:      line.Amount,
-			Currency:    line.Currency,
-			Description: "Reversal of " + journal.Name,
-			DocumentID:  line.DocumentID,
-			Metadata:    line.Metadata,
-		})
-	}
-	now := time.Now()
-	reversal.PostedAt = &now
-	if err := s.repo.Create(ctx, reversal); err != nil {
-		return nil, err
-	}
-	if err := s.projectLedger(ctx, reversal); err != nil {
-		return nil, err
-	}
-	journal.Status = models.JournalStatusReversed
-	journal.ReversedAt = &now
-	if err := s.repo.Update(ctx, journal); err != nil {
+		if journal.Status != models.JournalStatusPosted {
+			return fmt.Errorf("only posted journals can be reversed")
+		}
+		now := time.Now()
+		reversal = &models.Journal{
+			BusinessID:   businessID,
+			Name:         "Reversal: " + journal.Name,
+			Reference:    journal.Reference,
+			ProjectID:    journal.ProjectID,
+			Status:       models.JournalStatusPosted,
+			PostingDate:  now,
+			Notes:        "Auto reversal",
+			ReversalOfID: &journal.ID,
+			PostedAt:     &now,
+		}
+		for _, line := range journal.Lines {
+			entryType := "debit"
+			if line.EntryType == "debit" {
+				entryType = "credit"
+			}
+			reversal.Lines = append(reversal.Lines, &models.JournalLine{
+				AccountCode: line.AccountCode,
+				AccountName: line.AccountName,
+				EntryType:   entryType,
+				Amount:      line.Amount,
+				Currency:    line.Currency,
+				Description: "Reversal of " + journal.Name,
+				DocumentID:  line.DocumentID,
+				Metadata:    line.Metadata,
+			})
+		}
+		if err := createJournalTx(tx, reversal); err != nil {
+			return err
+		}
+		if err := projectJournalLedgerTx(tx, reversal); err != nil {
+			return err
+		}
+		journal.Status = models.JournalStatusReversed
+		journal.ReversedAt = &now
+		return tx.Model(&models.Journal{}).
+			Where("id = ? AND business_id = ? AND status = ?", id, businessID, models.JournalStatusPosted).
+			Updates(map[string]interface{}{"status": journal.Status, "reversed_at": journal.ReversedAt}).Error
+	}); err != nil {
 		return nil, err
 	}
 	return reversal, nil
@@ -274,14 +324,73 @@ func buildJournalLinesForDocument(document *models.Document) []CreateJournalLine
 	}
 }
 
-func (s *JournalService) projectLedger(ctx context.Context, journal *models.Journal) error {
+func (s *JournalService) requireDatabase() error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("journal database is not configured")
+	}
+	return nil
+}
+
+func journalMinorUnits(amount float64) (int64, error) {
+	if math.IsNaN(amount) || math.IsInf(amount, 0) || amount <= 0 {
+		return 0, fmt.Errorf("journal line amount must be positive")
+	}
+	return int64(math.Floor((amount * 100) + 0.500000001)), nil
+}
+
+func createJournalTx(tx *gorm.DB, journal *models.Journal) error {
+	if err := tx.Omit(clause.Associations).Create(journal).Error; err != nil {
+		return err
+	}
 	for _, line := range journal.Lines {
-		entryType := line.EntryType
+		line.JournalID = journal.ID
+	}
+	if len(journal.Lines) == 0 {
+		return nil
+	}
+	return tx.Create(&journal.Lines).Error
+}
+
+func replaceDraftJournalTx(tx *gorm.DB, journal *models.Journal) error {
+	if err := tx.Model(&models.Journal{}).
+		Where("id = ? AND business_id = ?", journal.ID, journal.BusinessID).
+		Updates(map[string]interface{}{
+			"name": journal.Name, "reference": journal.Reference, "project_id": journal.ProjectID,
+			"status": journal.Status, "posting_date": journal.PostingDate, "notes": journal.Notes,
+			"posted_at": journal.PostedAt,
+		}).Error; err != nil {
+		return err
+	}
+	if err := tx.Where("journal_id = ?", journal.ID).Delete(&models.JournalLine{}).Error; err != nil {
+		return err
+	}
+	for _, line := range journal.Lines {
+		line.JournalID = journal.ID
+	}
+	if len(journal.Lines) == 0 {
+		return nil
+	}
+	return tx.Create(&journal.Lines).Error
+}
+
+func loadJournalForUpdateTx(tx *gorm.DB, businessID, id string, journal *models.Journal) error {
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Preload("Lines").
+		Where("id = ? AND business_id = ? AND deleted_at IS NULL", id, businessID).
+		First(journal).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("journal not found")
+	}
+	return err
+}
+
+func projectJournalLedgerTx(tx *gorm.DB, journal *models.Journal) error {
+	for _, line := range journal.Lines {
 		entry := &models.LedgerEntry{
 			BusinessID:    journal.BusinessID,
 			TransactionID: journal.ID,
 			EntryDate:     journal.PostingDate,
-			EntryType:     entryType,
+			EntryType:     line.EntryType,
 			Category:      line.AccountCode,
 			Description:   line.AccountName + " - " + line.Description,
 			Amount:        line.Amount,
@@ -291,7 +400,7 @@ func (s *JournalService) projectLedger(ctx context.Context, journal *models.Jour
 		if line.DocumentID != nil {
 			entry.InvoiceID = line.DocumentID
 		}
-		if err := s.ledgerRepo.Create(ctx, entry); err != nil {
+		if err := tx.Create(entry).Error; err != nil {
 			return err
 		}
 	}
