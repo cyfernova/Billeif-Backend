@@ -1,7 +1,10 @@
 package services
 
 import (
+	"context"
+
 	"invoice-backend/internal/config"
+	"invoice-backend/internal/models"
 	"invoice-backend/internal/outbox"
 	"invoice-backend/internal/repositories/interfaces"
 	voicesession "invoice-backend/internal/voice/session"
@@ -12,6 +15,10 @@ import (
 
 	"gorm.io/gorm"
 )
+
+type invoiceIssueStockEffectConfigurer interface {
+	ConfigureInvoiceIssueStockEffect(func(context.Context, *gorm.DB, *models.Document) error)
+}
 
 type Container struct {
 	Auth                *AuthService
@@ -104,6 +111,9 @@ func NewContainer(
 	a2aSigner, _ := ap2.NewSignatureService()
 	a2aClient := a2a.NewA2AClient(a2aSigner, log)
 	inventorySvc := NewInventoryService(db, inventoryRepo, productRepo, businessRepo, teamRepo, log)
+	if configurer, ok := invoiceRepo.(invoiceIssueStockEffectConfigurer); ok {
+		configurer.ConfigureInvoiceIssueStockEffect(inventorySvc.ApplyDocumentTx)
+	}
 	journalSvc := NewJournalService(db, journalRepo, log)
 	shippingSvc := NewShippingService(cfg, shippingRepo, customerRepo, vendorRepo, log)
 	documentSvc := NewDocumentService(db, cfg, resolver, documentRepo, businessRepo, customerRepo, vendorRepo, productRepo, inventorySvc, journalSvc, shippingSvc, aws, businessAuthSvc, log)

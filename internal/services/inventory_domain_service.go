@@ -1645,8 +1645,22 @@ func (s *InventoryService) resolveWarehouseIDTx(tx *gorm.DB, businessID, warehou
 		}
 		return warehouse.ID, nil
 	}
-	warehouse, err := s.EnsureDefaultWarehouse(tx.Statement.Context, businessID)
-	if err != nil {
+	var warehouse models.Warehouse
+	err := tx.Where("business_id = ? AND is_default = TRUE AND deleted_at IS NULL", businessID).First(&warehouse).Error
+	if err == nil {
+		return warehouse.ID, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", err
+	}
+	warehouse = models.Warehouse{BusinessID: businessID, Name: "Main Warehouse", Code: "MAIN", IsDefault: true}
+	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&warehouse).Error; err != nil {
+		return "", err
+	}
+	if warehouse.ID != "" {
+		return warehouse.ID, nil
+	}
+	if err := tx.Where("business_id = ? AND is_default = TRUE AND deleted_at IS NULL", businessID).First(&warehouse).Error; err != nil {
 		return "", err
 	}
 	return warehouse.ID, nil
@@ -2091,11 +2105,15 @@ func (s *InventoryService) reserveInventoryTx(tx *gorm.DB, businessID, productID
 
 func (s *InventoryService) releaseInventoryTx(tx *gorm.DB, businessID, productID, variantID, warehouseID string, quantity float64, documentID string, documentLineID *string, reason string) error {
 	var balance models.InventoryBalance
-	if err := tx.Where("business_id = ? AND product_id = ? AND variant_id = ? AND warehouse_id = ? AND batch_key = '' AND deleted_at IS NULL",
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("business_id = ? AND product_id = ? AND variant_id = ? AND warehouse_id = ? AND batch_key = '' AND deleted_at IS NULL",
 		businessID, productID, variantID, warehouseID).First(&balance).Error; err != nil {
 		return err
 	}
-	balance.Reserved = clampZero(balance.Reserved - quantity)
+	releaseQuantity := math.Min(balance.Reserved, quantity)
+	if releaseQuantity <= 0 {
+		return nil
+	}
+	balance.Reserved = clampZero(balance.Reserved - releaseQuantity)
 	now := time.Now()
 	balance.LastRecordedAt = &now
 	if err := tx.Save(&balance).Error; err != nil {
@@ -2110,7 +2128,7 @@ func (s *InventoryService) releaseInventoryTx(tx *gorm.DB, businessID, productID
 		DocumentLineID:  documentLineID,
 		TransactionType: models.InventoryTransactionTypeRelease,
 		Direction:       models.StockMoveDirectionRelease,
-		Quantity:        quantity,
+		Quantity:        releaseQuantity,
 		Reason:          reason,
 		Metadata:        mustMarshalMap(map[string]interface{}{"source": "document_release"}),
 		RecordedAt:      now,

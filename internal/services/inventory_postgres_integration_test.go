@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -90,6 +91,62 @@ func TestInventoryTransferPostgresRejectsCrossTenantDestinationWarehouse(t *test
 	var crossTenantBalanceCount int64
 	require.NoError(t, database.Model(&models.InventoryBalance{}).Where("business_id = ? AND warehouse_id = ?", fixture.businessID, otherWarehouseID).Count(&crossTenantBalanceCount).Error)
 	require.Zero(t, crossTenantBalanceCount)
+}
+
+func TestInventoryDocumentStockEffectPostgresUsesOuterTransaction(t *testing.T) {
+	database := newInventoryPostgresIntegrationDB(t)
+	service := NewInventoryService(database, nil, nil, nil, nil, logger.New())
+	fixture := seedInventoryTransferFixture(t, database)
+	document := &models.Document{
+		ID:           uuid.NewString(),
+		BusinessID:   fixture.businessID,
+		DocumentType: models.DocumentTypeSalesInvoice,
+		Status:       models.DocumentStatusIssued,
+		SerialNumber: "POS/26-27/000001",
+		Lines: []*models.DocumentLine{{
+			ID:          uuid.NewString(),
+			ProductID:   models.StringPointer(fixture.productID),
+			VariantID:   models.StringPointer(fixture.variantID),
+			WarehouseID: models.StringPointer(fixture.sourceID),
+			Quantity:    60,
+			StockEffect: "out",
+		}},
+	}
+
+	err := database.Transaction(func(tx *gorm.DB) error {
+		if err := service.ApplyDocumentTx(context.Background(), tx, document); err != nil {
+			return err
+		}
+		return errors.New("abort issue")
+	})
+	require.ErrorContains(t, err, "abort issue")
+	assertInventoryDocumentEffect(t, database, fixture, 100, 0)
+
+	require.NoError(t, database.Transaction(func(tx *gorm.DB) error {
+		return service.ApplyDocumentTx(context.Background(), tx, document)
+	}))
+	assertInventoryDocumentEffect(t, database, fixture, 40, 1)
+
+	secondDocument := *document
+	secondDocument.ID = uuid.NewString()
+	secondLine := *document.Lines[0]
+	secondLine.ID = uuid.NewString()
+	secondLine.DocumentID = secondDocument.ID
+	secondDocument.Lines = []*models.DocumentLine{&secondLine}
+	require.ErrorContains(t, database.Transaction(func(tx *gorm.DB) error {
+		return service.ApplyDocumentTx(context.Background(), tx, &secondDocument)
+	}), "insufficient stock")
+	assertInventoryDocumentEffect(t, database, fixture, 40, 1)
+}
+
+func assertInventoryDocumentEffect(t *testing.T, database *gorm.DB, fixture inventoryTransferFixture, onHand float64, moves int64) {
+	t.Helper()
+	var balance models.InventoryBalance
+	require.NoError(t, database.Where("business_id = ? AND warehouse_id = ?", fixture.businessID, fixture.sourceID).First(&balance).Error)
+	require.Equal(t, onHand, balance.OnHand)
+	var moveCount int64
+	require.NoError(t, database.Model(&models.StockMove{}).Where("business_id = ?", fixture.businessID).Count(&moveCount).Error)
+	require.Equal(t, moves, moveCount)
 }
 
 type inventoryTransferFixture struct {
