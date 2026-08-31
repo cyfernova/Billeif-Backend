@@ -574,7 +574,7 @@ Resources:
                 Action: iam:PassRole
                 Resource:
                   - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-outbox-scheduler-exec-role"
-                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-recurring-invoices-scheduler-exec-role"
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-recurring-invoices-scheduler-role"
                   - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-voice-reconciler-scheduler-role"
                 Condition:
                   StringEquals:

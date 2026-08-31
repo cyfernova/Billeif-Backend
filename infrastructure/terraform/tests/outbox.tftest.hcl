@@ -216,7 +216,7 @@ mock_provider "aws" {
     target          = aws_iam_role.recurring_invoices_scheduler
     override_during = plan
     values = {
-      arn = "arn:aws:iam::928282274753:role/billeif-test-test-recurring-invoices-scheduler-exec-role"
+      arn = "arn:aws:iam::928282274753:role/billeif-test-test-recurring-invoices-scheduler-role"
     }
   }
 
@@ -402,7 +402,7 @@ run "outbox_dispatcher_iam_is_dedicated_and_least_privilege" {
       length([for statement in data.aws_iam_policy_document.recurring_invoices.statement : statement if statement.sid == "RecurringInvoiceParameters" && length(statement.actions) == 1 && contains(statement.actions, "ssm:GetParameters") && length(statement.resources) == 1 && contains(statement.resources, local.db_host_ssm_parameter_arn)]) == 1 &&
       length([for statement in data.aws_iam_policy_document.recurring_invoices.statement : statement if statement.sid == "RecurringInvoiceSecret" && length(statement.actions) == 2 && contains(statement.actions, "secretsmanager:DescribeSecret") && contains(statement.actions, "secretsmanager:GetSecretValue") && length(statement.resources) == 1 && contains(statement.resources, aws_db_instance.main.master_user_secret[0].secret_arn)]) == 1 &&
       length([for statement in data.aws_iam_policy_document.recurring_invoices.statement : statement if statement.sid == "RecurringInvoiceSecretKMS" && length(statement.actions) == 2 && contains(statement.actions, "kms:Decrypt") && contains(statement.actions, "kms:DescribeKey") && length(statement.resources) == 1 && contains(statement.resources, aws_kms_key.application_secrets.arn)]) == 1 &&
-      aws_iam_role.recurring_invoices_scheduler.name == "${local.resource_prefix}-recurring-invoices-scheduler-exec-role" &&
+      aws_iam_role.recurring_invoices_scheduler.name == "${local.resource_prefix}-recurring-invoices-scheduler-role" &&
       length([for statement in data.aws_iam_policy_document.recurring_invoices_scheduler.statement : statement if statement.sid == "InvokeRecurringInvoices" && length(statement.actions) == 1 && contains(statement.actions, "lambda:InvokeFunction") && length(statement.resources) == 1 && contains(statement.resources, aws_lambda_function.recurring_invoices.arn)]) == 1 &&
       length([for statement in data.aws_iam_policy_document.recurring_invoices_scheduler.statement : statement if statement.sid == "SendRecurringInvoiceFailures" && length(statement.actions) == 1 && contains(statement.actions, "sqs:SendMessage") && length(statement.resources) == 1 && contains(statement.resources, aws_sqs_queue.recurring_invoices_scheduler_dlq.arn)]) == 1
     )
