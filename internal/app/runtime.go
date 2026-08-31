@@ -1022,6 +1022,7 @@ func setupRouter(
 			subscriptions := protected.Group("/subscriptions")
 			{
 				subscriptions.GET("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionSubscriptionsView), h.Subscription.Get)
+				subscriptions.GET("/catalog", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionSubscriptionsView), h.Commerce.ListSubscriptionCatalog)
 				subscriptions.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionSubscriptionsManage), h.Subscription.Create)
 				subscriptions.PUT("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionSubscriptionsManage), h.Subscription.Update)
 				subscriptions.GET("/entitlements", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionSubscriptionsView), h.Commerce.ListEntitlements)

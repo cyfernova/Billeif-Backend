@@ -385,7 +385,15 @@ func (s *CommerceService) ListFeatureEntitlements(ctx context.Context, businessI
 		Find(&entitlements).Error; err != nil {
 		return nil, err
 	}
-	if featureEntitlementsNeedSync(entitlements) {
+	if s.subscriptionRepo == nil {
+		return entitlements, nil
+	}
+	subscription, err := s.subscriptionRepo.GetByBusinessID(ctx, businessID)
+	if err != nil || subscription == nil {
+		subscription = &models.Subscription{BusinessID: businessID, Plan: "free", PlanCode: "free", Status: "active"}
+	}
+	seeds := defaultEntitlementSeedsForSubscription(subscription)
+	if featureEntitlementsNeedSync(entitlements, seeds) {
 		return s.SyncFeatureEntitlements(ctx, businessID)
 	}
 	return entitlements, nil
@@ -2202,27 +2210,37 @@ type entitlementSeed struct {
 	Metadata   map[string]interface{}
 }
 
-func defaultEntitlementSeedsForSubscription(_ *models.Subscription) []entitlementSeed {
-	unlimited := int64(-1)
+func defaultEntitlementSeedsForSubscription(subscription *models.Subscription) []entitlementSeed {
+	return defaultEntitlementSeedsForPlan(subscriptionPlanForSubscription(subscription, time.Now().UTC()))
+}
 
+func defaultEntitlementSeedsForPlan(plan SubscriptionPlan) []entitlementSeed {
+	users := plan.Quotas[QuotaUsers]
+	storageMB := plan.Quotas[QuotaStorageMB]
 	return []entitlementSeed{
-		{FeatureKey: FeatureOnlineStore, Enabled: true},
-		{FeatureKey: FeatureMultiCurrency, Enabled: true},
-		{FeatureKey: FeatureExportDocuments, Enabled: true},
-		{FeatureKey: FeatureSEZDocuments, Enabled: true},
-		{FeatureKey: FeatureDeemedExportDocuments, Enabled: true},
-		{FeatureKey: FeatureMultiUser, Enabled: true, LimitValue: &unlimited},
-		{FeatureKey: FeatureCustomRoles, Enabled: true},
-		{FeatureKey: FeatureMultiBusiness, Enabled: true},
-		{FeatureKey: FeatureBranches, Enabled: true, LimitValue: &unlimited},
-		{FeatureKey: FeaturePrioritySupport, Enabled: true},
-		{FeatureKey: FeatureDriveStorageMB, Enabled: true, LimitValue: &unlimited},
-		{FeatureKey: FeatureWhatsAppNotifications, Enabled: true},
+		{FeatureKey: FeatureOnlineStore, Enabled: plan.Features[FeatureOnlineStore]},
+		{FeatureKey: FeatureMultiCurrency, Enabled: plan.Features[FeatureMultiCurrency]},
+		{FeatureKey: FeatureExportDocuments, Enabled: plan.Features[FeatureExportDocuments]},
+		{FeatureKey: FeatureSEZDocuments, Enabled: plan.Features[FeatureSEZDocuments]},
+		{FeatureKey: FeatureDeemedExportDocuments, Enabled: plan.Features[FeatureDeemedExportDocuments]},
+		{FeatureKey: FeatureMultiUser, Enabled: plan.Features[FeatureMultiUser], LimitValue: enabledLimit(plan.Features[FeatureMultiUser], users)},
+		{FeatureKey: FeatureCustomRoles, Enabled: plan.Features[FeatureCustomRoles]},
+		{FeatureKey: FeatureMultiBusiness, Enabled: plan.Features[FeatureMultiBusiness]},
+		{FeatureKey: FeatureBranches, Enabled: plan.Features[FeatureBranches]},
+		{FeatureKey: FeaturePrioritySupport, Enabled: plan.Features[FeaturePrioritySupport]},
+		{FeatureKey: FeatureDriveStorageMB, Enabled: plan.Features[FeatureDriveStorageMB], LimitValue: enabledLimit(plan.Features[FeatureDriveStorageMB], storageMB)},
+		{FeatureKey: FeatureWhatsAppNotifications, Enabled: plan.Features[FeatureWhatsAppNotifications]},
 	}
 }
 
-func featureEntitlementsNeedSync(entitlements []*models.FeatureEntitlement) bool {
-	required := defaultEntitlementSeedsForSubscription(nil)
+func enabledLimit(enabled bool, limit int64) *int64 {
+	if !enabled {
+		return nil
+	}
+	return &limit
+}
+
+func featureEntitlementsNeedSync(entitlements []*models.FeatureEntitlement, required []entitlementSeed) bool {
 	if len(entitlements) < len(required) {
 		return true
 	}
@@ -2236,10 +2254,13 @@ func featureEntitlementsNeedSync(entitlements []*models.FeatureEntitlement) bool
 
 	for _, seed := range required {
 		entitlement, ok := byFeatureKey[seed.FeatureKey]
-		if !ok || !entitlement.Enabled {
+		if !ok || entitlement.Enabled != seed.Enabled {
 			return true
 		}
-		if seed.LimitValue != nil && (entitlement.LimitValue == nil || *entitlement.LimitValue != *seed.LimitValue) {
+		if (seed.LimitValue == nil) != (entitlement.LimitValue == nil) {
+			return true
+		}
+		if seed.LimitValue != nil && *entitlement.LimitValue != *seed.LimitValue {
 			return true
 		}
 	}

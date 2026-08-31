@@ -265,9 +265,6 @@ func (s *TaxComplianceService) GetComplianceStatus(ctx context.Context, business
 }
 
 func (s *TaxComplianceService) GenerateEInvoiceByDocument(ctx context.Context, businessID, documentID, idempotencyKey string, input GenerateEInvoiceInput) (*models.GSTSubmissionJob, error) {
-	if err := s.entitlements.EnsureFeature(ctx, businessID, FeatureEInvoice); err != nil {
-		return nil, err
-	}
 	document, err := s.getDocumentForCompliance(ctx, businessID, documentID)
 	if err != nil {
 		return nil, err
@@ -309,9 +306,6 @@ func (s *TaxComplianceService) CancelEInvoiceByDocument(ctx context.Context, bus
 }
 
 func (s *TaxComplianceService) GenerateEWayBillByDocument(ctx context.Context, businessID, documentID, idempotencyKey string, input GenerateEWayBillInput) (*models.GSTSubmissionJob, error) {
-	if err := s.entitlements.EnsureFeature(ctx, businessID, FeatureEWayBill); err != nil {
-		return nil, err
-	}
 	document, err := s.getDocumentForCompliance(ctx, businessID, documentID)
 	if err != nil {
 		return nil, err
@@ -418,24 +412,43 @@ func (s *TaxComplianceService) enqueueGSTJob(ctx context.Context, document *mode
 	if strings.TrimSpace(idempotencyKey) == "" {
 		idempotencyKey = defaultIdempotencyKey(document.ID, operation, source)
 	}
-	var existing models.GSTSubmissionJob
-	if err := s.db.WithContext(ctx).
-		Where("idempotency_key = ? AND deleted_at IS NULL", idempotencyKey).
-		First(&existing).Error; err == nil {
-		return &existing, nil
-	}
+	job := &models.GSTSubmissionJob{}
+	replayed := false
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var existing models.GSTSubmissionJob
+		findErr := tx.WithContext(ctx).
+			Where("business_id = ? AND idempotency_key = ? AND deleted_at IS NULL", document.BusinessID, idempotencyKey).
+			First(&existing).Error
+		switch {
+		case findErr == nil:
+			*job = existing
+			replayed = true
+			return nil
+		case !errors.Is(findErr, gorm.ErrRecordNotFound):
+			return findErr
+		}
 
-	job := &models.GSTSubmissionJob{
-		BusinessID:     document.BusinessID,
-		DocumentID:     document.ID,
-		Operation:      operation,
-		Status:         models.GSTJobStatusQueued,
-		IdempotencyKey: idempotencyKey,
-		RequestPayload: mustMarshalMap(payload),
-		Source:         coalesceString(source, "api"),
-	}
-	if err := s.db.WithContext(ctx).Create(job).Error; err != nil {
+		if feature := quotaFeatureForGSTOperation(operation); feature != "" {
+			if err := s.entitlements.ReserveFeatureTx(ctx, tx, document.BusinessID, feature, 1); err != nil {
+				return err
+			}
+		}
+
+		*job = models.GSTSubmissionJob{
+			BusinessID:     document.BusinessID,
+			DocumentID:     document.ID,
+			Operation:      operation,
+			Status:         models.GSTJobStatusQueued,
+			IdempotencyKey: idempotencyKey,
+			RequestPayload: mustMarshalMap(payload),
+			Source:         coalesceString(source, "api"),
+		}
+		return tx.WithContext(ctx).Create(job).Error
+	}); err != nil {
 		return nil, err
+	}
+	if replayed {
+		return job, nil
 	}
 	if err := s.dispatchGSTJob(ctx, job); err != nil {
 		job.Status = models.GSTJobStatusFailed
@@ -444,6 +457,17 @@ func (s *TaxComplianceService) enqueueGSTJob(ctx context.Context, document *mode
 		return nil, err
 	}
 	return job, nil
+}
+
+func quotaFeatureForGSTOperation(operation string) string {
+	switch operation {
+	case models.GSTOperationGenerateEInvoice:
+		return FeatureEInvoice
+	case models.GSTOperationGenerateEWayBill:
+		return FeatureEWayBill
+	default:
+		return ""
+	}
 }
 
 func (s *TaxComplianceService) dispatchGSTJob(ctx context.Context, job *models.GSTSubmissionJob) error {

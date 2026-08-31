@@ -112,7 +112,12 @@ func TestPOSCheckoutMapsActivePayloadToCanonicalUnnumberedDraft(t *testing.T) {
 		documents,
 		nil,
 		inventory,
-		NewEntitlementService(nil, db, nil, log),
+		NewEntitlementService(nil, db, fixedSubscriptionRepository{subscription: &models.Subscription{
+			BusinessID: businessID,
+			Plan:       "enterprise",
+			PlanCode:   "biz",
+			Status:     "active",
+		}}, log),
 		log,
 	)
 	idempotencyKey := uuid.NewString()
@@ -150,6 +155,26 @@ func TestPOSCheckoutMapsActivePayloadToCanonicalUnnumberedDraft(t *testing.T) {
 		t.Fatalf("POS canonical lifecycle = status %q state %q number %q, want unnumbered draft",
 			document.Status, document.DraftState, document.SerialNumber)
 	}
+}
+
+type fixedSubscriptionRepository struct {
+	subscription *models.Subscription
+}
+
+func (r fixedSubscriptionRepository) Create(context.Context, *models.Subscription) error {
+	return errors.New("not implemented")
+}
+
+func (r fixedSubscriptionRepository) GetByID(context.Context, string, string) (*models.Subscription, error) {
+	return r.subscription, nil
+}
+
+func (r fixedSubscriptionRepository) GetByBusinessID(context.Context, string) (*models.Subscription, error) {
+	return r.subscription, nil
+}
+
+func (r fixedSubscriptionRepository) Update(context.Context, *models.Subscription) error {
+	return errors.New("not implemented")
 }
 
 func TestCanonicalPOSCheckoutInputReplaysSameSessionAndKey(t *testing.T) {

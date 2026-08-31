@@ -419,6 +419,9 @@ func (h *DocumentUtilityHandler) GenerateEInvoice(c *gin.Context) {
 	_ = c.ShouldBindJSON(&input)
 	job, err := h.tax.GenerateEInvoiceByDocument(c.Request.Context(), businessID, c.Param("id"), idempotencyKey, input)
 	if err != nil {
+		if writeSubscriptionControlError(c, err) {
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -473,6 +476,9 @@ func (h *DocumentUtilityHandler) GenerateEWayBill(c *gin.Context) {
 	_ = c.ShouldBindJSON(&input)
 	job, err := h.tax.GenerateEWayBillByDocument(c.Request.Context(), businessID, c.Param("id"), idempotencyKey, input)
 	if err != nil {
+		if writeSubscriptionControlError(c, err) {
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

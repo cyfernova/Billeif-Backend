@@ -20,12 +20,11 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestDefaultEntitlementSeedsForSubscriptionMakesFeaturesAvailable(t *testing.T) {
+func TestDefaultEntitlementSeedsForSubscriptionUsesCatalogLimits(t *testing.T) {
 	seeds := defaultEntitlementSeedsForSubscription(&models.Subscription{
-		Plan:         "starter",
-		PlanCode:     "pro",
-		MaxUsers:     2,
-		MaxStorageMB: 256,
+		Plan:     "starter",
+		PlanCode: "pro",
+		Status:   "active",
 	})
 
 	for _, featureKey := range []string{
@@ -47,16 +46,13 @@ func TestDefaultEntitlementSeedsForSubscriptionMakesFeaturesAvailable(t *testing
 		}
 	}
 
-	for _, featureKey := range []string{FeatureMultiUser, FeatureBranches, FeatureDriveStorageMB} {
-		limit := seedLimit(seeds, featureKey)
-		if limit == nil || *limit != -1 {
-			t.Fatalf("expected %s limit to be unlimited, got %v", featureKey, limit)
-		}
-	}
+	require.Equal(t, int64(3), *seedLimit(seeds, FeatureMultiUser))
+	require.Nil(t, seedLimit(seeds, FeatureBranches))
+	require.Equal(t, int64(512), *seedLimit(seeds, FeatureDriveStorageMB))
 }
 
 func TestFeatureEntitlementsNeedSyncDetectsDisabledRows(t *testing.T) {
-	seeds := defaultEntitlementSeedsForSubscription(nil)
+	seeds := defaultEntitlementSeedsForSubscription(&models.Subscription{Plan: "starter", PlanCode: "pro", Status: "active"})
 	entitlements := make([]*models.FeatureEntitlement, 0, len(seeds))
 	for _, seed := range seeds {
 		entitlements = append(entitlements, &models.FeatureEntitlement{
@@ -66,24 +62,38 @@ func TestFeatureEntitlementsNeedSyncDetectsDisabledRows(t *testing.T) {
 		})
 	}
 
-	if featureEntitlementsNeedSync(entitlements) {
+	if featureEntitlementsNeedSync(entitlements, seeds) {
 		t.Fatal("expected complete enabled entitlement set to be current")
 	}
 
 	entitlements[0].Enabled = false
-	if !featureEntitlementsNeedSync(entitlements) {
+	if !featureEntitlementsNeedSync(entitlements, seeds) {
 		t.Fatal("expected disabled entitlement to require sync")
 	}
 
 	entitlements[0].Enabled = true
 	for _, entitlement := range entitlements {
-		if entitlement.FeatureKey == FeatureBranches {
+		if entitlement.FeatureKey == FeatureMultiUser {
 			entitlement.LimitValue = int64Pointer(1)
 			break
 		}
 	}
-	if !featureEntitlementsNeedSync(entitlements) {
+	if !featureEntitlementsNeedSync(entitlements, seeds) {
 		t.Fatal("expected stale entitlement limit to require sync")
+	}
+
+	freeSeeds := defaultEntitlementSeedsForSubscription(&models.Subscription{Plan: "free", PlanCode: "free", Status: "active"})
+	freeEntitlements := make([]*models.FeatureEntitlement, 0, len(freeSeeds))
+	for _, seed := range freeSeeds {
+		freeEntitlements = append(freeEntitlements, &models.FeatureEntitlement{
+			FeatureKey: seed.FeatureKey,
+			Enabled:    seed.Enabled,
+			LimitValue: seed.LimitValue,
+		})
+	}
+	freeEntitlements[0].LimitValue = int64Pointer(1)
+	if !featureEntitlementsNeedSync(freeEntitlements, freeSeeds) {
+		t.Fatal("expected stale limit on disabled entitlement to require sync")
 	}
 }
 
@@ -310,7 +320,7 @@ func newDriveUploadTestDB(t *testing.T) *gorm.DB {
 		deleted_at DATETIME
 	)`).Error)
 
-	for index, seed := range defaultEntitlementSeedsForSubscription(nil) {
+	for index, seed := range defaultEntitlementSeedsForSubscription(&models.Subscription{Plan: "starter", PlanCode: "pro", Status: "active"}) {
 		require.NoError(t, db.Exec(
 			"INSERT INTO feature_entitlements (id, business_id, feature_key, enabled, limit_value, metadata, created_at, updated_at) VALUES (?, ?, ?, ?, ?, '{}', ?, ?)",
 			fmt.Sprintf("entitlement-%d", index), "business-123", seed.FeatureKey, seed.Enabled, seed.LimitValue, time.Now().UTC(), time.Now().UTC(),

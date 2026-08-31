@@ -27,6 +27,18 @@ func NewCommerceHandler(svc *services.CommerceService, log *logger.Logger) *Comm
 	return &CommerceHandler{svc: svc, publicOrders: svc, log: log}
 }
 
+// ListSubscriptionCatalog godoc
+// @Summary List subscription plans
+// @Description Returns the authoritative subscription plan catalog used for checkout and entitlement enforcement.
+// @Tags Subscriptions
+// @Security BearerAuth
+// @Produce json
+// @Success 200 {object} services.SubscriptionCatalogResponse
+// @Router /subscriptions/catalog [get]
+func (h *CommerceHandler) ListSubscriptionCatalog(c *gin.Context) {
+	c.JSON(http.StatusOK, services.SubscriptionCatalog())
+}
+
 // ListEntitlements godoc
 // @Summary List feature entitlements
 // @Description Returns a list of all feature entitlements for a business

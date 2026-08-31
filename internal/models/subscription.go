@@ -28,3 +28,16 @@ type Subscription struct {
 func (s *Subscription) TableName() string {
 	return "subscriptions"
 }
+
+type SubscriptionQuotaUsage struct {
+	BusinessID  string    `gorm:"primaryKey;type:uuid" json:"business_id"`
+	FeatureKey  string    `gorm:"primaryKey;size:120" json:"feature_key"`
+	PeriodStart time.Time `gorm:"primaryKey;type:date" json:"period_start"`
+	UsedValue   int64     `gorm:"not null;default:0" json:"used_value"`
+	CreatedAt   time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt   time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
+func (SubscriptionQuotaUsage) TableName() string {
+	return "subscription_quota_usage"
+}

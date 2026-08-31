@@ -97,33 +97,6 @@ type RazorpayVerifyPaymentResponse struct {
 	Status string `json:"status"`
 }
 
-type planCatalogEntry struct {
-	PlanID       string
-	Plan         string
-	PlanCode     string
-	AmountPaise  int64
-	Currency     string
-	MaxInvoices  int64
-	MaxCustomers int64
-	MaxUsers     int64
-	MaxStorageMB int64
-}
-
-var razorpayPlanCatalog = map[string]planCatalogEntry{
-	"pro_monthly": {
-		PlanID: "pro_monthly", Plan: "starter", PlanCode: "pro", AmountPaise: 29900, Currency: "INR",
-		MaxInvoices: 100, MaxCustomers: 100, MaxUsers: 3, MaxStorageMB: 512,
-	},
-	"rise_monthly": {
-		PlanID: "rise_monthly", Plan: "professional", PlanCode: "rise", AmountPaise: 99900, Currency: "INR",
-		MaxInvoices: 1000, MaxCustomers: 1000, MaxUsers: 10, MaxStorageMB: 2048,
-	},
-	"biz_monthly": {
-		PlanID: "biz_monthly", Plan: "enterprise", PlanCode: "biz", AmountPaise: 299900, Currency: "INR",
-		MaxInvoices: 100000, MaxCustomers: 100000, MaxUsers: 50, MaxStorageMB: 10240,
-	},
-}
-
 func (s *RazorpayPaymentService) CreateOrder(ctx context.Context, businessID, userID string, input RazorpayCreateOrderInput) (*RazorpayCreateOrderResponse, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("payment service is not configured")
@@ -223,11 +196,11 @@ func (s *RazorpayPaymentService) resolvePaymentTarget(ctx context.Context, busin
 	switch strings.TrimSpace(input.TargetType) {
 	case models.PaymentAttemptTargetPlan:
 		planID := strings.TrimSpace(input.PlanID)
-		plan, ok := razorpayPlanCatalog[planID]
+		plan, ok := paidSubscriptionPlan(planID)
 		if !ok {
 			return resolvedPaymentTarget{}, 0, "", fmt.Errorf("unsupported plan_id")
 		}
-		return resolvedPaymentTarget{TargetType: models.PaymentAttemptTargetPlan, TargetID: plan.PlanID}, plan.AmountPaise, plan.Currency, nil
+		return resolvedPaymentTarget{TargetType: models.PaymentAttemptTargetPlan, TargetID: plan.ID}, plan.Amount, plan.Currency, nil
 	case models.PaymentAttemptTargetStoreOrder:
 		orderID := strings.TrimSpace(input.StoreOrderID)
 		if orderID == "" {
@@ -520,7 +493,7 @@ func (s *RazorpayPaymentService) markAttemptPaidTx(ctx context.Context, tx *gorm
 }
 
 func (s *RazorpayPaymentService) applyPlanPaymentTx(ctx context.Context, tx *gorm.DB, attempt *models.PaymentAttempt, paidAt time.Time) error {
-	plan, ok := razorpayPlanCatalog[attempt.TargetID]
+	plan, ok := paidSubscriptionPlan(attempt.TargetID)
 	if !ok {
 		return fmt.Errorf("unknown paid plan")
 	}
@@ -531,14 +504,14 @@ func (s *RazorpayPaymentService) applyPlanPaymentTx(ctx context.Context, tx *gor
 		First(&subscription).Error
 	switch {
 	case err == nil:
-		subscription.Plan = plan.Plan
+		subscription.Plan = plan.LegacyPlan
 		subscription.PlanCode = plan.PlanCode
 		subscription.CatalogVersion = CurrentSubscriptionCatalogVersion
 		subscription.Status = "active"
-		subscription.MaxInvoices = plan.MaxInvoices
-		subscription.MaxCustomers = plan.MaxCustomers
-		subscription.MaxUsers = plan.MaxUsers
-		subscription.MaxStorageMB = plan.MaxStorageMB
+		subscription.MaxInvoices = plan.Quotas[QuotaInvoices]
+		subscription.MaxCustomers = plan.Quotas[QuotaCustomers]
+		subscription.MaxUsers = plan.Quotas[QuotaUsers]
+		subscription.MaxStorageMB = plan.Quotas[QuotaStorageMB]
 		subscription.StartDate = paidAt
 		subscription.EndDate = &nextBilling
 		subscription.NextBillingDate = &nextBilling
@@ -547,14 +520,14 @@ func (s *RazorpayPaymentService) applyPlanPaymentTx(ctx context.Context, tx *gor
 		subscription = models.Subscription{
 			ID:              uuid.NewString(),
 			BusinessID:      attempt.BusinessID,
-			Plan:            plan.Plan,
+			Plan:            plan.LegacyPlan,
 			PlanCode:        plan.PlanCode,
 			CatalogVersion:  CurrentSubscriptionCatalogVersion,
 			Status:          "active",
-			MaxInvoices:     plan.MaxInvoices,
-			MaxCustomers:    plan.MaxCustomers,
-			MaxUsers:        plan.MaxUsers,
-			MaxStorageMB:    plan.MaxStorageMB,
+			MaxInvoices:     plan.Quotas[QuotaInvoices],
+			MaxCustomers:    plan.Quotas[QuotaCustomers],
+			MaxUsers:        plan.Quotas[QuotaUsers],
+			MaxStorageMB:    plan.Quotas[QuotaStorageMB],
 			StartDate:       paidAt,
 			EndDate:         &nextBilling,
 			NextBillingDate: &nextBilling,

@@ -729,6 +729,9 @@ func (h *InvoiceHandler) GenerateEInvoice(c *gin.Context) {
 	_ = c.ShouldBindJSON(&input)
 	job, err := h.compliance.GenerateEInvoiceByDocument(c.Request.Context(), businessID, c.Param("id"), idempotencyKey, input)
 	if err != nil {
+		if writeSubscriptionControlError(c, err) {
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

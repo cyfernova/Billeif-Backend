@@ -2,7 +2,7 @@ package services
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -13,6 +13,7 @@ import (
 	"invoice-backend/pkg/logger"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -24,25 +25,46 @@ const (
 )
 
 type PlanEntitlements struct {
-	EInvoiceEnabled bool  `json:"einvoice_enabled"`
-	EInvoiceLimit   int64 `json:"einvoice_limit"`
-	EWayBillEnabled bool  `json:"ewaybill_enabled"`
-	EWayBillLimit   int64 `json:"ewaybill_limit"`
-	BulkGSTEnabled  bool  `json:"bulk_gst_enabled"`
-	GSTAPIEnabled   bool  `json:"gst_api_enabled"`
-	POSEnabled      bool  `json:"pos_enabled"`
+	PlanID          string `json:"plan_id"`
+	EInvoiceEnabled bool   `json:"einvoice_enabled"`
+	EInvoiceLimit   int64  `json:"einvoice_limit"`
+	EWayBillEnabled bool   `json:"ewaybill_enabled"`
+	EWayBillLimit   int64  `json:"ewaybill_limit"`
+	BulkGSTEnabled  bool   `json:"bulk_gst_enabled"`
+	GSTAPIEnabled   bool   `json:"gst_api_enabled"`
+	POSEnabled      bool   `json:"pos_enabled"`
+}
+
+type FeatureUnavailableError struct {
+	Code    string `json:"code"`
+	Feature string `json:"feature"`
+	PlanID  string `json:"plan_id"`
+}
+
+func (e *FeatureUnavailableError) Error() string {
+	return fmt.Sprintf("%s is not enabled on plan %s", e.Feature, e.PlanID)
+}
+
+type QuotaExceededError struct {
+	Code    string `json:"code"`
+	Feature string `json:"feature"`
+	Limit   int64  `json:"limit"`
+	Used    int64  `json:"used"`
+	PlanID  string `json:"plan_id"`
+}
+
+func (e *QuotaExceededError) Error() string {
+	return fmt.Sprintf("%s quota exceeded for plan %s", e.Feature, e.PlanID)
 }
 
 type EntitlementService struct {
-	cfg              *config.Config
 	db               *gorm.DB
 	subscriptionRepo interfaces.SubscriptionRepository
 	log              *logger.Logger
 }
 
-func NewEntitlementService(cfg *config.Config, db *gorm.DB, subscriptionRepo interfaces.SubscriptionRepository, log *logger.Logger) *EntitlementService {
+func NewEntitlementService(_ *config.Config, db *gorm.DB, subscriptionRepo interfaces.SubscriptionRepository, log *logger.Logger) *EntitlementService {
 	return &EntitlementService{
-		cfg:              cfg,
 		db:               db,
 		subscriptionRepo: subscriptionRepo,
 		log:              log,
@@ -51,16 +73,16 @@ func NewEntitlementService(cfg *config.Config, db *gorm.DB, subscriptionRepo int
 
 func (s *EntitlementService) ResolveByBusiness(ctx context.Context, businessID string) (PlanEntitlements, error) {
 	if s.subscriptionRepo == nil {
-		return defaultEntitlementsForPlan("free"), nil
+		return entitlementsForPlan(subscriptionPlanForCode("free")), nil
 	}
 	subscription, err := s.subscriptionRepo.GetByBusinessID(ctx, businessID)
 	if err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "not found") || strings.Contains(err.Error(), "subscription not found") {
-			return defaultEntitlementsForPlan("free"), nil
+		if isSubscriptionNotFoundError(err) {
+			return entitlementsForPlan(subscriptionPlanForCode("free")), nil
 		}
 		return PlanEntitlements{}, err
 	}
-	return s.resolve(subscription.Plan), nil
+	return entitlementsForPlan(subscriptionPlanForSubscription(subscription, time.Now().UTC())), nil
 }
 
 func (s *EntitlementService) EnsureFeature(ctx context.Context, businessID, feature string) error {
@@ -68,81 +90,137 @@ func (s *EntitlementService) EnsureFeature(ctx context.Context, businessID, feat
 	if err != nil {
 		return err
 	}
-	switch feature {
-	case FeatureEInvoice:
-		if !entitlements.EInvoiceEnabled {
-			return fmt.Errorf("e-invoice generation is not enabled on the current plan")
-		}
-		return s.ensureMonthlyLimit(ctx, businessID, entitlements.EInvoiceLimit, models.EInvoiceStatusGenerated, &models.EInvoiceRecord{}, "e-invoice monthly quota exceeded")
-	case FeatureEWayBill:
-		if !entitlements.EWayBillEnabled {
-			return fmt.Errorf("e-way bill generation is not enabled on the current plan")
-		}
-		return s.ensureMonthlyLimit(ctx, businessID, entitlements.EWayBillLimit, models.EWayBillStatusGenerated, &models.EWayBillRecord{}, "e-way bill monthly quota exceeded")
-	case FeatureBulkGST:
-		if !entitlements.BulkGSTEnabled {
-			return fmt.Errorf("bulk GST actions are not enabled on the current plan")
-		}
-	case FeatureGSTAPI:
-		if !entitlements.GSTAPIEnabled {
-			return fmt.Errorf("GST API access is not enabled on the current plan")
-		}
-	case FeaturePOS:
-		if !entitlements.POSEnabled {
-			return fmt.Errorf("POS is not enabled on the current plan")
-		}
-	}
-	return nil
-}
-
-func (s *EntitlementService) resolve(plan string) PlanEntitlements {
-	defaults := defaultEntitlementsForPlan(plan)
-	if s.cfg == nil {
-		return defaults
-	}
-	raw := strings.TrimSpace(s.cfg.Entitlements.JSON)
-	if raw == "" {
-		return defaults
-	}
-	var overrides map[string]PlanEntitlements
-	if err := json.Unmarshal([]byte(raw), &overrides); err != nil {
-		s.log.Warn("failed to parse entitlements json; using defaults", "error", err)
-		return defaults
-	}
-	override, ok := overrides[strings.ToLower(strings.TrimSpace(plan))]
-	if !ok {
-		return defaults
-	}
-	return override
-}
-
-func (s *EntitlementService) ensureMonthlyLimit(ctx context.Context, businessID string, limit int64, successStatus string, model interface{}, message string) error {
-	if limit <= 0 {
+	if entitlementFeatureEnabled(entitlements, feature) {
 		return nil
 	}
-	start := time.Now().UTC()
-	monthStart := time.Date(start.Year(), start.Month(), 1, 0, 0, 0, 0, time.UTC)
-	var count int64
-	if err := s.db.WithContext(ctx).
-		Model(model).
-		Where("business_id = ? AND status = ? AND created_at >= ? AND deleted_at IS NULL", businessID, successStatus, monthStart).
-		Count(&count).Error; err != nil {
-		return err
-	}
-	if count >= limit {
-		return fmt.Errorf("%s", message)
-	}
-	return nil
+	return &FeatureUnavailableError{Code: "feature_disabled", Feature: feature, PlanID: entitlements.PlanID}
 }
 
-func defaultEntitlementsForPlan(plan string) PlanEntitlements {
-	return PlanEntitlements{
-		EInvoiceEnabled: true,
-		EInvoiceLimit:   -1,
-		EWayBillEnabled: true,
-		EWayBillLimit:   -1,
-		BulkGSTEnabled:  true,
-		GSTAPIEnabled:   true,
-		POSEnabled:      true,
+func (s *EntitlementService) ReserveFeatureTx(ctx context.Context, tx *gorm.DB, businessID, feature string, amount int64) error {
+	if tx == nil {
+		return fmt.Errorf("quota transaction is required")
 	}
+	if amount <= 0 {
+		return fmt.Errorf("quota reservation amount must be positive")
+	}
+
+	plan, err := s.resolvePlanTx(ctx, tx, businessID)
+	if err != nil {
+		return err
+	}
+	if !plan.Features[feature] {
+		return &FeatureUnavailableError{Code: "feature_disabled", Feature: feature, PlanID: plan.ID}
+	}
+
+	limit, limited := quotaLimitForFeature(plan, feature)
+	if !limited {
+		return nil
+	}
+	if limit < amount {
+		return &QuotaExceededError{Code: "quota_exceeded", Feature: feature, Limit: limit, Used: 0, PlanID: plan.ID}
+	}
+
+	periodStart := currentQuotaPeriodStart(time.Now().UTC())
+	usage := models.SubscriptionQuotaUsage{
+		BusinessID: businessID, FeatureKey: feature, PeriodStart: periodStart, UsedValue: amount,
+	}
+	result := tx.WithContext(ctx).Clauses(
+		clause.OnConflict{
+			Columns: []clause.Column{{Name: "business_id"}, {Name: "feature_key"}, {Name: "period_start"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"used_value": gorm.Expr("subscription_quota_usage.used_value + ?", amount),
+				"updated_at": time.Now().UTC(),
+			}),
+			Where: clause.Where{Exprs: []clause.Expression{
+				gorm.Expr("subscription_quota_usage.used_value + ? <= ?", amount, limit),
+			}},
+		},
+		clause.Returning{Columns: []clause.Column{{Name: "used_value"}}},
+	).Create(&usage)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected > 0 {
+		return nil
+	}
+
+	var current models.SubscriptionQuotaUsage
+	if err := tx.WithContext(ctx).
+		Where("business_id = ? AND feature_key = ? AND period_start = ?", businessID, feature, periodStart).
+		First(&current).Error; err != nil {
+		return err
+	}
+	return &QuotaExceededError{Code: "quota_exceeded", Feature: feature, Limit: limit, Used: current.UsedValue, PlanID: plan.ID}
+}
+
+func (s *EntitlementService) resolvePlanTx(ctx context.Context, tx *gorm.DB, businessID string) (SubscriptionPlan, error) {
+	var subscription models.Subscription
+	err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("business_id = ? AND deleted_at IS NULL", businessID).
+		First(&subscription).Error
+	switch {
+	case err == nil:
+		return subscriptionPlanForSubscription(&subscription, time.Now().UTC()), nil
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		return subscriptionPlanForCode("free"), nil
+	default:
+		return SubscriptionPlan{}, err
+	}
+}
+
+func entitlementsForPlan(plan SubscriptionPlan) PlanEntitlements {
+	return PlanEntitlements{
+		PlanID:          plan.ID,
+		EInvoiceEnabled: plan.Features[FeatureEInvoice],
+		EInvoiceLimit:   plan.Quotas[QuotaEInvoiceMonthly],
+		EWayBillEnabled: plan.Features[FeatureEWayBill],
+		EWayBillLimit:   plan.Quotas[QuotaEWayBillMonthly],
+		BulkGSTEnabled:  plan.Features[FeatureBulkGST],
+		GSTAPIEnabled:   plan.Features[FeatureGSTAPI],
+		POSEnabled:      plan.Features[FeaturePOS],
+	}
+}
+
+func entitlementFeatureEnabled(entitlements PlanEntitlements, feature string) bool {
+	switch feature {
+	case FeatureEInvoice:
+		return entitlements.EInvoiceEnabled
+	case FeatureEWayBill:
+		return entitlements.EWayBillEnabled
+	case FeatureBulkGST:
+		return entitlements.BulkGSTEnabled
+	case FeatureGSTAPI:
+		return entitlements.GSTAPIEnabled
+	case FeaturePOS:
+		return entitlements.POSEnabled
+	default:
+		return false
+	}
+}
+
+func quotaLimitForFeature(plan SubscriptionPlan, feature string) (int64, bool) {
+	var key string
+	switch feature {
+	case FeatureEInvoice:
+		key = QuotaEInvoiceMonthly
+	case FeatureEWayBill:
+		key = QuotaEWayBillMonthly
+	default:
+		return 0, false
+	}
+	limit, ok := plan.Quotas[key]
+	return limit, ok
+}
+
+func currentQuotaPeriodStart(now time.Time) time.Time {
+	utc := now.UTC()
+	return time.Date(utc.Year(), utc.Month(), 1, 0, 0, 0, 0, time.UTC)
+}
+
+func isSubscriptionNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	normalized := strings.ToLower(err.Error())
+	return strings.Contains(normalized, "subscription not found") || strings.Contains(normalized, "record not found")
 }
