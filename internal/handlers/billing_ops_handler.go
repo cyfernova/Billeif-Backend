@@ -636,8 +636,12 @@ func (h *BillingOpsHandler) GenerateInvoiceSubscriptionNow(c *gin.Context) {
 	if !ok {
 		return
 	}
+	idempotencyKey, ok := requireIdempotencyKey(c)
+	if !ok {
+		return
+	}
 	requestContextWithActor(c)
-	run, err := h.svc.GenerateInvoiceSubscriptionNow(c.Request.Context(), businessID, c.Param("id"))
+	run, err := h.svc.GenerateInvoiceSubscriptionNow(c.Request.Context(), businessID, c.Param("id"), idempotencyKey)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

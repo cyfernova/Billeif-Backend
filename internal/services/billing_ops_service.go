@@ -12,12 +12,14 @@ import (
 	"time"
 
 	"invoice-backend/internal/config"
+	"invoice-backend/internal/idempotency"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/logger"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type BillingOpsService struct {
@@ -26,11 +28,16 @@ type BillingOpsService struct {
 	customerRepo interfaces.CustomerRepository
 	vendorRepo   interfaces.VendorRepository
 	productRepo  interfaces.ProductRepository
-	invoices     *InvoiceService
+	invoices     billingOpsInvoiceService
 	documents    *DocumentService
 	s3           *S3Service
 	permissions  PermissionChecker
 	log          *logger.Logger
+}
+
+type billingOpsInvoiceService interface {
+	canonicalInvoiceCreator
+	GetByBusiness(ctx context.Context, businessID, id string) (*models.Invoice, error)
 }
 
 var ErrInvalidPartyGroupMember = errors.New("invalid party group member")
@@ -1590,75 +1597,120 @@ func (s *BillingOpsService) DispatchDueInvoiceSubscriptions(ctx context.Context,
 	return dispatched, nil
 }
 
-func (s *BillingOpsService) GenerateInvoiceSubscriptionNow(ctx context.Context, businessID, subscriptionID string) (*models.InvoiceSubscriptionRun, error) {
+func (s *BillingOpsService) GenerateInvoiceSubscriptionNow(ctx context.Context, businessID, subscriptionID, idempotencyKey string) (*models.InvoiceSubscriptionRun, error) {
 	if s.db == nil {
 		return nil, fmt.Errorf("database is not configured")
 	}
-	subscription, err := s.GetInvoiceSubscription(ctx, businessID, subscriptionID)
+	if s.invoices == nil {
+		return nil, fmt.Errorf("canonical invoice creator is not configured")
+	}
+	runID, storedKey, err := invoiceSubscriptionRunIdentity(businessID, subscriptionID, idempotencyKey)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateInvoiceSubscriptionGeneration(subscription); err != nil {
-		return nil, err
-	}
-	scheduledFor := time.Now().UTC()
-	run := &models.InvoiceSubscriptionRun{
-		BusinessID:     businessID,
-		SubscriptionID: subscription.ID,
-		ScheduledFor:   scheduledFor,
-		Status:         models.BulkJobStatusProcessing,
-		IdempotencyKey: fmt.Sprintf("%s:%d", subscription.ID, scheduledFor.UnixNano()),
-		AttemptCount:   1,
-	}
-	if err := s.db.WithContext(ctx).Create(run).Error; err != nil {
-		return nil, err
-	}
-	items := invoiceSubscriptionCreateItems(subscription)
-	input := CreateInvoiceInput{
-		BusinessID:           businessID,
-		CustomerID:           subscription.CustomerID,
-		IdempotencyKey:       run.ID,
-		DueDate:              scheduledFor.AddDate(0, 0, 30),
-		Notes:                subscription.Notes,
-		Items:                items,
-		PriceListID:          pointerStringValue(subscription.PriceListID),
-		OriginSubscriptionID: subscription.ID,
-		OriginRunID:          run.ID,
-	}
-	invoice, err := s.invoices.CreateByBusiness(ctx, businessID, input)
-	if err != nil {
-		lastError := err.Error()
-		_ = s.db.WithContext(ctx).Model(&models.InvoiceSubscriptionRun{}).
-			Where("id = ?", run.ID).
-			Updates(map[string]interface{}{"status": models.BulkJobStatusFailed, "last_error": lastError}).Error
-		return nil, err
-	}
-	nextRunAt, cadenceErr := cadenceNextRun(scheduledFor, subscription.Cadence, subscription.Timezone)
-	if cadenceErr != nil {
-		nextRunAt = scheduledFor
-	}
-	run.Status = models.BulkJobStatusCompleted
-	run.InvoiceID = &invoice.ID
-	run.DocumentID = &invoice.ID
-	run.CompletedAt = &scheduledFor
-	subscription.LastRunAt = &scheduledFor
-	subscription.NextRunAt = &nextRunAt
+	var (
+		run           models.InvoiceSubscriptionRun
+		subscription  models.InvoiceSubscription
+		generationErr error
+		generated     bool
+	)
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Save(run).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Preload("Lines").
+			Where("id = ? AND business_id = ? AND deleted_at IS NULL", subscriptionID, businessID).
+			First(&subscription).Error; err != nil {
 			return err
 		}
-		return tx.Model(&models.InvoiceSubscription{}).
-			Where("id = ?", subscription.ID).
+		scheduledFor := time.Now().UTC()
+		run = models.InvoiceSubscriptionRun{
+			ID: runID, BusinessID: businessID, SubscriptionID: subscription.ID,
+			ScheduledFor: scheduledFor, Status: models.BulkJobStatusProcessing,
+			IdempotencyKey: storedKey,
+		}
+		claim := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&run)
+		if claim.Error != nil {
+			return claim.Error
+		}
+		if claim.RowsAffected == 0 {
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("business_id = ? AND subscription_id = ? AND idempotency_key = ? AND deleted_at IS NULL", businessID, subscriptionID, storedKey).
+				First(&run).Error; err != nil {
+				return err
+			}
+			if run.Status == models.BulkJobStatusCompleted && run.InvoiceID != nil && strings.TrimSpace(*run.InvoiceID) != "" {
+				return nil
+			}
+		}
+		if err := validateInvoiceSubscriptionGeneration(&subscription); err != nil {
+			return err
+		}
+		run.Status = models.BulkJobStatusProcessing
+		run.AttemptCount++
+		run.LastError = nil
+		if err := tx.Save(&run).Error; err != nil {
+			return err
+		}
+		input := CreateInvoiceInput{
+			BusinessID:           businessID,
+			CustomerID:           subscription.CustomerID,
+			IdempotencyKey:       run.ID,
+			DueDate:              run.ScheduledFor.AddDate(0, 0, 30),
+			Notes:                subscription.Notes,
+			Items:                invoiceSubscriptionCreateItems(&subscription),
+			PriceListID:          pointerStringValue(subscription.PriceListID),
+			OriginSubscriptionID: subscription.ID,
+			OriginRunID:          run.ID,
+		}
+		invoice, createErr := s.invoices.CreateByBusiness(ctx, businessID, input)
+		if createErr != nil {
+			lastError := createErr.Error()
+			run.Status = models.BulkJobStatusFailed
+			run.LastError = &lastError
+			generationErr = createErr
+			return tx.Save(&run).Error
+		}
+		nextRunAt, cadenceErr := cadenceNextRun(run.ScheduledFor, subscription.Cadence, subscription.Timezone)
+		if cadenceErr != nil {
+			return cadenceErr
+		}
+		completedAt := time.Now().UTC()
+		run.Status = models.BulkJobStatusCompleted
+		run.InvoiceID = &invoice.ID
+		run.DocumentID = &invoice.ID
+		run.CompletedAt = &completedAt
+		if err := tx.Save(&run).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&models.InvoiceSubscription{}).
+			Where("id = ? AND business_id = ?", subscription.ID, businessID).
 			Updates(map[string]interface{}{
-				"last_run_at": subscription.LastRunAt,
-				"next_run_at": subscription.NextRunAt,
-			}).Error
+				"last_run_at": completedAt,
+				"next_run_at": nextRunAt,
+			}).Error; err != nil {
+			return err
+		}
+		generated = true
+		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	_ = recordActivityLog(ctx, s.db, businessID, "invoice_subscription", subscription.ID, "generated", "", run, nil, map[string]interface{}{"invoice_id": invoice.ID})
-	return run, nil
+	if generationErr != nil {
+		return nil, generationErr
+	}
+	if generated {
+		_ = recordActivityLog(ctx, s.db, businessID, "invoice_subscription", subscription.ID, "generated", "", &run, nil, map[string]interface{}{"invoice_id": pointerStringValue(run.InvoiceID)})
+	}
+	return &run, nil
+}
+
+func invoiceSubscriptionRunIdentity(businessID, subscriptionID, idempotencyKey string) (string, string, error) {
+	key := strings.TrimSpace(idempotencyKey)
+	if _, err := uuid.Parse(key); err != nil {
+		return "", "", &idempotency.InvalidKeyError{}
+	}
+	material := strings.Join([]string{"invoice-subscription-run", strings.TrimSpace(businessID), strings.TrimSpace(subscriptionID), key}, ":")
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(material)).String(), material, nil
 }
 
 func invoiceSubscriptionCreateItems(subscription *models.InvoiceSubscription) []CreateInvoiceItemInput {

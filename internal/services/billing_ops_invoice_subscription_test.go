@@ -168,3 +168,97 @@ func TestInvoiceSubscriptionCreateItemsDefersFollowPricingToCanonicalBatchResolv
 		t.Fatalf("snapshot-pricing item = %#v, want stored subscription facts", snapshot)
 	}
 }
+
+type recurringInvoiceCreatorFake struct {
+	calls  int
+	inputs []CreateInvoiceInput
+}
+
+func (f *recurringInvoiceCreatorFake) CreateByBusiness(_ context.Context, businessID string, input CreateInvoiceInput) (*models.Invoice, error) {
+	f.calls++
+	f.inputs = append(f.inputs, input)
+	return &models.Invoice{ID: uuid.NewSHA1(uuid.NameSpaceOID, []byte(businessID+":"+input.IdempotencyKey)).String()}, nil
+}
+
+func (f *recurringInvoiceCreatorFake) GetByBusiness(context.Context, string, string) (*models.Invoice, error) {
+	return nil, errors.New("not implemented")
+}
+
+func TestGenerateInvoiceSubscriptionNowReplaysOneTenantBoundRun(t *testing.T) {
+	database, err := gorm.Open(sqlite.Open("file:recurring-idempotency?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open recurring invoice database: %v", err)
+	}
+	for _, statement := range []string{
+		`CREATE TABLE invoice_subscriptions (
+			id TEXT PRIMARY KEY, business_id TEXT NOT NULL, customer_id TEXT NOT NULL, name TEXT NOT NULL,
+			status TEXT NOT NULL, cadence TEXT NOT NULL, timezone TEXT NOT NULL, start_date DATETIME NOT NULL,
+			end_date DATETIME, next_run_at DATETIME, last_run_at DATETIME, auto_send NUMERIC NOT NULL DEFAULT 0,
+			price_policy TEXT NOT NULL, price_list_id TEXT, currency TEXT NOT NULL, notes TEXT, metadata TEXT DEFAULT '{}',
+			template_invoice_id TEXT, template_document_id TEXT, created_at DATETIME, updated_at DATETIME, deleted_at DATETIME
+		)`,
+		`CREATE TABLE invoice_subscription_lines (
+			id TEXT PRIMARY KEY, subscription_id TEXT NOT NULL, product_id TEXT, variant_id TEXT, warehouse_id TEXT,
+			description TEXT NOT NULL, quantity NUMERIC NOT NULL, free_quantity NUMERIC DEFAULT 0,
+			unit_price NUMERIC NOT NULL, mrp NUMERIC DEFAULT 0, discount_amount NUMERIC DEFAULT 0,
+			tax_rate NUMERIC DEFAULT 0, cess_rate NUMERIC DEFAULT 0, custom_fields TEXT DEFAULT '{}',
+			additional_charge TEXT DEFAULT '{}', position INTEGER DEFAULT 0, created_at DATETIME, updated_at DATETIME
+		)`,
+		`CREATE TABLE invoice_subscription_runs (
+			id TEXT PRIMARY KEY, subscription_id TEXT NOT NULL, business_id TEXT NOT NULL, scheduled_for DATETIME NOT NULL,
+			status TEXT NOT NULL, idempotency_key TEXT NOT NULL UNIQUE, invoice_id TEXT, document_id TEXT,
+			attempt_count INTEGER DEFAULT 0, last_error TEXT, metadata TEXT DEFAULT '{}', created_at DATETIME,
+			updated_at DATETIME, completed_at DATETIME, deleted_at DATETIME
+		)`,
+	} {
+		if err := database.Exec(statement).Error; err != nil {
+			t.Fatalf("create recurring invoice fixture: %v", err)
+		}
+	}
+	businessID := uuid.NewString()
+	subscriptionID := uuid.NewString()
+	customerID := uuid.NewString()
+	productID := uuid.NewString()
+	commandKey := uuid.NewString()
+	now := time.Now().UTC()
+	if err := database.Exec(`INSERT INTO invoice_subscriptions
+		(id, business_id, customer_id, name, status, cadence, timezone, start_date, next_run_at, auto_send, price_policy, currency)
+		VALUES (?, ?, ?, 'Monthly tea', 'active', 'monthly', 'UTC', ?, ?, 0, 'freeze_on_create', 'INR')`,
+		subscriptionID, businessID, customerID, now, now.AddDate(0, 1, 0)).Error; err != nil {
+		t.Fatalf("seed recurring invoice subscription: %v", err)
+	}
+	if err := database.Exec(`INSERT INTO invoice_subscription_lines
+		(id, subscription_id, product_id, description, quantity, unit_price, position)
+		VALUES (?, ?, ?, 'Tea', 2, 100, 0)`, uuid.NewString(), subscriptionID, productID).Error; err != nil {
+		t.Fatalf("seed recurring invoice line: %v", err)
+	}
+	creator := &recurringInvoiceCreatorFake{}
+	service := &BillingOpsService{db: database, invoices: creator, log: logger.New()}
+
+	first, err := service.GenerateInvoiceSubscriptionNow(context.Background(), businessID, subscriptionID, commandKey)
+	if err != nil {
+		t.Fatalf("first recurring invoice generation: %v", err)
+	}
+	if err := database.Model(&models.InvoiceSubscription{}).
+		Where("id = ?", subscriptionID).
+		Update("status", models.InvoiceSubscriptionStatusPaused).Error; err != nil {
+		t.Fatalf("pause subscription after completed run: %v", err)
+	}
+	second, err := service.GenerateInvoiceSubscriptionNow(context.Background(), businessID, subscriptionID, commandKey)
+	if err != nil {
+		t.Fatalf("replayed recurring invoice generation: %v", err)
+	}
+	if first.ID != second.ID || first.InvoiceID == nil || second.InvoiceID == nil || *first.InvoiceID != *second.InvoiceID {
+		t.Fatalf("run replay mismatch: first=%#v second=%#v", first, second)
+	}
+	if creator.calls != 1 || len(creator.inputs) != 1 || creator.inputs[0].IdempotencyKey != first.ID {
+		t.Fatalf("canonical invoice calls/inputs = %d/%#v, want one run-bound command", creator.calls, creator.inputs)
+	}
+	var runCount int64
+	if err := database.Model(&models.InvoiceSubscriptionRun{}).Where("business_id = ?", businessID).Count(&runCount).Error; err != nil {
+		t.Fatalf("count recurring runs: %v", err)
+	}
+	if runCount != 1 {
+		t.Fatalf("recurring run count = %d, want 1", runCount)
+	}
+}
