@@ -19,6 +19,7 @@ func TestRuntimeEntrypointsUseScopedConfigurationProfiles(t *testing.T) {
 		"../cmd/lambda/sqs-bargaining/main.go":     "config.ProfileBargaining",
 		"../cmd/lambda/sqs-email-delivery/main.go": "config.ProfileEmailDelivery",
 		"../cmd/lambda/sqs-ses-feedback/main.go":   "config.ProfileSESFeedback",
+		"../cmd/lambda/recurring-invoices/main.go": "config.ProfileRecurringInvoices",
 		"../cmd/server/main.go":                    "config.ProfileHTTP",
 	}
 	for path, profile := range cases {
@@ -67,7 +68,7 @@ func TestWorkerBootstrapProfilesFailClosedWithoutTheirConcreteDependencies(t *te
 }
 
 func TestWorkerBootstrapProfilesAcceptCompleteConcreteDependencies(t *testing.T) {
-	for _, profile := range []config.Profile{config.ProfileInvoice, config.ProfileGST, config.ProfileBargaining, config.ProfileOutbox, config.ProfileEmailDelivery} {
+	for _, profile := range []config.Profile{config.ProfileInvoice, config.ProfileGST, config.ProfileBargaining, config.ProfileOutbox, config.ProfileRecurringInvoices, config.ProfileEmailDelivery} {
 		if err := config.ValidateForProfile(completeWorkerBootstrapConfig(), profile); err != nil {
 			t.Fatalf("%s rejected complete bootstrap config: %v", profile, err)
 		}
@@ -131,6 +132,32 @@ func TestOutboxEntrypointBootstrapsOnlyItsScopedRuntime(t *testing.T) {
 	for _, forbidden := range []string{"app.Initialize(", "awsclients.New("} {
 		if strings.Contains(source, forbidden) {
 			t.Fatalf("outbox entrypoint must not contain %s", forbidden)
+		}
+	}
+}
+
+func TestRecurringInvoiceEntrypointBootstrapsOnlyItsScopedRuntime(t *testing.T) {
+	t.Parallel()
+
+	body, err := os.ReadFile("../cmd/lambda/recurring-invoices/main.go")
+	if err != nil {
+		t.Fatalf("read recurring invoice entrypoint: %v", err)
+	}
+	source := string(body)
+	for _, required := range []string{
+		"config.LoadForProfile(config.ProfileRecurringInvoices)",
+		"app.OpenDatabase(",
+		"postgresrepo.NewBusinessRepository(",
+		"postgresrepo.NewCustomerRepository(",
+		"postgresrepo.NewInvoiceRepository(",
+	} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("recurring invoice entrypoint must contain %s", required)
+		}
+	}
+	for _, forbidden := range []string{"app.Initialize(", "awsclients.New("} {
+		if strings.Contains(source, forbidden) {
+			t.Fatalf("recurring invoice entrypoint must not contain %s", forbidden)
 		}
 	}
 }

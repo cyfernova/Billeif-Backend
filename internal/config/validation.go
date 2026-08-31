@@ -12,16 +12,17 @@ import (
 type Profile string
 
 const (
-	ProfileHTTP          Profile = "http"
-	ProfileA2A           Profile = "a2a-stream"
-	ProfileInvoice       Profile = "sqs-invoice"
-	ProfileGST           Profile = "sqs-gst"
-	ProfileBargaining    Profile = "sqs-bargaining"
-	ProfileWebSocket     Profile = "websocket"
-	ProfileMigration     Profile = "migration"
-	ProfileOutbox        Profile = "outbox"
-	ProfileEmailDelivery Profile = "sqs-email-delivery"
-	ProfileSESFeedback   Profile = "sqs-ses-feedback"
+	ProfileHTTP              Profile = "http"
+	ProfileA2A               Profile = "a2a-stream"
+	ProfileInvoice           Profile = "sqs-invoice"
+	ProfileGST               Profile = "sqs-gst"
+	ProfileBargaining        Profile = "sqs-bargaining"
+	ProfileWebSocket         Profile = "websocket"
+	ProfileMigration         Profile = "migration"
+	ProfileOutbox            Profile = "outbox"
+	ProfileRecurringInvoices Profile = "recurring-invoices"
+	ProfileEmailDelivery     Profile = "sqs-email-delivery"
+	ProfileSESFeedback       Profile = "sqs-ses-feedback"
 )
 
 func ValidateForProfile(cfg *Config, profile Profile) error {
@@ -53,7 +54,7 @@ func ValidateForProfile(cfg *Config, profile Profile) error {
 			}
 		}
 		return nil
-	case ProfileMigration:
+	case ProfileMigration, ProfileRecurringInvoices:
 		if err := validateProfileBase(cfg); err != nil {
 			return err
 		}

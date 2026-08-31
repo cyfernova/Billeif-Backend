@@ -3,7 +3,7 @@
 -include .env.local
 export
 
-.PHONY: help infra-backend-init infra-init infra-validate infra-apply infra-plan infra-destroy infra-output build-agentcore test-agentcore build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-email-delivery build-lambda-sqs-ses-feedback build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-outbox build-lambda-migrator build-lambda-voice-reconciler build-lambda-custom-sms-sender package-lambda package-lambda-email-delivery package-lambda-ses-feedback package-lambda-outbox package-lambda-migrator package-lambda-voice-reconciler migration-manifest migration-manifest-verify rds-tunnel run-local test test-integration migrate-up migrate-down migrate-rds-up migrate-rds-down migrate-create fmt lint clean deps test-coverage swagger
+.PHONY: help infra-backend-init infra-init infra-validate infra-apply infra-plan infra-destroy infra-output build-agentcore test-agentcore build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-email-delivery build-lambda-sqs-ses-feedback build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-outbox build-lambda-recurring-invoices build-lambda-migrator build-lambda-voice-reconciler build-lambda-custom-sms-sender package-lambda package-lambda-email-delivery package-lambda-ses-feedback package-lambda-outbox package-lambda-recurring-invoices package-lambda-migrator package-lambda-voice-reconciler migration-manifest migration-manifest-verify rds-tunnel run-local test test-integration migrate-up migrate-down migrate-rds-up migrate-rds-down migrate-create fmt lint clean deps test-coverage swagger
 
 LAMBDA_BUILD_DIR := .build/lambda
 AGENTCORE_BUILD_DIR := .build/agentcore
@@ -91,7 +91,7 @@ build-agentcore: ## Build the AgentCore voice runtime for linux/arm64 without pu
 	mkdir -p $(AGENTCORE_BUILD_DIR)
 	docker buildx build --platform linux/arm64 --file deploy/agentcore/Dockerfile --target voice-runtime-artifact --output type=local,dest=$(AGENTCORE_BUILD_DIR) .
 
-build-lambda: build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-email-delivery build-lambda-sqs-ses-feedback build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-outbox build-lambda-migrator build-lambda-voice-reconciler ## Build all Lambda binaries
+build-lambda: build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-email-delivery build-lambda-sqs-ses-feedback build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-outbox build-lambda-recurring-invoices build-lambda-migrator build-lambda-voice-reconciler ## Build all Lambda binaries
 
 build-lambda-http: ## Build HTTP API Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/http
@@ -129,6 +129,10 @@ build-lambda-outbox: ## Build stripped ARM64 Billeif outbox dispatcher Lambda bo
 	mkdir -p $(LAMBDA_BUILD_DIR)/outbox
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o $(LAMBDA_BUILD_DIR)/outbox/bootstrap ./cmd/lambda/outbox
 
+build-lambda-recurring-invoices: ## Build stripped ARM64 Billeif recurring invoice Lambda bootstrap binary
+	mkdir -p $(LAMBDA_BUILD_DIR)/recurring-invoices
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o $(LAMBDA_BUILD_DIR)/recurring-invoices/bootstrap ./cmd/lambda/recurring-invoices
+
 build-lambda-migrator: migration-manifest-verify ## Build stripped ARM64 database migration Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/migrator
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o $(LAMBDA_BUILD_DIR)/migrator/bootstrap ./cmd/lambda/migrator
@@ -143,7 +147,7 @@ build-lambda-custom-sms-sender: ## Build the Node.js custom SMS sender Lambda pa
 	cp -R infrastructure/lambda/custom-sms-sender/. $(LAMBDA_BUILD_DIR)/custom-sms-sender/
 	cd $(LAMBDA_BUILD_DIR)/custom-sms-sender && pnpm install --prod --frozen-lockfile
 
-package-lambda: build-lambda build-lambda-custom-sms-sender package-lambda-email-delivery package-lambda-ses-feedback package-lambda-outbox package-lambda-migrator package-lambda-voice-reconciler ## Package Lambda artifacts into zip files
+package-lambda: build-lambda build-lambda-custom-sms-sender package-lambda-email-delivery package-lambda-ses-feedback package-lambda-outbox package-lambda-recurring-invoices package-lambda-migrator package-lambda-voice-reconciler ## Package Lambda artifacts into zip files
 	rm -f $(LAMBDA_BUILD_DIR)/http.zip
 	TZ=UTC touch -t 198001010000 $(LAMBDA_BUILD_DIR)/http/bootstrap
 	cd $(LAMBDA_BUILD_DIR)/http && TZ=UTC zip -q -X -j ../http.zip bootstrap
@@ -171,6 +175,11 @@ package-lambda-outbox: build-lambda-outbox ## Package the Billeif outbox Lambda 
 	rm -f $(LAMBDA_BUILD_DIR)/outbox.zip
 	TZ=UTC touch -t 198001010000 $(LAMBDA_BUILD_DIR)/outbox/bootstrap
 	cd $(LAMBDA_BUILD_DIR)/outbox && TZ=UTC zip -q -X -j ../outbox.zip bootstrap
+
+package-lambda-recurring-invoices: build-lambda-recurring-invoices ## Package the Billeif recurring invoice Lambda deterministically
+	rm -f $(LAMBDA_BUILD_DIR)/recurring-invoices.zip
+	TZ=UTC touch -t 198001010000 $(LAMBDA_BUILD_DIR)/recurring-invoices/bootstrap
+	cd $(LAMBDA_BUILD_DIR)/recurring-invoices && TZ=UTC zip -q -X -j ../recurring-invoices.zip bootstrap
 
 package-lambda-email-delivery: build-lambda-sqs-email-delivery ## Package the Billeif email delivery Lambda deterministically
 	rm -f $(LAMBDA_BUILD_DIR)/sqs-email-delivery.zip

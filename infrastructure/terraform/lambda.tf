@@ -17,6 +17,7 @@ locals {
     ws_handler         = "${var.lambda_artifact_dir}/ws.zip"
     custom_sms_sender  = "${var.lambda_artifact_dir}/custom-sms-sender.zip"
     outbox             = "${var.lambda_artifact_dir}/outbox.zip"
+    recurring_invoices = "${var.lambda_artifact_dir}/recurring-invoices.zip"
     sqs_email_delivery = "${var.lambda_artifact_dir}/sqs-email-delivery.zip"
     sqs_ses_feedback   = "${var.lambda_artifact_dir}/sqs-ses-feedback.zip"
   }
@@ -153,6 +154,11 @@ resource "aws_cloudwatch_log_group" "lambda_outbox_dispatcher" {
   retention_in_days = var.log_retention_days
 }
 
+resource "aws_cloudwatch_log_group" "lambda_recurring_invoices" {
+  name              = "/aws/lambda/${local.resource_prefix}-recurring-invoices"
+  retention_in_days = var.log_retention_days
+}
+
 resource "aws_cloudwatch_log_group" "lambda_sqs_email_delivery" {
   name              = "/aws/lambda/${local.resource_prefix}-sqs-email-delivery"
   retention_in_days = var.log_retention_days
@@ -208,6 +214,53 @@ resource "aws_lambda_function" "outbox_dispatcher" {
     aws_nat_gateway.main,
     aws_cloudwatch_log_group.lambda_outbox_dispatcher,
     aws_iam_role_policy.outbox_dispatcher,
+    aws_ssm_parameter.db_host,
+  ]
+}
+
+resource "aws_lambda_function" "recurring_invoices" {
+  function_name    = "${local.resource_prefix}-recurring-invoices"
+  role             = aws_iam_role.recurring_invoices.arn
+  runtime          = "provided.al2023"
+  handler          = "bootstrap"
+  architectures    = ["arm64"]
+  filename         = local.lambda_artifacts.recurring_invoices
+  source_code_hash = local.lambda_artifact_hashes.recurring_invoices
+  memory_size      = 256
+  timeout          = 60
+
+  reserved_concurrent_executions = local.background_processing_enabled ? (var.enable_lambda_reserved_concurrency ? 1 : null) : 0
+
+  environment {
+    variables = {
+      ENVIRONMENT             = var.environment
+      LOG_LEVEL               = "info"
+      LOG_FORMAT              = "json"
+      DATABASE_HOST_SSM_PARAM = local.db_host_ssm_parameter_name
+      DATABASE_SECRET_ARN     = aws_db_instance.main.master_user_secret[0].secret_arn
+      DATABASE_PORT           = tostring(var.db_port)
+      DATABASE_NAME           = var.db_name
+      DATABASE_SSL_MODE       = "require"
+    }
+  }
+
+  vpc_config {
+    subnet_ids         = aws_subnet.private[*].id
+    security_group_ids = [aws_security_group.lambda.id]
+  }
+
+  lifecycle {
+    precondition {
+      condition     = fileexists(local.lambda_artifacts.recurring_invoices)
+      error_message = "Missing Billeif recurring invoice Lambda artifact ${local.lambda_artifacts.recurring_invoices}. Run make package-lambda-recurring-invoices from the repository root before running Terraform."
+    }
+  }
+
+  depends_on = [
+    aws_ssm_association.nat_activation_ready,
+    aws_nat_gateway.main,
+    aws_cloudwatch_log_group.lambda_recurring_invoices,
+    aws_iam_role_policy.recurring_invoices,
     aws_ssm_parameter.db_host,
   ]
 }

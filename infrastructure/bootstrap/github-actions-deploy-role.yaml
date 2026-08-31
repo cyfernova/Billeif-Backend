@@ -547,6 +547,7 @@ Resources:
                   - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-lambda-invoice-worker-exec-role"
                   - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-lambda-websocket-exec-role"
                   - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-outbox-dispatcher-exec-role"
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-recurring-invoices-exec-role"
                   - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-ses-feedback-exec-role"
                   - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-voice-reconciler-role"
                 Condition:
@@ -573,6 +574,7 @@ Resources:
                 Action: iam:PassRole
                 Resource:
                   - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-outbox-scheduler-exec-role"
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-recurring-invoices-scheduler-exec-role"
                   - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}-${Environment}-voice-reconciler-scheduler-role"
                 Condition:
                   StringEquals:

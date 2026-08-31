@@ -467,7 +467,8 @@ func TestNATReadinessAndShutdownOrderingAreExplicit(t *testing.T) {
 		`resource "aws_ec2_instance_state" "nat_stopped"`,
 		`aws_lambda_event_source_mapping.invoice_queue,`,
 		`aws_lambda_permission.allow_http_api_http,`,
-		`aws_scheduler_schedule.outbox_dispatcher`,
+		`aws_scheduler_schedule.outbox_dispatcher,`,
+		`aws_scheduler_schedule.recurring_invoices`,
 	} {
 		if !strings.Contains(nat, required) {
 			t.Errorf("NAT readiness or shutdown dependency contract is missing %q", required)
@@ -476,8 +477,8 @@ func TestNATReadinessAndShutdownOrderingAreExplicit(t *testing.T) {
 	if !strings.Contains(migrations, `aws_ssm_association.nat_bootstrap_ready`) {
 		t.Error("database migration must depend on verified NAT bootstrap readiness")
 	}
-	if got := strings.Count(lambdas, `aws_ssm_association.nat_activation_ready,`); got != 9 {
-		t.Errorf("all nine application Lambda resources must wait for NAT activation readiness; got %d", got)
+	if got := strings.Count(lambdas, `aws_ssm_association.nat_activation_ready,`); got != 10 {
+		t.Errorf("all ten application Lambda resources must wait for NAT activation readiness; got %d", got)
 	}
 }
 
@@ -622,6 +623,7 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_cognito_resource_server.main",
 		"aws_cloudwatch_log_group.database_migrator",
 		"aws_cloudwatch_log_group.lambda_outbox_dispatcher",
+		"aws_cloudwatch_log_group.lambda_recurring_invoices",
 		"aws_cloudwatch_log_group.lambda_sqs_email_delivery",
 		"aws_cloudwatch_log_group.lambda_sqs_ses_feedback",
 		"aws_cloudwatch_log_group.lambda_voice_reconciler",
@@ -633,6 +635,7 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_cloudwatch_metric_alarm.lambda_email_delivery_duration",
 		"aws_cloudwatch_metric_alarm.lambda_email_delivery_errors",
 		"aws_cloudwatch_metric_alarm.lambda_email_delivery_throttles",
+		"aws_cloudwatch_metric_alarm.lambda_recurring_invoices_errors",
 		"aws_cloudwatch_metric_alarm.lambda_ses_feedback_duration",
 		"aws_cloudwatch_metric_alarm.lambda_ses_feedback_errors",
 		"aws_cloudwatch_metric_alarm.lambda_ses_feedback_throttles",
@@ -646,6 +649,7 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_cloudwatch_metric_alarm.rds_connections_high",
 		"aws_cloudwatch_metric_alarm.rds_cpu_credits_low",
 		"aws_cloudwatch_metric_alarm.rds_memory_low",
+		"aws_cloudwatch_metric_alarm.recurring_invoice_failed_runs",
 		"aws_cloudwatch_metric_alarm.voice_agentcore_active_sessions",
 		"aws_cloudwatch_metric_alarm.voice_agentcore_error",
 		"aws_cloudwatch_metric_alarm.voice_agentcore_latency",
@@ -680,6 +684,8 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_iam_role.voice_reconciler_scheduler",
 		"aws_iam_role.outbox_dispatcher",
 		"aws_iam_role.outbox_scheduler",
+		"aws_iam_role.recurring_invoices",
+		"aws_iam_role.recurring_invoices_scheduler",
 		"aws_iam_role_policy.database_migrator",
 		"aws_iam_role_policy.email_delivery",
 		"aws_iam_role_policy.invoice_cursor_http",
@@ -693,9 +699,13 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_iam_role_policy.voice_session_http",
 		"aws_iam_role_policy.outbox_dispatcher",
 		"aws_iam_role_policy.outbox_scheduler",
+		"aws_iam_role_policy.recurring_invoices",
+		"aws_iam_role_policy.recurring_invoices_scheduler",
 		"aws_iam_role_policy.rate_limit_connect",
 		"aws_iam_role_policy_attachment.outbox_dispatcher_basic",
 		"aws_iam_role_policy_attachment.outbox_dispatcher_vpc_access",
+		"aws_iam_role_policy_attachment.recurring_invoices_basic",
+		"aws_iam_role_policy_attachment.recurring_invoices_vpc_access",
 		"aws_iam_role_policy_attachment.email_delivery_basic",
 		"aws_iam_role_policy_attachment.email_delivery_vpc_access",
 		"aws_iam_role_policy_attachment.lambda_http_basic",
@@ -707,6 +717,7 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_lambda_event_source_mapping.ses_feedback_queue",
 		"aws_lambda_function.database_migrator",
 		"aws_lambda_function.outbox_dispatcher",
+		"aws_lambda_function.recurring_invoices",
 		"aws_lambda_function.sqs_email_delivery",
 		"aws_lambda_function.sqs_ses_feedback",
 		"aws_lambda_function.voice_reconciler",
@@ -717,6 +728,7 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_route_table.database",
 		"aws_route_table_association.database",
 		"aws_scheduler_schedule.outbox_dispatcher",
+		"aws_scheduler_schedule.recurring_invoices",
 		"aws_scheduler_schedule.voice_reconciler",
 		"aws_s3_object.custom_sms_sender_lambda_artifact",
 		"aws_s3_object.sqs_gst_lambda_artifact",
@@ -733,11 +745,13 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_sqs_queue.email_delivery",
 		"aws_sqs_queue.email_delivery_dlq",
 		"aws_sqs_queue.outbox_dispatcher_scheduler_dlq",
+		"aws_sqs_queue.recurring_invoices_scheduler_dlq",
 		"aws_sqs_queue.ses_feedback",
 		"aws_sqs_queue.ses_feedback_dlq",
 		"aws_sqs_queue_policy.email_delivery",
 		"aws_sqs_queue_policy.email_delivery_dlq",
 		"aws_sqs_queue_policy.outbox_dispatcher_scheduler_dlq",
+		"aws_sqs_queue_policy.recurring_invoices_scheduler_dlq",
 		"aws_sqs_queue_policy.ses_feedback",
 		"aws_sqs_queue_policy.ses_feedback_dlq",
 		"aws_sqs_queue_redrive_allow_policy.email_delivery_dlq",

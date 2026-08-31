@@ -253,6 +253,7 @@ resource "aws_ec2_instance_state" "nat_stopped" {
   depends_on = [
     aws_lambda_invocation.database_migrations,
     aws_lambda_function.outbox_dispatcher,
+    aws_lambda_function.recurring_invoices,
     aws_lambda_function.sqs_email_delivery,
     aws_lambda_function.sqs_ses_feedback,
     aws_lambda_function.api_http,
@@ -271,7 +272,8 @@ resource "aws_ec2_instance_state" "nat_stopped" {
     aws_lambda_permission.allow_rest_a2a_stream,
     aws_lambda_permission.allow_websocket_lambda,
     aws_lambda_permission.cognito_phone_custom_sms,
-    aws_scheduler_schedule.outbox_dispatcher
+    aws_scheduler_schedule.outbox_dispatcher,
+    aws_scheduler_schedule.recurring_invoices
   ]
 }
 

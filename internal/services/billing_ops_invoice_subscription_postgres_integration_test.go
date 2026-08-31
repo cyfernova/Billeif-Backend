@@ -95,3 +95,50 @@ func TestGenerateInvoiceSubscriptionNowPostgresSerializesSameCommand(t *testing.
 		Count(&runCount).Error)
 	require.Equal(t, int64(1), runCount)
 }
+
+func TestDispatchDueInvoiceSubscriptionsPostgresSerializesScheduledRun(t *testing.T) {
+	database := newInventoryPostgresIntegrationDB(t)
+	fixture := seedInventoryTransferFixture(t, database)
+	require.NoError(t, database.AutoMigrate(
+		&models.InvoiceSubscription{},
+		&models.InvoiceSubscriptionLine{},
+		&models.InvoiceSubscriptionRun{},
+	))
+	dueAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond)
+	subscription := &models.InvoiceSubscription{
+		ID: uuid.NewString(), BusinessID: fixture.businessID, CustomerID: uuid.NewString(),
+		Name: "Scheduled tea", Status: models.InvoiceSubscriptionStatusActive, Cadence: "monthly",
+		Timezone: "UTC", StartDate: dueAt, NextRunAt: &dueAt,
+		PricePolicy: models.InvoiceSubscriptionPricePolicyFreeze, Currency: "INR",
+		Lines: []*models.InvoiceSubscriptionLine{{
+			ID: uuid.NewString(), ProductID: &fixture.productID, Description: "Tea", Quantity: 1, UnitPrice: 100,
+		}},
+	}
+	require.NoError(t, database.Create(subscription).Error)
+	creator := &concurrentRecurringInvoiceCreator{}
+	service := &BillingOpsService{db: database, invoices: creator, log: logger.New()}
+	errorsChannel := make(chan error, 2)
+	start := make(chan struct{})
+	var group sync.WaitGroup
+	for index := 0; index < 2; index++ {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			<-start
+			_, err := service.DispatchDueInvoiceSubscriptions(context.Background(), 10)
+			errorsChannel <- err
+		}()
+	}
+	close(start)
+	group.Wait()
+	close(errorsChannel)
+	for err := range errorsChannel {
+		require.NoError(t, err)
+	}
+	require.Equal(t, 1, creator.callCount())
+	var runs []models.InvoiceSubscriptionRun
+	require.NoError(t, database.Where("business_id = ? AND subscription_id = ?", fixture.businessID, subscription.ID).Find(&runs).Error)
+	require.Len(t, runs, 1)
+	require.Equal(t, models.BulkJobStatusCompleted, runs[0].Status)
+	require.WithinDuration(t, dueAt, runs[0].ScheduledFor, time.Microsecond)
+}

@@ -116,13 +116,14 @@ func TestProductionDeploymentUsesProtectedOIDCAndBoundedWorkloadRoles(t *testing
 				"lambda-invoice-worker-exec-role",
 				"lambda-websocket-exec-role",
 				"outbox-dispatcher-exec-role",
+				"recurring-invoices-exec-role",
 				"ses-feedback-exec-role",
 				"voice-reconciler-role",
 			},
 		},
 		{sid: "PassEC2RolesToEC2", service: "ec2.amazonaws.com", roles: []string{"nat-instance-role", "rds-tunnel-role"}},
 		{sid: "PassAgentCoreRoleToAgentCore", service: "bedrock-agentcore.amazonaws.com", roles: []string{"voice-agentcore-runtime-role"}},
-		{sid: "PassSchedulerRolesToScheduler", service: "scheduler.amazonaws.com", roles: []string{"outbox-scheduler-exec-role", "voice-reconciler-scheduler-role"}},
+		{sid: "PassSchedulerRolesToScheduler", service: "scheduler.amazonaws.com", roles: []string{"outbox-scheduler-exec-role", "recurring-invoices-scheduler-exec-role", "voice-reconciler-scheduler-role"}},
 		{sid: "PassAPIGatewayRoleToAPIGateway", service: "apigateway.amazonaws.com", roles: []string{"apigateway-cloudwatch-role"}},
 		{sid: "PassCognitoRoleToCognito", service: "cognito-idp.amazonaws.com", roles: []string{"cognito-phone-sms-role"}},
 		{sid: "PassRDSRoleToRDS", service: "rds.amazonaws.com", roles: []string{"rds-proxy-role"}},
@@ -151,7 +152,7 @@ func TestProductionDeploymentUsesProtectedOIDCAndBoundedWorkloadRoles(t *testing
 		}
 	}
 
-	if got, want := len(seenRoles), 20; got != want {
+	if got, want := len(seenRoles), 22; got != want {
 		t.Fatalf("exact PassRole inventory contains %d roles; want %d", got, want)
 	}
 

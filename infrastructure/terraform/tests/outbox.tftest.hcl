@@ -10,7 +10,7 @@ mock_provider "aws" {
 
   mock_resource "aws_lambda_invocation" {
     defaults = {
-      result = "{\"status\":\"applied\",\"version\":51,\"latest_version\":51,\"dirty\":false,\"manifest_checksum\":\"d777ff30743d7c7348127bc7c20ec9cfcb7d366d6cae1b968024cee9ab716747\"}"
+      result = "{\"status\":\"applied\",\"version\":53,\"latest_version\":53,\"dirty\":false,\"manifest_checksum\":\"e6b4bef1df19096e4ab93d3aec502445f0ba0c25af134cb2b2bef09b8aa1af9f\"}"
     }
   }
 
@@ -205,6 +205,30 @@ mock_provider "aws" {
   }
 
   override_resource {
+    target          = aws_lambda_function.recurring_invoices
+    override_during = plan
+    values = {
+      arn = "arn:aws:lambda:ap-south-1:928282274753:function:billeif-test-test-recurring-invoices"
+    }
+  }
+
+  override_resource {
+    target          = aws_iam_role.recurring_invoices_scheduler
+    override_during = plan
+    values = {
+      arn = "arn:aws:iam::928282274753:role/billeif-test-test-recurring-invoices-scheduler-exec-role"
+    }
+  }
+
+  override_resource {
+    target          = aws_sqs_queue.recurring_invoices_scheduler_dlq
+    override_during = plan
+    values = {
+      arn = "arn:aws:sqs:ap-south-1:928282274753:billeif-test-test-recurring-invoices-scheduler-dlq"
+    }
+  }
+
+  override_resource {
     target          = aws_security_group.lambda
     override_during = plan
     values = {
@@ -305,6 +329,42 @@ run "outbox_dispatcher_is_private_serial_and_fail_closed" {
     )
     error_message = "The disabled dispatcher schedule must run every minute without a flexible window and retain bounded failures in an encrypted Billeif DLQ."
   }
+
+  assert {
+    condition = (
+      local.lambda_artifacts.recurring_invoices == "${var.lambda_artifact_dir}/recurring-invoices.zip" &&
+      local.lambda_artifact_hashes.recurring_invoices != null &&
+      aws_lambda_function.recurring_invoices.function_name == "${local.resource_prefix}-recurring-invoices" &&
+      aws_lambda_function.recurring_invoices.runtime == "provided.al2023" &&
+      aws_lambda_function.recurring_invoices.architectures[0] == "arm64" &&
+      aws_lambda_function.recurring_invoices.memory_size == 256 &&
+      aws_lambda_function.recurring_invoices.timeout == 60 &&
+      aws_lambda_function.recurring_invoices.reserved_concurrent_executions == 0 &&
+      toset(aws_lambda_function.recurring_invoices.vpc_config[0].subnet_ids) == toset(aws_subnet.private[*].id) &&
+      toset(aws_lambda_function.recurring_invoices.vpc_config[0].security_group_ids) == toset([aws_security_group.lambda.id]) &&
+      toset(keys(aws_lambda_function.recurring_invoices.environment[0].variables)) == toset([
+        "ENVIRONMENT", "LOG_LEVEL", "LOG_FORMAT", "DATABASE_HOST_SSM_PARAM", "DATABASE_SECRET_ARN",
+        "DATABASE_PORT", "DATABASE_NAME", "DATABASE_SSL_MODE"
+      ])
+    )
+    error_message = "The disabled recurring invoice generator must be a private, ARM64, database-only Lambda with one bounded execution."
+  }
+
+  assert {
+    condition = (
+      aws_scheduler_schedule.recurring_invoices.schedule_expression == "rate(1 minute)" &&
+      aws_scheduler_schedule.recurring_invoices.state == "DISABLED" &&
+      aws_scheduler_schedule.recurring_invoices.flexible_time_window[0].mode == "OFF" &&
+      aws_scheduler_schedule.recurring_invoices.target[0].arn == aws_lambda_function.recurring_invoices.arn &&
+      aws_scheduler_schedule.recurring_invoices.target[0].role_arn == aws_iam_role.recurring_invoices_scheduler.arn &&
+      aws_scheduler_schedule.recurring_invoices.target[0].dead_letter_config[0].arn == aws_sqs_queue.recurring_invoices_scheduler_dlq.arn &&
+      aws_scheduler_schedule.recurring_invoices.target[0].retry_policy[0].maximum_event_age_in_seconds == 300 &&
+      aws_scheduler_schedule.recurring_invoices.target[0].retry_policy[0].maximum_retry_attempts == 3 &&
+      aws_sqs_queue.recurring_invoices_scheduler_dlq.sqs_managed_sse_enabled &&
+      aws_sqs_queue.recurring_invoices_scheduler_dlq.message_retention_seconds == 1209600
+    )
+    error_message = "The recurring invoice schedule must be gated, retry-bounded, and retain failures in an encrypted 14-day DLQ."
+  }
 }
 
 run "outbox_dispatcher_iam_is_dedicated_and_least_privilege" {
@@ -332,6 +392,21 @@ run "outbox_dispatcher_iam_is_dedicated_and_least_privilege" {
       length([for statement in data.aws_iam_policy_document.outbox_scheduler_dlq.statement : statement if length(statement.actions) == 1 && contains(statement.actions, "sqs:SendMessage") && anytrue([for principal in statement.principals : contains(principal.identifiers, "scheduler.amazonaws.com")]) && length(statement.resources) == 1 && contains(statement.resources, aws_sqs_queue.outbox_dispatcher_scheduler_dlq.arn)]) == 1
     )
     error_message = "The scheduler may invoke only the outbox Lambda and write failures only to its Billeif DLQ."
+  }
+
+  assert {
+    condition = (
+      aws_iam_role.recurring_invoices.name == "${local.resource_prefix}-recurring-invoices-exec-role" &&
+      aws_iam_role_policy_attachment.recurring_invoices_basic.policy_arn == "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole" &&
+      aws_iam_role_policy_attachment.recurring_invoices_vpc_access.policy_arn == "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole" &&
+      length([for statement in data.aws_iam_policy_document.recurring_invoices.statement : statement if statement.sid == "RecurringInvoiceParameters" && length(statement.actions) == 1 && contains(statement.actions, "ssm:GetParameters") && length(statement.resources) == 1 && contains(statement.resources, local.db_host_ssm_parameter_arn)]) == 1 &&
+      length([for statement in data.aws_iam_policy_document.recurring_invoices.statement : statement if statement.sid == "RecurringInvoiceSecret" && length(statement.actions) == 2 && contains(statement.actions, "secretsmanager:DescribeSecret") && contains(statement.actions, "secretsmanager:GetSecretValue") && length(statement.resources) == 1 && contains(statement.resources, aws_db_instance.main.master_user_secret[0].secret_arn)]) == 1 &&
+      length([for statement in data.aws_iam_policy_document.recurring_invoices.statement : statement if statement.sid == "RecurringInvoiceSecretKMS" && length(statement.actions) == 2 && contains(statement.actions, "kms:Decrypt") && contains(statement.actions, "kms:DescribeKey") && length(statement.resources) == 1 && contains(statement.resources, aws_kms_key.application_secrets.arn)]) == 1 &&
+      aws_iam_role.recurring_invoices_scheduler.name == "${local.resource_prefix}-recurring-invoices-scheduler-exec-role" &&
+      length([for statement in data.aws_iam_policy_document.recurring_invoices_scheduler.statement : statement if statement.sid == "InvokeRecurringInvoices" && length(statement.actions) == 1 && contains(statement.actions, "lambda:InvokeFunction") && length(statement.resources) == 1 && contains(statement.resources, aws_lambda_function.recurring_invoices.arn)]) == 1 &&
+      length([for statement in data.aws_iam_policy_document.recurring_invoices_scheduler.statement : statement if statement.sid == "SendRecurringInvoiceFailures" && length(statement.actions) == 1 && contains(statement.actions, "sqs:SendMessage") && length(statement.resources) == 1 && contains(statement.resources, aws_sqs_queue.recurring_invoices_scheduler_dlq.arn)]) == 1
+    )
+    error_message = "Recurring invoice execution and scheduling must use distinct roles scoped to the database, one Lambda, and one failure queue."
   }
 }
 
@@ -393,7 +468,9 @@ run "outbox_dispatcher_schedule_enables_only_with_application" {
   assert {
     condition = (
       aws_lambda_function.outbox_dispatcher.reserved_concurrent_executions == 1 &&
-      aws_scheduler_schedule.outbox_dispatcher.state == "ENABLED"
+      aws_scheduler_schedule.outbox_dispatcher.state == "ENABLED" &&
+      aws_lambda_function.recurring_invoices.reserved_concurrent_executions == 1 &&
+      aws_scheduler_schedule.recurring_invoices.state == "ENABLED"
     )
     error_message = "Reviewed application enablement must release exactly one dispatcher execution and enable its schedule."
   }
@@ -418,6 +495,7 @@ run "low_quota_activation_keeps_request_paths_unreserved_and_background_off" {
       aws_lambda_function.custom_sms_sender.reserved_concurrent_executions == null &&
       aws_lambda_function.database_migrator.reserved_concurrent_executions == null &&
       aws_lambda_function.outbox_dispatcher.reserved_concurrent_executions == 0 &&
+      aws_lambda_function.recurring_invoices.reserved_concurrent_executions == 0 &&
       aws_lambda_function.sqs_invoice.reserved_concurrent_executions == 0 &&
       aws_lambda_function.sqs_gst.reserved_concurrent_executions == 0 &&
       aws_lambda_function.sqs_bargaining.reserved_concurrent_executions == 0 &&
@@ -435,6 +513,7 @@ run "low_quota_activation_keeps_request_paths_unreserved_and_background_off" {
       length(aws_lambda_event_source_mapping.email_delivery_queue) == 0 &&
       length(aws_lambda_event_source_mapping.ses_feedback_queue) == 0 &&
       aws_scheduler_schedule.outbox_dispatcher.state == "DISABLED" &&
+      aws_scheduler_schedule.recurring_invoices.state == "DISABLED" &&
       aws_cloudwatch_metric_alarm.outbox_oldest_pending_age.treat_missing_data == "notBreaching"
     )
     error_message = "Low-quota activation must keep every background trigger disabled and avoid alarming on missing outbox telemetry."
@@ -731,5 +810,22 @@ run "standard_resolution_operational_alarms_use_two_of_three" {
       aws_cloudwatch_metric_alarm.outbox_oldest_pending_age.treat_missing_data == "notBreaching"
     )
     error_message = "The Billeif outbox oldest-pending-age metric must alarm after two of three five-minute breaches without treating an empty outbox as a failure."
+  }
+
+  assert {
+    condition = (
+      aws_cloudwatch_metric_alarm.lambda_recurring_invoices_errors.metric_name == "Errors" &&
+      aws_cloudwatch_metric_alarm.lambda_recurring_invoices_errors.namespace == "AWS/Lambda" &&
+      aws_cloudwatch_metric_alarm.lambda_recurring_invoices_errors.evaluation_periods == 3 &&
+      aws_cloudwatch_metric_alarm.lambda_recurring_invoices_errors.datapoints_to_alarm == 2 &&
+      aws_cloudwatch_metric_alarm.lambda_recurring_invoices_errors.treat_missing_data == "notBreaching" &&
+      aws_cloudwatch_metric_alarm.recurring_invoice_failed_runs.metric_name == "Failed" &&
+      aws_cloudwatch_metric_alarm.recurring_invoice_failed_runs.namespace == "Billeif/RecurringInvoices" &&
+      aws_cloudwatch_metric_alarm.recurring_invoice_failed_runs.threshold == 0 &&
+      aws_cloudwatch_metric_alarm.recurring_invoice_failed_runs.evaluation_periods == 3 &&
+      aws_cloudwatch_metric_alarm.recurring_invoice_failed_runs.datapoints_to_alarm == 2 &&
+      aws_cloudwatch_metric_alarm.recurring_invoice_failed_runs.treat_missing_data == "notBreaching"
+    )
+    error_message = "Recurring invoice runtime and failed-run metrics must use explicit two-of-three alarms."
   }
 }

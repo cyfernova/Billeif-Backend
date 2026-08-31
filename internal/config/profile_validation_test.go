@@ -62,6 +62,10 @@ func TestProductionValidationProfilesRequireOnlyEntrypointConfiguration(t *testi
 			},
 		},
 		{
+			name:    "recurring invoices",
+			profile: ProfileRecurringInvoices,
+		},
+		{
 			name:    "email delivery",
 			profile: ProfileEmailDelivery,
 			mutate: func(cfg *Config) {
@@ -266,6 +270,7 @@ func TestLoadForProfileAcceptsScopedProductionWorkerAndWebSocketEnvironments(t *
 		{ProfileWebSocket, nil},
 		{ProfileMigration, nil},
 		{ProfileOutbox, nil},
+		{ProfileRecurringInvoices, nil},
 		{ProfileEmailDelivery, nil},
 	}
 
