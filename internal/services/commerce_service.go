@@ -20,7 +20,10 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
+
+const storefrontCheckoutClaimTTL = 5 * time.Minute
 
 type CommerceService struct {
 	cfg              *config.Config
@@ -1092,6 +1095,101 @@ func (s *CommerceService) ValidateCoupon(ctx context.Context, slug string, input
 	}, nil
 }
 
+func storefrontCheckoutCommand(storefrontID string) string {
+	return "storefront.checkout:" + storefrontID
+}
+
+func (s *CommerceService) claimStorefrontCheckout(
+	ctx context.Context,
+	businessID, storefrontID, idempotencyKey, requestHash string,
+) (bool, string, error) {
+	claim := &models.APIIdempotencyKey{
+		BusinessID:     businessID,
+		Command:        storefrontCheckoutCommand(storefrontID),
+		IdempotencyKey: idempotencyKey,
+		RequestHash:    requestHash,
+		Status:         models.IdempotencyStatusInProgress,
+	}
+	result := s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "business_id"}, {Name: "command"}, {Name: "idempotency_key"}},
+		DoNothing: true,
+	}).Create(claim)
+	if result.Error != nil {
+		return false, "", result.Error
+	}
+	if result.RowsAffected == 1 {
+		return true, "", nil
+	}
+
+	var existing models.APIIdempotencyKey
+	if err := s.db.WithContext(ctx).
+		Where("business_id = ? AND command = ? AND idempotency_key = ?", businessID, claim.Command, idempotencyKey).
+		First(&existing).Error; err != nil {
+		return false, "", err
+	}
+	if existing.RequestHash != requestHash {
+		return false, "", fmt.Errorf("idempotency key already used for a different checkout request")
+	}
+	if existing.Status == models.IdempotencyStatusCompleted {
+		if existing.ResultType == nil || *existing.ResultType != "store_order" || existing.ResultID == nil || *existing.ResultID == "" {
+			return false, "", fmt.Errorf("completed checkout claim has no order")
+		}
+		return false, *existing.ResultID, nil
+	}
+	if existing.Status != models.IdempotencyStatusInProgress {
+		return false, "", fmt.Errorf("checkout claim has invalid status")
+	}
+
+	now := time.Now().UTC()
+	reclaimed := s.db.WithContext(ctx).Model(&models.APIIdempotencyKey{}).
+		Where("id = ? AND request_hash = ? AND status = ? AND updated_at < ?", existing.ID, requestHash, models.IdempotencyStatusInProgress, now.Add(-storefrontCheckoutClaimTTL)).
+		Updates(map[string]interface{}{"updated_at": now})
+	if reclaimed.Error != nil {
+		return false, "", reclaimed.Error
+	}
+	if reclaimed.RowsAffected == 1 {
+		return true, "", nil
+	}
+	return false, "", fmt.Errorf("checkout is still processing; retry with the same idempotency key")
+}
+
+func completeStorefrontCheckoutClaim(
+	tx *gorm.DB,
+	businessID, storefrontID, idempotencyKey, requestHash, orderID string,
+) error {
+	now := time.Now().UTC()
+	resultType := "store_order"
+	result := tx.Model(&models.APIIdempotencyKey{}).
+		Where("business_id = ? AND command = ? AND idempotency_key = ? AND request_hash = ? AND status = ?",
+			businessID, storefrontCheckoutCommand(storefrontID), idempotencyKey, requestHash, models.IdempotencyStatusInProgress).
+		Updates(map[string]interface{}{
+			"status":       models.IdempotencyStatusCompleted,
+			"result_type":  &resultType,
+			"result_id":    &orderID,
+			"completed_at": &now,
+			"updated_at":   now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return fmt.Errorf("checkout claim could not be completed")
+	}
+	return nil
+}
+
+func (s *CommerceService) abandonStorefrontCheckoutClaim(
+	ctx context.Context,
+	businessID, storefrontID, idempotencyKey, requestHash string,
+) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	_ = s.db.WithContext(cleanupCtx).
+		Where("business_id = ? AND command = ? AND idempotency_key = ? AND request_hash = ? AND status = ?",
+			businessID, storefrontCheckoutCommand(storefrontID), idempotencyKey, requestHash, models.IdempotencyStatusInProgress).
+		Delete(&models.APIIdempotencyKey{}).Error
+}
+
 func (s *CommerceService) Checkout(ctx context.Context, slug, idempotencyKey string, input StorefrontCheckoutInput) (*CheckoutResult, error) {
 	storefront, err := s.findStorefrontBySlug(ctx, slug)
 	if err != nil {
@@ -1100,22 +1198,48 @@ func (s *CommerceService) Checkout(ctx context.Context, slug, idempotencyKey str
 	if err := ensurePublishedStorefront(storefront); err != nil {
 		return nil, err
 	}
-	if idempotencyKey != "" {
-		var existing models.StoreOrder
-		err := s.db.WithContext(ctx).
-			Preload("Lines", "deleted_at IS NULL").
-			Where("storefront_id = ? AND idempotency_key = ? AND deleted_at IS NULL", storefront.ID, idempotencyKey).
-			First(&existing).Error
-		if err == nil {
-			if !checkoutInputMatchesOrder(&existing, input) {
-				return nil, fmt.Errorf("idempotency key already used for a different checkout request")
-			}
-			return &CheckoutResult{Order: &existing, GatewayOrderID: existing.GatewayOrderID}, nil
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	if idempotencyKey == "" {
+		return nil, fmt.Errorf("idempotency key is required")
+	}
+	var existing models.StoreOrder
+	err = s.db.WithContext(ctx).
+		Preload("Lines", "deleted_at IS NULL").
+		Where("storefront_id = ? AND idempotency_key = ? AND deleted_at IS NULL", storefront.ID, idempotencyKey).
+		First(&existing).Error
+	if err == nil {
+		if !checkoutInputMatchesOrder(&existing, input) {
+			return nil, fmt.Errorf("idempotency key already used for a different checkout request")
 		}
-		if err != nil && err != gorm.ErrRecordNotFound {
+		return &CheckoutResult{Order: &existing, GatewayOrderID: existing.GatewayOrderID}, nil
+	}
+	if err != nil && err != gorm.ErrRecordNotFound {
+		return nil, err
+	}
+
+	requestHash := checkoutInputFingerprint(input)
+	claimed, replayOrderID, err := s.claimStorefrontCheckout(ctx, storefront.BusinessID, storefront.ID, idempotencyKey, requestHash)
+	if err != nil {
+		return nil, err
+	}
+	if replayOrderID != "" {
+		if err := s.db.WithContext(ctx).
+			Preload("Lines", "deleted_at IS NULL").
+			Where("id = ? AND business_id = ? AND storefront_id = ? AND deleted_at IS NULL", replayOrderID, storefront.BusinessID, storefront.ID).
+			First(&existing).Error; err != nil {
 			return nil, err
 		}
+		if !checkoutInputMatchesOrder(&existing, input) {
+			return nil, fmt.Errorf("idempotency key already used for a different checkout request")
+		}
+		return &CheckoutResult{Order: &existing, GatewayOrderID: existing.GatewayOrderID}, nil
 	}
+	claimCompleted := false
+	defer func() {
+		if claimed && !claimCompleted {
+			s.abandonStorefrontCheckoutClaim(ctx, storefront.BusinessID, storefront.ID, idempotencyKey, requestHash)
+		}
+	}()
 	paymentMethod := normalizePublicPaymentMethod(input.PaymentMethod)
 	if paymentMethod == "" {
 		return nil, fmt.Errorf("unsupported payment method")
@@ -1140,6 +1264,7 @@ func (s *CommerceService) Checkout(ctx context.Context, slug, idempotencyKey str
 	}
 
 	order := &models.StoreOrder{
+		ID:              uuid.NewString(),
 		BusinessID:      storefront.BusinessID,
 		StorefrontID:    storefront.ID,
 		BranchID:        stringPointer(input.BranchID),
@@ -1215,12 +1340,26 @@ func (s *CommerceService) Checkout(ctx context.Context, slug, idempotencyKey str
 		return nil, fmt.Errorf("minimum order value is %.2f", storefront.MinimumOrderValue)
 	}
 	order.Snapshot = mustMarshalMap(map[string]interface{}{
-		"checkout_fingerprint": checkoutInputFingerprint(input),
+		"checkout_fingerprint": requestHash,
 		"customer":             input.Customer,
 		"items":                input.Items,
 	})
+	salesOrder, err := s.buildStoreOrderDocument(ctx, order, lines, models.DocumentTypeSalesOrder)
+	if err != nil {
+		return nil, err
+	}
+	order.SalesOrderID = stringPointer(salesOrder.ID)
 
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(salesOrder).Error; err != nil {
+			return err
+		}
+		if err := s.inventory.ApplyDocumentTx(ctx, tx, salesOrder); err != nil {
+			return err
+		}
+		if err := createStoreOrderDocumentRevisionTx(tx, salesOrder, order.ID, order.PaymentStatus); err != nil {
+			return err
+		}
 		if err := tx.Create(order).Error; err != nil {
 			return err
 		}
@@ -1242,23 +1381,19 @@ func (s *CommerceService) Checkout(ctx context.Context, slug, idempotencyKey str
 				return err
 			}
 		}
-		return tx.Create(&models.StoreOrderEvent{
+		if err := tx.Create(&models.StoreOrderEvent{
 			StoreOrderID: order.ID,
 			EventType:    "store_order.created",
 			Status:       order.Status,
 			Payload:      mustMarshalMap(map[string]interface{}{"payment_method": order.PaymentMethod}),
-		}).Error
+		}).Error; err != nil {
+			return err
+		}
+		return completeStorefrontCheckoutClaim(tx, storefront.BusinessID, storefront.ID, idempotencyKey, requestHash, order.ID)
 	}); err != nil {
 		return nil, err
 	}
-
-	salesOrderID, err := s.createSalesOrderForOrder(ctx, order)
-	if err != nil {
-		s.log.Error("failed to create sales order for storefront checkout", "order_id", order.ID, "error", err)
-	} else {
-		order.SalesOrderID = stringPointer(salesOrderID)
-		_ = s.db.WithContext(ctx).Model(order).Update("sales_order_id", salesOrderID).Error
-	}
+	claimCompleted = true
 
 	s.queueStoreOrderNotification(ctx, order, "store_order.created")
 	return &CheckoutResult{
@@ -1937,14 +2072,6 @@ func (s *CommerceService) resolveCoupon(ctx context.Context, storefront *models.
 	return &coupon, roundMoney(discount), nil
 }
 
-func (s *CommerceService) createSalesOrderForOrder(ctx context.Context, order *models.StoreOrder) (string, error) {
-	document, err := s.createStoreOrderDocument(ctx, order, models.DocumentTypeSalesOrder)
-	if err != nil {
-		return "", err
-	}
-	return document.ID, nil
-}
-
 func (s *CommerceService) createSalesInvoiceForOrder(ctx context.Context, order *models.StoreOrder) (string, error) {
 	document, err := s.createStoreOrderDocument(ctx, order, models.DocumentTypeSalesInvoice)
 	if err != nil {
@@ -1953,16 +2080,14 @@ func (s *CommerceService) createSalesInvoiceForOrder(ctx context.Context, order 
 	return document.ID, nil
 }
 
-func (s *CommerceService) createStoreOrderDocument(ctx context.Context, order *models.StoreOrder, documentType string) (*models.Document, error) {
+func (s *CommerceService) buildStoreOrderDocument(
+	ctx context.Context,
+	order *models.StoreOrder,
+	lines []*models.StoreOrderLine,
+	documentType string,
+) (*models.Document, error) {
 	if order.CustomerID == nil || *order.CustomerID == "" {
 		return nil, fmt.Errorf("customer is required for document generation")
-	}
-	var lines []*models.StoreOrderLine
-	if err := s.db.WithContext(ctx).
-		Where("store_order_id = ? AND deleted_at IS NULL", order.ID).
-		Order("created_at ASC").
-		Find(&lines).Error; err != nil {
-		return nil, err
 	}
 	documentLines := make([]CreateDocumentLineInput, 0, len(lines))
 	for _, line := range lines {
@@ -1991,7 +2116,40 @@ func (s *CommerceService) createStoreOrderDocument(ctx context.Context, order *m
 		Direction:    models.DocumentDirectionOutward,
 		Lines:        documentLines,
 	}
-	document, err := s.documents.buildDocument(ctx, order.BusinessID, documentType, input)
+	return s.documents.buildDocument(ctx, order.BusinessID, documentType, input)
+}
+
+func createStoreOrderDocumentRevisionTx(
+	tx *gorm.DB,
+	document *models.Document,
+	storeOrderID, paymentStatus string,
+) error {
+	snapshot, err := json.Marshal(document)
+	if err != nil {
+		return err
+	}
+	return tx.Create(&models.DocumentRevision{
+		DocumentID: document.ID,
+		BusinessID: document.BusinessID,
+		Action:     "created",
+		Snapshot:   string(snapshot),
+		Metadata: mustMarshalMap(map[string]interface{}{
+			"origin":         "storefront",
+			"store_order_id": storeOrderID,
+			"payment_status": paymentStatus,
+		}),
+	}).Error
+}
+
+func (s *CommerceService) createStoreOrderDocument(ctx context.Context, order *models.StoreOrder, documentType string) (*models.Document, error) {
+	var lines []*models.StoreOrderLine
+	if err := s.db.WithContext(ctx).
+		Where("store_order_id = ? AND deleted_at IS NULL", order.ID).
+		Order("created_at ASC").
+		Find(&lines).Error; err != nil {
+		return nil, err
+	}
+	document, err := s.buildStoreOrderDocument(ctx, order, lines, documentType)
 	if err != nil {
 		return nil, err
 	}

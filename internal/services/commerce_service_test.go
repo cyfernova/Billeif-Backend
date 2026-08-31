@@ -210,6 +210,53 @@ func TestCheckoutInputMatchesOrderRejectsDifferentReplayBody(t *testing.T) {
 	}
 }
 
+func TestStorefrontCheckoutClaimAllowsOneWorkerAndReplaysCompletedOrder(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+strings.ReplaceAll(t.Name(), "/", "_")+"?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(`CREATE TABLE api_idempotency_keys (
+		id TEXT PRIMARY KEY,
+		business_id TEXT NOT NULL,
+		command TEXT NOT NULL,
+		idempotency_key TEXT NOT NULL,
+		request_hash TEXT NOT NULL,
+		status TEXT NOT NULL,
+		result_type TEXT,
+		result_id TEXT,
+		created_at DATETIME,
+		updated_at DATETIME,
+		completed_at DATETIME,
+		UNIQUE (business_id, command, idempotency_key)
+	)`).Error)
+	service := &CommerceService{db: db}
+	ctx := context.Background()
+	businessID := "business-1"
+	storefrontID := "storefront-1"
+	key := "checkout-key-1"
+	hash := strings.Repeat("a", 64)
+
+	claimed, replayID, err := service.claimStorefrontCheckout(ctx, businessID, storefrontID, key, hash)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.Empty(t, replayID)
+
+	claimed, replayID, err = service.claimStorefrontCheckout(ctx, businessID, storefrontID, key, hash)
+	require.ErrorContains(t, err, "still processing")
+	require.False(t, claimed)
+	require.Empty(t, replayID)
+
+	_, _, err = service.claimStorefrontCheckout(ctx, businessID, storefrontID, key, strings.Repeat("b", 64))
+	require.ErrorContains(t, err, "different checkout request")
+
+	orderID := "order-1"
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		return completeStorefrontCheckoutClaim(tx, businessID, storefrontID, key, hash, orderID)
+	}))
+	claimed, replayID, err = service.claimStorefrontCheckout(ctx, businessID, storefrontID, key, hash)
+	require.NoError(t, err)
+	require.False(t, claimed)
+	require.Equal(t, orderID, replayID)
+}
+
 func TestNormalizePublicPaymentMethodRejectsUnsupportedMethods(t *testing.T) {
 	if got := normalizePublicPaymentMethod(""); got != "cod" {
 		t.Fatalf("expected blank payment method to default to cod, got %q", got)
