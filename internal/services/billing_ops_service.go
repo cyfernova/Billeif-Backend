@@ -413,6 +413,12 @@ type InvoiceSubscriptionRunStats struct {
 	FailedRuns  int64 `json:"failed_runs"`
 }
 
+type InvoiceSubscriptionDispatchResult struct {
+	Due       int `json:"due"`
+	Completed int `json:"completed"`
+	Failed    int `json:"failed"`
+}
+
 func (s *BillingOpsService) CreatePartyGroup(ctx context.Context, input CreatePartyGroupInput) (*models.PartyGroup, error) {
 	if s.db == nil {
 		return nil, fmt.Errorf("database is not configured")
@@ -1550,9 +1556,9 @@ func (s *BillingOpsService) decorateInvoiceSubscriptions(ctx context.Context, bu
 	return nil
 }
 
-func (s *BillingOpsService) DispatchDueInvoiceSubscriptions(ctx context.Context, limit int) ([]*models.InvoiceSubscriptionRun, error) {
+func (s *BillingOpsService) DispatchDueInvoiceSubscriptions(ctx context.Context, limit int) (InvoiceSubscriptionDispatchResult, error) {
 	if s.db == nil {
-		return nil, fmt.Errorf("database is not configured")
+		return InvoiceSubscriptionDispatchResult{}, fmt.Errorf("database is not configured")
 	}
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -1564,46 +1570,47 @@ func (s *BillingOpsService) DispatchDueInvoiceSubscriptions(ctx context.Context,
 		Order("next_run_at ASC").
 		Limit(limit).
 		Find(&subscriptions).Error; err != nil {
-		return nil, err
+		return InvoiceSubscriptionDispatchResult{}, err
 	}
+	result := InvoiceSubscriptionDispatchResult{Due: len(subscriptions)}
+	dispatchContext := scheduledInvoiceSubscriptionContext(ctx)
+	var dispatchErrors []error
 	for i := range subscriptions {
-		if err := rejectInvoiceSubscriptionAutoSend(subscriptions[i].AutoSend); err != nil {
-			return nil, fmt.Errorf("dispatch invoice subscription %s: %w", subscriptions[i].ID, err)
-		}
-	}
-	dispatched := make([]*models.InvoiceSubscriptionRun, 0, len(subscriptions))
-	for _, subscription := range subscriptions {
-		nextRunAt, err := cadenceNextRun(now, subscription.Cadence, subscription.Timezone)
-		if err != nil {
+		if subscriptions[i].NextRunAt == nil {
+			result.Failed++
+			dispatchErrors = append(dispatchErrors, fmt.Errorf("dispatch invoice subscription %s: scheduled time is required", subscriptions[i].ID))
 			continue
 		}
-		run := &models.InvoiceSubscriptionRun{
-			BusinessID:     subscription.BusinessID,
-			SubscriptionID: subscription.ID,
-			ScheduledFor:   now,
-			Status:         models.BulkJobStatusQueued,
-			IdempotencyKey: fmt.Sprintf("dispatch:%s:%d", subscription.ID, now.UnixNano()),
-			AttemptCount:   0,
+		scheduledFor := subscriptions[i].NextRunAt.UTC()
+		commandKey := scheduledInvoiceSubscriptionCommandKey(subscriptions[i].BusinessID, subscriptions[i].ID, scheduledFor)
+		_, err := s.generateInvoiceSubscription(
+			dispatchContext,
+			subscriptions[i].BusinessID,
+			subscriptions[i].ID,
+			commandKey,
+			&scheduledFor,
+		)
+		if err != nil {
+			result.Failed++
+			dispatchErrors = append(dispatchErrors, fmt.Errorf("dispatch invoice subscription %s: %w", subscriptions[i].ID, err))
+			continue
 		}
-		if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			if err := tx.Create(run).Error; err != nil {
-				return err
-			}
-			return tx.Model(&models.InvoiceSubscription{}).
-				Where("id = ?", subscription.ID).
-				Updates(map[string]interface{}{
-					"last_run_at": now,
-					"next_run_at": nextRunAt,
-				}).Error
-		}); err != nil {
-			return nil, err
-		}
-		dispatched = append(dispatched, run)
+		result.Completed++
 	}
-	return dispatched, nil
+	return result, errors.Join(dispatchErrors...)
 }
 
 func (s *BillingOpsService) GenerateInvoiceSubscriptionNow(ctx context.Context, businessID, subscriptionID, idempotencyKey string) (*models.InvoiceSubscriptionRun, error) {
+	return s.generateInvoiceSubscription(ctx, businessID, subscriptionID, idempotencyKey, nil)
+}
+
+func (s *BillingOpsService) generateInvoiceSubscription(
+	ctx context.Context,
+	businessID string,
+	subscriptionID string,
+	idempotencyKey string,
+	scheduledFor *time.Time,
+) (*models.InvoiceSubscriptionRun, error) {
 	if s.db == nil {
 		return nil, fmt.Errorf("database is not configured")
 	}
@@ -1627,10 +1634,13 @@ func (s *BillingOpsService) GenerateInvoiceSubscriptionNow(ctx context.Context, 
 			First(&subscription).Error; err != nil {
 			return err
 		}
-		scheduledFor := time.Now().UTC()
+		runScheduledFor := time.Now().UTC()
+		if scheduledFor != nil {
+			runScheduledFor = scheduledFor.UTC()
+		}
 		run = models.InvoiceSubscriptionRun{
 			ID: runID, BusinessID: businessID, SubscriptionID: subscription.ID,
-			ScheduledFor: scheduledFor, Status: models.BulkJobStatusProcessing,
+			ScheduledFor: runScheduledFor, Status: models.BulkJobStatusProcessing,
 			IdempotencyKey: storedKey,
 		}
 		claim := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&run)
@@ -1708,6 +1718,23 @@ func (s *BillingOpsService) GenerateInvoiceSubscriptionNow(ctx context.Context, 
 		_ = recordActivityLog(ctx, s.db, businessID, "invoice_subscription", subscription.ID, "generated", "", &run, nil, map[string]interface{}{"invoice_id": pointerStringValue(run.InvoiceID)})
 	}
 	return &run, nil
+}
+
+func scheduledInvoiceSubscriptionContext(ctx context.Context) context.Context {
+	actor := actorFromContext(ctx)
+	actor.UserID = uuid.NewSHA1(uuid.NameSpaceOID, []byte("billeif:scheduled-invoice-system")).String()
+	actor.Role = "system"
+	return ContextWithActor(ctx, actor)
+}
+
+func scheduledInvoiceSubscriptionCommandKey(businessID, subscriptionID string, scheduledFor time.Time) string {
+	material := strings.Join([]string{
+		"invoice-subscription-schedule",
+		strings.TrimSpace(businessID),
+		strings.TrimSpace(subscriptionID),
+		scheduledFor.UTC().Format(time.RFC3339Nano),
+	}, ":")
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(material)).String()
 }
 
 func invoiceSubscriptionRunIdentity(businessID, subscriptionID, idempotencyKey string) (string, string, error) {
