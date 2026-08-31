@@ -185,6 +185,7 @@ resource "aws_cloudwatch_metric_alarm" "lambda_ws_errors" {
   period              = 300
   statistic           = "Sum"
   threshold           = 5
+  treat_missing_data  = "notBreaching"
   alarm_description   = "WebSocket Lambda error count is high"
   alarm_actions       = [aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]
@@ -203,6 +204,7 @@ resource "aws_cloudwatch_metric_alarm" "lambda_invoice_errors" {
   period              = 300
   statistic           = "Sum"
   threshold           = 3
+  treat_missing_data  = "notBreaching"
   alarm_description   = "Invoice worker Lambda error count is high"
   alarm_actions       = [aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]
@@ -221,6 +223,7 @@ resource "aws_cloudwatch_metric_alarm" "lambda_gst_errors" {
   period              = 300
   statistic           = "Sum"
   threshold           = 3
+  treat_missing_data  = "notBreaching"
   alarm_description   = "GST worker Lambda error count is high"
   alarm_actions       = [aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]

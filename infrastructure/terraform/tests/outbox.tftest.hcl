@@ -684,6 +684,17 @@ run "standard_resolution_operational_alarms_use_two_of_three" {
   }
 
   assert {
+    condition = alltrue([
+      for alarm in [
+        aws_cloudwatch_metric_alarm.lambda_ws_errors,
+        aws_cloudwatch_metric_alarm.lambda_invoice_errors,
+        aws_cloudwatch_metric_alarm.lambda_gst_errors
+      ] : alarm.treat_missing_data == "notBreaching"
+    ])
+    error_message = "Sparse Lambda error alarms must treat missing metrics as non-breaching instead of entering INSUFFICIENT_DATA."
+  }
+
+  assert {
     condition = (
       length(aws_cloudwatch_metric_alarm.worker_queue_age) == 5 &&
       length(aws_cloudwatch_metric_alarm.worker_dlq_messages) == 5 &&
