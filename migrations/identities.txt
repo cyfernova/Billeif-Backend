@@ -50,3 +50,4 @@
 000050_websocket_tickets
 000051_notifications
 000052_subscription_quota_usage
+000053_payment_reversals

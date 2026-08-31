@@ -233,6 +233,9 @@ func (s *JournalService) ReverseByBusiness(ctx context.Context, businessID, id s
 		if journal.Status != models.JournalStatusPosted {
 			return fmt.Errorf("only posted journals can be reversed")
 		}
+		if journal.SourceType == "payment" || journal.SourceType == "payment_reversal" {
+			return fmt.Errorf("payment journals must be reversed through the payment workflow")
+		}
 		now := time.Now()
 		reversal = &models.Journal{
 			BusinessID:   businessID,

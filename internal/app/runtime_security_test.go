@@ -17,6 +17,7 @@ func TestPaymentRoutesRequirePaymentPermissions(t *testing.T) {
 		`payments.GET("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsView), h.Payment.List)`,
 		`payments.GET("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsView), h.Payment.Get)`,
 		`payments.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), userWriteRL, h.Payment.Create)`,
+		`payments.POST("/:id/reverse", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), userWriteRL, h.Payment.Reverse)`,
 		`payments.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), userWriteRL, h.Payment.Update)`,
 		`payments.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), userWriteRL, h.Payment.Delete)`,
 	}

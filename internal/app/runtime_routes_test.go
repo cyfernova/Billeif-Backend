@@ -79,6 +79,16 @@ func TestLegacyInvoiceSendRouteIsNotRegistered(t *testing.T) {
 	}
 }
 
+func TestPaymentReversalRouteIsRegistered(t *testing.T) {
+	router := setupTestRouter(t)
+	for _, route := range router.Routes() {
+		if route.Method == http.MethodPost && route.Path == "/api/v1/payments/:id/reverse" {
+			return
+		}
+	}
+	t.Fatal("payment reversal route must be registered")
+}
+
 func TestRouterDoesNotLetGinTrustCallerForwardingHeaders(t *testing.T) {
 	router := setupTestRouter(t)
 	router.GET("/__test/client-ip", func(c *gin.Context) {
