@@ -93,6 +93,100 @@ func TestInventoryTransferPostgresRejectsCrossTenantDestinationWarehouse(t *test
 	require.Zero(t, crossTenantBalanceCount)
 }
 
+func TestInventoryBatchTransferPostgresRejectsAllocationMismatchWithoutMovement(t *testing.T) {
+	database := newInventoryPostgresIntegrationDB(t)
+	service := NewInventoryService(database, nil, nil, nil, nil, logger.New())
+	fixture := seedInventoryTransferFixture(t, database)
+	require.NoError(t, database.Model(&models.ProductVariant{}).
+		Where("id = ?", fixture.variantID).
+		Update("track_batches", true).Error)
+	batch := &models.ProductBatch{
+		ID: uuid.NewString(), BusinessID: fixture.businessID, ProductID: fixture.productID,
+		VariantID: fixture.variantID, BatchNumber: "LOT-1", IsActive: true,
+	}
+	require.NoError(t, database.Create(batch).Error)
+	require.NoError(t, database.Model(&models.InventoryBalance{}).
+		Where("business_id = ? AND warehouse_id = ?", fixture.businessID, fixture.sourceID).
+		Updates(map[string]interface{}{"batch_id": batch.ID, "batch_key": batch.ID}).Error)
+
+	err := service.TransferStock(context.Background(), InventoryTransferInput{
+		BusinessID: fixture.businessID, ProductID: fixture.productID, VariantID: fixture.variantID,
+		FromWarehouseID: fixture.sourceID, ToWarehouseID: fixture.targetOneID, Quantity: 10, UnitCost: 1,
+		BatchAllocations: []BatchAllocationInput{{BatchID: batch.ID, Quantity: 1}},
+	})
+	require.ErrorContains(t, err, "must sum to the requested quantity")
+
+	var source models.InventoryBalance
+	require.NoError(t, database.Where("business_id = ? AND warehouse_id = ?", fixture.businessID, fixture.sourceID).First(&source).Error)
+	require.Equal(t, 100.0, source.OnHand)
+	var moveCount int64
+	require.NoError(t, database.Model(&models.StockMove{}).Where("business_id = ?", fixture.businessID).Count(&moveCount).Error)
+	require.Zero(t, moveCount)
+}
+
+func TestInventorySerialTransferPostgresSerializesSameSerial(t *testing.T) {
+	database := newInventoryPostgresIntegrationDB(t)
+	service := NewInventoryService(database, nil, nil, nil, nil, logger.New())
+	fixture := seedInventoryTransferFixture(t, database)
+	require.NoError(t, database.Model(&models.ProductVariant{}).
+		Where("id = ?", fixture.variantID).
+		Update("track_serials", true).Error)
+	require.NoError(t, database.Model(&models.InventoryBalance{}).
+		Where("business_id = ? AND warehouse_id = ?", fixture.businessID, fixture.sourceID).
+		Updates(map[string]interface{}{"on_hand": 1, "stock_value": 1}).Error)
+	serial := &models.ProductSerialNumber{
+		ID: uuid.NewString(), BusinessID: fixture.businessID, ProductID: fixture.productID,
+		VariantID: fixture.variantID, WarehouseID: &fixture.sourceID, SerialNumber: "SERIAL-1",
+		Status: models.SerialStatusAvailable,
+	}
+	require.NoError(t, database.Create(serial).Error)
+
+	inputs := []InventoryTransferInput{
+		{BusinessID: fixture.businessID, ProductID: fixture.productID, VariantID: fixture.variantID, FromWarehouseID: fixture.sourceID, ToWarehouseID: fixture.targetOneID, Quantity: 1, UnitCost: 1, SerialIDs: []string{serial.SerialNumber}},
+		{BusinessID: fixture.businessID, ProductID: fixture.productID, VariantID: fixture.variantID, FromWarehouseID: fixture.sourceID, ToWarehouseID: fixture.targetTwoID, Quantity: 1, UnitCost: 1, SerialIDs: []string{serial.SerialNumber}},
+	}
+	start := make(chan struct{})
+	errs := make(chan error, len(inputs))
+	var group sync.WaitGroup
+	for _, input := range inputs {
+		input := input
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			<-start
+			errs <- service.TransferStock(context.Background(), input)
+		}()
+	}
+	close(start)
+	group.Wait()
+	close(errs)
+	successes, rejections := 0, 0
+	for err := range errs {
+		if err == nil {
+			successes++
+		} else if strings.Contains(err.Error(), "requested warehouse") {
+			rejections++
+		} else {
+			t.Fatalf("unexpected concurrent serial transfer error: %v", err)
+		}
+	}
+	require.Equal(t, 1, successes)
+	require.Equal(t, 1, rejections)
+
+	var persistedSerial models.ProductSerialNumber
+	require.NoError(t, database.First(&persistedSerial, "id = ?", serial.ID).Error)
+	require.NotNil(t, persistedSerial.WarehouseID)
+	require.Contains(t, []string{fixture.targetOneID, fixture.targetTwoID}, *persistedSerial.WarehouseID)
+	var total float64
+	require.NoError(t, database.Model(&models.InventoryBalance{}).
+		Where("business_id = ?", fixture.businessID).
+		Select("COALESCE(SUM(on_hand), 0)").Scan(&total).Error)
+	require.Equal(t, 1.0, total)
+	var moveCount int64
+	require.NoError(t, database.Model(&models.StockMove{}).Where("business_id = ?", fixture.businessID).Count(&moveCount).Error)
+	require.Equal(t, int64(2), moveCount)
+}
+
 func TestInventoryDocumentStockEffectPostgresUsesOuterTransaction(t *testing.T) {
 	database := newInventoryPostgresIntegrationDB(t)
 	service := NewInventoryService(database, nil, nil, nil, nil, logger.New())
@@ -213,7 +307,8 @@ func newInventoryPostgresIntegrationDB(t *testing.T) *gorm.DB {
 	})
 	require.NoError(t, database.AutoMigrate(
 		&models.BusinessProfile{}, &models.Warehouse{}, &models.Product{}, &models.ProductVariant{},
-		&models.InventoryBalance{}, &models.StockMove{}, &models.InventorySnapshot{}, &models.InventoryEventLog{},
+		&models.ProductBatch{}, &models.ProductSerialNumber{}, &models.InventoryBalance{}, &models.StockMove{},
+		&models.InventorySnapshot{}, &models.InventoryEventLog{},
 	))
 	return database
 }

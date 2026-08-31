@@ -885,6 +885,9 @@ func (s *InventoryService) RecordAdjustment(ctx context.Context, input Inventory
 }
 
 func (s *InventoryService) TransferStock(ctx context.Context, input InventoryTransferInput) error {
+	if math.IsNaN(input.Quantity) || math.IsInf(input.Quantity, 0) || input.Quantity <= 0 {
+		return fmt.Errorf("transfer quantity must be a positive finite number")
+	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		fromWarehouseID, err := s.resolveWarehouseIDTx(tx, input.BusinessID, input.FromWarehouseID)
 		if err != nil {
@@ -907,8 +910,8 @@ func (s *InventoryService) TransferStock(ctx context.Context, input InventoryTra
 			return s.transferSerialsTx(tx, product, variant, input)
 		}
 		if variant.TrackBatches {
-			if len(input.BatchAllocations) == 0 {
-				return fmt.Errorf("batch allocations are required for batch-tracked variants")
+			if err := validateInventoryBatchAllocations(input.Quantity, input.BatchAllocations); err != nil {
+				return err
 			}
 			for _, allocation := range input.BatchAllocations {
 				batch, err := s.resolveBatchTx(tx, input.BusinessID, product.ID, variant.ID, allocation)
@@ -1479,13 +1482,11 @@ func (input inventoryMutationInput) effectiveUnitCost() float64 {
 }
 
 func (s *InventoryService) applyBatchMutationTx(tx *gorm.DB, input inventoryMutationInput) ([]*models.InventoryBalance, error) {
-	if len(input.BatchAllocations) == 0 {
-		return nil, fmt.Errorf("batch allocations are required for batch-tracked variants")
+	if err := validateInventoryBatchAllocations(input.Quantity, input.BatchAllocations); err != nil {
+		return nil, err
 	}
-	total := 0.0
 	balances := make([]*models.InventoryBalance, 0, len(input.BatchAllocations))
 	for _, allocation := range input.BatchAllocations {
-		total += allocation.Quantity
 		batch, err := s.resolveBatchTx(tx, input.BusinessID, input.Product.ID, input.Variant.ID, allocation)
 		if err != nil {
 			return nil, err
@@ -1514,9 +1515,6 @@ func (s *InventoryService) applyBatchMutationTx(tx *gorm.DB, input inventoryMuta
 		}
 		balances = append(balances, balance)
 	}
-	if math.Abs(total-math.Abs(input.Quantity)) > 0.0001 {
-		return nil, fmt.Errorf("batch allocations must sum to the requested quantity")
-	}
 	if err := s.refreshCachesTx(tx, input.Product.ID, input.Variant.ID, input.WarehouseID); err != nil {
 		return nil, err
 	}
@@ -1524,18 +1522,15 @@ func (s *InventoryService) applyBatchMutationTx(tx *gorm.DB, input inventoryMuta
 }
 
 func (s *InventoryService) applySerialMutationTx(tx *gorm.DB, input inventoryMutationInput) ([]*models.InventoryBalance, error) {
-	if len(input.SerialIDs) == 0 {
-		return nil, fmt.Errorf("serial IDs are required for serial-tracked variants")
+	serialIDs, err := normalizeInventorySerialIDs(input.Quantity, input.SerialIDs)
+	if err != nil {
+		return nil, err
 	}
-	if math.Abs(math.Abs(input.Quantity)-float64(len(input.SerialIDs))) > 0.0001 {
-		return nil, fmt.Errorf("serial ID count must match quantity")
-	}
-	balances := make([]*models.InventoryBalance, 0, len(input.SerialIDs))
-	for _, serialValue := range input.SerialIDs {
+	balances := make([]*models.InventoryBalance, 0, len(serialIDs))
+	for _, serialValue := range serialIDs {
 		var serial *models.ProductSerialNumber
-		var err error
 		if input.Quantity > 0 {
-			serial, err = s.createOrLoadSerialTx(tx, input.BusinessID, input.Product.ID, input.Variant.ID, input.WarehouseID, serialValue)
+			serial, err = createInventorySerialTx(tx, input.BusinessID, input.Product.ID, input.Variant.ID, input.WarehouseID, serialValue)
 			if err != nil {
 				return nil, err
 			}
@@ -1584,13 +1579,11 @@ func (s *InventoryService) applySerialMutationTx(tx *gorm.DB, input inventoryMut
 }
 
 func (s *InventoryService) transferSerialsTx(tx *gorm.DB, product *models.Product, variant *models.ProductVariant, input InventoryTransferInput) error {
-	if len(input.SerialIDs) == 0 {
-		return fmt.Errorf("serial IDs are required for serial-tracked transfers")
+	serialIDs, err := normalizeInventorySerialIDs(input.Quantity, input.SerialIDs)
+	if err != nil {
+		return err
 	}
-	if math.Abs(input.Quantity-float64(len(input.SerialIDs))) > 0.0001 {
-		return fmt.Errorf("serial ID count must match transfer quantity")
-	}
-	for _, serialValue := range input.SerialIDs {
+	for _, serialValue := range serialIDs {
 		serial, err := s.requireAvailableSerialTx(tx, input.BusinessID, product.ID, variant.ID, input.FromWarehouseID, serialValue)
 		if err != nil {
 			return err
@@ -1781,21 +1774,23 @@ func (s *InventoryService) resolveBatchTx(tx *gorm.DB, businessID, productID, va
 	return &batch, nil
 }
 
-func (s *InventoryService) createOrLoadSerialTx(tx *gorm.DB, businessID, productID, variantID, warehouseID, serialValue string) (*models.ProductSerialNumber, error) {
+func createInventorySerialTx(tx *gorm.DB, businessID, productID, variantID, warehouseID, serialValue string) (*models.ProductSerialNumber, error) {
 	serialValue = strings.TrimSpace(serialValue)
 	if serialValue == "" {
 		return nil, fmt.Errorf("serial number is required")
 	}
 	var serial models.ProductSerialNumber
-	err := tx.Where("(serial_number = ? OR imei = ?) AND business_id = ? AND deleted_at IS NULL", serialValue, serialValue, businessID).First(&serial).Error
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("(serial_number = ? OR imei = ?) AND business_id = ? AND deleted_at IS NULL", serialValue, serialValue, businessID).
+		First(&serial).Error
 	if err == nil {
-		if serial.Status != models.SerialStatusAvailable {
-			return nil, fmt.Errorf("serial %s is not available for stock in", serialValue)
+		if serial.ProductID != productID || serial.VariantID != variantID {
+			return nil, fmt.Errorf("serial %s belongs to another product", serialValue)
 		}
-		if serial.WarehouseID != nil && *serial.WarehouseID != warehouseID {
-			return nil, fmt.Errorf("serial %s already belongs to another warehouse", serialValue)
+		if serial.Status == models.SerialStatusAvailable && serial.WarehouseID != nil {
+			return nil, fmt.Errorf("serial %s is already in stock", serialValue)
 		}
-		return &serial, nil
+		return nil, fmt.Errorf("serial %s is not available for stock in", serialValue)
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
@@ -1815,8 +1810,14 @@ func (s *InventoryService) createOrLoadSerialTx(tx *gorm.DB, businessID, product
 }
 
 func (s *InventoryService) requireAvailableSerialTx(tx *gorm.DB, businessID, productID, variantID, warehouseID, serialValue string) (*models.ProductSerialNumber, error) {
+	serialValue = strings.TrimSpace(serialValue)
+	if serialValue == "" {
+		return nil, fmt.Errorf("serial number is required")
+	}
 	var serial models.ProductSerialNumber
-	err := tx.Where("(serial_number = ? OR imei = ?) AND business_id = ? AND product_id = ? AND variant_id = ? AND deleted_at IS NULL", serialValue, serialValue, businessID, productID, variantID).First(&serial).Error
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("(serial_number = ? OR imei = ?) AND business_id = ? AND product_id = ? AND variant_id = ? AND deleted_at IS NULL", serialValue, serialValue, businessID, productID, variantID).
+		First(&serial).Error
 	if err != nil {
 		return nil, err
 	}
@@ -1827,6 +1828,49 @@ func (s *InventoryService) requireAvailableSerialTx(tx *gorm.DB, businessID, pro
 		return nil, fmt.Errorf("serial %s is not in the requested warehouse", serialValue)
 	}
 	return &serial, nil
+}
+
+func validateInventoryBatchAllocations(quantity float64, allocations []BatchAllocationInput) error {
+	if math.IsNaN(quantity) || math.IsInf(quantity, 0) || math.Abs(quantity) < 0.0001 {
+		return fmt.Errorf("inventory quantity must be a non-zero finite number")
+	}
+	if len(allocations) == 0 {
+		return fmt.Errorf("batch allocations are required for batch-tracked variants")
+	}
+	total := 0.0
+	for _, allocation := range allocations {
+		if math.IsNaN(allocation.Quantity) || math.IsInf(allocation.Quantity, 0) || allocation.Quantity <= 0 {
+			return fmt.Errorf("batch allocation quantities must be positive finite numbers")
+		}
+		total += allocation.Quantity
+	}
+	if math.Abs(total-math.Abs(quantity)) > 0.0001 {
+		return fmt.Errorf("batch allocations must sum to the requested quantity")
+	}
+	return nil
+}
+
+func normalizeInventorySerialIDs(quantity float64, serialIDs []string) ([]string, error) {
+	if math.IsNaN(quantity) || math.IsInf(quantity, 0) || math.Abs(quantity) < 0.0001 {
+		return nil, fmt.Errorf("inventory quantity must be a non-zero finite number")
+	}
+	if math.Abs(math.Abs(quantity)-float64(len(serialIDs))) > 0.0001 {
+		return nil, fmt.Errorf("serial ID count must match quantity")
+	}
+	normalized := make([]string, 0, len(serialIDs))
+	seen := make(map[string]struct{}, len(serialIDs))
+	for _, value := range serialIDs {
+		serialID := strings.TrimSpace(value)
+		if serialID == "" {
+			return nil, fmt.Errorf("serial number is required")
+		}
+		if _, exists := seen[serialID]; exists {
+			return nil, fmt.Errorf("duplicate serial ID %s", serialID)
+		}
+		seen[serialID] = struct{}{}
+		normalized = append(normalized, serialID)
+	}
+	return normalized, nil
 }
 
 func (s *InventoryService) currentOnHandTx(tx *gorm.DB, businessID, productID, variantID, warehouseID string) (float64, error) {
