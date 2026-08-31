@@ -39,6 +39,9 @@ func TestStorefrontCheckoutPostgresSerializesClaimOrderAndReservation(t *testing
 		&models.InvoiceItem{},
 		&models.OutboxEvent{},
 		&models.ActivityLog{},
+		&models.Journal{},
+		&models.JournalLine{},
+		&models.LedgerEntry{},
 		&models.InventoryReservation{},
 		&models.APIIdempotencyKey{},
 		&models.StorefrontCoupon{},
@@ -48,6 +51,9 @@ func TestStorefrontCheckoutPostgresSerializesClaimOrderAndReservation(t *testing
 		&models.StoreOrderEvent{},
 		&models.WhatsAppConfig{},
 	))
+	require.NoError(t, database.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_journals_business_source
+		ON journals (business_id, source_type, source_id)
+		WHERE source_type <> '' AND source_id IS NOT NULL AND deleted_at IS NULL`).Error)
 
 	storefront := &models.Storefront{
 		ID: uuid.NewString(), BusinessID: fixture.businessID, Name: "Invariant store", Slug: "invariant-store",
@@ -63,13 +69,16 @@ func TestStorefrontCheckoutPostgresSerializesClaimOrderAndReservation(t *testing
 	customerRepo := postgresrepo.NewCustomerRepository(database)
 	productRepo := postgresrepo.NewProductRepository(database)
 	inventory := NewInventoryService(database, nil, productRepo, businessRepo, nil, logger.New())
+	journals := NewJournalService(database, postgresrepo.NewJournalRepository(database), logger.New())
 	documents := &DocumentService{
 		db: database, businessRepo: businessRepo, customerRepo: customerRepo,
 		productRepo: productRepo, inventory: inventory, log: logger.New(),
 	}
 	invoiceRepo := postgresrepo.NewInvoiceRepository(database)
 	if configurer, ok := invoiceRepo.(invoiceIssueStockEffectConfigurer); ok {
-		configurer.ConfigureInvoiceIssueStockEffect(inventory.ApplyDocumentTx)
+		configurer.ConfigureInvoiceIssueStockEffect(func(ctx context.Context, tx *gorm.DB, document *models.Document) error {
+			return applyCanonicalInvoiceIssueEffects(ctx, tx, document, inventory, journals)
+		})
 	}
 	invoiceService := NewInvoiceService(
 		database, nil, invoiceRepo, businessRepo, productRepo, customerRepo, documents,
@@ -216,6 +225,15 @@ func assertStorefrontApprovalCounts(t *testing.T, database *gorm.DB, fixture inv
 		Where("business_id = ? AND document_id = ? AND status = ?", fixture.businessID, models.StringValue(order.SalesOrderID), "consumed").
 		Count(&consumedReservations).Error)
 	require.Equal(t, int64(1), consumedReservations)
+	var journal models.Journal
+	require.NoError(t, database.Preload("Lines").
+		Where("business_id = ? AND source_type = ? AND source_id = ?", fixture.businessID, "document", invoiceID).
+		First(&journal).Error)
+	require.Equal(t, models.JournalStatusPosted, journal.Status)
+	require.GreaterOrEqual(t, len(journal.Lines), 2)
+	var ledgerCount int64
+	require.NoError(t, database.Model(&models.LedgerEntry{}).Where("transaction_id = ?", journal.ID).Count(&ledgerCount).Error)
+	require.Equal(t, int64(len(journal.Lines)), ledgerCount)
 }
 
 func assertStorefrontCancellationCounts(t *testing.T, database *gorm.DB, fixture inventoryTransferFixture, order *models.StoreOrder) {

@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"fmt"
 
 	"invoice-backend/internal/config"
 	"invoice-backend/internal/models"
@@ -18,6 +19,23 @@ import (
 
 type invoiceIssueStockEffectConfigurer interface {
 	ConfigureInvoiceIssueStockEffect(func(context.Context, *gorm.DB, *models.Document) error)
+}
+
+func applyCanonicalInvoiceIssueEffects(
+	ctx context.Context,
+	tx *gorm.DB,
+	document *models.Document,
+	inventory *InventoryService,
+	journals *JournalService,
+) error {
+	if inventory == nil || journals == nil {
+		return fmt.Errorf("canonical invoice issue effects are not configured")
+	}
+	if err := inventory.ApplyDocumentTx(ctx, tx, document); err != nil {
+		return err
+	}
+	_, err := journals.CreateAutoJournalForDocumentTx(ctx, tx, document)
+	return err
 }
 
 type Container struct {
@@ -111,10 +129,12 @@ func NewContainer(
 	a2aSigner, _ := ap2.NewSignatureService()
 	a2aClient := a2a.NewA2AClient(a2aSigner, log)
 	inventorySvc := NewInventoryService(db, inventoryRepo, productRepo, businessRepo, teamRepo, log)
-	if configurer, ok := invoiceRepo.(invoiceIssueStockEffectConfigurer); ok {
-		configurer.ConfigureInvoiceIssueStockEffect(inventorySvc.ApplyDocumentTx)
-	}
 	journalSvc := NewJournalService(db, journalRepo, log)
+	if configurer, ok := invoiceRepo.(invoiceIssueStockEffectConfigurer); ok {
+		configurer.ConfigureInvoiceIssueStockEffect(func(ctx context.Context, tx *gorm.DB, document *models.Document) error {
+			return applyCanonicalInvoiceIssueEffects(ctx, tx, document, inventorySvc, journalSvc)
+		})
+	}
 	shippingSvc := NewShippingService(cfg, shippingRepo, customerRepo, vendorRepo, log)
 	documentSvc := NewDocumentService(db, cfg, resolver, documentRepo, businessRepo, customerRepo, vendorRepo, productRepo, inventorySvc, journalSvc, shippingSvc, aws, businessAuthSvc, log)
 	barcodeSvc := NewBarcodeService(db, log)

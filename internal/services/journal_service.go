@@ -282,11 +282,32 @@ func (s *JournalService) ReverseByBusiness(ctx context.Context, businessID, id s
 }
 
 func (s *JournalService) CreateAutoJournalForDocument(ctx context.Context, document *models.Document) (*models.Journal, error) {
+	if err := s.requireDatabase(); err != nil {
+		return nil, err
+	}
+	var journal *models.Journal
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var err error
+		journal, err = s.CreateAutoJournalForDocumentTx(ctx, tx, document)
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	return journal, nil
+}
+
+func (s *JournalService) CreateAutoJournalForDocumentTx(ctx context.Context, tx *gorm.DB, document *models.Document) (*models.Journal, error) {
+	if tx == nil {
+		return nil, fmt.Errorf("journal transaction is required")
+	}
+	if document == nil || document.ID == "" || document.BusinessID == "" {
+		return nil, fmt.Errorf("issued document is required")
+	}
 	lines := buildJournalLinesForDocument(document)
 	if len(lines) == 0 {
 		return nil, nil
 	}
-	return s.CreateByBusiness(ctx, document.BusinessID, CreateJournalInput{
+	journal, err := s.buildJournal(ctx, document.BusinessID, CreateJournalInput{
 		Name:        fmt.Sprintf("%s %s", document.DocumentType, document.SerialNumber),
 		Reference:   document.SerialNumber,
 		ProjectID:   normalizeProjectID(derefString(document.ProjectID)),
@@ -294,30 +315,45 @@ func (s *JournalService) CreateAutoJournalForDocument(ctx context.Context, docum
 		Status:      models.JournalStatusPosted,
 		Lines:       lines,
 	})
+	if err != nil {
+		return nil, err
+	}
+	journal.SourceType = "document"
+	journal.SourceID = &document.ID
+	postedAt := time.Now().UTC()
+	journal.PostedAt = &postedAt
+	if err := createJournalTx(tx.WithContext(ctx), journal); err != nil {
+		return nil, err
+	}
+	if err := projectJournalLedgerTx(tx.WithContext(ctx), journal); err != nil {
+		return nil, err
+	}
+	return journal, nil
 }
 
 func buildJournalLinesForDocument(document *models.Document) []CreateJournalLineInput {
+	var lines []CreateJournalLineInput
 	switch document.DocumentType {
 	case models.DocumentTypeSalesInvoice, models.DocumentTypeBillOfSupply:
-		return []CreateJournalLineInput{
+		lines = []CreateJournalLineInput{
 			{AccountCode: "AR", AccountName: "Accounts Receivable", EntryType: "debit", Amount: document.Total, Currency: document.Currency, Description: document.SerialNumber, DocumentID: &document.ID},
 			{AccountCode: "REV", AccountName: "Revenue", EntryType: "credit", Amount: document.Subtotal - document.DiscountTotal, Currency: document.Currency, Description: document.SerialNumber, DocumentID: &document.ID},
 			{AccountCode: "OUT_GST", AccountName: "Output GST", EntryType: "credit", Amount: document.TaxTotal + document.CessTotal, Currency: document.Currency, Description: document.SerialNumber, DocumentID: &document.ID},
 		}
 	case models.DocumentTypeCreditNote:
-		return []CreateJournalLineInput{
+		lines = []CreateJournalLineInput{
 			{AccountCode: "REV", AccountName: "Revenue", EntryType: "debit", Amount: document.Subtotal - document.DiscountTotal, Currency: document.Currency, Description: document.SerialNumber, DocumentID: &document.ID},
 			{AccountCode: "OUT_GST", AccountName: "Output GST", EntryType: "debit", Amount: document.TaxTotal + document.CessTotal, Currency: document.Currency, Description: document.SerialNumber, DocumentID: &document.ID},
 			{AccountCode: "AR", AccountName: "Accounts Receivable", EntryType: "credit", Amount: document.Total, Currency: document.Currency, Description: document.SerialNumber, DocumentID: &document.ID},
 		}
 	case models.DocumentTypePurchaseInvoice, models.DocumentTypeExpense:
-		return []CreateJournalLineInput{
+		lines = []CreateJournalLineInput{
 			{AccountCode: "INV", AccountName: "Inventory / Expense", EntryType: "debit", Amount: document.Subtotal - document.DiscountTotal, Currency: document.Currency, Description: document.SerialNumber, DocumentID: &document.ID},
 			{AccountCode: "IN_GST", AccountName: "Input GST", EntryType: "debit", Amount: document.TaxTotal + document.CessTotal, Currency: document.Currency, Description: document.SerialNumber, DocumentID: &document.ID},
 			{AccountCode: "AP", AccountName: "Accounts Payable", EntryType: "credit", Amount: document.Total, Currency: document.Currency, Description: document.SerialNumber, DocumentID: &document.ID},
 		}
 	case models.DocumentTypeDebitNote:
-		return []CreateJournalLineInput{
+		lines = []CreateJournalLineInput{
 			{AccountCode: "AP", AccountName: "Accounts Payable", EntryType: "debit", Amount: document.Total, Currency: document.Currency, Description: document.SerialNumber, DocumentID: &document.ID},
 			{AccountCode: "INV", AccountName: "Inventory / Expense", EntryType: "credit", Amount: document.Subtotal - document.DiscountTotal, Currency: document.Currency, Description: document.SerialNumber, DocumentID: &document.ID},
 			{AccountCode: "IN_GST", AccountName: "Input GST", EntryType: "credit", Amount: document.TaxTotal + document.CessTotal, Currency: document.Currency, Description: document.SerialNumber, DocumentID: &document.ID},
@@ -325,6 +361,14 @@ func buildJournalLinesForDocument(document *models.Document) []CreateJournalLine
 	default:
 		return nil
 	}
+	result := make([]CreateJournalLineInput, 0, len(lines))
+	for _, line := range lines {
+		if line.Amount == 0 {
+			continue
+		}
+		result = append(result, line)
+	}
+	return result
 }
 
 func (s *JournalService) requireDatabase() error {
@@ -338,7 +382,11 @@ func journalMinorUnits(amount float64) (int64, error) {
 	if math.IsNaN(amount) || math.IsInf(amount, 0) || amount <= 0 {
 		return 0, fmt.Errorf("journal line amount must be positive")
 	}
-	return int64(math.Floor((amount * 100) + 0.500000001)), nil
+	minor := int64(math.Floor((amount * 100) + 0.500000001))
+	if minor <= 0 {
+		return 0, fmt.Errorf("journal line amount must be positive after rounding")
+	}
+	return minor, nil
 }
 
 func createJournalTx(tx *gorm.DB, journal *models.Journal) error {

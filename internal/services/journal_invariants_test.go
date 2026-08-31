@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/postgres"
@@ -68,6 +69,40 @@ func TestPostedJournalCreationRollsBackWhenLedgerProjectionFails(t *testing.T) {
 	var lineCount int64
 	require.NoError(t, db.Model(&models.JournalLine{}).Count(&lineCount).Error)
 	require.Zero(t, lineCount)
+}
+
+func TestCanonicalInvoiceIssueEffectsCreateSourceLinkedPostedJournal(t *testing.T) {
+	db := newJournalInvariantDB(t)
+	journalService := NewJournalService(db, postgres.NewJournalRepository(db), logger.New())
+	documentID := uuid.NewString()
+	businessID := uuid.NewString()
+	document := &models.Document{
+		ID: documentID, BusinessID: businessID, DocumentType: models.DocumentTypeBillOfSupply,
+		SerialNumber: "BOS/26-27/000001", Currency: "INR", IssueDate: time.Now().UTC(),
+		Subtotal: 100, Total: 100,
+	}
+
+	err := db.Transaction(func(tx *gorm.DB) error {
+		return applyCanonicalInvoiceIssueEffects(
+			context.Background(),
+			tx,
+			document,
+			&InventoryService{db: db},
+			journalService,
+		)
+	})
+	require.NoError(t, err)
+
+	var journal models.Journal
+	require.NoError(t, db.Preload("Lines").
+		Where("business_id = ? AND source_type = ? AND source_id = ?", businessID, "document", documentID).
+		First(&journal).Error)
+	require.Equal(t, models.JournalStatusPosted, journal.Status)
+	require.NotNil(t, journal.PostedAt)
+	require.Len(t, journal.Lines, 2)
+	var ledgerCount int64
+	require.NoError(t, db.Model(&models.LedgerEntry{}).Where("transaction_id = ?", journal.ID).Count(&ledgerCount).Error)
+	require.Equal(t, int64(2), ledgerCount)
 }
 
 func TestJournalBalanceUsesPersistedMinorUnits(t *testing.T) {
