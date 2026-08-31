@@ -155,6 +155,21 @@ func TestStorefrontCheckoutPostgresSerializesClaimOrderAndReservation(t *testing
 		require.Equal(t, invoiceID, *approved.SalesInvoiceID)
 	}
 	assertStorefrontApprovalCounts(t, database, fixture, replay.Order.ID, invoiceID)
+
+	_, err = service.CancelStoreOrder(approvalContext, fixture.businessID, storefront.ID, replay.Order.ID, "unsafe direct cancel")
+	require.ErrorContains(t, err, "compensating credit note")
+
+	cancellableInput := input
+	cancellableInput.Items = []CheckoutItemInput{{ProductID: fixture.productID, Quantity: 10}}
+	cancellable, err := service.Checkout(context.Background(), storefront.Slug, uuid.NewString(), cancellableInput)
+	require.NoError(t, err)
+	require.NotNil(t, cancellable.Order.SalesOrderID)
+	firstCancellation, err := service.CancelStoreOrder(approvalContext, fixture.businessID, storefront.ID, cancellable.Order.ID, "customer request")
+	require.NoError(t, err)
+	secondCancellation, err := service.CancelStoreOrder(approvalContext, fixture.businessID, storefront.ID, cancellable.Order.ID, "retry")
+	require.NoError(t, err)
+	require.Equal(t, firstCancellation.CancellationReason, secondCancellation.CancellationReason)
+	assertStorefrontCancellationCounts(t, database, fixture, cancellable.Order)
 }
 
 func assertStorefrontCheckoutCounts(t *testing.T, database *gorm.DB, fixture inventoryTransferFixture, storefrontID string, reserved float64) {
@@ -192,6 +207,35 @@ func assertStorefrontApprovalCounts(t *testing.T, database *gorm.DB, fixture inv
 	var approvedEvents int64
 	require.NoError(t, database.Model(&models.StoreOrderEvent{}).Where("store_order_id = ? AND event_type = ?", orderID, "store_order.approved").Count(&approvedEvents).Error)
 	require.Equal(t, int64(1), approvedEvents)
+	var balance models.InventoryBalance
+	require.NoError(t, database.Where("business_id = ? AND warehouse_id = ?", fixture.businessID, fixture.sourceID).First(&balance).Error)
+	require.Equal(t, float64(40), balance.OnHand)
+	require.Zero(t, balance.Reserved)
+	var consumedReservations int64
+	require.NoError(t, database.Model(&models.InventoryReservation{}).
+		Where("business_id = ? AND document_id = ? AND status = ?", fixture.businessID, models.StringValue(order.SalesOrderID), "consumed").
+		Count(&consumedReservations).Error)
+	require.Equal(t, int64(1), consumedReservations)
+}
+
+func assertStorefrontCancellationCounts(t *testing.T, database *gorm.DB, fixture inventoryTransferFixture, order *models.StoreOrder) {
+	t.Helper()
+	require.NotNil(t, order)
+	require.NotNil(t, order.SalesOrderID)
+	var persisted models.StoreOrder
+	require.NoError(t, database.Where("id = ?", order.ID).First(&persisted).Error)
+	require.Equal(t, models.StoreOrderStatusCancelled, persisted.Status)
+	require.Equal(t, "customer request", persisted.CancellationReason)
+	var cancelledEvents int64
+	require.NoError(t, database.Model(&models.StoreOrderEvent{}).
+		Where("store_order_id = ? AND event_type = ?", order.ID, "store_order.cancelled").
+		Count(&cancelledEvents).Error)
+	require.Equal(t, int64(1), cancelledEvents)
+	var releasedReservations int64
+	require.NoError(t, database.Model(&models.InventoryReservation{}).
+		Where("business_id = ? AND document_id = ? AND status = ?", fixture.businessID, *order.SalesOrderID, "released").
+		Count(&releasedReservations).Error)
+	require.Equal(t, int64(1), releasedReservations)
 	var balance models.InventoryBalance
 	require.NoError(t, database.Where("business_id = ? AND warehouse_id = ?", fixture.businessID, fixture.sourceID).First(&balance).Error)
 	require.Equal(t, float64(40), balance.OnHand)

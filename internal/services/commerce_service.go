@@ -1048,23 +1048,56 @@ func (s *CommerceService) ApproveStoreOrder(ctx context.Context, businessID, sto
 }
 
 func (s *CommerceService) CancelStoreOrder(ctx context.Context, businessID, storefrontID, orderID, reason string) (*models.StoreOrder, error) {
-	order, _, err := s.getStoreOrderForBusiness(ctx, businessID, storefrontID, orderID)
-	if err != nil {
+	if _, err := s.GetStorefront(ctx, businessID, storefrontID); err != nil {
 		return nil, err
 	}
-	now := time.Now().UTC()
-	order.Status = models.StoreOrderStatusCancelled
-	order.CancelledAt = &now
-	order.CancellationReason = reason
-	if err := s.db.WithContext(ctx).Save(order).Error; err != nil {
+	var order models.StoreOrder
+	transitioned := false
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Preload("Lines", "deleted_at IS NULL").
+			Where("id = ? AND business_id = ? AND storefront_id = ? AND deleted_at IS NULL", orderID, businessID, storefrontID).
+			First(&order).Error; err != nil {
+			return err
+		}
+		if order.SalesInvoiceID != nil && strings.TrimSpace(*order.SalesInvoiceID) != "" {
+			return fmt.Errorf("issued storefront orders require a compensating credit note before cancellation")
+		}
+		if order.Status == models.StoreOrderStatusCancelled {
+			return nil
+		}
+		now := time.Now().UTC()
+		order.Status = models.StoreOrderStatusCancelled
+		order.CancelledAt = &now
+		order.CancellationReason = reason
+		if order.SalesOrderID != nil && strings.TrimSpace(*order.SalesOrderID) != "" {
+			if s.inventory == nil {
+				return fmt.Errorf("inventory service is not configured")
+			}
+			if err := s.inventory.ReleaseReservationsTx(ctx, tx, businessID, *order.SalesOrderID); err != nil {
+				return err
+			}
+		}
+		if err := tx.Save(&order).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(&models.StoreOrderEvent{
+			StoreOrderID: order.ID,
+			EventType:    "store_order.cancelled",
+			Status:       order.Status,
+			Payload:      mustMarshalMap(map[string]interface{}{"reason": reason}),
+		}).Error; err != nil {
+			return err
+		}
+		transitioned = true
+		return nil
+	}); err != nil {
 		return nil, err
 	}
-	if order.SalesOrderID != nil && *order.SalesOrderID != "" && (order.SalesInvoiceID == nil || *order.SalesInvoiceID == "") {
-		_ = s.inventory.ReleaseReservations(ctx, *order.SalesOrderID)
+	if transitioned {
+		s.queueStoreOrderNotification(ctx, &order, "store_order.cancelled")
 	}
-	_ = s.recordStoreOrderEvent(ctx, order.ID, "store_order.cancelled", order.Status, map[string]interface{}{"reason": reason})
-	s.queueStoreOrderNotification(ctx, order, "store_order.cancelled")
-	return order, nil
+	return &order, nil
 }
 
 func (s *CommerceService) GetCatalog(ctx context.Context, slug string) (*PublicStorefrontCatalogResponse, error) {
@@ -2243,21 +2276,6 @@ func createStoreOrderDocumentRevisionTx(
 	}).Error
 }
 
-func (s *CommerceService) getStoreOrderForBusiness(ctx context.Context, businessID, storefrontID, orderID string) (*models.StoreOrder, *models.Storefront, error) {
-	storefront, err := s.GetStorefront(ctx, businessID, storefrontID)
-	if err != nil {
-		return nil, nil, err
-	}
-	var order models.StoreOrder
-	if err := s.db.WithContext(ctx).
-		Preload("Lines", "deleted_at IS NULL").
-		Where("id = ? AND business_id = ? AND storefront_id = ? AND deleted_at IS NULL", orderID, businessID, storefrontID).
-		First(&order).Error; err != nil {
-		return nil, nil, err
-	}
-	return &order, storefront, nil
-}
-
 func (s *CommerceService) validateBranchID(ctx context.Context, businessID, branchID string) error {
 	if branchID == "" {
 		return nil
@@ -2321,18 +2339,6 @@ func (s *CommerceService) driveUsageAndLimit(ctx context.Context, businessID str
 		}
 	}
 	return usageBytes, 0, nil
-}
-
-func (s *CommerceService) recordStoreOrderEvent(ctx context.Context, orderID, eventType, status string, payload map[string]interface{}) error {
-	if orderID == "" {
-		return nil
-	}
-	return s.db.WithContext(ctx).Create(&models.StoreOrderEvent{
-		StoreOrderID: orderID,
-		EventType:    eventType,
-		Status:       status,
-		Payload:      mustMarshalMap(payload),
-	}).Error
 }
 
 func (s *CommerceService) queueStoreOrderNotification(ctx context.Context, order *models.StoreOrder, eventKey string) {

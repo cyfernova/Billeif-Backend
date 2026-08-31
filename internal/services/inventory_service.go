@@ -10,6 +10,7 @@ import (
 	"invoice-backend/pkg/logger"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type InventoryService struct {
@@ -80,6 +81,7 @@ func (s *InventoryService) ApplyDocumentTx(ctx context.Context, tx *gorm.DB, doc
 	}
 	tx = tx.WithContext(ctx)
 	direction, shouldPost, shouldReserve := stockBehaviorForDocument(document)
+	reservationDocumentID := sourceReservationDocumentID(document)
 	if !shouldPost && !shouldReserve {
 		return nil
 	}
@@ -141,10 +143,55 @@ func (s *InventoryService) ApplyDocumentTx(ctx context.Context, tx *gorm.DB, doc
 			return err
 		}
 		if direction == models.StockMoveDirectionOut {
-			if err := s.releaseInventoryTx(tx, document.BusinessID, product.ID, variant.ID, warehouseID, qty, document.ID, &line.ID, reason); err != nil && !strings.Contains(strings.ToLower(err.Error()), "record not found") {
+			releaseDocumentID := document.ID
+			if reservationDocumentID != "" {
+				releaseDocumentID = reservationDocumentID
+			}
+			if err := s.releaseInventoryTx(tx, document.BusinessID, product.ID, variant.ID, warehouseID, qty, releaseDocumentID, &line.ID, reason); err != nil && !strings.Contains(strings.ToLower(err.Error()), "record not found") {
 				return err
 			}
+			if reservationDocumentID != "" {
+				if err := consumeSourceReservationTx(tx, document.BusinessID, reservationDocumentID, product.ID, warehouseID, qty); err != nil {
+					return err
+				}
+			}
 		}
+	}
+	return nil
+}
+
+func sourceReservationDocumentID(document *models.Document) string {
+	if document == nil {
+		return ""
+	}
+	sourceLinkage := unmarshalJSONMap(document.SourceLinkage)
+	value, _ := sourceLinkage["sales_order_document_id"].(string)
+	return strings.TrimSpace(value)
+}
+
+func consumeSourceReservationTx(tx *gorm.DB, businessID, documentID, productID, warehouseID string, quantity float64) error {
+	var reservation models.InventoryReservation
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where(
+			"business_id = ? AND document_id = ? AND product_id = ? AND warehouse_id = ? AND quantity = ? AND status = 'active' AND deleted_at IS NULL",
+			businessID,
+			documentID,
+			productID,
+			warehouseID,
+			quantity,
+		).
+		Order("created_at ASC, id ASC").
+		First(&reservation).Error; err != nil {
+		return fmt.Errorf("active source reservation does not match issued stock line: %w", err)
+	}
+	result := tx.Model(&models.InventoryReservation{}).
+		Where("id = ? AND business_id = ? AND status = 'active'", reservation.ID, businessID).
+		Update("status", "consumed")
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return fmt.Errorf("active source reservation changed before consumption")
 	}
 	return nil
 }
@@ -154,24 +201,41 @@ func (s *InventoryService) ReleaseReservations(ctx context.Context, documentID s
 		return s.repo.ReleaseReservationsByDocument(ctx, documentID)
 	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var reservations []models.InventoryReservation
-		if err := tx.Where("document_id = ? AND status = 'active' AND deleted_at IS NULL", documentID).Find(&reservations).Error; err != nil {
+		return s.ReleaseReservationsTx(ctx, tx, "", documentID)
+	})
+}
+
+func (s *InventoryService) ReleaseReservationsTx(ctx context.Context, tx *gorm.DB, businessID, documentID string) error {
+	if tx == nil {
+		return fmt.Errorf("inventory transaction is required")
+	}
+	query := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("document_id = ? AND status = 'active' AND deleted_at IS NULL", documentID)
+	if strings.TrimSpace(businessID) != "" {
+		query = query.Where("business_id = ?", strings.TrimSpace(businessID))
+	}
+	var reservations []models.InventoryReservation
+	if err := query.Find(&reservations).Error; err != nil {
+		return err
+	}
+	for _, reservation := range reservations {
+		if reservation.WarehouseID == nil || strings.TrimSpace(*reservation.WarehouseID) == "" {
+			return fmt.Errorf("reservation %s has no warehouse", reservation.ID)
+		}
+		product, variant, err := s.resolveVariantTx(tx, reservation.BusinessID, reservation.ProductID, "")
+		if err != nil {
 			return err
 		}
-		for _, reservation := range reservations {
-			if reservation.WarehouseID != nil {
-				product, variant, err := s.resolveVariantTx(tx, reservation.BusinessID, reservation.ProductID, "")
-				if err != nil {
-					s.log.Warn("failed to resolve variant for reservation release", "reservation_id", reservation.ID, "error", err)
-					continue
-				}
-				if err := s.releaseInventoryTx(tx, reservation.BusinessID, product.ID, variant.ID, *reservation.WarehouseID, reservation.Quantity, reservation.DocumentID, reservation.DocumentLineID, "reservation release"); err != nil {
-					s.log.Warn("failed to release reservation balance", "reservation_id", reservation.ID, "error", err)
-				}
-			}
+		if err := s.releaseInventoryTx(tx, reservation.BusinessID, product.ID, variant.ID, *reservation.WarehouseID, reservation.Quantity, reservation.DocumentID, reservation.DocumentLineID, "reservation release"); err != nil {
+			return err
 		}
-		return s.repo.ReleaseReservationsByDocument(ctx, documentID)
-	})
+	}
+	update := tx.WithContext(ctx).Model(&models.InventoryReservation{}).
+		Where("document_id = ? AND status = 'active' AND deleted_at IS NULL", documentID)
+	if strings.TrimSpace(businessID) != "" {
+		update = update.Where("business_id = ?", strings.TrimSpace(businessID))
+	}
+	return update.Update("status", "released").Error
 }
 
 func documentInventoryTransactionType(documentType, direction string) string {
