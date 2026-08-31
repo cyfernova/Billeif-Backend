@@ -58,6 +58,7 @@ type Handler struct {
 	Intent          *IntentHandler
 	WebSocket       *WebSocketHandler
 	WebSocketTicket *WebSocketTicketHandler
+	Notification    *NotificationHandler
 	LLM             *LLMHandler
 	SarvamTTS       *SarvamTTSHandler
 	VoiceSession    *VoiceSessionHandler
@@ -138,6 +139,7 @@ func New(
 		Intent:          NewIntentHandler(svcs.IntentProcessing, log),
 		WebSocket:       NewWebSocketHandler(wsHub, svcs.WebSocketConnection, svcs.WebSocketTicket, log),
 		WebSocketTicket: NewWebSocketTicketHandler(svcs.WebSocketTicket, log),
+		Notification:    NewNotificationHandler(svcs.Notification, log),
 		LLM:             NewLLMHandler(svcs.LLM, svcs.LLMChatHistory, log),
 		SarvamTTS:       NewSarvamTTSHandler(svcs.SarvamTTS, log),
 		VoiceSession:    NewVoiceSessionHandler(svcs.VoiceSession, log),

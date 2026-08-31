@@ -392,6 +392,7 @@ type Repositories struct {
 	Webhook         interfaces.WebhookRepository
 	Subscription    interfaces.SubscriptionRepository
 	WebSocketTicket interfaces.WebSocketTicketRepository
+	Notification    interfaces.NotificationRepository
 	AP2             interfaces.AP2Repository
 }
 
@@ -414,6 +415,7 @@ func initRepositories(db *gorm.DB) *Repositories {
 		Webhook:         postgresrepo.NewWebhookRepository(db),
 		Subscription:    postgresrepo.NewSubscriptionRepository(db),
 		WebSocketTicket: postgresrepo.NewWebSocketTicketRepository(db),
+		Notification:    postgresrepo.NewNotificationRepository(db),
 		AP2:             postgresrepo.NewAP2Repository(db),
 	}
 }
@@ -421,7 +423,7 @@ func initRepositories(db *gorm.DB) *Repositories {
 func initServices(cfg *config.Config, db *gorm.DB, repos *Repositories, aws *awsclients.Config, resolver services.ProviderConfigResolver, log *logger.Logger) *services.Container {
 	return services.NewContainer(cfg, resolver, db, repos.User, repos.Business, repos.Customer, repos.Vendor,
 		repos.Product, repos.Document, repos.Journal, repos.Inventory, repos.Shipping, repos.Invoice, repos.Payment, repos.Ledger, repos.Reporting, repos.Team,
-		repos.Webhook, repos.Subscription, repos.WebSocketTicket, repos.AP2, aws, log)
+		repos.Webhook, repos.Subscription, repos.WebSocketTicket, repos.Notification, repos.AP2, aws, log)
 }
 
 type renderProfilePasswordBackfiller interface {
@@ -682,6 +684,13 @@ func setupRouter(
 			protected.POST("/auth/profile-picture", h.Auth.UploadProfilePicture)
 			protected.PUT("/auth/profile-picture", h.Auth.UpdateProfilePicture)
 			protected.POST("/websocket/tickets", websocketRL, h.WebSocketTicket.Issue)
+
+			notifications := protected.Group("/notifications")
+			{
+				notifications.GET("", h.Notification.List)
+				notifications.POST("/read-all", userWriteRL, h.Notification.MarkAllRead)
+				notifications.POST("/:id/read", userWriteRL, h.Notification.MarkRead)
+			}
 
 			dashboard := protected.Group("/dashboard")
 			{

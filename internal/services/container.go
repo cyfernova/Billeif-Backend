@@ -64,6 +64,7 @@ type Container struct {
 	A2ABargaining       *A2ABargainingService
 	WebSocketConnection *WebSocketConnectionService
 	WebSocketTicket     *WebSocketTicketService
+	Notification        *NotificationService
 	AWS                 *awsclients.Config
 }
 
@@ -88,6 +89,7 @@ func NewContainer(
 	webhookRepo interfaces.WebhookRepository,
 	subscriptionRepo interfaces.SubscriptionRepository,
 	websocketTicketRepo interfaces.WebSocketTicketRepository,
+	notificationRepo interfaces.NotificationRepository,
 	ap2Repo interfaces.AP2Repository,
 	aws *awsclients.Config,
 	log *logger.Logger,
@@ -128,6 +130,7 @@ func NewContainer(
 	a2aBargainingSvc := NewA2ABargainingService(a2aClient, bargainingSvc, menteeSvc, ap2Repo, aws.SQS, cfg, log)
 	websocketConnectionSvc := NewWebSocketConnectionService(cfg, aws, log)
 	websocketTicketSvc := NewWebSocketTicketService(websocketTicketRepo, WebSocketTicketServiceOptions{})
+	notificationSvc := NewNotificationService(notificationRepo, NotificationServiceOptions{})
 	credentialProviderSvc := NewCredentialProviderServiceWithResolver(ap2Repo, cfg, resolver, log)
 	var voiceSessionSvc *voicesession.Service
 	if cfg.VoiceSession.Enabled() && aws != nil && aws.DynamoDB != nil && aws.AgentCore != nil {
@@ -231,6 +234,7 @@ func NewContainer(
 		A2ABargaining:       a2aBargainingSvc,
 		WebSocketConnection: websocketConnectionSvc,
 		WebSocketTicket:     websocketTicketSvc,
+		Notification:        notificationSvc,
 		AWS:                 aws,
 	}
 }

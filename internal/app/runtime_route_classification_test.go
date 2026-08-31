@@ -63,6 +63,7 @@ func TestEveryGinRouteRegistrationHasAnExplicitAccessClass(t *testing.T) {
 		"ledger":               routeBusiness,
 		"teams":                routeBusiness,
 		"webhooks":             routeBusiness,
+		"notifications":        routeBusiness,
 		"subscriptions":        routeBusiness,
 		"branches":             routeBusiness,
 		"roles":                routeBusiness,
