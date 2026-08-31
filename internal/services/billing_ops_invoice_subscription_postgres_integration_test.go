@@ -43,6 +43,7 @@ func TestGenerateInvoiceSubscriptionNowPostgresSerializesSameCommand(t *testing.
 		&models.InvoiceSubscription{},
 		&models.InvoiceSubscriptionLine{},
 		&models.InvoiceSubscriptionRun{},
+		&models.ActivityLog{},
 	))
 	subscription := &models.InvoiceSubscription{
 		ID: uuid.NewString(), BusinessID: fixture.businessID, CustomerID: uuid.NewString(),
@@ -103,6 +104,7 @@ func TestDispatchDueInvoiceSubscriptionsPostgresSerializesScheduledRun(t *testin
 		&models.InvoiceSubscription{},
 		&models.InvoiceSubscriptionLine{},
 		&models.InvoiceSubscriptionRun{},
+		&models.ActivityLog{},
 	))
 	dueAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond)
 	subscription := &models.InvoiceSubscription{

@@ -1430,6 +1430,9 @@ func (s *CommerceService) Checkout(ctx context.Context, slug, idempotencyKey str
 	if err != nil {
 		return nil, err
 	}
+	if strings.TrimSpace(salesOrder.ID) == "" {
+		salesOrder.ID = uuid.NewString()
+	}
 	order.SalesOrderID = stringPointer(salesOrder.ID)
 
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
