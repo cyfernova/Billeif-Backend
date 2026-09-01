@@ -350,7 +350,8 @@ func (s *SubscriptionLifecycleService) StartRenewable(
 				current.Status != models.SubscriptionStatusCancelled && current.Status != models.SubscriptionStatusExpired {
 				return ErrSubscriptionLifecycleConflict
 			}
-			if subscriptionHasCurrentPaidAccess(current, now) && normalizePlanCode(current.Plan, current.PlanCode) != "free" {
+			if current.Status != models.SubscriptionStatusCancelled && current.Status != models.SubscriptionStatusExpired &&
+				subscriptionHasCurrentPaidAccess(current, now) && normalizePlanCode(current.Plan, current.PlanCode) != "free" {
 				return ErrSubscriptionLifecycleConflict
 			}
 			aggregate = current
@@ -367,6 +368,9 @@ func (s *SubscriptionLifecycleService) StartRenewable(
 			return currentErr
 		}
 		fromStatus := aggregate.Status
+		if currentErr == nil {
+			resetSubscriptionForRenewableRestart(aggregate, now)
+		}
 		aggregate.Status = models.SubscriptionStatusPendingPayment
 		aggregate.BillingMode = models.SubscriptionBillingModeRenewable
 		aggregate.ProviderMode = settings.ProviderMode
@@ -872,30 +876,61 @@ func (s *SubscriptionLifecycleService) ScheduleCancellation(
 		return nil, ErrSubscriptionProviderUnknown
 	}
 	if strings.EqualFold(cancelled.Status, "cancelled") {
-		persistErr := s.repository.Transaction(ctx, func(tx interfaces.SubscriptionLifecycleRepository) error {
-			current, err := tx.GetByBusinessIDForUpdate(ctx, businessID)
-			if err != nil {
-				return err
-			}
-			current.Status = models.SubscriptionStatusCancelled
-			current.CancelAtPeriodEnd = false
-			cancelledAt := s.config.Now().UTC()
-			current.CancelledAt = &cancelledAt
-			return tx.SaveSubscription(ctx, current)
-		})
+		terminal, persistErr := s.finalizeImmediateCancellation(ctx, aggregate, actorUserID, idempotencyKey, requestHash)
 		if persistErr != nil {
-			_ = s.markCommandUnknown(ctx, aggregate, actorUserID, subscriptionCommandCancellation, idempotencyKey, "cancellation_persistence_unknown", now)
 			return nil, ErrSubscriptionProviderUnknown
 		}
-		aggregate.Status = models.SubscriptionStatusCancelled
-		aggregate.CancelAtPeriodEnd = false
-		aggregate.CancelledAt = firstTime(&now)
+		return mutationResponse(terminal), nil
 	}
 	if err := s.completeCommand(ctx, businessID, actorUserID, subscriptionCommandCancellation, idempotencyKey, requestHash); err != nil {
 		_ = s.markCommandUnknown(ctx, aggregate, actorUserID, subscriptionCommandCancellation, idempotencyKey, "cancellation_persistence_unknown", now)
 		return nil, ErrSubscriptionProviderUnknown
 	}
 	return mutationResponse(aggregate), nil
+}
+
+func (s *SubscriptionLifecycleService) finalizeImmediateCancellation(
+	ctx context.Context,
+	aggregate *models.Subscription,
+	actorUserID, idempotencyKey, requestHash string,
+) (*models.Subscription, error) {
+	var terminal *models.Subscription
+	err := s.repository.Transaction(ctx, func(tx interfaces.SubscriptionLifecycleRepository) error {
+		current, err := tx.GetByBusinessIDForUpdate(ctx, aggregate.BusinessID)
+		if err != nil || current.ID != aggregate.ID || current.Status != models.SubscriptionStatusCancellationScheduled {
+			return firstError(err, ErrSubscriptionLifecycleConflict)
+		}
+		command, err := tx.GetCommandForUpdate(ctx, aggregate.BusinessID, actorUserID, subscriptionCommandCancellation, idempotencyKey)
+		if err != nil || command.RequestHash != requestHash || command.Status != "initializing" {
+			return firstError(err, ErrSubscriptionLifecycleConflict)
+		}
+		fromStatus := current.Status
+		cancelledAt := s.config.Now().UTC()
+		current.Status = models.SubscriptionStatusCancelled
+		current.CancelAtPeriodEnd = false
+		current.CancellationEffectiveAt = nil
+		current.CancelledAt = &cancelledAt
+		current.ReconciliationCode = ""
+		if err := tx.SaveSubscription(ctx, current); err != nil {
+			return err
+		}
+		command.Status = "completed"
+		command.CompletedAt = &cancelledAt
+		if err := tx.SaveCommand(ctx, command); err != nil {
+			return err
+		}
+		if err := tx.CreateAudit(ctx, &models.SubscriptionAuditRecord{
+			ID: uuid.NewString(), BusinessID: current.BusinessID, SubscriptionID: current.ID, ActorUserID: actorUserID,
+			Action: "provider_cancellation_verified", FromStatus: fromStatus, ToStatus: current.Status,
+			FromPlanID: currentCatalogPlanID(current), ToPlanID: currentCatalogPlanID(current), ProviderMode: current.ProviderMode,
+			SanitizedCode: "provider_cancellation_verified", OccurredAt: cancelledAt,
+		}); err != nil {
+			return err
+		}
+		terminal = current
+		return nil
+	})
+	return terminal, err
 }
 
 func (s *SubscriptionLifecycleService) completeCommand(ctx context.Context, businessID, actorUserID, action, idempotencyKey, requestHash string) error {
@@ -1019,6 +1054,13 @@ func (s *SubscriptionLifecycleService) applySubscriptionEventTx(
 		}
 		start := time.Unix(providerSubscription.CurrentStart, 0).UTC()
 		end := time.Unix(providerSubscription.CurrentEnd, 0).UTC()
+		if aggregate.PendingProviderPlanID == providerSubscription.PlanID &&
+			(aggregate.PendingPlanEffectiveAt == nil || !start.Equal(aggregate.PendingPlanEffectiveAt.UTC())) {
+			return "pending_plan_boundary_mismatch", ErrSubscriptionProviderUnknown
+		}
+		if aggregate.LastProviderPaidCount > 0 && aggregate.PeriodEnd != nil && !start.Equal(aggregate.PeriodEnd.UTC()) {
+			return "provider_period_not_monotonic", ErrSubscriptionProviderUnknown
+		}
 		next := end
 		applyPlanToAggregate(aggregate, plan)
 		aggregate.Status = models.SubscriptionStatusActive
@@ -1122,6 +1164,31 @@ func applyPlanToAggregate(aggregate *models.Subscription, plan SubscriptionPlan)
 	aggregate.MaxCustomers = plan.Quotas[QuotaCustomers]
 	aggregate.MaxUsers = plan.Quotas[QuotaUsers]
 	aggregate.MaxStorageMB = plan.Quotas[QuotaStorageMB]
+}
+
+func resetSubscriptionForRenewableRestart(aggregate *models.Subscription, now time.Time) {
+	applyPlanToAggregate(aggregate, subscriptionPlanForCode("free"))
+	aggregate.BillingMode = models.SubscriptionBillingModeFree
+	aggregate.ProviderMode = ""
+	aggregate.ProviderCustomerID = ""
+	aggregate.ProviderSubscriptionID = ""
+	aggregate.ProviderPlanID = ""
+	aggregate.StartDate = now.UTC()
+	aggregate.EndDate = nil
+	aggregate.NextBillingDate = nil
+	aggregate.PeriodStart = nil
+	aggregate.PeriodEnd = nil
+	aggregate.NextRenewalAt = nil
+	aggregate.GraceDeadline = nil
+	aggregate.CancelAtPeriodEnd = false
+	aggregate.CancellationEffectiveAt = nil
+	aggregate.CancelledAt = nil
+	aggregate.PendingPlanID = ""
+	aggregate.PendingProviderPlanID = ""
+	aggregate.PendingPlanEffectiveAt = nil
+	aggregate.LastProviderEventAt = nil
+	aggregate.LastProviderPaidCount = 0
+	aggregate.ReconciliationCode = ""
 }
 
 func currentCatalogPlanID(subscription *models.Subscription) string {
