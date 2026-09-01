@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -54,6 +55,49 @@ func (s *LLMService) providerConfig(ctx context.Context, kind config.SecretKind)
 		return config.LLMConfig{}, err
 	}
 	return resolved.LLM, nil
+}
+
+func (s *LLMService) ProbeCapability(ctx context.Context, _ CapabilityProbeTarget) CapabilityProviderOutcome {
+	providerCfg, err := s.providerConfig(ctx, config.SecretLLM)
+	if err != nil {
+		return CapabilityProviderOutcome{Err: err}
+	}
+	endpoint, err := llmModelProbeURL(providerCfg.APIURL, providerCfg.Model)
+	if err != nil {
+		return CapabilityProviderOutcome{Err: err}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return CapabilityProviderOutcome{Err: err}
+	}
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(providerCfg.APIKey))
+	req.Header.Set("Accept", "application/json")
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return CapabilityProviderOutcome{Err: err}
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return CapabilityProviderOutcome{Err: &providerHTTPError{status: resp.StatusCode}}
+	}
+	return CapabilityProviderOutcome{}
+}
+
+func llmModelProbeURL(apiURL, model string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(apiURL))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", ErrCapabilityProbeUnsupported
+	}
+	path := strings.TrimRight(parsed.Path, "/")
+	if !strings.HasSuffix(path, "/chat/completions") {
+		return "", ErrCapabilityProbeUnsupported
+	}
+	parsed.Path = strings.TrimSuffix(path, "/chat/completions") + "/models/" + url.PathEscape(strings.TrimSpace(model))
+	parsed.RawPath = ""
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String(), nil
 }
 
 type LLMChatOptions struct {

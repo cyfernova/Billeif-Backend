@@ -12693,6 +12693,12 @@ const docTemplate = `{
                             }
                         }
                     },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CapabilityMutationError"
+                        }
+                    },
                     "404": {
                         "description": "Not Found",
                         "schema": {
@@ -12702,6 +12708,18 @@ const docTemplate = `{
                             }
                         }
                     },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CapabilityMutationError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CapabilityMutationError"
+                        }
+                    },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
@@ -12709,6 +12727,12 @@ const docTemplate = `{
                             "additionalProperties": {
                                 "type": "string"
                             }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CapabilityMutationError"
                         }
                     }
                 },
@@ -12764,12 +12788,6 @@ const docTemplate = `{
                             }
                         }
                     },
-                    "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.CapabilityMutationError"
-                        }
-                    },
                     "404": {
                         "description": "Not Found",
                         "schema": {
@@ -12779,18 +12797,6 @@ const docTemplate = `{
                             }
                         }
                     },
-                    "422": {
-                        "description": "Unprocessable Entity",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.CapabilityMutationError"
-                        }
-                    },
-                    "429": {
-                        "description": "Too Many Requests",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.CapabilityMutationError"
-                        }
-                    },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
@@ -12798,12 +12804,6 @@ const docTemplate = `{
                             "additionalProperties": {
                                 "type": "string"
                             }
-                        }
-                    },
-                    "503": {
-                        "description": "Service Unavailable",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.CapabilityMutationError"
                         }
                     }
                 },

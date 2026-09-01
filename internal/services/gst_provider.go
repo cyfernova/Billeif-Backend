@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -369,16 +370,16 @@ func (p *configuredGSTProvider) doJSON(ctx context.Context, method, path string,
 	}
 	defer resp.Body.Close()
 
-	var payload map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return nil, err
+	limitedBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, fmt.Errorf("read GST provider response: %w", err)
 	}
 	if resp.StatusCode >= 400 {
-		message := coalesceString(
-			readStringCandidate(payload, "error", "message", "detail", "data.error"),
-			fmt.Sprintf("gst provider returned status %d", resp.StatusCode),
-		)
-		return nil, fmt.Errorf("%s", message)
+		return nil, &providerHTTPError{status: resp.StatusCode}
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(limitedBody, &payload); err != nil {
+		return nil, fmt.Errorf("decode GST provider response: %w", err)
 	}
 	return payload, nil
 }

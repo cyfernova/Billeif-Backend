@@ -65,6 +65,31 @@ func TestCapabilityServiceUnknownCapabilityFailsClosed(t *testing.T) {
 	require.Equal(t, ReasonCapabilityUnknown, result.ReasonCode)
 }
 
+func TestGSTFeaturesShareTenantScopedProviderHealth(t *testing.T) {
+	now := time.Date(2026, 9, 1, 16, 10, 0, 0, time.UTC)
+	health := NewCapabilityHealthCache(CapabilityHealthCacheOptions{Now: func() time.Time { return now }})
+	require.NoError(t, health.Record("biz-1", CapabilityGSTProvider, CapabilityHealthObservation{Status: CapabilityProviderHealthy, ObservedAt: now}))
+	service := NewCapabilityService(CapabilityServiceOptions{
+		Configuration: config.CapabilityConfiguration{GST: true},
+		Entitlements: staticCapabilityEntitlements{
+			FeatureEInvoice: {Required: true, Entitled: true, Quota: CapabilityQuota{Available: true}},
+			FeatureEWayBill: {Required: true, Entitled: true, Quota: CapabilityQuota{Available: true}},
+		},
+		Permissions: staticCapabilityPermissions{PermissionDocumentsManage: true},
+		Setup:       staticCapabilitySetup{snapshot: CapabilityBusinessSetup{BusinessExists: true, GST: true}},
+		Health:      health, Now: func() time.Time { return now },
+	})
+
+	for _, capability := range []CapabilityKey{CapabilityEInvoice, CapabilityEWayBill} {
+		result, err := service.Evaluate(context.Background(), CapabilityRequest{BusinessID: "biz-1", UserID: "user-1", Capability: capability})
+		require.NoError(t, err)
+		require.True(t, result.Available, "%s should use the shared GST provider fact", capability)
+	}
+	other, err := service.Evaluate(context.Background(), CapabilityRequest{BusinessID: "biz-2", UserID: "user-1", Capability: CapabilityEInvoice})
+	require.NoError(t, err)
+	require.Equal(t, CapabilityStateUnknown, other.State)
+}
+
 func TestCapabilityServiceRequireRejectsUnsupportedCapabilityWithTypedError(t *testing.T) {
 	service := NewCapabilityService(CapabilityServiceOptions{
 		Setup: staticCapabilitySetup{snapshot: CapabilityBusinessSetup{BusinessExists: true}},
@@ -198,7 +223,7 @@ func TestCapabilityServiceSeparatesHealthEntitlementPermissionAndFinalState(t *t
 	now := time.Date(2026, 9, 1, 11, 0, 0, 0, time.UTC)
 	health := NewCapabilityHealthCache(CapabilityHealthCacheOptions{Now: func() time.Time { return now }})
 	retryAt := now.Add(time.Minute)
-	require.NoError(t, health.Record("biz-1", CapabilityEInvoice, CapabilityHealthObservation{
+	require.NoError(t, health.Record("biz-1", CapabilityGSTProvider, CapabilityHealthObservation{
 		Status: CapabilityProviderUnavailable, ObservedAt: now, RetryAt: &retryAt,
 		CustomerCode: "provider_unavailable", OperatorDetail: "secret arn and raw provider error",
 	}))

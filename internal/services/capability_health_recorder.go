@@ -36,12 +36,7 @@ func NewCapabilityHealthRecorder(cache *CapabilityHealthCache, now func() time.T
 }
 
 func (r *CapabilityHealthRecorder) RecordOutcome(businessID string, capability CapabilityKey, outcome CapabilityProviderOutcome) error {
-	if outcome.HTTPStatus == 0 {
-		var statusError interface{ HTTPStatusCode() int }
-		if errors.As(outcome.Err, &statusError) {
-			outcome.HTTPStatus = statusError.HTTPStatusCode()
-		}
-	}
+	outcome.HTTPStatus = providerOutcomeHTTPStatus(outcome)
 	now := r.now().UTC()
 	observation := CapabilityHealthObservation{
 		Status: CapabilityProviderHealthy, ObservedAt: now,
@@ -67,6 +62,17 @@ func (r *CapabilityHealthRecorder) RecordOutcome(businessID string, capability C
 		observation.RetryAt = &retryAt
 	}
 	return r.cache.Record(businessID, capability, observation)
+}
+
+func providerOutcomeHTTPStatus(outcome CapabilityProviderOutcome) int {
+	if outcome.HTTPStatus != 0 {
+		return outcome.HTTPStatus
+	}
+	var statusError interface{ HTTPStatusCode() int }
+	if errors.As(outcome.Err, &statusError) {
+		return statusError.HTTPStatusCode()
+	}
+	return 0
 }
 
 func providerOutcomeTimedOut(err error) bool {

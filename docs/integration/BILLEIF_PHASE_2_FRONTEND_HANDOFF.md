@@ -86,7 +86,7 @@ omitted column to imply support.
 
 | ID | Pagination / file behavior | State and retry | Event / invalidation | Existing migration and rollout | Proof and governing limitation |
 | --- | --- | --- | --- | --- | --- |
-| CAP-001 | Fixed 13-item array; no pagination or file | Synchronous cached evaluation; reads are retry-safe; honor `retry_at` for temporary provider failures | Provider operation outcomes refresh local AI, Razorpay/storefront and e-invoice/e-way facts; refetch after readiness, subscription, permission, or setup changes | No migration; deploy before frontend capability gating | Capability, recorder, guarded-mutation, quota, handler, and route tests beside their owners; health cache is process-local and starts unknown on cold start |
+| CAP-001 | Fixed 13-item array; no pagination or file | Synchronous cached evaluation; reads are retry-safe; honor `retry_at` for temporary provider failures | Provider operation outcomes plus a bounded recurring observer refresh local AI, shared Razorpay/storefront, and shared GST/e-invoice/e-way facts; refetch after readiness, subscription, permission, or setup changes | No migration; deploy before frontend capability gating | Capability, observer, recorder, guarded-mutation, quota, handler, and route tests beside their owners; each process-local cache starts unknown and bootstraps asynchronously |
 | SUB-001 | No pagination or file | Synchronous read; retry safe | No event; invalidate on catalog-version/deployment change | No Task 0 migration; catalog is code-defined | `internal/services/subscription_catalog_test.go`; one-month checkout is not renewal |
 | SUB-002 | No pagination or file | Stored `active`/`canceled`/`expired` model; refetch after payment | No versioned event; invalidate subscription and entitlement queries after verify/sync | Existing subscription and feature-entitlement schema; keep direct writes disabled | `tests/unit/subscription_service_test.go`, `internal/services/entitlements_test.go`, `internal/services/commerce_service_test.go`; runtime capability and lifecycle are incomplete |
 | SUB-003 | No pagination or file | Attempt `created`/`pending`/`paid`/`failed`; do not blindly retry unknown provider outcomes | No client event; invalidate SUB-002 after verified paid response | `migrations/000041_add_razorpay_payment_attempts.up.sql`; test-mode/provider rollout unverified | `internal/services/razorpay_payment_service_test.go`, `internal/handlers/payment_handler_idempotency_test.go`, `infrastructure/terraform/tests/razorpay.tftest.hcl`; no recurring lifecycle or reconciliation |
@@ -268,12 +268,21 @@ process-local in-memory cache. Each process retains at most 4096
 tenant/capability observations and evicts the oldest observation when full.
 Actual Razorpay order, business-scoped LLM, and GST e-invoice/e-way provider
 outcomes record sanitized success, rate-limit, timeout, or unavailable facts
-monotonically for that tenant. A Lambda cold start or another concurrent Lambda
-instance still begins with unknown health. No safe synchronous probe was added:
-S3 presign success does not prove object-store health, voice admission does not
+monotonically for that tenant. Storefront uses the shared Razorpay fact;
+e-invoice and e-way bill use the shared GST-provider fact. HTTP runtime startup
+also launches a non-overlapping two-minute asynchronous observer. Each cycle
+rotates through at most 256 tenant/capability targets with four workers,
+five-second timeouts and no more than two attempts. It uses a read-only Razorpay
+order-list request, an authenticated read-only LLM model lookup, and per-tenant
+GST credential validation when a validation path and integration account exist.
+Configuration presence alone never writes healthy. A Lambda cold start or
+another concurrent instance begins unknown briefly and builds its own local
+observations; instances may temporarily disagree. Unsupported probe shapes
+remain unknown. No safe producer was added for S3 because presign success does
+not prove object-store health; voice admission does not
 prove the downstream media/runtime path, and WhatsApp/email lack a safe
 business-scoped probe here, so those capabilities remain unknown until a future
-asynchronous producer exists. The API never pings providers while serving
+producer exists. The API never pings providers while serving
 `GET /capabilities` and no live provider is claimed healthy by local tests. No
 internal diagnostics endpoint was added: the repository has no operator
 principal distinct from business owner/admin, which is insufficient

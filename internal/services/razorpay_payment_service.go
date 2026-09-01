@@ -83,6 +83,14 @@ func (s *RazorpayPaymentService) clientFor(ctx context.Context) (*razorpay.Clien
 	return client, nil
 }
 
+func (s *RazorpayPaymentService) ProbeCapability(ctx context.Context, _ CapabilityProbeTarget) CapabilityProviderOutcome {
+	client, err := s.clientFor(ctx)
+	if err == nil {
+		err = client.Probe(ctx)
+	}
+	return CapabilityProviderOutcome{Err: err}
+}
+
 type RazorpayCreateOrderInput struct {
 	TargetType     string `json:"target_type" binding:"required,oneof=plan store_order"`
 	PlanID         string `json:"plan_id,omitempty"`
@@ -155,7 +163,7 @@ func (s *RazorpayPaymentService) CreateOrder(ctx context.Context, businessID, us
 			order, err = s.createRazorpayOrder(ctx, client, attempt)
 		}
 		if s.health != nil {
-			_ = s.health.RecordOutcome(businessID, capability, CapabilityProviderOutcome{Err: err})
+			_ = s.health.RecordOutcome(businessID, providerHealthKeyForCapability(capability), CapabilityProviderOutcome{Err: err})
 		}
 		if err != nil {
 			s.log.Warn("failed to initialize Razorpay payment order", "payment_attempt_id", attempt.ID, "business_id", businessID, "error", err)

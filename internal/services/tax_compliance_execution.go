@@ -665,7 +665,7 @@ func (s *TaxComplianceService) processGSTJob(ctx context.Context, job *models.GS
 
 func (s *TaxComplianceService) recordGSTProviderOutcome(businessID string, capability CapabilityKey, err error) {
 	if s.health != nil {
-		_ = s.health.RecordOutcome(businessID, capability, CapabilityProviderOutcome{Err: err})
+		_ = s.health.RecordOutcome(businessID, providerHealthKeyForCapability(capability), CapabilityProviderOutcome{Err: err})
 	}
 }
 

@@ -123,7 +123,7 @@ relevant tests were inspected.
 | Task | Baseline classification | Evidence | Expected smallest owners and impact |
 | --- | --- | --- | --- |
 | 0 | `complete` for inventory; external state `externally unverified` | This plan; `docs/integration/BILLEIF_PHASE_2_FRONTEND_HANDOFF.md`; evidence paths below | Documentation only. No migration, provider call, runtime, OpenAPI, Terraform, or test change. |
-| 1 | `complete` locally including governed mutation preflights and production outcome recorders; provider health `externally unverified`; internal diagnostics `blocked` | CAP-001 evaluation/cache/recorder plus guards at report, payment/storefront, GST command, drive upload, voice, business LLM, bulk-import, and saved-payment service boundaries; focused behavior/race tests are beside each owner | No migration. Customer output and typed mutation errors are secret-safe; unknown/stale fails closed. Actual Razorpay, LLM, and e-invoice/e-way provider outcomes update tenant facts, while the process-local cache and missing safe S3/voice/WhatsApp/email probes mean cold starts and other Lambda instances begin unknown. Internal diagnostics require a future operator principal distinct from business owner/admin. |
+| 1 | `complete` locally including governed mutation preflights, production outcome recorders, and bounded asynchronous Razorpay/LLM/GST bootstrap observation; provider health `externally unverified`; internal diagnostics `blocked` | CAP-001 evaluation/cache/recorder plus guards at report, payment/storefront, GST command, drive upload, voice, business LLM, bulk-import, and saved-payment service boundaries; focused behavior/race tests are beside each owner | No migration. Customer output and typed mutation errors are secret-safe; unknown/stale fails closed. HTTP runtime startup asynchronously discovers tenant targets in rotating bounded batches, performs read-only Razorpay/LLM probes and GST credential validation when supported, and refreshes every two minutes without request-time fan-out. S3/voice/WhatsApp/email remain unknown without a safe producer. Internal diagnostics require a future operator principal distinct from business owner/admin. |
 | 2 | `partial`, with an `unsafe` truth gap; Razorpay `externally unverified` | `internal/models/subscription.go`, `internal/models/payment_attempt.go`, `internal/services/subscription_service.go`, `internal/services/razorpay_payment_service.go`, `migrations/000041_add_razorpay_payment_attempts.up.sql`, `internal/services/razorpay_payment_service_test.go`, `internal/handlers/payment_handler_idempotency_test.go`, `infrastructure/terraform/tests/razorpay.tftest.hcl` | Subscription/payment models, repositories, services, handlers, webhook inbox/reconciliation worker, paired migrations, provider fixtures, OpenAPI and race/replay tests. Expand-first state conversion must not activate entitlements from stale or ambiguous events. |
 | 3 | `partial`; deployed queues/providers `externally unverified` | Render/delivery status in `internal/services/invoice_service.go` and `internal/services/invoice_delivery.go`; outbox/workers; `infrastructure/terraform/monitoring.tf` and `sns_sqs.tf` | Aggregate read service/repositories, customer and operator handlers, recovery commands, audit, metrics/alarms, permissions/step-up, OpenAPI, state/retry tests. Recovery must remain tenant-bound and idempotent. |
 | 4 | `missing`; every staging dependency `externally unverified` | No bounded environment-selecting verification command found after inspecting every entry point under `cmd`, `internal/config`, `Makefile`, `infrastructure/terraform`, `.github/workflows`, and `docs` | New verification command and an adjacent refusal/redaction/classification/cleanup test package; documentation and safe adapters only unless a real gap is found. No schema expected by default. Must refuse production, redact secrets, bound writes, and classify cleanup. |
@@ -256,15 +256,24 @@ provider; existing transactional GST quota reservation and authoritative drive
 byte enforcement remain decisive.
 
 Actual Razorpay order, business-scoped LLM, and GST e-invoice/e-way provider
-outcomes record sanitized tenant/capability health observations. Success,
+outcomes record sanitized tenant/provider-health observations. Storefront shares
+the Razorpay provider fact; e-invoice and e-way bill share the GST provider fact.
+In addition, the HTTP runtime starts a recurring asynchronous observer that
+discovers tenants in rotating bounded batches, shares one read-only Razorpay
+order-list and LLM model-lookup probe across each batch, and validates stored GST
+integration credentials per tenant when `GST_VALIDATE_PATH` is configured. It
+uses four workers, five-second probe deadlines, at most two attempts, a maximum
+of 256 targets per cycle, and a two-minute non-overlapping refresh. Success,
 rate-limit, timeout and unavailable classifications are monotonic by observation
 time and become stale after five minutes; configuration alone never records
 healthy. Missing and stale health fail closed and provider failure never changes
-the separately returned entitlement fact. S3 presign, voice admission,
+the separately returned entitlement fact. Unsupported probe shapes record
+nothing and remain unknown. S3 presign, voice admission,
 WhatsApp, and email have no safe business-scoped probe in this task and remain
 unknown until a future asynchronous producer exists. The cache is deliberately
-process-local: Lambda cold starts and other concurrent instances begin unknown,
-so Task 1 makes no deployed-provider health claim.
+process-local: each Lambda instance begins unknown briefly and establishes its
+own observations asynchronously, so Task 1 makes no deployed-provider health
+claim and instances can temporarily disagree.
 
 No migration was added because configuration and setup use existing rows and
 provider health is ephemeral. A separately authorized internal diagnostics
@@ -281,6 +290,7 @@ read path never reserves quota.
 Evidence: `internal/config/capabilities_test.go`,
 `internal/services/capability_health_cache_test.go`,
 `internal/services/capability_health_recorder_test.go`,
+`internal/services/capability_health_observer_test.go`,
 `internal/services/capability_service_test.go`,
 `internal/services/capability_setup_reader_test.go`,
 `internal/services/entitlements_test.go`,
@@ -293,7 +303,8 @@ Evidence: `internal/config/capabilities_test.go`,
 `internal/services/mutation_authorization_test.go`,
 `internal/voice/session/service_test.go`,
 `internal/handlers/capability_handler_test.go`, and
-`internal/app/runtime_routes_test.go`. Swagger was regenerated in
+`internal/app/runtime_routes_test.go`, and
+`internal/app/runtime_swagger_test.go`. Swagger was regenerated in
 `docs/docs.go`; `docs/openapi.yaml` and CAP-001 in
 `docs/integration/BILLEIF_PHASE_2_FRONTEND_HANDOFF.md` contain the exact public
 contract. Frontend rollout must follow the backend deployment and must keep

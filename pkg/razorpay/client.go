@@ -33,6 +33,15 @@ type Client struct {
 	log           *logger.Logger
 }
 
+// HTTPError preserves provider status for internal health classification while
+// deliberately excluding response bodies and credential detail.
+type HTTPError struct {
+	statusCode int
+}
+
+func (e *HTTPError) Error() string       { return "razorpay provider request failed" }
+func (e *HTTPError) HTTPStatusCode() int { return e.statusCode }
+
 func NewClient(cfg Config, log *logger.Logger) *Client {
 	baseURL := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
 	if baseURL == "" {
@@ -154,6 +163,13 @@ func (c *Client) FetchOrdersByReceipt(ctx context.Context, receipt string) ([]Or
 	return collection.Items, nil
 }
 
+// Probe performs a bounded read-only authenticated request. It establishes
+// provider reachability without creating an order or exposing provider data.
+func (c *Client) Probe(ctx context.Context) error {
+	var collection OrderCollection
+	return c.request(ctx, http.MethodGet, "/orders?count=1", nil, &collection)
+}
+
 func (c *Client) FetchPayment(ctx context.Context, paymentID string) (*Payment, error) {
 	var payment Payment
 	if err := c.request(ctx, http.MethodGet, "/payments/"+paymentID, nil, &payment); err != nil {
@@ -197,7 +213,7 @@ func (c *Client) request(ctx context.Context, method, path string, payload inter
 	limitedBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		c.log.Warn("Razorpay API returned error", "method", method, "path", path, "status_code", resp.StatusCode, "duration_ms", time.Since(start).Milliseconds())
-		return fmt.Errorf("razorpay API returned status %d", resp.StatusCode)
+		return &HTTPError{statusCode: resp.StatusCode}
 	}
 
 	if out != nil {

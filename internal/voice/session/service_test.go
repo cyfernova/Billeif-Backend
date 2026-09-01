@@ -113,6 +113,13 @@ type stopRecorder struct {
 	err   error
 }
 
+func allowCreateGuard(context.Context, Scope, CreateInput) error { return nil }
+
+func allowServiceOptions(options ServiceOptions) ServiceOptions {
+	options.CreateGuard = allowCreateGuard
+	return options
+}
+
 func (s *stopRecorder) StopRuntimeSession(_ context.Context, target RuntimeTarget) error {
 	s.calls = append(s.calls, target)
 	return s.err
@@ -121,10 +128,10 @@ func (s *stopRecorder) StopRuntimeSession(_ context.Context, target RuntimeTarge
 func TestServiceCreateIsIdempotentAndValidatesContract(t *testing.T) {
 	store := newMemoryStore()
 	now := time.Date(2026, 8, 6, 7, 0, 0, 0, time.UTC)
-	svc := NewService(store, &stopRecorder{}, testConfig(), ServiceOptions{
+	svc := NewService(store, &stopRecorder{}, testConfig(), allowServiceOptions(ServiceOptions{
 		Now:     func() time.Time { return now },
 		NewULID: func() string { return "01K1ABCDE2FGHIJK3LMNOPQRST" },
-	})
+	}))
 	input := validCreateInput()
 	identity := Scope{UserID: "user-1", BusinessID: "business-1", AllBranches: true}
 
@@ -182,6 +189,20 @@ func TestServiceCreateRejectsCapabilityGuardBeforeAdmission(t *testing.T) {
 	}
 }
 
+func TestServiceCreateFailsClosedWithoutGuardBeforeAdmission(t *testing.T) {
+	store := newMemoryStore()
+	svc := NewService(store, &stopRecorder{}, testConfig(), ServiceOptions{})
+
+	_, err := svc.Create(context.Background(), Scope{UserID: "user-1", BusinessID: "business-1", AllBranches: true}, validCreateInput())
+
+	if !errors.Is(err, ErrCreateGuardUnavailable) {
+		t.Fatalf("create error = %v, want ErrCreateGuardUnavailable", err)
+	}
+	if store.createCalls != 0 {
+		t.Fatalf("store create calls = %d, want zero", store.createCalls)
+	}
+}
+
 func TestServiceCreateRejectsInvalidConsentAndLanguage(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -198,7 +219,7 @@ func TestServiceCreateRejectsInvalidConsentAndLanguage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			input := validCreateInput()
 			tc.mutate(&input)
-			svc := NewService(newMemoryStore(), &stopRecorder{}, testConfig(), ServiceOptions{})
+			svc := NewService(newMemoryStore(), &stopRecorder{}, testConfig(), allowServiceOptions(ServiceOptions{}))
 			if _, err := svc.Create(context.Background(), Scope{UserID: "u", BusinessID: "b", AllBranches: true}, input); !errors.Is(err, ErrInvalidRequest) {
 				t.Fatalf("expected invalid request, got %v", err)
 			}
@@ -215,7 +236,7 @@ func TestServiceResumeRotatesOnlyStoppedRuntimeWithoutAdmission(t *testing.T) {
 		ExpiresAt: now.Add(time.Hour), LeaseExpiresAt: now.Add(time.Minute),
 	}
 	store.sessions[active.ID] = active
-	svc := NewService(store, &stopRecorder{}, testConfig(), ServiceOptions{Now: func() time.Time { return now }, NewULID: func() string { return "01K1ABCDE2FGHIJK3LMNOPQRST" }})
+	svc := NewService(store, &stopRecorder{}, testConfig(), allowServiceOptions(ServiceOptions{Now: func() time.Time { return now }, NewULID: func() string { return "01K1ABCDE2FGHIJK3LMNOPQRST" }}))
 	originalRuntimeID := active.RuntimeSessionID
 
 	resumed, err := svc.Resume(context.Background(), Scope{UserID: "u", BusinessID: "b", AllBranches: true}, active.ID)
@@ -254,7 +275,7 @@ func TestServiceResumeRejectsLeaseChangedAfterRead(t *testing.T) {
 	store.beforeResume = func(current *Session) {
 		current.LeaseExpiresAt = now.Add(-time.Nanosecond)
 	}
-	svc := NewService(store, &stopRecorder{}, testConfig(), ServiceOptions{Now: func() time.Time { return now }})
+	svc := NewService(store, &stopRecorder{}, testConfig(), allowServiceOptions(ServiceOptions{Now: func() time.Time { return now }}))
 
 	if _, err := svc.Resume(context.Background(), Scope{UserID: "u", BusinessID: "b", AllBranches: true}, stored.ID); !errors.Is(err, ErrNotResumable) {
 		t.Fatalf("renewed/reconciled lease race must reject resume, got %v", err)
@@ -270,7 +291,7 @@ func TestServiceCloseReleasesOnceStopsExactRuntimeAndIsIdempotent(t *testing.T) 
 		ExpiresAt: now.Add(time.Hour),
 	}
 	stopper := &stopRecorder{}
-	svc := NewService(store, stopper, testConfig(), ServiceOptions{Now: func() time.Time { return now }})
+	svc := NewService(store, stopper, testConfig(), allowServiceOptions(ServiceOptions{Now: func() time.Time { return now }}))
 	scope := Scope{UserID: "u", BusinessID: "b", AllBranches: true}
 
 	if err := svc.Close(context.Background(), scope, "voice_one"); err != nil {
@@ -310,7 +331,7 @@ func TestServiceCloseFailuresLeaveClosingSessionRetryable(t *testing.T) {
 		store := newMemoryStore()
 		store.sessions["voice_stop_retry"] = newSession("voice_stop_retry")
 		stopper := &stopRecorder{err: errors.New("transient stop failure")}
-		svc := NewService(store, stopper, testConfig(), ServiceOptions{Now: func() time.Time { return now }})
+		svc := NewService(store, stopper, testConfig(), allowServiceOptions(ServiceOptions{Now: func() time.Time { return now }}))
 
 		if err := svc.Close(context.Background(), scope, "voice_stop_retry"); err == nil {
 			t.Fatal("expected stop failure")
@@ -332,7 +353,7 @@ func TestServiceCloseFailuresLeaveClosingSessionRetryable(t *testing.T) {
 		store.sessions["voice_mark_retry"] = newSession("voice_mark_retry")
 		store.markClosedErr = errors.New("transient mark failure")
 		stopper := &stopRecorder{}
-		svc := NewService(store, stopper, testConfig(), ServiceOptions{Now: func() time.Time { return now }})
+		svc := NewService(store, stopper, testConfig(), allowServiceOptions(ServiceOptions{Now: func() time.Time { return now }}))
 
 		if err := svc.Close(context.Background(), scope, "voice_mark_retry"); err == nil {
 			t.Fatal("expected mark-closed failure")
@@ -353,7 +374,7 @@ func TestServiceCloseFailuresLeaveClosingSessionRetryable(t *testing.T) {
 func TestServiceDoesNotLeakForeignSession(t *testing.T) {
 	store := newMemoryStore()
 	store.sessions["voice_private"] = &Session{ID: "voice_private", UserID: "owner", BusinessID: "biz", Status: StatusActive, ExpiresAt: time.Now().Add(time.Hour)}
-	svc := NewService(store, &stopRecorder{}, testConfig(), ServiceOptions{})
+	svc := NewService(store, &stopRecorder{}, testConfig(), allowServiceOptions(ServiceOptions{}))
 	if _, err := svc.Get(context.Background(), Scope{UserID: "stranger", BusinessID: "biz", AllBranches: true}, "voice_private"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("foreign session should look absent, got %v", err)
 	}

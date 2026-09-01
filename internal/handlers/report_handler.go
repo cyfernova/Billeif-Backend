@@ -50,12 +50,8 @@ func (h *ReportHandler) Catalog(c *gin.Context) {
 // @Param input body services.ReportQueryInput true "Query parameters"
 // @Success 200 {object} interface{}
 // @Failure 400 {object} map[string]string
-// @Failure 403 {object} CapabilityMutationError
 // @Failure 404 {object} map[string]string
-// @Failure 422 {object} CapabilityMutationError
-// @Failure 429 {object} CapabilityMutationError
 // @Failure 500 {object} map[string]string
-// @Failure 503 {object} CapabilityMutationError
 // @Router /reports/{key}/query [post]
 func (h *ReportHandler) Query(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
@@ -101,8 +97,12 @@ func (h *ReportHandler) Query(c *gin.Context) {
 // @Param input body services.ReportExportInput true "Export parameters"
 // @Success 201 {object} interface{}
 // @Failure 400 {object} map[string]string
+// @Failure 403 {object} CapabilityMutationError
 // @Failure 404 {object} map[string]string
+// @Failure 422 {object} CapabilityMutationError
+// @Failure 429 {object} CapabilityMutationError
 // @Failure 500 {object} map[string]string
+// @Failure 503 {object} CapabilityMutationError
 // @Router /reports/{key}/export [post]
 func (h *ReportHandler) Export(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)

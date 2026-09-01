@@ -56,6 +56,28 @@ func (s *TaxComplianceService) WithCapabilityHealthRecorder(recorder CapabilityO
 	return s
 }
 
+func (s *TaxComplianceService) ProbeCapability(ctx context.Context, target CapabilityProbeTarget) CapabilityProviderOutcome {
+	if s == nil || s.db == nil || s.provider == nil || s.cfg == nil || strings.TrimSpace(s.cfg.GST.ValidatePath) == "" {
+		return CapabilityProviderOutcome{Err: ErrCapabilityProbeUnsupported}
+	}
+	var account models.GSTIntegrationAccount
+	err := s.db.WithContext(ctx).
+		Where("business_id = ? AND deleted_at IS NULL", target.BusinessID).
+		Order("updated_at DESC").First(&account).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return CapabilityProviderOutcome{Err: ErrCapabilityProbeUnsupported}
+		}
+		return CapabilityProviderOutcome{Err: err}
+	}
+	credentials, err := s.decryptIntegrationCredentials(ctx, account.EncryptedCredentials)
+	if err == nil {
+		credentials.PortalUsername = coalesceString(account.PortalUsername, credentials.PortalUsername)
+		err = s.provider.ValidateCredentials(ctx, &credentials)
+	}
+	return CapabilityProviderOutcome{Err: err}
+}
+
 var gstinFormatPattern = regexp.MustCompile(`^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$`)
 
 type GSTINLookupResult struct {

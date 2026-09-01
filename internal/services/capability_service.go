@@ -193,8 +193,8 @@ type capabilityDefinition struct {
 var capabilityDefinitions = []capabilityDefinition{
 	{Key: CapabilityRazorpay, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.Razorpay }, Permission: PermissionPaymentsManage, Platforms: allCapabilityPlatforms(), Setup: businessExistsSetup, SetupAction: "contact_support", HealthKey: CapabilityRazorpay},
 	{Key: CapabilityGSTProvider, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.GST }, Feature: FeatureGSTAPI, Permission: PermissionTaxIntegrationsManage, Platforms: allCapabilityPlatforms(), Setup: func(s CapabilityBusinessSetup) bool { return s.GST }, SetupAction: "configure_gst", HealthKey: CapabilityGSTProvider},
-	{Key: CapabilityEInvoice, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.GST }, Feature: FeatureEInvoice, Permission: PermissionDocumentsManage, Platforms: allCapabilityPlatforms(), Setup: func(s CapabilityBusinessSetup) bool { return s.GST }, SetupAction: "configure_gst", HealthKey: CapabilityEInvoice},
-	{Key: CapabilityEWayBill, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.GST }, Feature: FeatureEWayBill, Permission: PermissionDocumentsManage, Platforms: allCapabilityPlatforms(), Setup: func(s CapabilityBusinessSetup) bool { return s.GST }, SetupAction: "configure_gst", HealthKey: CapabilityEWayBill},
+	{Key: CapabilityEInvoice, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.GST }, Feature: FeatureEInvoice, Permission: PermissionDocumentsManage, Platforms: allCapabilityPlatforms(), Setup: func(s CapabilityBusinessSetup) bool { return s.GST }, SetupAction: "configure_gst", HealthKey: CapabilityGSTProvider},
+	{Key: CapabilityEWayBill, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.GST }, Feature: FeatureEWayBill, Permission: PermissionDocumentsManage, Platforms: allCapabilityPlatforms(), Setup: func(s CapabilityBusinessSetup) bool { return s.GST }, SetupAction: "configure_gst", HealthKey: CapabilityGSTProvider},
 	{Key: CapabilityWhatsApp, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.WhatsApp }, Feature: FeatureWhatsAppNotifications, Permission: PermissionNotificationsManage, Platforms: allCapabilityPlatforms(), Setup: func(s CapabilityBusinessSetup) bool { return s.WhatsApp }, SetupAction: "configure_whatsapp", HealthKey: CapabilityWhatsApp},
 	{Key: CapabilityEmail, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.Email }, Permission: PermissionNotificationsManage, Platforms: allCapabilityPlatforms(), Setup: func(s CapabilityBusinessSetup) bool { return s.Email }, SetupAction: "configure_email", HealthKey: CapabilityEmail},
 	{Key: CapabilityS3Uploads, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.S3Uploads }, Feature: FeatureDriveStorageMB, Permission: PermissionDriveManage, Platforms: allCapabilityPlatforms(), Setup: businessExistsSetup, SetupAction: "contact_support", HealthKey: CapabilityS3Uploads},
@@ -395,6 +395,14 @@ func capabilityDefinitionByKey(key CapabilityKey) (capabilityDefinition, bool) {
 		}
 	}
 	return capabilityDefinition{}, false
+}
+
+func providerHealthKeyForCapability(key CapabilityKey) CapabilityKey {
+	definition, ok := capabilityDefinitionByKey(key)
+	if ok && definition.HealthKey != "" {
+		return definition.HealthKey
+	}
+	return key
 }
 
 func unknownCapability(request CapabilityRequest, evaluatedAt time.Time) Capability {

@@ -2,7 +2,11 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
+	"sync"
+	"time"
 
 	"invoice-backend/internal/config"
 	"invoice-backend/internal/models"
@@ -93,6 +97,57 @@ type Container struct {
 	Capability          *CapabilityService
 	CapabilityHealth    *CapabilityHealthCache
 	AWS                 *awsclients.Config
+	capabilityObserver  *capabilityObserverState
+}
+
+type capabilityObserverRunner interface {
+	Run(context.Context, time.Duration) error
+}
+
+type capabilityObserverState struct {
+	runner capabilityObserverRunner
+	mu     sync.Mutex
+	cancel context.CancelFunc
+	log    *logger.Logger
+}
+
+func (c *Container) StartCapabilityHealthObservation() {
+	if c == nil || c.capabilityObserver == nil || c.capabilityObserver.runner == nil {
+		return
+	}
+	state := c.capabilityObserver
+	state.mu.Lock()
+	if state.cancel != nil {
+		state.mu.Unlock()
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	state.cancel = cancel
+	observer := state.runner
+	log := state.log
+	state.mu.Unlock()
+	go func() {
+		if err := observer.Run(ctx, 2*time.Minute); err != nil && !errors.Is(err, context.Canceled) && log != nil {
+			log.Warn("capability health observer stopped")
+		}
+	}()
+}
+
+func (c *Container) StopCapabilityHealthObservation() {
+	if c == nil {
+		return
+	}
+	state := c.capabilityObserver
+	if state == nil {
+		return
+	}
+	state.mu.Lock()
+	cancel := state.cancel
+	state.cancel = nil
+	state.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 func NewContainer(
@@ -213,14 +268,25 @@ func NewContainer(
 	commerceSvc := NewCommerceService(cfg, db, businessRepo, customerRepo, productRepo, subscriptionRepo, inventorySvc, documentSvc, s3Svc, log)
 	razorpayPaymentSvc := NewRazorpayPaymentService(cfg, db, log, resolver)
 	capabilityHealth := NewCapabilityHealthCache(CapabilityHealthCacheOptions{})
+	capabilityConfiguration := config.CapabilityConfigurationSnapshot(cfg)
 	capabilitySvc = NewCapabilityService(CapabilityServiceOptions{
-		Configuration: config.CapabilityConfigurationSnapshot(cfg),
+		Configuration: capabilityConfiguration,
 		Entitlements:  taxComplianceSvc.entitlements,
 		Permissions:   businessAuthSvc,
 		Setup:         NewDBCapabilityBusinessSetupReader(db),
 		Health:        capabilityHealth,
 	})
 	capabilityRecorder := NewCapabilityHealthRecorder(capabilityHealth, nil)
+	capabilityObserver := NewCapabilityHealthObserver(
+		NewDBCapabilityProbeTargetSource(db, capabilityConfiguration, cfg != nil && strings.TrimSpace(cfg.GST.ValidatePath) != ""),
+		map[CapabilityKey]CapabilityProviderProber{
+			CapabilityRazorpay:    razorpayPaymentSvc,
+			CapabilityAI:          llmSvc,
+			CapabilityGSTProvider: taxComplianceSvc,
+		},
+		capabilityRecorder,
+		CapabilityHealthObserverOptions{},
+	)
 	reportSvc.WithCapabilityGuard(capabilitySvc)
 	taxComplianceSvc.WithCapabilityGuard(capabilitySvc).WithCapabilityHealthRecorder(capabilityRecorder)
 	billingOpsSvc.WithCapabilityGuard(capabilitySvc)
@@ -295,5 +361,6 @@ func NewContainer(
 		Capability:          capabilitySvc,
 		CapabilityHealth:    capabilityHealth,
 		AWS:                 aws,
+		capabilityObserver:  &capabilityObserverState{runner: capabilityObserver, log: log},
 	}
 }

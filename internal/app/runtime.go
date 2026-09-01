@@ -199,6 +199,9 @@ func Initialize(ctx context.Context, opts InitializeOptions) (*Runtime, error) {
 	if opts.EnableWorker {
 		rt.Worker = workers.New(cfg, svcs, awsClients, log)
 	}
+	if opts.Profile == config.ProfileHTTP {
+		svcs.StartCapabilityHealthObservation()
+	}
 
 	bootstrapLog.Info("runtime initialized")
 	return rt, nil
@@ -252,6 +255,9 @@ func initializeRateLimiter(
 }
 
 func (r *Runtime) Close() {
+	if r.Svcs != nil {
+		r.Svcs.StopCapabilityHealthObservation()
+	}
 	if r.RateLimiter != nil {
 		_ = r.RateLimiter.Close()
 	}

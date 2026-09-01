@@ -61,6 +61,31 @@ func TestLLMServiceChatSendsOpenAICompatibleRequest(t *testing.T) {
 	}
 }
 
+func TestLLMCapabilityProbeUsesReadOnlyModelLookup(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/models/test-model" {
+			t.Fatalf("probe request = %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
+			t.Fatalf("authorization = %q", got)
+		}
+		_, _ = w.Write([]byte(`{"id":"test-model"}`))
+	}))
+	defer server.Close()
+	service := NewLLMService(config.LLMConfig{APIKey: "test-key", APIURL: server.URL + "/v1/chat/completions", Model: "test-model", Timeout: 1}, logger.New())
+
+	outcome := service.ProbeCapability(context.Background(), CapabilityProbeTarget{BusinessID: "biz-1", HealthKey: CapabilityAI})
+
+	if outcome.Err != nil {
+		t.Fatalf("probe error = %v", outcome.Err)
+	}
+	if calls != 1 {
+		t.Fatalf("provider calls = %d, want 1", calls)
+	}
+}
+
 func TestLLMServiceBusinessChatRejectsUnavailableAICapabilityBeforeProvider(t *testing.T) {
 	var providerCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
