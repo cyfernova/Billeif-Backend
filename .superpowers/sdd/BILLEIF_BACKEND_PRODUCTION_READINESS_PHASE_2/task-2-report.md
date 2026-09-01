@@ -404,3 +404,262 @@ performed directly against `dbeaf67...HEAD`.
   safely fetched by ID. It intentionally remains reconciliation-required for
   manual/provider-console resolution, and idempotent replay does not issue a
   second create.
+
+## Fix round 1
+
+### Scope and implementation
+
+This correction round started from reviewed baseline
+`9569767c4c1931a49abae9cbac91adc9f609cba2` and resolves every round-one
+finding.
+
+1. Scheduled plan changes now require the charged or reconciled provider period
+   to start exactly at `pending_plan_effective_at`. Every renewal after a prior
+   paid count also requires a stored prior period end and an exact monotonic
+   start at that boundary. A mismatch remains reconciliation-required without
+   changing plan, quotas, paid count, periods, or billing history.
+2. Restarting an expired or cancelled renewable lifecycle resets the aggregate
+   to a clean free/pending baseline before creating the new provider
+   subscription. Prior plan/quota fields, provider identities, periods,
+   provider event clock, paid count, grace, cancellation, pending plan, and
+   reconciliation state do not carry forward. Historical billing/audit rows are
+   preserved.
+3. A provider-confirmed immediate cancellation now persists terminal
+   subscription state, command completion, and a sanitized verification audit
+   in one transaction. A command or audit write failure rolls that transaction
+   back and never converts the verified cancellation path to
+   `reconciliation_required`.
+4. Same-payload inbox replay reconstructs the prior safe domain outcome from
+   durable processing status. Reconciliation-required deliveries continue to
+   return the handler's `202` outcome on replay; rejected deliveries remain
+   rejected rather than becoming `200`.
+5. Webhook processing validates invariant subscription, tenant, and provider
+   mode identity first, performs event ordering next, and validates the
+   state-dependent current/pending plan only for non-stale events. Delayed
+   previous-plan events are ignored without poisoning current state.
+6. Maintenance uses one total record budget across reconciliation and grace
+   work. The Lambda supplies a 50-second invocation context, the service uses a
+   45-second run context, and every provider fetch has a 3-second child context.
+   The contexts are synchronous and cancelled directly, so no timeout goroutine
+   is leaked. The schedule plus the 50-record total budget is the provider fetch
+   rate ceiling.
+7. Successful checkout commands persist the exact safe checkout response fields
+   and replay them without reading the current aggregate or fetching the
+   provider. Post-activation replay therefore remains the original
+   `pending_payment` authorization response and exposes no provider IDs.
+8. Billing/audit history strictly accepts an absent limit as `50` or an integer
+   from `1` through `100`. Malformed and out-of-range values return `400
+   subscription_invalid_limit`; repository failures return a typed sanitized
+   `500 subscription_internal_error`. Handler annotations, generated Swagger,
+   both OpenAPI files, runtime Swagger tests, and the frontend handoff now agree
+   on limits and statuses.
+9. Provider errors preserving a `4xx` HTTP status are deterministic rejections.
+   Checkout, plan change, and cancellation restore the pre-command lifecycle and
+   atomically mark the command `rejected`, returning `422
+   subscription_provider_rejected`. Transport failures, malformed successful
+   responses, and other unknown outcomes remain reconciliation-required. No raw
+   provider body/error is stored, logged, or returned.
+
+The immutable checkout response required four nullable columns on the
+unreleased `000055_subscription_lifecycle.up.sql` command table:
+`response_status`, `response_billing_mode`, `response_pending_plan_id`, and
+`response_authorization_url`. The paired down migration already drops the
+command table, so it needed no change. The manifest and all mocked Terraform
+migration checksums were synchronized. No migration was applied or rolled back
+against a live database.
+
+### Strict RED/GREEN evidence
+
+Each command below was run RED before the owning implementation and GREEN after
+the minimal correction.
+
+1. Exact plan-change boundary
+
+   - Command: `go test ./internal/services -run TestScheduledPlanChangeRequiresExactMonotonicProviderBoundary -count=1`
+   - RED: `Expected error ... but got nil`; the early provider period changed
+     the plan.
+   - GREEN: `ok invoice-backend/internal/services`.
+
+2. Clean terminal restart
+
+   - Command: `go test ./internal/services -run TestRestartAfterTerminalSubscriptionResetsLifecycleBeforeProviderCharge -count=1`
+   - RED: `expected: "free"`, `actual: "biz"`.
+   - GREEN: `ok invoice-backend/internal/services`.
+
+3. Atomic terminal cancellation
+
+   - Command: `go test ./internal/services -run 'TestImmediateProviderCancellation(CompletionFailureRollsBackWithoutReconciliation|CommitsTerminalStateCommandAndAuditTogether)' -count=1`
+   - RED: the forced command completion failure produced
+     `reconciliation_required` instead of the transaction's prior
+     `cancellation_scheduled` state, and the successful path had no
+     `provider_cancellation_verified` audit.
+   - GREEN: `ok invoice-backend/internal/services`.
+
+4. Durable duplicate outcome
+
+   - Command: `go test ./internal/services -run TestSubscriptionWebhookSamePayloadReplayPreservesReconciliationOutcome -count=1`
+   - RED: the second delivery returned no domain error.
+   - GREEN: `ok invoice-backend/internal/services`.
+
+5. Stale event before current-plan validation
+
+   - Command: `go test ./internal/services -run TestDelayedPreviousPlanEventIsIgnoredBeforeCurrentPlanValidation -count=1`
+   - RED: delayed previous-plan event returned reconciliation-required.
+   - GREEN: `ok invoice-backend/internal/services` with
+     `stale_event_ignored` and unchanged active plan.
+
+6. One maintenance budget and explicit deadlines
+
+   - Command: `go test ./internal/services -run TestSubscriptionMaintenanceUsesOneTotalRunBudgetAcrossReconciliationAndGrace -count=1`
+   - RED: expected one suspension, actual two, for three total operations under
+     limit two.
+   - GREEN: `ok invoice-backend/internal/services`.
+   - Command: `go test ./internal/services -run TestSubscriptionMaintenanceBoundsEachProviderFetchByDeadline -count=1`
+   - RED: `unknown field MaintenanceRunTimeout` and `unknown field
+     ProviderFetchTimeout`.
+   - GREEN: blocking provider boundary was cancelled within the test budget and
+     returned `Failed: 1`.
+   - Command: `go test ./cmd/lambda/subscription-reconciler -run TestHandlerRunsBoundedMaintenanceAndEmitsMetrics -count=1`
+   - RED: `unknown field runTimeout`.
+   - GREEN: `ok invoice-backend/cmd/lambda/subscription-reconciler`; runner
+     observed a context deadline and limit 50.
+
+7. Immutable checkout replay
+
+   - Command: `go test ./internal/services -run TestCheckoutIdempotencyReplayReturnsImmutableOriginalResponseAfterActivation -count=1`
+   - RED: expected pending/original authorization response; actual was the
+     active aggregate with changed URL.
+   - GREEN: exact response equality, one create, and zero replay fetches passed.
+
+8. Strict history runtime and documentation contracts
+
+   - Command: `go test ./internal/handlers -run 'TestSubscriptionHistory(RejectsMalformedAndOutOfRangeLimits|MapsInternalFailuresToSanitizedServerError)' -count=1`
+   - RED: invalid limits returned `200`; repository failures returned `400`.
+   - GREEN: both endpoints return stable `400`/`500` outcomes without raw
+     database detail.
+   - Command: `go test ./internal/handlers -run TestSubscriptionProviderRejectionMapsToStableUnprocessableResponse -count=1`
+   - RED: expected `422`, actual `400`.
+   - GREEN: stable `subscription_provider_rejected` response passed.
+   - Command: `go test ./internal/app -run TestSwaggerDocumentsExactSubscriptionMutationAndHistoryStatuses -count=1`
+   - RED: `/subscriptions/checkout response 422 is undocumented`.
+   - GREEN after `make swagger`: runtime Swagger includes mutation
+     `200/400/409/422/503`, history `200/400/500/503`, and limit `1..100`
+     default `50`.
+
+9. Deterministic rejection versus ambiguous provider outcome
+
+   - Command: `go test ./internal/services -run 'TestDeterministicProvider(CheckoutRejectionRestoresPriorLifecycle|PlanChangeRejectionRestoresActivePlan|CancellationRejectionRestoresActiveAccess)' -count=1`
+   - RED: `undefined: ErrSubscriptionProviderRejected` for all mutation paths.
+   - GREEN: `ok invoice-backend/internal/services`; all three restore prior
+     state and avoid reconciliation.
+   - Control command:
+     `go test ./internal/services -run TestSubscriptionProviderTimeoutIsRecordedForReconciliationAndNeverBlindlyRetried -count=1`
+   - GREEN: transport timeout remains reconciliation-required and create count
+     remains one.
+
+10. Reconciliation and self-review boundary completeness
+
+    - Command: `go test ./internal/services -run TestSubscriptionMaintenanceDoesNotApplyPendingPlanBeforeVerifiedBoundary -count=1`
+    - RED: maintenance returned success and applied the early pending plan.
+    - GREEN: result is `Failed: 1`; incumbent plan/quota/period/count remain
+      unchanged in reconciliation.
+    - Command: `go test ./internal/services -run TestRenewalChargeRequiresStoredPriorPeriodBoundary -count=1`
+    - RED: a paid-count renewal with no stored prior period returned success.
+    - GREEN: `provider_period_not_monotonic`, no billing row, no paid-count or
+      period mutation.
+
+### Files and contracts
+
+Material implementation changes:
+
+- `internal/services/subscription_lifecycle_service.go`
+- `internal/services/subscription_lifecycle_test.go`
+- `internal/models/subscription.go`
+- `internal/handlers/subscription_handler.go`
+- `internal/handlers/subscription_handler_test.go`
+- `cmd/lambda/subscription-reconciler/main.go`
+- `cmd/lambda/subscription-reconciler/main_test.go`
+- `migrations/000055_subscription_lifecycle.up.sql`
+- `migrations/subscription_lifecycle_schema_test.go`
+- `migrations/manifest.sha256`
+- mocked migration results under `infrastructure/terraform/tests/`
+
+Contract changes:
+
+- `docs/docs.go` regenerated from handler annotations
+- `docs/openapi.yaml`
+- `openapi/openapi.yaml`
+- `internal/app/runtime_swagger_test.go`
+- `docs/integration/BILLEIF_PHASE_2_FRONTEND_HANDOFF.md`
+
+Public provider/customer/subscription/plan/payment/invoice identifiers remain
+hidden. Billing amounts remain exact integer minor units. Every command, event,
+audit, billing, and maintenance query remains business and provider-mode scoped.
+
+### Final validation
+
+- Focused race command across amended packages passed:
+  `go test -race ./internal/services ./internal/handlers ./cmd/lambda/subscription-reconciler ./pkg/razorpay -run 'Test(Subscription|StartRenewable|RestartAfterTerminal|CheckoutIdempotency|SignedSubscription|ConcurrentFirstDelivery|ConcurrentPlanChange|ScheduledPlanChange|ImmediateProviderCancellation|DelayedPreviousPlan|EqualTimestamp|DeterministicProvider|HandlerRunsBoundedMaintenance|ClientHTTPError)' -count=1`.
+- `make fmt`: passed.
+- `make lint`: passed with `golangci-lint run --timeout=5m`.
+- `make test`: passed with race detection and coverage across `./...`.
+- `make migration-manifest-verify`: every pair through `000055` passed and the
+  embedded bundle test passed.
+- `make swagger`: passed with only the existing non-fatal repository-root
+  package-name warning.
+- `jq empty docs/swagger.json`: passed.
+- Ruby safe YAML parsing passed for `docs/swagger.yaml`, `docs/openapi.yaml`,
+  and `openapi/openapi.yaml`.
+- `make build-lambda-subscription-reconciler`: passed for Linux ARM64.
+- `terraform fmt -check -recursive`: passed.
+- `terraform validate`: passed; only the pre-existing DynamoDB
+  `hash_key/range_key` deprecation warnings remain.
+- `terraform test -filter=tests/migrator.tftest.hcl`: `6 passed, 0 failed`.
+- `terraform test -filter=tests/razorpay.tftest.hcl`: `20 passed, 0 failed`.
+- `git diff --check`: passed.
+- Final changed-file secret scan found no private key, cloud access key, raw
+  credential, webhook body/signature, provider account ID, or embedded secret.
+
+No live Razorpay request, payment/charge, AWS/provider write, Terraform apply,
+message, production action, or live database migration was run.
+
+### Commits
+
+- `00b64b6 fix: preserve subscription lifecycle boundaries`
+- `abc458d fix: harden subscription lifecycle recovery`
+- `dffaaa6 docs: align subscription lifecycle outcomes`
+- `580700c fix: require prior renewal boundary`
+- `docs: record subscription fix round evidence` (this report commit; final
+  handoff contains its hash)
+
+### Self-review
+
+The repository code-review skill was applied directly because this task
+explicitly prohibited its normal standards/spec subagents. The standards axis
+reviewed `9569767...HEAD` against repository `AGENTS.md` and the handler-service-
+repository conventions. The spec axis reviewed the same diff against
+`task-2-brief.md` and all nine round-one findings.
+
+No remaining material standards or spec finding was identified after adding the
+missing-prior-boundary correction. The review confirmed current membership and
+business scope remain handler/middleware enforced; provider mode and tenant
+identity remain in event/command/audit ownership; provider mutations remain
+outside database transactions; local multi-record effects are transactional;
+unknown outcomes are never retried as payment; deterministic rejections do not
+enter reconciliation; and generated/handwritten contracts match runtime status
+behavior. The carried Task 1 GST binding and sanitized tax error prerequisites
+were untouched and remained green in the full suite.
+
+### External gaps and concerns
+
+- Live Razorpay subscription create/update/cancel, webhook delivery, and fetch
+  behavior remain externally unverified because provider calls and charges were
+  prohibited.
+- Migration 55 remains unapplied to live PostgreSQL. It is unreleased,
+  expand-first, reversible through its paired down migration, manifest-verified,
+  and locally exercised only.
+- Terraform validation/tests used local mocked providers only. No real-account
+  plan or apply was run. Pre-existing DynamoDB deprecation warnings remain.
+- A transport timeout before provider subscription identity is returned still
+  requires operator/provider reconciliation and intentionally cannot be blindly
+  retried.
