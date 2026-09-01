@@ -965,3 +965,247 @@ diagnostics remain blocked pending a distinct operator principal.
   no validation path is configured. No weak operator diagnostics were added.
 - No migration was added, no provider was called live, and no public capability
   contract changed.
+
+## Fix round 4
+
+Status: complete locally. The rejected tenant census, rotating target pages,
+high-water cache reservation, and business-keyed global-provider observations
+were removed. Razorpay/AI health is now explicitly global and fixed-size; GST
+health is business-scoped and durable. Provider health remains externally
+unverified, and internal diagnostics remain blocked pending a distinct operator
+authorization mechanism.
+
+### Design and implementation
+
+1. Global Razorpay and AI health
+
+   - `CapabilityGlobalHealthCache` accepts only `razorpay_payments` and `ai`.
+     Its API has no business identifier and its fixed two-key observations have
+     only a validated status, observation/retry timestamps, and a bounded
+     customer-safe classification. It has no credential, account, setup,
+     entitlement, permission, quota, raw-error, eviction, reservation, or map
+     scan surface.
+   - `CapabilityGlobalHealthObserver` receives only a fixed map of configured
+     global probers. A cycle probes each at most once with at most two workers,
+     five-second probe deadlines, two attempts, a 30-second cycle deadline, and
+     a two-minute maximum refresh interval. It performs no database discovery,
+     census, `COUNT`, rotation, or tenant write.
+   - Razorpay and LLM implement `ProbeGlobalCapability`. Business Razorpay and
+     LLM operations no longer write tenant-keyed copies of global network
+     health. Capability evaluation combines the global fact with the requesting
+     business's setup, entitlement, quota, and permission facts.
+   - Lifecycle cancellation and join behavior is preserved. Recurring issue
+     callbacks contain only `cycle_deadline_exceeded` or
+     `observation_record_failed`; source errors never enter the callback.
+
+2. Complete-list LLM proof
+
+   - The LLM probe recognizes only configured `/chat/completions` and
+     `/v1/chat/completions` endpoints and only pagination-free HTTP `200`
+     responses with an exact top-level `object: "list"` plus `data` envelope.
+   - A streaming decoder caps the body at 1 MiB, the array at 10,000 entries,
+     and nested skipped values at depth 64. It parses through the closing array,
+     object, and EOF before classifying either model presence or absence.
+   - Empty/unrecognized objects, malformed JSON or model entries, unknown
+     top-level/pagination fields, partial or other successful HTTP statuses,
+     pagination headers, oversized bodies, scan-cap exhaustion, unknown URL
+     shapes, and `404`/`405` record nothing and remain unknown. The response
+     body, model list, pagination cursor, and credentials are never returned or
+     logged. No chat mutation is used.
+
+3. Durable business GST health
+
+   - Paired migration `000054_capability_provider_health_snapshots` adds one row
+     keyed by `(business_id, provider_key)`, constrains the only provider key to
+     `gst_provider`, constrains status/customer-code combinations, and stores
+     only observation/freshness/retry timestamps plus the safe classification.
+     The down migration drops only this derived table.
+   - The repository performs an exact business/provider read, exact clear, and
+     `ON CONFLICT` update only when the incoming `observed_at` is newer. It
+     rejects free-form classifications before SQL. Migration identity,
+     manifest, latest-version, pair-count, and schema-contract tests were
+     updated for version 54.
+   - `CapabilityBusinessHealthReader` reads only the requesting business's GST
+     row. Missing or stale state fails closed. Observations are fresh for 24
+     hours and are never stored in an unbounded process map.
+   - Credential upsert clears the prior GST observation and performs no
+     provider call, so the sensitive mutation cannot bootstrap itself. Existing
+     `POST /tax/integrations/{id}/validate` is the explicit path from unknown to
+     observed; validation failures return/store a stable safe message and still
+     persist the sanitized unavailable fact. Real e-invoice/e-way provider
+     outcomes refresh the same durable row after capability admission.
+   - Unknown, stale, or unavailable GST health now returns setup action
+     `validate_gst_integration`; missing GST setup still returns
+     `configure_gst`. Other providers without a safe producer remain explicitly
+     `unobserved` and unknown.
+
+4. Runtime and contracts
+
+   - Runtime repository composition injects the new durable repository into the
+     service container. `GET /capabilities` performs no provider I/O; its
+     database work is a constant number of exact business-keyed GST reads, not
+     a cycle-wide table scan.
+   - CAP-001 handoff, Task 1 plan evidence/limitations, manual OpenAPI, handler
+     annotation, and generated Swagger were updated for the scope model,
+     migration order, `validate_gst_integration`, 24-hour GST freshness, and
+     strict LLM completeness behavior.
+   - Obsolete census/rotation/high-water production code and tests were
+     deleted rather than retained behind new constants.
+
+### Strict TDD evidence
+
+1. LLM completeness
+
+   - RED:
+     `go test ./internal/services -run 'TestLLMCapabilityProbeLeavesUnprovenModelListsUnknown' -count=1`
+     failed because `{}`, missing markers/data, malformed JSON/entries,
+     oversized input, and a configured model before scan-cap exhaustion were
+     classified unavailable or healthy instead of unsupported/unknown.
+   - Additional RED after self-review:
+     `go test ./internal/services -run TestLLMCapabilityProbeRejectsHTTPResponsesThatDoNotProveACompleteList -count=1`
+     failed all five fixtures because HTTP `201`, HTTP `206`, `Link`,
+     `Content-Range`, and `X-Next-Cursor` responses returned
+     `configured LLM model is unavailable`.
+   - GREEN:
+     `go test ./internal/services -run 'TestLLMCapabilityProbe(UsesDeepSeekReadOnlyModelList|MarksMissingConfiguredModelUnavailableWithoutRawBody|LeavesUnprovenModelListsUnknown|RejectsHTTPResponsesThatDoNotProveACompleteList|UnsupportedProbeRouteLeavesHealthUnknownWithoutChatMutation|UnrecognizedChatEndpointShapeDoesNotCallProvider)' -count=1`
+     returned `ok invoice-backend/internal/services`.
+
+2. Explicit global scope and bounded observer
+
+   - RED focused tests initially failed to compile with undefined
+     `CapabilityGlobalHealthCache`, `CapabilityGlobalProviderProber`,
+     `CapabilityGlobalHealthObserver`, global recorder, and options types.
+   - RED:
+     `go test ./internal/services -run TestCapabilityGlobalHealthCacheRejectsFreeformProviderDetail -count=1`
+     failed with `An error is expected but got nil`.
+   - RED:
+     `go test ./internal/services -run TestEveryCapabilityDefinitionDeclaresItsProviderHealthScope -count=1`
+     reported expected `unobserved`, actual empty scope for `report_exports`.
+   - GREEN global cache/observer/scope/lifecycle command:
+     `go test -race ./internal/services -run 'TestCapabilityGlobalHealth(Cache|Observer|Recorder)|TestContainer.*Capability|TestContainer.*Observer' -count=1`
+     returned `ok invoice-backend/internal/services`.
+
+3. Durable GST schema and repository
+
+   - RED:
+     `go test ./migrations -run TestCapabilityProviderHealth -count=1`
+     initially failed because both `000054` files were missing.
+   - RED repository tests initially failed to compile because the snapshot
+     model, repository interface/errors, and PostgreSQL constructor did not
+     exist.
+   - RED:
+     `go test ./internal/repositories/postgres -run TestCapabilityProviderHealthUpsertRejectsFreeformCustomerCodeBeforeSQL -count=1`
+     showed an unexpected attempted `INSERT ... ON CONFLICT` containing the
+     free-form fixture instead of rejecting before SQL.
+   - RED schema classification test reported missing healthy/degraded/
+     unavailable status-to-customer-code constraint fragments.
+   - GREEN:
+     `go test -count=1 ./migrations ./internal/migrator ./internal/repositories/postgres`
+     passed all three packages, and `make migration-manifest-verify` verified
+     both version-54 directions and the embedded bundle.
+
+4. GST service and runtime wiring
+
+   - RED business-health tests initially failed with undefined business reader,
+     GST recorder, and `BusinessHealth` capability option.
+   - RED explicit-validation test failed with undefined
+     `WithGSTProviderHealthRecorder`; after the durable writer existed, the
+     safe-error follow-up failed to compile with undefined
+     `ErrGSTCredentialValidationFailed`.
+   - RED runtime composition test failed because `Repositories` had no
+     `CapabilityProviderHealth` member.
+   - GREEN focused service/runtime/repository/migration command:
+     `go test ./internal/services ./internal/repositories/postgres ./internal/app ./migrations -count=1`
+     passed all four packages.
+
+### Files and migration
+
+- Global observation and evaluation:
+  `internal/services/capability_health_cache.go`,
+  `capability_health_recorder.go`, `capability_global_health_observer.go`,
+  `capability_service.go`, `container.go`, `llm_service.go`, and
+  `razorpay_payment_service.go`, with focused tests beside their owners.
+- Durable GST state:
+  `internal/models/capability_provider_health.go`,
+  `internal/repositories/interfaces/capability_provider_health_repository.go`,
+  `internal/repositories/postgres/capability_provider_health_repo.go`,
+  `internal/services/capability_business_health.go`,
+  `tax_compliance_service.go`, `tax_compliance_execution.go`, and runtime
+  composition/tests.
+- Migration:
+  `migrations/000054_capability_provider_health_snapshots.up.sql`, paired down,
+  schema test, identity, manifest, embedded counts, and latest-version test.
+- Contracts/evidence:
+  `docs/integration/BILLEIF_PHASE_2_FRONTEND_HANDOFF.md`,
+  `docs/plans/BILLEIF_BACKEND_PRODUCTION_READINESS_PHASE_2.md`,
+  `docs/openapi.yaml`, `internal/handlers/capability_handler.go`, and generated
+  `docs/docs.go`.
+- Removed:
+  `internal/services/capability_health_observer.go`, its obsolete rotating/
+  census test, and the obsolete business-keyed capacity-cache test.
+
+### Validation
+
+- Final focused race gate:
+  `go test -race -count=1 ./internal/services ./internal/voice/session ./pkg/razorpay ./internal/app ./internal/handlers ./internal/repositories/postgres ./tests/unit`
+  passed: services `4.252s`, voice session `1.493s`, Razorpay `1.439s`, app
+  `2.226s`, handlers `1.908s`, PostgreSQL repositories `1.915s`, and unit tests
+  `2.002s`.
+- Migration/repository gate:
+  `make migration-manifest-verify` passed through both `000054` files and the
+  embedded-bundle test;
+  `go test -count=1 ./migrations ./internal/migrator ./internal/repositories/postgres`
+  passed.
+- Command compile:
+  `go test -count=1 ./cmd/server ./cmd/lambda/http` passed; server has no test
+  files and HTTP Lambda passed in `0.633s`.
+- `make swagger` completed and regenerated `docs/docs.go`; the generator emitted
+  its existing root-package `go list` warning but exited successfully.
+- `make fmt` passed (`go fmt ./...` and `goimports`).
+- `make lint` passed (`golangci-lint run --timeout=5m`).
+- Ruby safe-load validation returned `openapi and swagger yaml ok`; JSON parsing
+  returned `swagger json ok`; focused runtime Swagger/routes tests passed.
+- `git diff --check` passed. The tracked diff and all new files were scanned for
+  private-key markers, AWS access-key patterns, and token-shaped `sk-` values;
+  no secret pattern was found. Deliberate `raw-secret` test fixtures prove
+  redaction and are not credentials.
+- No live provider call, migration apply/down, Terraform plan/apply, external
+  write, message, or charge was performed.
+
+### Commit
+
+- `d164278 fix: scope capability provider health`
+- `docs: record scoped capability health evidence` (this report commit; its
+  final hash is returned to the parent because a commit cannot contain itself)
+
+### Self-review and concerns
+
+- Confirmed a global observation cannot carry a tenant identifier by type or
+  API, and only the two explicit global keys enter the global map. All business
+  setup, entitlement, quota, permission, and GST facts are evaluated separately
+  for the requesting business.
+- Confirmed the global cache can never follow historical tenant growth: it has
+  two accepted keys, no dynamic capacity, no eviction reservation, and no map
+  scan on write. The observer has no database dependency and therefore cannot
+  execute the former whole-table census/count work.
+- Confirmed LLM health/unavailability is recorded only after complete bounded
+  proof. Every incomplete, paginated, malformed, oversized, capped, or
+  unrecognized response path returns the unsupported sentinel, which the
+  observer intentionally does not record.
+- Confirmed the GST table is sanitized, exact-tenant keyed, one row per allowed
+  provider key, monotonic, and durable across process turnover. Credential
+  mutation clears prior health; explicit validation is the only setup action
+  that can move a new/changed integration from unknown to observed before a
+  guarded GST mutation.
+- Global Razorpay/AI facts remain process-local by design. A cold instance starts
+  those two facts unknown, and instances can disagree until their next bounded
+  observer cycle. GST does not have that limitation.
+- Real GST operation health writes are best-effort so a completed provider/
+  document side effect is not converted into a customer failure by an auxiliary
+  observation write. A failed write leaves the prior row to become stale and
+  should receive dedicated metrics in future observability work; explicit
+  validation propagates persistence failure.
+- S3, voice, WhatsApp, and email still have no safe producer and remain unknown.
+  Internal provider diagnostics remain blocked rather than being exposed to a
+  business admin. Provider health remains externally unverified because local
+  tests used only fakes and `httptest` servers.
