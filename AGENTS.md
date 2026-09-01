@@ -148,3 +148,17 @@ Keep transport DTOs near handlers and persistence models near repositories or `i
 
 - Keep this file as a concise operational contract, not general engineering documentation.
 - Propose updates when guidance is stale or missing; edit it only when explicitly requested.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and PRDs are tracked in this repository's GitHub Issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Triage uses the five default canonical label names. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This repository uses a single-context layout with root domain documents and system-wide ADRs. See `docs/agents/domain.md`.
