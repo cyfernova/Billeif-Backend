@@ -12,6 +12,7 @@ import (
 	"invoice-backend/internal/reporting"
 	"invoice-backend/pkg/logger"
 
+	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -165,6 +166,35 @@ func TestEncodeCSVNeutralizesSpreadsheetFormulas(t *testing.T) {
 			t.Fatalf("expected CSV to contain neutralized cell %q, got %q", want, csv)
 		}
 	}
+}
+
+func TestReportServiceExportRejectsUnavailableCapabilityBeforeQueryOrRun(t *testing.T) {
+	repo := &reportingRepoStub{}
+	guard := &recordingCapabilityGuard{err: &CapabilityUnavailableError{
+		Code: "capability_unavailable", Capability: CapabilityReportExports,
+		State: CapabilityStateUpgradeRequired, ReasonCode: ReasonEntitlementRequired,
+	}}
+	svc := NewReportService(&config.Config{}, repo, logger.New()).WithCapabilityGuard(guard)
+
+	_, err := svc.Export(context.Background(), "biz-1", "user-1", "sales_register", ReportExportInput{})
+
+	var unavailable *CapabilityUnavailableError
+	require.ErrorAs(t, err, &unavailable)
+	require.Zero(t, repo.queryCalls)
+	require.Empty(t, repo.createdRuns)
+	require.Equal(t, CapabilityRequest{
+		BusinessID: "biz-1", UserID: "user-1", Platform: CapabilityPlatformWeb, Capability: CapabilityReportExports,
+	}, guard.request)
+}
+
+type recordingCapabilityGuard struct {
+	request CapabilityRequest
+	err     error
+}
+
+func (g *recordingCapabilityGuard) Require(_ context.Context, request CapabilityRequest) error {
+	g.request = request
+	return g.err
 }
 
 func TestReportServiceCreateSnapshotShareCreatesRunAndHashesSecrets(t *testing.T) {

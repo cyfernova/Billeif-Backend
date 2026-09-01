@@ -50,8 +50,12 @@ func (h *ReportHandler) Catalog(c *gin.Context) {
 // @Param input body services.ReportQueryInput true "Query parameters"
 // @Success 200 {object} interface{}
 // @Failure 400 {object} map[string]string
+// @Failure 403 {object} CapabilityMutationError
 // @Failure 404 {object} map[string]string
+// @Failure 422 {object} CapabilityMutationError
+// @Failure 429 {object} CapabilityMutationError
 // @Failure 500 {object} map[string]string
+// @Failure 503 {object} CapabilityMutationError
 // @Router /reports/{key}/query [post]
 func (h *ReportHandler) Query(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
@@ -119,6 +123,9 @@ func (h *ReportHandler) Export(c *gin.Context) {
 	}
 	result, err := h.svc.Export(c.Request.Context(), businessID, userID, c.Param("key"), input)
 	if err != nil {
+		if writeSubscriptionControlError(c, err) {
+			return
+		}
 		statusCode := http.StatusInternalServerError
 		if isNotFoundErr(err) {
 			statusCode = http.StatusNotFound

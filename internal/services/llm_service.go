@@ -19,8 +19,20 @@ type LLMService struct {
 	config   config.LLMConfig
 	appCfg   *config.Config
 	resolver ProviderConfigResolver
+	guard    CapabilityGuard
+	health   CapabilityOutcomeRecorder
 	log      *logger.Logger
 	client   *http.Client
+}
+
+func (s *LLMService) WithCapabilityHealthRecorder(recorder CapabilityOutcomeRecorder) *LLMService {
+	s.health = recorder
+	return s
+}
+
+func (s *LLMService) WithCapabilityGuard(guard CapabilityGuard) *LLMService {
+	s.guard = guard
+	return s
 }
 
 func NewLLMServiceWithResolver(cfg *config.Config, resolver ProviderConfigResolver, log *logger.Logger) *LLMService {
@@ -256,6 +268,20 @@ func (s *LLMService) ChatWithWebSearch(ctx context.Context, messages []ChatMessa
 	return &LLMChatResult{Response: response, WebSearch: webSearch}, nil
 }
 
+func (s *LLMService) ChatWithWebSearchForBusiness(ctx context.Context, businessID, userID string, messages []ChatMessage) (*LLMChatResult, error) {
+	if err := requireCapability(ctx, s.guard, CapabilityRequest{
+		BusinessID: businessID, UserID: userID,
+		Platform: CapabilityPlatformWeb, Capability: CapabilityAI,
+	}); err != nil {
+		return nil, err
+	}
+	result, err := s.ChatWithWebSearch(ctx, messages)
+	if s.health != nil {
+		_ = s.health.RecordOutcome(businessID, CapabilityAI, CapabilityProviderOutcome{Err: err})
+	}
+	return result, err
+}
+
 // ChatWithOptions sends a chat request to the LLM with call-site-specific generation limits.
 func (s *LLMService) ChatWithOptions(ctx context.Context, messages []ChatMessage, options LLMChatOptions) (string, error) {
 	log := logger.FromContext(ctx).With("service", "llm", "operation", "chat", "message_count", len(messages))
@@ -327,7 +353,7 @@ func (s *LLMService) ChatWithOptions(ctx context.Context, messages []ChatMessage
 			"response_size", len(bodyBytes),
 			"response_body", string(bodyBytes),
 		)
-		return "", fmt.Errorf("API returned error: %s - %s", resp.Status, string(bodyBytes))
+		return "", &providerHTTPError{status: resp.StatusCode}
 	}
 
 	var chatResp OpenAIChatResponse
@@ -418,7 +444,7 @@ func (s *LLMService) searchExa(ctx context.Context, query string) ([]LLMSearchRe
 		return nil, fmt.Errorf("read Exa search response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("Exa search returned %s: %s", resp.Status, string(bodyBytes))
+		return nil, &providerHTTPError{status: resp.StatusCode}
 	}
 
 	var searchResp exaSearchResponse
@@ -691,4 +717,19 @@ For each assistant idea, provide:
 
 	log.Info("agent intent processed", "response_length", len(response))
 	return response, nil
+}
+
+// ProcessAgentIntentForBusiness applies the runtime AI capability preflight before provider execution.
+func (s *LLMService) ProcessAgentIntentForBusiness(ctx context.Context, businessID, userID, intent, contextInfo string) (string, error) {
+	if err := requireCapability(ctx, s.guard, CapabilityRequest{
+		BusinessID: businessID, UserID: userID,
+		Platform: CapabilityPlatformWeb, Capability: CapabilityAI,
+	}); err != nil {
+		return "", err
+	}
+	response, err := s.ProcessAgentIntent(ctx, intent, contextInfo)
+	if s.health != nil {
+		_ = s.health.RecordOutcome(businessID, CapabilityAI, CapabilityProviderOutcome{Err: err})
+	}
+	return response, err
 }

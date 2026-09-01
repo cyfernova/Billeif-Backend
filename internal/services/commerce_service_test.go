@@ -708,6 +708,12 @@ func TestCreateDriveUploadSignsDeclaredSizeAndAccountsForQuotaUsage(t *testing.T
 		db:  db,
 		s3:  &S3Service{client: client},
 	}
+	service.WithCapabilityControls(&recordingCapabilityGuard{}, &staticDriveStorageQuotaReader{result: DriveStorageQuota{
+		Access: FeatureAccess{Required: true, Entitled: true, Quota: CapabilityQuota{
+			Unit: "MB", Limited: true, Limit: 2048, Used: 0, Remaining: 2048, Available: true,
+		}},
+		LimitBytes: 2048 * 1024 * 1024,
+	}})
 
 	session, err := service.CreateDriveUpload(context.Background(), "business-123", "user-456", CreateDriveAssetInput{
 		Name:        "invoice.pdf",
@@ -730,6 +736,64 @@ func TestCreateDriveUploadSignsDeclaredSizeAndAccountsForQuotaUsage(t *testing.T
 		Where("business_id = ? AND deleted_at IS NULL", "business-123").
 		Scan(&usageBytes).Error)
 	require.Equal(t, int64(8192), usageBytes)
+}
+
+func TestCreateDriveUploadRejectsUnavailableCapabilityBeforeAssetOrPresign(t *testing.T) {
+	db := newDriveUploadTestDB(t)
+	guard := &recordingCapabilityGuard{err: &CapabilityUnavailableError{
+		Code: "capability_unavailable", Capability: CapabilityS3Uploads,
+		State: CapabilityStateQuotaExhausted, ReasonCode: ReasonQuotaExhausted,
+	}}
+	service := (&CommerceService{db: db}).WithCapabilityControls(guard, nil)
+
+	_, err := service.CreateDriveUpload(context.Background(), "business-123", "user-456", CreateDriveAssetInput{
+		Name: "invoice.pdf", ContentType: "application/pdf", SizeBytes: 8192,
+	})
+
+	var unavailable *CapabilityUnavailableError
+	require.ErrorAs(t, err, &unavailable)
+	require.Equal(t, CapabilityS3Uploads, guard.request.Capability)
+	var count int64
+	require.NoError(t, db.Model(&models.DriveAsset{}).Count(&count).Error)
+	require.Zero(t, count)
+}
+
+func TestCreateDriveUploadRejectsExactAuthoritativeStorageLimitBeforeAsset(t *testing.T) {
+	db := newDriveUploadTestDB(t)
+	limitMB := int64(2048)
+	storage := &staticDriveStorageQuotaReader{result: DriveStorageQuota{
+		Access: FeatureAccess{Required: true, Entitled: true, Quota: CapabilityQuota{
+			Unit: "MB", Limited: true, Limit: limitMB, Used: limitMB, Remaining: 0, Available: false,
+		}},
+		LimitBytes: limitMB * 1024 * 1024,
+		UsedBytes:  limitMB * 1024 * 1024,
+	}}
+	service := (&CommerceService{db: db}).WithCapabilityControls(&recordingCapabilityGuard{}, storage)
+
+	_, err := service.CreateDriveUpload(context.Background(), "business-123", "user-456", CreateDriveAssetInput{
+		Name: "invoice.pdf", ContentType: "application/pdf", SizeBytes: 8192,
+	})
+
+	var quotaErr *QuotaExceededError
+	require.ErrorAs(t, err, &quotaErr)
+	require.Equal(t, FeatureDriveStorageMB, quotaErr.Feature)
+	require.Equal(t, limitMB, quotaErr.Limit)
+	require.Equal(t, limitMB, quotaErr.Used)
+	require.Equal(t, []string{"business-123"}, storage.businessIDs)
+	var count int64
+	require.NoError(t, db.Model(&models.DriveAsset{}).Count(&count).Error)
+	require.Zero(t, count)
+}
+
+type staticDriveStorageQuotaReader struct {
+	result      DriveStorageQuota
+	err         error
+	businessIDs []string
+}
+
+func (r *staticDriveStorageQuotaReader) InspectDriveStorage(_ context.Context, businessID string) (DriveStorageQuota, error) {
+	r.businessIDs = append(r.businessIDs, businessID)
+	return r.result, r.err
 }
 
 func newDriveUploadTestDB(t *testing.T) *gorm.DB {

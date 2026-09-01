@@ -65,6 +65,112 @@ func TestCapabilityServiceUnknownCapabilityFailsClosed(t *testing.T) {
 	require.Equal(t, ReasonCapabilityUnknown, result.ReasonCode)
 }
 
+func TestCapabilityServiceRequireRejectsUnsupportedCapabilityWithTypedError(t *testing.T) {
+	service := NewCapabilityService(CapabilityServiceOptions{
+		Setup: staticCapabilitySetup{snapshot: CapabilityBusinessSetup{BusinessExists: true}},
+	})
+
+	err := service.Require(context.Background(), CapabilityRequest{
+		BusinessID: "biz-1", UserID: "user-1", Platform: CapabilityPlatformWeb, Capability: CapabilitySavedPayments,
+	})
+
+	var unavailable *CapabilityUnavailableError
+	require.ErrorAs(t, err, &unavailable)
+	require.Equal(t, CapabilitySavedPayments, unavailable.Capability)
+	require.Equal(t, CapabilityStateUnsupported, unavailable.State)
+	require.Equal(t, ReasonSavedPaymentsUnsupported, unavailable.ReasonCode)
+	require.Equal(t, "capability_unavailable", unavailable.Code)
+}
+
+func TestCapabilityServiceRequireFailsClosedForEveryUnavailableState(t *testing.T) {
+	now := time.Date(2026, 9, 1, 11, 0, 0, 0, time.UTC)
+	staleHealth := NewCapabilityHealthCache(CapabilityHealthCacheOptions{MaxAge: time.Minute, Now: func() time.Time { return now }})
+	require.NoError(t, staleHealth.Record("biz-1", CapabilityEmail, CapabilityHealthObservation{
+		Status: CapabilityProviderHealthy, ObservedAt: now.Add(-2 * time.Minute),
+	}))
+
+	tests := []struct {
+		name      string
+		service   *CapabilityService
+		request   CapabilityRequest
+		wantState CapabilityState
+	}{
+		{
+			name: "setup", wantState: CapabilityStateSetupRequired,
+			service: NewCapabilityService(CapabilityServiceOptions{Setup: staticCapabilitySetup{snapshot: CapabilityBusinessSetup{BusinessExists: true}}}),
+			request: CapabilityRequest{BusinessID: "biz-1", UserID: "user-1", Capability: CapabilityEmail},
+		},
+		{
+			name: "upgrade", wantState: CapabilityStateUpgradeRequired,
+			service: NewCapabilityService(CapabilityServiceOptions{
+				Entitlements: staticCapabilityEntitlements{FeatureExportDocuments: {Required: true, Entitled: false}},
+				Permissions:  staticCapabilityPermissions{PermissionReportsExport: true},
+				Setup:        staticCapabilitySetup{snapshot: CapabilityBusinessSetup{BusinessExists: true}},
+			}),
+			request: CapabilityRequest{BusinessID: "biz-1", UserID: "user-1", Capability: CapabilityReportExports},
+		},
+		{
+			name: "quota", wantState: CapabilityStateQuotaExhausted,
+			service: NewCapabilityService(CapabilityServiceOptions{
+				Configuration: config.CapabilityConfiguration{GST: true},
+				Entitlements: staticCapabilityEntitlements{FeatureEInvoice: {
+					Required: true, Entitled: true, Quota: CapabilityQuota{Limited: true, Limit: 1, Used: 1, Available: false},
+				}},
+				Permissions: staticCapabilityPermissions{PermissionDocumentsManage: true},
+				Setup:       staticCapabilitySetup{snapshot: CapabilityBusinessSetup{BusinessExists: true, GST: true}},
+			}),
+			request: CapabilityRequest{BusinessID: "biz-1", UserID: "user-1", Capability: CapabilityEInvoice},
+		},
+		{
+			name: "permission", wantState: CapabilityStatePermissionDenied,
+			service: NewCapabilityService(CapabilityServiceOptions{
+				Entitlements: staticCapabilityEntitlements{FeatureExportDocuments: {Required: true, Entitled: true, Quota: CapabilityQuota{Available: true}}},
+				Permissions:  staticCapabilityPermissions{},
+				Setup:        staticCapabilitySetup{snapshot: CapabilityBusinessSetup{BusinessExists: true}},
+			}),
+			request: CapabilityRequest{BusinessID: "biz-1", UserID: "user-1", Capability: CapabilityReportExports},
+		},
+		{
+			name: "stale", wantState: CapabilityStateTemporarilyUnavailable,
+			service: NewCapabilityService(CapabilityServiceOptions{
+				Configuration: config.CapabilityConfiguration{Email: true},
+				Permissions:   staticCapabilityPermissions{PermissionNotificationsManage: true},
+				Setup:         staticCapabilitySetup{snapshot: CapabilityBusinessSetup{BusinessExists: true, Email: true}},
+				Health:        staleHealth, Now: func() time.Time { return now },
+			}),
+			request: CapabilityRequest{BusinessID: "biz-1", UserID: "user-1", Capability: CapabilityEmail},
+		},
+		{
+			name: "unsupported platform", wantState: CapabilityStateUnsupportedPlatform,
+			service: NewCapabilityService(CapabilityServiceOptions{
+				Configuration: config.CapabilityConfiguration{Voice: true},
+				Permissions:   staticCapabilityPermissions{PermissionVoiceUse: true},
+				Setup:         staticCapabilitySetup{snapshot: CapabilityBusinessSetup{BusinessExists: true, Voice: true}},
+			}),
+			request: CapabilityRequest{BusinessID: "biz-1", UserID: "user-1", Platform: CapabilityPlatformWeb, Capability: CapabilityVoice},
+		},
+		{
+			name: "unsupported", wantState: CapabilityStateUnsupported,
+			service: NewCapabilityService(CapabilityServiceOptions{Setup: staticCapabilitySetup{snapshot: CapabilityBusinessSetup{BusinessExists: true}}}),
+			request: CapabilityRequest{BusinessID: "biz-1", UserID: "user-1", Capability: CapabilitySavedPayments},
+		},
+		{
+			name: "unknown", wantState: CapabilityStateUnknown,
+			service: NewCapabilityService(CapabilityServiceOptions{Setup: staticCapabilitySetup{snapshot: CapabilityBusinessSetup{BusinessExists: true}}}),
+			request: CapabilityRequest{BusinessID: "biz-1", UserID: "user-1", Capability: CapabilityKey("future_capability")},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.service.Require(context.Background(), test.request)
+			var unavailable *CapabilityUnavailableError
+			require.ErrorAs(t, err, &unavailable)
+			require.Equal(t, test.wantState, unavailable.State)
+		})
+	}
+}
+
 func TestCapabilityServiceListCoversAuthoritativeCapabilityInventory(t *testing.T) {
 	service := NewCapabilityService(CapabilityServiceOptions{
 		Setup: staticCapabilitySetup{snapshot: CapabilityBusinessSetup{BusinessExists: true}},

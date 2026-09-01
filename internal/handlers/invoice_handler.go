@@ -717,6 +717,7 @@ func invoiceDeliveryErrorResponse(err error) (int, string) {
 }
 
 func (h *InvoiceHandler) GenerateEInvoice(c *gin.Context) {
+	requestContextWithActor(c)
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
 		return

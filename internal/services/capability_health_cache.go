@@ -101,6 +101,7 @@ func (c *CapabilityHealthCache) Record(businessID string, capability CapabilityK
 	default:
 		return fmt.Errorf("invalid provider health status")
 	}
+	observation.RetryAt = cloneCapabilityTime(observation.RetryAt)
 	c.mu.Lock()
 	key := capabilityHealthCacheKey(businessID, capability)
 	if current, ok := c.observations[key]; ok {
@@ -155,6 +156,7 @@ func (c *CapabilityHealthCache) OperatorObservation(businessID string, capabilit
 	c.mu.RLock()
 	observation, ok := c.observations[capabilityHealthCacheKey(businessID, capability)]
 	c.mu.RUnlock()
+	observation.RetryAt = cloneCapabilityTime(observation.RetryAt)
 	return observation, ok
 }
 

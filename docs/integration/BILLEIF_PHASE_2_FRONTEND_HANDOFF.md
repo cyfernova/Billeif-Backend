@@ -34,7 +34,7 @@ route registration or current generated OpenAPI alone.
 
 | ID | Current contract | Classification | Frontend use at this revision |
 | --- | --- | --- | --- |
-| CAP-001 | Runtime capability evaluation | `complete` locally; provider health `externally unverified` | Authoritative source for whether the active user/business/platform may expose or attempt covered functionality. |
+| CAP-001 | Runtime capability evaluation and mutation preflight | `complete` locally; provider health `externally unverified` | Authoritative source for whether the active user/business/platform may expose or attempt covered functionality; governed service mutations fail closed independently of frontend gating. |
 | SUB-001 | Subscription catalog | `complete` locally | May render catalog data, with the one-month purchase warning from SUB-003. |
 | SUB-002 | Current subscription and legacy feature rows | `partial` | May show current stored state; do not infer renewal, provider health, or runtime capability. |
 | SUB-003 | Razorpay checkout and verification | `partial`, lifecycle wording `unsafe`, provider `externally unverified` | Test-only integration until Task 2 proves provider lifecycle. Do not label auto-renewing. |
@@ -48,11 +48,11 @@ route registration or current generated OpenAPI alone.
 | ACC-001 | Journal create/read/list/update/delete/post/reverse | `partial` accounting surface | Internal accounting UI only; no fiscal lock or stable error-code contract. |
 | ACC-002 | General-ledger list and balance | `partial` read surface | Internal accounting UI only; not a Trial Balance or Balance Sheet. |
 | AUTH-001 | Indian phone OTP auth | `partial`, Cognito/SMS `externally unverified` | Do not ship as hardened account-linking/session-management UX yet. |
-| ASSET-001 | Business-logo and drive presigns | `partial` and `unsafe` as completed-asset workflows; S3 `externally unverified` | Do not mark an asset complete after PUT; completion verification does not exist. |
-| IMP-001 | Current bulk import intake/read | `partial` and `unsafe` | Do not enable as a production import workflow; no processor was found. |
+| ASSET-001 | Business-logo and drive presigns | `partial` and `unsafe` as completed-asset workflows; S3 `externally unverified` | Drive intake now enforces CAP-001 plus the authoritative tenant storage quota; do not mark an asset complete after PUT because completion verification does not exist. |
+| IMP-001 | Current bulk import intake/read | intake `blocked`; legacy reads `partial` | Keep imports disabled. Customer and queued import intake now return CAP-001 `unsupported` until Task 7 supplies a safe processor. |
 | CART-001 | AP2 signed cart mandate | `partial` and `unsafe` as the requested editable cart | Existing clients only; no update/remove/clear contract. |
 | COUPON-001 | Storefront coupon list/create/update | `partial` and concurrency `unsafe` | Management UI may inspect it, but usage caps are not race-safe. |
-| REPORT-001 | Report JSON/CSV export envelope | `partial` | Existing synchronous JSON/CSV only; not an XLSX or file-download contract. |
+| REPORT-001 | Report JSON/CSV export envelope | `partial` | Existing synchronous JSON/CSV only; runtime export capability and plan/permission checks are enforced, but this is not an XLSX or file-download contract. |
 | AI-001 | Agent capability list/add/remove and permission probe | `partial` and `unsafe` as governance | Capability inventory only; do not treat it as execution authorization. |
 
 ## Cross-contract controls and client lifecycle
@@ -77,16 +77,16 @@ omitted column to imply support.
 | ACC-001 | Bearer + effective business + all branches | Reads `reports.view`; writes `documents.manage` | None | None implemented | No command/version key; never retry writes after an ambiguous response |
 | ACC-002 | Bearer + effective business + all branches | `reports.view` | None | None implemented | Read-only |
 | AUTH-001 | Public except logout, which requires bearer + effective business through the protected group | No business scope during public flow | None | None implemented | No command key; provider OTP/session controls apply |
-| ASSET-001 | Logo: bearer + owned business; drive: bearer + effective business | Logo owner check; drive `drive.manage` | Logo none; drive `drive_storage_mb` | None implemented | No command key and no completion idempotency |
-| IMP-001 | Bearer + effective business + authenticated user | Customer/vendor create permissions; product/invoice/document incomplete | None enforced | None implemented | No command/row idempotency |
+| ASSET-001 | Logo: bearer + owned business; drive: bearer + effective business | Logo owner check; drive `drive.manage` | Logo none; drive `drive_storage_mb`, measured from tenant drive assets in MB | None implemented | No command key and no completion idempotency |
+| IMP-001 | Bearer + effective business + authenticated user | Intake is rejected by CAP-001 before legacy per-type permission checks | Product support is `unsupported` until Task 7 | None implemented | No intake mutation occurs |
 | CART-001 | Bearer + effective business; user and owned shopping-agent checks | No additional permission | None | None implemented | No command key; signatures cover a created mandate but add creates a new mandate |
 | COUPON-001 | Management: bearer + effective business; validation: public slug route with rate limits | View `storefront.view`; writes `storefront.manage`; validation public | None enforced on coupon routes | None implemented | No command/version key |
-| REPORT-001 | Bearer + effective business + branch/warehouse scope | `reports.export` | No report-export plan entitlement enforced | None implemented | No command key; every request creates a report run |
+| REPORT-001 | Bearer + effective business + branch/warehouse scope | `reports.export` | `export_documents` through CAP-001 | None implemented | No command key; every accepted request creates a report run |
 | AI-001 | Bearer + effective business; same-business access passes the current ownership helper | No additional permission | None | None implemented | Add/remove have no command/version key; reads are safe |
 
 | ID | Pagination / file behavior | State and retry | Event / invalidation | Existing migration and rollout | Proof and governing limitation |
 | --- | --- | --- | --- | --- | --- |
-| CAP-001 | Fixed 13-item array; no pagination or file | Synchronous cached evaluation; reads are retry-safe; honor `retry_at` for temporary provider failures | No event; refetch after subscription, permission, business setup, or provider-readiness changes | No migration; deploy before frontend capability gating | `internal/config/capabilities_test.go`, `internal/services/capability_service_test.go`, `internal/services/capability_health_cache_test.go`, `internal/services/capability_setup_reader_test.go`, `internal/handlers/capability_handler_test.go`, `internal/app/runtime_routes_test.go`; health cache is process-local and starts unknown on cold start |
+| CAP-001 | Fixed 13-item array; no pagination or file | Synchronous cached evaluation; reads are retry-safe; honor `retry_at` for temporary provider failures | Provider operation outcomes refresh local AI, Razorpay/storefront and e-invoice/e-way facts; refetch after readiness, subscription, permission, or setup changes | No migration; deploy before frontend capability gating | Capability, recorder, guarded-mutation, quota, handler, and route tests beside their owners; health cache is process-local and starts unknown on cold start |
 | SUB-001 | No pagination or file | Synchronous read; retry safe | No event; invalidate on catalog-version/deployment change | No Task 0 migration; catalog is code-defined | `internal/services/subscription_catalog_test.go`; one-month checkout is not renewal |
 | SUB-002 | No pagination or file | Stored `active`/`canceled`/`expired` model; refetch after payment | No versioned event; invalidate subscription and entitlement queries after verify/sync | Existing subscription and feature-entitlement schema; keep direct writes disabled | `tests/unit/subscription_service_test.go`, `internal/services/entitlements_test.go`, `internal/services/commerce_service_test.go`; runtime capability and lifecycle are incomplete |
 | SUB-003 | No pagination or file | Attempt `created`/`pending`/`paid`/`failed`; do not blindly retry unknown provider outcomes | No client event; invalidate SUB-002 after verified paid response | `migrations/000041_add_razorpay_payment_attempts.up.sql`; test-mode/provider rollout unverified | `internal/services/razorpay_payment_service_test.go`, `internal/handlers/payment_handler_idempotency_test.go`, `infrastructure/terraform/tests/razorpay.tftest.hcl`; no recurring lifecycle or reconciliation |
@@ -136,8 +136,8 @@ Each item contains these exact fields: `key`; `product_support.supported`;
 `configuration.required` and `configuration.configured`;
 `provider_health.status`, optional `provider_health.observed_at`, and
 `provider_health.stale`; `entitlement.required` and `entitlement.entitled`;
-`quota.limited`, `quota.limit`, `quota.used`, `quota.remaining`, and
-`quota.available`; `permission.required`, optional `permission.key`, and
+optional `quota.unit`, `quota.limited`, `quota.limit`, `quota.used`,
+`quota.remaining`, and `quota.available`; `permission.required`, optional `permission.key`, and
 `permission.granted`; `business_setup.required` and `business_setup.complete`;
 `platform.requested`, `platform.supported`, and `platform.supported_platforms`;
 `available`; `state`; `reason_code`; optional `setup_action`; optional
@@ -185,6 +185,8 @@ States are `available`, `setup_required`, `upgrade_required`,
 `entitlement_required`, `quota_exhausted`, `permission_required`,
 `business_setup_required`, `platform_unsupported`,
 `saved_payment_methods_unsupported`, and `bulk_import_processor_unavailable`.
+Governed mutations may additionally return `capability_evaluation_failed` with
+state `unknown` when the evaluator itself cannot read an authoritative fact.
 Stable setup actions are `contact_support`, `configure_gst`,
 `configure_whatsapp`, `configure_email`, `enable_voice`,
 `enable_storefront_payments`, `complete_business_setup`,
@@ -211,12 +213,47 @@ stale, or unknown provider health fails closed. A fresh `degraded` observation
 may remain `available` with `reason_code: "provider_degraded"` and a safe
 degradation object.
 
+For `s3_uploads`, `quota.unit` is `MB`; `limit` is the plan's storage MB,
+`used` rounds tenant drive-asset bytes up to the next MB, and `remaining`
+rounds remaining bytes down to whole MB. `available` becomes false at the exact
+byte limit. The read endpoint never reserves storage. Drive presign enforcement
+uses this same tenant-scoped reader and rejects an upload that would exceed the
+byte limit before creating a drive asset or calling S3.
+
 Web voice is always `unsupported_platform`; saved payment methods are always
 `unsupported`; bulk imports are always `unsupported` with
 `bulk_import_processor_unavailable` because the current intake has no safe
 processor. The legacy simulated GST provider never satisfies configuration.
 Customer JSON cannot contain provider credentials, provider account IDs, secret
 identifiers, raw provider errors, or infrastructure topology.
+
+The same evaluation is a service-layer preflight, not merely frontend advice.
+Report export; Razorpay plan/storefront order creation; e-invoice and e-way
+generation/cancellation/update commands; drive upload initiation; mobile voice
+session creation; business LLM chat/agent-assist; bulk-import intake; and saved
+payment-method add/default/delete/token mutations are rejected before their
+database, queue, reservation, encryption, or provider effect when the relevant
+capability is unavailable. The preflight does not replace transactional
+e-invoice/e-way quota reservation or upload quota enforcement.
+
+Governed mutations return a stable customer-safe body:
+
+```json
+{
+  "code": "capability_unavailable",
+  "error": "capability e_invoice is unavailable: provider_health_unknown",
+  "capability": "e_invoice",
+  "state": "unknown",
+  "reason_code": "provider_health_unknown",
+  "setup_action": "configure_gst",
+  "retry_at": "2026-09-01T12:01:00Z"
+}
+```
+
+`setup_action` and `retry_at` are optional. Status is `403` for setup, upgrade,
+or permission states; `422` for unsupported product/platform; `429` for quota;
+and `503` for unknown or temporarily unavailable. Clients must branch on
+`state`/`reason_code`, never parse `error`.
 
 Stable endpoint errors introduced by this handler are
 `400 {"error":{"code":"invalid_platform","message":"Platform must be web, ios, or android."}}`,
@@ -228,14 +265,20 @@ middleware with HTTP `401` or `403` and the shared legacy error envelope.
 
 Known limitations: provider observations are held in a bounded, five-minute,
 process-local in-memory cache. Each process retains at most 4096
-tenant/capability observations and evicts the oldest observation when full. A
-Lambda cold start or another concurrent Lambda instance begins with unknown
-health, so the API fails closed until that process receives an observation.
-Task 1 does not synchronously ping providers and does
-not claim any live provider is healthy. No internal diagnostics endpoint was
-added: the repository has no operator principal distinct from business
-owner/admin, and that is insufficient authorization for provider internals.
-Operator diagnostics remain blocked until a genuine operator mechanism exists.
+tenant/capability observations and evicts the oldest observation when full.
+Actual Razorpay order, business-scoped LLM, and GST e-invoice/e-way provider
+outcomes record sanitized success, rate-limit, timeout, or unavailable facts
+monotonically for that tenant. A Lambda cold start or another concurrent Lambda
+instance still begins with unknown health. No safe synchronous probe was added:
+S3 presign success does not prove object-store health, voice admission does not
+prove the downstream media/runtime path, and WhatsApp/email lack a safe
+business-scoped probe here, so those capabilities remain unknown until a future
+asynchronous producer exists. The API never pings providers while serving
+`GET /capabilities` and no live provider is claimed healthy by local tests. No
+internal diagnostics endpoint was added: the repository has no operator
+principal distinct from business owner/admin, which is insufficient
+authorization for provider internals. Operator diagnostics remain blocked
+until a genuine operator mechanism exists.
 
 ## SUB-001: Subscription catalog
 
@@ -1348,7 +1391,9 @@ Success is `201` JSON, not a streamed file:
 }
 ```
 
-Binding failures are unstable `400` text. Exact current classified failures are
+CAP-001 failures use the stable capability mutation error documented above and
+occur before report lookup/query/run creation. Other binding failures are
+unstable `400` text. Exact current classified failures are
 `400 {"error":"unsupported export format"}`, `400 {"error":"at least one
 valid column is required"}`, `403 {"error":"report scope unavailable"}` or
 `403` for an unsafe branch/warehouse projection, `404 {"error":"report not
@@ -1380,10 +1425,10 @@ and `tests/unit/report_handler_test.go`.
 | Staging verification evidence | `missing` and `externally unverified` | Do not label a provider operational from local tests. |
 | Step-up, TOTP, durable devices/sessions and privacy workflows | `missing` | Do not expose placeholder controls. |
 | Trial Balance, Balance Sheet, fiscal lock/opening balance and bank reconciliation | `missing` around ACC-001/002 | Current journals and ledger reads do not prove these Phase 2 contracts. |
-| Durable two-phase customer/vendor/product import | `missing` around unsafe intake | Keep imports disabled. |
+| Durable two-phase customer/vendor/product import | `missing`; unsafe intake now fail-closed by CAP-001 | Keep imports disabled until Task 7 replaces the unsupported capability state. |
 | Verified upload completion, editable cart, race-safe coupons and typed XLSX | `missing` around partial surfaces | Do not simulate completion client-side. |
 | AI risk/approval/budget/kill-switch governance | `missing` around unsafe AI-001 descriptive capabilities and read-only voice tools | Do not enable governed high-risk agent actions. |
-| Saved payment methods | `deferred` | Keep unavailable. |
+| Saved payment methods | `deferred`; every current mutation is fail-closed by CAP-001 | Keep unavailable; read-only legacy views do not authorize creation or token use. |
 | Official GST return filing | `deferred` | Do not expose filing. Existing simulated provider output is not filing evidence. |
 | Automatic recurring issue/send | `deferred`; recurring draft creation exists | Do not label recurring drafts as auto-sent invoices. |
 | Full offline POS sync, report PDF export, web voice, marketplace/A2A/AP2 breadth, new bargaining modes | `deferred` | Keep outside Phase 2 release claims. |

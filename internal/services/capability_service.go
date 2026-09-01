@@ -112,6 +112,36 @@ type CapabilityRequest struct {
 	Capability CapabilityKey
 }
 
+type CapabilityGuard interface {
+	Require(ctx context.Context, request CapabilityRequest) error
+}
+
+func requireCapability(ctx context.Context, guard CapabilityGuard, request CapabilityRequest) error {
+	if guard == nil {
+		return &CapabilityUnavailableError{
+			Code: "capability_unavailable", Capability: request.Capability,
+			State: CapabilityStateUnknown, ReasonCode: "capability_evaluation_failed",
+		}
+	}
+	return guard.Require(ctx, request)
+}
+
+type CapabilityUnavailableError struct {
+	Code        string          `json:"code"`
+	Capability  CapabilityKey   `json:"capability"`
+	State       CapabilityState `json:"state"`
+	ReasonCode  string          `json:"reason_code"`
+	SetupAction string          `json:"setup_action,omitempty"`
+	RetryAt     *time.Time      `json:"retry_at,omitempty"`
+	cause       error
+}
+
+func (e *CapabilityUnavailableError) Error() string {
+	return fmt.Sprintf("capability %s is unavailable: %s", e.Capability, e.ReasonCode)
+}
+
+func (e *CapabilityUnavailableError) Unwrap() error { return e.cause }
+
 type CapabilityBusinessSetup struct {
 	BusinessExists     bool
 	GST                bool
@@ -205,6 +235,37 @@ func (s *CapabilityService) Evaluate(ctx context.Context, request CapabilityRequ
 	}
 	return s.evaluateDefinition(ctx, request, definition, setup)
 }
+
+// Require is the reusable service-layer preflight for governed mutations.
+// Entitlement quota reservations remain authoritative at the mutation's
+// transaction boundary; this check never reserves capacity.
+func (s *CapabilityService) Require(ctx context.Context, request CapabilityRequest) error {
+	result, err := s.Evaluate(ctx, request)
+	if err != nil {
+		return &CapabilityUnavailableError{
+			Code: "capability_unavailable", Capability: request.Capability,
+			State: CapabilityStateUnknown, ReasonCode: "capability_evaluation_failed", cause: err,
+		}
+	}
+	if result.Available {
+		return nil
+	}
+	retryAt := cloneCapabilityTime(result.RetryAt)
+	return &CapabilityUnavailableError{
+		Code: "capability_unavailable", Capability: result.Key, State: result.State,
+		ReasonCode: result.ReasonCode, SetupAction: result.SetupAction, RetryAt: retryAt,
+	}
+}
+
+func cloneCapabilityTime(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
+}
+
+var _ error = (*CapabilityUnavailableError)(nil)
 
 func (s *CapabilityService) List(ctx context.Context, businessID, userID string, platform CapabilityPlatform) (CapabilityList, error) {
 	if strings.TrimSpace(businessID) == "" || strings.TrimSpace(userID) == "" {

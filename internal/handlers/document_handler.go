@@ -407,6 +407,7 @@ func (h *DocumentUtilityHandler) GetComplianceStatus(c *gin.Context) {
 }
 
 func (h *DocumentUtilityHandler) GenerateEInvoice(c *gin.Context) {
+	requestContextWithActor(c)
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
 		return
@@ -442,6 +443,7 @@ func (h *DocumentUtilityHandler) GetEInvoice(c *gin.Context) {
 }
 
 func (h *DocumentUtilityHandler) CancelEInvoice(c *gin.Context) {
+	requestContextWithActor(c)
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
 		return
@@ -457,6 +459,9 @@ func (h *DocumentUtilityHandler) CancelEInvoice(c *gin.Context) {
 	}
 	job, err := h.tax.CancelEInvoiceByDocument(c.Request.Context(), businessID, c.Param("id"), idempotencyKey, input)
 	if err != nil {
+		if writeSubscriptionControlError(c, err) {
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -464,6 +469,7 @@ func (h *DocumentUtilityHandler) CancelEInvoice(c *gin.Context) {
 }
 
 func (h *DocumentUtilityHandler) GenerateEWayBill(c *gin.Context) {
+	requestContextWithActor(c)
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
 		return
@@ -512,6 +518,7 @@ func (h *DocumentUtilityHandler) GetEWayBillPDF(c *gin.Context) {
 }
 
 func (h *DocumentUtilityHandler) UpdateEWayPartB(c *gin.Context) {
+	requestContextWithActor(c)
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
 		return
@@ -527,6 +534,9 @@ func (h *DocumentUtilityHandler) UpdateEWayPartB(c *gin.Context) {
 	}
 	job, err := h.tax.UpdateEWayPartBByDocument(c.Request.Context(), businessID, c.Param("id"), idempotencyKey, input)
 	if err != nil {
+		if writeSubscriptionControlError(c, err) {
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -534,6 +544,7 @@ func (h *DocumentUtilityHandler) UpdateEWayPartB(c *gin.Context) {
 }
 
 func (h *DocumentUtilityHandler) InitiateMultiVehicle(c *gin.Context) {
+	requestContextWithActor(c)
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
 		return
@@ -549,6 +560,9 @@ func (h *DocumentUtilityHandler) InitiateMultiVehicle(c *gin.Context) {
 	}
 	job, err := h.tax.InitiateMultiVehicleByDocument(c.Request.Context(), businessID, c.Param("id"), idempotencyKey, input)
 	if err != nil {
+		if writeSubscriptionControlError(c, err) {
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

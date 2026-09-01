@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"invoice-backend/internal/config"
 	"invoice-backend/internal/models"
@@ -18,6 +19,7 @@ import (
 	"invoice-backend/pkg/razorpay"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -154,7 +156,7 @@ func newRazorpayPaymentTestService(t *testing.T) (*RazorpayPaymentService, *gorm
 			Timeout:       5,
 		},
 	}
-	return NewRazorpayPaymentService(cfg, db, logger.New()), db, fake
+	return NewRazorpayPaymentService(cfg, db, logger.New()).WithCapabilityGuard(&recordingCapabilityGuard{}), db, fake
 }
 
 func createRazorpayPaymentTestSchema(t *testing.T, db *gorm.DB) {
@@ -262,6 +264,51 @@ func createRazorpayPaymentTestSchema(t *testing.T, db *gorm.DB) {
 			t.Fatalf("create test schema: %v\n%s", err, stmt)
 		}
 	}
+}
+
+func TestRazorpayCreateOrderRejectsUnavailablePaymentCapabilityBeforeDatabaseOrProvider(t *testing.T) {
+	for _, fixture := range []struct {
+		name       string
+		targetType string
+		capability CapabilityKey
+	}{
+		{name: "plan payment", targetType: "plan", capability: CapabilityRazorpay},
+		{name: "storefront payment", targetType: "store_order", capability: CapabilityStorefrontPayments},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			guard := &recordingCapabilityGuard{err: &CapabilityUnavailableError{
+				Code: "capability_unavailable", Capability: fixture.capability,
+				State: CapabilityStateTemporarilyUnavailable, ReasonCode: ReasonProviderUnavailable,
+			}}
+			service := NewRazorpayPaymentService(&config.Config{}, nil, logger.New()).WithCapabilityGuard(guard)
+
+			_, err := service.CreateOrder(context.Background(), "biz-1", "user-1", RazorpayCreateOrderInput{TargetType: fixture.targetType})
+
+			var unavailable *CapabilityUnavailableError
+			require.ErrorAs(t, err, &unavailable)
+			require.Equal(t, fixture.capability, guard.request.Capability)
+			require.Equal(t, "biz-1", guard.request.BusinessID)
+			require.Equal(t, "user-1", guard.request.UserID)
+		})
+	}
+}
+
+func TestRazorpayCreateOrderRecordsTenantScopedProviderSuccess(t *testing.T) {
+	service, _, _ := newRazorpayPaymentTestService(t)
+	now := time.Date(2026, 9, 1, 14, 30, 0, 0, time.UTC)
+	cache := NewCapabilityHealthCache(CapabilityHealthCacheOptions{Now: func() time.Time { return now }})
+	service.WithCapabilityHealthRecorder(NewCapabilityHealthRecorder(cache, func() time.Time { return now }))
+
+	_, err := service.CreateOrder(context.Background(), "biz-1", "user-1", RazorpayCreateOrderInput{
+		TargetType: models.PaymentAttemptTargetPlan, PlanID: "pro_monthly", IdempotencyKey: "health-1",
+	})
+	require.NoError(t, err)
+
+	fact, ok := cache.CustomerFact("biz-1", CapabilityRazorpay)
+	require.True(t, ok)
+	require.Equal(t, CapabilityProviderHealthy, fact.Status)
+	_, otherTenant := cache.CustomerFact("biz-2", CapabilityRazorpay)
+	require.False(t, otherTenant)
 }
 
 func TestRazorpayPaymentCreateOrderServerAmountAndIdempotency(t *testing.T) {

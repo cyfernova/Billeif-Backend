@@ -36,11 +36,22 @@ type PlanEntitlements struct {
 }
 
 type CapabilityQuota struct {
-	Limited   bool  `json:"limited"`
-	Limit     int64 `json:"limit"`
-	Used      int64 `json:"used"`
-	Remaining int64 `json:"remaining"`
-	Available bool  `json:"available"`
+	Unit      string `json:"unit,omitempty"`
+	Limited   bool   `json:"limited"`
+	Limit     int64  `json:"limit"`
+	Used      int64  `json:"used"`
+	Remaining int64  `json:"remaining"`
+	Available bool   `json:"available"`
+}
+
+type DriveStorageQuota struct {
+	Access     FeatureAccess
+	LimitBytes int64
+	UsedBytes  int64
+}
+
+type DriveStorageQuotaReader interface {
+	InspectDriveStorage(ctx context.Context, businessID string) (DriveStorageQuota, error)
 }
 
 type FeatureAccess struct {
@@ -102,6 +113,10 @@ func (s *EntitlementService) ResolveByBusiness(ctx context.Context, businessID s
 // InspectFeature observes current catalog entitlement and quota usage without
 // reserving capacity. Mutations must still reserve through ReserveFeatureTx.
 func (s *EntitlementService) InspectFeature(ctx context.Context, businessID, feature string) (FeatureAccess, error) {
+	if feature == FeatureDriveStorageMB {
+		storage, err := s.InspectDriveStorage(ctx, businessID)
+		return storage.Access, err
+	}
 	plan, err := s.resolvePlan(ctx, businessID)
 	if err != nil {
 		return FeatureAccess{}, err
@@ -126,6 +141,43 @@ func (s *EntitlementService) InspectFeature(ctx context.Context, businessID, fea
 	access.Quota.Remaining = max(limit-usage.UsedValue, 0)
 	access.Quota.Available = usage.UsedValue < limit
 	return access, nil
+}
+
+func (s *EntitlementService) InspectDriveStorage(ctx context.Context, businessID string) (DriveStorageQuota, error) {
+	plan, err := s.resolvePlan(ctx, businessID)
+	if err != nil {
+		return DriveStorageQuota{}, err
+	}
+	limitMB, limited := plan.Quotas[QuotaStorageMB]
+	access := FeatureAccess{
+		Required: true,
+		Entitled: plan.Features[FeatureDriveStorageMB],
+		Quota: CapabilityQuota{
+			Unit: "MB", Limited: limited, Limit: limitMB,
+		},
+	}
+	if s.db == nil {
+		return DriveStorageQuota{}, fmt.Errorf("storage quota database is required")
+	}
+	var usedBytes int64
+	if err := s.db.WithContext(ctx).
+		Model(&models.DriveAsset{}).
+		Select("COALESCE(SUM(size_bytes), 0)").
+		Where("business_id = ? AND deleted_at IS NULL", businessID).
+		Scan(&usedBytes).Error; err != nil {
+		return DriveStorageQuota{}, fmt.Errorf("read drive storage usage: %w", err)
+	}
+	const bytesPerMB int64 = 1024 * 1024
+	limitBytes := limitMB * bytesPerMB
+	usedMB := usedBytes / bytesPerMB
+	if usedBytes%bytesPerMB != 0 {
+		usedMB++
+	}
+	remainingBytes := max(limitBytes-usedBytes, 0)
+	access.Quota.Used = usedMB
+	access.Quota.Remaining = remainingBytes / bytesPerMB
+	access.Quota.Available = access.Entitled && (!limited || usedBytes < limitBytes)
+	return DriveStorageQuota{Access: access, LimitBytes: limitBytes, UsedBytes: usedBytes}, nil
 }
 
 func (s *EntitlementService) resolvePlan(ctx context.Context, businessID string) (SubscriptionPlan, error) {

@@ -192,6 +192,34 @@ func TestEntitlementServiceInspectFeatureReportsCurrentQuotaWithoutReserving(t *
 	require.False(t, access.Quota.Available)
 }
 
+func TestEntitlementServiceInspectDriveStorageUsesTenantScopedAssetUsageInMB(t *testing.T) {
+	db := newEntitlementsTestDB(t)
+	seedActiveSubscription(t, db, "biz-below", "starter", "pro", nil)
+	seedActiveSubscription(t, db, "biz-exact", "starter", "pro", nil)
+	limitMB := subscriptionPlanForCode("pro").Quotas[QuotaStorageMB]
+	require.NoError(t, db.Exec(
+		"INSERT INTO drive_assets (id, business_id, size_bytes) VALUES (?, ?, ?), (?, ?, ?), (?, ?, ?)",
+		"asset-below", "biz-below", int64(10*1024*1024),
+		"asset-other", "other-business", int64(900*1024*1024),
+		"asset-exact", "biz-exact", limitMB*1024*1024,
+	).Error)
+	service := NewEntitlementService(&config.Config{}, db, postgresrepo.NewSubscriptionRepository(db), logger.New())
+
+	below, err := service.InspectFeature(context.Background(), "biz-below", FeatureDriveStorageMB)
+	require.NoError(t, err)
+	require.Equal(t, "MB", below.Quota.Unit)
+	require.Equal(t, limitMB, below.Quota.Limit)
+	require.Equal(t, int64(10), below.Quota.Used)
+	require.Equal(t, limitMB-10, below.Quota.Remaining)
+	require.True(t, below.Quota.Available)
+
+	exact, err := service.InspectFeature(context.Background(), "biz-exact", FeatureDriveStorageMB)
+	require.NoError(t, err)
+	require.Equal(t, limitMB, exact.Quota.Used)
+	require.Zero(t, exact.Quota.Remaining)
+	require.False(t, exact.Quota.Available)
+}
+
 func TestEntitlementReservationRollsBackWithGovernedWrite(t *testing.T) {
 	db := newEntitlementsTestDB(t)
 	seedActiveSubscription(t, db, "biz-1", "starter", "pro", nil)
@@ -246,6 +274,12 @@ func newEntitlementsTestDB(t *testing.T) *gorm.DB {
 			PRIMARY KEY (business_id, feature_key, period_start)
 		)`,
 		`CREATE TABLE governed_actions (id INTEGER PRIMARY KEY, business_id TEXT NOT NULL, feature_key TEXT NOT NULL)`,
+		`CREATE TABLE drive_assets (
+			id TEXT PRIMARY KEY,
+			business_id TEXT NOT NULL,
+			size_bytes INTEGER NOT NULL,
+			deleted_at DATETIME
+		)`,
 	}
 	for _, statement := range statements {
 		require.NoError(t, db.Exec(statement).Error)

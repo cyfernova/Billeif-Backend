@@ -32,7 +32,13 @@ type BillingOpsService struct {
 	documents    *DocumentService
 	s3           *S3Service
 	permissions  PermissionChecker
+	capability   CapabilityGuard
 	log          *logger.Logger
+}
+
+func (s *BillingOpsService) WithCapabilityGuard(guard CapabilityGuard) *BillingOpsService {
+	s.capability = guard
+	return s
 }
 
 type billingOpsInvoiceService interface {
@@ -880,6 +886,14 @@ type CreateBulkJobInput struct {
 }
 
 func (s *BillingOpsService) CreateBulkJob(ctx context.Context, input CreateBulkJobInput) (*models.BulkJob, error) {
+	if bulkJobIsImport(input.JobType) {
+		if err := requireCapability(ctx, s.capability, CapabilityRequest{
+			BusinessID: input.BusinessID, UserID: actorFromContext(ctx).UserID,
+			Platform: CapabilityPlatformWeb, Capability: CapabilityBulkImports,
+		}); err != nil {
+			return nil, err
+		}
+	}
 	switch input.JobType {
 	case models.BulkJobTypeImportCustomers:
 		if err := requireMutationPermission(ctx, s.permissions, input.BusinessID, PermissionCustomersCreate); err != nil {
@@ -955,6 +969,19 @@ func (s *BillingOpsService) CreateBulkJob(ctx context.Context, input CreateBulkJ
 	}
 	_ = recordActivityLog(ctx, s.db, input.BusinessID, "bulk_job", job.ID, "created", "", job, nil, nil)
 	return job, nil
+}
+
+func bulkJobIsImport(jobType string) bool {
+	switch jobType {
+	case models.BulkJobTypeImportCustomers,
+		models.BulkJobTypeImportVendors,
+		models.BulkJobTypeImportProducts,
+		models.BulkJobTypeImportInvoices,
+		models.BulkJobTypeImportDocuments:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *BillingOpsService) ListBulkJobs(ctx context.Context, businessID string, page, limit int) ([]*models.BulkJob, int64, error) {

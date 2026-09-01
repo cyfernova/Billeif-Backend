@@ -164,6 +164,7 @@ func NewContainer(
 	websocketTicketSvc := NewWebSocketTicketService(websocketTicketRepo, WebSocketTicketServiceOptions{})
 	notificationSvc := NewNotificationService(notificationRepo, NotificationServiceOptions{})
 	credentialProviderSvc := NewCredentialProviderServiceWithResolver(ap2Repo, cfg, resolver, log)
+	var capabilitySvc *CapabilityService
 	var voiceSessionSvc *voicesession.Service
 	if cfg.VoiceSession.Enabled() && aws != nil && aws.DynamoDB != nil && aws.AgentCore != nil {
 		voiceConfig := voicesession.Config{
@@ -180,7 +181,14 @@ func NewContainer(
 			TableName: voiceConfig.TableName, LeaseIndexName: voiceConfig.LeaseIndexName,
 			GlobalCapacityLimit: voiceConfig.GlobalCapacityLimit, PerUserCapacityLimit: voiceConfig.PerUserCapacityLimit,
 		})
-		voiceSessionSvc = voicesession.NewService(voiceStore, voicesession.NewAgentCoreRuntimeStopper(aws.AgentCore), voiceConfig, voicesession.ServiceOptions{})
+		voiceSessionSvc = voicesession.NewService(voiceStore, voicesession.NewAgentCoreRuntimeStopper(aws.AgentCore), voiceConfig, voicesession.ServiceOptions{
+			CreateGuard: func(ctx context.Context, scope voicesession.Scope, input voicesession.CreateInput) error {
+				return requireCapability(ctx, capabilitySvc, CapabilityRequest{
+					BusinessID: scope.BusinessID, UserID: scope.UserID,
+					Platform: CapabilityPlatform(input.Client.Platform), Capability: CapabilityVoice,
+				})
+			},
+		})
 	}
 
 	webhookSvc := NewWebhookService(webhookRepo, log)
@@ -205,13 +213,22 @@ func NewContainer(
 	commerceSvc := NewCommerceService(cfg, db, businessRepo, customerRepo, productRepo, subscriptionRepo, inventorySvc, documentSvc, s3Svc, log)
 	razorpayPaymentSvc := NewRazorpayPaymentService(cfg, db, log, resolver)
 	capabilityHealth := NewCapabilityHealthCache(CapabilityHealthCacheOptions{})
-	capabilitySvc := NewCapabilityService(CapabilityServiceOptions{
+	capabilitySvc = NewCapabilityService(CapabilityServiceOptions{
 		Configuration: config.CapabilityConfigurationSnapshot(cfg),
 		Entitlements:  taxComplianceSvc.entitlements,
 		Permissions:   businessAuthSvc,
 		Setup:         NewDBCapabilityBusinessSetupReader(db),
 		Health:        capabilityHealth,
 	})
+	capabilityRecorder := NewCapabilityHealthRecorder(capabilityHealth, nil)
+	reportSvc.WithCapabilityGuard(capabilitySvc)
+	taxComplianceSvc.WithCapabilityGuard(capabilitySvc).WithCapabilityHealthRecorder(capabilityRecorder)
+	billingOpsSvc.WithCapabilityGuard(capabilitySvc)
+	commerceSvc.WithCapabilityControls(capabilitySvc, taxComplianceSvc.entitlements)
+	razorpayPaymentSvc.WithCapabilityGuard(capabilitySvc).WithCapabilityHealthRecorder(capabilityRecorder)
+	credentialProviderSvc.WithCapabilityGuard(capabilitySvc)
+	llmSvc.WithCapabilityGuard(capabilitySvc).WithCapabilityHealthRecorder(capabilityRecorder)
+	customerSvc := NewCustomerService(customerRepo, businessAuthSvc, log).WithCapabilityGuard(capabilitySvc)
 
 	log.Info("service container initialized",
 		"components", 34,
@@ -227,7 +244,7 @@ func NewContainer(
 		Auth:                NewAuthService(cfg, userRepo, aws, emailSvc, s3Svc, log),
 		BusinessAuth:        businessAuthSvc,
 		Business:            NewBusinessService(businessRepo, s3Svc, log),
-		Customer:            NewCustomerService(customerRepo, businessAuthSvc, log),
+		Customer:            customerSvc,
 		Vendor:              NewVendorService(vendorRepo, businessAuthSvc, log),
 		Product:             NewProductService(db, productRepo, s3Svc, inventorySvc, log),
 		Project:             projectSvc,

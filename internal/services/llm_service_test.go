@@ -3,10 +3,12 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"invoice-backend/internal/config"
 	"invoice-backend/pkg/logger"
@@ -56,6 +58,86 @@ func TestLLMServiceChatSendsOpenAICompatibleRequest(t *testing.T) {
 	}
 	if got != "ok" {
 		t.Fatalf("Chat response = %q, want ok", got)
+	}
+}
+
+func TestLLMServiceBusinessChatRejectsUnavailableAICapabilityBeforeProvider(t *testing.T) {
+	var providerCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		providerCalls++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	guard := &recordingCapabilityGuard{err: &CapabilityUnavailableError{
+		Code: "capability_unavailable", Capability: CapabilityAI,
+		State: CapabilityStateUnknown, ReasonCode: ReasonProviderHealthUnknown,
+	}}
+	service := NewLLMService(config.LLMConfig{APIKey: "test", APIURL: server.URL, Timeout: 1}, logger.New()).WithCapabilityGuard(guard)
+
+	_, err := service.ChatWithWebSearchForBusiness(context.Background(), "biz-1", "user-1", []ChatMessage{{Role: "user", Content: "hello"}})
+
+	var unavailable *CapabilityUnavailableError
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("business chat error = %T %v, want CapabilityUnavailableError", err, err)
+	}
+	if providerCalls != 0 {
+		t.Fatalf("provider calls = %d, want zero", providerCalls)
+	}
+	if guard.request.Capability != CapabilityAI || guard.request.BusinessID != "biz-1" || guard.request.UserID != "user-1" {
+		t.Fatalf("guard request = %#v", guard.request)
+	}
+}
+
+func TestLLMServiceBusinessAgentAssistRejectsUnavailableAICapabilityBeforeProvider(t *testing.T) {
+	var providerCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		providerCalls++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	guard := &recordingCapabilityGuard{err: &CapabilityUnavailableError{
+		Code: "capability_unavailable", Capability: CapabilityAI,
+		State: CapabilityStateUnknown, ReasonCode: ReasonProviderHealthUnknown,
+	}}
+	service := NewLLMService(config.LLMConfig{APIKey: "test", APIURL: server.URL, Timeout: 1}, logger.New()).WithCapabilityGuard(guard)
+
+	_, err := service.ProcessAgentIntentForBusiness(context.Background(), "biz-1", "user-1", "suggest an agent", "")
+
+	var unavailable *CapabilityUnavailableError
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("agent assist error = %T %v, want CapabilityUnavailableError", err, err)
+	}
+	if providerCalls != 0 {
+		t.Fatalf("provider calls = %d, want zero", providerCalls)
+	}
+}
+
+func TestLLMServiceBusinessChatRecordsTenantScopedProviderOutcome(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}],"model":"test"}`))
+	}))
+	defer server.Close()
+	now := time.Date(2026, 9, 1, 14, 0, 0, 0, time.UTC)
+	cache := NewCapabilityHealthCache(CapabilityHealthCacheOptions{Now: func() time.Time { return now }})
+	recorder := NewCapabilityHealthRecorder(cache, func() time.Time { return now })
+	service := NewLLMService(config.LLMConfig{APIKey: "test", APIURL: server.URL, Model: "test", Timeout: 1}, logger.New()).
+		WithCapabilityGuard(&recordingCapabilityGuard{}).
+		WithCapabilityHealthRecorder(recorder)
+
+	_, err := service.ChatWithWebSearchForBusiness(context.Background(), "biz-1", "user-1", []ChatMessage{{Role: "user", Content: "hello"}})
+	if err != nil {
+		t.Fatalf("business chat: %v", err)
+	}
+
+	fact, ok := cache.CustomerFact("biz-1", CapabilityAI)
+	if !ok || fact.Status != CapabilityProviderHealthy || fact.ObservedAt == nil || !fact.ObservedAt.Equal(now) {
+		t.Fatalf("provider fact = %#v, found=%v", fact, ok)
+	}
+	if _, otherTenant := cache.CustomerFact("biz-2", CapabilityAI); otherTenant {
+		t.Fatal("provider outcome leaked to another tenant")
 	}
 }
 

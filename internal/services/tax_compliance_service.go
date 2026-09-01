@@ -41,7 +41,19 @@ type TaxComplianceService struct {
 	entitlements     *EntitlementService
 	provider         GSTProvider
 	resolver         ProviderConfigResolver
+	capability       CapabilityGuard
+	health           CapabilityOutcomeRecorder
 	log              *logger.Logger
+}
+
+func (s *TaxComplianceService) WithCapabilityGuard(guard CapabilityGuard) *TaxComplianceService {
+	s.capability = guard
+	return s
+}
+
+func (s *TaxComplianceService) WithCapabilityHealthRecorder(recorder CapabilityOutcomeRecorder) *TaxComplianceService {
+	s.health = recorder
+	return s
 }
 
 var gstinFormatPattern = regexp.MustCompile(`^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$`)

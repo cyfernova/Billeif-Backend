@@ -264,6 +264,9 @@ func (s *TaxComplianceService) GetComplianceStatus(ctx context.Context, business
 }
 
 func (s *TaxComplianceService) GenerateEInvoiceByDocument(ctx context.Context, businessID, documentID, idempotencyKey string, input GenerateEInvoiceInput) (*models.GSTSubmissionJob, error) {
+	if err := s.requireGSTCapability(ctx, businessID, CapabilityEInvoice); err != nil {
+		return nil, err
+	}
 	document, err := s.getDocumentForCompliance(ctx, businessID, documentID)
 	if err != nil {
 		return nil, err
@@ -282,6 +285,9 @@ func (s *TaxComplianceService) GenerateEInvoiceByDocument(ctx context.Context, b
 }
 
 func (s *TaxComplianceService) CancelEInvoiceByDocument(ctx context.Context, businessID, documentID, idempotencyKey string, input CancelEInvoiceInput) (*models.GSTSubmissionJob, error) {
+	if err := s.requireGSTCapability(ctx, businessID, CapabilityEInvoice); err != nil {
+		return nil, err
+	}
 	document, err := s.getDocumentForCompliance(ctx, businessID, documentID)
 	if err != nil {
 		return nil, err
@@ -305,6 +311,9 @@ func (s *TaxComplianceService) CancelEInvoiceByDocument(ctx context.Context, bus
 }
 
 func (s *TaxComplianceService) GenerateEWayBillByDocument(ctx context.Context, businessID, documentID, idempotencyKey string, input GenerateEWayBillInput) (*models.GSTSubmissionJob, error) {
+	if err := s.requireGSTCapability(ctx, businessID, CapabilityEWayBill); err != nil {
+		return nil, err
+	}
 	document, err := s.getDocumentForCompliance(ctx, businessID, documentID)
 	if err != nil {
 		return nil, err
@@ -320,6 +329,9 @@ func (s *TaxComplianceService) GenerateEWayBillByDocument(ctx context.Context, b
 }
 
 func (s *TaxComplianceService) UpdateEWayPartBByDocument(ctx context.Context, businessID, documentID, idempotencyKey string, input UpdateEWayPartBInput) (*models.GSTSubmissionJob, error) {
+	if err := s.requireGSTCapability(ctx, businessID, CapabilityEWayBill); err != nil {
+		return nil, err
+	}
 	document, err := s.getDocumentForCompliance(ctx, businessID, documentID)
 	if err != nil {
 		return nil, err
@@ -339,6 +351,9 @@ func (s *TaxComplianceService) UpdateEWayPartBByDocument(ctx context.Context, bu
 }
 
 func (s *TaxComplianceService) InitiateMultiVehicleByDocument(ctx context.Context, businessID, documentID, idempotencyKey string, input MultiVehicleInput) (*models.GSTSubmissionJob, error) {
+	if err := s.requireGSTCapability(ctx, businessID, CapabilityEWayBill); err != nil {
+		return nil, err
+	}
 	document, err := s.getDocumentForCompliance(ctx, businessID, documentID)
 	if err != nil {
 		return nil, err
@@ -359,6 +374,13 @@ func (s *TaxComplianceService) InitiateMultiVehicleByDocument(ctx context.Contex
 		"payload":          input.Payload,
 	}
 	return s.enqueueGSTJob(ctx, document, models.GSTOperationMultiVehicle, input.Source, idempotencyKey, payload)
+}
+
+func (s *TaxComplianceService) requireGSTCapability(ctx context.Context, businessID string, capability CapabilityKey) error {
+	return requireCapability(ctx, s.capability, CapabilityRequest{
+		BusinessID: businessID, UserID: actorFromContext(ctx).UserID,
+		Platform: CapabilityPlatformWeb, Capability: capability,
+	})
 }
 
 func (s *TaxComplianceService) GetEWayBillPDFByDocument(ctx context.Context, businessID, documentID string) (string, error) {
@@ -543,6 +565,7 @@ func (s *TaxComplianceService) processGSTJob(ctx context.Context, job *models.GS
 			SerialNo:   document.SerialNumber,
 			Payload:    reqPayload,
 		})
+		s.recordGSTProviderOutcome(job.BusinessID, CapabilityEInvoice, opErr)
 		if opErr == nil {
 			opErr = s.applyEInvoiceResult(ctx, document, job, account, result)
 			resultPayload = result.RawResponse
@@ -561,6 +584,7 @@ func (s *TaxComplianceService) processGSTJob(ctx context.Context, job *models.GS
 			Reason:     readStringCandidate(reqPayload, "reason"),
 			Payload:    reqPayload,
 		})
+		s.recordGSTProviderOutcome(job.BusinessID, CapabilityEInvoice, opErr)
 		if opErr == nil {
 			opErr = s.applyCancelledEInvoice(ctx, document, job, record, result)
 			resultPayload = result.RawResponse
@@ -573,6 +597,7 @@ func (s *TaxComplianceService) processGSTJob(ctx context.Context, job *models.GS
 			SerialNo:   document.SerialNumber,
 			Payload:    reqPayload,
 		})
+		s.recordGSTProviderOutcome(job.BusinessID, CapabilityEWayBill, opErr)
 		if opErr == nil {
 			opErr = s.applyEWayBillResult(ctx, document, job, account, result, false)
 			resultPayload = result.RawResponse
@@ -590,6 +615,7 @@ func (s *TaxComplianceService) processGSTJob(ctx context.Context, job *models.GS
 			EWayBillNo: record.EWayBillNumber,
 			Payload:    reqPayload,
 		})
+		s.recordGSTProviderOutcome(job.BusinessID, CapabilityEWayBill, opErr)
 		if opErr == nil {
 			opErr = s.applyEWayBillResult(ctx, document, job, account, result, true)
 			if opErr == nil {
@@ -610,6 +636,7 @@ func (s *TaxComplianceService) processGSTJob(ctx context.Context, job *models.GS
 			EWayBillNo: record.EWayBillNumber,
 			Payload:    reqPayload,
 		})
+		s.recordGSTProviderOutcome(job.BusinessID, CapabilityEWayBill, opErr)
 		if opErr == nil {
 			opErr = s.recordVehicleMovement(ctx, document, record, reqPayload, coalesceString(readStringCandidate(reqPayload, "movement_type"), "multi_vehicle"))
 			resultPayload = result.RawResponse
@@ -634,6 +661,12 @@ func (s *TaxComplianceService) processGSTJob(ctx context.Context, job *models.GS
 		return err
 	}
 	return nil
+}
+
+func (s *TaxComplianceService) recordGSTProviderOutcome(businessID string, capability CapabilityKey, err error) {
+	if s.health != nil {
+		_ = s.health.RecordOutcome(businessID, capability, CapabilityProviderOutcome{Err: err})
+	}
 }
 
 func (s *TaxComplianceService) applyEInvoiceResult(ctx context.Context, document *models.Document, job *models.GSTSubmissionJob, account *models.GSTIntegrationAccount, result *GSTEInvoiceResult) error {

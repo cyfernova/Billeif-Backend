@@ -144,7 +144,7 @@ func TestCustomerServiceDeniesUnauthorizedMutationsBeforeRepository(t *testing.T
 		t.Run(test.name, func(t *testing.T) {
 			repository := &countingCustomerRepository{}
 			checker := &recordingPermissionChecker{}
-			service := NewCustomerService(repository, checker, logger.New())
+			service := NewCustomerService(repository, checker, logger.New()).WithCapabilityGuard(&recordingCapabilityGuard{})
 			err := test.mutate(service)
 			assertPermissionDeniedBeforeRepository(t, err, repository.calls, checker, test.permission)
 		})
@@ -224,11 +224,53 @@ func TestQueuedPartyImportsDenyUnauthorizedActorBeforeDatabase(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			checker := &recordingPermissionChecker{}
-			service := NewBillingOpsService(nil, nil, nil, nil, nil, nil, nil, nil, checker, logger.New())
+			service := NewBillingOpsService(nil, nil, nil, nil, nil, nil, nil, nil, checker, logger.New()).WithCapabilityGuard(&recordingCapabilityGuard{})
 			_, err := service.CreateBulkJob(mutationActorContext(), CreateBulkJobInput{BusinessID: "business-1", JobType: test.jobType})
 			assertPermissionDeniedBeforeRepository(t, err, 0, checker, test.permission)
 		})
 	}
+}
+
+func TestBulkImportIntakeRejectsUnsupportedCapabilityBeforeAnyEffect(t *testing.T) {
+	unavailable := &CapabilityUnavailableError{
+		Code: "capability_unavailable", Capability: CapabilityBulkImports,
+		State: CapabilityStateUnsupported, ReasonCode: ReasonBulkProcessorUnavailable,
+	}
+
+	t.Run("direct customer import", func(t *testing.T) {
+		repository := &countingCustomerRepository{}
+		checker := &recordingPermissionChecker{allow: true}
+		guard := &recordingCapabilityGuard{err: unavailable}
+		service := NewCustomerService(repository, checker, logger.New()).WithCapabilityGuard(guard)
+
+		_, err := service.Import(mutationActorContext(), "business-1", []CreateCustomerInput{{Name: "Customer", Email: "customer@example.com"}})
+
+		var capabilityErr *CapabilityUnavailableError
+		if !errors.As(err, &capabilityErr) {
+			t.Fatalf("import error = %T %v, want CapabilityUnavailableError", err, err)
+		}
+		if repository.calls != 0 || len(checker.calls) != 0 {
+			t.Fatalf("repository calls = %d permission calls = %d, want zero effects", repository.calls, len(checker.calls))
+		}
+	})
+
+	t.Run("queued import", func(t *testing.T) {
+		checker := &recordingPermissionChecker{allow: true}
+		guard := &recordingCapabilityGuard{err: unavailable}
+		service := NewBillingOpsService(nil, nil, nil, nil, nil, nil, nil, nil, checker, logger.New()).WithCapabilityGuard(guard)
+
+		_, err := service.CreateBulkJob(mutationActorContext(), CreateBulkJobInput{
+			BusinessID: "business-1", JobType: models.BulkJobTypeImportProducts, FileContent: []byte("unsafe"),
+		})
+
+		var capabilityErr *CapabilityUnavailableError
+		if !errors.As(err, &capabilityErr) {
+			t.Fatalf("import error = %T %v, want CapabilityUnavailableError", err, err)
+		}
+		if len(checker.calls) != 0 {
+			t.Fatalf("permission calls = %d, want zero effects", len(checker.calls))
+		}
+	})
 }
 
 func TestMutationAuthorizationFailsClosedWithoutCheckerOrServerActor(t *testing.T) {

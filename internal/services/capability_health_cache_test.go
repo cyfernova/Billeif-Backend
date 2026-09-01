@@ -1,6 +1,8 @@
 package services
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -84,4 +86,76 @@ func TestCapabilityHealthCacheEvictsOldestObservationAtCapacity(t *testing.T) {
 	require.False(t, oldestPresent)
 	require.True(t, middlePresent)
 	require.True(t, newestPresent)
+}
+
+func TestCapabilityHealthCacheRetryAtIsMutationIsolatedOnRecordAndRead(t *testing.T) {
+	now := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+	originalRetry := now.Add(time.Minute)
+	retryInput := originalRetry
+	cache := NewCapabilityHealthCache(CapabilityHealthCacheOptions{Now: func() time.Time { return now }})
+	require.NoError(t, cache.Record("business-a", CapabilityRazorpay, CapabilityHealthObservation{
+		Status: CapabilityProviderUnavailable, ObservedAt: now, RetryAt: &retryInput,
+	}))
+
+	retryInput = now.Add(24 * time.Hour)
+	fact, ok := cache.CustomerFact("business-a", CapabilityRazorpay)
+	require.True(t, ok)
+	require.Equal(t, originalRetry, *fact.RetryAt)
+	*fact.RetryAt = now.Add(48 * time.Hour)
+	operator, ok := cache.OperatorObservation("business-a", CapabilityRazorpay)
+	require.True(t, ok)
+	require.Equal(t, originalRetry, *operator.RetryAt)
+	*operator.RetryAt = now.Add(72 * time.Hour)
+
+	again, ok := cache.CustomerFact("business-a", CapabilityRazorpay)
+	require.True(t, ok)
+	require.Equal(t, originalRetry, *again.RetryAt)
+}
+
+func TestCapabilityHealthCacheConcurrentRecordAndReadOwnRetryAtValues(t *testing.T) {
+	now := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+	cache := NewCapabilityHealthCache(CapabilityHealthCacheOptions{Now: func() time.Time { return now }})
+	retryAt := now.Add(time.Minute)
+	require.NoError(t, cache.Record("business-a", CapabilityRazorpay, CapabilityHealthObservation{
+		Status: CapabilityProviderHealthy, ObservedAt: now, RetryAt: &retryAt,
+	}))
+
+	var wait sync.WaitGroup
+	errors := make(chan error, 32)
+	for index := 0; index < 32; index++ {
+		wait.Add(2)
+		go func(index int) {
+			defer wait.Done()
+			observedAt := now.Add(time.Duration(index+1) * time.Second)
+			retry := observedAt.Add(time.Minute)
+			if err := cache.Record("business-a", CapabilityRazorpay, CapabilityHealthObservation{
+				Status: CapabilityProviderHealthy, ObservedAt: observedAt, RetryAt: &retry,
+				CustomerCode: fmt.Sprintf("healthy_%d", index),
+			}); err != nil {
+				errors <- err
+			}
+			retry = now.Add(24 * time.Hour)
+		}(index)
+		go func() {
+			defer wait.Done()
+			if fact, ok := cache.CustomerFact("business-a", CapabilityRazorpay); ok && fact.RetryAt != nil {
+				*fact.RetryAt = now.Add(48 * time.Hour)
+			}
+			if observation, ok := cache.OperatorObservation("business-a", CapabilityRazorpay); ok && observation.RetryAt != nil {
+				*observation.RetryAt = now.Add(72 * time.Hour)
+			}
+		}()
+	}
+	wait.Wait()
+	close(errors)
+	for err := range errors {
+		require.NoError(t, err)
+	}
+
+	fact, ok := cache.CustomerFact("business-a", CapabilityRazorpay)
+	require.True(t, ok)
+	require.NotNil(t, fact.RetryAt)
+	require.NotEqual(t, now.Add(24*time.Hour), *fact.RetryAt)
+	require.NotEqual(t, now.Add(48*time.Hour), *fact.RetryAt)
+	require.NotEqual(t, now.Add(72*time.Hour), *fact.RetryAt)
 }

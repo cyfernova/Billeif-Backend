@@ -30,7 +30,13 @@ type CredentialProviderService struct {
 	encryptionKey []byte
 	cfg           *config.Config
 	resolver      ProviderConfigResolver
+	capability    CapabilityGuard
 	log           *logger.Logger
+}
+
+func (s *CredentialProviderService) WithCapabilityGuard(guard CapabilityGuard) *CredentialProviderService {
+	s.capability = guard
+	return s
 }
 
 func NewCredentialProviderService(ap2Repo interfaces.AP2Repository, encryptionKey string, log *logger.Logger) (*CredentialProviderService, error) {
@@ -58,6 +64,7 @@ func NewCredentialProviderServiceWithResolver(ap2Repo interfaces.AP2Repository, 
 }
 
 type AddPaymentMethodRequest struct {
+	BusinessID         string
 	UserID             string
 	CredentialType     string
 	RazorpayCustomerID string
@@ -68,6 +75,15 @@ type AddPaymentMethodRequest struct {
 }
 
 func (s *CredentialProviderService) AddPaymentMethod(ctx context.Context, req *AddPaymentMethodRequest) (*models.PaymentCredential, error) {
+	if req == nil {
+		return nil, fmt.Errorf("payment method request is required")
+	}
+	if err := requireCapability(ctx, s.capability, CapabilityRequest{
+		BusinessID: req.BusinessID, UserID: req.UserID,
+		Platform: CapabilityPlatformWeb, Capability: CapabilitySavedPayments,
+	}); err != nil {
+		return nil, err
+	}
 	encryptedData, err := s.encryptCredential(ctx, req.CardToken)
 	if err != nil {
 		s.log.Error("failed to encrypt credential", "error", err, "user_id", req.UserID)
@@ -126,7 +142,13 @@ func (s *CredentialProviderService) GetPaymentMethodByID(ctx context.Context, cr
 	return credential, nil
 }
 
-func (s *CredentialProviderService) SetDefaultPaymentMethod(ctx context.Context, userID, credentialID string) error {
+func (s *CredentialProviderService) SetDefaultPaymentMethod(ctx context.Context, businessID, userID, credentialID string) error {
+	if err := requireCapability(ctx, s.capability, CapabilityRequest{
+		BusinessID: businessID, UserID: userID,
+		Platform: CapabilityPlatformWeb, Capability: CapabilitySavedPayments,
+	}); err != nil {
+		return err
+	}
 	credential, err := s.ap2Repo.GetPaymentCredentialByID(ctx, credentialID)
 	if err != nil {
 		return ErrCredentialNotFound
@@ -145,7 +167,13 @@ func (s *CredentialProviderService) SetDefaultPaymentMethod(ctx context.Context,
 	return nil
 }
 
-func (s *CredentialProviderService) DeletePaymentMethod(ctx context.Context, userID, credentialID string) error {
+func (s *CredentialProviderService) DeletePaymentMethod(ctx context.Context, businessID, userID, credentialID string) error {
+	if err := requireCapability(ctx, s.capability, CapabilityRequest{
+		BusinessID: businessID, UserID: userID,
+		Platform: CapabilityPlatformWeb, Capability: CapabilitySavedPayments,
+	}); err != nil {
+		return err
+	}
 	credential, err := s.ap2Repo.GetPaymentCredentialByID(ctx, credentialID)
 	if err != nil {
 		return ErrCredentialNotFound
@@ -165,12 +193,22 @@ func (s *CredentialProviderService) DeletePaymentMethod(ctx context.Context, use
 }
 
 type GenerateTokenRequest struct {
+	BusinessID       string
 	CredentialID     string
 	PaymentMandateID string
 	UserID           string
 }
 
 func (s *CredentialProviderService) GenerateCredentialToken(ctx context.Context, req *GenerateTokenRequest) (*models.CredentialToken, error) {
+	if req == nil {
+		return nil, fmt.Errorf("credential token request is required")
+	}
+	if err := requireCapability(ctx, s.capability, CapabilityRequest{
+		BusinessID: req.BusinessID, UserID: req.UserID,
+		Platform: CapabilityPlatformWeb, Capability: CapabilitySavedPayments,
+	}); err != nil {
+		return nil, err
+	}
 	credential, err := s.ap2Repo.GetPaymentCredentialByID(ctx, req.CredentialID)
 	if err != nil {
 		return nil, ErrCredentialNotFound

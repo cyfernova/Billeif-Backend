@@ -36,8 +36,16 @@ type CommerceService struct {
 	inventory        *InventoryService
 	documents        *DocumentService
 	s3               *S3Service
+	capability       CapabilityGuard
+	storageQuotas    DriveStorageQuotaReader
 	httpClient       *http.Client
 	log              *logger.Logger
+}
+
+func (s *CommerceService) WithCapabilityControls(guard CapabilityGuard, storageQuotas DriveStorageQuotaReader) *CommerceService {
+	s.capability = guard
+	s.storageQuotas = storageQuotas
+	return s
 }
 
 type UpsertFeatureEntitlementInput struct {
@@ -1538,19 +1546,38 @@ func (s *CommerceService) ListDriveAssets(ctx context.Context, businessID string
 }
 
 func (s *CommerceService) CreateDriveUpload(ctx context.Context, businessID, userID string, input CreateDriveAssetInput) (*DriveUploadSession, error) {
-	if err := s.ensureFeatureEnabled(ctx, businessID, FeatureDriveStorageMB); err != nil {
+	if err := requireCapability(ctx, s.capability, CapabilityRequest{
+		BusinessID: businessID, UserID: userID,
+		Platform: CapabilityPlatformWeb, Capability: CapabilityS3Uploads,
+	}); err != nil {
 		return nil, err
 	}
 	contentType, err := validateDriveAssetUpload(input)
 	if err != nil {
 		return nil, err
 	}
-	usage, limit, err := s.driveUsageAndLimit(ctx, businessID)
+	if s.storageQuotas == nil {
+		return nil, &CapabilityUnavailableError{
+			Code: "capability_unavailable", Capability: CapabilityS3Uploads,
+			State: CapabilityStateUnknown, ReasonCode: "capability_evaluation_failed",
+		}
+	}
+	storage, err := s.storageQuotas.InspectDriveStorage(ctx, businessID)
 	if err != nil {
 		return nil, err
 	}
-	if limit > 0 && usage+input.SizeBytes > limit {
-		return nil, fmt.Errorf("drive storage quota exceeded")
+	if !storage.Access.Entitled {
+		return nil, &CapabilityUnavailableError{
+			Code: "capability_unavailable", Capability: CapabilityS3Uploads,
+			State: CapabilityStateUpgradeRequired, ReasonCode: ReasonEntitlementRequired,
+			SetupAction: "upgrade_subscription",
+		}
+	}
+	if storage.Access.Quota.Limited && storage.UsedBytes+input.SizeBytes > storage.LimitBytes {
+		return nil, &QuotaExceededError{
+			Code: "quota_exceeded", Feature: FeatureDriveStorageMB,
+			Limit: storage.Access.Quota.Limit, Used: storage.Access.Quota.Used,
+		}
 	}
 	asset := &models.DriveAsset{
 		BusinessID:  businessID,
@@ -2347,27 +2374,6 @@ func (s *CommerceService) ensureFeatureEnabled(ctx context.Context, businessID, 
 		}
 	}
 	return fmt.Errorf("%s is not enabled on the current plan", featureKey)
-}
-
-func (s *CommerceService) driveUsageAndLimit(ctx context.Context, businessID string) (usageBytes int64, limitBytes int64, err error) {
-	if err := s.db.WithContext(ctx).
-		Model(&models.DriveAsset{}).
-		Select("COALESCE(SUM(size_bytes), 0)").
-		Where("business_id = ? AND deleted_at IS NULL", businessID).
-		Scan(&usageBytes).Error; err != nil {
-		return 0, 0, err
-	}
-	entitlements, err := s.ListFeatureEntitlements(ctx, businessID)
-	if err != nil {
-		return usageBytes, 0, err
-	}
-	for _, entitlement := range entitlements {
-		if entitlement.FeatureKey == FeatureDriveStorageMB && entitlement.Enabled && entitlement.LimitValue != nil && *entitlement.LimitValue > 0 {
-			limitBytes = *entitlement.LimitValue * 1024 * 1024
-			return usageBytes, limitBytes, nil
-		}
-	}
-	return usageBytes, 0, nil
 }
 
 func (s *CommerceService) queueStoreOrderNotification(ctx context.Context, order *models.StoreOrder, eventKey string) {

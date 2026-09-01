@@ -774,6 +774,10 @@ func (h *CommerceHandler) ListDriveAssets(c *gin.Context) {
 // @Success 201 {object} services.DriveUploadSession
 // @Failure 400 {object} map[string]string
 // @Failure 401 {object} map[string]string
+// @Failure 403 {object} CapabilityMutationError
+// @Failure 422 {object} CapabilityMutationError
+// @Failure 429 {object} CapabilityMutationError
+// @Failure 503 {object} CapabilityMutationError
 // @Router /drive/presign [post]
 func (h *CommerceHandler) CreateDriveUpload(c *gin.Context) {
 	requestContextWithActor(c)
@@ -793,6 +797,9 @@ func (h *CommerceHandler) CreateDriveUpload(c *gin.Context) {
 	input.BusinessID = businessID
 	session, err := h.svc.CreateDriveUpload(c.Request.Context(), businessID, userID, input)
 	if err != nil {
+		if writeSubscriptionControlError(c, err) {
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

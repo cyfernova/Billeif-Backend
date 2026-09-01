@@ -24,9 +24,10 @@ import (
 )
 
 type ReportService struct {
-	cfg  *config.Config
-	repo interfaces.ReportingRepository
-	log  *logger.Logger
+	cfg        *config.Config
+	repo       interfaces.ReportingRepository
+	capability CapabilityGuard
+	log        *logger.Logger
 }
 
 var ErrReportScopeUnsupported = errors.New("report cannot be safely limited to the caller's branch or warehouse scope")
@@ -132,6 +133,11 @@ func NewReportService(cfg *config.Config, repo interfaces.ReportingRepository, l
 	return &ReportService{cfg: cfg, repo: repo, log: log}
 }
 
+func (s *ReportService) WithCapabilityGuard(guard CapabilityGuard) *ReportService {
+	s.capability = guard
+	return s
+}
+
 func (s *ReportService) Catalog() []reporting.Definition {
 	return reporting.Catalog()
 }
@@ -158,6 +164,11 @@ func (s *ReportService) Query(ctx context.Context, businessID, userID, reportKey
 }
 
 func (s *ReportService) Export(ctx context.Context, businessID, userID, reportKey string, input ReportExportInput) (*ReportExportResponse, error) {
+	if err := requireCapability(ctx, s.capability, CapabilityRequest{
+		BusinessID: businessID, UserID: userID, Platform: CapabilityPlatformWeb, Capability: CapabilityReportExports,
+	}); err != nil {
+		return nil, err
+	}
 	def, ok := reporting.Lookup(reportKey)
 	if !ok {
 		return nil, fmt.Errorf("report not found")

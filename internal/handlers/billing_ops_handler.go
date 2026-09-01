@@ -445,6 +445,9 @@ func (h *BillingOpsHandler) createImportJob(c *gin.Context, jobType string) {
 		},
 	})
 	if err != nil {
+		if writeSubscriptionControlError(c, err) {
+			return
+		}
 		statusCode := http.StatusInternalServerError
 		if isPermissionDeniedErr(err) {
 			statusCode = http.StatusForbidden

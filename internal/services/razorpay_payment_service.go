@@ -22,7 +22,19 @@ type RazorpayPaymentService struct {
 	db       *gorm.DB
 	client   *razorpay.Client
 	resolver ProviderConfigResolver
+	guard    CapabilityGuard
+	health   CapabilityOutcomeRecorder
 	log      *logger.Logger
+}
+
+func (s *RazorpayPaymentService) WithCapabilityHealthRecorder(recorder CapabilityOutcomeRecorder) *RazorpayPaymentService {
+	s.health = recorder
+	return s
+}
+
+func (s *RazorpayPaymentService) WithCapabilityGuard(guard CapabilityGuard) *RazorpayPaymentService {
+	s.guard = guard
+	return s
 }
 
 func NewRazorpayPaymentService(cfg *config.Config, db *gorm.DB, log *logger.Logger, resolvers ...ProviderConfigResolver) *RazorpayPaymentService {
@@ -98,7 +110,19 @@ type RazorpayVerifyPaymentResponse struct {
 }
 
 func (s *RazorpayPaymentService) CreateOrder(ctx context.Context, businessID, userID string, input RazorpayCreateOrderInput) (*RazorpayCreateOrderResponse, error) {
-	if s == nil || s.db == nil {
+	if s == nil {
+		return nil, fmt.Errorf("payment service is not configured")
+	}
+	capability := CapabilityRazorpay
+	if strings.TrimSpace(input.TargetType) == "store_order" {
+		capability = CapabilityStorefrontPayments
+	}
+	if err := requireCapability(ctx, s.guard, CapabilityRequest{
+		BusinessID: businessID, UserID: userID, Platform: CapabilityPlatformWeb, Capability: capability,
+	}); err != nil {
+		return nil, err
+	}
+	if s.db == nil {
 		return nil, fmt.Errorf("payment service is not configured")
 	}
 	client, err := s.clientFor(ctx)
@@ -129,6 +153,9 @@ func (s *RazorpayPaymentService) CreateOrder(ctx context.Context, businessID, us
 			}
 		} else {
 			order, err = s.createRazorpayOrder(ctx, client, attempt)
+		}
+		if s.health != nil {
+			_ = s.health.RecordOutcome(businessID, capability, CapabilityProviderOutcome{Err: err})
 		}
 		if err != nil {
 			s.log.Warn("failed to initialize Razorpay payment order", "payment_attempt_id", attempt.ID, "business_id", businessID, "error", err)

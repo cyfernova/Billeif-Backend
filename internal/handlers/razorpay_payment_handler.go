@@ -37,9 +37,11 @@ func NewRazorpayPaymentHandler(svc *services.RazorpayPaymentService, log *logger
 // @Success 200 {object} services.RazorpayCreateOrderResponse
 // @Failure 400 {object} map[string]string
 // @Failure 401 {object} map[string]string
-// @Failure 403 {object} map[string]string
+// @Failure 403 {object} CapabilityMutationError
 // @Failure 409 {object} map[string]string
-// @Failure 429 {object} map[string]string
+// @Failure 422 {object} CapabilityMutationError
+// @Failure 429 {object} CapabilityMutationError
+// @Failure 503 {object} CapabilityMutationError
 // @Router /payments/razorpay/order [post]
 func (h *RazorpayPaymentHandler) CreateOrder(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
@@ -59,6 +61,9 @@ func (h *RazorpayPaymentHandler) CreateOrder(c *gin.Context) {
 
 	resp, err := h.svc.CreateOrder(c.Request.Context(), businessID, userID, input)
 	if err != nil {
+		if writeSubscriptionControlError(c, err) {
+			return
+		}
 		status, message := paymentErrorResponse(err)
 		h.log.Warn("create Razorpay order failed", "business_id", businessID, "user_id", userID, "target_type", input.TargetType, "status", status, "error", err)
 		c.JSON(status, gin.H{"error": message})

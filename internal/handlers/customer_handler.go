@@ -224,7 +224,11 @@ func (h *CustomerHandler) Delete(c *gin.Context) {
 // @Param input body []services.CreateCustomerInput true "List of customers"
 // @Success 200 {object} map[string]int
 // @Failure 400 {object} map[string]string
+// @Failure 403 {object} CapabilityMutationError
+// @Failure 422 {object} CapabilityMutationError
+// @Failure 429 {object} CapabilityMutationError
 // @Failure 500 {object} map[string]string
+// @Failure 503 {object} CapabilityMutationError
 // @Router /customers/import [post]
 func (h *CustomerHandler) Import(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("customer_handler").With("operation", "import")
@@ -244,6 +248,9 @@ func (h *CustomerHandler) Import(c *gin.Context) {
 	count, err := h.svc.Import(c.Request.Context(), businessID, customers)
 	if err != nil {
 		log.Error("failed to import customers", "error", err, "business_id", businessID)
+		if writeSubscriptionControlError(c, err) {
+			return
+		}
 		statusCode := http.StatusInternalServerError
 		if isPermissionDeniedErr(err) {
 			statusCode = http.StatusForbidden

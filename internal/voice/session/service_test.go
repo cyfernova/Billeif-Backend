@@ -160,6 +160,28 @@ func TestServiceCreateIsIdempotentAndValidatesContract(t *testing.T) {
 	}
 }
 
+func TestServiceCreateRejectsCapabilityGuardBeforeAdmission(t *testing.T) {
+	store := newMemoryStore()
+	guardErr := errors.New("voice capability unavailable")
+	svc := NewService(store, &stopRecorder{}, testConfig(), ServiceOptions{
+		CreateGuard: func(_ context.Context, scope Scope, input CreateInput) error {
+			if scope.BusinessID != "business-1" || scope.UserID != "user-1" || input.Client.Platform != "ios" {
+				t.Fatalf("unexpected guarded create: scope=%#v input=%#v", scope, input)
+			}
+			return guardErr
+		},
+	})
+
+	_, err := svc.Create(context.Background(), Scope{UserID: "user-1", BusinessID: "business-1", AllBranches: true}, validCreateInput())
+
+	if !errors.Is(err, guardErr) {
+		t.Fatalf("create error = %v, want guard error", err)
+	}
+	if store.createCalls != 0 {
+		t.Fatalf("store create calls = %d, want zero", store.createCalls)
+	}
+}
+
 func TestServiceCreateRejectsInvalidConsentAndLanguage(t *testing.T) {
 	cases := []struct {
 		name   string

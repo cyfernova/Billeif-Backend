@@ -618,6 +618,9 @@ components:
           type: object
           required: [limited, limit, used, remaining, available]
           properties:
+            unit:
+              type: string
+              description: Unit for limit, used, and remaining. Present as MB for s3_uploads.
             limited:
               type: boolean
             limit:
@@ -684,6 +687,29 @@ components:
             message:
               type: string
         evaluated_at:
+          type: string
+          format: date-time
+
+    CapabilityMutationError:
+      type: object
+      required: [code, error, capability, state, reason_code]
+      properties:
+        code:
+          type: string
+          enum: [capability_unavailable]
+        error:
+          type: string
+          description: Customer-safe summary without provider or credential detail.
+        capability:
+          type: string
+        state:
+          type: string
+          enum: [setup_required, upgrade_required, quota_exhausted, permission_denied, temporarily_unavailable, unsupported_platform, unsupported, unknown]
+        reason_code:
+          type: string
+        setup_action:
+          type: string
+        retry_at:
           type: string
           format: date-time
 
