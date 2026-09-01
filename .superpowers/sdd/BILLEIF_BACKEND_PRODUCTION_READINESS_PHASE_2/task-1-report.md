@@ -459,3 +459,289 @@ expected failure caused by the missing behavior.
   unverified.
 - Internal diagnostics remain blocked until a true operator principal and
   policy distinct from business owner/admin exist. No weak endpoint was added.
+
+## Fix round 2
+
+### Status
+
+Fix round 2 is complete locally in `8475c74` (`fix: bootstrap governed provider
+capabilities`). The round closes the voice nil-guard bypass, cold-start health
+bootstrap deadlock, provider HTTP-status loss, storefront/GST provider-health
+identity mismatch, and report Swagger classification findings. No live provider
+was called, so deployed-provider health remains externally unverified. Internal
+diagnostics remain blocked pending a distinct operator principal.
+
+### Implementation
+
+- Voice creation now fails closed with `ErrCreateGuardUnavailable` whenever
+  `ServiceOptions.CreateGuard` is omitted. `NewService` installs the deny guard,
+  `Create` always invokes the guard before rollout or admission, the production
+  container injects `CapabilityService.Require`, and unrelated voice tests inject
+  an explicit allow guard.
+- Added a production `CapabilityHealthObserver` with explicit target discovery,
+  provider probers, retry/time/concurrency limits, recurring non-overlapping
+  cycles, tenant-scoped recording, and process lifecycle start/stop hooks.
+  HTTP runtime initialization starts it asynchronously; runtime shutdown cancels
+  it before closing the database.
+- Target discovery reads existing business and GST integration rows in rotating
+  bounded batches. It emits global Razorpay/AI groups and tenant-specific GST
+  groups only for configured capabilities. Configuration presence never writes
+  a health fact. A later cycle discovers newly created tenants without requiring
+  a customer capability request or a sensitive mutation.
+- Observer defaults are at most 256 tenant/capability targets per cycle, four
+  workers, five-second probe deadlines, two attempts, and a two-minute refresh.
+  Cycles do not overlap. Typed HTTP responses are not retried; transient transport
+  failures receive the bounded retry. Unsupported probes record nothing, so the
+  capability remains truthfully unknown.
+- Razorpay now has a bounded authenticated read-only `GET /orders?count=1`
+  probe. LLM health uses an authenticated read-only model lookup derived from
+  the configured OpenAI-compatible chat endpoint. GST uses the configured
+  credential-validation endpoint with the tenant's encrypted integration
+  credentials, without updating the account row.
+- Added sanitized typed Razorpay and GST HTTP errors implementing
+  `HTTPStatusCode()`. Neither adapter includes provider response bodies,
+  credentials, account identifiers, or topology in returned errors. The common
+  recorder now preserves real 429, timeout, unavailable, and success
+  classifications and produces only stable customer-safe degradation codes.
+- Storefront evaluation and concrete Razorpay outcomes now use the same shared
+  `razorpay_payments` provider-health key. E-invoice and e-way-bill evaluation and
+  operation outcomes similarly share `gst_provider`. Cache keys remain
+  business-scoped, so a provider result cannot cross tenants.
+- Moved capability-error annotations from unguarded report Query to guarded
+  report Export and regenerated Swagger. A runtime Swagger behavior test checks
+  `403`, `422`, `429`, and `503` on Export and rejects capability-error contracts
+  on Query.
+- Updated CAP-001 and the Task 1 plan evidence to document asynchronous
+  bootstrap, shared provider-health identities, bounds, process-local behavior,
+  and the exact unsupported-producer gaps. No migration was added.
+
+### Strict RED/GREEN evidence
+
+1. Voice constructor fail-closed behavior
+
+   - RED: `go test ./internal/voice/session -run TestServiceCreateFailsClosedWithoutGuardBeforeAdmission -count=1`
+   - RED output: build failed with `undefined: ErrCreateGuardUnavailable`.
+   - GREEN: same focused command.
+   - GREEN output: `ok invoice-backend/internal/voice/session`.
+   - Broader GREEN: `go test ./internal/voice/session -count=1`.
+
+2. Storefront provider-health identity
+
+   - RED: `go test ./internal/services -run TestRazorpayStorefrontOrderRecordsSharedProviderHealthKey -count=1`
+   - RED output: the successful storefront order left the shared Razorpay fact
+     absent.
+   - GREEN: same focused command.
+   - GREEN output: `ok invoice-backend/internal/services`.
+   - The GREEN test also proves no write under the storefront feature key and no
+     cross-business fact.
+
+3. Sanitized Razorpay HTTP status
+
+   - RED: `go test ./pkg/razorpay -run TestClientHTTPErrorPreservesStatusWithoutRawProviderBody -count=1`
+   - RED output: the returned ordinary error did not implement
+     `HTTPStatusCode()`.
+   - GREEN: same focused command.
+   - GREEN output: `ok invoice-backend/pkg/razorpay`.
+   - Adapter-to-recorder GREEN:
+     `go test ./internal/services -run TestRazorpayAdapterStatusFeedsRateLimitHealthWithoutRawBody -count=1`.
+   - Result: `ok invoice-backend/internal/services`; real adapter 429 became
+     `degraded/provider_rate_limited` with retry time and no raw body.
+
+4. Sanitized GST HTTP status and timeout
+
+   - RED: `go test ./internal/services -run TestGSTAdapterHTTPStatusFeedsRateLimitHealthWithoutRawBody -count=1`
+   - RED output: the GST adapter returned its raw provider message and no typed
+     HTTP status.
+   - GREEN: same focused command.
+   - GREEN output: `ok invoice-backend/internal/services`.
+   - Timeout GREEN:
+     `go test ./internal/services -run TestGSTAdapterTimeoutFeedsUnavailableHealth -count=1`.
+   - Result: `ok invoice-backend/internal/services`; timeout became sanitized
+     unavailable health with a bounded retry time.
+
+5. Cold-start observer core
+
+   - RED: `go test ./internal/services -run TestCapabilityHealthObserverMovesColdTenantsFromUnknownWithoutMutation -count=1`
+   - RED output: observer targets, prober, options, and constructor were
+     undefined.
+   - GREEN: same focused command.
+   - GREEN output: `ok invoice-backend/internal/services`.
+   - The test proves one global probe records independent healthy facts for two
+     tenants while a third tenant remains absent.
+
+6. Tenant/capability discovery
+
+   - RED: `go test ./internal/services -run TestDBCapabilityProbeTargetSourceDiscoversConfiguredTenantsAndGSTAccounts -count=1`
+   - RED output: `undefined: NewDBCapabilityProbeTargetSource`.
+   - GREEN: same focused command.
+   - GREEN output: `ok invoice-backend/internal/services`.
+   - Follow-up RED:
+     `go test ./internal/services -run TestDBCapabilityProbeTargetSourceRotatesBoundedTenantBatches -count=1`.
+   - RED output: the second bounded batch repeated `biz-1` through `biz-3` and
+     omitted `biz-4`.
+   - GREEN: same focused command.
+   - GREEN output: `ok invoice-backend/internal/services`; cursor rotation now
+     gives every later tenant an asynchronous observation path.
+
+7. Concrete Razorpay read-only probe
+
+   - RED: `go test ./pkg/razorpay -run TestClientProbeUsesBoundedReadOnlyOrderList -count=1`
+   - RED output: `client.Probe undefined`.
+   - GREEN: same focused command.
+   - GREEN output: `ok invoice-backend/pkg/razorpay`.
+   - Service seam RED:
+     `go test ./internal/services -run TestRazorpayCapabilityProbeDoesNotCreateOrder -count=1`.
+   - RED output: `service.ProbeCapability undefined`.
+   - GREEN output: `ok invoice-backend/internal/services`; provider create count
+     remained zero.
+
+8. Concrete LLM read-only probe
+
+   - RED: `go test ./internal/services -run TestLLMCapabilityProbeUsesReadOnlyModelLookup -count=1`
+   - RED output: `service.ProbeCapability undefined`.
+   - GREEN: same focused command.
+   - GREEN output: `ok invoice-backend/internal/services`; request was an
+     authenticated GET to the model endpoint, not chat execution.
+
+9. Concrete GST tenant probe
+
+   - RED: `go test ./internal/services -run TestGSTCapabilityProbeValidatesStoredCredentialsWithoutMutatingAccount -count=1`
+   - RED output: `service.ProbeCapability undefined`.
+   - GREEN: same focused command.
+   - GREEN output: `ok invoice-backend/internal/services`; validation ran once
+     and status, last validation time, and last error were unchanged.
+
+10. Shared GST provider-health fact
+
+    - RED: `go test ./internal/services -run TestGSTFeaturesShareTenantScopedProviderHealth -count=1`
+    - RED output: `e_invoice should use the shared GST provider fact`.
+    - GREEN: same focused command.
+    - GREEN output: `ok invoice-backend/internal/services`; e-invoice and e-way
+      bill used the shared fact and the other tenant stayed unknown.
+
+11. Recurring discovery and observer lifecycle
+
+    - RED: `go test ./internal/services -run TestCapabilityHealthObserverRunDiscoversNewTenantOnLaterCycle -count=1`
+    - RED output: `observer.Run undefined`.
+    - GREEN: same focused command.
+    - GREEN output: `ok invoice-backend/internal/services`.
+    - Container RED:
+      `go test ./internal/services -run TestContainerStartsAndStopsCapabilityHealthObserver -count=1`.
+    - RED output: missing container observer field and start/stop methods.
+    - GREEN output: `ok invoice-backend/internal/services`.
+
+12. Typed rate-limit retry bound
+
+    - RED: `go test ./internal/services -run TestCapabilityHealthObserverDoesNotRetryTypedRateLimit -count=1`
+    - RED output: expected one provider call, received two.
+    - GREEN: same focused command.
+    - GREEN output: `ok invoice-backend/internal/services`; typed 429 is recorded
+      immediately as degraded and is not retried.
+    - Bound/unsupported GREEN:
+      `go test -race ./internal/services -run 'TestCapabilityHealthObserver(Bounds|DoesNotRetry|Run|Moves)' -count=1`.
+    - Result: `ok invoice-backend/internal/services 1.924s`; maximum active probes
+      stayed at or below two in the fixture and unsupported remained unknown.
+
+13. Report Swagger ownership
+
+    - RED: `go test ./internal/app -run TestSwaggerDocumentsCapabilityErrorsOnlyForGuardedReportExport -count=1`
+    - RED output: `export response 403 is undocumented`.
+    - GREEN: `make swagger && go test ./internal/app -run TestSwaggerDocumentsCapabilityErrorsOnlyForGuardedReportExport -count=1`.
+    - GREEN output: Swagger generation completed with the existing non-fatal
+      root-package warning; test result `ok invoice-backend/internal/app`.
+
+### Validation
+
+- `go test -race -count=1 ./internal/services ./internal/voice/session ./pkg/razorpay ./internal/app`
+  - `ok invoice-backend/internal/services 4.223s`
+  - `ok invoice-backend/internal/voice/session 1.818s`
+  - `ok invoice-backend/pkg/razorpay 1.758s`
+  - `ok invoice-backend/internal/app 2.252s`
+- `go test -count=1 ./cmd/server ./cmd/lambda/http`
+  - server compiled with no tests; HTTP Lambda passed.
+- Final post-format focused packages:
+  `go test -count=1 ./internal/services ./internal/voice/session ./pkg/razorpay ./internal/app ./cmd/server ./cmd/lambda/http`
+  - all passed.
+- `make swagger`
+  - passed; regenerated `docs/docs.go`.
+- `make fmt`
+  - passed (`go fmt ./...` and `goimports`).
+- `make lint`
+  - passed (`golangci-lint run --timeout=5m`).
+- `ruby -e 'require "yaml"; YAML.load_file("docs/openapi.yaml"); puts "docs/openapi.yaml: valid"'`
+  - `docs/openapi.yaml: valid`.
+- `git diff --check` and staged diff check
+  - passed.
+- Secret-marker scan found new fake credentials/account identifiers only in
+  test fixtures that assert redaction. No credential, secret identifier, raw
+  provider response, or topology was added to customer output or production
+  constants.
+- Per campaign instruction, the full `make test` suite was not rerun; the
+  controller owns that gate.
+
+### Files added in fix round 2
+
+- `internal/services/capability_health_observer.go`
+- `internal/services/capability_health_observer_test.go`
+- `internal/services/container_capability_observer_test.go`
+- `internal/services/gst_provider_health_test.go`
+- `pkg/razorpay/client_test.go`
+
+### Principal files updated in fix round 2
+
+- Capability/cache/container/runtime: `internal/services/capability_service.go`,
+  `internal/services/capability_health_recorder.go`,
+  `internal/services/container.go`, and `internal/app/runtime.go`.
+- Provider adapters/services: `pkg/razorpay/client.go`,
+  `internal/services/razorpay_payment_service.go`,
+  `internal/services/gst_provider.go`,
+  `internal/services/tax_compliance_service.go`,
+  `internal/services/tax_compliance_execution.go`, and
+  `internal/services/llm_service.go`, with adjacent behavior tests.
+- Voice: `internal/voice/session/service.go`, `store.go`, and explicit guard
+  injection in session tests.
+- Contract/evidence: `internal/handlers/report_handler.go`,
+  `internal/app/runtime_swagger_test.go`, `docs/docs.go`, CAP-001 frontend
+  handoff, and the Task 1 plan section.
+
+### Commits
+
+- `8475c74 fix: bootstrap governed provider capabilities`
+- `docs: record capability bootstrap evidence` (report commit; final hash is
+  returned to the parent because a commit cannot contain its own hash)
+
+### Self-review and concerns
+
+- Confirmed every observer cache write contains both business ID and the shared
+  provider-health capability key; global provider calls share only the network
+  outcome, never a cache key or customer identity.
+- Confirmed observer discovery is bounded, rotates batches, does not execute in
+  `GET /capabilities`, does not overlap cycles, and does not call a mutation
+  provider method. GST validation reads/decrypts existing tenant credentials but
+  never persists them or includes them in an error/log/customer result.
+- Confirmed configuration and health remain separate: configured tenants begin
+  unknown, only a concrete successful probe records healthy, and unsupported
+  probes stay unknown. Failure never revokes entitlement or consumes quota.
+- Confirmed Storefront/Razorpay and EInvoice/EWayBill/GST use deliberate shared
+  provider facts without weakening their distinct feature entitlement,
+  permission, setup, platform, or quota facts.
+- Confirmed voice nil-guard behavior is a typed fail-closed error before store
+  admission. Production and every test that creates sessions now make its guard
+  policy explicit.
+- Confirmed provider status types omit raw bodies and the real adapter-to-recorder
+  tests cover 429 and timeout/unavailable classifications.
+- The cache remains process-local and non-durable. Every instance starts unknown
+  briefly and bootstraps independently, so concurrent instances may disagree
+  until their observers run; observations are not claimed as cross-instance
+  truth.
+- LLM probing requires an OpenAI-compatible `/chat/completions` URL from which a
+  read-only model endpoint can be derived. Other shapes stay unknown instead of
+  guessing or executing a chat mutation.
+- GST probing requires `GST_VALIDATE_PATH` and at least one tenant integration
+  account. Providers without that safe validation path stay unknown with no
+  fabricated healthy state.
+- S3, voice, WhatsApp, and email still lack safe provider probes. Their existing
+  operation paths or future bounded observers must supply observations before
+  those provider-backed facts can become healthy.
+- No live provider was called, no migration was added, and internal diagnostics
+  remain blocked until a real operator authorization mechanism exists.
