@@ -1,9 +1,13 @@
 package handlers
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"time"
 
+	"invoice-backend/internal/models"
+	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/internal/services"
 	"invoice-backend/pkg/logger"
 
@@ -11,12 +15,28 @@ import (
 )
 
 type TaxHandler struct {
-	svc *services.TaxComplianceService
-	log *logger.Logger
+	svc            *services.TaxComplianceService
+	integrationSvc TaxIntegrationAccountService
+	log            *logger.Logger
 }
 
 func NewTaxHandler(svc *services.TaxComplianceService, log *logger.Logger) *TaxHandler {
-	return &TaxHandler{svc: svc, log: log}
+	return &TaxHandler{svc: svc, integrationSvc: svc, log: log}
+}
+
+type TaxIntegrationAccountService interface {
+	ListIntegrationAccounts(ctx context.Context, businessID string) ([]*models.GSTIntegrationAccount, error)
+	UpsertIntegrationAccount(ctx context.Context, businessID, id string, input services.UpsertGSTIntegrationAccountInput) (*models.GSTIntegrationAccount, error)
+	ValidateIntegrationAccount(ctx context.Context, businessID, id string) (*models.GSTIntegrationAccount, error)
+}
+
+type TaxIntegrationAPIError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+type TaxIntegrationErrorResponse struct {
+	Error TaxIntegrationAPIError `json:"error"`
 }
 
 // FetchGSTIN verifies GSTIN details
@@ -171,16 +191,16 @@ func (h *TaxHandler) GetReportRun(c *gin.Context) {
 // @Produce json
 // @Security BearerAuth
 // @Success 200 {object} map[string]interface{}
-// @Failure 500 {object} map[string]string
+// @Failure 500 {object} TaxIntegrationErrorResponse
 // @Router /tax/integrations [get]
 func (h *TaxHandler) ListIntegrationAccounts(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
 		return
 	}
-	accounts, err := h.svc.ListIntegrationAccounts(c.Request.Context(), businessID)
+	accounts, err := h.integrationSvc.ListIntegrationAccounts(c.Request.Context(), businessID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		h.writeTaxIntegrationError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": accounts})
@@ -196,9 +216,12 @@ func (h *TaxHandler) ListIntegrationAccounts(c *gin.Context) {
 // @Param id path string false "Integration Account ID"
 // @Param input body services.UpsertGSTIntegrationAccountInput true "Account details"
 // @Success 200 {object} interface{}
-// @Failure 400 {object} map[string]string
-// @Failure 500 {object} map[string]string
-// @Router /tax/integrations/{id} [post]
+// @Failure 400 {object} TaxIntegrationErrorResponse
+// @Failure 404 {object} TaxIntegrationErrorResponse
+// @Failure 409 {object} TaxIntegrationErrorResponse
+// @Failure 500 {object} TaxIntegrationErrorResponse
+// @Router /tax/integrations [post]
+// @Router /tax/integrations/{id} [put]
 func (h *TaxHandler) UpsertIntegrationAccount(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
@@ -206,12 +229,12 @@ func (h *TaxHandler) UpsertIntegrationAccount(c *gin.Context) {
 	}
 	var input services.UpsertGSTIntegrationAccountInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		h.writeTaxIntegrationAPIError(c, http.StatusBadRequest, "invalid_tax_integration_request", "Tax integration request is invalid.")
 		return
 	}
-	account, err := h.svc.UpsertIntegrationAccount(c.Request.Context(), businessID, c.Param("id"), input)
+	account, err := h.integrationSvc.UpsertIntegrationAccount(c.Request.Context(), businessID, c.Param("id"), input)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		h.writeTaxIntegrationError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, account)
@@ -225,20 +248,51 @@ func (h *TaxHandler) UpsertIntegrationAccount(c *gin.Context) {
 // @Security BearerAuth
 // @Param id path string true "Integration Account ID"
 // @Success 200 {object} interface{}
-// @Failure 400 {object} map[string]string
-// @Failure 500 {object} map[string]string
+// @Failure 404 {object} TaxIntegrationErrorResponse
+// @Failure 409 {object} TaxIntegrationErrorResponse
+// @Failure 422 {object} TaxIntegrationErrorResponse
+// @Failure 500 {object} TaxIntegrationErrorResponse
 // @Router /tax/integrations/{id}/validate [post]
 func (h *TaxHandler) ValidateIntegrationAccount(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
 		return
 	}
-	account, err := h.svc.ValidateIntegrationAccount(c.Request.Context(), businessID, c.Param("id"))
+	account, err := h.integrationSvc.ValidateIntegrationAccount(c.Request.Context(), businessID, c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "account": account})
+		h.writeTaxIntegrationError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, account)
+}
+
+func (h *TaxHandler) writeTaxIntegrationError(c *gin.Context, err error) {
+	status, code, message := taxIntegrationErrorResponse(err)
+	if status == http.StatusInternalServerError && h != nil && h.log != nil {
+		h.log.Error("tax integration request failed", "error", err)
+	}
+	h.writeTaxIntegrationAPIError(c, status, code, message)
+}
+
+func (h *TaxHandler) writeTaxIntegrationAPIError(c *gin.Context, status int, code, message string) {
+	c.JSON(status, TaxIntegrationErrorResponse{Error: TaxIntegrationAPIError{Code: code, Message: message}})
+}
+
+func taxIntegrationErrorResponse(err error) (int, string, string) {
+	switch {
+	case errors.Is(err, services.ErrGSTCredentialValidationNotConfigured):
+		return http.StatusUnprocessableEntity, "gst_credential_validation_not_configured", "GST credential validation is not configured."
+	case errors.Is(err, services.ErrGSTCredentialValidationFailed):
+		return http.StatusUnprocessableEntity, "gst_credential_validation_failed", "GST credential validation failed."
+	case errors.Is(err, interfaces.ErrGSTIntegrationAccountNotFound):
+		return http.StatusNotFound, "gst_integration_account_not_found", "GST integration account was not found."
+	case errors.Is(err, interfaces.ErrCapabilityProviderHealthCredentialRevisionStale):
+		return http.StatusConflict, "gst_credential_revision_conflict", "GST integration credentials changed. Refresh and retry."
+	case errors.Is(err, services.ErrGSTIntegrationAccountRequired):
+		return http.StatusUnprocessableEntity, "gst_integration_account_required", "Configure a GST integration account before using this operation."
+	default:
+		return http.StatusInternalServerError, "tax_integration_internal_error", "Tax integration request failed."
+	}
 }
 
 func parseReportOptions(c *gin.Context) (services.GSTReportOptions, error) {

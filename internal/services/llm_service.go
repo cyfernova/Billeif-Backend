@@ -81,7 +81,7 @@ func (s *LLMService) ProbeGlobalCapability(ctx context.Context) CapabilityProvid
 		}
 		return CapabilityProviderOutcome{Err: &providerHTTPError{status: resp.StatusCode}}
 	}
-	if llmModelListHasPaginationHeaders(resp.Header) {
+	if !llmModelListHeadersProveTerminalJSON(resp.Header) {
 		return CapabilityProviderOutcome{Err: ErrCapabilityProbeUnsupported}
 	}
 	present, complete := inspectLLMModelList(resp.Body, strings.TrimSpace(providerCfg.Model))
@@ -94,13 +94,27 @@ func (s *LLMService) ProbeGlobalCapability(ctx context.Context) CapabilityProvid
 	return CapabilityProviderOutcome{Err: errors.New("configured LLM model is unavailable")}
 }
 
-func llmModelListHasPaginationHeaders(header http.Header) bool {
-	for _, name := range []string{"Link", "Content-Range", "X-Next-Page", "X-Next-Cursor", "Next-Cursor", "X-Has-More"} {
-		if strings.TrimSpace(header.Get(name)) != "" {
-			return true
-		}
+func llmModelListHeadersProveTerminalJSON(header http.Header) bool {
+	contentType := strings.ToLower(strings.TrimSpace(header.Get("Content-Type")))
+	if contentType != "application/json" && !strings.HasPrefix(contentType, "application/json;") {
+		return false
 	}
-	return false
+	for name := range header {
+		normalized := strings.ToLower(strings.TrimSpace(name))
+		switch normalized {
+		case "content-type", "content-length", "date", "server", "connection", "keep-alive",
+			"vary", "etag", "last-modified", "cache-control", "expires", "pragma",
+			"strict-transport-security", "alt-svc", "x-content-type-options", "x-frame-options",
+			"x-request-id", "request-id", "cf-ray", "cf-cache-status", "nel", "report-to",
+			"openai-processing-ms", "openai-version":
+			continue
+		}
+		if strings.HasPrefix(normalized, "x-ratelimit-") || strings.HasPrefix(normalized, "ratelimit-") {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 const (
@@ -259,14 +273,18 @@ func skipLLMJSONValue(decoder *json.Decoder) bool {
 
 func llmModelProbeURL(apiURL, _ string) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(apiURL))
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil ||
+		parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Port() != "" && parsed.Port() != "443") {
 		return "", ErrCapabilityProbeUnsupported
 	}
+	host := strings.ToLower(parsed.Hostname())
 	path := strings.TrimRight(parsed.Path, "/")
-	switch path {
-	case "/chat/completions":
+	switch {
+	case host == "api.deepseek.com" && path == "/chat/completions":
 		parsed.Path = "/models"
-	case "/v1/chat/completions":
+	case host == "api.deepseek.com" && path == "/v1/chat/completions":
+		parsed.Path = "/v1/models"
+	case host == "api.openai.com" && path == "/v1/chat/completions":
 		parsed.Path = "/v1/models"
 	default:
 		return "", ErrCapabilityProbeUnsupported

@@ -27,23 +27,24 @@ import (
 )
 
 type TaxComplianceService struct {
-	cfg              *config.Config
-	db               *gorm.DB
-	businessRepo     interfaces.BusinessRepository
-	customerRepo     interfaces.CustomerRepository
-	vendorRepo       interfaces.VendorRepository
-	subscriptionRepo interfaces.SubscriptionRepository
-	httpClient       *http.Client
-	sqs              *sqs.Client
-	s3               *S3Service
-	webhooks         *WebhookService
-	documents        *DocumentService
-	entitlements     *EntitlementService
-	provider         GSTProvider
-	resolver         ProviderConfigResolver
-	capability       CapabilityGuard
-	gstHealth        GSTProviderHealthOutcomeRecorder
-	log              *logger.Logger
+	cfg                         *config.Config
+	db                          *gorm.DB
+	businessRepo                interfaces.BusinessRepository
+	customerRepo                interfaces.CustomerRepository
+	vendorRepo                  interfaces.VendorRepository
+	subscriptionRepo            interfaces.SubscriptionRepository
+	httpClient                  *http.Client
+	sqs                         *sqs.Client
+	s3                          *S3Service
+	webhooks                    *WebhookService
+	documents                   *DocumentService
+	entitlements                *EntitlementService
+	provider                    GSTProvider
+	resolver                    ProviderConfigResolver
+	capability                  CapabilityGuard
+	gstHealth                   GSTProviderHealthOutcomeRecorder
+	gstHealthPersistenceTimeout time.Duration
+	log                         *logger.Logger
 }
 
 func (s *TaxComplianceService) WithCapabilityGuard(guard CapabilityGuard) *TaxComplianceService {
@@ -53,6 +54,13 @@ func (s *TaxComplianceService) WithCapabilityGuard(guard CapabilityGuard) *TaxCo
 
 func (s *TaxComplianceService) WithGSTProviderHealthRecorder(recorder GSTProviderHealthOutcomeRecorder) *TaxComplianceService {
 	s.gstHealth = recorder
+	return s
+}
+
+func (s *TaxComplianceService) WithGSTHealthPersistenceTimeout(timeout time.Duration) *TaxComplianceService {
+	if timeout > 0 {
+		s.gstHealthPersistenceTimeout = timeout
+	}
 	return s
 }
 
@@ -133,18 +141,19 @@ func NewTaxComplianceService(
 		resolver = resolvers[0]
 	}
 	svc := &TaxComplianceService{
-		cfg:              cfg,
-		db:               db,
-		businessRepo:     businessRepo,
-		customerRepo:     customerRepo,
-		vendorRepo:       vendorRepo,
-		subscriptionRepo: subscriptionRepo,
-		httpClient:       &http.Client{Timeout: timeout},
-		sqs:              sqsClient,
-		s3:               s3,
-		webhooks:         webhooks,
-		resolver:         resolver,
-		log:              log,
+		cfg:                         cfg,
+		db:                          db,
+		businessRepo:                businessRepo,
+		customerRepo:                customerRepo,
+		vendorRepo:                  vendorRepo,
+		subscriptionRepo:            subscriptionRepo,
+		httpClient:                  &http.Client{Timeout: timeout},
+		sqs:                         sqsClient,
+		s3:                          s3,
+		webhooks:                    webhooks,
+		resolver:                    resolver,
+		gstHealthPersistenceTimeout: 2 * time.Second,
+		log:                         log,
 	}
 	svc.entitlements = NewEntitlementService(cfg, db, subscriptionRepo, log)
 	svc.provider = NewLazyConfiguredGSTProvider(cfg, resolver, log)

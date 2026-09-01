@@ -35,8 +35,10 @@ func TestGSTAdapterHTTPStatusFeedsRateLimitHealthWithoutRawBody(t *testing.T) {
 
 	now := time.Date(2026, 9, 1, 15, 0, 0, 0, time.UTC)
 	repository := newMemoryCapabilityProviderHealthRepository()
+	repository.accountRevisions["account-1"] = 1
 	recorder := NewGSTProviderHealthRecorder(repository, GSTProviderHealthRecorderOptions{Now: func() time.Time { return now }})
-	require.NoError(t, recorder.RecordGSTOutcome(context.Background(), "biz-1", CapabilityProviderOutcome{Err: err}))
+	_, recordErr := recorder.RecordGSTOutcome(context.Background(), "biz-1", "account-1", 1, CapabilityProviderOutcome{Err: err})
+	require.NoError(t, recordErr)
 	fact, ok, readErr := NewCapabilityBusinessHealthReader(repository, func() time.Time { return now }).
 		CustomerFact(context.Background(), "biz-1", CapabilityGSTProvider)
 	require.NoError(t, readErr)
@@ -62,12 +64,35 @@ func TestGSTAdapterTimeoutFeedsUnavailableHealth(t *testing.T) {
 
 	now := time.Date(2026, 9, 1, 15, 0, 0, 0, time.UTC)
 	repository := newMemoryCapabilityProviderHealthRepository()
+	repository.accountRevisions["account-1"] = 1
 	recorder := NewGSTProviderHealthRecorder(repository, GSTProviderHealthRecorderOptions{Now: func() time.Time { return now }})
-	require.NoError(t, recorder.RecordGSTOutcome(context.Background(), "biz-1", CapabilityProviderOutcome{Err: err}))
+	_, recordErr := recorder.RecordGSTOutcome(context.Background(), "biz-1", "account-1", 1, CapabilityProviderOutcome{Err: err})
+	require.NoError(t, recordErr)
 	fact, ok, readErr := NewCapabilityBusinessHealthReader(repository, func() time.Time { return now }).
 		CustomerFact(context.Background(), "biz-1", CapabilityGSTProvider)
 	require.NoError(t, readErr)
 	require.True(t, ok)
 	require.Equal(t, CapabilityProviderUnavailable, fact.Status)
 	require.Equal(t, now.Add(30*time.Second), *fact.RetryAt)
+}
+
+func TestConfiguredGSTProviderUsesTenantCredentialForExecutionRequest(t *testing.T) {
+	var accountAPIKey string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		accountAPIKey = r.Header.Get("X-Account-API-Key")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"irn":"irn-1","ack_number":"ack-1"}`))
+	}))
+	defer server.Close()
+	provider := NewConfiguredGSTProvider(&config.Config{GST: config.GSTConfig{
+		BaseURL: server.URL, EInvoicePath: "/einvoice", ClientID: "global-client-id",
+	}}, logger.New())
+
+	_, err := provider.GenerateEInvoice(context.Background(), GSTEInvoiceRequest{
+		Payload:     map[string]interface{}{"document": "test"},
+		Credentials: &GSTIntegrationAccountCredentials{APIKey: "tenant-fixture-key"},
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, "tenant-fixture-key", accountAPIKey)
 }

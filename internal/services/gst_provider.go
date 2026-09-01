@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,8 @@ import (
 	"invoice-backend/internal/config"
 	"invoice-backend/pkg/logger"
 )
+
+var ErrGSTCredentialValidationNotConfigured = errors.New("GST credential validation is not configured")
 
 type GSTProvider interface {
 	ValidateCredentials(ctx context.Context, account *GSTIntegrationAccountCredentials) error
@@ -40,10 +43,11 @@ type GSTIntegrationAccountCredentials struct {
 }
 
 type GSTEInvoiceRequest struct {
-	BusinessID string
-	DocumentID string
-	SerialNo   string
-	Payload    map[string]interface{}
+	BusinessID  string
+	DocumentID  string
+	SerialNo    string
+	Payload     map[string]interface{}
+	Credentials *GSTIntegrationAccountCredentials `json:"-"`
 }
 
 type GSTEInvoiceResult struct {
@@ -57,11 +61,12 @@ type GSTEInvoiceResult struct {
 }
 
 type GSTCancelEInvoiceRequest struct {
-	BusinessID string
-	DocumentID string
-	IRN        string
-	Reason     string
-	Payload    map[string]interface{}
+	BusinessID  string
+	DocumentID  string
+	IRN         string
+	Reason      string
+	Payload     map[string]interface{}
+	Credentials *GSTIntegrationAccountCredentials `json:"-"`
 }
 
 type GSTCancelEInvoiceResult struct {
@@ -70,10 +75,11 @@ type GSTCancelEInvoiceResult struct {
 }
 
 type GSTEWayBillRequest struct {
-	BusinessID string
-	DocumentID string
-	SerialNo   string
-	Payload    map[string]interface{}
+	BusinessID  string
+	DocumentID  string
+	SerialNo    string
+	Payload     map[string]interface{}
+	Credentials *GSTIntegrationAccountCredentials `json:"-"`
 }
 
 type GSTEWayBillResult struct {
@@ -86,17 +92,19 @@ type GSTEWayBillResult struct {
 }
 
 type GSTEWayPartBRequest struct {
-	BusinessID string
-	DocumentID string
-	EWayBillNo string
-	Payload    map[string]interface{}
+	BusinessID  string
+	DocumentID  string
+	EWayBillNo  string
+	Payload     map[string]interface{}
+	Credentials *GSTIntegrationAccountCredentials `json:"-"`
 }
 
 type GSTMultiVehicleRequest struct {
-	BusinessID string
-	DocumentID string
-	EWayBillNo string
-	Payload    map[string]interface{}
+	BusinessID  string
+	DocumentID  string
+	EWayBillNo  string
+	Payload     map[string]interface{}
+	Credentials *GSTIntegrationAccountCredentials `json:"-"`
 }
 
 type GSTMultiVehicleResult struct {
@@ -105,9 +113,10 @@ type GSTMultiVehicleResult struct {
 }
 
 type GSTEWayBillPDFRequest struct {
-	BusinessID string
-	DocumentID string
-	EWayBillNo string
+	BusinessID  string
+	DocumentID  string
+	EWayBillNo  string
+	Credentials *GSTIntegrationAccountCredentials `json:"-"`
 }
 
 type GSTEWayBillPDFResult struct {
@@ -227,14 +236,14 @@ type configuredGSTProvider struct {
 
 func (p *configuredGSTProvider) ValidateCredentials(ctx context.Context, account *GSTIntegrationAccountCredentials) error {
 	if strings.TrimSpace(p.cfg.GST.ValidatePath) == "" {
-		return nil
+		return ErrGSTCredentialValidationNotConfigured
 	}
 	_, err := p.doJSON(ctx, http.MethodPost, p.cfg.GST.ValidatePath, account, account)
 	return err
 }
 
 func (p *configuredGSTProvider) GenerateEInvoice(ctx context.Context, req GSTEInvoiceRequest) (*GSTEInvoiceResult, error) {
-	payload, err := p.doJSON(ctx, http.MethodPost, p.cfg.GST.EInvoicePath, req.Payload, nil)
+	payload, err := p.doJSON(ctx, http.MethodPost, p.cfg.GST.EInvoicePath, req.Payload, req.Credentials)
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +251,7 @@ func (p *configuredGSTProvider) GenerateEInvoice(ctx context.Context, req GSTEIn
 }
 
 func (p *configuredGSTProvider) CancelEInvoice(ctx context.Context, req GSTCancelEInvoiceRequest) (*GSTCancelEInvoiceResult, error) {
-	payload, err := p.doJSON(ctx, http.MethodPost, p.cfg.GST.EInvoiceCancelPath, req.Payload, nil)
+	payload, err := p.doJSON(ctx, http.MethodPost, p.cfg.GST.EInvoiceCancelPath, req.Payload, req.Credentials)
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +262,7 @@ func (p *configuredGSTProvider) CancelEInvoice(ctx context.Context, req GSTCance
 }
 
 func (p *configuredGSTProvider) GenerateEWayBill(ctx context.Context, req GSTEWayBillRequest) (*GSTEWayBillResult, error) {
-	payload, err := p.doJSON(ctx, http.MethodPost, p.cfg.GST.EWayBillPath, req.Payload, nil)
+	payload, err := p.doJSON(ctx, http.MethodPost, p.cfg.GST.EWayBillPath, req.Payload, req.Credentials)
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +270,7 @@ func (p *configuredGSTProvider) GenerateEWayBill(ctx context.Context, req GSTEWa
 }
 
 func (p *configuredGSTProvider) UpdateEWayPartB(ctx context.Context, req GSTEWayPartBRequest) (*GSTEWayBillResult, error) {
-	payload, err := p.doJSON(ctx, http.MethodPost, p.cfg.GST.EWayBillPartBPath, req.Payload, nil)
+	payload, err := p.doJSON(ctx, http.MethodPost, p.cfg.GST.EWayBillPartBPath, req.Payload, req.Credentials)
 	if err != nil {
 		return nil, err
 	}
@@ -269,7 +278,7 @@ func (p *configuredGSTProvider) UpdateEWayPartB(ctx context.Context, req GSTEWay
 }
 
 func (p *configuredGSTProvider) InitiateMultiVehicle(ctx context.Context, req GSTMultiVehicleRequest) (*GSTMultiVehicleResult, error) {
-	payload, err := p.doJSON(ctx, http.MethodPost, p.cfg.GST.EWayBillMultiVehiclePath, req.Payload, nil)
+	payload, err := p.doJSON(ctx, http.MethodPost, p.cfg.GST.EWayBillMultiVehiclePath, req.Payload, req.Credentials)
 	if err != nil {
 		return nil, err
 	}
@@ -283,7 +292,7 @@ func (p *configuredGSTProvider) FetchEWayBillPDF(ctx context.Context, req GSTEWa
 	payload, err := p.doJSON(ctx, http.MethodPost, p.cfg.GST.EWayBillPDFPath, map[string]interface{}{
 		"eway_bill_number": req.EWayBillNo,
 		"document_id":      req.DocumentID,
-	}, nil)
+	}, req.Credentials)
 	if err != nil {
 		return nil, err
 	}
@@ -389,7 +398,7 @@ type simulatedGSTProvider struct {
 }
 
 func (p *simulatedGSTProvider) ValidateCredentials(ctx context.Context, account *GSTIntegrationAccountCredentials) error {
-	return nil
+	return ErrGSTCredentialValidationNotConfigured
 }
 
 func (p *simulatedGSTProvider) GenerateEInvoice(ctx context.Context, req GSTEInvoiceRequest) (*GSTEInvoiceResult, error) {

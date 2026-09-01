@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -22,13 +24,18 @@ import (
 )
 
 type memoryCapabilityProviderHealthRepository struct {
-	mu        sync.Mutex
-	snapshots map[string]models.CapabilityProviderHealthSnapshot
-	reads     []string
+	mu               sync.Mutex
+	db               *gorm.DB
+	snapshots        map[string]models.CapabilityProviderHealthSnapshot
+	accountRevisions map[string]int64
+	reads            []string
 }
 
 func newMemoryCapabilityProviderHealthRepository() *memoryCapabilityProviderHealthRepository {
-	return &memoryCapabilityProviderHealthRepository{snapshots: make(map[string]models.CapabilityProviderHealthSnapshot)}
+	return &memoryCapabilityProviderHealthRepository{
+		snapshots:        make(map[string]models.CapabilityProviderHealthSnapshot),
+		accountRevisions: make(map[string]int64),
+	}
 }
 
 func (r *memoryCapabilityProviderHealthRepository) Get(_ context.Context, businessID, providerKey string) (*models.CapabilityProviderHealthSnapshot, error) {
@@ -39,36 +46,122 @@ func (r *memoryCapabilityProviderHealthRepository) Get(_ context.Context, busine
 	if !found {
 		return nil, interfaces.ErrCapabilityProviderHealthNotFound
 	}
+	if current := r.accountRevisions[snapshot.IntegrationAccountID]; current != snapshot.CredentialRevision {
+		return nil, interfaces.ErrCapabilityProviderHealthNotFound
+	}
 	return &snapshot, nil
 }
 
-func (r *memoryCapabilityProviderHealthRepository) UpsertMonotonic(_ context.Context, snapshot *models.CapabilityProviderHealthSnapshot) error {
+func (r *memoryCapabilityProviderHealthRepository) RecordRevisionBound(ctx context.Context, snapshot *models.CapabilityProviderHealthSnapshot) (int64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	key := snapshot.BusinessID + "\x00" + snapshot.ProviderKey
-	current, found := r.snapshots[key]
-	if !found || snapshot.ObservedAt.After(current.ObservedAt) {
-		r.snapshots[key] = *snapshot
+	if err := ctx.Err(); err != nil {
+		return 0, err
 	}
-	return nil
+	if r.accountRevisions[snapshot.IntegrationAccountID] != snapshot.CredentialRevision {
+		return 0, interfaces.ErrCapabilityProviderHealthCredentialRevisionStale
+	}
+	key := snapshot.BusinessID + "\x00" + snapshot.ProviderKey
+	current := r.snapshots[key]
+	snapshot.ObservationRevision = current.ObservationRevision + 1
+	if snapshot.ObservationRevision == 0 {
+		snapshot.ObservationRevision = 1
+	}
+	r.snapshots[key] = *snapshot
+	return snapshot.ObservationRevision, nil
 }
 
-func (r *memoryCapabilityProviderHealthRepository) Clear(_ context.Context, businessID, providerKey string) error {
+func (r *memoryCapabilityProviderHealthRepository) RecordValidationRevisionBound(
+	ctx context.Context,
+	snapshot *models.CapabilityProviderHealthSnapshot,
+	state interfaces.GSTIntegrationValidationState,
+) (int64, error) {
+	revision, err := r.RecordRevisionBound(ctx, snapshot)
+	if err != nil {
+		return 0, err
+	}
+	if r.db != nil {
+		result := r.db.WithContext(ctx).Model(&models.GSTIntegrationAccount{}).
+			Where("id = ? AND business_id = ? AND credential_revision = ? AND deleted_at IS NULL",
+				snapshot.IntegrationAccountID, snapshot.BusinessID, snapshot.CredentialRevision).
+			Updates(map[string]interface{}{
+				"status":            state.Status,
+				"last_validated_at": state.LastValidatedAt,
+				"last_error":        state.LastError,
+			})
+		if result.Error != nil {
+			return 0, result.Error
+		}
+		if result.RowsAffected != 1 {
+			return 0, interfaces.ErrCapabilityProviderHealthObservationNotApplied
+		}
+	}
+	return revision, nil
+}
+
+func (r *memoryCapabilityProviderHealthRepository) SaveGSTIntegrationAccountAndInvalidate(
+	ctx context.Context,
+	account *models.GSTIntegrationAccount,
+	expectedCredentialRevision int64,
+) error {
 	r.mu.Lock()
-	delete(r.snapshots, businessID+"\x00"+providerKey)
-	r.mu.Unlock()
-	return nil
+	defer r.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if expectedCredentialRevision > 0 && r.accountRevisions[account.ID] != expectedCredentialRevision {
+		return interfaces.ErrCapabilityProviderHealthCredentialRevisionStale
+	}
+	for accountID := range r.accountRevisions {
+		r.accountRevisions[accountID]++
+	}
+	if expectedCredentialRevision == 0 {
+		account.CredentialRevision = 1
+	} else {
+		account.CredentialRevision = expectedCredentialRevision + 1
+	}
+	r.accountRevisions[account.ID] = account.CredentialRevision
+	delete(r.snapshots, account.BusinessID+"\x00gst_provider")
+	if r.db == nil {
+		return nil
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&models.GSTIntegrationAccount{}).
+			Where("business_id = ? AND deleted_at IS NULL", account.BusinessID).
+			UpdateColumn("credential_revision", gorm.Expr("credential_revision + 1")).Error; err != nil {
+			return err
+		}
+		if expectedCredentialRevision == 0 {
+			return tx.Create(account).Error
+		}
+		return tx.Model(&models.GSTIntegrationAccount{}).
+			Where("id = ? AND business_id = ? AND credential_revision = ?", account.ID, account.BusinessID, account.CredentialRevision).
+			Updates(map[string]interface{}{
+				"provider":              account.Provider,
+				"service_type":          account.ServiceType,
+				"gsp_name":              account.GSPName,
+				"portal_username":       account.PortalUsername,
+				"encrypted_credentials": account.EncryptedCredentials,
+				"credential_hint":       account.CredentialHint,
+				"status":                account.Status,
+				"last_validated_at":     nil,
+				"last_error":            "",
+				"metadata":              account.Metadata,
+				"updated_at":            account.UpdatedAt,
+			}).Error
+	})
 }
 
 func TestGSTProviderHealthRecorderPersistsOnlySanitizedTenantSnapshot(t *testing.T) {
 	now := time.Date(2026, 9, 1, 20, 30, 0, 0, time.UTC)
 	repository := newMemoryCapabilityProviderHealthRepository()
+	repository.accountRevisions["account-a"] = 1
 	recorder := NewGSTProviderHealthRecorder(repository, GSTProviderHealthRecorderOptions{
 		Now:      func() time.Time { return now },
 		FreshFor: 24 * time.Hour,
 	})
 
-	err := recorder.RecordGSTOutcome(context.Background(), "business-a", CapabilityProviderOutcome{
+	_, err := recorder.RecordGSTOutcome(context.Background(), "business-a", "account-a", 1, CapabilityProviderOutcome{
 		HTTPStatus: 429,
 		Err:        errors.New("raw credential account-id provider response"),
 	})
@@ -76,6 +169,9 @@ func TestGSTProviderHealthRecorderPersistsOnlySanitizedTenantSnapshot(t *testing
 	snapshot := repository.snapshots["business-a\x00gst_provider"]
 	require.Equal(t, "business-a", snapshot.BusinessID)
 	require.Equal(t, "gst_provider", snapshot.ProviderKey)
+	require.Equal(t, "account-a", snapshot.IntegrationAccountID)
+	require.EqualValues(t, 1, snapshot.CredentialRevision)
+	require.EqualValues(t, 1, snapshot.ObservationRevision)
 	require.Equal(t, "degraded", snapshot.Status)
 	require.Equal(t, "provider_rate_limited", snapshot.CustomerCode)
 	require.Equal(t, now, snapshot.ObservedAt)
@@ -87,11 +183,31 @@ func TestGSTProviderHealthRecorderPersistsOnlySanitizedTenantSnapshot(t *testing
 	}
 }
 
+func TestGSTProviderHealthRecorderAdvancesEqualTimestampCompletions(t *testing.T) {
+	now := time.Date(2026, 9, 1, 20, 45, 0, 0, time.UTC)
+	repository := newMemoryCapabilityProviderHealthRepository()
+	repository.accountRevisions["account-a"] = 7
+	recorder := NewGSTProviderHealthRecorder(repository, GSTProviderHealthRecorderOptions{Now: func() time.Time { return now }})
+
+	first, err := recorder.RecordGSTOutcome(context.Background(), "business-a", "account-a", 7, CapabilityProviderOutcome{})
+	require.NoError(t, err)
+	second, err := recorder.RecordGSTOutcome(context.Background(), "business-a", "account-a", 7, CapabilityProviderOutcome{HTTPStatus: http.StatusTooManyRequests})
+	require.NoError(t, err)
+
+	require.EqualValues(t, 1, first)
+	require.EqualValues(t, 2, second)
+	snapshot := repository.snapshots["business-a\x00gst_provider"]
+	require.Equal(t, "degraded", snapshot.Status)
+	require.EqualValues(t, 2, snapshot.ObservationRevision)
+}
+
 func TestCapabilityBusinessHealthReaderIsTenantScopedSanitizedAndDurable(t *testing.T) {
 	now := time.Date(2026, 9, 1, 21, 0, 0, 0, time.UTC)
 	repository := newMemoryCapabilityProviderHealthRepository()
+	repository.accountRevisions["account-a"] = 1
 	repository.snapshots["business-a\x00gst_provider"] = models.CapabilityProviderHealthSnapshot{
-		BusinessID: "business-a", ProviderKey: "gst_provider", Status: "healthy",
+		BusinessID: "business-a", ProviderKey: "gst_provider", IntegrationAccountID: "account-a",
+		CredentialRevision: 1, ObservationRevision: 1, Status: "healthy",
 		ObservedAt: now, FreshUntil: now.Add(24 * time.Hour),
 	}
 	reader := NewCapabilityBusinessHealthReader(repository, func() time.Time { return now })
@@ -114,8 +230,10 @@ func TestCapabilityBusinessHealthReaderIsTenantScopedSanitizedAndDurable(t *test
 func TestCapabilityServiceUsesTenantGSTSnapshotAndExposesValidationActionForUnknown(t *testing.T) {
 	now := time.Date(2026, 9, 1, 21, 30, 0, 0, time.UTC)
 	repository := newMemoryCapabilityProviderHealthRepository()
+	repository.accountRevisions["account-a"] = 1
 	repository.snapshots["business-a\x00gst_provider"] = models.CapabilityProviderHealthSnapshot{
-		BusinessID: "business-a", ProviderKey: "gst_provider", Status: "healthy",
+		BusinessID: "business-a", ProviderKey: "gst_provider", IntegrationAccountID: "account-a",
+		CredentialRevision: 1, ObservationRevision: 1, Status: "healthy",
 		ObservedAt: now, FreshUntil: now.Add(24 * time.Hour),
 	}
 	service := NewCapabilityService(CapabilityServiceOptions{
@@ -164,7 +282,7 @@ func TestGSTIntegrationCredentialUpdateClearsOldHealthAndExplicitValidationSeeds
 	require.NoError(t, db.Exec(`CREATE TABLE gst_integration_accounts (
 		id TEXT PRIMARY KEY, business_id TEXT NOT NULL, provider TEXT NOT NULL,
 		service_type TEXT NOT NULL, gsp_name TEXT, portal_username TEXT,
-		encrypted_credentials TEXT, credential_hint TEXT, status TEXT NOT NULL,
+		encrypted_credentials TEXT, credential_hint TEXT, credential_revision INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL,
 		last_validated_at DATETIME, last_error TEXT, metadata TEXT,
 		created_at DATETIME, updated_at DATETIME, deleted_at DATETIME
 	)`).Error)
@@ -176,8 +294,11 @@ func TestGSTIntegrationCredentialUpdateClearsOldHealthAndExplicitValidationSeeds
 	}).Error)
 	now := time.Date(2026, 9, 1, 22, 0, 0, 0, time.UTC)
 	repository := newMemoryCapabilityProviderHealthRepository()
+	repository.db = db
+	repository.accountRevisions[accountID] = 1
 	repository.snapshots[businessID+"\x00gst_provider"] = models.CapabilityProviderHealthSnapshot{
-		BusinessID: businessID, ProviderKey: "gst_provider", Status: "healthy",
+		BusinessID: businessID, ProviderKey: "gst_provider", IntegrationAccountID: accountID,
+		CredentialRevision: 1, ObservationRevision: 1, Status: "healthy",
 		ObservedAt: now.Add(-time.Hour), FreshUntil: now.Add(23 * time.Hour),
 	}
 	recorder := NewGSTProviderHealthRecorder(repository, GSTProviderHealthRecorderOptions{
@@ -219,4 +340,223 @@ func TestGSTIntegrationCredentialUpdateClearsOldHealthAndExplicitValidationSeeds
 	require.Equal(t, "unavailable", snapshot.Status)
 	require.Equal(t, "provider_unavailable", snapshot.CustomerCode)
 	require.Equal(t, now, snapshot.ObservedAt)
+}
+
+func TestGSTIntegrationValidationWithoutConfiguredPathStaysUnknownWithoutProviderOrHealthWrite(t *testing.T) {
+	var providerCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		providerCalls++
+	}))
+	defer server.Close()
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(`CREATE TABLE gst_integration_accounts (
+		id TEXT PRIMARY KEY, business_id TEXT NOT NULL, provider TEXT NOT NULL,
+		service_type TEXT NOT NULL, gsp_name TEXT, portal_username TEXT,
+		encrypted_credentials TEXT, credential_hint TEXT, credential_revision INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL,
+		last_validated_at DATETIME, last_error TEXT, metadata TEXT,
+		created_at DATETIME, updated_at DATETIME, deleted_at DATETIME
+	)`).Error)
+	businessID := uuid.NewString()
+	accountID := uuid.NewString()
+	cfg := &config.Config{
+		GST:         config.GSTConfig{BaseURL: server.URL, ValidatePath: "   "},
+		Credentials: config.CredentialsConfig{EncryptionKey: base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))},
+	}
+	repository := newMemoryCapabilityProviderHealthRepository()
+	repository.db = db
+	repository.accountRevisions[accountID] = 1
+	service := NewTaxComplianceService(cfg, db, nil, nil, nil, nil, nil, nil, nil, logger.New()).
+		WithGSTProviderHealthRecorder(NewGSTProviderHealthRecorder(repository, GSTProviderHealthRecorderOptions{}))
+	encrypted, _, err := service.encryptIntegrationCredentials(context.Background(), GSTIntegrationAccountCredentials{APIKey: "fixture-key"})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&models.GSTIntegrationAccount{
+		ID: accountID, BusinessID: businessID, Provider: "configured", ServiceType: "einvoice",
+		EncryptedCredentials: encrypted, Status: "pending", Metadata: `{}`,
+	}).Error)
+
+	account, err := service.ValidateIntegrationAccount(context.Background(), businessID, accountID)
+
+	require.ErrorIs(t, err, ErrGSTCredentialValidationNotConfigured)
+	require.Equal(t, "pending", account.Status)
+	require.Zero(t, providerCalls)
+	require.Empty(t, repository.snapshots, "unsupported validation must not create a healthy snapshot")
+}
+
+type blockingValidationGSTProvider struct {
+	GSTProvider
+	started chan struct{}
+	release chan struct{}
+}
+
+func (p *blockingValidationGSTProvider) ValidateCredentials(context.Context, *GSTIntegrationAccountCredentials) error {
+	close(p.started)
+	<-p.release
+	return nil
+}
+
+func TestGSTIntegrationValidationCannotRestoreHealthAfterCredentialRevisionChanges(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(`CREATE TABLE gst_integration_accounts (
+		id TEXT PRIMARY KEY, business_id TEXT NOT NULL, provider TEXT NOT NULL,
+		service_type TEXT NOT NULL, gsp_name TEXT, portal_username TEXT,
+		encrypted_credentials TEXT, credential_hint TEXT, credential_revision INTEGER NOT NULL DEFAULT 1,
+		status TEXT NOT NULL, last_validated_at DATETIME, last_error TEXT, metadata TEXT,
+		created_at DATETIME, updated_at DATETIME, deleted_at DATETIME
+	)`).Error)
+	businessID := uuid.NewString()
+	accountID := uuid.NewString()
+	repository := newMemoryCapabilityProviderHealthRepository()
+	repository.db = db
+	repository.accountRevisions[accountID] = 1
+	recorder := NewGSTProviderHealthRecorder(repository, GSTProviderHealthRecorderOptions{})
+	service := NewTaxComplianceService(&config.Config{
+		Credentials: config.CredentialsConfig{EncryptionKey: base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))},
+	}, db, nil, nil, nil, nil, nil, nil, nil, logger.New()).WithGSTProviderHealthRecorder(recorder)
+	encrypted, _, err := service.encryptIntegrationCredentials(context.Background(), GSTIntegrationAccountCredentials{APIKey: "old-fixture-key"})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&models.GSTIntegrationAccount{
+		ID: accountID, BusinessID: businessID, Provider: "test", ServiceType: "einvoice",
+		EncryptedCredentials: encrypted, CredentialRevision: 1, Status: "pending", Metadata: `{}`,
+	}).Error)
+	provider := &blockingValidationGSTProvider{started: make(chan struct{}), release: make(chan struct{})}
+	service.provider = provider
+
+	validationResult := make(chan error, 1)
+	go func() {
+		_, validateErr := service.ValidateIntegrationAccount(context.Background(), businessID, accountID)
+		validationResult <- validateErr
+	}()
+	<-provider.started
+
+	updated, err := service.UpsertIntegrationAccount(context.Background(), businessID, accountID, UpsertGSTIntegrationAccountInput{
+		Provider: "test", ServiceType: "einvoice",
+		Credentials: GSTIntegrationAccountCredentials{APIKey: "new-fixture-key"},
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 2, updated.CredentialRevision)
+	close(provider.release)
+
+	require.ErrorIs(t, <-validationResult, interfaces.ErrCapabilityProviderHealthCredentialRevisionStale)
+	require.Empty(t, repository.snapshots, "old-revision validation must not recreate health")
+	var persisted models.GSTIntegrationAccount
+	require.NoError(t, db.First(&persisted, "id = ?", accountID).Error)
+	require.EqualValues(t, 2, persisted.CredentialRevision)
+	require.Equal(t, "pending", persisted.Status)
+}
+
+func TestGSTExecutionCannotFallBackToDifferentGlobalCredentials(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(`CREATE TABLE gst_integration_accounts (
+		id TEXT PRIMARY KEY, business_id TEXT NOT NULL, provider TEXT NOT NULL,
+		service_type TEXT NOT NULL, gsp_name TEXT, portal_username TEXT,
+		encrypted_credentials TEXT, credential_hint TEXT, credential_revision INTEGER NOT NULL DEFAULT 1,
+		status TEXT NOT NULL, last_validated_at DATETIME, last_error TEXT, metadata TEXT,
+		created_at DATETIME, updated_at DATETIME, deleted_at DATETIME
+	)`).Error)
+	service := NewTaxComplianceService(&config.Config{GST: config.GSTConfig{
+		Username: "global-user", Password: "global-password", ClientID: "global-client", ClientSecret: "global-secret",
+	}}, db, nil, nil, nil, nil, nil, nil, nil, logger.New())
+
+	account, credentials, err := service.resolveIntegrationAccount(
+		context.Background(), uuid.NewString(), models.GSTOperationGenerateEInvoice,
+	)
+
+	require.ErrorIs(t, err, ErrGSTIntegrationAccountRequired)
+	require.Nil(t, account)
+	require.Empty(t, credentials)
+}
+
+func TestGSTIntegrationAccountMissingUsesStableServiceError(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(`CREATE TABLE gst_integration_accounts (
+		id TEXT PRIMARY KEY, business_id TEXT NOT NULL, provider TEXT NOT NULL,
+		service_type TEXT NOT NULL, gsp_name TEXT, portal_username TEXT,
+		encrypted_credentials TEXT, credential_hint TEXT, credential_revision INTEGER NOT NULL DEFAULT 1,
+		status TEXT NOT NULL, last_validated_at DATETIME, last_error TEXT, metadata TEXT,
+		created_at DATETIME, updated_at DATETIME, deleted_at DATETIME
+	)`).Error)
+	service := NewTaxComplianceService(&config.Config{
+		Credentials: config.CredentialsConfig{EncryptionKey: base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))},
+	}, db, nil, nil, nil, nil, nil, nil, nil, logger.New())
+	businessID := uuid.NewString()
+	accountID := uuid.NewString()
+
+	_, upsertErr := service.UpsertIntegrationAccount(context.Background(), businessID, accountID, UpsertGSTIntegrationAccountInput{
+		ServiceType: "einvoice", Credentials: GSTIntegrationAccountCredentials{APIKey: "fixture-key"},
+	})
+	_, validateErr := service.ValidateIntegrationAccount(context.Background(), businessID, accountID)
+
+	require.ErrorIs(t, upsertErr, interfaces.ErrGSTIntegrationAccountNotFound)
+	require.ErrorIs(t, validateErr, interfaces.ErrGSTIntegrationAccountNotFound)
+}
+
+func TestGSTCredentialMutationRequiresRevisionBoundHealthPersistence(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(`CREATE TABLE gst_integration_accounts (
+		id TEXT PRIMARY KEY, business_id TEXT NOT NULL, provider TEXT NOT NULL,
+		service_type TEXT NOT NULL, gsp_name TEXT, portal_username TEXT,
+		encrypted_credentials TEXT, credential_hint TEXT, credential_revision INTEGER NOT NULL DEFAULT 1,
+		status TEXT NOT NULL, last_validated_at DATETIME, last_error TEXT, metadata TEXT,
+		created_at DATETIME, updated_at DATETIME, deleted_at DATETIME
+	)`).Error)
+	businessID := uuid.NewString()
+	accountID := uuid.NewString()
+	require.NoError(t, db.Create(&models.GSTIntegrationAccount{
+		ID: accountID, BusinessID: businessID, Provider: "test", ServiceType: "einvoice",
+		CredentialRevision: 1, EncryptedCredentials: "old-encrypted-fixture", Status: "pending", Metadata: `{}`,
+	}).Error)
+	service := NewTaxComplianceService(&config.Config{
+		Credentials: config.CredentialsConfig{EncryptionKey: base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))},
+	}, db, nil, nil, nil, nil, nil, nil, nil, logger.New())
+
+	_, err = service.UpsertIntegrationAccount(context.Background(), businessID, accountID, UpsertGSTIntegrationAccountInput{
+		Provider: "test", ServiceType: "einvoice",
+		Credentials: GSTIntegrationAccountCredentials{APIKey: "new-fixture-key"},
+	})
+
+	require.ErrorIs(t, err, ErrGSTProviderHealthPersistenceNotConfigured)
+	var persisted models.GSTIntegrationAccount
+	require.NoError(t, db.First(&persisted, "id = ?", accountID).Error)
+	require.EqualValues(t, 1, persisted.CredentialRevision)
+	require.Equal(t, "old-encrypted-fixture", persisted.EncryptedCredentials)
+}
+
+func TestGSTValidationRequiresRevisionBoundHealthPersistence(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(`CREATE TABLE gst_integration_accounts (
+		id TEXT PRIMARY KEY, business_id TEXT NOT NULL, provider TEXT NOT NULL,
+		service_type TEXT NOT NULL, gsp_name TEXT, portal_username TEXT,
+		encrypted_credentials TEXT, credential_hint TEXT, credential_revision INTEGER NOT NULL DEFAULT 1,
+		status TEXT NOT NULL, last_validated_at DATETIME, last_error TEXT, metadata TEXT,
+		created_at DATETIME, updated_at DATETIME, deleted_at DATETIME
+	)`).Error)
+	businessID := uuid.NewString()
+	accountID := uuid.NewString()
+	service := NewTaxComplianceService(&config.Config{
+		Credentials: config.CredentialsConfig{EncryptionKey: base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))},
+	}, db, nil, nil, nil, nil, nil, nil, nil, logger.New())
+	provider := &validationOnlyGSTProvider{}
+	service.provider = provider
+	encrypted, _, err := service.encryptIntegrationCredentials(context.Background(), GSTIntegrationAccountCredentials{APIKey: "fixture-key"})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&models.GSTIntegrationAccount{
+		ID: accountID, BusinessID: businessID, Provider: "test", ServiceType: "einvoice",
+		CredentialRevision: 1, EncryptedCredentials: encrypted, Status: "pending", Metadata: `{}`,
+	}).Error)
+
+	account, err := service.ValidateIntegrationAccount(context.Background(), businessID, accountID)
+
+	require.ErrorIs(t, err, ErrGSTProviderHealthPersistenceNotConfigured)
+	require.Equal(t, "pending", account.Status)
+	require.Zero(t, provider.calls)
+	var persisted models.GSTIntegrationAccount
+	require.NoError(t, db.First(&persisted, "id = ?", accountID).Error)
+	require.Equal(t, "pending", persisted.Status)
+	require.Nil(t, persisted.LastValidatedAt)
 }

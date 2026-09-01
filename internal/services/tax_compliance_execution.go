@@ -17,9 +17,11 @@ import (
 
 	"invoice-backend/internal/config"
 	"invoice-backend/internal/models"
+	"invoice-backend/internal/repositories/interfaces"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/google/uuid"
 	"github.com/skip2/go-qrcode"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -32,7 +34,11 @@ const (
 	eWayBillBackdateWindow = 180 * 24 * time.Hour
 )
 
-var ErrGSTCredentialValidationFailed = errors.New("GST integration credential validation failed")
+var (
+	ErrGSTCredentialValidationFailed             = errors.New("GST integration credential validation failed")
+	ErrGSTIntegrationAccountRequired             = errors.New("GST integration account is required")
+	ErrGSTProviderHealthPersistenceNotConfigured = errors.New("GST provider health persistence is not configured")
+)
 
 type UpsertGSTIntegrationAccountInput struct {
 	Provider       string                           `json:"provider"`
@@ -134,6 +140,7 @@ func (s *TaxComplianceService) ListIntegrationAccounts(ctx context.Context, busi
 
 func (s *TaxComplianceService) UpsertIntegrationAccount(ctx context.Context, businessID, id string, input UpsertGSTIntegrationAccountInput) (*models.GSTIntegrationAccount, error) {
 	account := &models.GSTIntegrationAccount{
+		ID:             strings.TrimSpace(id),
 		BusinessID:     businessID,
 		Provider:       coalesceString(input.Provider, fallbackProviderName(s.cfg)),
 		ServiceType:    strings.ToLower(strings.TrimSpace(input.ServiceType)),
@@ -151,12 +158,16 @@ func (s *TaxComplianceService) UpsertIntegrationAccount(ctx context.Context, bus
 	}
 	account.EncryptedCredentials = encrypted
 	account.CredentialHint = hint
+	account.UpdatedAt = time.Now().UTC()
 
 	if id != "" {
 		var existing models.GSTIntegrationAccount
 		if err := s.db.WithContext(ctx).
 			Where("id = ? AND business_id = ? AND deleted_at IS NULL", id, businessID).
 			First(&existing).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, interfaces.ErrGSTIntegrationAccountNotFound
+			}
 			return nil, err
 		}
 		existing.Provider = account.Provider
@@ -168,23 +179,23 @@ func (s *TaxComplianceService) UpsertIntegrationAccount(ctx context.Context, bus
 		existing.Metadata = account.Metadata
 		existing.Status = "pending"
 		existing.LastError = ""
-		if s.gstHealth != nil {
-			if err := s.gstHealth.ClearGSTOutcome(ctx, businessID); err != nil {
-				return nil, fmt.Errorf("clear prior GST provider health: %w", err)
-			}
+		existing.LastValidatedAt = nil
+		existing.UpdatedAt = account.UpdatedAt
+		if s.gstHealth == nil {
+			return nil, ErrGSTProviderHealthPersistenceNotConfigured
 		}
-		if err := s.db.WithContext(ctx).Save(&existing).Error; err != nil {
-			return nil, err
+		if err := s.gstHealth.SaveGSTIntegrationAccountAndInvalidate(ctx, &existing, existing.CredentialRevision); err != nil {
+			return nil, fmt.Errorf("save GST integration account revision: %w", err)
 		}
 		return &existing, nil
 	}
-	if s.gstHealth != nil {
-		if err := s.gstHealth.ClearGSTOutcome(ctx, businessID); err != nil {
-			return nil, fmt.Errorf("clear prior GST provider health: %w", err)
-		}
+	account.ID = uuid.NewString()
+	account.CredentialRevision = 1
+	if s.gstHealth == nil {
+		return nil, ErrGSTProviderHealthPersistenceNotConfigured
 	}
-	if err := s.db.WithContext(ctx).Create(account).Error; err != nil {
-		return nil, err
+	if err := s.gstHealth.SaveGSTIntegrationAccountAndInvalidate(ctx, account, 0); err != nil {
+		return nil, fmt.Errorf("save GST integration account revision: %w", err)
 	}
 	return account, nil
 }
@@ -194,7 +205,13 @@ func (s *TaxComplianceService) ValidateIntegrationAccount(ctx context.Context, b
 	if err := s.db.WithContext(ctx).
 		Where("id = ? AND business_id = ? AND deleted_at IS NULL", id, businessID).
 		First(&account).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, interfaces.ErrGSTIntegrationAccountNotFound
+		}
 		return nil, err
+	}
+	if s.gstHealth == nil {
+		return &account, ErrGSTProviderHealthPersistenceNotConfigured
 	}
 	credentials, err := s.decryptIntegrationCredentials(ctx, account.EncryptedCredentials)
 	if err != nil {
@@ -202,23 +219,30 @@ func (s *TaxComplianceService) ValidateIntegrationAccount(ctx context.Context, b
 	}
 	credentials.PortalUsername = coalesceString(account.PortalUsername, credentials.PortalUsername)
 	validationErr := s.provider.ValidateCredentials(ctx, &credentials)
-	if s.gstHealth != nil {
-		if err := s.gstHealth.RecordGSTOutcome(ctx, businessID, CapabilityProviderOutcome{Err: validationErr}); err != nil {
-			return &account, fmt.Errorf("persist GST provider health: %w", err)
-		}
-	}
-	if validationErr != nil {
-		account.Status = models.GSTJobStatusFailed
-		account.LastError = ErrGSTCredentialValidationFailed.Error()
-		_ = s.db.WithContext(ctx).Save(&account).Error
-		return &account, ErrGSTCredentialValidationFailed
+	if errors.Is(validationErr, ErrGSTCredentialValidationNotConfigured) {
+		return &account, ErrGSTCredentialValidationNotConfigured
 	}
 	now := time.Now().UTC()
-	account.Status = models.GSTJobStatusSucceeded
-	account.LastValidatedAt = &now
-	account.LastError = ""
-	if err := s.db.WithContext(ctx).Save(&account).Error; err != nil {
-		return nil, err
+	state := interfaces.GSTIntegrationValidationState{
+		Status:          models.GSTJobStatusSucceeded,
+		LastValidatedAt: &now,
+	}
+	if validationErr != nil {
+		state.Status = models.GSTJobStatusFailed
+		state.LastValidatedAt = account.LastValidatedAt
+		state.LastError = ErrGSTCredentialValidationFailed.Error()
+	}
+	if _, err := s.gstHealth.RecordGSTValidationOutcome(
+		ctx, businessID, account.ID, account.CredentialRevision,
+		CapabilityProviderOutcome{Err: validationErr}, state,
+	); err != nil {
+		return &account, fmt.Errorf("persist GST provider health: %w", err)
+	}
+	account.Status = state.Status
+	account.LastValidatedAt = state.LastValidatedAt
+	account.LastError = state.LastError
+	if validationErr != nil {
+		return &account, ErrGSTCredentialValidationFailed
 	}
 	return &account, nil
 }
@@ -409,11 +433,17 @@ func (s *TaxComplianceService) GetEWayBillPDFByDocument(ctx context.Context, bus
 	if record.PDFURL != "" {
 		return record.PDFURL, nil
 	}
+	account, credentials, err := s.resolveIntegrationAccount(ctx, businessID, models.GSTOperationFetchEWayPDF)
+	if err != nil {
+		return "", err
+	}
 	result, err := s.provider.FetchEWayBillPDF(ctx, GSTEWayBillPDFRequest{
-		BusinessID: businessID,
-		DocumentID: documentID,
-		EWayBillNo: record.EWayBillNumber,
+		BusinessID:  businessID,
+		DocumentID:  documentID,
+		EWayBillNo:  record.EWayBillNumber,
+		Credentials: &credentials,
 	})
+	s.recordGSTProviderOutcome(ctx, account, err)
 	if err != nil {
 		return "", err
 	}
@@ -547,7 +577,7 @@ func (s *TaxComplianceService) processGSTJob(ctx context.Context, job *models.GS
 	if err != nil {
 		return err
 	}
-	account, _, err := s.resolveIntegrationAccount(ctx, job.BusinessID, job.Operation)
+	account, credentials, err := s.resolveIntegrationAccount(ctx, job.BusinessID, job.Operation)
 	if err != nil {
 		return s.failJob(ctx, job, models.GSTErrorClassCredentials, err)
 	}
@@ -578,12 +608,13 @@ func (s *TaxComplianceService) processGSTJob(ctx context.Context, job *models.GS
 	case models.GSTOperationGenerateEInvoice:
 		var result *GSTEInvoiceResult
 		result, opErr = s.provider.GenerateEInvoice(ctx, GSTEInvoiceRequest{
-			BusinessID: job.BusinessID,
-			DocumentID: job.DocumentID,
-			SerialNo:   document.SerialNumber,
-			Payload:    reqPayload,
+			BusinessID:  job.BusinessID,
+			DocumentID:  job.DocumentID,
+			SerialNo:    document.SerialNumber,
+			Payload:     reqPayload,
+			Credentials: &credentials,
 		})
-		s.recordGSTProviderOutcome(ctx, job.BusinessID, CapabilityEInvoice, opErr)
+		s.recordGSTProviderOutcome(ctx, account, opErr)
 		if opErr == nil {
 			opErr = s.applyEInvoiceResult(ctx, document, job, account, result)
 			resultPayload = result.RawResponse
@@ -596,13 +627,14 @@ func (s *TaxComplianceService) processGSTJob(ctx context.Context, job *models.GS
 		}
 		var result *GSTCancelEInvoiceResult
 		result, opErr = s.provider.CancelEInvoice(ctx, GSTCancelEInvoiceRequest{
-			BusinessID: job.BusinessID,
-			DocumentID: job.DocumentID,
-			IRN:        record.IRN,
-			Reason:     readStringCandidate(reqPayload, "reason"),
-			Payload:    reqPayload,
+			BusinessID:  job.BusinessID,
+			DocumentID:  job.DocumentID,
+			IRN:         record.IRN,
+			Reason:      readStringCandidate(reqPayload, "reason"),
+			Payload:     reqPayload,
+			Credentials: &credentials,
 		})
-		s.recordGSTProviderOutcome(ctx, job.BusinessID, CapabilityEInvoice, opErr)
+		s.recordGSTProviderOutcome(ctx, account, opErr)
 		if opErr == nil {
 			opErr = s.applyCancelledEInvoice(ctx, document, job, record, result)
 			resultPayload = result.RawResponse
@@ -610,12 +642,13 @@ func (s *TaxComplianceService) processGSTJob(ctx context.Context, job *models.GS
 	case models.GSTOperationGenerateEWayBill:
 		var result *GSTEWayBillResult
 		result, opErr = s.provider.GenerateEWayBill(ctx, GSTEWayBillRequest{
-			BusinessID: job.BusinessID,
-			DocumentID: job.DocumentID,
-			SerialNo:   document.SerialNumber,
-			Payload:    reqPayload,
+			BusinessID:  job.BusinessID,
+			DocumentID:  job.DocumentID,
+			SerialNo:    document.SerialNumber,
+			Payload:     reqPayload,
+			Credentials: &credentials,
 		})
-		s.recordGSTProviderOutcome(ctx, job.BusinessID, CapabilityEWayBill, opErr)
+		s.recordGSTProviderOutcome(ctx, account, opErr)
 		if opErr == nil {
 			opErr = s.applyEWayBillResult(ctx, document, job, account, result, false)
 			resultPayload = result.RawResponse
@@ -628,12 +661,13 @@ func (s *TaxComplianceService) processGSTJob(ctx context.Context, job *models.GS
 		}
 		var result *GSTEWayBillResult
 		result, opErr = s.provider.UpdateEWayPartB(ctx, GSTEWayPartBRequest{
-			BusinessID: job.BusinessID,
-			DocumentID: job.DocumentID,
-			EWayBillNo: record.EWayBillNumber,
-			Payload:    reqPayload,
+			BusinessID:  job.BusinessID,
+			DocumentID:  job.DocumentID,
+			EWayBillNo:  record.EWayBillNumber,
+			Payload:     reqPayload,
+			Credentials: &credentials,
 		})
-		s.recordGSTProviderOutcome(ctx, job.BusinessID, CapabilityEWayBill, opErr)
+		s.recordGSTProviderOutcome(ctx, account, opErr)
 		if opErr == nil {
 			opErr = s.applyEWayBillResult(ctx, document, job, account, result, true)
 			if opErr == nil {
@@ -649,12 +683,13 @@ func (s *TaxComplianceService) processGSTJob(ctx context.Context, job *models.GS
 		}
 		var result *GSTMultiVehicleResult
 		result, opErr = s.provider.InitiateMultiVehicle(ctx, GSTMultiVehicleRequest{
-			BusinessID: job.BusinessID,
-			DocumentID: job.DocumentID,
-			EWayBillNo: record.EWayBillNumber,
-			Payload:    reqPayload,
+			BusinessID:  job.BusinessID,
+			DocumentID:  job.DocumentID,
+			EWayBillNo:  record.EWayBillNumber,
+			Payload:     reqPayload,
+			Credentials: &credentials,
 		})
-		s.recordGSTProviderOutcome(ctx, job.BusinessID, CapabilityEWayBill, opErr)
+		s.recordGSTProviderOutcome(ctx, account, opErr)
 		if opErr == nil {
 			opErr = s.recordVehicleMovement(ctx, document, record, reqPayload, coalesceString(readStringCandidate(reqPayload, "movement_type"), "multi_vehicle"))
 			resultPayload = result.RawResponse
@@ -681,9 +716,31 @@ func (s *TaxComplianceService) processGSTJob(ctx context.Context, job *models.GS
 	return nil
 }
 
-func (s *TaxComplianceService) recordGSTProviderOutcome(ctx context.Context, businessID string, _ CapabilityKey, err error) {
-	if s.gstHealth != nil {
-		_ = s.gstHealth.RecordGSTOutcome(ctx, businessID, CapabilityProviderOutcome{Err: err})
+func (s *TaxComplianceService) recordGSTProviderOutcome(ctx context.Context, account *models.GSTIntegrationAccount, err error) {
+	if s.gstHealth == nil || account == nil || account.ID == "" || account.CredentialRevision <= 0 {
+		return
+	}
+	timeout := s.gstHealthPersistenceTimeout
+	if timeout <= 0 {
+		timeout = 2 * time.Second
+	}
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+	defer cancel()
+	_, persistErr := s.gstHealth.RecordGSTOutcome(
+		writeCtx, account.BusinessID, account.ID, account.CredentialRevision,
+		CapabilityProviderOutcome{Err: err},
+	)
+	if persistErr == nil {
+		return
+	}
+	code := "gst_health_persistence_failed"
+	if errors.Is(persistErr, interfaces.ErrCapabilityProviderHealthCredentialRevisionStale) {
+		code = "gst_health_credential_revision_stale"
+	} else if writeCtx.Err() != nil {
+		code = "gst_health_persistence_timeout"
+	}
+	if s.log != nil {
+		s.log.Warn("GST provider health persistence issue", "code", code)
 	}
 }
 
@@ -1113,21 +1170,7 @@ func (s *TaxComplianceService) resolveIntegrationAccount(ctx context.Context, bu
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, GSTIntegrationAccountCredentials{}, err
 	}
-	runtimeCfg := s.cfg
-	if s.resolver != nil && s.cfg != nil && strings.TrimSpace(s.cfg.GST.BaseURL) != "" {
-		resolved, resolveErr := s.resolver.ResolveProvider(ctx, s.cfg, config.SecretGSTProvider)
-		if resolveErr != nil {
-			return nil, GSTIntegrationAccountCredentials{}, resolveErr
-		}
-		runtimeCfg = resolved
-	}
-	fallback := GSTIntegrationAccountCredentials{
-		PortalUsername: gstConfigValue(runtimeCfg, func(cfg *config.Config) string { return cfg.GST.Username }),
-		PortalPassword: gstConfigValue(runtimeCfg, func(cfg *config.Config) string { return cfg.GST.Password }),
-		APIKey:         gstConfigValue(runtimeCfg, func(cfg *config.Config) string { return cfg.GST.ClientID }),
-		APISecret:      gstConfigValue(runtimeCfg, func(cfg *config.Config) string { return cfg.GST.ClientSecret }),
-	}
-	return nil, fallback, nil
+	return nil, GSTIntegrationAccountCredentials{}, ErrGSTIntegrationAccountRequired
 }
 
 func (s *TaxComplianceService) encryptIntegrationCredentials(ctx context.Context, credentials GSTIntegrationAccountCredentials) (string, string, error) {

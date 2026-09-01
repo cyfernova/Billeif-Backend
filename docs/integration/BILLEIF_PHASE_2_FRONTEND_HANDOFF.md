@@ -277,28 +277,35 @@ table count, rotation, or business-keyed cache write.
 
 GST health is business-specific and durable in
 `capability_provider_health_snapshots`, keyed by `(business_id, gst_provider)`.
-The row contains only a bounded status, observation/freshness/retry timestamps,
-and customer-safe code; the primary key and provider constraint bound it to one
-row per business GST key. Credential upsert clears an earlier observation but
-does not validate or mark the provider healthy. The existing explicit
-`POST /tax/integrations/{id}/validate` action validates the stored credentials
-and records the sanitized result, and real e-invoice/e-way provider outcomes
-refresh the same row. Each observation is fresh for 24 hours and upserts are
-monotonic by `observed_at`. A missing or stale row stays fail-closed and directs
-the user to `validate_gst_integration`.
+The row contains only internal account/revision consistency keys, a bounded
+status, observation/freshness/retry timestamps, and a customer-safe code; the
+primary key and provider constraint bound it to one row per business GST key.
+Credential upsert atomically advances active account revisions and invalidates
+the earlier observation without validating or marking the provider healthy.
+The explicit `POST /tax/integrations/{id}/validate` action validates the stored
+tenant credentials and records account status plus the sanitized result in one
+revision-bound transaction. Real e-invoice/e-way calls use that same tenant
+credential revision and persist provider outcomes using a detached bounded
+context. Every accepted completion advances a database-ordered observation
+revision; an old credential revision is rejected explicitly. Each observation
+is fresh for 24 hours. A missing or stale row stays fail-closed and directs the
+user to `validate_gst_integration`.
 `GET /capabilities` performs only exact business-keyed snapshot reads and never
 contacts a provider.
 
-The OpenAI-compatible/DeepSeek AI probe recognizes only configured
-`/chat/completions` or `/v1/chat/completions` shapes and uses the read-only
-`GET /models` list. A response proves health or model absence only after a
-pagination-free HTTP `200` and a complete recognized `object: "list"` and
+The AI probe recognizes only explicitly supported official OpenAI/DeepSeek
+hosts and their exact configured `/chat/completions` or
+`/v1/chat/completions` shapes, then uses the provider's read-only `GET /models`
+or `GET /v1/models` complete-list contract. Custom endpoints are not probed. A
+response proves health or model absence only after a terminal JSON HTTP `200`
+and a complete recognized `object: "list"` and
 `data` array streamed within the 1 MiB and 10,000-entry bounds. Only complete
 presence is healthy and only complete absence is unavailable.
 Empty/unrecognized objects, malformed JSON or entries, pagination/partial
-response headers, other successful statuses, oversized bodies, scan-cap
-exhaustion, unknown URL shapes, and `404`/`405` routes record nothing and remain
-unknown. The probe never decodes an unbounded array, logs or returns the body,
+or unrecognized response headers, other successful statuses, oversized bodies,
+scan-cap exhaustion, unknown URL shapes, and `404`/`405` routes record nothing
+and remain unknown. Completeness is never inferred from the absence of a known
+pagination header. The probe never decodes an unbounded array, logs or returns the body,
 or sends a chat mutation.
 
 Configuration presence alone never writes healthy. A Lambda cold start may
@@ -910,7 +917,7 @@ Evidence: `internal/app/runtime.go`, `internal/handlers/document_handler.go`,
 | `GET /tax/integrations` | `tax.integrations.manage`, all branches | `200 {"data":[]}` |
 | `POST /tax/integrations` | same | body below; `200` account |
 | `PUT /tax/integrations/{id}` | same | body below; `200` account |
-| `POST /tax/integrations/{id}/validate` | same | no body; `200` account or `400 {"error":"...","account":{...}}` |
+| `POST /tax/integrations/{id}/validate` | same | no body; `200` account; stable safe errors below |
 | `POST /utils/gstin/{gstin}/fetch` | `reports.view` | no body; `200` lookup result |
 
 The account body has optional `provider`, required `service_type`, optional
@@ -927,12 +934,39 @@ account response fields are `id`, `business_id`, `provider`, `service_type`,
 optional `gsp_name`, optional `portal_username`, optional `credential_hint`,
 `status`, optional `last_validated_at`, optional `last_error`, optional
 `metadata` as a JSON-encoded string, `created_at`, and `updated_at`. Encrypted
-credentials are not serialized. Create/update binding and service failures are
-unstable `400` text. Account writes and validate are not idempotent.
+credentials and internal credential/observation revisions are not serialized.
+Account writes and validate are not idempotent.
 
 ```json
 {"id":"14141414-aaaa-4aaa-8aaa-141414141414","business_id":"22222222-2222-4222-8222-222222222222","provider":"configured-provider","service_type":"einvoice","gsp_name":"Example GSP","portal_username":"tenant-user","credential_hint":"unsafe-hint","status":"pending","metadata":"{\"environment\":\"sandbox\"}","created_at":"2026-09-01T12:00:00Z","updated_at":"2026-09-01T12:00:00Z"}
 ```
+
+Integration errors use the stable envelope
+`{"error":{"code":"...","message":"..."}}`. Exact public errors are:
+
+- `400 invalid_tax_integration_request`: `Tax integration request is invalid.`
+- `404 gst_integration_account_not_found`: `GST integration account was not found.`
+- `409 gst_credential_revision_conflict`: `GST integration credentials changed. Refresh and retry.`
+- `422 gst_credential_validation_not_configured`: `GST credential validation is not configured.`
+- `422 gst_credential_validation_failed`: `GST credential validation failed.`
+- `422 gst_integration_account_required`: `Configure a GST integration account before using this operation.`
+- `500 tax_integration_internal_error`: `Tax integration request failed.`
+
+List uses the generic `500`; create/update uses `400`, `404`, `409`, and
+`500`; explicit validation uses `404`, `409`, both validation `422` codes, and
+`500`. Error responses never include the account or raw database/provider text.
+A missing validation path returns the not-configured `422`, performs no
+provider I/O, and leaves provider readiness unknown.
+
+Credential writes atomically advance an internal business-wide credential
+revision and invalidate the prior GST health snapshot. A validation or real
+operation outcome is accepted only for the exact tenant account revision it
+loaded. E-invoice/e-way execution uses that same decrypted tenant credential
+source; it no longer falls back to unrelated global GST credentials when the
+tenant account is missing. Best-effort real-operation health persistence is
+detached from request cancellation and bounded; an auxiliary persistence issue
+does not change the provider/business result and is emitted only as a sanitized
+operational issue.
 
 GSTIN lookup returns `gstin`, optional `pan`, `legal_name`, `trade_name`,
 `address`, `state_code`, `status`, `registration_date`, `constitution`,

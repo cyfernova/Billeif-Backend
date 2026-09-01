@@ -123,7 +123,7 @@ relevant tests were inspected.
 | Task | Baseline classification | Evidence | Expected smallest owners and impact |
 | --- | --- | --- | --- |
 | 0 | `complete` for inventory; external state `externally unverified` | This plan; `docs/integration/BILLEIF_PHASE_2_FRONTEND_HANDOFF.md`; evidence paths below | Documentation only. No migration, provider call, runtime, OpenAPI, Terraform, or test change. |
-| 1 | `complete` locally with governed mutation preflights, fixed global Razorpay/LLM observation, and durable business-scoped GST health; provider health `externally unverified`; internal diagnostics `blocked` | CAP-001 evaluation, fixed global cache/observer, durable GST repository/recorder, migration 000054, and guards at report, payment/storefront, GST command, drive upload, voice, business LLM, bulk-import, and saved-payment service boundaries; focused behavior/race and migration-bundle tests are beside each owner | Expand-first migration 000054 precedes the application. Customer output and typed mutation errors are secret-safe; unknown/stale fails closed. The observer performs exactly the configured static global probes and no tenant census, discovery, rotation, or whole-table count. Explicit GST validation and real GST outcomes update one sanitized monotonic row per business/provider key; capability GET performs no provider I/O. Observer shutdown cancels and joins before dependencies close. S3/voice/WhatsApp/email remain unknown without a safe producer. Internal diagnostics require a future operator principal distinct from business owner/admin. |
+| 1 | `complete` locally with governed mutation preflights, fixed global Razorpay/LLM observation, and durable business-scoped GST health; provider health `externally unverified`; internal diagnostics `blocked` | CAP-001 evaluation, fixed global cache/observer, durable GST repository/recorder, migration 000054, and guards at report, payment/storefront, GST command, drive upload, voice, business LLM, bulk-import, and saved-payment service boundaries; focused behavior/race and migration-bundle tests are beside each owner | Expand-first migration 000054 precedes the application. Customer output and typed mutation errors are secret-safe; unknown/stale fails closed. The observer performs exactly the configured static global probes and no tenant census, discovery, rotation, or whole-table count. Explicit GST validation and real GST outcomes update one sanitized credential-revision-bound row per business/provider key; capability GET performs no provider I/O. Observer shutdown cancels and joins before dependencies close. S3/voice/WhatsApp/email remain unknown without a safe producer. Internal diagnostics require a future operator principal distinct from business owner/admin. |
 | 2 | `partial`, with an `unsafe` truth gap; Razorpay `externally unverified` | `internal/models/subscription.go`, `internal/models/payment_attempt.go`, `internal/services/subscription_service.go`, `internal/services/razorpay_payment_service.go`, `migrations/000041_add_razorpay_payment_attempts.up.sql`, `internal/services/razorpay_payment_service_test.go`, `internal/handlers/payment_handler_idempotency_test.go`, `infrastructure/terraform/tests/razorpay.tftest.hcl` | Subscription/payment models, repositories, services, handlers, webhook inbox/reconciliation worker, paired migrations, provider fixtures, OpenAPI and race/replay tests. Expand-first state conversion must not activate entitlements from stale or ambiguous events. |
 | 3 | `partial`; deployed queues/providers `externally unverified` | Render/delivery status in `internal/services/invoice_service.go` and `internal/services/invoice_delivery.go`; outbox/workers; `infrastructure/terraform/monitoring.tf` and `sns_sqs.tf` | Aggregate read service/repositories, customer and operator handlers, recovery commands, audit, metrics/alarms, permissions/step-up, OpenAPI, state/retry tests. Recovery must remain tenant-bound and idempotent. |
 | 4 | `missing`; every staging dependency `externally unverified` | No bounded environment-selecting verification command found after inspecting every entry point under `cmd`, `internal/config`, `Makefile`, `infrastructure/terraform`, `.github/workflows`, and `docs` | New verification command and an adjacent refusal/redaction/classification/cleanup test package; documentation and safe adapters only unless a real gap is found. No schema expected by default. Must refuse production, redact secrets, bound writes, and classify cleanup. |
@@ -151,7 +151,7 @@ relevant tests were inspected.
 | Journals and ledger | `complete` for existing invariant subset; Phase 2 accounting `partial` | ACC-001/002 cover list/get/create/update/delete/post/reverse plus ledger list/balance. Posted journals balance per currency, are immutable, and reverse through compensation. Mutations have no idempotency/version/step-up/fiscal lock; ledger uses floating-point response fields. Trial Balance, Balance Sheet, opening balances and banking were not found after inspecting `internal/handlers`, `internal/services`, `internal/models`, `internal/repositories`, `internal/reporting`, and `migrations`. Evidence: `internal/services/journal_service.go`, `internal/models/journal.go`, `internal/models/ledger.go`, `internal/services/journal_invariants_test.go`, `tests/unit/journal_handler_test.go`, `tests/unit/ledger_service_test.go`, `migrations/000008_ledger_entries.up.sql`, `migrations/000025_add_document_platform.up.sql`, `migrations/000029_add_projects_and_reporting.up.sql`. |
 | Payment accounting | `complete` for existing invariant subset | Payment reversal routes through compensating journal behavior. Evidence: `internal/services/payment_service.go`, `internal/services/payment_invariants_test.go`, `internal/services/payment_postgres_integration_test.go`, `migrations/payment_reversal_schema_test.go`. |
 | GST document operations | `unsafe`, `partial`, provider `externally unverified` | OPS-004 exposes durable job/retry states, but its status nests idempotency keys, queue IDs, raw payloads, provider references/errors and URLs; unknown documents may read as `idle`. Business-global idempotency keys are not request-hash bound. Missing provider configuration selects `simulatedGSTProvider`, which can fabricate success. Evidence: `internal/services/tax_compliance_execution.go`, `internal/services/gst_provider.go`, `internal/models/gst_compliance.go`, `internal/services/tax_compliance_service_test.go`, `tests/unit/document_handler_test.go`. |
-| GST setup, lookup and reconciliation | `partial`, some output `unsafe`; provider `externally unverified`; official filing `deferred` | OPS-005 hides encrypted credentials but can return hints/raw metadata/simulated status. OPS-006 provides synchronous GSTR-2B matching and report runs, not filing. Evidence: `internal/handlers/tax_handler.go`, `internal/services/tax_compliance_service.go`, `internal/models/tax.go`, `internal/services/tax_compliance_service_test.go`, `tests/unit/tax_handler_test.go`, `migrations/000027_add_gst_compliance.up.sql`, `migrations/000031_add_gst_execution_and_pos.up.sql`. |
+| GST setup, lookup and reconciliation | `partial`, some output `unsafe`; provider `externally unverified`; official filing `deferred` | OPS-005 hides encrypted credentials and uses stable safe integration errors, but can still return unsafe hints/raw lookup metadata. Blank/simulated validation cannot claim health; tenant execution and validation share the exact revision-bound credential source. OPS-006 provides synchronous GSTR-2B matching and report runs, not filing. Evidence: `internal/handlers/tax_handler.go`, `internal/services/tax_compliance_service.go`, `internal/models/tax.go`, `internal/services/capability_business_health_test.go`, `internal/handlers/tax_integration_handler_test.go`, `migrations/000054_capability_provider_health_snapshots.up.sql`. |
 | Bulk import | `unsafe`, `partial` | Multipart content is read fully into memory and rows are persisted as queued, but no processing worker was found after inspecting `internal/workers`, `cmd`, and `infrastructure/terraform`. Product/invoice/document imports also lack the complete permission model. Evidence: `internal/handlers/billing_ops_handler.go`, `internal/services/billing_ops_service.go`, `internal/models/swipe_ops.go`, `tests/unit/billing_ops_handler_test.go`, `migrations/000030_add_swipe_billing_ops.up.sql`. |
 | Uploads and assets | `unsafe`, `partial`, S3 `externally unverified` | Logo and drive presigns bind declared size/type; Terraform blocks public access and encrypts/version-controls buckets. No pending-upload completion, checksum, quarantine/scan or object-metadata verification exists. Drive creates the asset before upload and returns internal coordinates. Evidence: `internal/services/s3_service_test.go`, `tests/unit/business_service_test.go`, `internal/services/commerce_service_test.go`, `tests/unit/commerce_handler_test.go`, `tests/integration/s3_test.go`, `infrastructure/terraform/s3.tf`. |
 | Phone authentication | `partial`, Cognito/SMS `externally unverified` | Indian E.164 normalization, register/confirm/resend/login/verify/refresh/global logout exist. Login reveals local registration; explicit provider linking, durable device/session revocation, MFA and audit are absent. Evidence: `internal/services/auth_service.go`, `internal/services/auth_phone_test.go`, `tests/unit/auth_service_test.go`, `tests/integration/auth_test.go`, `migrations/000023_add_phone_auth_fields.up.sql`. |
@@ -265,29 +265,38 @@ and whose observations contain no setup, entitlement, permission, quota,
 credential, account, response-body, or raw-error field. There is no tenant
 discovery, rotation, high-water reservation, census query, or full-cache scan.
 
-The OpenAI-compatible/DeepSeek contract recognizes only configured
-`/chat/completions` or `/v1/chat/completions` shapes and performs the documented
-read-only `GET /models` or `GET /v1/models`. Its streaming decoder requires a
-pagination-free HTTP `200` and a complete recognized `object: "list"` response
+The LLM probe recognizes only explicitly supported official OpenAI/DeepSeek
+hosts with their exact configured `/chat/completions` or
+`/v1/chat/completions` shapes and performs the documented read-only
+`GET /models` or `GET /v1/models`. Custom and unrecognized endpoints are not
+probed. Its streaming decoder requires an official complete-list contract, a
+terminal JSON HTTP `200`, and a complete recognized `object: "list"` response
 with a complete `data` array, bounded to 1 MiB, 10,000 entries, and bounded
 nesting. Only a fully parsed configured-model presence is healthy, and only a
 fully parsed absence is unavailable. Empty/unrecognized objects, malformed JSON
 or entries, partial/paginated response headers, other successful statuses,
 oversized bodies, entry-cap exhaustion, unknown URL shapes, and `404`/`405`
-probe routes record nothing and remain unknown. It never decodes an unbounded
+probe routes or unrecognized response headers record nothing and remain
+unknown. Completeness is never inferred from the absence of a known pagination
+header. It never decodes an unbounded
 list, returns or logs the provider body, or sends a chat mutation.
 
 GST provider health is business-specific and durable. Expand-first migration
 `000054_capability_provider_health_snapshots` adds one sanitized row keyed by
 `(business_id, provider_key)`, constrained to `gst_provider`, with bounded
 status/customer code and observation, freshness, and retry timestamps. The
-repository uses exact tenant/provider reads and monotonic conflict updates.
-Credential upsert clears a prior snapshot but performs no provider call and
-cannot bootstrap itself healthy. The explicit
-`POST /tax/integrations/{id}/validate` action records a safe validation result;
-real e-invoice/e-way provider outcomes refresh the same row. Missing, stale, or
-unavailable GST health fails closed after the 24-hour observation freshness
-window with setup action
+repository joins each read to the exact live tenant account credential revision
+and assigns a database-ordered observation revision on every accepted
+completion. Credential upsert atomically advances the business's active account
+revisions and clears the prior snapshot without a provider call. An in-flight
+old-revision observation is rejected explicitly and cannot restore health. The
+explicit `POST /tax/integrations/{id}/validate` action records account status
+and a safe observation in one transaction; a blank validation path performs no
+I/O and remains unknown. Real e-invoice/e-way calls use the resolved tenant
+credentials and persist outcomes through a detached bounded context, so request
+cancellation cannot preserve an older healthy row. Missing tenant accounts do
+not fall back to unrelated global credentials. Missing, stale, or unavailable
+GST health fails closed after the 24-hour observation freshness window with setup action
 `validate_gst_integration`; missing credentials still use `configure_gst`.
 `GET /capabilities` reads only the sanitized snapshot and never contacts a
 provider.

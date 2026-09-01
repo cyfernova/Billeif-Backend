@@ -65,8 +65,9 @@ func (r *CapabilityBusinessHealthReader) CustomerFact(
 }
 
 type GSTProviderHealthOutcomeRecorder interface {
-	RecordGSTOutcome(ctx context.Context, businessID string, outcome CapabilityProviderOutcome) error
-	ClearGSTOutcome(ctx context.Context, businessID string) error
+	RecordGSTOutcome(ctx context.Context, businessID, accountID string, credentialRevision int64, outcome CapabilityProviderOutcome) (int64, error)
+	RecordGSTValidationOutcome(ctx context.Context, businessID, accountID string, credentialRevision int64, outcome CapabilityProviderOutcome, state interfaces.GSTIntegrationValidationState) (int64, error)
+	SaveGSTIntegrationAccountAndInvalidate(ctx context.Context, account *models.GSTIntegrationAccount, expectedCredentialRevision int64) error
 }
 
 type GSTProviderHealthRecorderOptions struct {
@@ -95,25 +96,58 @@ func NewGSTProviderHealthRecorder(
 
 func (r *GSTProviderHealthRecorder) RecordGSTOutcome(
 	ctx context.Context,
-	businessID string,
+	businessID, accountID string,
+	credentialRevision int64,
 	outcome CapabilityProviderOutcome,
+) (int64, error) {
+	snapshot, err := r.snapshotFromOutcome(businessID, accountID, credentialRevision, outcome)
+	if err != nil {
+		return 0, err
+	}
+	return r.repository.RecordRevisionBound(ctx, snapshot)
+}
+
+func (r *GSTProviderHealthRecorder) RecordGSTValidationOutcome(
+	ctx context.Context,
+	businessID, accountID string,
+	credentialRevision int64,
+	outcome CapabilityProviderOutcome,
+	state interfaces.GSTIntegrationValidationState,
+) (int64, error) {
+	snapshot, err := r.snapshotFromOutcome(businessID, accountID, credentialRevision, outcome)
+	if err != nil {
+		return 0, err
+	}
+	return r.repository.RecordValidationRevisionBound(ctx, snapshot, state)
+}
+
+func (r *GSTProviderHealthRecorder) SaveGSTIntegrationAccountAndInvalidate(
+	ctx context.Context,
+	account *models.GSTIntegrationAccount,
+	expectedCredentialRevision int64,
 ) error {
-	if r == nil || r.repository == nil || strings.TrimSpace(businessID) == "" {
+	if r == nil || r.repository == nil {
 		return interfaces.ErrCapabilityProviderHealthScope
+	}
+	return r.repository.SaveGSTIntegrationAccountAndInvalidate(ctx, account, expectedCredentialRevision)
+}
+
+func (r *GSTProviderHealthRecorder) snapshotFromOutcome(
+	businessID, accountID string,
+	credentialRevision int64,
+	outcome CapabilityProviderOutcome,
+) (*models.CapabilityProviderHealthSnapshot, error) {
+	if r == nil || r.repository == nil || strings.TrimSpace(businessID) == "" ||
+		strings.TrimSpace(accountID) == "" || credentialRevision <= 0 {
+		return nil, interfaces.ErrCapabilityProviderHealthScope
 	}
 	now := r.now().UTC()
 	observation := capabilityHealthObservationFromOutcome(outcome, now)
-	return r.repository.UpsertMonotonic(ctx, &models.CapabilityProviderHealthSnapshot{
+	return &models.CapabilityProviderHealthSnapshot{
 		BusinessID: strings.TrimSpace(businessID), ProviderKey: string(CapabilityGSTProvider),
+		IntegrationAccountID: strings.TrimSpace(accountID), CredentialRevision: credentialRevision,
 		Status: string(observation.Status), ObservedAt: now, FreshUntil: now.Add(r.freshFor),
 		RetryAt: cloneCapabilityTime(observation.RetryAt), CustomerCode: observation.CustomerCode,
 		CreatedAt: now, UpdatedAt: now,
-	})
-}
-
-func (r *GSTProviderHealthRecorder) ClearGSTOutcome(ctx context.Context, businessID string) error {
-	if r == nil || r.repository == nil || strings.TrimSpace(businessID) == "" {
-		return interfaces.ErrCapabilityProviderHealthScope
-	}
-	return r.repository.Clear(ctx, strings.TrimSpace(businessID), string(CapabilityGSTProvider))
+	}, nil
 }

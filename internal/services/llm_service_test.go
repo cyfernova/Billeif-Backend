@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -65,7 +66,10 @@ func TestLLMServiceChatSendsOpenAICompatibleRequest(t *testing.T) {
 
 func TestLLMCapabilityProbeUsesDeepSeekReadOnlyModelList(t *testing.T) {
 	var calls int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	service := NewLLMService(config.LLMConfig{
+		APIKey: "test-key", APIURL: "https://api.deepseek.com/chat/completions", Model: "deepseek-chat", Timeout: 1,
+	}, logger.New())
+	service.client.Transport = llmProbeRoundTripFunc(func(r *http.Request) (*http.Response, error) {
 		calls++
 		if r.Method != http.MethodGet || r.URL.Path != "/models" {
 			t.Fatalf("probe request = %s %s", r.Method, r.URL.Path)
@@ -73,10 +77,8 @@ func TestLLMCapabilityProbeUsesDeepSeekReadOnlyModelList(t *testing.T) {
 		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
 			t.Fatalf("authorization = %q", got)
 		}
-		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"deepseek-chat","object":"model"}]}`))
-	}))
-	defer server.Close()
-	service := NewLLMService(config.LLMConfig{APIKey: "test-key", APIURL: server.URL + "/chat/completions", Model: "deepseek-chat", Timeout: 1}, logger.New())
+		return llmProbeResponse(r, http.StatusOK, nil, `{"object":"list","data":[{"id":"deepseek-chat","object":"model"}]}`), nil
+	})
 
 	outcome := service.ProbeGlobalCapability(context.Background())
 
@@ -90,14 +92,15 @@ func TestLLMCapabilityProbeUsesDeepSeekReadOnlyModelList(t *testing.T) {
 
 func TestLLMCapabilityProbeMarksMissingConfiguredModelUnavailableWithoutRawBody(t *testing.T) {
 	const rawBody = `{"object":"list","data":[{"id":"other-model","credential":"raw-secret"}]}`
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	service := NewLLMService(config.LLMConfig{
+		APIKey: "test-key", APIURL: "https://api.deepseek.com/v1/chat/completions", Model: "configured-model", Timeout: 1,
+	}, logger.New())
+	service.client.Transport = llmProbeRoundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/models" {
 			t.Fatalf("probe request = %s %s", r.Method, r.URL.Path)
 		}
-		_, _ = w.Write([]byte(rawBody))
-	}))
-	defer server.Close()
-	service := NewLLMService(config.LLMConfig{APIKey: "test-key", APIURL: server.URL + "/v1/chat/completions", Model: "configured-model", Timeout: 1}, logger.New())
+		return llmProbeResponse(r, http.StatusOK, nil, rawBody), nil
+	})
 
 	outcome := service.ProbeGlobalCapability(context.Background())
 
@@ -115,6 +118,49 @@ func TestLLMCapabilityProbeMarksMissingConfiguredModelUnavailableWithoutRawBody(
 	if !found || fact.Status != CapabilityProviderUnavailable {
 		t.Fatalf("missing configured model fact = %#v, found=%v", fact, found)
 	}
+}
+
+func TestLLMCapabilityProbeCustomEndpointCannotProveCompleteModelAbsence(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"other-model"}]}`))
+	}))
+	defer server.Close()
+	service := NewLLMService(config.LLMConfig{
+		APIKey: "test-key", APIURL: server.URL + "/v1/chat/completions",
+		Model: "configured-model", Timeout: 1,
+	}, logger.New())
+
+	outcome := service.ProbeGlobalCapability(context.Background())
+
+	require.ErrorIs(t, outcome.Err, ErrCapabilityProbeUnsupported)
+	require.Zero(t, calls, "custom endpoints must not be probed as complete-list providers")
+}
+
+func TestLLMCapabilityProbeUnrecognizedResponseHeaderCannotProveCompleteModelAbsence(t *testing.T) {
+	service := NewLLMService(config.LLMConfig{
+		APIKey: "test-key", APIURL: "https://api.deepseek.com/v1/chat/completions",
+		Model: "configured-model", Timeout: 1,
+	}, logger.New())
+	service.client.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		require.Equal(t, "api.deepseek.com", request.URL.Host)
+		require.Equal(t, "/v1/models", request.URL.Path)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header: http.Header{
+				"Content-Type": []string{"application/json"},
+				"X-Next-Token": []string{"opaque-continuation"},
+			},
+			Body:    io.NopCloser(strings.NewReader(`{"object":"list","data":[{"id":"other-model"}]}`)),
+			Request: request,
+		}, nil
+	})
+
+	outcome := service.ProbeGlobalCapability(context.Background())
+
+	require.ErrorIs(t, outcome.Err, ErrCapabilityProbeUnsupported)
+	require.NotContains(t, outcome.Err.Error(), "opaque-continuation")
 }
 
 func TestLLMCapabilityProbeLeavesUnprovenModelListsUnknown(t *testing.T) {
@@ -143,14 +189,13 @@ func TestLLMCapabilityProbeLeavesUnprovenModelListsUnknown(t *testing.T) {
 		{name: "response exceeds model scan limit", body: tooManyModels.String()},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				_, _ = w.Write([]byte(fixture.body))
-			}))
-			defer server.Close()
 			service := NewLLMService(config.LLMConfig{
-				APIKey: "test-key", APIURL: server.URL + "/v1/chat/completions",
+				APIKey: "test-key", APIURL: "https://api.deepseek.com/v1/chat/completions",
 				Model: "configured-model", Timeout: 1,
 			}, logger.New())
+			service.client.Transport = llmProbeRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+				return llmProbeResponse(r, http.StatusOK, nil, fixture.body), nil
+			})
 
 			outcome := service.ProbeGlobalCapability(context.Background())
 
@@ -174,18 +219,13 @@ func TestLLMCapabilityProbeRejectsHTTPResponsesThatDoNotProveACompleteList(t *te
 		{name: "next cursor", status: http.StatusOK, headers: map[string]string{"X-Next-Cursor": "raw-secret-cursor"}},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				for name, value := range fixture.headers {
-					w.Header().Set(name, value)
-				}
-				w.WriteHeader(fixture.status)
-				_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"other-model"}]}`))
-			}))
-			defer server.Close()
 			service := NewLLMService(config.LLMConfig{
-				APIKey: "test-key", APIURL: server.URL + "/v1/chat/completions",
+				APIKey: "test-key", APIURL: "https://api.deepseek.com/v1/chat/completions",
 				Model: "configured-model", Timeout: 1,
 			}, logger.New())
+			service.client.Transport = llmProbeRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+				return llmProbeResponse(r, fixture.status, fixture.headers, `{"object":"list","data":[{"id":"other-model"}]}`), nil
+			})
 
 			outcome := service.ProbeGlobalCapability(context.Background())
 
@@ -199,13 +239,13 @@ func TestLLMUnsupportedProbeRouteLeavesHealthUnknownWithoutChatMutation(t *testi
 	for _, status := range []int{http.StatusNotFound, http.StatusMethodNotAllowed} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			var methods []string
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			service := NewLLMService(config.LLMConfig{
+				APIKey: "test-key", APIURL: "https://api.deepseek.com/chat/completions", Model: "deepseek-chat", Timeout: 1,
+			}, logger.New())
+			service.client.Transport = llmProbeRoundTripFunc(func(r *http.Request) (*http.Response, error) {
 				methods = append(methods, r.Method+" "+r.URL.Path)
-				w.WriteHeader(status)
-				_, _ = w.Write([]byte(`{"error":"raw secret unsupported response"}`))
-			}))
-			defer server.Close()
-			service := NewLLMService(config.LLMConfig{APIKey: "test-key", APIURL: server.URL + "/chat/completions", Model: "deepseek-chat", Timeout: 1}, logger.New())
+				return llmProbeResponse(r, status, nil, `{"error":"raw secret unsupported response"}`), nil
+			})
 			cache := NewCapabilityGlobalHealthCache(CapabilityGlobalHealthCacheOptions{})
 			observer := NewCapabilityGlobalHealthObserver(
 				map[CapabilityKey]CapabilityGlobalProviderProber{CapabilityAI: service},
@@ -222,6 +262,25 @@ func TestLLMUnsupportedProbeRouteLeavesHealthUnknownWithoutChatMutation(t *testi
 				t.Fatalf("provider calls = %v, want only GET /models", methods)
 			}
 		})
+	}
+}
+
+type llmProbeRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f llmProbeRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+func llmProbeResponse(request *http.Request, status int, headers map[string]string, body string) *http.Response {
+	header := http.Header{"Content-Type": []string{"application/json"}}
+	for name, value := range headers {
+		header.Set(name, value)
+	}
+	return &http.Response{
+		StatusCode: status,
+		Header:     header,
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Request:    request,
 	}
 }
 
