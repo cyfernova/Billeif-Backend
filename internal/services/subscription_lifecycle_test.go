@@ -383,7 +383,7 @@ func TestSubscriptionProviderTimeoutIsRecordedForReconciliationAndNeverBlindlyRe
 	require.NoError(t, db.Create(&models.Subscription{ID: uuid.NewString(), BusinessID: businessID, Plan: "free", PlanCode: "free", Status: "active", BillingMode: "free", StartDate: now}).Error)
 	provider := &fakeSubscriptionProvider{createErr: errors.New("provider timeout")}
 	service := NewSubscriptionLifecycleService(postgresrepo.NewSubscriptionLifecycleRepository(db), provider, SubscriptionLifecycleConfig{
-		ProviderMode: "test", ProviderPlanIDs: map[string]string{"pro_monthly": "plan_fixture"}, Now: func() time.Time { return now },
+		ProviderMode: "test", ProviderPlanIDs: map[string]string{"pro_monthly": "plan_fixture", "rise_monthly": "plan_rise_fixture"}, Now: func() time.Time { return now },
 	}, logger.New())
 	input := StartRenewableSubscriptionInput{PlanID: "pro_monthly", IdempotencyKey: "command-fixture"}
 	_, firstErr := service.StartRenewable(context.Background(), businessID, "user", input)
@@ -394,6 +394,22 @@ func TestSubscriptionProviderTimeoutIsRecordedForReconciliationAndNeverBlindlyRe
 	var stored models.Subscription
 	require.NoError(t, db.First(&stored, "business_id = ?", businessID).Error)
 	require.Equal(t, models.SubscriptionStatusReconciliationRequired, stored.Status)
+}
+
+func TestPendingRenewableCheckoutRejectsSecondActorBeforeAnotherProviderMutation(t *testing.T) {
+	db := newSubscriptionLifecycleTestDB(t)
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	businessID := uuid.NewString()
+	require.NoError(t, db.Create(&models.Subscription{ID: uuid.NewString(), BusinessID: businessID, Plan: "free", PlanCode: "free", Status: "active", BillingMode: "free", StartDate: now}).Error)
+	provider := &fakeSubscriptionProvider{created: &razorpay.Subscription{ID: "sub_fixture", PlanID: "plan_fixture"}}
+	service := NewSubscriptionLifecycleService(postgresrepo.NewSubscriptionLifecycleRepository(db), provider, SubscriptionLifecycleConfig{
+		ProviderMode: "test", ProviderPlanIDs: map[string]string{"pro_monthly": "plan_fixture", "rise_monthly": "plan_rise_fixture"}, Now: func() time.Time { return now },
+	}, logger.New())
+	_, err := service.StartRenewable(context.Background(), businessID, "user-a", StartRenewableSubscriptionInput{PlanID: "pro_monthly", IdempotencyKey: "first"})
+	require.NoError(t, err)
+	_, err = service.StartRenewable(context.Background(), businessID, "user-b", StartRenewableSubscriptionInput{PlanID: "rise_monthly", IdempotencyKey: "second"})
+	require.ErrorIs(t, err, ErrSubscriptionLifecycleConflict)
+	require.Equal(t, 1, provider.createCalls)
 }
 
 func TestOverQuotaDowngradeSchedulesWithoutDeletingUsage(t *testing.T) {

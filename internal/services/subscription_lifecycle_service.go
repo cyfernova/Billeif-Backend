@@ -344,6 +344,10 @@ func (s *SubscriptionLifecycleService) StartRenewable(
 		current, currentErr := tx.GetByBusinessIDForUpdate(ctx, businessID)
 		switch {
 		case currentErr == nil:
+			if current.BillingMode == models.SubscriptionBillingModeRenewable &&
+				current.Status != models.SubscriptionStatusCancelled && current.Status != models.SubscriptionStatusExpired {
+				return ErrSubscriptionLifecycleConflict
+			}
 			if subscriptionHasCurrentPaidAccess(current, now) && normalizePlanCode(current.Plan, current.PlanCode) != "free" {
 				return ErrSubscriptionLifecycleConflict
 			}

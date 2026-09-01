@@ -283,7 +283,7 @@ func (s *EntitlementService) resolvePlanTx(ctx context.Context, tx *gorm.DB, bus
 }
 
 func quotaPeriodStart(subscription *models.Subscription, now time.Time) time.Time {
-	if subscription != nil && subscription.BillingMode == models.SubscriptionBillingModeRenewable && subscription.PeriodStart != nil {
+	if subscription != nil && subscription.BillingMode != models.SubscriptionBillingModeFree && subscription.PeriodStart != nil {
 		return subscription.PeriodStart.UTC()
 	}
 	return currentQuotaPeriodStart(now)
