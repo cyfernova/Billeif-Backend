@@ -306,7 +306,7 @@ func (s *TaxComplianceService) GetComplianceStatus(ctx context.Context, business
 }
 
 func (s *TaxComplianceService) GenerateEInvoiceByDocument(ctx context.Context, businessID, documentID, idempotencyKey string, input GenerateEInvoiceInput) (*models.GSTSubmissionJob, error) {
-	if err := s.requireGSTCapability(ctx, businessID, CapabilityEInvoice); err != nil {
+	if err := s.requireGSTCapability(ctx, businessID, CapabilityEInvoice, models.GSTOperationGenerateEInvoice); err != nil {
 		return nil, err
 	}
 	document, err := s.getDocumentForCompliance(ctx, businessID, documentID)
@@ -327,7 +327,7 @@ func (s *TaxComplianceService) GenerateEInvoiceByDocument(ctx context.Context, b
 }
 
 func (s *TaxComplianceService) CancelEInvoiceByDocument(ctx context.Context, businessID, documentID, idempotencyKey string, input CancelEInvoiceInput) (*models.GSTSubmissionJob, error) {
-	if err := s.requireGSTCapability(ctx, businessID, CapabilityEInvoice); err != nil {
+	if err := s.requireGSTCapability(ctx, businessID, CapabilityEInvoice, models.GSTOperationCancelEInvoice); err != nil {
 		return nil, err
 	}
 	document, err := s.getDocumentForCompliance(ctx, businessID, documentID)
@@ -353,7 +353,7 @@ func (s *TaxComplianceService) CancelEInvoiceByDocument(ctx context.Context, bus
 }
 
 func (s *TaxComplianceService) GenerateEWayBillByDocument(ctx context.Context, businessID, documentID, idempotencyKey string, input GenerateEWayBillInput) (*models.GSTSubmissionJob, error) {
-	if err := s.requireGSTCapability(ctx, businessID, CapabilityEWayBill); err != nil {
+	if err := s.requireGSTCapability(ctx, businessID, CapabilityEWayBill, models.GSTOperationGenerateEWayBill); err != nil {
 		return nil, err
 	}
 	document, err := s.getDocumentForCompliance(ctx, businessID, documentID)
@@ -371,7 +371,7 @@ func (s *TaxComplianceService) GenerateEWayBillByDocument(ctx context.Context, b
 }
 
 func (s *TaxComplianceService) UpdateEWayPartBByDocument(ctx context.Context, businessID, documentID, idempotencyKey string, input UpdateEWayPartBInput) (*models.GSTSubmissionJob, error) {
-	if err := s.requireGSTCapability(ctx, businessID, CapabilityEWayBill); err != nil {
+	if err := s.requireGSTCapability(ctx, businessID, CapabilityEWayBill, models.GSTOperationUpdateEWayPartB); err != nil {
 		return nil, err
 	}
 	document, err := s.getDocumentForCompliance(ctx, businessID, documentID)
@@ -393,7 +393,7 @@ func (s *TaxComplianceService) UpdateEWayPartBByDocument(ctx context.Context, bu
 }
 
 func (s *TaxComplianceService) InitiateMultiVehicleByDocument(ctx context.Context, businessID, documentID, idempotencyKey string, input MultiVehicleInput) (*models.GSTSubmissionJob, error) {
-	if err := s.requireGSTCapability(ctx, businessID, CapabilityEWayBill); err != nil {
+	if err := s.requireGSTCapability(ctx, businessID, CapabilityEWayBill, models.GSTOperationMultiVehicle); err != nil {
 		return nil, err
 	}
 	document, err := s.getDocumentForCompliance(ctx, businessID, documentID)
@@ -418,11 +418,21 @@ func (s *TaxComplianceService) InitiateMultiVehicleByDocument(ctx context.Contex
 	return s.enqueueGSTJob(ctx, document, models.GSTOperationMultiVehicle, input.Source, idempotencyKey, payload)
 }
 
-func (s *TaxComplianceService) requireGSTCapability(ctx context.Context, businessID string, capability CapabilityKey) error {
-	return requireCapability(ctx, s.capability, CapabilityRequest{
+func (s *TaxComplianceService) requireGSTCapability(ctx context.Context, businessID string, capability CapabilityKey, operation string) error {
+	request := CapabilityRequest{
 		BusinessID: businessID, UserID: actorFromContext(ctx).UserID,
 		Platform: CapabilityPlatformWeb, Capability: capability,
-	})
+	}
+	if err := requireCapability(ctx, s.capability, request); err != nil {
+		return err
+	}
+	account, _, err := s.resolveIntegrationAccount(ctx, businessID, operation)
+	if err != nil {
+		return err
+	}
+	request.IntegrationAccountID = account.ID
+	request.GSTServiceType = account.ServiceType
+	return requireCapability(ctx, s.capability, request)
 }
 
 func (s *TaxComplianceService) GetEWayBillPDFByDocument(ctx context.Context, businessID, documentID string) (string, error) {

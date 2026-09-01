@@ -265,6 +265,39 @@ func TestCapabilityServiceUsesTenantGSTSnapshotAndExposesValidationActionForUnkn
 	require.False(t, strings.Contains(raw, "business-a"))
 }
 
+func TestCapabilityServiceBindsGSTReadinessToSelectedIntegrationAccount(t *testing.T) {
+	now := time.Date(2026, 9, 1, 21, 15, 0, 0, time.UTC)
+	repository := newMemoryCapabilityProviderHealthRepository()
+	repository.accountRevisions["account-a"] = 1
+	repository.accountRevisions["account-b"] = 1
+	repository.snapshots["business-a\x00gst_provider"] = models.CapabilityProviderHealthSnapshot{
+		BusinessID: "business-a", ProviderKey: "gst_provider", IntegrationAccountID: "account-a",
+		CredentialRevision: 1, ObservationRevision: 1, Status: "healthy",
+		ObservedAt: now, FreshUntil: now.Add(24 * time.Hour),
+	}
+	service := NewCapabilityService(CapabilityServiceOptions{
+		Configuration: config.CapabilityConfiguration{GST: true},
+		Entitlements:  staticCapabilityEntitlements{FeatureEInvoice: {Required: true, Entitled: true, Quota: CapabilityQuota{Available: true}}},
+		Permissions:   staticCapabilityPermissions{PermissionDocumentsManage: true},
+		Setup:         staticCapabilitySetup{snapshot: CapabilityBusinessSetup{BusinessExists: true, GST: true}},
+		BusinessHealth: NewCapabilityBusinessHealthReader(repository, func() time.Time {
+			return now
+		}),
+		Now: func() time.Time { return now },
+	})
+
+	capability, err := service.Evaluate(context.Background(), CapabilityRequest{
+		BusinessID: "business-a", UserID: "user-a", Platform: CapabilityPlatformWeb,
+		Capability: CapabilityEInvoice, IntegrationAccountID: "account-b", GSTServiceType: "einvoice",
+	})
+
+	require.NoError(t, err)
+	require.False(t, capability.Available)
+	require.Equal(t, CapabilityStateUnknown, capability.State)
+	require.Equal(t, ReasonProviderHealthUnknown, capability.ReasonCode)
+	require.Equal(t, "validate_gst_integration", capability.SetupAction)
+}
+
 type validationOnlyGSTProvider struct {
 	GSTProvider
 	err   error

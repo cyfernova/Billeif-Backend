@@ -62,7 +62,11 @@ func TestTaxIntegrationHandlerMapsInternalFailuresToGeneric500WithoutLeak(t *tes
 	require.NotContains(t, response.Body.String(), "tenant_private_credentials")
 	require.NotContains(t, response.Body.String(), "pq:")
 	require.Len(t, logs.All(), 1)
-	require.Contains(t, logs.All()[0].ContextMap()["error"], "tenant_private_credentials")
+	require.Equal(t, "tax_integration_internal_error", logs.All()[0].ContextMap()["code"])
+	serializedLog, err := json.Marshal(logs.All()[0].ContextMap())
+	require.NoError(t, err)
+	require.NotContains(t, string(serializedLog), "tenant_private_credentials")
+	require.NotContains(t, string(serializedLog), "pq:")
 }
 
 func TestTaxIntegrationHandlerMapsStableValidationAndRevisionErrors(t *testing.T) {

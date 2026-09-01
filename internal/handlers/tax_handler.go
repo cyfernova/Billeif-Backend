@@ -269,7 +269,7 @@ func (h *TaxHandler) ValidateIntegrationAccount(c *gin.Context) {
 func (h *TaxHandler) writeTaxIntegrationError(c *gin.Context, err error) {
 	status, code, message := taxIntegrationErrorResponse(err)
 	if status == http.StatusInternalServerError && h != nil && h.log != nil {
-		h.log.Error("tax integration request failed", "error", err)
+		h.log.Error("tax integration request failed", "code", code)
 	}
 	h.writeTaxIntegrationAPIError(c, status, code, message)
 }

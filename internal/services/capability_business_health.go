@@ -17,6 +17,10 @@ type CapabilityBusinessHealthFactReader interface {
 	CustomerFact(ctx context.Context, businessID string, capability CapabilityKey) (CapabilityProviderHealth, bool, error)
 }
 
+type CapabilityBusinessHealthAccountFactReader interface {
+	CustomerFactForAccount(ctx context.Context, businessID string, capability CapabilityKey, integrationAccountID, serviceType string) (CapabilityProviderHealth, bool, error)
+}
+
 type CapabilityBusinessHealthReader struct {
 	repository interfaces.CapabilityProviderHealthRepository
 	now        func() time.Time
@@ -62,6 +66,28 @@ func (r *CapabilityBusinessHealthReader) CustomerFact(
 	}
 	fact.Stale = r.now().UTC().After(snapshot.FreshUntil.UTC())
 	return fact, true, nil
+}
+
+func (r *CapabilityBusinessHealthReader) CustomerFactForAccount(
+	ctx context.Context,
+	businessID string,
+	capability CapabilityKey,
+	integrationAccountID, _ string,
+) (CapabilityProviderHealth, bool, error) {
+	if strings.TrimSpace(integrationAccountID) == "" {
+		return r.CustomerFact(ctx, businessID, capability)
+	}
+	snapshot, err := r.repository.Get(ctx, strings.TrimSpace(businessID), string(capability))
+	if errors.Is(err, interfaces.ErrCapabilityProviderHealthNotFound) {
+		return CapabilityProviderHealth{Status: CapabilityProviderUnknown}, false, nil
+	}
+	if err != nil {
+		return CapabilityProviderHealth{}, false, fmt.Errorf("read business provider health: %w", err)
+	}
+	if snapshot.IntegrationAccountID != strings.TrimSpace(integrationAccountID) {
+		return CapabilityProviderHealth{Status: CapabilityProviderUnknown}, false, nil
+	}
+	return r.CustomerFact(ctx, businessID, capability)
 }
 
 type GSTProviderHealthOutcomeRecorder interface {

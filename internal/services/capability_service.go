@@ -106,10 +106,12 @@ type CapabilityList struct {
 }
 
 type CapabilityRequest struct {
-	BusinessID string
-	UserID     string
-	Platform   CapabilityPlatform
-	Capability CapabilityKey
+	BusinessID           string
+	UserID               string
+	Platform             CapabilityPlatform
+	Capability           CapabilityKey
+	IntegrationAccountID string
+	GSTServiceType       string
 }
 
 type CapabilityGuard interface {
@@ -344,7 +346,16 @@ func (s *CapabilityService) evaluateDefinition(ctx context.Context, request Capa
 			result.Degradation = health.Degradation
 		}
 	} else if definition.HealthScope == CapabilityHealthScopeBusiness && s.businessHealth != nil {
-		health, ok, err := s.businessHealth.CustomerFact(ctx, request.BusinessID, definition.HealthKey)
+		var (
+			health CapabilityProviderHealth
+			ok     bool
+			err    error
+		)
+		if bound, supported := s.businessHealth.(CapabilityBusinessHealthAccountFactReader); supported && strings.TrimSpace(request.IntegrationAccountID) != "" {
+			health, ok, err = bound.CustomerFactForAccount(ctx, request.BusinessID, definition.HealthKey, request.IntegrationAccountID, request.GSTServiceType)
+		} else {
+			health, ok, err = s.businessHealth.CustomerFact(ctx, request.BusinessID, definition.HealthKey)
+		}
 		if err != nil {
 			return Capability{}, fmt.Errorf("read capability provider health: %w", err)
 		}
