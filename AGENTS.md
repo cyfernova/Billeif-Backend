@@ -1,45 +1,54 @@
 # AGENTS.md
 
-Repository-level instructions for coding agents working in `invoice-backend`.
+Repository instructions for coding agents working in `invoice-backend`.
 
-Applies to the whole repository unless a deeper `AGENTS.md` overrides it.
-If both `AGENTS.md` and tool-specific files exist, follow all non-conflicting instructions, with deeper files winning inside their subtree.
+## 1) Scope and Precedence
 
-## 1) Project Snapshot
+- These instructions apply repository-wide unless closer instructions override them.
+- In each directory, `AGENTS.override.md` takes precedence over `AGENTS.md`; Codex loads at most one instruction file per directory.
+- Codex merges instructions from the repository root toward the working directory. Put subsystem-only rules near the code they govern.
 
-- Language: Go `1.24`
-- HTTP framework: Gin
-- ORM: GORM
-- Database: PostgreSQL
-- Cache: Redis
-- Auth: AWS Cognito JWT
-- Entry points: `cmd/lambda/http/main.go` (+ other handlers under `cmd/lambda/`)
+## 2) Project Snapshot
+
+- Go `1.25.0`, Gin, GORM, PostgreSQL, Redis, and AWS Cognito JWT
+- Production HTTP Lambda: `cmd/lambda/http/main.go`
+- Local HTTP server: `cmd/server`
+- Other Lambda entry points: `cmd/lambda/`
 - API base path: `/api/v1`
 
-## 2) Canonical Commands
+## 3) Authorization and Boundaries
 
-Use these first; avoid inventing custom alternatives when a Make target exists.
+- For answers, reviews, diagnoses, audits, or plans: inspect and report; do not edit unless asked.
+- For change, build, fix, or refactor requests: make in-scope local changes and run relevant non-destructive checks.
+- Ask before external writes, destructive actions, costs, production operations, or material scope expansion.
+- Keep changes minimal and backward compatible unless a breaking change is explicitly requested.
+- Preserve unrelated user changes; never discard or overwrite them.
+- Do not create Markdown files unless explicitly requested. Modify existing Markdown only when the task requires it or the user asks.
+
+## 4) Canonical Commands
+
+Use Make targets when an appropriate target exists.
 
 ```bash
-make run-local            # Run HTTP Lambda handler locally
-make build-lambda         # Build all Lambda bootstrap binaries
-make package-lambda       # Package Lambda artifacts
-make test                 # Unit tests (race + coverage)
-make test-integration     # Integration tests (requires local deps running)
-make lint                 # golangci-lint
-make fmt                  # go fmt + goimports
-make swagger              # Regenerate Swagger docs
-make deps                 # go mod download + tidy
+make run-local
+make build-lambda
+make package-lambda
+make test                 # race and coverage
+make test-integration     # requires local dependencies
+make lint
+make fmt
+make swagger
+make deps
 ```
 
-Single test examples:
+Focused tests:
 
 ```bash
 go test -v ./internal/services/... -run TestName
 go test -v ./tests/integration/... -run TestName -tags=integration
 ```
 
-Database migrations:
+Migrations:
 
 ```bash
 make migrate-up
@@ -47,172 +56,95 @@ make migrate-down
 make migrate-create NAME=add_example_table
 ```
 
-## 3) Agent Working Agreement
+Treat rollbacks and infrastructure targets as destructive. Confirm the exact environment before running them against shared or remote resources.
 
-1. Keep changes minimal, targeted, and reversible.
-2. Follow existing layering:
-   - `handlers` for HTTP/parsing/response
-   - `services` for business logic
-   - `repositories` for persistence
-3. Do not bypass auth/tenant checks in protected endpoints.
-4. Never commit secrets from `.env` or credentials from local setup.
-5. Run `make fmt`, `make lint`, and `make test` after meaningful code changes.
-6. If API contracts change, run `make swagger`.
-7. If schema changes, add migration files and validate up/down paths.
-8. Use `pnpm` (not `npm`/`yarn`) for any Node.js tooling that may be introduced.
-9. Do NOT create any extra markdown files (README, CHANGELOG, docs, summaries, etc.) after completing a task. Only modify existing `.md` files when explicitly requested.
+## 5) Architecture and Coding Rules
 
-## 4) High-Value Workflows
+Follow the existing layers:
 
-### Add or modify an endpoint
+- `internal/handlers`: HTTP transport; `internal/services`: use cases and invariants
+- `internal/repositories/interfaces`: contracts; `internal/repositories/postgres`: PostgreSQL adapters
+- `internal/models`: models; `internal/config`: configuration; `internal/middleware`: HTTP cross-cutting behavior
+- `internal/workers`: asynchronous work; `pkg`: reusable non-domain libraries
 
-1. Update handler in `internal/handlers`.
-2. Update service logic in `internal/services`.
-3. Update repository interface/implementation if persistence changes.
-4. Add/update tests (unit first, then integration if behavior spans boundaries).
-5. Regenerate Swagger if request/response/route annotations changed.
+Rules:
 
-### Add a database-backed feature
+1. Keep handlers thin; keep persistence details in repository adapters.
+2. Services depend on repository interfaces, not infrastructure implementations.
+3. Pass `context.Context` through request-scoped service and repository calls.
+4. Wrap errors with context using `%w`; add typed errors only when callers must branch.
+5. Preserve auth, RBAC, and `business_id` tenant checks on protected endpoints.
+6. Prefer explicit composition, focused functions, and early returns.
+7. Keep each business, validation, and query rule authoritative in one layer. Extract repetition only after a real second use.
+8. Keep domain logic out of `internal/utils`; utilities must be generic and side-effect free.
+9. Reuse existing types, logging, middleware, and dependency-injection patterns.
+10. Keep business logic testable without network or database dependencies; prefer table-driven tests where useful.
+11. Use `pnpm` for new Node.js tooling. Never track credentials, tokens, `.env` contents, or local secrets.
 
-1. Create migration: `make migrate-create NAME=...`
-2. Apply locally: `make migrate-up`
-3. Add/adjust GORM models and repository logic.
-4. Add tests that validate migration-backed behavior.
+## 6) Change Workflows
 
-### Fix a production bug
+### Endpoint changes
 
-1. Add or identify a failing test reproducing the issue.
-2. Implement smallest fix in correct layer.
-3. Verify with `make test` and impacted integration tests.
-4. Note any follow-up hardening work (metrics, validation, retry logic, etc.).
+- Update the handler and transport contract, put business behavior in the service, and change repositories only when persistence changes.
+- Add focused tests and integration coverage for external boundaries. Run `make swagger` for route or API contract changes.
 
-## 5) Architecture Notes
+### Database-backed changes
 
-- `cmd/lambda/http/main.go`: API Gateway Lambda entrypoint for HTTP traffic.
-- `cmd/lambda/`: additional Lambda entrypoints (`a2a-stream`, `sqs-*`, `ws`).
-- `internal/config`: env-driven config via Viper.
-- `internal/middleware`: auth, RBAC, CORS, request ID, logging, recovery.
-- `internal/handlers`: route handlers and HTTP contracts.
-- `internal/services/container.go`: dependency injection container.
-- `internal/repositories/interfaces`: repository contracts.
-- `internal/repositories/postgres`: PostgreSQL implementations.
-- `internal/workers/worker.go`: async processing (SQS-backed jobs).
-- `.well-known/agent.json` + `.well-known/agents.json`: agent discovery metadata.
+- Create a paired migration, validate both paths locally, update models and repositories in their existing layers, and test the resulting behavior.
 
-## 6) Domain Terms
+### Production bug fixes
 
-- Business scoping: Multi-tenant access control by `business_id`.
-- A2A: Agent-to-agent task/stream protocol under `/api/v1/a2a/v0.3`.
-- AP2: Additional protocol/repository surface used by handler/service layers.
-- Marketplace/Bargaining: commerce and negotiation flows with dedicated services.
+- Reproduce the defect with a test when practical, apply the smallest fix in the owning layer, then run focused and relevant broader checks.
+- Report out-of-scope hardening such as metrics, validation, or retries.
 
-## 7) Code Quality Checklist
+## 7) Validation
 
-Before finishing a task, confirm:
+- Run the smallest relevant checks while iterating.
+- After meaningful Go changes, run `make fmt`, `make lint`, and `make test`.
+- Run `make test-integration` for changed integration boundaries when dependencies are available.
+- Run `make swagger` for API changes; include and validate migrations for schema changes.
+- If a required command cannot run, report the command, blocker, and substitute validation.
+- Inspect the final diff and confirm no secrets or unrelated changes were added.
 
-1. Code is formatted (`make fmt`).
-2. Lint is clean (`make lint`).
-3. Tests pass (`make test` and any relevant integration tests).
-4. Swagger updated when API changed.
-5. Migrations included when schema changed.
-6. No credentials or environment secrets were added to tracked files.
+## 8) Domain and Runtime Notes
 
-## 8) Go Style Conventions
+- Business scoping: tenant isolation by `business_id`
+- A2A: agent-to-agent tasks and streams under `/api/v1/a2a/v0.3`
+- AP2: protocol and repository surface used by handlers and services
+- Marketplace/Bargaining: commerce and negotiation workflows
+- Agent discovery: `.well-known/agent.json` and `.well-known/agents.json`
+- Dependency-injection container: `internal/services/container.go`
 
-1. Keep handlers thin; put business logic in services.
-2. Accept `context.Context` where long-running/service calls are made.
-3. Wrap errors with context (`fmt.Errorf("...: %w", err)`).
-4. Prefer table-driven tests for service/repository logic.
-5. Reuse existing logger and middleware patterns instead of new frameworks.
-6. Preserve backward compatibility for public API fields unless change is explicitly requested.
-
-## 9) PR/Commit Guidance
-
-- Prefer small focused PRs.
-- Title format recommendation: `<area>: <what changed>`
-  - Example: `invoice: enforce business scoping in list endpoint`
-- Branch naming recommendation: `feature/<area>-<short-desc>` or `fix/<area>-<short-desc>`
-- Include validation evidence (tests run, lint status, migration notes).
-- Mention rollout or backward-compatibility concerns when relevant.
-
-## 10) Keep This File Current
-
-- Treat this as a living playbook: update it when build/test/migration workflows change.
-- If a repeated agent mistake happens twice, add a short preventive rule here.
-
-## 11) AI Coding Style Guardrails (DRY + KISS)
-
-Apply these defaults on every task unless the user explicitly asks otherwise:
-
-### DRY (Don't Repeat Yourself)
-
-1. Keep one authoritative implementation per business rule, query rule, and validation rule.
-2. If logic is repeated in 2+ places, extract it to the correct layer (`services` for business rules, `repositories` for persistence rules, `middleware` for cross-cutting HTTP rules).
-3. Reuse shared constants/types for statuses, roles, and protocol values instead of string literals.
-4. Do not move domain logic into `internal/utils`; keep utilities generic and side-effect free.
-
-### KISS (Keep It Simple, Stupid)
-
-1. Prefer the smallest change that satisfies acceptance criteria and tests.
-2. Prefer explicit code over clever abstractions; optimize for readability during on-call/debugging.
-3. Use YAGNI: do not add extension points, frameworks, or generic builders before a real second use case exists.
-4. Keep functions focused on one responsibility and use early returns to reduce nesting.
-
-## 12) Required Coding Paradigms
-
-1. Layered architecture: `handlers` parse/validate HTTP, `services` own use cases and business invariants, `repositories` handle data access.
-2. Dependency inversion at boundaries: depend on repository interfaces in services; keep infrastructure-specific code in adapters.
-3. Composition over inheritance: compose behavior with structs/interfaces; avoid deep type hierarchies.
-4. Context-first service/repository APIs: pass `context.Context` through all request-scoped operations.
-5. Error-first control flow: wrap errors with `%w`, return typed/sentinel errors only when callers need branching behavior.
-6. Testability by design: write code so business logic can be unit tested without network/database dependencies.
-
-## 13) Production File Structure (Default for New Features)
-
-Follow this shape for new domain work:
+New domain work should follow:
 
 ```text
-cmd/
-  lambda/
-    http/
-      main.go
-internal/
-  handlers/
-    <domain>_handler.go
-  services/
-    <domain>_service.go
-    container.go
-  repositories/
-    interfaces/
-      <domain>_repository.go
-    postgres/
-      <domain>_repository.go
-  models/
-    <domain>.go
-  middleware/
-  config/
-  workers/
-pkg/                    # reusable, non-domain-specific libraries only
-tests/
-  integration/
-migrations/
-docs/                   # generated API docs, swagger outputs
+internal/handlers/<domain>_handler.go
+    -> internal/services/<domain>_service.go
+    -> internal/repositories/interfaces/<domain>_repository.go
+    -> internal/repositories/postgres/<domain>_repository.go
 ```
 
-Structure rules:
+Keep transport DTOs near handlers and persistence models near repositories or `internal/models`. Never expose database-only fields through public contracts.
 
-1. Keep domain workflows vertical: handler -> service -> repository.
-2. Keep cross-domain utilities minimal and pure; avoid creating a catch-all helpers package.
-3. Prefer one file per primary responsibility (`invoice_handler.go`, `invoice_service.go`, `invoice_repository.go`) before splitting further.
-4. Put transport DTOs near handlers and persistence models near repositories/models; do not leak DB-only fields to API contracts.
+## 9) Code Review Rules
 
-## 14) Web References (for the principles above)
+- Prioritize correctness, security, tenant isolation, data integrity, concurrency, compatibility, and missing tests.
+- Flag protected endpoints missing auth, authorization, or `business_id` scoping; identify the safe existing pattern.
+- Flag misplaced business or persistence logic when it creates concrete risk.
+- Flag schema changes lacking paired migrations, reversibility, or compatibility handling.
+- Cite the smallest relevant lines, explain impact, and recommend a correction.
+- Skip automated formatting or lint issues unless they reveal behavioral risk.
+- Reviews are read-only unless fixes are also requested.
 
-- DRY origin and definition from *The Pragmatic Programmer*: https://media.pragprog.com/articles/may_04_improve_code1.pdf
-- YAGNI: https://martinfowler.com/bliki/Yagni.html
-- Simple design rules (practical KISS): https://martinfowler.com/bliki/BeckDesignRules.html
-- Dependency Injection pattern: https://martinfowler.com/articles/injection.html
-- Go module/project organization: https://go.dev/doc/modules/layout
-- Effective Go: https://go.dev/doc/effective_go
-- Go Code Review Comments: https://go.dev/wiki/CodeReviewComments
-- The Twelve-Factor App (production operational defaults): https://12factor.net/
+## 10) PR and Commit Guidance
+
+- Prefer small, focused changes.
+- Recommended title: `<area>: <what changed>`.
+- Recommended branch: `feature/<area>-<short-desc>` or `fix/<area>-<short-desc>`.
+- Include validation evidence and migration, rollout, or compatibility notes.
+- Do not mention Codex in branch names or commit messages.
+
+## 11) Maintenance
+
+- Keep this file as a concise operational contract, not general engineering documentation.
+- Propose updates when guidance is stale or missing; edit it only when explicitly requested.
