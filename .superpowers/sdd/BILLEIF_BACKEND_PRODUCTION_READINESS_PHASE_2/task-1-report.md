@@ -1209,3 +1209,246 @@ authorization mechanism.
   Internal provider diagnostics remain blocked rather than being exposed to a
   business admin. Provider health remains externally unverified because local
   tests used only fakes and `httptest` servers.
+
+## Fix round 5
+
+Status: complete locally. All six scoped re-review findings are resolved, and
+the related tenant-credential execution invariant is wired through the concrete
+GST provider boundary. Provider behavior remains externally unverified. The
+optional real-PostgreSQL concurrency test was added but skipped locally because
+`MIGRATION_TEST_DATABASE_URL` was not configured.
+
+### Findings addressed
+
+1. Positive LLM completeness contract
+
+   - Model-list probing now recognizes only exact HTTPS official API contracts:
+     OpenAI `api.openai.com/v1/chat/completions` and DeepSeek
+     `api.deepseek.com[/v1]/chat/completions`, mapped to their documented model
+     list routes. Custom hosts, userinfo, non-default ports, query/fragment
+     variants, and unrecognized paths remain unsupported and receive no probe.
+   - A successful model list must be JSON and contain only recognized terminal
+     response/rate-limit headers. Any unrecognized header, including an unknown
+     pagination token such as `X-Next-Token`, leaves the result unknown. Model
+     absence is therefore proved only by a recognized official complete-list
+     contract plus the existing bounded complete body proof; it is never
+     inferred from the absence of known pagination headers.
+
+2. Unsupported GST validation configuration
+
+   - Blank `GST_VALIDATE_PATH` and the simulated provider return the stable
+     `ErrGSTCredentialValidationNotConfigured` sentinel. Explicit validation
+     returns before provider I/O, account-status persistence, or health
+     persistence, so it cannot create a 24-hour healthy observation.
+
+3. Credential-revision binding and atomic invalidation
+
+   - Migration `000054` now adds a positive `credential_revision` to GST
+     accounts and binds the sanitized snapshot to the exact
+     `(integration_account_id, business_id, credential_revision)` with a
+     deferred composite foreign key. Credential/account revision keys remain
+     internal and are excluded from JSON.
+   - Credential writes lock the business and all active GST accounts, verify the
+     caller's expected revision, advance active revisions, save the target, and
+     delete the shared GST snapshot in one transaction. The service has no
+     non-atomic fallback: missing revision-bound persistence fails closed before
+     a credential mutation or validation call.
+   - Validation account status and its health observation commit in one
+     revision-bound transaction. An observation for an old revision returns the
+     explicit stale-revision sentinel and cannot recreate health after a
+     credential change.
+
+4. Database-ordered observations
+
+   - Each accepted observation locks its exact live account revision and
+     performs an unconditional conflict update that increments the database
+     `observation_revision` and returns it. Equal timestamps and app-clock skew
+     cannot silently discard a completion. Missing accounts, stale revisions,
+     zero returned rows, and non-positive returned revisions surface explicit
+     errors rather than reporting success.
+   - The business-wide revision bump intentionally does not change unrelated
+     accounts' `updated_at`, preserving the existing execution-account ordering
+     while invalidating observations based on any earlier business revision.
+
+5. Detached bounded real-operation persistence
+
+   - Real e-invoice/e-way/PDF provider outcomes persist synchronously through
+     `context.WithoutCancel` plus a two-second bounded timeout after the provider
+     outcome. Request cancellation therefore cannot automatically preserve an
+     earlier healthy row, and the bounded call creates no background goroutine.
+   - Auxiliary persistence failure never replaces the provider/business result.
+     It emits only one sanitized operational code
+     (`gst_health_persistence_failed`,
+     `gst_health_credential_revision_stale`, or
+     `gst_health_persistence_timeout`); raw repository/provider text is not
+     logged by that path.
+
+6. Safe tax integration errors
+
+   - Tax integration list/upsert/validate handlers now use a narrow service
+     boundary and the stable envelope `{"error":{"code":"...","message":"..."}}`.
+     Binding and expected validation/account/revision errors map to documented
+     safe `400`, `404`, `409`, or `422` responses. Unexpected repository,
+     schema, database, or server failures return only
+     `500 tax_integration_internal_error`; raw detail is logged internally
+     through the existing logger and is never returned or mislabeled as `400`.
+   - Swagger annotations and generated `docs/docs.go` now match the actual
+     `POST /tax/integrations`, `PUT /tax/integrations/{id}`, and validation
+     routes and their stable error schemas. The frontend handoff lists the exact
+     public codes/messages.
+
+7. Tenant credential execution boundary
+
+   - Resolved encrypted tenant credentials are attached to every concrete
+     e-invoice, cancellation, e-way bill, Part B, multi-vehicle, and PDF provider
+     request. Validation and execution therefore use the same tenant credential
+     source and global provider configuration. A missing tenant integration no
+     longer falls back to unrelated global GST credentials; execution returns
+     the stable account-required sentinel instead.
+
+### Strict TDD evidence
+
+1. LLM contract
+
+   - RED:
+     `go test ./internal/services -run 'TestLLMCapabilityProbe(CustomEndpoint|UnrecognizedResponseHeader)' -count=1`
+     failed both new tests because a custom complete-looking page and an
+     `X-Next-Token` partial page were classified as configured-model
+     unavailable.
+   - GREEN: the same command returned
+     `ok invoice-backend/internal/services` after the official-contract gate.
+
+2. Blank validation and tenant execution
+
+   - RED:
+     `go test ./internal/services -run TestGSTIntegrationValidationWithoutConfiguredPathStaysUnknownWithoutProviderOrHealthWrite -count=1`
+     failed to compile with undefined
+     `ErrGSTCredentialValidationNotConfigured`.
+   - RED:
+     `go test ./internal/services -run TestGSTExecutionCannotFallBackToDifferentGlobalCredentials -count=1`
+     failed to compile with undefined `ErrGSTIntegrationAccountRequired`.
+   - GREEN: the focused GST service/provider tests passed, including no-I/O
+     blank validation and the concrete tenant API-key request-header assertion.
+
+3. Credential revision, ordering, and race behavior
+
+   - RED:
+     `go test ./internal/repositories/postgres -run 'TestCapabilityProviderHealth(Record|Read)' -count=1`
+     failed to compile because the repository did not yet expose the
+     revision-bound record methods.
+   - RED schema checks reported missing account credential revision,
+     observation revision, and the exact composite foreign-key fragments in
+     migration `000054`.
+   - RED lock review: repository SQL expectations requiring `FOR UPDATE` failed
+     while the implementation still used a shared lock that could deadlock on
+     concurrent observation updates.
+   - RED selection-order regression:
+     `go test ./internal/repositories/postgres -run TestGSTIntegrationAccountCredentialChangeLocksBusinessAndInvalidatesHealthAtomically -count=1`
+     failed because the business-wide revision update also changed every
+     account's `updated_at`; the focused SQL expectation rejected that query.
+   - GREEN: focused PostgreSQL repository/schema/service race tests passed after
+     exclusive row locking, returned database revisions, atomic invalidation,
+     and removal of the unrelated timestamp update.
+   - The added real-PostgreSQL race command
+     `go test -v ./internal/repositories/postgres -run TestCapabilityProviderHealthPostgresCredentialMutationWinsObservationRace -count=1`
+     returned `PASS` with the test safely `SKIP`ped because
+     `MIGRATION_TEST_DATABASE_URL` was unset.
+
+4. Detached persistence and safe handler mapping
+
+   - RED detached-write tests failed to compile before the bounded timeout
+     option and account/revision-bound recorder signature existed.
+   - RED handler tests failed to compile before the narrow integration service
+     boundary and stable response DTOs existed; the old handler returned raw
+     database text as `400`.
+   - GREEN:
+     `go test ./internal/services ./internal/handlers -run 'TestGSTOperationHealthPersistence|TestTaxIntegrationHandler' -count=1`
+     passed the canceled-context, bounded-timeout/no-goroutine, sanitized-log,
+     stable-4xx, and generic-500 cases.
+
+5. Fail-closed construction
+
+   - RED:
+     `go test ./internal/services -run 'TestGST(CredentialMutation|Validation)RequiresRevisionBoundHealthPersistence' -count=1`
+     failed to compile with undefined
+     `ErrGSTProviderHealthPersistenceNotConfigured`; the prior implementation
+     could fall back to independent GORM writes.
+   - GREEN: the same command returned
+     `ok invoice-backend/internal/services`; neither path performs provider or
+     database mutation without the atomic coordinator.
+
+### Files changed
+
+- LLM completeness: `internal/services/llm_service.go` and focused tests.
+- GST provider/execution: `internal/services/gst_provider.go`,
+  `tax_compliance_execution.go`, `tax_compliance_service.go`, health recorder,
+  and focused provider/service/detached-write tests.
+- Revision-bound persistence:
+  `internal/models/capability_provider_health.go`,
+  `internal/models/gst_compliance.go`, repository interface/PostgreSQL adapter,
+  SQL-mock tests, and optional real-PostgreSQL race test.
+- Schema/deployment fixtures: both directions of unreleased migration `000054`,
+  schema tests, manifest, root bundle-count test, and eight Terraform migrator
+  result fixtures updated to version 54/current manifest checksum.
+- HTTP/contracts: `internal/handlers/tax_handler.go`, new focused handler tests,
+  generated Swagger, frontend handoff, and Phase 2 plan evidence.
+
+### Validation
+
+- Final full repository gate:
+  `go test ./... -count=1` passed every package; the broad `tests` package
+  completed in `8.441s`.
+- Final focused race gate:
+  `go test -race ./internal/services ./internal/repositories/postgres ./internal/handlers -run 'TestGST|TestCapabilityProviderHealth|TestTaxIntegrationHandler|TestLLMCapabilityProbe|TestLLMUnsupportedProbeRoute' -count=1`
+  passed services `2.444s`, PostgreSQL repositories `2.120s`, and handlers
+  `2.258s`.
+- `make migration-manifest-verify` passed all 108 root migration files and the
+  embedded version-54 bundle check; `go test ./migrations -count=1` passed.
+- `go test ./internal/app ./cmd/... -count=1` passed every application/command
+  package (packages without tests compiled successfully).
+- `make fmt` passed (`go fmt ./...` plus `goimports`).
+- `make lint` passed (`golangci-lint run --timeout=5m`).
+- `make swagger` regenerated `docs/docs.go` and exited successfully with the
+  repository's existing root-package `go list` warning.
+- Ruby safe-load/JSON validation printed
+  `openapi and swagger documents parse` for manual OpenAPI and generated
+  Swagger; focused app Swagger/routes tests passed.
+- The first broad `go test ./...` exposed two stale version-53 fixtures outside
+  the focused packages: the expected root SQL count (`106`) and eight Terraform
+  mocked migrator results. After updating them to 108/version 54/current
+  manifest checksum, focused Terraform migration-safety tests and the final
+  full repository gate passed.
+- `git diff --check` passed. The complete tracked/untracked change set was
+  reviewed and scanned for private-key and AWS access-key patterns with no
+  match. All credential strings in tests are explicit non-secret fixtures.
+- No live provider, migration apply/down, Terraform plan/apply, AWS call,
+  external write, message, or charge was performed.
+
+### Commit
+
+- `11f0223 fix: harden capability provider observations`
+- `docs: record final capability hardening evidence` (this report commit; its
+  final hash is returned to the parent because a commit cannot contain itself)
+
+### Self-review and concerns
+
+- Confirmed custom/unrecognized LLM endpoints and unknown headers cannot prove
+  absence. The official-host contract remains intentionally conservative: a
+  new unrecognized response header leaves health unknown until explicitly
+  reviewed.
+- Confirmed all accepted GST observations are bound to the live tenant account
+  revision and receive a database revision; mutation and validation each have
+  one transactional persistence path. The obsolete standalone clear method and
+  all non-atomic service fallbacks were removed.
+- Confirmed real GST calls pass the decrypted tenant credentials that supplied
+  the recorded account/revision. Auxiliary persistence survives request
+  cancellation for at most the configured short bound and cannot change the
+  provider/business result.
+- Confirmed tax integration responses contain no raw account object or database,
+  schema, provider, credential, or repository text. Internal logging retains
+  raw unexpected errors only for operators.
+- Real PostgreSQL concurrency behavior is covered by a disposable-schema test,
+  but it was not executed locally because the opt-in database URL was absent;
+  SQL-mock transaction assertions, service concurrency tests, and the race
+  detector passed. Provider contracts remain externally unverified because no
+  live provider was contacted.
