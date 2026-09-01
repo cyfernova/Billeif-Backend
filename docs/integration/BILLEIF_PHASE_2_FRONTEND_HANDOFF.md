@@ -1,6 +1,6 @@
 # Billeif Phase 2 Frontend Handoff
 
-Status: in progress; initial evidence baseline plus locally complete CAP-001
+Status: in progress; CAP-001 and SUB-001 through SUB-003 are locally complete
 
 This document describes only Phase 2-relevant HTTP behavior that is implemented
 in the backend at the audited revision. It is not a future API design. `partial`
@@ -35,9 +35,9 @@ route registration or current generated OpenAPI alone.
 | ID | Current contract | Classification | Frontend use at this revision |
 | --- | --- | --- | --- |
 | CAP-001 | Runtime capability evaluation and mutation preflight | `complete` locally; provider health `externally unverified` | Authoritative source for whether the active user/business/platform may expose or attempt covered functionality; governed service mutations fail closed independently of frontend gating. |
-| SUB-001 | Subscription catalog | `complete` locally | May render catalog data, with the one-month purchase warning from SUB-003. |
-| SUB-002 | Current subscription and legacy feature rows | `partial` | May show current stored state; do not infer renewal, provider health, or runtime capability. |
-| SUB-003 | Razorpay checkout and verification | `partial`, lifecycle wording `unsafe`, provider `externally unverified` | Test-only integration until Task 2 proves provider lifecycle. Do not label auto-renewing. |
+| SUB-001 | Subscription catalog | `complete` locally | Authoritative renewable monthly plan catalog. |
+| SUB-002 | Current subscription, lifecycle and feature rows | `complete` locally | Show server lifecycle/period/pending state; runtime capability remains CAP-001. |
+| SUB-003 | Razorpay renewable checkout, plan change, cancellation and billing/audit | `complete` locally; provider `externally unverified` | Use for new monthly subscriptions; never infer payment from checkout success. |
 | OPS-001 | Invoice render status | `complete` for current safe projection | Pollable. |
 | OPS-002 | Invoice delivery create/status | `complete` for current safe projection | Usable with UUID idempotency key; poll status. |
 | OPS-003 | In-app notifications | `complete` for current non-paginated contract | Usable; refresh/poll because no versioned event contract is promised here. |
@@ -65,8 +65,8 @@ omitted column to imply support.
 | --- | --- | --- | --- | --- | --- |
 | CAP-001 | Bearer + effective business; setup, entitlement, quota, permission, and GST snapshot reads are business-scoped, while global provider facts contain no tenant data | No endpoint-wide permission; each result evaluates its listed operation permission | Each result evaluates the current subscription catalog feature where applicable | None; read-only | Read-only and safe to repeat |
 | SUB-001 | Bearer + effective business | `subscriptions.view` | None | None implemented | Read-only |
-| SUB-002 | Bearer + effective business | `subscriptions.view`; sync/direct mutations use `subscriptions.manage` | Subscription is the entitlement source | None implemented | Reads are safe to repeat; sync is convergent but has no command key; direct mutation has no idempotency key |
-| SUB-003 | Bearer + effective business + all branches | `payments.manage` | None | None implemented | Required body `idempotency_key` for order; verify locks and safely re-observes a paid attempt |
+| SUB-002 | Bearer + effective business | `subscriptions.view`; legacy feature sync uses `subscriptions.manage` | Verified current subscription period is the entitlement/quota source | None implemented | Reads are safe; direct subscription mutation routes are disabled |
+| SUB-003 | Bearer + effective business + all branches | Mutations `subscriptions.manage`; history/audit `subscriptions.view` | Paid access changes only on signed verified boundary events | None implemented | Required body `idempotency_key` per actor/business/action; changed reuse conflicts |
 | OPS-001 | Bearer + effective business + all branches | `documents.export` | None | None implemented | Read-only |
 | OPS-002 | Bearer + effective business + all branches | Create `documents.manage`; read `documents.export` | None | None implemented | Required UUID `Idempotency-Key`; same actor/payload replays, changed payload conflicts |
 | OPS-003 | Bearer + effective business + authenticated user | No additional permission | None | None implemented | Source ingestion is unique; read mutations have no client command key and are naturally convergent |
@@ -87,9 +87,9 @@ omitted column to imply support.
 | ID | Pagination / file behavior | State and retry | Event / invalidation | Existing migration and rollout | Proof and governing limitation |
 | --- | --- | --- | --- | --- | --- |
 | CAP-001 | Fixed 13-item array; no pagination or file | Synchronous observed-state evaluation; reads are retry-safe; honor `retry_at` for temporary provider failures | A fixed global observer refreshes AI and shared Razorpay/storefront health; explicit GST validation and real GST outcomes update the business GST snapshot; refetch after readiness, subscription, permission, credential, or setup changes | Expand first with `migrations/000054_capability_provider_health_snapshots.up.sql`, then deploy the application | Capability, fixed-global-observer, durable-GST-repository, guarded-mutation, quota, handler, migration-bundle, and route tests beside their owners; no tenant census or rotating cache exists |
-| SUB-001 | No pagination or file | Synchronous read; retry safe | No event; invalidate on catalog-version/deployment change | No Task 0 migration; catalog is code-defined | `internal/services/subscription_catalog_test.go`; one-month checkout is not renewal |
-| SUB-002 | No pagination or file | Stored `active`/`canceled`/`expired` model; refetch after payment | No versioned event; invalidate subscription and entitlement queries after verify/sync | Existing subscription and feature-entitlement schema; keep direct writes disabled | `tests/unit/subscription_service_test.go`, `internal/services/entitlements_test.go`, `internal/services/commerce_service_test.go`; runtime capability and lifecycle are incomplete |
-| SUB-003 | No pagination or file | Attempt `created`/`pending`/`paid`/`failed`; do not blindly retry unknown provider outcomes | No client event; invalidate SUB-002 after verified paid response | `migrations/000041_add_razorpay_payment_attempts.up.sql`; test-mode/provider rollout unverified | `internal/services/razorpay_payment_service_test.go`, `internal/handlers/payment_handler_idempotency_test.go`, `infrastructure/terraform/tests/razorpay.tftest.hcl`; no recurring lifecycle or reconciliation |
+| SUB-001 | No pagination or file | Synchronous retry-safe catalog read | Invalidate on catalog-version/deployment change | Code-defined catalog | `internal/services/subscription_catalog_test.go` |
+| SUB-002 | No pagination or file | Ten lifecycle states; free/legacy/renewable billing modes; refetch after commands/provider boundaries | No versioned client event; poll with bounded backoff | Expand-first `000055_subscription_lifecycle`; legacy rows preserved | lifecycle/catalog/entitlement/quota tests beside owners |
+| SUB-003 | History/audit `limit` 1-100, default 50; no file | Idempotent mutations; ambiguous outcomes stay reconciliation-required | No client event; invalidate SUB-002/history after verified changes | Deploy `000055`, application, then enable five-minute worker; provider rollout unverified | lifecycle/provider/race/worker tests and mocked `razorpay.tftest.hcl` |
 | OPS-001 | No pagination or file; PDF download is separate | Poll `queued`/`processing`; stop on `completed`/`failed`/`obsolete` | No versioned client event; invalidate invoice PDF/download state on terminal state | Existing render/outbox migrations; deployed worker unverified | `tests/unit/invoice_service_test.go`, `internal/handlers/invoice_download_handler_test.go`, `internal/workers/pdf_renderer_snapshot_test.go`, `infrastructure/terraform/tests/outbox.tftest.hcl`; no safe retry API |
 | OPS-002 | No pagination or file | Reuse same key after timeout; poll until terminal | No versioned client event promised; invalidate invoice and delivery queries on change | Existing canonical delivery/outbox schema; SES/deployed worker unverified | `internal/services/invoice_delivery_test.go`, `internal/handlers/invoice_delivery_handler_test.go`, `internal/repositories/postgres/invoice_delivery_repo_test.go`; no customer retry action or provider detail |
 | OPS-003 | Limit only, maximum 200; no cursor/file | Read operations are retry-safe | No versioned notification-event name promised; invalidate list after mark-read | `migrations/000051_notifications.up.sql`; deployed delivery unverified | `internal/handlers/notification_handler_test.go`, `internal/services/notification_service_test.go`, `internal/repositories/postgres/notification_repo_test.go`; capped non-cursor list |
@@ -384,9 +384,9 @@ Example excerpt:
 }
 ```
 
-Limitation: `interval: "month"` describes the purchased access period. The
-audited Razorpay implementation does not create an auto-renewing provider
-subscription.
+`interval: "month"` is a renewable interval for new checkouts through SUB-003.
+Previously successful plan checkouts remain fixed-period `legacy_one_time`
+purchases and are never silently relabelled or renewed.
 
 ## SUB-002: Current subscription and feature rows
 
@@ -400,13 +400,21 @@ subscription.
 | Evidence | `internal/handlers/subscription_handler.go`, `internal/models/subscription.go`, `tests/unit/subscription_service_test.go`, `internal/services/entitlements_test.go` |
 
 Exact fields are `id`, `business_id`, `plan`, optional `plan_code`, optional
-`catalog_version`, `status`, `max_invoices`, `max_customers`, `max_users`,
-`max_storage_mb`, `start_date`, optional `end_date`, optional
-`next_billing_date`, `created_at`, and `updated_at`. Model-declared status values
-are `active`, `canceled`, and `expired`; legacy plan values are `free`,
-`starter`, `professional`, and `enterprise`. The current update service does not
-validate a non-empty status against that set, which is another reason clients
-must not use the direct update route.
+`catalog_version`, `status`, `billing_mode`, quota maxima, `start_date`, optional
+`end_date`, optional `next_billing_date`, optional `period_start`, optional
+`period_end`, optional `next_renewal_at`, optional `grace_deadline`,
+`cancel_at_period_end`, optional `cancellation_effective_at`, optional
+`cancelled_at`, optional `pending_plan_id`, optional
+`pending_plan_effective_at`, optional sanitized `reconciliation_code`,
+`lifecycle_version`, `created_at`, and `updated_at`. Provider customer,
+subscription, plan, mode, event, payment and invoice identifiers are internal.
+
+Lifecycle states are `pending_payment`, `active`, `renewal_pending`, `past_due`,
+`grace_period`, `cancellation_scheduled`, `cancelled`, `expired`, `suspended`,
+and `reconciliation_required`. Billing modes are `free`, `legacy_one_time`, and
+`renewable`. Paid access is projected only from a verified current period;
+past-due/grace access ends at `grace_deadline`, and suspended, cancelled,
+expired, or unpaid pending subscriptions project the free plan.
 
 ```json
 {
@@ -416,6 +424,7 @@ must not use the direct update route.
   "plan_code": "pro",
   "catalog_version": "swipe-v1",
   "status": "active",
+  "billing_mode": "renewable",
   "max_invoices": 100,
   "max_customers": 100,
   "max_users": 3,
@@ -423,6 +432,11 @@ must not use the direct update route.
   "start_date": "2026-09-01T12:00:00Z",
   "end_date": "2026-10-01T12:00:00Z",
   "next_billing_date": "2026-10-01T12:00:00Z",
+  "period_start": "2026-09-01T12:00:00Z",
+  "period_end": "2026-10-01T12:00:00Z",
+  "next_renewal_at": "2026-10-01T12:00:00Z",
+  "cancel_at_period_end": false,
+  "lifecycle_version": 4,
   "created_at": "2026-09-01T12:00:00Z",
   "updated_at": "2026-09-01T12:00:00Z"
 }
@@ -465,29 +479,33 @@ Evidence: `internal/models/commerce.go`, `internal/services/commerce_service.go`
 `internal/services/entitlements.go`, `internal/services/entitlements_test.go`,
 and `internal/services/commerce_service_test.go`.
 
-Do not use current `POST /subscriptions` or `PUT /subscriptions` to buy or switch
-paid plans. The service rejects paid creation and plan changes, while the handler
-currently maps those errors to unstable `500` responses.
+Direct `POST /subscriptions` and `PUT /subscriptions` mutations are not
+registered. Use the idempotent lifecycle commands in SUB-003.
 
-## SUB-003: Razorpay one-month checkout
+## SUB-003: Razorpay renewable subscription lifecycle
 
-`POST /payments/razorpay/order`
+New monthly plans use these endpoints:
+
+- `POST /subscriptions/checkout`
+- `POST /subscriptions/plan-change`
+- `POST /subscriptions/cancellation`
+- `GET /subscriptions/billing-history?limit=50`
+- `GET /subscriptions/audit?limit=50`
 
 | Property | Current value |
 | --- | --- |
 | Auth and scope | Bearer token, effective business, all-branches scope |
-| Permission | `payments.manage` |
+| Permission | Mutations `subscriptions.manage`; history/audit `subscriptions.view` |
 | Step-up / entitlement | None |
-| Idempotency | Body `idempotency_key`, required; scoped to user and business |
+| Idempotency | Every mutation requires body `idempotency_key`; scoped to actor, business and action; changed reuse is `SUB-002` |
 | Success | `200` |
-| Provider state | `externally unverified`; returns `503` when unconfigured |
-| Evidence | `internal/handlers/razorpay_payment_handler.go`, `internal/services/razorpay_payment_service.go`, `internal/models/payment_attempt.go`, `internal/services/razorpay_payment_service_test.go`, `internal/handlers/payment_handler_idempotency_test.go`, `migrations/000041_add_razorpay_payment_attempts.up.sql` |
+| Provider state | Locally verified against the official adapter; live provider deployment remains `externally unverified` |
+| Evidence | `internal/handlers/subscription_handler.go`, `internal/services/subscription_lifecycle_service.go`, `internal/repositories/postgres/subscription_lifecycle_repo.go`, `pkg/razorpay/client.go`, `internal/services/subscription_lifecycle_test.go`, migration `000055_subscription_lifecycle` |
 
-Order request and response:
+Checkout request and response:
 
 ```json
 {
-  "target_type": "plan",
   "plan_id": "pro_monthly",
   "idempotency_key": "33333333-3333-4333-8333-333333333333"
 }
@@ -495,41 +513,72 @@ Order request and response:
 
 ```json
 {
-  "payment_attempt_id": "44444444-4444-4444-8444-444444444444",
-  "razorpay_key_id": "rzp_test_example",
-  "razorpay_order_id": "order_example",
-  "amount": 29900,
-  "currency": "INR"
+  "subscription_id": "44444444-4444-4444-8444-444444444444",
+  "status": "pending_payment",
+  "billing_mode": "renewable",
+  "pending_plan_id": "pro_monthly",
+  "authorization_url": "https://opaque-provider-authorization.example"
 }
 ```
 
-For a store order, use `target_type: "store_order"` with
-`store_order_id`; omit `plan_id`. The server calculates amount and currency.
-Reusing the idempotency key with a different target/amount/currency conflicts.
+The authorization URL is opaque. Pending checkout does not grant paid
+entitlements. `POST /payments/razorpay/order` now rejects `target_type: "plan"`;
+it remains available only for authenticated store-order payments.
 
-`POST /payments/razorpay/verify` accepts:
+Plan-change request:
 
 ```json
 {
-  "payment_attempt_id": "44444444-4444-4444-8444-444444444444",
-  "razorpay_order_id": "order_example",
-  "razorpay_payment_id": "pay_example",
-  "razorpay_signature": "opaque-signature"
+  "plan_id": "rise_monthly",
+  "idempotency_key": "55555555-5555-4555-8555-555555555555"
 }
 ```
 
-Success is `200 {"status":"paid"}`. The backend verifies the checkout
-signature and fetches trusted provider payment/order state before applying the
-result. Current sanitized errors include `400 invalid request`, `400 invalid
-payment verification`, `404 payment target not found`, `409 payment request
-conflicts with an existing attempt`, `503 payment provider is not configured`,
-and `502 payment provider request failed`.
+Cancellation request is `{ "idempotency_key": "..." }`. Both return:
 
-After a plan payment, refetch SUB-002. The stored period starts at payment time
-and ends one month later. There is no renewal, grace, cancel-at-period-end,
-proration, billing-history, provider-subscription ID, reconciliation endpoint,
-or client event contract. A timeout/unknown outcome must not be shown as failed
-or retried blindly.
+```json
+{
+  "subscription_id": "44444444-4444-4444-8444-444444444444",
+  "status": "renewal_pending",
+  "plan_id": "pro_monthly",
+  "pending_plan_id": "rise_monthly",
+  "effective_at": "2026-10-01T12:00:00Z",
+  "cancel_at_period_end": false,
+  "reconciliation_required": false
+}
+```
+
+There is no proration. Plan changes take effect only on the matching signed
+provider charge at the next verified boundary. Cancellation is scheduled at
+the current paid period end. Concurrent plan change/cancellation conflicts are
+serialized. A downgrade above the target quota keeps existing rows and becomes
+restricted after the boundary rather than deleting data.
+
+Billing history returns `{ "records": [...] }`. Each record exposes `id`,
+`business_id`, `subscription_id`, integer `amount_minor`, `currency`, `status`,
+`receipt_reference`, optional period/quota-window timestamps, `occurred_at`, and
+`created_at`. Audit has the same envelope and exposes sanitized lifecycle
+action/status/plan/code/timestamps. Neither surface returns provider IDs.
+
+Stable lifecycle errors are:
+
+```json
+{"error":{"code":"subscription_invalid_request","message":"subscription request could not be processed"}}
+```
+
+- `400 subscription_invalid_request`: invalid request or unsupported plan.
+- `409 subscription_conflict`: current-state or changed-idempotency conflict.
+- `503 subscription_reconciliation_required`: provider outcome is ambiguous.
+- `503 subscription_unavailable`: provider configuration cannot be resolved safely.
+
+After a successful authorization, poll/refetch SUB-002 until a signed
+`subscription.charged` event activates the verified period. A `subscription.pending`
+event starts past-due/grace handling; grace expiry suspends access. Duplicate
+events replay their prior result, stale events cannot regress state, and
+wrong-plan/test-live/signature/race ambiguity becomes reconciliation-required.
+The five-minute bounded worker re-observes known provider subscriptions without
+creating charges or blindly retrying unknown mutations. Client event delivery
+is not promised; refetch after commands and on bounded polling/backoff.
 
 ## OPS-001: Invoice render status
 

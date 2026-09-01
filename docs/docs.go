@@ -14181,59 +14181,28 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ]
-            },
-            "put": {
-                "description": "Update the subscription plan or status for a business.",
-                "consumes": [
-                    "application/json"
-                ],
+            }
+        },
+        "/subscriptions/audit": {
+            "get": {
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Subscriptions"
                 ],
-                "summary": "Update subscription",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Business ID (if not in token)",
-                        "name": "business_id",
-                        "in": "query"
-                    },
-                    {
-                        "description": "Subscription updates",
-                        "name": "input",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/services.UpdateSubscriptionInput"
-                        }
-                    }
-                ],
+                "summary": "List subscription audit history",
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.Subscription"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/services.SubscriptionAuditHistoryResponse"
                         }
                     },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/handlers.SubscriptionAPIError"
                         }
                     }
                 },
@@ -14242,9 +14211,40 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ]
-            },
+            }
+        },
+        "/subscriptions/billing-history": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Subscriptions"
+                ],
+                "summary": "List subscription billing history",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/services.SubscriptionBillingHistoryResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.SubscriptionAPIError"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/subscriptions/cancellation": {
             "post": {
-                "description": "Create a new subscription plan for a business.",
                 "consumes": [
                     "application/json"
                 ],
@@ -14254,41 +14254,41 @@ const docTemplate = `{
                 "tags": [
                     "Subscriptions"
                 ],
-                "summary": "Create subscription",
+                "summary": "Schedule subscription cancellation",
                 "parameters": [
                     {
-                        "description": "Subscription details",
+                        "description": "Scheduled cancellation",
                         "name": "input",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/services.CreateSubscriptionInput"
+                            "$ref": "#/definitions/services.ScheduleSubscriptionCancellationInput"
                         }
                     }
                 ],
                 "responses": {
-                    "201": {
-                        "description": "Created",
+                    "200": {
+                        "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/models.Subscription"
+                            "$ref": "#/definitions/services.SubscriptionMutationResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/handlers.SubscriptionAPIError"
                         }
                     },
-                    "500": {
-                        "description": "Internal Server Error",
+                    "409": {
+                        "description": "Conflict",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/handlers.SubscriptionAPIError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.SubscriptionAPIError"
                         }
                     }
                 },
@@ -14314,6 +14314,62 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/services.SubscriptionCatalogResponse"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/subscriptions/checkout": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Subscriptions"
+                ],
+                "summary": "Start renewable subscription checkout",
+                "parameters": [
+                    {
+                        "description": "Subscription checkout",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/services.StartRenewableSubscriptionInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/services.SubscriptionCheckoutResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.SubscriptionAPIError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.SubscriptionAPIError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.SubscriptionAPIError"
                         }
                     }
                 },
@@ -14402,6 +14458,62 @@ const docTemplate = `{
                             "additionalProperties": {
                                 "type": "string"
                             }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/subscriptions/plan-change": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Subscriptions"
+                ],
+                "summary": "Schedule subscription plan change",
+                "parameters": [
+                    {
+                        "description": "Scheduled plan change",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/services.ChangeSubscriptionPlanInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/services.SubscriptionMutationResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.SubscriptionAPIError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.SubscriptionAPIError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.SubscriptionAPIError"
                         }
                     }
                 },
@@ -18436,6 +18548,22 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.SubscriptionAPIError": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "object",
+                    "properties": {
+                        "code": {
+                            "type": "string"
+                        },
+                        "message": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "handlers.TaxIntegrationAPIError": {
             "type": "object",
             "properties": {
@@ -20382,11 +20510,22 @@ const docTemplate = `{
             "required": [
                 "business_id",
                 "plan",
-                "start_date",
-                "status"
+                "start_date"
             ],
             "properties": {
+                "billing_mode": {
+                    "type": "string"
+                },
                 "business_id": {
+                    "type": "string"
+                },
+                "cancel_at_period_end": {
+                    "type": "boolean"
+                },
+                "cancellation_effective_at": {
+                    "type": "string"
+                },
+                "cancelled_at": {
                     "type": "string"
                 },
                 "catalog_version": {
@@ -20398,8 +20537,14 @@ const docTemplate = `{
                 "end_date": {
                     "type": "string"
                 },
+                "grace_deadline": {
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
+                },
+                "lifecycle_version": {
+                    "type": "integer"
                 },
                 "max_customers": {
                     "type": "integer",
@@ -20420,6 +20565,21 @@ const docTemplate = `{
                 "next_billing_date": {
                     "type": "string"
                 },
+                "next_renewal_at": {
+                    "type": "string"
+                },
+                "pending_plan_effective_at": {
+                    "type": "string"
+                },
+                "pending_plan_id": {
+                    "type": "string"
+                },
+                "period_end": {
+                    "type": "string"
+                },
+                "period_start": {
+                    "type": "string"
+                },
                 "plan": {
                     "type": "string",
                     "enum": [
@@ -20432,18 +20592,101 @@ const docTemplate = `{
                 "plan_code": {
                     "type": "string"
                 },
+                "reconciliation_code": {
+                    "type": "string"
+                },
                 "start_date": {
                     "type": "string"
                 },
                 "status": {
-                    "type": "string",
-                    "enum": [
-                        "active",
-                        "canceled",
-                        "expired"
-                    ]
+                    "type": "string"
                 },
                 "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.SubscriptionAuditRecord": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "actor_user_id": {
+                    "type": "string"
+                },
+                "business_id": {
+                    "type": "string"
+                },
+                "code": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "from_plan_id": {
+                    "type": "string"
+                },
+                "from_status": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "occurred_at": {
+                    "type": "string"
+                },
+                "subscription_id": {
+                    "type": "string"
+                },
+                "to_plan_id": {
+                    "type": "string"
+                },
+                "to_status": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.SubscriptionBillingRecord": {
+            "type": "object",
+            "properties": {
+                "amount_minor": {
+                    "type": "integer"
+                },
+                "business_id": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "occurred_at": {
+                    "type": "string"
+                },
+                "period_end": {
+                    "type": "string"
+                },
+                "period_start": {
+                    "type": "string"
+                },
+                "quota_period_end": {
+                    "type": "string"
+                },
+                "quota_period_start": {
+                    "type": "string"
+                },
+                "receipt_reference": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "subscription_id": {
                     "type": "string"
                 }
             }
@@ -21116,6 +21359,21 @@ const docTemplate = `{
                     "minLength": 12
                 },
                 "old_password": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.ChangeSubscriptionPlanInput": {
+            "type": "object",
+            "required": [
+                "idempotency_key",
+                "plan_id"
+            ],
+            "properties": {
+                "idempotency_key": {
+                    "type": "string"
+                },
+                "plan_id": {
                     "type": "string"
                 }
             }
@@ -23696,6 +23954,17 @@ const docTemplate = `{
                 }
             }
         },
+        "services.ScheduleSubscriptionCancellationInput": {
+            "type": "object",
+            "required": [
+                "idempotency_key"
+            ],
+            "properties": {
+                "idempotency_key": {
+                    "type": "string"
+                }
+            }
+        },
         "services.ShippingRequestInput": {
             "type": "object",
             "properties": {
@@ -23722,6 +23991,21 @@ const docTemplate = `{
                 },
                 "weight_kg": {
                     "type": "number"
+                }
+            }
+        },
+        "services.StartRenewableSubscriptionInput": {
+            "type": "object",
+            "required": [
+                "idempotency_key",
+                "plan_id"
+            ],
+            "properties": {
+                "idempotency_key": {
+                    "type": "string"
+                },
+                "plan_id": {
+                    "type": "string"
                 }
             }
         },
@@ -23805,6 +24089,28 @@ const docTemplate = `{
                 }
             }
         },
+        "services.SubscriptionAuditHistoryResponse": {
+            "type": "object",
+            "properties": {
+                "records": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.SubscriptionAuditRecord"
+                    }
+                }
+            }
+        },
+        "services.SubscriptionBillingHistoryResponse": {
+            "type": "object",
+            "properties": {
+                "records": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.SubscriptionBillingRecord"
+                    }
+                }
+            }
+        },
         "services.SubscriptionCatalogResponse": {
             "type": "object",
             "properties": {
@@ -23815,6 +24121,52 @@ const docTemplate = `{
                     }
                 },
                 "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.SubscriptionCheckoutResponse": {
+            "type": "object",
+            "properties": {
+                "authorization_url": {
+                    "type": "string"
+                },
+                "billing_mode": {
+                    "type": "string"
+                },
+                "pending_plan_id": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "subscription_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.SubscriptionMutationResponse": {
+            "type": "object",
+            "properties": {
+                "cancel_at_period_end": {
+                    "type": "boolean"
+                },
+                "effective_at": {
+                    "type": "string"
+                },
+                "pending_plan_id": {
+                    "type": "string"
+                },
+                "plan_id": {
+                    "type": "string"
+                },
+                "reconciliation_required": {
+                    "type": "boolean"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "subscription_id": {
                     "type": "string"
                 }
             }

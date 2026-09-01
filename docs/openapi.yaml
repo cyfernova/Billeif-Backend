@@ -19,6 +19,8 @@ servers:
     description: Local development
 
 tags:
+  - name: Subscriptions
+    description: Renewable subscription lifecycle and tenant billing records
   - name: Capabilities
     description: Backend-authoritative runtime availability for the active business
   - name: Intent Processing
@@ -35,6 +37,94 @@ tags:
     description: Payment processing and credentials
 
 paths:
+  /subscriptions/checkout:
+    post:
+      tags: [Subscriptions]
+      summary: Start a renewable monthly subscription checkout
+      description: Creates a genuine Razorpay subscription. Paid entitlements remain unchanged until a signed, provider-verified charge event is processed.
+      security: [{BearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/SubscriptionCheckoutRequest"}
+      responses:
+        "200":
+          description: Pending renewable subscription authorization
+          content: {application/json: {schema: {$ref: "#/components/schemas/SubscriptionCheckoutResponse"}}}
+        "400": {$ref: "#/components/responses/SubscriptionBadRequest"}
+        "409": {$ref: "#/components/responses/SubscriptionConflict"}
+        "503": {$ref: "#/components/responses/SubscriptionReconciliation"}
+
+  /subscriptions/plan-change:
+    post:
+      tags: [Subscriptions]
+      summary: Schedule a no-proration plan change
+      description: Schedules the plan at the next verified billing boundary. A higher entitlement is never granted early; over-quota downgrades never delete existing data.
+      security: [{BearerAuth: []}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/SubscriptionPlanChangeRequest"}}}
+      responses:
+        "200":
+          description: Plan change scheduled
+          content: {application/json: {schema: {$ref: "#/components/schemas/SubscriptionMutationResponse"}}}
+        "400": {$ref: "#/components/responses/SubscriptionBadRequest"}
+        "409": {$ref: "#/components/responses/SubscriptionConflict"}
+        "503": {$ref: "#/components/responses/SubscriptionReconciliation"}
+
+  /subscriptions/cancellation:
+    post:
+      tags: [Subscriptions]
+      summary: Schedule cancellation at the current paid period end
+      security: [{BearerAuth: []}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/SubscriptionCancellationRequest"}}}
+      responses:
+        "200":
+          description: Cancellation scheduled
+          content: {application/json: {schema: {$ref: "#/components/schemas/SubscriptionMutationResponse"}}}
+        "400": {$ref: "#/components/responses/SubscriptionBadRequest"}
+        "409": {$ref: "#/components/responses/SubscriptionConflict"}
+        "503": {$ref: "#/components/responses/SubscriptionReconciliation"}
+
+  /subscriptions/billing-history:
+    get:
+      tags: [Subscriptions]
+      summary: List tenant-scoped subscription billing history
+      security: [{BearerAuth: []}]
+      parameters:
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 100, default: 50}}
+      responses:
+        "200":
+          description: Provider-verified billing records without provider identifiers
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [records]
+                properties:
+                  records: {type: array, items: {$ref: "#/components/schemas/SubscriptionBillingRecord"}}
+
+  /subscriptions/audit:
+    get:
+      tags: [Subscriptions]
+      summary: List tenant-scoped sanitized lifecycle audit records
+      security: [{BearerAuth: []}]
+      parameters:
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 100, default: 50}}
+      responses:
+        "200":
+          description: Sanitized subscription lifecycle audit
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [records]
+                properties:
+                  records: {type: array, items: {$ref: "#/components/schemas/SubscriptionAuditRecord"}}
+
   /capabilities:
     get:
       summary: List runtime capabilities
@@ -543,7 +633,98 @@ components:
       bearerFormat: JWT
       description: JWT token from authentication endpoint
 
+  responses:
+    SubscriptionBadRequest:
+      description: Invalid subscription request
+      content: {application/json: {schema: {$ref: "#/components/schemas/SubscriptionError"}}}
+    SubscriptionConflict:
+      description: Lifecycle or idempotency conflict
+      content: {application/json: {schema: {$ref: "#/components/schemas/SubscriptionError"}}}
+    SubscriptionReconciliation:
+      description: Provider outcome requires reconciliation or the service is unavailable
+      content: {application/json: {schema: {$ref: "#/components/schemas/SubscriptionError"}}}
+
   schemas:
+    SubscriptionCheckoutRequest:
+      type: object
+      required: [plan_id, idempotency_key]
+      properties:
+        plan_id: {type: string, enum: [pro_monthly, rise_monthly, biz_monthly]}
+        idempotency_key: {type: string, minLength: 1, maxLength: 180}
+    SubscriptionPlanChangeRequest:
+      allOf:
+        - {$ref: "#/components/schemas/SubscriptionCheckoutRequest"}
+    SubscriptionCancellationRequest:
+      type: object
+      required: [idempotency_key]
+      properties:
+        idempotency_key: {type: string, minLength: 1, maxLength: 180}
+    SubscriptionCheckoutResponse:
+      type: object
+      required: [subscription_id, status, billing_mode, pending_plan_id]
+      properties:
+        subscription_id: {type: string, format: uuid}
+        status: {type: string, enum: [pending_payment, reconciliation_required]}
+        billing_mode: {type: string, enum: [renewable]}
+        pending_plan_id: {type: string, enum: [pro_monthly, rise_monthly, biz_monthly]}
+        authorization_url: {type: string, format: uri}
+    SubscriptionMutationResponse:
+      type: object
+      required: [subscription_id, status, plan_id, cancel_at_period_end, reconciliation_required]
+      properties:
+        subscription_id: {type: string, format: uuid}
+        status: {$ref: "#/components/schemas/SubscriptionLifecycleStatus"}
+        plan_id: {type: string, enum: [free, pro_monthly, rise_monthly, biz_monthly]}
+        pending_plan_id: {type: string, enum: [pro_monthly, rise_monthly, biz_monthly]}
+        effective_at: {type: string, format: date-time}
+        cancel_at_period_end: {type: boolean}
+        reconciliation_required: {type: boolean}
+    SubscriptionLifecycleStatus:
+      type: string
+      enum: [pending_payment, active, renewal_pending, past_due, grace_period, cancellation_scheduled, cancelled, expired, suspended, reconciliation_required]
+    SubscriptionBillingRecord:
+      type: object
+      required: [id, business_id, subscription_id, amount_minor, currency, status, receipt_reference, occurred_at, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        business_id: {type: string, format: uuid}
+        subscription_id: {type: string, format: uuid}
+        amount_minor: {type: integer, format: int64, minimum: 0}
+        currency: {type: string, enum: [INR]}
+        status: {type: string, enum: [paid, failed, provider_verified]}
+        receipt_reference: {type: string}
+        period_start: {type: string, format: date-time}
+        period_end: {type: string, format: date-time}
+        quota_period_start: {type: string, format: date-time}
+        quota_period_end: {type: string, format: date-time}
+        occurred_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
+    SubscriptionAuditRecord:
+      type: object
+      required: [id, business_id, action, code, occurred_at, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        business_id: {type: string, format: uuid}
+        subscription_id: {type: string, format: uuid}
+        actor_user_id: {type: string}
+        action: {type: string}
+        from_status: {type: string}
+        to_status: {type: string}
+        from_plan_id: {type: string}
+        to_plan_id: {type: string}
+        code: {type: string}
+        occurred_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
+    SubscriptionError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: {type: string, enum: [subscription_invalid_request, subscription_conflict, subscription_reconciliation_required, subscription_unavailable]}
+            message: {type: string}
     CapabilityList:
       type: object
       required: [business_id, platform, evaluated_at, capabilities]
