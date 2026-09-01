@@ -60,6 +60,7 @@ type Handler struct {
 	WebSocketTicket *WebSocketTicketHandler
 	Notification    *NotificationHandler
 	Capability      *CapabilityHandler
+	Operation       *OperationHandler
 	LLM             *LLMHandler
 	SarvamTTS       *SarvamTTSHandler
 	VoiceSession    *VoiceSessionHandler
@@ -142,6 +143,7 @@ func New(
 		WebSocketTicket: NewWebSocketTicketHandler(svcs.WebSocketTicket, log),
 		Notification:    NewNotificationHandler(svcs.Notification, log),
 		Capability:      NewCapabilityHandler(svcs.Capability, log),
+		Operation:       NewOperationHandler(svcs.Operation, log),
 		LLM:             NewLLMHandler(svcs.LLM, svcs.LLMChatHistory, log),
 		SarvamTTS:       NewSarvamTTSHandler(svcs.SarvamTTS, log),
 		VoiceSession:    NewVoiceSessionHandler(svcs.VoiceSession, log),

@@ -341,6 +341,7 @@ func TestLoadWithExplicitLocalDatabaseCredentialsDoesNotRequireAWS(t *testing.T)
 	t.Setenv("S3_BUCKET_PRODUCTS", "local-products")
 	t.Setenv("SQS_INVOICE_QUEUE", "local-invoice-queue")
 	t.Setenv("SQS_EMAIL_DELIVERY_QUEUE", "local-email-delivery-queue")
+	t.Setenv("PLATFORM_OPERATOR_GROUP", "platform_operator")
 	t.Setenv("LLM_API_KEY", "local-llm-key")
 	t.Setenv("LLM_API_URL", "https://llm.example.test/chat/completions")
 	t.Setenv("LLM_MODEL", "local-model")
@@ -353,6 +354,9 @@ func TestLoadWithExplicitLocalDatabaseCredentialsDoesNotRequireAWS(t *testing.T)
 	}
 	if cfg.Database.Host != "127.0.0.1" || cfg.Database.User != "invoice_local" || cfg.Database.Password != "local-only-password" {
 		t.Fatal("explicit local database credentials were not preserved")
+	}
+	if cfg.Cognito.OperatorGroup != "platform_operator" {
+		t.Fatalf("operator group = %q", cfg.Cognito.OperatorGroup)
 	}
 }
 

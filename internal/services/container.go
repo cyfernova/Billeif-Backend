@@ -95,6 +95,7 @@ type Container struct {
 	WebSocketTicket        *WebSocketTicketService
 	Notification           *NotificationService
 	Capability             *CapabilityService
+	Operation              *OperationService
 	CapabilityGlobalHealth *CapabilityGlobalHealthCache
 	AWS                    *awsclients.Config
 	capabilityObserver     *capabilityObserverState
@@ -183,6 +184,7 @@ func NewContainer(
 	websocketTicketRepo interfaces.WebSocketTicketRepository,
 	notificationRepo interfaces.NotificationRepository,
 	capabilityProviderHealthRepo interfaces.CapabilityProviderHealthRepository,
+	operationRepo interfaces.OperationRepository,
 	ap2Repo interfaces.AP2Repository,
 	aws *awsclients.Config,
 	log *logger.Logger,
@@ -292,6 +294,12 @@ func NewContainer(
 		GlobalHealth:   capabilityGlobalHealth,
 		BusinessHealth: capabilityBusinessHealth,
 	})
+	operationSvc := NewOperationService(
+		operationRepo,
+		businessAuthSvc,
+		NewConfiguredOperationRecoveryCapabilityGuard(cfg, aws),
+		OperationServiceOptions{},
+	)
 	globalProbers := make(map[CapabilityKey]CapabilityGlobalProviderProber, 2)
 	if capabilityConfiguration.Razorpay {
 		globalProbers[CapabilityRazorpay] = razorpayPaymentSvc
@@ -380,6 +388,7 @@ func NewContainer(
 		WebSocketTicket:        websocketTicketSvc,
 		Notification:           notificationSvc,
 		Capability:             capabilitySvc,
+		Operation:              operationSvc,
 		CapabilityGlobalHealth: capabilityGlobalHealth,
 		AWS:                    aws,
 		capabilityObserver:     &capabilityObserverState{runner: capabilityObserver, log: log},

@@ -47,6 +47,30 @@ func TestBusinessWideFinancialAndDocumentRoutesRequireAllBranches(t *testing.T) 
 	}
 }
 
+func TestOperationRoutesSeparateBusinessAndPlatformOperatorAuthorization(t *testing.T) {
+	source, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatalf("read runtime routes: %v", err)
+	}
+	routes := string(source)
+	for _, fragment := range []string{
+		`operations := protected.Group("/operations")`,
+		`operations.Use(middleware.RequireAllBranches())`,
+		`operations.GET("", h.Operation.ListBusiness)`,
+		`operations.GET("/:operation_id", h.Operation.GetBusiness)`,
+		`operations.GET("/:operation_id/timeline", h.Operation.TimelineBusiness)`,
+		`operations.POST("/:operation_id/recovery", userWriteRL, h.Operation.RecoverBusiness)`,
+		`operator.Use(middleware.Auth(cfg.Cognito, log))`,
+		`operator.Use(middleware.RequirePlatformOperator(cfg.Cognito.OperatorGroup))`,
+		`operator.GET("/operations/:operation_id", h.Operation.GetOperator)`,
+		`operator.POST("/operations/:operation_id/recovery", userWriteRL, h.Operation.RecoverOperator)`,
+	} {
+		if !strings.Contains(routes, fragment) {
+			t.Fatalf("operation route authorization contract missing: %s", fragment)
+		}
+	}
+}
+
 func TestInventoryRoutesDoNotExposeFakeTransferCompletion(t *testing.T) {
 	source, err := os.ReadFile("runtime.go")
 	if err != nil {

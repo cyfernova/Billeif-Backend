@@ -53,3 +53,4 @@
 000053_payment_reversals
 000054_capability_provider_health_snapshots
 000055_subscription_lifecycle
+000056_operation_recovery

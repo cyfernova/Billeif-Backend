@@ -401,6 +401,7 @@ type Repositories struct {
 	WebSocketTicket          interfaces.WebSocketTicketRepository
 	Notification             interfaces.NotificationRepository
 	CapabilityProviderHealth interfaces.CapabilityProviderHealthRepository
+	Operation                interfaces.OperationRepository
 	AP2                      interfaces.AP2Repository
 }
 
@@ -426,6 +427,7 @@ func initRepositories(db *gorm.DB) *Repositories {
 		WebSocketTicket:          postgresrepo.NewWebSocketTicketRepository(db),
 		Notification:             postgresrepo.NewNotificationRepository(db),
 		CapabilityProviderHealth: postgresrepo.NewCapabilityProviderHealthRepository(db),
+		Operation:                postgresrepo.NewOperationRepository(db),
 		AP2:                      postgresrepo.NewAP2Repository(db),
 	}
 }
@@ -433,7 +435,7 @@ func initRepositories(db *gorm.DB) *Repositories {
 func initServices(cfg *config.Config, db *gorm.DB, repos *Repositories, aws *awsclients.Config, resolver services.ProviderConfigResolver, log *logger.Logger) *services.Container {
 	return services.NewContainer(cfg, resolver, db, repos.User, repos.Business, repos.Customer, repos.Vendor,
 		repos.Product, repos.Document, repos.Journal, repos.Inventory, repos.Shipping, repos.Invoice, repos.Payment, repos.Ledger, repos.Reporting, repos.Team,
-		repos.Webhook, repos.Subscription, repos.SubscriptionLifecycle, repos.WebSocketTicket, repos.Notification, repos.CapabilityProviderHealth, repos.AP2, aws, log)
+		repos.Webhook, repos.Subscription, repos.SubscriptionLifecycle, repos.WebSocketTicket, repos.Notification, repos.CapabilityProviderHealth, repos.Operation, repos.AP2, aws, log)
 }
 
 type renderProfilePasswordBackfiller interface {
@@ -683,11 +685,28 @@ func setupRouter(
 		api.POST("/webhooks/razorpay", rateLimit(razorpayWebhookPolicy, commonPolicy), h.RazorpayPayment.Webhook)
 		api.GET("/ws", websocketRL, h.WebSocket.HandleConnection)
 
+		operator := api.Group("/operator")
+		operator.Use(middleware.Auth(cfg.Cognito, log))
+		operator.Use(middleware.RequirePlatformOperator(cfg.Cognito.OperatorGroup))
+		{
+			operator.GET("/operations/:operation_id", h.Operation.GetOperator)
+			operator.GET("/operations/:operation_id/timeline", h.Operation.TimelineOperator)
+			operator.POST("/operations/:operation_id/recovery", userWriteRL, h.Operation.RecoverOperator)
+		}
+
 		protected := api.Group("")
 		protected.Use(middleware.Auth(cfg.Cognito, log))
 		protected.Use(middleware.BusinessAuth(svcs.BusinessAuth))
 		{
 			protected.GET("/capabilities", h.Capability.List)
+			operations := protected.Group("/operations")
+			operations.Use(middleware.RequireAllBranches())
+			{
+				operations.GET("", h.Operation.ListBusiness)
+				operations.GET("/:operation_id", h.Operation.GetBusiness)
+				operations.GET("/:operation_id/timeline", h.Operation.TimelineBusiness)
+				operations.POST("/:operation_id/recovery", userWriteRL, h.Operation.RecoverBusiness)
+			}
 			protected.GET("/auth/me", h.Auth.Me)
 			protected.PUT("/auth/profile", h.Auth.UpdateProfile)
 			protected.POST("/auth/change-password", h.Auth.ChangePassword)

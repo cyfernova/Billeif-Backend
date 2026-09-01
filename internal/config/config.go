@@ -166,6 +166,7 @@ type CognitoConfig struct {
 	ClientID        string             `mapstructure:"CLIENT_ID"`
 	Domain          string             `mapstructure:"DOMAIN"`
 	Region          string             `mapstructure:"REGION"`
+	OperatorGroup   string             `mapstructure:"OPERATOR_GROUP"`
 	JWKSRefreshRate time.Duration      `mapstructure:"JWKS_REFRESH_RATE"`
 	Phone           CognitoPhoneConfig `mapstructure:"PHONE"`
 }
@@ -362,6 +363,7 @@ func LoadForProfile(profile Profile) (*Config, error) {
 	_ = viper.BindEnv("COGNITO.CLIENT_ID", "COGNITO_CLIENT_ID")
 	_ = viper.BindEnv("COGNITO.DOMAIN", "COGNITO_DOMAIN")
 	_ = viper.BindEnv("COGNITO.REGION", "COGNITO_REGION")
+	_ = viper.BindEnv("COGNITO.OPERATOR_GROUP", "PLATFORM_OPERATOR_GROUP")
 	_ = viper.BindEnv("COGNITO.JWKS_REFRESH_RATE", "COGNITO_JWKS_REFRESH_RATE")
 	_ = viper.BindEnv("COGNITO.PHONE.USER_POOL_ID", "COGNITO_PHONE_USER_POOL_ID")
 	_ = viper.BindEnv("COGNITO.PHONE.CLIENT_ID", "COGNITO_PHONE_CLIENT_ID")
@@ -541,6 +543,7 @@ func applyFlatEnvFileFallbacks(cfg *Config) {
 	setIfEmpty(&cfg.Cognito.ClientID, "COGNITO_CLIENT_ID")
 	setIfEmpty(&cfg.Cognito.Domain, "COGNITO_DOMAIN")
 	setIfEmpty(&cfg.Cognito.Region, "COGNITO_REGION")
+	setIfEmpty(&cfg.Cognito.OperatorGroup, "PLATFORM_OPERATOR_GROUP")
 	setIfZeroDuration(&cfg.Cognito.JWKSRefreshRate, "COGNITO_JWKS_REFRESH_RATE")
 	setIfEmpty(&cfg.Cognito.Phone.UserPoolID, "COGNITO_PHONE_USER_POOL_ID")
 	setIfEmpty(&cfg.Cognito.Phone.ClientID, "COGNITO_PHONE_CLIENT_ID")

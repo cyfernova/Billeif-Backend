@@ -15,6 +15,7 @@ const (
 	routePublic   routeAccessClass = "public"
 	routeUser     routeAccessClass = "user"
 	routeBusiness routeAccessClass = "business"
+	routeOperator routeAccessClass = "operator"
 )
 
 func TestEveryGinRouteRegistrationHasAnExplicitAccessClass(t *testing.T) {
@@ -30,8 +31,10 @@ func TestEveryGinRouteRegistrationHasAnExplicitAccessClass(t *testing.T) {
 		"mcpGroup":   routeUser,
 		"googleAuth": routeUser,
 		"admin":      routeUser,
+		"operator":   routeOperator,
 
 		"protected":            routeBusiness,
+		"operations":           routeBusiness,
 		"dashboard":            routeBusiness,
 		"businesses":           routeBusiness,
 		"customers":            routeBusiness,
@@ -121,7 +124,7 @@ func TestEveryGinRouteRegistrationHasAnExplicitAccessClass(t *testing.T) {
 		return true
 	})
 
-	for _, class := range []routeAccessClass{routePublic, routeUser, routeBusiness} {
+	for _, class := range []routeAccessClass{routePublic, routeUser, routeBusiness, routeOperator} {
 		if counts[class] == 0 {
 			t.Errorf("route class %q has no registered routes", class)
 		}
@@ -142,6 +145,8 @@ func TestRouteAccessRootsRetainApplicationDualCognitoAndBusinessMiddleware(t *te
 		`protected.Use(middleware.Auth(cfg.Cognito, log))`,
 		`protected.Use(middleware.BusinessAuth(svcs.BusinessAuth))`,
 		`admin.Use(middleware.Auth(cfg.Cognito, log))`,
+		`operator.Use(middleware.Auth(cfg.Cognito, log))`,
+		`operator.Use(middleware.RequirePlatformOperator(cfg.Cognito.OperatorGroup))`,
 	} {
 		if !strings.Contains(routes, required) {
 			t.Errorf("route access root is missing %q", required)
