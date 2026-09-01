@@ -663,3 +663,212 @@ were untouched and remained green in the full suite.
 - A transport timeout before provider subscription identity is returned still
   requires operator/provider reconciliation and intentionally cannot be blindly
   retried.
+
+## Fix round 2
+
+### Finding and implementation
+
+This scoped correction started from clean reviewed baseline
+`74c5b9c4352b022205dc906ee9dd39aacd07a52b`. A deterministic Razorpay
+rejection is known not to have applied at the provider, but checkout,
+plan-change, and cancellation each need a local compensation transaction to
+restore the prior aggregate and mark the command rejected. If that local
+transaction failed, all three paths returned the history-read sentinel. The
+shared handler consequently emitted the history-specific message
+`subscription history could not be loaded` for a lifecycle mutation.
+
+The three compensation-failure branches now return the distinct sanitized
+`ErrSubscriptionMutationInternal` sentinel. The handler maps it to the exact
+generic response below and never includes provider or database details:
+
+```json
+{"error":{"code":"subscription_mutation_internal_error","message":"subscription request could not be completed"}}
+```
+
+Billing and audit repository failures retain their prior, distinct safe
+response:
+
+```json
+{"error":{"code":"subscription_internal_error","message":"subscription history could not be loaded"}}
+```
+
+Checkout, plan-change, and cancellation now document `500` in generated
+Swagger. Both hand-authored OpenAPI files reference a dedicated
+`SubscriptionMutationInternal` response with the exact code/message example,
+and the frontend handoff distinguishes mutation recovery from history-read
+failure. No raw provider response, raw database error, signature, credential,
+provider identifier, or infrastructure detail is returned or newly logged.
+
+### Strict RED/GREEN evidence
+
+1. Service, handler, and generated Swagger behavior
+
+   - RED command:
+
+     `go test ./internal/services ./internal/handlers ./internal/app -run 'Test(DeterministicProviderRejectionCompensationFailuresReturnMutationInternalError|SubscriptionMutationInternalFailureMapsToStableGenericServerError|SubscriptionHistoryMapsInternalFailuresToSanitizedServerError|SwaggerDocumentsExactSubscriptionMutationAndHistoryStatuses)' -count=1`
+
+   - Expected RED output:
+
+     ```text
+     internal/handlers/subscription_handler_test.go:95:52: undefined: services.ErrSubscriptionMutationInternal
+     internal/services/subscription_lifecycle_test.go:1042:27: undefined: ErrSubscriptionMutationInternal
+     internal/services/subscription_lifecycle_test.go:1069:27: undefined: ErrSubscriptionMutationInternal
+     internal/services/subscription_lifecycle_test.go:1094:27: undefined: ErrSubscriptionMutationInternal
+     runtime_swagger_test.go:112: /subscriptions/checkout response 500 is undocumented
+     FAIL
+     ```
+
+   - GREEN command:
+
+     `make swagger && go test ./internal/services ./internal/handlers ./internal/app -run 'Test(DeterministicProviderRejectionCompensationFailuresReturnMutationInternalError|SubscriptionMutationInternalFailureMapsToStableGenericServerError|SubscriptionHistoryMapsInternalFailuresToSanitizedServerError|SwaggerDocumentsExactSubscriptionMutationAndHistoryStatuses)' -count=1`
+
+   - Relevant GREEN output:
+
+     ```text
+     ok invoice-backend/internal/services
+     ok invoice-backend/internal/handlers
+     ok invoice-backend/internal/app
+     ```
+
+   The service test forces the compensation transaction to fail after a mocked
+   provider `4xx` rejection for each public mutation. Every path returns only
+   the new sentinel, never the history sentinel or raw fixture detail. The
+   handler tests assert the exact mutation and history HTTP `500` responses.
+
+2. Hand-authored OpenAPI and frontend handoff contracts
+
+   - RED command:
+
+     `go test ./internal/app -run TestStaticSubscriptionContractsDocumentDistinctInternalFailures -count=1`
+
+   - Expected RED output:
+
+     ```text
+     /subscriptions/checkout mutation 500 ref = ""
+     /subscriptions/checkout mutation 500 ref = ""
+     frontend handoff is missing exact response {"error":{"code":"subscription_mutation_internal_error","message":"subscription request could not be completed"}}
+     FAIL
+     ```
+
+   - GREEN command:
+
+     `go test ./internal/app -run TestStaticSubscriptionContractsDocumentDistinctInternalFailures -count=1`
+
+   - GREEN output:
+
+     ```text
+     ok invoice-backend/internal/app
+     ```
+
+   The test parses `docs/openapi.yaml` and `openapi/openapi.yaml`, checks all
+   three mutation `500` references, checks the exact mutation and history
+   response examples, and checks both literal safe responses in the frontend
+   handoff.
+
+3. Final combined focused GREEN
+
+   - Command:
+
+     `go test ./internal/services ./internal/handlers ./internal/app -run 'Test(DeterministicProviderRejectionCompensationFailuresReturnMutationInternalError|SubscriptionMutationInternalFailureMapsToStableGenericServerError|SubscriptionHistoryMapsInternalFailuresToSanitizedServerError|SwaggerDocumentsExactSubscriptionMutationAndHistoryStatuses|StaticSubscriptionContractsDocumentDistinctInternalFailures)' -count=1`
+
+   - Output:
+
+     ```text
+     ok invoice-backend/internal/services 0.369s
+     ok invoice-backend/internal/handlers 0.469s
+     ok invoice-backend/internal/app 0.548s
+     ```
+
+### Files and public contracts
+
+Implementation and focused tests:
+
+- `internal/services/subscription_lifecycle_service.go`
+- `internal/services/subscription_lifecycle_test.go`
+- `internal/handlers/subscription_handler.go`
+- `internal/handlers/subscription_handler_test.go`
+- `internal/app/runtime_swagger_test.go`
+
+Generated and hand-authored contracts:
+
+- `docs/docs.go`
+- `docs/openapi.yaml`
+- `openapi/openapi.yaml`
+- `docs/integration/BILLEIF_PHASE_2_FRONTEND_HANDOFF.md`
+
+No model, repository, migration, migration manifest, provider adapter, worker,
+or Terraform file changed. Tenant/business and provider-mode isolation, integer
+minor-unit billing, signed webhook processing, and the carried Task 1 GST
+prerequisites are untouched.
+
+### Validation
+
+- Focused amended-package race command passed:
+
+  `go test -race ./internal/services ./internal/handlers ./internal/app -run 'Test(DeterministicProviderRejectionCompensationFailuresReturnMutationInternalError|SubscriptionMutationInternalFailureMapsToStableGenericServerError|SubscriptionHistoryMapsInternalFailuresToSanitizedServerError|SwaggerDocumentsExactSubscriptionMutationAndHistoryStatuses|StaticSubscriptionContractsDocumentDistinctInternalFailures)' -count=1`
+
+  Output: services `1.712s`, handlers `1.735s`, app `2.019s`, all `ok`.
+- `make fmt`: passed (`go fmt ./...` and repository `goimports`).
+- `git diff --exit-code` immediately after formatting: passed; formatting was
+  reproducible and did not alter the implementation commit.
+- `make lint`: passed with `golangci-lint run --timeout=5m`.
+- `make test`: passed with `go test -v -race -cover ./...`.
+- `make swagger`: passed and regenerated the same tracked `docs/docs.go`. It
+  emitted only the pre-existing non-fatal repository-root `no Go files`
+  package-name warning.
+- `jq empty docs/swagger.json`: passed.
+- The first Ruby parse command used `YAML.safe_load_file`, which this host's
+  Psych version does not provide, and failed with `NoMethodError`. The corrected
+  non-mutating command
+  `ruby -e 'require "yaml"; ARGV.each { |path| YAML.safe_load(File.read(path), permitted_classes: [], permitted_symbols: [], aliases: true); puts "parsed #{path}" }' docs/swagger.yaml docs/openapi.yaml openapi/openapi.yaml`
+  parsed all three files successfully.
+- `git diff --check 74c5b9c...HEAD`: passed.
+- Final added-line secret scan reported `changed-line secret scan: clean` for
+  private-key markers, cloud access keys, and credential assignments.
+- Migration manifest verification and Terraform mocked tests were not rerun in
+  this round because no migration, manifest, infrastructure, or Terraform file
+  changed, as required by the scoped validation instruction.
+
+No live Razorpay request, payment, charge, webhook, AWS/provider write,
+Terraform apply, message, production action, or live database migration was
+performed.
+
+### Commits
+
+- `45b3e8d fix: distinguish subscription mutation failures`
+- `docs: record subscription fix round two evidence` (this report commit; final
+  handoff contains its hash)
+
+### Self-review
+
+The repository code-review skill was applied directly because this task again
+prohibited its normal standards/spec subagents. The fixed point resolves to
+`74c5b9c4352b022205dc906ee9dd39aacd07a52b`; the reviewed implementation diff
+contains the single commit `45b3e8d fix: distinguish subscription mutation
+failures` before this evidence commit.
+
+Standards axis: no finding. The change remains in the owning service and thin
+HTTP mapper, uses branchable sentinels, propagates context through the existing
+repository transaction, uses the external-provider fake only at the Razorpay
+boundary, and exercises real observable SQLite repository behavior. No raw
+error is wrapped into the public sentinel or response. Generated Swagger and
+hand-authored contracts were updated together. No speculative abstraction,
+cross-tenant data access, provider retry, schema change, or unrelated edit was
+introduced.
+
+Spec axis: no finding. Exactly the three reviewed compensation failures now
+produce the mutation-specific safe `500`; history and audit keep their exact
+history-specific safe `500`; generated Swagger includes mutation `500` for all
+three routes; both OpenAPI files and the frontend handoff contain the exact
+public code/message. Focused tests cover all requested paths and the full race
+suite remains green.
+
+### External gaps and concerns
+
+- Live Razorpay behavior remains externally unverified because this correction
+  deliberately made no provider call or charge. The change only classifies and
+  safely exposes a local persistence failure after an already deterministic
+  provider rejection.
+- The existing non-fatal Swagger generator repository-root package-name warning
+  remains unchanged.
+- No new migration or infrastructure concern was introduced.
