@@ -745,3 +745,223 @@ diagnostics remain blocked pending a distinct operator principal.
   those provider-backed facts can become healthy.
 - No live provider was called, no migration was added, and internal diagnostics
   remain blocked until a real operator authorization mechanism exists.
+
+## Fix round 3
+
+### Implementation
+
+- Replaced the guessed LLM `GET /models/{model}` probe with the declared
+  OpenAI-compatible/DeepSeek read-only model-list contract. Only exact
+  `/chat/completions` and `/v1/chat/completions` configurations map to
+  `GET /models` and `GET /v1/models`. The response is bounded to 1 MiB, scanned
+  for at most 10,000 model entries, and never returned or logged. A present
+  configured model records success; an absent configured model records a
+  sanitized unavailable outcome. Unrecognized shapes and `404`/`405` record
+  nothing and remain unknown. No probe sends a chat request.
+- Added a tenant-target census to the rotating database source. It reports the
+  exact configured Razorpay/AI target count, the distinct GST-account tenant
+  count, and the worst-case business-page sweep count. Each observer fact
+  declares a freshness window large enough for a complete serial rotation:
+  `sweep cycles * (refresh interval + maximum cycle duration) + maximum cycle
+  duration`.
+- Made the production cycle budget explicit: at most 20 target groups per page,
+  four workers, two five-second attempts, and a one-minute cycle deadline. Five
+  worst-case waves take 50 seconds, leaving ten seconds for census, discovery,
+  recording, and cancellation. Provider calls, database queries/pages, retries,
+  concurrency, and cycle duration remain bounded.
+- Aligned cache capacity with active census targets. The cache retains its
+  ordinary 4096 outcome budget plus one reserved slot per active target
+  high-water mark. Fresh scheduled observations are protected; expired
+  scheduled facts and ordinary outcomes are evicted first. If churn fills the
+  bounded cache entirely with current reservations, recording returns
+  `ErrCapabilityHealthCapacity` and leaves all active facts intact instead of
+  silently evicting one. The observer exposes only the stable
+  `observation_record_failed` issue code.
+- Preserved operation outcomes and observer refreshes through the same recorder
+  while carrying the observer's declared freshness. Monotonic observation time,
+  tenant+capability keys, retry-time cloning, and the distinct setup/health
+  facts remain unchanged.
+- Added sanitized recurring-cycle reporting. A production logger receives at
+  most one stable code per failed cycle (`target_census_failed`,
+  `target_discovery_failed`, `cycle_deadline_exceeded`, or
+  `observation_record_failed`) and the observer waits for its normal interval;
+  raw database/provider errors, credentials, response bodies, and topology are
+  not part of the callback.
+- Changed container lifecycle management to cancel and join the observer before
+  returning from Stop. Start/Stop generations serialize under the lifecycle
+  lock, so a new generation cannot overlap an in-flight prior discovery or
+  probe. Runtime Close already invokes Stop before closing the rate limiter,
+  worker, workflow, and database.
+- Updated CAP-001 and the Task 1 plan with exact safe-probe, target-page,
+  freshness, cache, error-reporting, and shutdown semantics. The public HTTP
+  schema and status contract did not change, so Swagger regeneration was not
+  required in this round.
+
+### Strict RED/GREEN evidence
+
+1. Declared DeepSeek/OpenAI-compatible model-list probe
+
+   - RED: `go test ./internal/services -run TestLLMCapabilityProbeUsesDeepSeekReadOnlyModelList -count=1`
+   - RED output: the probe requested `GET /models/deepseek-chat`; the test
+     required the documented list request `GET /models`.
+   - GREEN: the same focused command returned
+     `ok invoice-backend/internal/services`.
+   - Additional GREEN:
+     `go test ./internal/services -run 'TestLLM(CapabilityProbeMarksMissingConfiguredModelUnavailableWithoutRawBody|UnsupportedProbeRouteLeavesHealthUnknownWithoutChatMutation|UnrecognizedChatEndpointShapeDoesNotCallProvider)' -count=1`.
+     The configured-model absence is sanitized and unavailable; `404`, `405`,
+     and unrecognized shapes remain unknown; no chat mutation occurs.
+
+2. Active-target census and declared sweep freshness
+
+   - RED: `go test ./internal/services -run TestDBCapabilityProbeCensusDeclaresWorstCaseBusinessSweep -count=1`
+   - RED output: `CapabilityProbeCensus` and its source method were undefined.
+   - GREEN: the same focused command returned
+     `ok invoice-backend/internal/services`; 240 businesses with two global
+     targets and possible GST produce 480 active facts and 40 worst-case
+     20-target cycles.
+   - RED: `go test ./internal/services -run TestCapabilityHealthCacheUsesDeclaredRefreshSLA -count=1`
+   - RED output: `CapabilityHealthObservation` had no `FreshFor` field.
+   - GREEN: the same command passed; the customer fact remains fresh inside the
+     declared full-sweep window.
+
+3. Scale, rotation, and cache pressure beyond the 170-business review case
+
+   - RED: `go test ./internal/services -run TestCapabilityHealthObserverDeclaresSweepFreshnessBeyond170Businesses -count=1`
+   - RED output: observer options had no refresh/cycle SLA and a first-page fact
+     became stale under the 600-target rotation fixture.
+   - GREEN: the same command passed; the first fact remains fresh and present
+     after additional cache pressure.
+   - GREEN full-rotation proofs:
+     `go test ./internal/services -run 'TestCapabilityHealthObserverRefreshes(EveryTenantAcrossBoundedGlobalProviderPages|GSTTenantsAcrossBoundedProbePages)' -count=1`.
+     All 240 global-provider tenants and all 180 GST tenants were refreshed;
+     global provider calls stayed one per page, GST calls stayed page-bounded,
+     and an outside tenant received no fact.
+   - RED: `go test ./internal/services -run TestCapabilityHealthObserverRunCannotExceedDeclaredRefreshInterval -count=1`
+   - RED output: a caller-supplied one-hour interval prevented a second cycle
+     inside the declared ten-millisecond test refresh window.
+   - GREEN: the same command passed after Run clamps slower caller values to the
+     declared refresh interval.
+
+4. Active-fact capacity protection
+
+   - RED: `go test ./internal/services -run TestCapabilityHealthCacheCapacityTracksActiveTargetsBeyondDefaultPressure -count=1`
+   - RED output: `EnsureActiveCapacity` was undefined.
+   - GREEN: the same command passed with 600 active tenant facts.
+   - RED: `go test ./internal/services -run TestCapabilityHealthCacheExpiredSweepReservationCanBeEvicted -count=1`
+   - RED output: the expired scheduled fact remained protected during pressure.
+   - GREEN: the same command passed; expired reservations are eligible first.
+   - RED: `go test ./internal/services -run TestCapabilityHealthCacheNeverSilentlyEvictsCurrentActiveObservations -count=1`
+   - RED output: build failed with `undefined: ErrCapabilityHealthCapacity`.
+   - GREEN: the same command passed; two current facts remain and a third write
+     receives the stable capacity error.
+
+5. Mathematically conservative production page bound
+
+   - RED: `go test ./internal/services -run TestCapabilityHealthObserverDefaultTargetBoundLeavesCycleDeadlineMargin -count=1`
+   - RED output: expected 20 targets, received 24; 24 worst-case probes consumed
+     the entire one-minute deadline.
+   - GREEN: the same command passed. Twenty targets require five four-worker
+     waves and at most 50 seconds for two five-second attempts.
+
+6. Shutdown join and generation serialization
+
+   - RED: `go test ./internal/services -run TestContainerStopCancelsAndJoinsObserverBeforeReturning -count=1`
+   - RED output: Stop returned while the canceled runner was still blocked.
+   - GREEN: the same command passed after Stop waits for the observer goroutine.
+   - RED: `go test ./internal/services -run TestContainerRepeatedStartStopNeverOverlapsObserverGenerations -count=1`
+   - RED output: the previous lifecycle state did not track/join a running
+     generation.
+   - GREEN: the same command passed across three start/stop generations with
+     maximum active generation count one.
+   - RED follow-up:
+     `go test ./internal/services -run TestContainerStopJoinsConcreteObserverDiscoveryAndProbe -count=1`.
+   - RED output: cancellation of an in-flight concrete probe was recorded as a
+     provider-unavailable fact.
+   - GREEN: the same command passed for both blocking discovery and blocking
+     probe; Stop joined both and shutdown cancellation recorded no health fact.
+
+7. Sanitized recurring-cycle reporting
+
+   - RED: `go test ./internal/services -run TestCapabilityHealthObserverReportsSanitizedCycleErrorsWithoutBusyLoop -count=1`
+   - RED output: cycle issue/options types were undefined and recurring errors
+     had no production reporting seam.
+   - GREEN: the same command passed. Two failures were separated by the refresh
+     wait and only `target_discovery_failed` was emitted; the fixture's raw
+     database secret/error text was absent.
+
+### Validation
+
+- `go test -race -count=1 ./internal/services ./internal/voice/session ./pkg/razorpay ./internal/app ./internal/handlers ./tests/unit`
+  - all six packages passed; services `4.037s`, voice `1.541s`, Razorpay
+    `1.483s`, app `2.024s`, handlers `1.727s`, unit `1.825s`.
+- `go test -count=1 ./cmd/server ./cmd/lambda/http`
+  - server compiled with no tests; HTTP Lambda passed in `0.637s`.
+- `make fmt`
+  - passed (`go fmt ./...` and `goimports`).
+- `make lint`
+  - passed (`golangci-lint run --timeout=5m`).
+- `ruby -ryaml -rdate -e 'YAML.safe_load(File.read("docs/openapi.yaml"), permitted_classes: [Date, Time], aliases: true); puts "openapi yaml ok"'`
+  - `openapi yaml ok`.
+- `git diff --check`
+  - passed before the implementation commit and after the report update.
+- Secret marker scan over the implementation diff found no private-key marker,
+  AWS access-key pattern, or token-like `sk-` value. Test-only strings named
+  `raw-secret` prove redaction and are not credentials.
+- Swagger was not regenerated because fix round 3 changed no public route,
+  schema, annotation, or error contract. The prior generated/manual contract
+  remains covered by the focused app/runtime tests.
+- Per campaign instruction, the full `make test` suite was not rerun; the
+  controller owns that campaign gate. No live provider call was made.
+
+### Files updated in fix round 3
+
+- `internal/services/llm_service.go` and `llm_service_test.go`.
+- `internal/services/capability_health_observer.go` and
+  `capability_health_observer_test.go`.
+- `internal/services/capability_health_cache.go` and
+  `capability_health_cache_test.go`.
+- `internal/services/capability_health_recorder.go`.
+- `internal/services/container.go` and
+  `container_capability_observer_test.go`.
+- `docs/integration/BILLEIF_PHASE_2_FRONTEND_HANDOFF.md` and
+  `docs/plans/BILLEIF_BACKEND_PRODUCTION_READINESS_PHASE_2.md`.
+
+### Commits
+
+- `5e1e29e fix: harden capability observation lifecycle`
+- `docs: record capability observer hardening` (report commit; final hash is
+  returned to the parent because a commit cannot contain its own hash)
+
+### Self-review and concerns
+
+- Confirmed the LLM observer uses only a recognized read-only list-models
+  contract and a bounded response; unsupported provider shapes stay unknown
+  instead of being marked unavailable. No response body, API key, model list,
+  provider topology, or tenant/account identifier reaches the callback or
+  customer fact.
+- Confirmed global network outcomes are applied only to explicitly discovered
+  business targets and cached under business+provider-health keys. GST remains
+  per-tenant. Setup discovery and health remain distinct, and no outside tenant
+  inherits configuration or health.
+- Confirmed the database work per cycle is bounded to two census counts, one
+  rotating business page, and at most one GST-account lookup for that page. The
+  process-local cache is bounded by the ordinary budget plus the active-target
+  high-water census; it does not silently evict a current scheduled fact.
+- Confirmed cancellation is checked before recording provider outcomes, Stop
+  joins the actual observer generation, and Runtime closes the database only
+  afterward.
+- Remaining limitation: health is deliberately process-local and not durable,
+  so concurrent Lambda instances may disagree until each completes its bounded
+  census/rotation. Very large active populations produce a proportionally
+  longer declared freshness window; this is truthful and prevents rotation-only
+  staleness but is less responsive than a future durable/shared observation
+  store.
+- Razorpay and AI are configured globally, yet their health facts remain
+  business-keyed because CAP-001 combines global provider readiness with
+  tenant-specific setup, entitlement, permission, and quota. Network calls are
+  grouped once per page without sharing a customer cache identity.
+- S3, voice, WhatsApp, and email still lack a safe provider probe and remain
+  unknown until a future asynchronous producer exists. GST remains unknown if
+  no validation path is configured. No weak operator diagnostics were added.
+- No migration was added, no provider was called live, and no public capability
+  contract changed.
