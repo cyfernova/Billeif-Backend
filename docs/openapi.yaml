@@ -19,6 +19,8 @@ servers:
     description: Local development
 
 tags:
+  - name: Capabilities
+    description: Backend-authoritative runtime availability for the active business
   - name: Intent Processing
     description: Natural language intent parsing and product matching
   - name: Agent Discovery
@@ -33,6 +35,63 @@ tags:
     description: Payment processing and credentials
 
 paths:
+  /capabilities:
+    get:
+      summary: List runtime capabilities
+      description: |
+        Returns the customer-safe runtime capability evaluation for the authenticated
+        active business. Provider health comes from a tenant-isolated cache; this
+        request never synchronously contacts providers.
+      tags:
+        - Capabilities
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: platform
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [web, ios, android]
+            default: web
+      responses:
+        "200":
+          description: Capability evaluation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapabilityList"
+        "400":
+          description: Invalid platform
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapabilityErrorResponse"
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Active business scope required or denied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Capability evaluation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapabilityErrorResponse"
+        "503":
+          description: Capability service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapabilityErrorResponse"
+
   /intent/process:
     post:
       summary: Process shopping intent
@@ -484,6 +543,164 @@ components:
       description: JWT token from authentication endpoint
 
   schemas:
+    CapabilityList:
+      type: object
+      required: [business_id, platform, evaluated_at, capabilities]
+      properties:
+        business_id:
+          type: string
+        platform:
+          type: string
+          enum: [web, ios, android]
+        evaluated_at:
+          type: string
+          format: date-time
+        capabilities:
+          type: array
+          items:
+            $ref: "#/components/schemas/RuntimeCapability"
+
+    RuntimeCapability:
+      type: object
+      required:
+        - key
+        - product_support
+        - configuration
+        - provider_health
+        - entitlement
+        - quota
+        - permission
+        - business_setup
+        - platform
+        - available
+        - state
+        - reason_code
+        - evaluated_at
+      properties:
+        key:
+          type: string
+          enum: [razorpay_payments, gst_provider, e_invoice, e_way_bill, whatsapp_messaging, email_delivery, s3_uploads, voice, ai, storefront_payments, report_exports, bulk_imports, saved_payment_methods]
+        product_support:
+          type: object
+          required: [supported]
+          properties:
+            supported:
+              type: boolean
+        configuration:
+          type: object
+          required: [required, configured]
+          properties:
+            required:
+              type: boolean
+            configured:
+              type: boolean
+        provider_health:
+          type: object
+          required: [status, stale]
+          properties:
+            status:
+              type: string
+              enum: [unknown, healthy, degraded, unavailable]
+            observed_at:
+              type: string
+              format: date-time
+            stale:
+              type: boolean
+        entitlement:
+          type: object
+          required: [required, entitled]
+          properties:
+            required:
+              type: boolean
+            entitled:
+              type: boolean
+        quota:
+          type: object
+          required: [limited, limit, used, remaining, available]
+          properties:
+            limited:
+              type: boolean
+            limit:
+              type: integer
+              format: int64
+            used:
+              type: integer
+              format: int64
+            remaining:
+              type: integer
+              format: int64
+            available:
+              type: boolean
+        permission:
+          type: object
+          required: [required, granted]
+          properties:
+            required:
+              type: boolean
+            key:
+              type: string
+            granted:
+              type: boolean
+        business_setup:
+          type: object
+          required: [required, complete]
+          properties:
+            required:
+              type: boolean
+            complete:
+              type: boolean
+        platform:
+          type: object
+          required: [requested, supported, supported_platforms]
+          properties:
+            requested:
+              type: string
+              enum: [web, ios, android]
+            supported:
+              type: boolean
+            supported_platforms:
+              type: array
+              items:
+                type: string
+                enum: [web, ios, android]
+        available:
+          type: boolean
+        state:
+          type: string
+          enum: [available, setup_required, upgrade_required, quota_exhausted, permission_denied, temporarily_unavailable, unsupported_platform, unsupported, unknown]
+        reason_code:
+          type: string
+        setup_action:
+          type: string
+        retry_at:
+          type: string
+          format: date-time
+        degradation:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+        evaluated_at:
+          type: string
+          format: date-time
+
+    CapabilityErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [invalid_platform, authentication_required, business_scope_required, capability_service_unavailable, capability_evaluation_failed]
+            message:
+              type: string
+
     ParsedIntent:
       type: object
       properties:

@@ -89,6 +89,26 @@ func TestPaymentReversalRouteIsRegistered(t *testing.T) {
 	t.Fatal("payment reversal route must be registered")
 }
 
+func TestCustomerCapabilityRouteIsRegisteredAsProtectedRead(t *testing.T) {
+	router := setupTestRouter(t)
+	for _, route := range router.Routes() {
+		if route.Method == http.MethodGet && route.Path == "/api/v1/capabilities" {
+			return
+		}
+	}
+	t.Fatal("customer capability route must be registered")
+}
+
+func TestCustomerCapabilityRouteRejectsUnauthenticatedRequests(t *testing.T) {
+	router := setupTestRouter(t)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/capabilities?platform=web", nil)
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusUnauthorized, response.Body.String())
+	}
+}
+
 func TestRouterDoesNotLetGinTrustCallerForwardingHeaders(t *testing.T) {
 	router := setupTestRouter(t)
 	router.GET("/__test/client-ip", func(c *gin.Context) {

@@ -677,6 +677,7 @@ func setupRouter(
 		protected.Use(middleware.Auth(cfg.Cognito, log))
 		protected.Use(middleware.BusinessAuth(svcs.BusinessAuth))
 		{
+			protected.GET("/capabilities", h.Capability.List)
 			protected.GET("/auth/me", h.Auth.Me)
 			protected.PUT("/auth/profile", h.Auth.UpdateProfile)
 			protected.POST("/auth/change-password", h.Auth.ChangePassword)

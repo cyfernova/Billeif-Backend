@@ -123,7 +123,7 @@ relevant tests were inspected.
 | Task | Baseline classification | Evidence | Expected smallest owners and impact |
 | --- | --- | --- | --- |
 | 0 | `complete` for inventory; external state `externally unverified` | This plan; `docs/integration/BILLEIF_PHASE_2_FRONTEND_HANDOFF.md`; evidence paths below | Documentation only. No migration, provider call, runtime, OpenAPI, Terraform, or test change. |
-| 1 | `missing` | No backend-authoritative runtime capability states or customer/diagnostic endpoints found; current entitlements are plan feature rows in `internal/services/entitlements.go` and `internal/services/commerce_service.go` | `internal/config`, `internal/services`, `internal/handlers`, `internal/app`, repository/model owners, paired migration if cached health is durable, permissions, OpenAPI, and planned capability service/handler plus tenant-cache/permission/degradation test owners. Secret-safe output and deny-by-default degradation are security impacts. |
+| 1 | `complete` locally; provider health `externally unverified`; internal diagnostics `blocked` | CAP-001 is implemented in `internal/config/capabilities.go`, `internal/services/capability_service.go`, `internal/services/capability_health_cache.go`, `internal/services/capability_setup_reader.go`, `internal/handlers/capability_handler.go`, and `internal/app/runtime.go`; focused tests are beside each owner | No migration. Customer output is secret-safe and unknown/stale health fails closed. Cache is process-local with a five-minute freshness window and a 4096-observation bound; cold starts and other Lambda instances begin unknown. Internal diagnostics require a future operator principal distinct from business owner/admin. |
 | 2 | `partial`, with an `unsafe` truth gap; Razorpay `externally unverified` | `internal/models/subscription.go`, `internal/models/payment_attempt.go`, `internal/services/subscription_service.go`, `internal/services/razorpay_payment_service.go`, `migrations/000041_add_razorpay_payment_attempts.up.sql`, `internal/services/razorpay_payment_service_test.go`, `internal/handlers/payment_handler_idempotency_test.go`, `infrastructure/terraform/tests/razorpay.tftest.hcl` | Subscription/payment models, repositories, services, handlers, webhook inbox/reconciliation worker, paired migrations, provider fixtures, OpenAPI and race/replay tests. Expand-first state conversion must not activate entitlements from stale or ambiguous events. |
 | 3 | `partial`; deployed queues/providers `externally unverified` | Render/delivery status in `internal/services/invoice_service.go` and `internal/services/invoice_delivery.go`; outbox/workers; `infrastructure/terraform/monitoring.tf` and `sns_sqs.tf` | Aggregate read service/repositories, customer and operator handlers, recovery commands, audit, metrics/alarms, permissions/step-up, OpenAPI, state/retry tests. Recovery must remain tenant-bound and idempotent. |
 | 4 | `missing`; every staging dependency `externally unverified` | No bounded environment-selecting verification command found after inspecting every entry point under `cmd`, `internal/config`, `Makefile`, `infrastructure/terraform`, `.github/workflows`, and `docs` | New verification command and an adjacent refusal/redaction/classification/cleanup test package; documentation and safe adapters only unless a real gap is found. No schema expected by default. Must refuse production, redact secrets, bound writes, and classify cleanup. |
@@ -181,7 +181,7 @@ absence alone:
 
 | Finding | Inspected owners/directories |
 | --- | --- |
-| No Task 1 runtime capability projection/diagnostics | `internal/config`, `internal/app`, `internal/handlers`, `internal/services`, `internal/models`, `internal/repositories`, `migrations`, `openapi` |
+| No distinct operator authorization for internal capability diagnostics | `internal/app`, `internal/middleware`, `internal/handlers/admin_handler.go`, `internal/services/business_auth_service.go`, Cognito role claims, and permissions; business owner/admin is not an operator principal |
 | No bounded staging verifier | every entry point under `cmd`, plus `internal/config`, `Makefile`, `infrastructure/terraform`, `.github/workflows`, and `docs` |
 | No fiscal lock, Trial Balance, Balance Sheet, opening-balance or banking workflow | `internal/handlers`, `internal/services`, `internal/models`, `internal/repositories`, `internal/reporting`, `migrations`, `openapi` |
 | No bulk-import processor/queue/commit workflow | `internal/handlers/billing_ops_handler.go`, `internal/services/billing_ops_service.go`, `internal/models/swipe_ops.go`, all of `internal/workers`, every entry point under `cmd`, `infrastructure/terraform`, and `migrations` |
@@ -211,7 +211,8 @@ approval for surfaces marked unsafe or internal-only.
 
 ## Task 1: Runtime capability model
 
-Status: pending
+Status: completed locally; provider health externally unverified; internal
+diagnostics blocked pending a distinct operator authorization mechanism
 
 Implement business-scoped, backend-authoritative capability evaluation covering
 Razorpay, GST/e-invoice/e-way bill, WhatsApp, email, S3 uploads, voice, AI,
@@ -233,6 +234,45 @@ handler, tenant-cache, permission, and degradation test files beside their
 owners. Add a paired
 migration only if health/config snapshots are durable. Roll out customer-safe
 evaluation before any UI depends on it; keep unknown providers unavailable.
+
+Implemented CAP-001 at `GET /api/v1/capabilities?platform=web|ios|android`.
+The response separately reports product support, configuration presence,
+cached health and observation time, subscription entitlement, quota,
+permission, business setup, platform support, final availability, stable state
+and reason, setup action, retry time and customer-safe degradation. The bounded
+inventory covers Razorpay, GST provider, e-invoice, e-way bill, WhatsApp,
+email, S3 uploads, voice, AI, storefront payments, report exports, bulk
+imports and saved payment methods. Web voice is `unsupported_platform`; saved
+payment methods are `unsupported`; bulk import is `unsupported` with
+`bulk_import_processor_unavailable`; simulated GST never counts as configured.
+
+`CapabilityService.Evaluate` is the reusable request-time seam for later
+sensitive mutations. It observes current authoritative entitlements/quotas and
+permissions and never calls providers. Health observations are written
+explicitly to a tenant-keyed in-memory cache, are monotonic by observation time,
+and become stale after five minutes. Missing and stale health fail closed;
+provider failure never changes the separately returned entitlement fact. The
+cache is deliberately process-local: Lambda cold starts and other concurrent
+instances begin unknown, so Task 1 makes no deployed-provider health claim.
+
+No migration was added because configuration and setup use existing rows and
+provider health is ephemeral. A separately authorized internal diagnostics
+endpoint was not added: current `admin` is a business role, not a distinct
+operator principal, and exposing provider internals through it would violate
+the authorization requirement. This remains blocked until a genuine operator
+identity and policy exist.
+
+Evidence: `internal/config/capabilities_test.go`,
+`internal/services/capability_health_cache_test.go`,
+`internal/services/capability_service_test.go`,
+`internal/services/capability_setup_reader_test.go`,
+`internal/services/entitlements_test.go`,
+`internal/handlers/capability_handler_test.go`, and
+`internal/app/runtime_routes_test.go`. Swagger was regenerated in
+`docs/docs.go`; `docs/openapi.yaml` and CAP-001 in
+`docs/integration/BILLEIF_PHASE_2_FRONTEND_HANDOFF.md` contain the exact public
+contract. Frontend rollout must follow the backend deployment and must keep
+provider-backed actions unavailable while health is unknown.
 
 ## Task 2: Subscription and Razorpay lifecycle
 

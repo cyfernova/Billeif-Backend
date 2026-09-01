@@ -90,6 +90,8 @@ type Container struct {
 	WebSocketConnection *WebSocketConnectionService
 	WebSocketTicket     *WebSocketTicketService
 	Notification        *NotificationService
+	Capability          *CapabilityService
+	CapabilityHealth    *CapabilityHealthCache
 	AWS                 *awsclients.Config
 }
 
@@ -202,6 +204,14 @@ func NewContainer(
 	posSvc := NewPOSService(db, documentSvc, barcodeSvc, inventorySvc, taxComplianceSvc.entitlements, log)
 	commerceSvc := NewCommerceService(cfg, db, businessRepo, customerRepo, productRepo, subscriptionRepo, inventorySvc, documentSvc, s3Svc, log)
 	razorpayPaymentSvc := NewRazorpayPaymentService(cfg, db, log, resolver)
+	capabilityHealth := NewCapabilityHealthCache(CapabilityHealthCacheOptions{})
+	capabilitySvc := NewCapabilityService(CapabilityServiceOptions{
+		Configuration: config.CapabilityConfigurationSnapshot(cfg),
+		Entitlements:  taxComplianceSvc.entitlements,
+		Permissions:   businessAuthSvc,
+		Setup:         NewDBCapabilityBusinessSetupReader(db),
+		Health:        capabilityHealth,
+	})
 
 	log.Info("service container initialized",
 		"components", 34,
@@ -265,6 +275,8 @@ func NewContainer(
 		WebSocketConnection: websocketConnectionSvc,
 		WebSocketTicket:     websocketTicketSvc,
 		Notification:        notificationSvc,
+		Capability:          capabilitySvc,
+		CapabilityHealth:    capabilityHealth,
 		AWS:                 aws,
 	}
 }

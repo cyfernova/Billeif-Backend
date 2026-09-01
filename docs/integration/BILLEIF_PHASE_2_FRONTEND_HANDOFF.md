@@ -1,6 +1,6 @@
 # Billeif Phase 2 Frontend Handoff
 
-Status: initial evidence baseline at source revision `5b58a56`
+Status: in progress; initial evidence baseline plus locally complete CAP-001
 
 This document describes only Phase 2-relevant HTTP behavior that is implemented
 in the backend at the audited revision. It is not a future API design. `partial`
@@ -34,6 +34,7 @@ route registration or current generated OpenAPI alone.
 
 | ID | Current contract | Classification | Frontend use at this revision |
 | --- | --- | --- | --- |
+| CAP-001 | Runtime capability evaluation | `complete` locally; provider health `externally unverified` | Authoritative source for whether the active user/business/platform may expose or attempt covered functionality. |
 | SUB-001 | Subscription catalog | `complete` locally | May render catalog data, with the one-month purchase warning from SUB-003. |
 | SUB-002 | Current subscription and legacy feature rows | `partial` | May show current stored state; do not infer renewal, provider health, or runtime capability. |
 | SUB-003 | Razorpay checkout and verification | `partial`, lifecycle wording `unsafe`, provider `externally unverified` | Test-only integration until Task 2 proves provider lifecycle. Do not label auto-renewing. |
@@ -62,6 +63,7 @@ omitted column to imply support.
 
 | ID | Auth and business scope | Permission | Entitlement | Step-up | Idempotency |
 | --- | --- | --- | --- | --- | --- |
+| CAP-001 | Bearer + effective business; every setup and cache lookup is scoped by that business | No endpoint-wide permission; each result evaluates its listed operation permission | Each result evaluates the current subscription catalog feature where applicable | None; read-only | Read-only and safe to repeat |
 | SUB-001 | Bearer + effective business | `subscriptions.view` | None | None implemented | Read-only |
 | SUB-002 | Bearer + effective business | `subscriptions.view`; sync/direct mutations use `subscriptions.manage` | Subscription is the entitlement source | None implemented | Reads are safe to repeat; sync is convergent but has no command key; direct mutation has no idempotency key |
 | SUB-003 | Bearer + effective business + all branches | `payments.manage` | None | None implemented | Required body `idempotency_key` for order; verify locks and safely re-observes a paid attempt |
@@ -84,6 +86,7 @@ omitted column to imply support.
 
 | ID | Pagination / file behavior | State and retry | Event / invalidation | Existing migration and rollout | Proof and governing limitation |
 | --- | --- | --- | --- | --- | --- |
+| CAP-001 | Fixed 13-item array; no pagination or file | Synchronous cached evaluation; reads are retry-safe; honor `retry_at` for temporary provider failures | No event; refetch after subscription, permission, business setup, or provider-readiness changes | No migration; deploy before frontend capability gating | `internal/config/capabilities_test.go`, `internal/services/capability_service_test.go`, `internal/services/capability_health_cache_test.go`, `internal/services/capability_setup_reader_test.go`, `internal/handlers/capability_handler_test.go`, `internal/app/runtime_routes_test.go`; health cache is process-local and starts unknown on cold start |
 | SUB-001 | No pagination or file | Synchronous read; retry safe | No event; invalidate on catalog-version/deployment change | No Task 0 migration; catalog is code-defined | `internal/services/subscription_catalog_test.go`; one-month checkout is not renewal |
 | SUB-002 | No pagination or file | Stored `active`/`canceled`/`expired` model; refetch after payment | No versioned event; invalidate subscription and entitlement queries after verify/sync | Existing subscription and feature-entitlement schema; keep direct writes disabled | `tests/unit/subscription_service_test.go`, `internal/services/entitlements_test.go`, `internal/services/commerce_service_test.go`; runtime capability and lifecycle are incomplete |
 | SUB-003 | No pagination or file | Attempt `created`/`pending`/`paid`/`failed`; do not blindly retry unknown provider outcomes | No client event; invalidate SUB-002 after verified paid response | `migrations/000041_add_razorpay_payment_attempts.up.sql`; test-mode/provider rollout unverified | `internal/services/razorpay_payment_service_test.go`, `internal/handlers/payment_handler_idempotency_test.go`, `infrastructure/terraform/tests/razorpay.tftest.hcl`; no recurring lifecycle or reconciliation |
@@ -103,6 +106,136 @@ omitted column to imply support.
 | COUPON-001 | List is an array without pagination; no file | Active/date rules exist; retrying writes can duplicate without a client key | No versioned coupon event; invalidate storefront coupon list after writes | `migrations/000032_add_storefront_enterprise_features.up.sql`; avoid claiming hard caps | `internal/services/commerce_service_test.go`, `internal/services/commerce_checkout_postgres_integration_test.go`, `internal/services/storefront_tenant_scope_test.go`; redemption/update concurrency is unsafe |
 | REPORT-001 | Input page/limit; response embeds JSON or CSV string, not a file response | Synchronous `completed`/`failed` run model; repeat creates another run | No export event; invalidate report-run/history views after success | `migrations/000029_add_projects_and_reporting.up.sql`; XLSX rollout missing | `internal/services/report_service_test.go`, `tests/unit/report_handler_test.go`; no XLSX, typed cells, disposition or export idempotency |
 | AI-001 | Capability list is an unpaginated array; no file | Descriptive rows have no execution lifecycle; writes unsafe to retry | No event; refetch capability list after a confirmed write | `migrations/000013_add_ap2_agent_marketplace.up.sql`; AI providers unverified | `tests/unit/agent_handler_test.go`, `tests/integration/agent_test.go`; permission probe is not authorization |
+
+## CAP-001: Runtime capability evaluation
+
+`GET /capabilities?platform=web`
+
+| Property | Contract |
+| --- | --- |
+| Status | Implemented locally; live provider observations are externally unverified |
+| Purpose | Backend-authoritative availability for the active business, user, subscription and client platform |
+| Authentication and business scope | Bearer token plus effective business; cross-business selection is rejected by business-membership middleware |
+| Endpoint permission | None beyond current membership because the response applies per-capability permissions and does not reveal provider internals |
+| Entitlement | Per capability; see mapping below |
+| Step-up | None; read-only |
+| Request | No body; optional `platform` is `web` (default), `ios`, or `android` |
+| Response | `200` `CapabilityList` below |
+| Pagination and file behavior | Fixed 13-item array; no pagination or file |
+| Idempotency and retry | Read-only and safe to repeat; for `temporarily_unavailable`, wait until `retry_at` when supplied |
+| State transitions | No durable transition is performed. Re-evaluation may change when configuration, health observation, subscription/quota, permission, setup, or platform changes |
+| Event and invalidation | No event in Task 1. Invalidate after subscription, permission, business setup or provider-readiness changes |
+| Migration and rollout | No migration. Deploy backend first; frontend must not infer availability from route presence or environment values |
+
+Capability keys are `razorpay_payments`, `gst_provider`, `e_invoice`,
+`e_way_bill`, `whatsapp_messaging`, `email_delivery`, `s3_uploads`, `voice`,
+`ai`, `storefront_payments`, `report_exports`, `bulk_imports`, and
+`saved_payment_methods`. The response order is stable in that order.
+
+Each item contains these exact fields: `key`; `product_support.supported`;
+`configuration.required` and `configuration.configured`;
+`provider_health.status`, optional `provider_health.observed_at`, and
+`provider_health.stale`; `entitlement.required` and `entitlement.entitled`;
+`quota.limited`, `quota.limit`, `quota.used`, `quota.remaining`, and
+`quota.available`; `permission.required`, optional `permission.key`, and
+`permission.granted`; `business_setup.required` and `business_setup.complete`;
+`platform.requested`, `platform.supported`, and `platform.supported_platforms`;
+`available`; `state`; `reason_code`; optional `setup_action`; optional
+`retry_at`; optional customer-safe `degradation.code` and
+`degradation.message`; and `evaluated_at`. The envelope contains
+`business_id`, `platform`, `evaluated_at`, and `capabilities`.
+
+```json
+{
+  "business_id": "22222222-2222-4222-8222-222222222222",
+  "platform": "web",
+  "evaluated_at": "2026-09-01T12:00:00Z",
+  "capabilities": [
+    {
+      "key": "e_invoice",
+      "product_support": {"supported": true},
+      "configuration": {"required": true, "configured": true},
+      "provider_health": {
+        "status": "unavailable",
+        "observed_at": "2026-09-01T11:59:45Z",
+        "stale": false
+      },
+      "entitlement": {"required": true, "entitled": true},
+      "quota": {"limited": true, "limit": 100, "used": 20, "remaining": 80, "available": true},
+      "permission": {"required": true, "key": "documents.manage", "granted": true},
+      "business_setup": {"required": true, "complete": true},
+      "platform": {"requested": "web", "supported": true, "supported_platforms": ["web", "ios", "android"]},
+      "available": false,
+      "state": "temporarily_unavailable",
+      "reason_code": "provider_temporarily_unavailable",
+      "retry_at": "2026-09-01T12:01:00Z",
+      "degradation": {"code": "provider_unavailable", "message": "Provider service is temporarily unavailable."},
+      "evaluated_at": "2026-09-01T12:00:00Z"
+    }
+  ]
+}
+```
+
+States are `available`, `setup_required`, `upgrade_required`,
+`quota_exhausted`, `permission_denied`, `temporarily_unavailable`,
+`unsupported_platform`, `unsupported`, and `unknown`. Stable reason codes are
+`available`, `capability_unknown`, `provider_not_configured`,
+`provider_health_unknown`, `provider_health_stale`,
+`provider_temporarily_unavailable`, `provider_degraded`,
+`entitlement_required`, `quota_exhausted`, `permission_required`,
+`business_setup_required`, `platform_unsupported`,
+`saved_payment_methods_unsupported`, and `bulk_import_processor_unavailable`.
+Stable setup actions are `contact_support`, `configure_gst`,
+`configure_whatsapp`, `configure_email`, `enable_voice`,
+`enable_storefront_payments`, `complete_business_setup`,
+`upgrade_subscription`, and `request_permission`.
+
+Permission mapping is: Razorpay and saved methods `payments.manage`; GST setup
+`tax.integrations.manage`; e-invoice/e-way bill `documents.manage`; WhatsApp
+and email `notifications.manage`; S3 `drive.manage`; voice `voice:use`; AI
+`agents.view`; storefront payment `storefront.manage`; report export
+`reports.export`. Bulk import reports no aggregate permission because the
+legacy import paths use inconsistent per-type permissions; it remains
+unavailable before any permission could make it usable. Entitlement mapping is:
+GST provider `gst_api`; e-invoice `einvoice`;
+e-way bill `ewaybill`; WhatsApp `whatsapp_notifications`; S3
+`drive_storage_mb`; storefront payments `online_store`; report exports
+`export_documents`. Other listed capabilities have no current plan gate.
+
+Evaluation precedence is product support, platform, backend configuration,
+entitlement, quota, permission, business setup, then cached provider health.
+All underlying facts remain present even when an earlier fact determines the
+final state. A health failure therefore never changes `entitlement.entitled`.
+Configured means only that a binding exists; it never means healthy. Missing,
+stale, or unknown provider health fails closed. A fresh `degraded` observation
+may remain `available` with `reason_code: "provider_degraded"` and a safe
+degradation object.
+
+Web voice is always `unsupported_platform`; saved payment methods are always
+`unsupported`; bulk imports are always `unsupported` with
+`bulk_import_processor_unavailable` because the current intake has no safe
+processor. The legacy simulated GST provider never satisfies configuration.
+Customer JSON cannot contain provider credentials, provider account IDs, secret
+identifiers, raw provider errors, or infrastructure topology.
+
+Stable endpoint errors introduced by this handler are
+`400 {"error":{"code":"invalid_platform","message":"Platform must be web, ios, or android."}}`,
+`403 {"error":{"code":"business_scope_required","message":"An active business is required."}}`,
+`503 {"error":{"code":"capability_service_unavailable","message":"Capability evaluation is unavailable."}}`,
+and `500 {"error":{"code":"capability_evaluation_failed","message":"Capability evaluation failed."}}`.
+Authentication and cross-business membership may be rejected earlier by shared
+middleware with HTTP `401` or `403` and the shared legacy error envelope.
+
+Known limitations: provider observations are held in a bounded, five-minute,
+process-local in-memory cache. Each process retains at most 4096
+tenant/capability observations and evicts the oldest observation when full. A
+Lambda cold start or another concurrent Lambda instance begins with unknown
+health, so the API fails closed until that process receives an observation.
+Task 1 does not synchronously ping providers and does
+not claim any live provider is healthy. No internal diagnostics endpoint was
+added: the repository has no operator principal distinct from business
+owner/admin, and that is insufficient authorization for provider internals.
+Operator diagnostics remain blocked until a genuine operator mechanism exists.
 
 ## SUB-001: Subscription catalog
 
@@ -1236,11 +1369,11 @@ Evidence: `internal/app/runtime.go`, `internal/handlers/report_handler.go`,
 the registry under `internal/reporting`, `internal/services/report_service_test.go`,
 and `tests/unit/report_handler_test.go`.
 
-## No frontend contract yet
+## Remaining frontend contracts
 
 | Requested area | Current classification | Frontend instruction |
 | --- | --- | --- |
-| CAP runtime capability endpoint and diagnostics | `missing` | Do not infer availability from route presence, environment variables, plan rows, or UI feature flags. |
+| Internal capability diagnostics | `blocked` | Use customer-safe CAP-001 only. Provider internals require a future operator principal distinct from business owner/admin. |
 | Renewable subscription lifecycle, billing history, cancellation/grace/proration and reconciliation | `missing` around a `partial` one-month flow | Do not show auto-renewal or authoritative next charge. |
 | Aggregate operation status, operator detail and safe recovery actions | `missing` around complete individual statuses | Poll OPS-001/002 only; do not invent retries or DLQ actions. |
 | Customer-safe aggregate GST/provider truth and recovery | `missing` around OPS-004/005/006 | Keep provider-backed success UI disabled: absent provider configuration selects a simulator that can fabricate IRN/ack/e-way bill values. A local succeeded state is not government-system evidence. Evidence: `internal/services/gst_provider.go`. |

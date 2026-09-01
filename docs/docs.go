@@ -4996,6 +4996,81 @@ const docTemplate = `{
                 ]
             }
         },
+        "/capabilities": {
+            "get": {
+                "description": "Returns the backend-authoritative, customer-safe runtime capability evaluation for the active business. Provider health is read from cache; this request does not call providers.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Capabilities"
+                ],
+                "summary": "List runtime capabilities",
+                "parameters": [
+                    {
+                        "enum": [
+                            "web",
+                            "ios",
+                            "android"
+                        ],
+                        "type": "string",
+                        "default": "web",
+                        "description": "Client platform",
+                        "name": "platform",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/services.CapabilityList"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CapabilityErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CapabilityErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CapabilityErrorResponse"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/customers": {
             "get": {
                 "description": "Returns a list of customers belonging to a specific business.",
@@ -17551,6 +17626,25 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.CapabilityAPIError": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.CapabilityErrorResponse": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "$ref": "#/definitions/handlers.CapabilityAPIError"
+                }
+            }
+        },
         "handlers.CheckoutRequest": {
             "type": "object",
             "required": [
@@ -20422,6 +20516,282 @@ const docTemplate = `{
                     "type": "number"
                 }
             }
+        },
+        "services.Capability": {
+            "type": "object",
+            "properties": {
+                "available": {
+                    "type": "boolean"
+                },
+                "business_setup": {
+                    "$ref": "#/definitions/services.CapabilitySetup"
+                },
+                "configuration": {
+                    "$ref": "#/definitions/services.CapabilityConfigurationFact"
+                },
+                "degradation": {
+                    "$ref": "#/definitions/services.CapabilityDegradation"
+                },
+                "entitlement": {
+                    "$ref": "#/definitions/services.CapabilityEntitlement"
+                },
+                "evaluated_at": {
+                    "type": "string"
+                },
+                "key": {
+                    "$ref": "#/definitions/services.CapabilityKey"
+                },
+                "permission": {
+                    "$ref": "#/definitions/services.CapabilityPermission"
+                },
+                "platform": {
+                    "$ref": "#/definitions/services.CapabilityPlatformFact"
+                },
+                "product_support": {
+                    "$ref": "#/definitions/services.CapabilityProductSupport"
+                },
+                "provider_health": {
+                    "$ref": "#/definitions/services.CapabilityProviderHealth"
+                },
+                "quota": {
+                    "$ref": "#/definitions/services.CapabilityQuota"
+                },
+                "reason_code": {
+                    "type": "string"
+                },
+                "retry_at": {
+                    "type": "string"
+                },
+                "setup_action": {
+                    "type": "string"
+                },
+                "state": {
+                    "$ref": "#/definitions/services.CapabilityState"
+                }
+            }
+        },
+        "services.CapabilityConfigurationFact": {
+            "type": "object",
+            "properties": {
+                "configured": {
+                    "type": "boolean"
+                },
+                "required": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "services.CapabilityDegradation": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.CapabilityEntitlement": {
+            "type": "object",
+            "properties": {
+                "entitled": {
+                    "type": "boolean"
+                },
+                "required": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "services.CapabilityKey": {
+            "type": "string",
+            "enum": [
+                "razorpay_payments",
+                "gst_provider",
+                "e_invoice",
+                "e_way_bill",
+                "whatsapp_messaging",
+                "email_delivery",
+                "s3_uploads",
+                "voice",
+                "ai",
+                "storefront_payments",
+                "report_exports",
+                "bulk_imports",
+                "saved_payment_methods"
+            ],
+            "x-enum-varnames": [
+                "CapabilityRazorpay",
+                "CapabilityGSTProvider",
+                "CapabilityEInvoice",
+                "CapabilityEWayBill",
+                "CapabilityWhatsApp",
+                "CapabilityEmail",
+                "CapabilityS3Uploads",
+                "CapabilityVoice",
+                "CapabilityAI",
+                "CapabilityStorefrontPayments",
+                "CapabilityReportExports",
+                "CapabilityBulkImports",
+                "CapabilitySavedPayments"
+            ]
+        },
+        "services.CapabilityList": {
+            "type": "object",
+            "properties": {
+                "business_id": {
+                    "type": "string"
+                },
+                "capabilities": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/services.Capability"
+                    }
+                },
+                "evaluated_at": {
+                    "type": "string"
+                },
+                "platform": {
+                    "$ref": "#/definitions/services.CapabilityPlatform"
+                }
+            }
+        },
+        "services.CapabilityPermission": {
+            "type": "object",
+            "properties": {
+                "granted": {
+                    "type": "boolean"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "required": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "services.CapabilityPlatform": {
+            "type": "string",
+            "enum": [
+                "web",
+                "ios",
+                "android"
+            ],
+            "x-enum-varnames": [
+                "CapabilityPlatformWeb",
+                "CapabilityPlatformIOS",
+                "CapabilityPlatformAndroid"
+            ]
+        },
+        "services.CapabilityPlatformFact": {
+            "type": "object",
+            "properties": {
+                "requested": {
+                    "$ref": "#/definitions/services.CapabilityPlatform"
+                },
+                "supported": {
+                    "type": "boolean"
+                },
+                "supported_platforms": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/services.CapabilityPlatform"
+                    }
+                }
+            }
+        },
+        "services.CapabilityProductSupport": {
+            "type": "object",
+            "properties": {
+                "supported": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "services.CapabilityProviderHealth": {
+            "type": "object",
+            "properties": {
+                "observed_at": {
+                    "type": "string"
+                },
+                "stale": {
+                    "type": "boolean"
+                },
+                "status": {
+                    "$ref": "#/definitions/services.CapabilityProviderStatus"
+                }
+            }
+        },
+        "services.CapabilityProviderStatus": {
+            "type": "string",
+            "enum": [
+                "unknown",
+                "healthy",
+                "degraded",
+                "unavailable"
+            ],
+            "x-enum-varnames": [
+                "CapabilityProviderUnknown",
+                "CapabilityProviderHealthy",
+                "CapabilityProviderDegraded",
+                "CapabilityProviderUnavailable"
+            ]
+        },
+        "services.CapabilityQuota": {
+            "type": "object",
+            "properties": {
+                "available": {
+                    "type": "boolean"
+                },
+                "limit": {
+                    "type": "integer"
+                },
+                "limited": {
+                    "type": "boolean"
+                },
+                "remaining": {
+                    "type": "integer"
+                },
+                "used": {
+                    "type": "integer"
+                }
+            }
+        },
+        "services.CapabilitySetup": {
+            "type": "object",
+            "properties": {
+                "complete": {
+                    "type": "boolean"
+                },
+                "required": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "services.CapabilityState": {
+            "type": "string",
+            "enum": [
+                "available",
+                "setup_required",
+                "upgrade_required",
+                "quota_exhausted",
+                "permission_denied",
+                "temporarily_unavailable",
+                "unsupported_platform",
+                "unsupported",
+                "unknown"
+            ],
+            "x-enum-varnames": [
+                "CapabilityStateAvailable",
+                "CapabilityStateSetupRequired",
+                "CapabilityStateUpgradeRequired",
+                "CapabilityStateQuotaExhausted",
+                "CapabilityStatePermissionDenied",
+                "CapabilityStateTemporarilyUnavailable",
+                "CapabilityStateUnsupportedPlatform",
+                "CapabilityStateUnsupported",
+                "CapabilityStateUnknown"
+            ]
         },
         "services.ChangePasswordInput": {
             "type": "object",

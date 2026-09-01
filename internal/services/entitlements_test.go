@@ -164,6 +164,34 @@ func TestEntitlementServiceDowngradeUsesCurrentCatalogLimit(t *testing.T) {
 	require.Equal(t, limit+25, quotaErr.Used)
 }
 
+func TestEntitlementServiceInspectFeatureReportsCurrentQuotaWithoutReserving(t *testing.T) {
+	db := newEntitlementsTestDB(t)
+	seedActiveSubscription(t, db, "biz-1", "starter", "pro", nil)
+	service := NewEntitlementService(&config.Config{}, db, postgresrepo.NewSubscriptionRepository(db), logger.New())
+	limit := subscriptionPlanForCode("pro").Quotas[QuotaEInvoiceMonthly]
+	require.NoError(t, db.Exec(
+		"INSERT INTO subscription_quota_usage (business_id, feature_key, period_start, used_value) VALUES (?, ?, ?, ?)",
+		"biz-1", FeatureEInvoice, currentQuotaPeriodStart(time.Now().UTC()), limit-1,
+	).Error)
+
+	access, err := service.InspectFeature(context.Background(), "biz-1", FeatureEInvoice)
+	require.NoError(t, err)
+	require.True(t, access.Required)
+	require.True(t, access.Entitled)
+	require.True(t, access.Quota.Limited)
+	require.True(t, access.Quota.Available)
+	require.Equal(t, int64(1), access.Quota.Remaining)
+
+	access, err = service.InspectFeature(context.Background(), "biz-1", FeatureEInvoice)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), access.Quota.Remaining, "inspection must not reserve quota")
+
+	access, err = service.InspectFeature(context.Background(), "missing-business", FeatureEInvoice)
+	require.NoError(t, err)
+	require.False(t, access.Entitled)
+	require.False(t, access.Quota.Available)
+}
+
 func TestEntitlementReservationRollsBackWithGovernedWrite(t *testing.T) {
 	db := newEntitlementsTestDB(t)
 	seedActiveSubscription(t, db, "biz-1", "starter", "pro", nil)

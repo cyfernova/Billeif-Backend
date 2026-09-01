@@ -35,6 +35,20 @@ type PlanEntitlements struct {
 	POSEnabled      bool   `json:"pos_enabled"`
 }
 
+type CapabilityQuota struct {
+	Limited   bool  `json:"limited"`
+	Limit     int64 `json:"limit"`
+	Used      int64 `json:"used"`
+	Remaining int64 `json:"remaining"`
+	Available bool  `json:"available"`
+}
+
+type FeatureAccess struct {
+	Required bool            `json:"required"`
+	Entitled bool            `json:"entitled"`
+	Quota    CapabilityQuota `json:"quota"`
+}
+
 type FeatureUnavailableError struct {
 	Code    string `json:"code"`
 	Feature string `json:"feature"`
@@ -83,6 +97,49 @@ func (s *EntitlementService) ResolveByBusiness(ctx context.Context, businessID s
 		return PlanEntitlements{}, err
 	}
 	return entitlementsForPlan(subscriptionPlanForSubscription(subscription, time.Now().UTC())), nil
+}
+
+// InspectFeature observes current catalog entitlement and quota usage without
+// reserving capacity. Mutations must still reserve through ReserveFeatureTx.
+func (s *EntitlementService) InspectFeature(ctx context.Context, businessID, feature string) (FeatureAccess, error) {
+	plan, err := s.resolvePlan(ctx, businessID)
+	if err != nil {
+		return FeatureAccess{}, err
+	}
+	access := FeatureAccess{Required: true, Entitled: plan.Features[feature]}
+	limit, limited := quotaLimitForFeature(plan, feature)
+	access.Quota = CapabilityQuota{Limited: limited, Limit: limit, Available: access.Entitled}
+	if !limited || !access.Entitled {
+		return access, nil
+	}
+	if s.db == nil {
+		return FeatureAccess{}, fmt.Errorf("quota database is required")
+	}
+	var usage models.SubscriptionQuotaUsage
+	err = s.db.WithContext(ctx).
+		Where("business_id = ? AND feature_key = ? AND period_start = ?", businessID, feature, currentQuotaPeriodStart(time.Now().UTC())).
+		First(&usage).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return FeatureAccess{}, err
+	}
+	access.Quota.Used = usage.UsedValue
+	access.Quota.Remaining = max(limit-usage.UsedValue, 0)
+	access.Quota.Available = usage.UsedValue < limit
+	return access, nil
+}
+
+func (s *EntitlementService) resolvePlan(ctx context.Context, businessID string) (SubscriptionPlan, error) {
+	if s.subscriptionRepo == nil {
+		return subscriptionPlanForCode("free"), nil
+	}
+	subscription, err := s.subscriptionRepo.GetByBusinessID(ctx, businessID)
+	if err != nil {
+		if isSubscriptionNotFoundError(err) {
+			return subscriptionPlanForCode("free"), nil
+		}
+		return SubscriptionPlan{}, err
+	}
+	return subscriptionPlanForSubscription(subscription, time.Now().UTC()), nil
 }
 
 func (s *EntitlementService) EnsureFeature(ctx context.Context, businessID, feature string) error {

@@ -59,6 +59,7 @@ type Handler struct {
 	WebSocket       *WebSocketHandler
 	WebSocketTicket *WebSocketTicketHandler
 	Notification    *NotificationHandler
+	Capability      *CapabilityHandler
 	LLM             *LLMHandler
 	SarvamTTS       *SarvamTTSHandler
 	VoiceSession    *VoiceSessionHandler
@@ -140,6 +141,7 @@ func New(
 		WebSocket:       NewWebSocketHandler(wsHub, svcs.WebSocketConnection, svcs.WebSocketTicket, log),
 		WebSocketTicket: NewWebSocketTicketHandler(svcs.WebSocketTicket, log),
 		Notification:    NewNotificationHandler(svcs.Notification, log),
+		Capability:      NewCapabilityHandler(svcs.Capability, log),
 		LLM:             NewLLMHandler(svcs.LLM, svcs.LLMChatHistory, log),
 		SarvamTTS:       NewSarvamTTSHandler(svcs.SarvamTTS, log),
 		VoiceSession:    NewVoiceSessionHandler(svcs.VoiceSession, log),
