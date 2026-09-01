@@ -24,6 +24,7 @@ func TestSubscriptionLifecycleMigrationExpandsAndClassifiesLegacyRows(t *testing
 		"ADD COLUMN IF NOT EXISTS reconciliation_code VARCHAR(80)",
 		"WHEN plan = 'free' THEN 'free'",
 		"ELSE 'legacy_one_time'",
+		"next_renewal_at = NULL",
 		"SET status = 'cancelled' WHERE status = 'canceled'",
 		"'pending_payment', 'active', 'renewal_pending', 'past_due', 'grace_period'",
 		"'cancellation_scheduled', 'cancelled', 'expired', 'suspended', 'reconciliation_required'",

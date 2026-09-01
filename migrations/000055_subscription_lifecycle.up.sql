@@ -26,10 +26,7 @@ SET billing_mode = CASE
     END,
     period_start = COALESCE(period_start, start_date),
     period_end = COALESCE(period_end, end_date),
-    next_renewal_at = CASE
-        WHEN plan = 'free' THEN NULL
-        ELSE COALESCE(next_renewal_at, next_billing_date)
-    END;
+    next_renewal_at = NULL;
 
 ALTER TABLE subscriptions DROP CONSTRAINT IF EXISTS subscriptions_status_check;
 UPDATE subscriptions SET status = 'cancelled' WHERE status = 'canceled';

@@ -582,6 +582,19 @@ func TestRazorpayPaymentWebhookDuplicateIgnored(t *testing.T) {
 	}
 }
 
+func TestSubscriptionProviderSettingsUsePublicCatalogPlanIDs(t *testing.T) {
+	service := &RazorpayPaymentService{cfg: &config.Config{Razorpay: config.RazorpayConfig{
+		Mode: "test", PlanProID: "plan_pro", PlanRiseID: "plan_rise", PlanBizID: "plan_biz",
+	}}}
+
+	settings, err := service.SubscriptionProviderSettings(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{
+		"pro_monthly": "plan_pro", "rise_monthly": "plan_rise", "biz_monthly": "plan_biz",
+	}, settings.ProviderPlanIDs)
+}
+
 func hmacHex(message, secret string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	_, _ = mac.Write([]byte(message))

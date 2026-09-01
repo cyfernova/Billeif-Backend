@@ -95,7 +95,14 @@ func (r *subscriptionLifecycleRepository) GetEventForUpdate(ctx context.Context,
 }
 
 func (r *subscriptionLifecycleRepository) CreateEvent(ctx context.Context, event *models.RazorpayWebhookEvent) error {
-	return r.db.WithContext(ctx).Create(event).Error
+	result := r.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(event)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return interfaces.ErrRazorpayEventAlreadyExists
+	}
+	return nil
 }
 
 func (r *subscriptionLifecycleRepository) SaveEvent(ctx context.Context, event *models.RazorpayWebhookEvent) error {
@@ -114,17 +121,17 @@ func (r *subscriptionLifecycleRepository) ListAuditRecords(ctx context.Context, 
 	return records, err
 }
 
-func (r *subscriptionLifecycleRepository) ListReconciliationDue(ctx context.Context, limit int) ([]models.Subscription, error) {
+func (r *subscriptionLifecycleRepository) ListReconciliationDue(ctx context.Context, providerMode string, limit int) ([]models.Subscription, error) {
 	var records []models.Subscription
-	err := r.db.WithContext(ctx).Where("status = ? AND provider_subscription_id <> '' AND deleted_at IS NULL", models.SubscriptionStatusReconciliationRequired).
+	err := r.db.WithContext(ctx).Where("provider_mode = ? AND status = ? AND provider_subscription_id <> '' AND deleted_at IS NULL", providerMode, models.SubscriptionStatusReconciliationRequired).
 		Order("updated_at ASC").Limit(limit).Find(&records).Error
 	return records, err
 }
 
-func (r *subscriptionLifecycleRepository) ListGraceDue(ctx context.Context, before time.Time, limit int) ([]models.Subscription, error) {
+func (r *subscriptionLifecycleRepository) ListGraceDue(ctx context.Context, providerMode string, before time.Time, limit int) ([]models.Subscription, error) {
 	var records []models.Subscription
-	err := r.db.WithContext(ctx).Where("status IN ? AND grace_deadline IS NOT NULL AND grace_deadline <= ? AND deleted_at IS NULL",
-		[]string{models.SubscriptionStatusPastDue, models.SubscriptionStatusGracePeriod}, before.UTC()).
+	err := r.db.WithContext(ctx).Where("provider_mode = ? AND status IN ? AND grace_deadline IS NOT NULL AND grace_deadline <= ? AND deleted_at IS NULL",
+		providerMode, []string{models.SubscriptionStatusPastDue, models.SubscriptionStatusGracePeriod}, before.UTC()).
 		Order("grace_deadline ASC").Limit(limit).Find(&records).Error
 	return records, err
 }

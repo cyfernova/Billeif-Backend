@@ -12,6 +12,7 @@ var (
 	ErrSubscriptionLifecycleNotFound = errors.New("subscription lifecycle not found")
 	ErrSubscriptionCommandNotFound   = errors.New("subscription command not found")
 	ErrRazorpayEventNotFound         = errors.New("Razorpay event not found")
+	ErrRazorpayEventAlreadyExists    = errors.New("Razorpay event already exists")
 )
 
 type SubscriptionLifecycleRepository interface {
@@ -30,6 +31,6 @@ type SubscriptionLifecycleRepository interface {
 	SaveEvent(ctx context.Context, event *models.RazorpayWebhookEvent) error
 	ListBillingRecords(ctx context.Context, businessID string, limit int) ([]models.SubscriptionBillingRecord, error)
 	ListAuditRecords(ctx context.Context, businessID string, limit int) ([]models.SubscriptionAuditRecord, error)
-	ListReconciliationDue(ctx context.Context, limit int) ([]models.Subscription, error)
-	ListGraceDue(ctx context.Context, before time.Time, limit int) ([]models.Subscription, error)
+	ListReconciliationDue(ctx context.Context, providerMode string, limit int) ([]models.Subscription, error)
+	ListGraceDue(ctx context.Context, providerMode string, before time.Time, limit int) ([]models.Subscription, error)
 }

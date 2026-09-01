@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"invoice-backend/internal/models"
@@ -67,6 +68,7 @@ type SubscriptionLifecycleService struct {
 	provider   SubscriptionProvider
 	config     SubscriptionLifecycleConfig
 	log        *logger.Logger
+	eventLocks [64]sync.Mutex
 }
 
 type StartRenewableSubscriptionInput struct {
@@ -178,7 +180,7 @@ func (s *SubscriptionLifecycleService) RunMaintenance(ctx context.Context, limit
 	if err != nil {
 		return result, fmt.Errorf("subscription maintenance configuration unavailable")
 	}
-	due, err := s.repository.ListReconciliationDue(ctx, limit)
+	due, err := s.repository.ListReconciliationDue(ctx, settings.ProviderMode, limit)
 	if err != nil {
 		return result, fmt.Errorf("subscription reconciliation query failed")
 	}
@@ -194,7 +196,7 @@ func (s *SubscriptionLifecycleService) RunMaintenance(ctx context.Context, limit
 		}
 		result.Reconciled++
 	}
-	graceDue, err := s.repository.ListGraceDue(ctx, s.config.Now().UTC(), limit)
+	graceDue, err := s.repository.ListGraceDue(ctx, settings.ProviderMode, s.config.Now().UTC(), limit)
 	if err != nil {
 		return result, fmt.Errorf("subscription grace query failed")
 	}
@@ -472,6 +474,8 @@ func (s *SubscriptionLifecycleService) HandleWebhook(
 	if providerEventID == "" {
 		return nil, fmt.Errorf("missing Razorpay event identity")
 	}
+	unlockEvent := s.lockEventIdentity(settings.ProviderMode, providerEventID)
+	defer unlockEvent()
 	if strings.TrimSpace(settings.WebhookSecret) == "" || !razorpay.VerifyRazorpayWebhook(rawBody, signature, settings.WebhookSecret) {
 		unverifiedIdentity := "unverified:" + sha256Hex([]byte(providerEventID))
 		_ = s.repository.Transaction(ctx, func(tx interfaces.SubscriptionLifecycleRepository) error {
@@ -522,33 +526,7 @@ func (s *SubscriptionLifecycleService) HandleWebhook(
 	err = s.repository.Transaction(ctx, func(tx interfaces.SubscriptionLifecycleRepository) error {
 		existing, findErr := tx.GetEventForUpdate(ctx, settings.ProviderMode, providerEventID)
 		if findErr == nil {
-			result.Status = existing.ProcessingStatus
-			result.Code = existing.SanitizedErrorCode
-			result.Duplicate = true
-			existing.ReplayCount++
-			existing.LastReplayedAt = &receivedAt
-			if existing.PayloadHash != payloadHash {
-				existing.ProcessingStatus = "reconciliation_required"
-				existing.SanitizedErrorCode = "replay_payload_mismatch"
-				result.Status = existing.ProcessingStatus
-				result.Code = existing.SanitizedErrorCode
-				domainErr = ErrSubscriptionProviderUnknown
-				if existing.BusinessID != "" {
-					current, loadErr := tx.GetByBusinessIDForUpdate(ctx, existing.BusinessID)
-					if loadErr == nil {
-						fromStatus := current.Status
-						current.Status = models.SubscriptionStatusReconciliationRequired
-						current.ReconciliationCode = existing.SanitizedErrorCode
-						if saveErr := tx.SaveSubscription(ctx, current); saveErr != nil {
-							return saveErr
-						}
-						if auditErr := tx.CreateAudit(ctx, lifecycleAudit(current, "provider_event_replay_mismatch", fromStatus, current.Status, existing.SanitizedErrorCode, providerEventID, receivedAt)); auditErr != nil {
-							return auditErr
-						}
-					}
-				}
-			}
-			return tx.SaveEvent(ctx, existing)
+			return s.recordSubscriptionEventReplayTx(ctx, tx, existing, payloadHash, providerEventID, receivedAt, result, &domainErr)
 		}
 		if !errors.Is(findErr, interfaces.ErrRazorpayEventNotFound) {
 			return findErr
@@ -637,10 +615,64 @@ func (s *SubscriptionLifecycleService) HandleWebhook(
 		result.Status, result.Code = inbox.ProcessingStatus, inbox.SanitizedErrorCode
 		return tx.SaveEvent(ctx, inbox)
 	})
+	if errors.Is(err, interfaces.ErrRazorpayEventAlreadyExists) {
+		err = s.repository.Transaction(ctx, func(tx interfaces.SubscriptionLifecycleRepository) error {
+			existing, findErr := tx.GetEventForUpdate(ctx, settings.ProviderMode, providerEventID)
+			if findErr != nil {
+				return findErr
+			}
+			return s.recordSubscriptionEventReplayTx(ctx, tx, existing, payloadHash, providerEventID, receivedAt, result, &domainErr)
+		})
+	}
 	if err != nil {
 		return nil, err
 	}
 	return result, domainErr
+}
+
+func (s *SubscriptionLifecycleService) lockEventIdentity(providerMode, providerEventID string) func() {
+	digest := sha256.Sum256([]byte(providerMode + "\x00" + providerEventID))
+	lock := &s.eventLocks[int(digest[0])%len(s.eventLocks)]
+	lock.Lock()
+	return lock.Unlock
+}
+
+func (s *SubscriptionLifecycleService) recordSubscriptionEventReplayTx(
+	ctx context.Context,
+	tx interfaces.SubscriptionLifecycleRepository,
+	existing *models.RazorpayWebhookEvent,
+	payloadHash, providerEventID string,
+	receivedAt time.Time,
+	result *SubscriptionWebhookResult,
+	domainErr *error,
+) error {
+	result.Status = existing.ProcessingStatus
+	result.Code = existing.SanitizedErrorCode
+	result.Duplicate = true
+	existing.ReplayCount++
+	existing.LastReplayedAt = &receivedAt
+	if existing.PayloadHash != payloadHash {
+		existing.ProcessingStatus = "reconciliation_required"
+		existing.SanitizedErrorCode = "replay_payload_mismatch"
+		result.Status = existing.ProcessingStatus
+		result.Code = existing.SanitizedErrorCode
+		*domainErr = ErrSubscriptionProviderUnknown
+		if existing.BusinessID != "" {
+			current, loadErr := tx.GetByBusinessIDForUpdate(ctx, existing.BusinessID)
+			if loadErr == nil {
+				fromStatus := current.Status
+				current.Status = models.SubscriptionStatusReconciliationRequired
+				current.ReconciliationCode = existing.SanitizedErrorCode
+				if saveErr := tx.SaveSubscription(ctx, current); saveErr != nil {
+					return saveErr
+				}
+				if auditErr := tx.CreateAudit(ctx, lifecycleAudit(current, "provider_event_replay_mismatch", fromStatus, current.Status, existing.SanitizedErrorCode, providerEventID, receivedAt)); auditErr != nil {
+					return auditErr
+				}
+			}
+		}
+	}
+	return tx.SaveEvent(ctx, existing)
 }
 
 func (s *SubscriptionLifecycleService) SchedulePlanChange(
@@ -819,7 +851,7 @@ func (s *SubscriptionLifecycleService) ScheduleCancellation(
 		return nil, ErrSubscriptionProviderUnknown
 	}
 	if strings.EqualFold(cancelled.Status, "cancelled") {
-		_ = s.repository.Transaction(ctx, func(tx interfaces.SubscriptionLifecycleRepository) error {
+		persistErr := s.repository.Transaction(ctx, func(tx interfaces.SubscriptionLifecycleRepository) error {
 			current, err := tx.GetByBusinessIDForUpdate(ctx, businessID)
 			if err != nil {
 				return err
@@ -830,6 +862,10 @@ func (s *SubscriptionLifecycleService) ScheduleCancellation(
 			current.CancelledAt = &cancelledAt
 			return tx.SaveSubscription(ctx, current)
 		})
+		if persistErr != nil {
+			_ = s.markCommandUnknown(ctx, aggregate, actorUserID, subscriptionCommandCancellation, idempotencyKey, "cancellation_persistence_unknown", now)
+			return nil, ErrSubscriptionProviderUnknown
+		}
 		aggregate.Status = models.SubscriptionStatusCancelled
 		aggregate.CancelAtPeriodEnd = false
 		aggregate.CancelledAt = firstTime(&now)

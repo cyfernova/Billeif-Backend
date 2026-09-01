@@ -54,7 +54,9 @@ func TestSubscriptionMaintenanceRepairsMissingChargeAndExpiresGraceWithoutDeleti
 	periodStart := now.Add(-37 * 24 * time.Hour)
 	periodEnd := now.Add(-7 * 24 * time.Hour)
 	businessReconcile, businessGrace := uuid.NewString(), uuid.NewString()
+	businessLiveReconcile, businessLiveGrace := uuid.NewString(), uuid.NewString()
 	reconcileID, graceID := uuid.NewString(), uuid.NewString()
+	liveReconcileID, liveGraceID := uuid.NewString(), uuid.NewString()
 	reconcile := models.Subscription{
 		ID: reconcileID, BusinessID: businessReconcile, Plan: "starter", PlanCode: "pro", CatalogVersion: CurrentSubscriptionCatalogVersion,
 		Status: models.SubscriptionStatusReconciliationRequired, BillingMode: models.SubscriptionBillingModeRenewable,
@@ -69,8 +71,16 @@ func TestSubscriptionMaintenanceRepairsMissingChargeAndExpiresGraceWithoutDeleti
 		ProviderMode: models.ProviderModeTest, ProviderSubscriptionID: "sub_grace_fixture", ProviderPlanID: "plan_pro_test_01",
 		PeriodStart: &periodStart, PeriodEnd: &periodEnd, GraceDeadline: &graceDeadline, StartDate: periodStart, EndDate: &periodEnd, LifecycleVersion: 1,
 	}
+	liveReconcile := reconcile
+	liveReconcile.ID, liveReconcile.BusinessID = liveReconcileID, businessLiveReconcile
+	liveReconcile.ProviderMode, liveReconcile.ProviderSubscriptionID = models.ProviderModeLive, "sub_live_reconcile_fixture"
+	liveGrace := grace
+	liveGrace.ID, liveGrace.BusinessID = liveGraceID, businessLiveGrace
+	liveGrace.ProviderMode, liveGrace.ProviderSubscriptionID = models.ProviderModeLive, "sub_live_grace_fixture"
 	require.NoError(t, db.Create(&reconcile).Error)
 	require.NoError(t, db.Create(&grace).Error)
+	require.NoError(t, db.Create(&liveReconcile).Error)
+	require.NoError(t, db.Create(&liveGrace).Error)
 	newStart, newEnd := periodEnd, periodEnd.Add(30*24*time.Hour)
 	provider := &fakeSubscriptionProvider{fetchResult: &razorpay.Subscription{
 		ID: "sub_reconcile_fixture", PlanID: "plan_pro_test_01", CustomerID: "cust_fixture", Status: "active",
@@ -92,6 +102,11 @@ func TestSubscriptionMaintenanceRepairsMissingChargeAndExpiresGraceWithoutDeleti
 	require.Equal(t, newStart, *repaired.PeriodStart)
 	require.NoError(t, db.First(&suspended, "id = ?", graceID).Error)
 	require.Equal(t, models.SubscriptionStatusSuspended, suspended.Status)
+	var untouchedLiveReconcile, untouchedLiveGrace models.Subscription
+	require.NoError(t, db.First(&untouchedLiveReconcile, "id = ?", liveReconcileID).Error)
+	require.NoError(t, db.First(&untouchedLiveGrace, "id = ?", liveGraceID).Error)
+	require.Equal(t, models.SubscriptionStatusReconciliationRequired, untouchedLiveReconcile.Status)
+	require.Equal(t, models.SubscriptionStatusGracePeriod, untouchedLiveGrace.Status)
 	var billing []models.SubscriptionBillingRecord
 	require.NoError(t, db.Where("subscription_id = ?", reconcileID).Find(&billing).Error)
 	require.Len(t, billing, 1)
@@ -224,6 +239,59 @@ func TestSignedSubscriptionChargedActivatesOnceAndReplayReturnsPriorOutcome(t *t
 	require.NotNil(t, inbox.LastReplayedAt)
 }
 
+func TestConcurrentFirstDeliveryAppliesSubscriptionEventExactlyOnce(t *testing.T) {
+	db := newSubscriptionLifecycleTestDB(t)
+	businessID, localID := uuid.NewString(), uuid.NewString()
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	require.NoError(t, db.Create(&models.Subscription{
+		ID: localID, BusinessID: businessID, Plan: "free", PlanCode: "free",
+		CatalogVersion: CurrentSubscriptionCatalogVersion, Status: models.SubscriptionStatusPendingPayment,
+		BillingMode: models.SubscriptionBillingModeRenewable, ProviderMode: models.ProviderModeTest,
+		ProviderSubscriptionID: "sub_concurrent_fixture", ProviderPlanID: "plan_pro_test_01",
+		PendingPlanID: "pro_monthly", PendingProviderPlanID: "plan_pro_test_01",
+		StartDate: now, LifecycleVersion: 1,
+	}).Error)
+	service := NewSubscriptionLifecycleService(postgresrepo.NewSubscriptionLifecycleRepository(db), &fakeSubscriptionProvider{}, SubscriptionLifecycleConfig{
+		ProviderMode: models.ProviderModeTest, WebhookSecret: "webhook-secret",
+		ProviderPlanIDs: map[string]string{"pro_monthly": "plan_pro_test_01"},
+		Now:             func() time.Time { return now },
+	}, logger.New())
+	raw := []byte(`{"event":"subscription.charged","created_at":1788264000,"payload":{"subscription":{"entity":{"id":"sub_concurrent_fixture","plan_id":"plan_pro_test_01","status":"active","current_start":1788264000,"current_end":1790856000,"paid_count":1,"notes":{"business_id":"` + businessID + `","subscription_id":"` + localID + `","plan_id":"pro_monthly","provider_mode":"test"}}},"payment":{"entity":{"id":"pay_concurrent_fixture","amount":29900,"currency":"INR","status":"captured","captured":true}}}}`)
+	signature := hmacHex(string(raw), "webhook-secret")
+
+	const deliveries = 8
+	start := make(chan struct{})
+	type outcome struct {
+		result *SubscriptionWebhookResult
+		err    error
+	}
+	outcomes := make(chan outcome, deliveries)
+	for range deliveries {
+		go func() {
+			<-start
+			result, err := service.HandleWebhook(context.Background(), signature, "event-concurrent-fixture", raw)
+			outcomes <- outcome{result: result, err: err}
+		}()
+	}
+	close(start)
+	firstCount := 0
+	for range deliveries {
+		observed := <-outcomes
+		require.NoError(t, observed.err)
+		require.NotNil(t, observed.result)
+		if !observed.result.Duplicate {
+			firstCount++
+		}
+	}
+	require.Equal(t, 1, firstCount)
+	var billingCount int64
+	require.NoError(t, db.Model(&models.SubscriptionBillingRecord{}).Count(&billingCount).Error)
+	require.EqualValues(t, 1, billingCount)
+	var inbox models.RazorpayWebhookEvent
+	require.NoError(t, db.First(&inbox).Error)
+	require.Equal(t, deliveries-1, inbox.ReplayCount)
+}
+
 func TestConcurrentPlanChangeAndCancellationSerializesAtNoProrationBoundary(t *testing.T) {
 	db := newSubscriptionLifecycleTestDB(t)
 	businessID := uuid.NewString()
@@ -283,6 +351,42 @@ func TestConcurrentPlanChangeAndCancellationSerializesAtNoProrationBoundary(t *t
 	require.Equal(t, "rise_monthly", stored.PendingPlanID)
 	require.Equal(t, periodEnd, *stored.PendingPlanEffectiveAt)
 	require.False(t, stored.CancelAtPeriodEnd)
+}
+
+func TestImmediateProviderCancellationPersistenceFailureRequiresReconciliation(t *testing.T) {
+	db := newSubscriptionLifecycleTestDB(t)
+	now := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	periodStart, periodEnd := now.AddDate(0, 0, -9), now.AddDate(0, 1, -9)
+	businessID, localID := uuid.NewString(), uuid.NewString()
+	require.NoError(t, db.Create(&models.Subscription{
+		ID: localID, BusinessID: businessID, Plan: "starter", PlanCode: "pro",
+		CatalogVersion: CurrentSubscriptionCatalogVersion, Status: models.SubscriptionStatusActive,
+		BillingMode: models.SubscriptionBillingModeRenewable, ProviderMode: models.ProviderModeTest,
+		ProviderSubscriptionID: "sub_internal_fixture", ProviderPlanID: "plan_pro_test_01",
+		PeriodStart: &periodStart, PeriodEnd: &periodEnd, StartDate: periodStart, LifecycleVersion: 1,
+	}).Error)
+	require.NoError(t, db.Exec(`CREATE TRIGGER reject_cancelled_subscription
+		BEFORE UPDATE OF status ON subscriptions
+		WHEN NEW.status = 'cancelled'
+		BEGIN SELECT RAISE(FAIL, 'fixture cancellation persistence failure'); END`).Error)
+	provider := &fakeSubscriptionProvider{cancelResult: &razorpay.Subscription{
+		ID: "sub_internal_fixture", Status: "cancelled",
+	}}
+	service := NewSubscriptionLifecycleService(postgresrepo.NewSubscriptionLifecycleRepository(db), provider, SubscriptionLifecycleConfig{
+		ProviderMode:    models.ProviderModeTest,
+		ProviderPlanIDs: map[string]string{"pro_monthly": "plan_pro_test_01"},
+		Now:             func() time.Time { return now },
+	}, logger.New())
+
+	_, err := service.ScheduleCancellation(context.Background(), businessID, "user-a", ScheduleSubscriptionCancellationInput{
+		IdempotencyKey: "cancel-persistence-failure",
+	})
+
+	require.ErrorIs(t, err, ErrSubscriptionProviderUnknown)
+	var stored models.Subscription
+	require.NoError(t, db.First(&stored, "id = ?", localID).Error)
+	require.Equal(t, models.SubscriptionStatusReconciliationRequired, stored.Status)
+	require.Equal(t, "cancellation_persistence_unknown", stored.ReconciliationCode)
 }
 
 func TestSubscriptionWebhookRejectsInvalidSignatureWrongModeAndWrongPlanWithoutEntitlement(t *testing.T) {

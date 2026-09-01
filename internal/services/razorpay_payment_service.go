@@ -132,9 +132,9 @@ func (s *RazorpayPaymentService) SubscriptionProviderSettings(ctx context.Contex
 	return SubscriptionProviderSettings{
 		ProviderMode: strings.ToLower(strings.TrimSpace(resolved.Razorpay.Mode)),
 		ProviderPlanIDs: map[string]string{
-			"pro":  strings.TrimSpace(resolved.Razorpay.PlanProID),
-			"rise": strings.TrimSpace(resolved.Razorpay.PlanRiseID),
-			"biz":  strings.TrimSpace(resolved.Razorpay.PlanBizID),
+			"pro_monthly":  strings.TrimSpace(resolved.Razorpay.PlanProID),
+			"rise_monthly": strings.TrimSpace(resolved.Razorpay.PlanRiseID),
+			"biz_monthly":  strings.TrimSpace(resolved.Razorpay.PlanBizID),
 		},
 		WebhookSecret: resolved.Razorpay.WebhookSecret,
 	}, nil
