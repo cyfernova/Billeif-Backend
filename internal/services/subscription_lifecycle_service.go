@@ -20,6 +20,8 @@ import (
 
 const (
 	defaultRazorpaySubscriptionCycles int64 = 1200
+	defaultMaintenanceRunTimeout            = 45 * time.Second
+	defaultProviderFetchTimeout             = 3 * time.Second
 	subscriptionCommandStart                = "start_renewable"
 	subscriptionCommandPlanChange           = "schedule_plan_change"
 	subscriptionCommandCancellation         = "schedule_cancellation"
@@ -28,8 +30,11 @@ const (
 var (
 	ErrSubscriptionIdempotencyConflict = errors.New("subscription idempotency key conflict")
 	ErrSubscriptionProviderUnknown     = errors.New("subscription provider outcome requires reconciliation")
+	ErrSubscriptionProviderRejected    = errors.New("subscription provider rejected the mutation")
 	ErrSubscriptionLifecycleConflict   = errors.New("subscription lifecycle conflict")
 	ErrSubscriptionUnavailable         = errors.New("subscription lifecycle is unavailable")
+	ErrSubscriptionInternal            = errors.New("subscription lifecycle internal failure")
+	ErrSubscriptionWebhookRejected     = errors.New("subscription webhook was rejected")
 )
 
 type SubscriptionProvider interface {
@@ -40,13 +45,15 @@ type SubscriptionProvider interface {
 }
 
 type SubscriptionLifecycleConfig struct {
-	ProviderMode    string
-	ProviderPlanIDs map[string]string
-	WebhookSecret   string
-	TotalCount      int64
-	GracePeriod     time.Duration
-	Now             func() time.Time
-	Resolve         func(context.Context) (SubscriptionProviderSettings, error)
+	ProviderMode          string
+	ProviderPlanIDs       map[string]string
+	WebhookSecret         string
+	TotalCount            int64
+	GracePeriod           time.Duration
+	MaintenanceRunTimeout time.Duration
+	ProviderFetchTimeout  time.Duration
+	Now                   func() time.Time
+	Resolve               func(context.Context) (SubscriptionProviderSettings, error)
 }
 
 type SubscriptionProviderSettings struct {
@@ -129,6 +136,12 @@ func NewSubscriptionLifecycleService(
 	if config.GracePeriod <= 0 {
 		config.GracePeriod = 7 * 24 * time.Hour
 	}
+	if config.MaintenanceRunTimeout <= 0 {
+		config.MaintenanceRunTimeout = defaultMaintenanceRunTimeout
+	}
+	if config.ProviderFetchTimeout <= 0 {
+		config.ProviderFetchTimeout = defaultProviderFetchTimeout
+	}
 	if config.Now == nil {
 		config.Now = time.Now
 	}
@@ -147,7 +160,7 @@ func (s *SubscriptionLifecycleService) BillingHistory(ctx context.Context, busin
 	}
 	records, err := s.repository.ListBillingRecords(ctx, businessID, limit)
 	if err != nil {
-		return nil, err
+		return nil, ErrSubscriptionInternal
 	}
 	return &SubscriptionBillingHistoryResponse{Records: records}, nil
 }
@@ -161,7 +174,7 @@ func (s *SubscriptionLifecycleService) AuditHistory(ctx context.Context, busines
 	}
 	records, err := s.repository.ListAuditRecords(ctx, businessID, limit)
 	if err != nil {
-		return nil, err
+		return nil, ErrSubscriptionInternal
 	}
 	return &SubscriptionAuditHistoryResponse{Records: records}, nil
 }
@@ -176,32 +189,50 @@ func (s *SubscriptionLifecycleService) RunMaintenance(ctx context.Context, limit
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
-	settings, err := s.settings(ctx)
+	runCtx, cancelRun := context.WithTimeout(ctx, s.config.MaintenanceRunTimeout)
+	defer cancelRun()
+	settings, err := s.settings(runCtx)
 	if err != nil {
 		return result, fmt.Errorf("subscription maintenance configuration unavailable")
 	}
-	due, err := s.repository.ListReconciliationDue(ctx, settings.ProviderMode, limit)
+	due, err := s.repository.ListReconciliationDue(runCtx, settings.ProviderMode, limit)
 	if err != nil {
 		return result, fmt.Errorf("subscription reconciliation query failed")
 	}
 	for i := range due {
-		providerState, fetchErr := s.provider.FetchSubscription(ctx, due[i].ProviderSubscriptionID)
+		if runCtx.Err() != nil {
+			result.Failed += len(due) - i
+			break
+		}
+		fetchCtx, cancelFetch := context.WithTimeout(runCtx, s.config.ProviderFetchTimeout)
+		providerState, fetchErr := s.provider.FetchSubscription(fetchCtx, due[i].ProviderSubscriptionID)
+		cancelFetch()
 		if fetchErr != nil || providerState == nil {
 			result.Failed++
 			continue
 		}
-		if err := s.reconcileProviderState(ctx, due[i].BusinessID, providerState, settings); err != nil {
+		if err := s.reconcileProviderState(runCtx, due[i].BusinessID, providerState, settings); err != nil {
 			result.Failed++
 			continue
 		}
 		result.Reconciled++
 	}
-	graceDue, err := s.repository.ListGraceDue(ctx, settings.ProviderMode, s.config.Now().UTC(), limit)
+	remaining := limit - len(due)
+	if remaining == 0 {
+		if result.Failed > 0 {
+			return result, fmt.Errorf("subscription maintenance incomplete")
+		}
+		return result, nil
+	}
+	if runCtx.Err() != nil {
+		return result, fmt.Errorf("subscription maintenance incomplete")
+	}
+	graceDue, err := s.repository.ListGraceDue(runCtx, settings.ProviderMode, s.config.Now().UTC(), remaining)
 	if err != nil {
 		return result, fmt.Errorf("subscription grace query failed")
 	}
 	for i := range graceDue {
-		if err := s.suspendExpiredGrace(ctx, graceDue[i].BusinessID); err != nil {
+		if err := s.suspendExpiredGrace(runCtx, graceDue[i].BusinessID); err != nil {
 			result.Failed++
 			continue
 		}
@@ -239,6 +270,9 @@ func (s *SubscriptionLifecycleService) reconcileProviderState(
 			}
 			start := time.Unix(providerState.CurrentStart, 0).UTC()
 			end := time.Unix(providerState.CurrentEnd, 0).UTC()
+			if validatePaidPeriodAdvance(current, providerState, start) != "" {
+				return ErrSubscriptionProviderUnknown
+			}
 			applyPlanToAggregate(current, plan)
 			current.Status = models.SubscriptionStatusActive
 			current.ProviderPlanID = providerState.PlanID
@@ -321,21 +355,25 @@ func (s *SubscriptionLifecycleService) StartRenewable(
 	now := s.config.Now().UTC()
 	requestHash := subscriptionCommandHash(businessID, actorUserID, subscriptionCommandStart, idempotencyKey, plan.ID)
 	var aggregate *models.Subscription
+	var previous *models.Subscription
 	var replay bool
+	var replayResponse *SubscriptionCheckoutResponse
 	err = s.repository.Transaction(ctx, func(tx interfaces.SubscriptionLifecycleRepository) error {
 		command, commandErr := tx.GetCommandForUpdate(ctx, businessID, actorUserID, subscriptionCommandStart, idempotencyKey)
 		if commandErr == nil {
 			if command.RequestHash != requestHash {
 				return ErrSubscriptionIdempotencyConflict
 			}
+			if command.Status == "rejected" {
+				return ErrSubscriptionProviderRejected
+			}
 			if command.Status != "completed" {
 				return ErrSubscriptionProviderUnknown
 			}
-			current, err := tx.GetByBusinessIDForUpdate(ctx, businessID)
-			if err != nil {
-				return err
+			replayResponse = checkoutResponseFromCommand(command)
+			if replayResponse.Status == "" || replayResponse.BillingMode == "" || replayResponse.PendingPlanID == "" {
+				return ErrSubscriptionProviderUnknown
 			}
-			aggregate = current
 			replay = true
 			return nil
 		}
@@ -354,6 +392,7 @@ func (s *SubscriptionLifecycleService) StartRenewable(
 				subscriptionHasCurrentPaidAccess(current, now) && normalizePlanCode(current.Plan, current.PlanCode) != "free" {
 				return ErrSubscriptionLifecycleConflict
 			}
+			previous = cloneSubscription(current)
 			aggregate = current
 		case errors.Is(currentErr, interfaces.ErrSubscriptionLifecycleNotFound):
 			free := subscriptionPlanForCode("free")
@@ -405,13 +444,7 @@ func (s *SubscriptionLifecycleService) StartRenewable(
 		return nil, err
 	}
 	if replay {
-		providerSubscription, fetchErr := s.provider.FetchSubscription(ctx, aggregate.ProviderSubscriptionID)
-		if fetchErr != nil {
-			return &SubscriptionCheckoutResponse{
-				SubscriptionID: aggregate.ID, Status: aggregate.Status, BillingMode: aggregate.BillingMode, PendingPlanID: aggregate.PendingPlanID,
-			}, nil
-		}
-		return checkoutResponse(aggregate, providerSubscription.ShortURL), nil
+		return replayResponse, nil
 	}
 
 	created, createErr := s.provider.CreateSubscription(ctx, razorpay.SubscriptionCreateParams{
@@ -420,7 +453,17 @@ func (s *SubscriptionLifecycleService) StartRenewable(
 			"business_id": businessID, "subscription_id": aggregate.ID, "plan_id": plan.ID, "provider_mode": settings.ProviderMode,
 		},
 	})
-	if createErr != nil || created == nil || strings.TrimSpace(created.ID) == "" || created.PlanID != providerPlanID {
+	if createErr != nil {
+		if providerMutationRejected(createErr) {
+			if rejectErr := s.rejectProviderMutation(ctx, aggregate, previous, actorUserID, subscriptionCommandStart, idempotencyKey, requestHash, "provider_create_rejected", now); rejectErr != nil {
+				return nil, ErrSubscriptionInternal
+			}
+			return nil, ErrSubscriptionProviderRejected
+		}
+		_ = s.markUnknownProviderOutcome(ctx, aggregate.ID, businessID, actorUserID, idempotencyKey, now, "provider_create_unknown")
+		return nil, ErrSubscriptionProviderUnknown
+	}
+	if created == nil || strings.TrimSpace(created.ID) == "" || created.PlanID != providerPlanID {
 		_ = s.markUnknownProviderOutcome(ctx, aggregate.ID, businessID, actorUserID, idempotencyKey, now, "provider_create_unknown")
 		return nil, ErrSubscriptionProviderUnknown
 	}
@@ -444,6 +487,10 @@ func (s *SubscriptionLifecycleService) StartRenewable(
 		}
 		completed := s.config.Now().UTC()
 		command.Status = "completed"
+		command.ResponseStatus = models.SubscriptionStatusPendingPayment
+		command.ResponseBillingMode = models.SubscriptionBillingModeRenewable
+		command.ResponsePendingPlanID = plan.ID
+		command.ResponseAuthorizationURL = created.ShortURL
 		command.CompletedAt = &completed
 		if err := tx.SaveCommand(ctx, command); err != nil {
 			return err
@@ -549,7 +596,7 @@ func (s *SubscriptionLifecycleService) HandleWebhook(
 			inbox.ProcessingStatus = "rejected"
 			inbox.SanitizedErrorCode = "unsupported_subscription_event"
 			result.Status, result.Code = inbox.ProcessingStatus, inbox.SanitizedErrorCode
-			domainErr = fmt.Errorf("unsupported subscription event")
+			domainErr = ErrSubscriptionWebhookRejected
 			return tx.SaveEvent(ctx, inbox)
 		}
 
@@ -570,7 +617,7 @@ func (s *SubscriptionLifecycleService) HandleWebhook(
 		}
 		inbox.BusinessID = aggregate.BusinessID
 		inbox.SubscriptionID = aggregate.ID
-		if code := s.validateProviderSubscriptionMetadata(aggregate, &providerSubscription, settings); code != "" {
+		if code := s.validateProviderSubscriptionIdentity(aggregate, &providerSubscription, settings); code != "" {
 			fromStatus := aggregate.Status
 			aggregate.Status = models.SubscriptionStatusReconciliationRequired
 			aggregate.ReconciliationCode = code
@@ -592,6 +639,22 @@ func (s *SubscriptionLifecycleService) HandleWebhook(
 			result.Status, result.Code = inbox.ProcessingStatus, inbox.SanitizedErrorCode
 			now := s.config.Now().UTC()
 			inbox.ProcessedAt = &now
+			return tx.SaveEvent(ctx, inbox)
+		}
+		if code := validateProviderSubscriptionPlan(aggregate, &providerSubscription); code != "" {
+			fromStatus := aggregate.Status
+			aggregate.Status = models.SubscriptionStatusReconciliationRequired
+			aggregate.ReconciliationCode = code
+			if err := tx.SaveSubscription(ctx, aggregate); err != nil {
+				return err
+			}
+			inbox.ProcessingStatus = "reconciliation_required"
+			inbox.SanitizedErrorCode = code
+			result.Status, result.Code = inbox.ProcessingStatus, inbox.SanitizedErrorCode
+			domainErr = ErrSubscriptionProviderUnknown
+			if err := tx.CreateAudit(ctx, lifecycleAudit(aggregate, "provider_event_rejected", fromStatus, aggregate.Status, code, providerEventID, providerOccurredAt)); err != nil {
+				return err
+			}
 			return tx.SaveEvent(ctx, inbox)
 		}
 
@@ -674,6 +737,7 @@ func (s *SubscriptionLifecycleService) recordSubscriptionEventReplayTx(
 	result.Status = existing.ProcessingStatus
 	result.Code = existing.SanitizedErrorCode
 	result.Duplicate = true
+	*domainErr = subscriptionWebhookDomainError(existing.ProcessingStatus)
 	existing.ReplayCount++
 	existing.LastReplayedAt = &receivedAt
 	if existing.PayloadHash != payloadHash {
@@ -698,6 +762,17 @@ func (s *SubscriptionLifecycleService) recordSubscriptionEventReplayTx(
 		}
 	}
 	return tx.SaveEvent(ctx, existing)
+}
+
+func subscriptionWebhookDomainError(processingStatus string) error {
+	switch processingStatus {
+	case "reconciliation_required":
+		return ErrSubscriptionProviderUnknown
+	case "rejected":
+		return ErrSubscriptionWebhookRejected
+	default:
+		return nil
+	}
 }
 
 func (s *SubscriptionLifecycleService) SchedulePlanChange(
@@ -725,12 +800,16 @@ func (s *SubscriptionLifecycleService) SchedulePlanChange(
 	now := s.config.Now().UTC()
 	requestHash := subscriptionCommandHash(businessID, actorUserID, subscriptionCommandPlanChange, idempotencyKey, targetPlanID)
 	var aggregate *models.Subscription
+	var previous *models.Subscription
 	var replay bool
 	err = s.repository.Transaction(ctx, func(tx interfaces.SubscriptionLifecycleRepository) error {
 		command, commandErr := tx.GetCommandForUpdate(ctx, businessID, actorUserID, subscriptionCommandPlanChange, idempotencyKey)
 		if commandErr == nil {
 			if command.RequestHash != requestHash {
 				return ErrSubscriptionIdempotencyConflict
+			}
+			if command.Status == "rejected" {
+				return ErrSubscriptionProviderRejected
 			}
 			if command.Status != "completed" {
 				return ErrSubscriptionProviderUnknown
@@ -752,6 +831,7 @@ func (s *SubscriptionLifecycleService) SchedulePlanChange(
 			return ErrSubscriptionLifecycleConflict
 		}
 		fromStatus := current.Status
+		previous = cloneSubscription(current)
 		current.PendingPlanID = targetPlan.ID
 		current.PendingProviderPlanID = providerPlanID
 		effectiveAt := current.PeriodEnd.UTC()
@@ -785,7 +865,17 @@ func (s *SubscriptionLifecycleService) SchedulePlanChange(
 	updated, providerErr := s.provider.UpdateSubscription(ctx, aggregate.ProviderSubscriptionID, razorpay.SubscriptionUpdateParams{
 		PlanID: providerPlanID, ScheduleChangeAt: "cycle_end", CustomerNotify: false,
 	})
-	if providerErr != nil || updated == nil || updated.ID != aggregate.ProviderSubscriptionID ||
+	if providerErr != nil {
+		if providerMutationRejected(providerErr) {
+			if rejectErr := s.rejectProviderMutation(ctx, aggregate, previous, actorUserID, subscriptionCommandPlanChange, idempotencyKey, requestHash, "plan_change_provider_rejected", now); rejectErr != nil {
+				return nil, ErrSubscriptionInternal
+			}
+			return nil, ErrSubscriptionProviderRejected
+		}
+		_ = s.markCommandUnknown(ctx, aggregate, actorUserID, subscriptionCommandPlanChange, idempotencyKey, "plan_change_provider_unknown", now)
+		return nil, ErrSubscriptionProviderUnknown
+	}
+	if updated == nil || updated.ID != aggregate.ProviderSubscriptionID ||
 		!updated.HasScheduledChanges || updated.ScheduleChangeAt != "cycle_end" {
 		_ = s.markCommandUnknown(ctx, aggregate, actorUserID, subscriptionCommandPlanChange, idempotencyKey, "plan_change_provider_unknown", now)
 		return nil, ErrSubscriptionProviderUnknown
@@ -814,12 +904,16 @@ func (s *SubscriptionLifecycleService) ScheduleCancellation(
 	now := s.config.Now().UTC()
 	requestHash := subscriptionCommandHash(businessID, actorUserID, subscriptionCommandCancellation, idempotencyKey)
 	var aggregate *models.Subscription
+	var previous *models.Subscription
 	var replay bool
 	err = s.repository.Transaction(ctx, func(tx interfaces.SubscriptionLifecycleRepository) error {
 		command, commandErr := tx.GetCommandForUpdate(ctx, businessID, actorUserID, subscriptionCommandCancellation, idempotencyKey)
 		if commandErr == nil {
 			if command.RequestHash != requestHash {
 				return ErrSubscriptionIdempotencyConflict
+			}
+			if command.Status == "rejected" {
+				return ErrSubscriptionProviderRejected
 			}
 			if command.Status != "completed" {
 				return ErrSubscriptionProviderUnknown
@@ -841,6 +935,7 @@ func (s *SubscriptionLifecycleService) ScheduleCancellation(
 			return ErrSubscriptionLifecycleConflict
 		}
 		fromStatus := current.Status
+		previous = cloneSubscription(current)
 		effectiveAt := current.PeriodEnd.UTC()
 		current.Status = models.SubscriptionStatusCancellationScheduled
 		current.CancelAtPeriodEnd = true
@@ -871,7 +966,17 @@ func (s *SubscriptionLifecycleService) ScheduleCancellation(
 		return mutationResponse(aggregate), nil
 	}
 	cancelled, providerErr := s.provider.CancelSubscription(ctx, aggregate.ProviderSubscriptionID, razorpay.SubscriptionCancelParams{CancelAtCycleEnd: true})
-	if providerErr != nil || cancelled == nil || cancelled.ID != aggregate.ProviderSubscriptionID {
+	if providerErr != nil {
+		if providerMutationRejected(providerErr) {
+			if rejectErr := s.rejectProviderMutation(ctx, aggregate, previous, actorUserID, subscriptionCommandCancellation, idempotencyKey, requestHash, "cancellation_provider_rejected", now); rejectErr != nil {
+				return nil, ErrSubscriptionInternal
+			}
+			return nil, ErrSubscriptionProviderRejected
+		}
+		_ = s.markCommandUnknown(ctx, aggregate, actorUserID, subscriptionCommandCancellation, idempotencyKey, "cancellation_provider_unknown", now)
+		return nil, ErrSubscriptionProviderUnknown
+	}
+	if cancelled == nil || cancelled.ID != aggregate.ProviderSubscriptionID {
 		_ = s.markCommandUnknown(ctx, aggregate, actorUserID, subscriptionCommandCancellation, idempotencyKey, "cancellation_provider_unknown", now)
 		return nil, ErrSubscriptionProviderUnknown
 	}
@@ -975,6 +1080,69 @@ func (s *SubscriptionLifecycleService) markCommandUnknown(
 	})
 }
 
+func (s *SubscriptionLifecycleService) rejectProviderMutation(
+	ctx context.Context,
+	aggregate, previous *models.Subscription,
+	actorUserID, action, idempotencyKey, requestHash, code string,
+	occurredAt time.Time,
+) error {
+	return s.repository.Transaction(ctx, func(tx interfaces.SubscriptionLifecycleRepository) error {
+		current, err := tx.GetByBusinessIDForUpdate(ctx, aggregate.BusinessID)
+		if err != nil || current.ID != aggregate.ID {
+			return firstError(err, ErrSubscriptionLifecycleConflict)
+		}
+		fromStatus := current.Status
+		fromPlan := currentCatalogPlanID(current)
+		providerMode := current.ProviderMode
+		restored := current
+		if previous != nil {
+			restored = cloneSubscription(previous)
+			restored.LifecycleVersion = current.LifecycleVersion
+		} else {
+			resetSubscriptionForRenewableRestart(restored, occurredAt)
+			restored.Status = models.SubscriptionStatusActive
+			restored.BillingMode = models.SubscriptionBillingModeFree
+		}
+		if err := tx.SaveSubscription(ctx, restored); err != nil {
+			return err
+		}
+		command, err := tx.GetCommandForUpdate(ctx, aggregate.BusinessID, actorUserID, action, idempotencyKey)
+		if err != nil || command.RequestHash != requestHash || command.Status != "initializing" {
+			return firstError(err, ErrSubscriptionLifecycleConflict)
+		}
+		completedAt := occurredAt.UTC()
+		command.Status = "rejected"
+		command.SanitizedErrorCode = code
+		command.CompletedAt = &completedAt
+		if err := tx.SaveCommand(ctx, command); err != nil {
+			return err
+		}
+		return tx.CreateAudit(ctx, &models.SubscriptionAuditRecord{
+			ID: uuid.NewString(), BusinessID: restored.BusinessID, SubscriptionID: restored.ID, ActorUserID: actorUserID,
+			Action: action + "_rejected", FromStatus: fromStatus, ToStatus: restored.Status,
+			FromPlanID: fromPlan, ToPlanID: currentCatalogPlanID(restored), ProviderMode: providerMode,
+			SanitizedCode: code, OccurredAt: completedAt,
+		})
+	})
+}
+
+func providerMutationRejected(err error) bool {
+	var providerStatus interface{ HTTPStatusCode() int }
+	if !errors.As(err, &providerStatus) {
+		return false
+	}
+	status := providerStatus.HTTPStatusCode()
+	return status >= 400 && status < 500
+}
+
+func cloneSubscription(subscription *models.Subscription) *models.Subscription {
+	if subscription == nil {
+		return nil
+	}
+	clone := *subscription
+	return &clone
+}
+
 func mutationResponse(subscription *models.Subscription) *SubscriptionMutationResponse {
 	return &SubscriptionMutationResponse{
 		SubscriptionID: subscription.ID, Status: subscription.Status, PlanID: currentCatalogPlanID(subscription),
@@ -995,6 +1163,13 @@ func firstTime(values ...*time.Time) *time.Time {
 }
 
 func (s *SubscriptionLifecycleService) validateProviderSubscriptionMetadata(aggregate *models.Subscription, provider *razorpay.Subscription, settings SubscriptionProviderSettings) string {
+	if code := s.validateProviderSubscriptionIdentity(aggregate, provider, settings); code != "" {
+		return code
+	}
+	return validateProviderSubscriptionPlan(aggregate, provider)
+}
+
+func (s *SubscriptionLifecycleService) validateProviderSubscriptionIdentity(aggregate *models.Subscription, provider *razorpay.Subscription, settings SubscriptionProviderSettings) string {
 	if aggregate == nil || provider == nil || aggregate.ProviderMode != settings.ProviderMode {
 		return "provider_mode_mismatch"
 	}
@@ -1007,8 +1182,23 @@ func (s *SubscriptionLifecycleService) validateProviderSubscriptionMetadata(aggr
 	if provider.Notes["business_id"] != aggregate.BusinessID || provider.Notes["subscription_id"] != aggregate.ID {
 		return "tenant_metadata_mismatch"
 	}
+	return ""
+}
+
+func validateProviderSubscriptionPlan(aggregate *models.Subscription, provider *razorpay.Subscription) string {
 	if provider.PlanID != aggregate.ProviderPlanID && provider.PlanID != aggregate.PendingProviderPlanID {
 		return "provider_plan_mismatch"
+	}
+	return ""
+}
+
+func validatePaidPeriodAdvance(aggregate *models.Subscription, provider *razorpay.Subscription, start time.Time) string {
+	if aggregate.LastProviderPaidCount > 0 && aggregate.PendingProviderPlanID == provider.PlanID &&
+		(aggregate.PendingPlanEffectiveAt == nil || !start.Equal(aggregate.PendingPlanEffectiveAt.UTC())) {
+		return "pending_plan_boundary_mismatch"
+	}
+	if aggregate.LastProviderPaidCount > 0 && aggregate.PeriodEnd != nil && !start.Equal(aggregate.PeriodEnd.UTC()) {
+		return "provider_period_not_monotonic"
 	}
 	return ""
 }
@@ -1054,12 +1244,8 @@ func (s *SubscriptionLifecycleService) applySubscriptionEventTx(
 		}
 		start := time.Unix(providerSubscription.CurrentStart, 0).UTC()
 		end := time.Unix(providerSubscription.CurrentEnd, 0).UTC()
-		if aggregate.PendingProviderPlanID == providerSubscription.PlanID &&
-			(aggregate.PendingPlanEffectiveAt == nil || !start.Equal(aggregate.PendingPlanEffectiveAt.UTC())) {
-			return "pending_plan_boundary_mismatch", ErrSubscriptionProviderUnknown
-		}
-		if aggregate.LastProviderPaidCount > 0 && aggregate.PeriodEnd != nil && !start.Equal(aggregate.PeriodEnd.UTC()) {
-			return "provider_period_not_monotonic", ErrSubscriptionProviderUnknown
+		if code := validatePaidPeriodAdvance(aggregate, &providerSubscription, start); code != "" {
+			return code, ErrSubscriptionProviderUnknown
 		}
 		next := end
 		applyPlanToAggregate(aggregate, plan)
@@ -1248,6 +1434,13 @@ func checkoutResponse(subscription *models.Subscription, authorizationURL string
 	return &SubscriptionCheckoutResponse{
 		SubscriptionID: subscription.ID, Status: subscription.Status, BillingMode: subscription.BillingMode,
 		PendingPlanID: subscription.PendingPlanID, AuthorizationURL: authorizationURL,
+	}
+}
+
+func checkoutResponseFromCommand(command *models.SubscriptionCommand) *SubscriptionCheckoutResponse {
+	return &SubscriptionCheckoutResponse{
+		SubscriptionID: command.SubscriptionID, Status: command.ResponseStatus, BillingMode: command.ResponseBillingMode,
+		PendingPlanID: command.ResponsePendingPlanID, AuthorizationURL: command.ResponseAuthorizationURL,
 	}
 }
 

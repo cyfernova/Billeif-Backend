@@ -123,18 +123,22 @@ type SubscriptionAuditRecord struct {
 func (SubscriptionAuditRecord) TableName() string { return "subscription_audit_records" }
 
 type SubscriptionCommand struct {
-	ID                 string     `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"-"`
-	BusinessID         string     `gorm:"not null;type:uuid;index" json:"-"`
-	SubscriptionID     string     `gorm:"type:uuid;index" json:"-"`
-	ActorUserID        string     `gorm:"not null;size:120" json:"-"`
-	Action             string     `gorm:"not null;size:80" json:"-"`
-	IdempotencyKey     string     `gorm:"not null;size:180" json:"-"`
-	RequestHash        string     `gorm:"not null;size:64" json:"-"`
-	Status             string     `gorm:"not null;size:32" json:"-"`
-	SanitizedErrorCode string     `gorm:"size:80" json:"-"`
-	CreatedAt          time.Time  `gorm:"autoCreateTime" json:"-"`
-	UpdatedAt          time.Time  `gorm:"autoUpdateTime" json:"-"`
-	CompletedAt        *time.Time `json:"-"`
+	ID                       string     `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"-"`
+	BusinessID               string     `gorm:"not null;type:uuid;index" json:"-"`
+	SubscriptionID           string     `gorm:"type:uuid;index" json:"-"`
+	ActorUserID              string     `gorm:"not null;size:120" json:"-"`
+	Action                   string     `gorm:"not null;size:80" json:"-"`
+	IdempotencyKey           string     `gorm:"not null;size:180" json:"-"`
+	RequestHash              string     `gorm:"not null;size:64" json:"-"`
+	Status                   string     `gorm:"not null;size:32" json:"-"`
+	SanitizedErrorCode       string     `gorm:"size:80" json:"-"`
+	ResponseStatus           string     `gorm:"size:32" json:"-"`
+	ResponseBillingMode      string     `gorm:"size:32" json:"-"`
+	ResponsePendingPlanID    string     `gorm:"size:80" json:"-"`
+	ResponseAuthorizationURL string     `gorm:"type:text" json:"-"`
+	CreatedAt                time.Time  `gorm:"autoCreateTime" json:"-"`
+	UpdatedAt                time.Time  `gorm:"autoUpdateTime" json:"-"`
+	CompletedAt              *time.Time `json:"-"`
 }
 
 func (SubscriptionCommand) TableName() string { return "subscription_commands" }

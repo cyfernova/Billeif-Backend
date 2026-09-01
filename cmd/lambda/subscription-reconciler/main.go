@@ -24,7 +24,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 )
 
-const subscriptionMaintenanceLimit = 50
+const (
+	subscriptionMaintenanceLimit      = 50
+	subscriptionMaintenanceRunTimeout = 50 * time.Second
+)
 
 type subscriptionMaintenanceRunner interface {
 	RunMaintenance(context.Context, int) (services.SubscriptionMaintenanceResult, error)
@@ -33,6 +36,7 @@ type subscriptionMaintenanceRunner interface {
 type lambdaHandler struct {
 	runner       subscriptionMaintenanceRunner
 	limit        int
+	runTimeout   time.Duration
 	metricWriter io.Writer
 	environment  string
 	now          func() time.Time
@@ -47,7 +51,13 @@ func (h lambdaHandler) Handle(ctx context.Context) (services.SubscriptionMainten
 		return services.SubscriptionMaintenanceResult{}, errors.New("Lambda request ID is required")
 	}
 	ctx = services.ContextWithActor(ctx, services.ActorContext{RequestID: lambdaContext.AwsRequestID})
-	result, runErr := h.runner.RunMaintenance(ctx, h.limit)
+	runTimeout := h.runTimeout
+	if runTimeout <= 0 {
+		runTimeout = subscriptionMaintenanceRunTimeout
+	}
+	runCtx, cancelRun := context.WithTimeout(ctx, runTimeout)
+	defer cancelRun()
+	result, runErr := h.runner.RunMaintenance(runCtx, h.limit)
 	if h.metricWriter == nil {
 		return result, runErr
 	}
@@ -95,7 +105,7 @@ func newSubscriptionMaintenanceHandler(ctx context.Context) (*lambdaHandler, err
 	}
 	provider := services.NewRazorpayPaymentService(cfg, db, log, resolver)
 	runner := services.NewSubscriptionLifecycleService(postgresrepo.NewSubscriptionLifecycleRepository(db), provider, services.SubscriptionLifecycleConfig{Resolve: provider.SubscriptionProviderSettings}, log)
-	return &lambdaHandler{runner: runner, limit: subscriptionMaintenanceLimit, metricWriter: os.Stdout, environment: cfg.Environment, now: time.Now}, nil
+	return &lambdaHandler{runner: runner, limit: subscriptionMaintenanceLimit, runTimeout: subscriptionMaintenanceRunTimeout, metricWriter: os.Stdout, environment: cfg.Environment, now: time.Now}, nil
 }
 
 var initOnce sync.Once

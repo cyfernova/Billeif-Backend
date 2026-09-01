@@ -49,6 +49,7 @@ func subscriptionAPIError(code, message string) SubscriptionAPIError {
 // @Success 200 {object} services.SubscriptionCheckoutResponse
 // @Failure 400 {object} SubscriptionAPIError
 // @Failure 409 {object} SubscriptionAPIError
+// @Failure 422 {object} SubscriptionAPIError
 // @Failure 503 {object} SubscriptionAPIError
 // @Router /subscriptions/checkout [post]
 func (h *SubscriptionHandler) Checkout(c *gin.Context) {
@@ -83,6 +84,7 @@ func (h *SubscriptionHandler) Checkout(c *gin.Context) {
 // @Success 200 {object} services.SubscriptionMutationResponse
 // @Failure 400 {object} SubscriptionAPIError
 // @Failure 409 {object} SubscriptionAPIError
+// @Failure 422 {object} SubscriptionAPIError
 // @Failure 503 {object} SubscriptionAPIError
 // @Router /subscriptions/plan-change [post]
 func (h *SubscriptionHandler) ChangePlan(c *gin.Context) {
@@ -117,6 +119,7 @@ func (h *SubscriptionHandler) ChangePlan(c *gin.Context) {
 // @Success 200 {object} services.SubscriptionMutationResponse
 // @Failure 400 {object} SubscriptionAPIError
 // @Failure 409 {object} SubscriptionAPIError
+// @Failure 422 {object} SubscriptionAPIError
 // @Failure 503 {object} SubscriptionAPIError
 // @Router /subscriptions/cancellation [post]
 func (h *SubscriptionHandler) Cancel(c *gin.Context) {
@@ -146,8 +149,11 @@ func (h *SubscriptionHandler) Cancel(c *gin.Context) {
 // @Tags Subscriptions
 // @Security BearerAuth
 // @Produce json
+// @Param limit query int false "Maximum records" default(50) minimum(1) maximum(100)
 // @Success 200 {object} services.SubscriptionBillingHistoryResponse
+// @Failure 400 {object} SubscriptionAPIError
 // @Failure 500 {object} SubscriptionAPIError
+// @Failure 503 {object} SubscriptionAPIError
 // @Router /subscriptions/billing-history [get]
 func (h *SubscriptionHandler) BillingHistory(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
@@ -158,7 +164,11 @@ func (h *SubscriptionHandler) BillingHistory(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, subscriptionAPIError("subscription_unavailable", "subscription service is temporarily unavailable"))
 		return
 	}
-	limit, _ := strconv.Atoi(c.Query("limit"))
+	limit, ok := subscriptionHistoryLimit(c.Query("limit"))
+	if !ok {
+		c.JSON(http.StatusBadRequest, subscriptionAPIError("subscription_invalid_limit", "subscription history limit must be between 1 and 100"))
+		return
+	}
 	response, err := h.lifecycle.BillingHistory(c.Request.Context(), businessID, limit)
 	if err != nil {
 		writeSubscriptionLifecycleError(c, err)
@@ -172,8 +182,11 @@ func (h *SubscriptionHandler) BillingHistory(c *gin.Context) {
 // @Tags Subscriptions
 // @Security BearerAuth
 // @Produce json
+// @Param limit query int false "Maximum records" default(50) minimum(1) maximum(100)
 // @Success 200 {object} services.SubscriptionAuditHistoryResponse
+// @Failure 400 {object} SubscriptionAPIError
 // @Failure 500 {object} SubscriptionAPIError
+// @Failure 503 {object} SubscriptionAPIError
 // @Router /subscriptions/audit [get]
 func (h *SubscriptionHandler) AuditHistory(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
@@ -184,7 +197,11 @@ func (h *SubscriptionHandler) AuditHistory(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, subscriptionAPIError("subscription_unavailable", "subscription service is temporarily unavailable"))
 		return
 	}
-	limit, _ := strconv.Atoi(c.Query("limit"))
+	limit, ok := subscriptionHistoryLimit(c.Query("limit"))
+	if !ok {
+		c.JSON(http.StatusBadRequest, subscriptionAPIError("subscription_invalid_limit", "subscription history limit must be between 1 and 100"))
+		return
+	}
 	response, err := h.lifecycle.AuditHistory(c.Request.Context(), businessID, limit)
 	if err != nil {
 		writeSubscriptionLifecycleError(c, err)
@@ -193,14 +210,29 @@ func (h *SubscriptionHandler) AuditHistory(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
+func subscriptionHistoryLimit(raw string) (int, bool) {
+	if raw == "" {
+		return 50, true
+	}
+	limit, err := strconv.Atoi(raw)
+	if err != nil || limit < 1 || limit > 100 {
+		return 0, false
+	}
+	return limit, true
+}
+
 func writeSubscriptionLifecycleError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, services.ErrSubscriptionIdempotencyConflict), errors.Is(err, services.ErrSubscriptionLifecycleConflict):
 		c.JSON(http.StatusConflict, subscriptionAPIError("subscription_conflict", "subscription request conflicts with current lifecycle state"))
+	case errors.Is(err, services.ErrSubscriptionProviderRejected):
+		c.JSON(http.StatusUnprocessableEntity, subscriptionAPIError("subscription_provider_rejected", "subscription provider rejected the request"))
 	case errors.Is(err, services.ErrSubscriptionProviderUnknown):
 		c.JSON(http.StatusServiceUnavailable, subscriptionAPIError("subscription_reconciliation_required", "subscription outcome requires reconciliation"))
 	case errors.Is(err, services.ErrSubscriptionUnavailable):
 		c.JSON(http.StatusServiceUnavailable, subscriptionAPIError("subscription_unavailable", "subscription service is temporarily unavailable"))
+	case errors.Is(err, services.ErrSubscriptionInternal):
+		c.JSON(http.StatusInternalServerError, subscriptionAPIError("subscription_internal_error", "subscription history could not be loaded"))
 	default:
 		c.JSON(http.StatusBadRequest, subscriptionAPIError("subscription_invalid_request", "subscription request could not be processed"))
 	}
