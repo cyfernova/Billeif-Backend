@@ -75,6 +75,8 @@ func TestSubscriptionLifecycleDownMigrationRestoresLegacyCompatibility(t *testin
 		"DROP TABLE IF EXISTS subscription_audit_records",
 		"DROP TABLE IF EXISTS subscription_billing_records",
 		"SET status = 'canceled' WHERE status = 'cancelled'",
+		"GROUP BY razorpay_event_id",
+		"HAVING COUNT(*) > 1",
 		"DROP COLUMN IF EXISTS provider_subscription_id",
 		"DROP COLUMN IF EXISTS billing_mode",
 	)

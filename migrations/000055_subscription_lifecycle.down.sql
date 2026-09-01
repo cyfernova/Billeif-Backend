@@ -13,8 +13,19 @@ ALTER TABLE razorpay_webhook_events
     DROP CONSTRAINT IF EXISTS razorpay_webhook_events_attempt_count_check,
     DROP CONSTRAINT IF EXISTS razorpay_webhook_events_processing_status_check,
     DROP CONSTRAINT IF EXISTS razorpay_webhook_events_provider_mode_check;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM razorpay_webhook_events
+        GROUP BY razorpay_event_id
+        HAVING COUNT(*) > 1
+    ) THEN
+        ALTER TABLE razorpay_webhook_events
+            ADD CONSTRAINT razorpay_webhook_events_razorpay_event_id_key UNIQUE (razorpay_event_id);
+    END IF;
+END $$;
 ALTER TABLE razorpay_webhook_events
-    ADD CONSTRAINT razorpay_webhook_events_razorpay_event_id_key UNIQUE (razorpay_event_id),
     DROP COLUMN IF EXISTS last_replayed_at,
     DROP COLUMN IF EXISTS replay_count,
     DROP COLUMN IF EXISTS subscription_id,
