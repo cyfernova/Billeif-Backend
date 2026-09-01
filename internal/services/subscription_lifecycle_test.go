@@ -480,6 +480,35 @@ func TestSubscriptionWebhookStaleFailureCannotRegressAndCancellationChargeRaceRe
 	}
 }
 
+func TestEqualTimestampChargedEventAdvancesPaidCountWithoutAllowingRegression(t *testing.T) {
+	db := newSubscriptionLifecycleTestDB(t)
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	businessID, localID := uuid.NewString(), uuid.NewString()
+	require.NoError(t, db.Create(&models.Subscription{
+		ID: localID, BusinessID: businessID, Plan: "free", PlanCode: "free",
+		CatalogVersion: CurrentSubscriptionCatalogVersion, Status: models.SubscriptionStatusRenewalPending,
+		BillingMode: models.SubscriptionBillingModeRenewable, ProviderMode: models.ProviderModeTest,
+		ProviderSubscriptionID: "sub_equal_time_fixture", ProviderPlanID: "plan_pro_test_01",
+		PendingPlanID: "pro_monthly", PendingProviderPlanID: "plan_pro_test_01",
+		StartDate: now, LastProviderEventAt: &now, LifecycleVersion: 1,
+	}).Error)
+	service := NewSubscriptionLifecycleService(postgresrepo.NewSubscriptionLifecycleRepository(db), &fakeSubscriptionProvider{}, SubscriptionLifecycleConfig{
+		ProviderMode: models.ProviderModeTest, WebhookSecret: "secret",
+		ProviderPlanIDs: map[string]string{"pro_monthly": "plan_pro_test_01"},
+		Now:             func() time.Time { return now },
+	}, logger.New())
+	raw := []byte(fmt.Sprintf(`{"event":"subscription.charged","created_at":%d,"payload":{"subscription":{"entity":{"id":"sub_equal_time_fixture","plan_id":"plan_pro_test_01","status":"active","current_start":%d,"current_end":%d,"paid_count":1,"notes":{"business_id":"%s","subscription_id":"%s","provider_mode":"test"}}},"payment":{"entity":{"id":"pay_equal_time_fixture","amount":29900,"currency":"INR","status":"captured","captured":true}}}}`, now.Unix(), now.Unix(), now.AddDate(0, 1, 0).Unix(), businessID, localID))
+
+	result, err := service.HandleWebhook(context.Background(), hmacHex(string(raw), "secret"), "event-equal-time-fixture", raw)
+
+	require.NoError(t, err)
+	require.Empty(t, result.Code)
+	var stored models.Subscription
+	require.NoError(t, db.First(&stored, "id = ?", localID).Error)
+	require.Equal(t, models.SubscriptionStatusActive, stored.Status)
+	require.EqualValues(t, 1, stored.LastProviderPaidCount)
+}
+
 func TestSubscriptionProviderTimeoutIsRecordedForReconciliationAndNeverBlindlyRetried(t *testing.T) {
 	db := newSubscriptionLifecycleTestDB(t)
 	businessID := uuid.NewString()

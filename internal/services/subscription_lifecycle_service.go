@@ -582,7 +582,7 @@ func (s *SubscriptionLifecycleService) HandleWebhook(
 			}
 			return tx.SaveEvent(ctx, inbox)
 		}
-		if aggregate.LastProviderEventAt != nil && !providerOccurredAt.After(aggregate.LastProviderEventAt.UTC()) {
+		if subscriptionEventIsStale(aggregate, event, providerOccurredAt) {
 			inbox.ProcessingStatus = "processed"
 			inbox.SanitizedErrorCode = "stale_event_ignored"
 			result.Status, result.Code = inbox.ProcessingStatus, inbox.SanitizedErrorCode
@@ -628,6 +628,27 @@ func (s *SubscriptionLifecycleService) HandleWebhook(
 		return nil, err
 	}
 	return result, domainErr
+}
+
+func subscriptionEventIsStale(aggregate *models.Subscription, event *razorpay.WebhookEvent, occurredAt time.Time) bool {
+	if aggregate == nil || event == nil || aggregate.LastProviderEventAt == nil {
+		return false
+	}
+	last := aggregate.LastProviderEventAt.UTC()
+	if occurredAt.Before(last) {
+		return true
+	}
+	if occurredAt.After(last) {
+		return false
+	}
+	switch event.Event {
+	case "subscription.charged":
+		return event.Payload.Subscription == nil || event.Payload.Subscription.Entity.PaidCount <= aggregate.LastProviderPaidCount
+	case "subscription.cancelled", "subscription.completed", "subscription.expired":
+		return false
+	default:
+		return true
+	}
 }
 
 func (s *SubscriptionLifecycleService) lockEventIdentity(providerMode, providerEventID string) func() {
