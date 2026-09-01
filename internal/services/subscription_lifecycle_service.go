@@ -1197,8 +1197,10 @@ func validatePaidPeriodAdvance(aggregate *models.Subscription, provider *razorpa
 		(aggregate.PendingPlanEffectiveAt == nil || !start.Equal(aggregate.PendingPlanEffectiveAt.UTC())) {
 		return "pending_plan_boundary_mismatch"
 	}
-	if aggregate.LastProviderPaidCount > 0 && aggregate.PeriodEnd != nil && !start.Equal(aggregate.PeriodEnd.UTC()) {
-		return "provider_period_not_monotonic"
+	if aggregate.LastProviderPaidCount > 0 {
+		if aggregate.PeriodEnd == nil || !start.Equal(aggregate.PeriodEnd.UTC()) {
+			return "provider_period_not_monotonic"
+		}
 	}
 	return ""
 }

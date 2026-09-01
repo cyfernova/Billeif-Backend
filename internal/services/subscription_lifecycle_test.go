@@ -618,6 +618,38 @@ func TestScheduledPlanChangeRequiresExactMonotonicProviderBoundary(t *testing.T)
 	require.Zero(t, billingCount)
 }
 
+func TestRenewalChargeRequiresStoredPriorPeriodBoundary(t *testing.T) {
+	db := newSubscriptionLifecycleTestDB(t)
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	businessID, localID := uuid.NewString(), uuid.NewString()
+	pro := subscriptionPlanForCode("pro")
+	require.NoError(t, db.Create(&models.Subscription{
+		ID: localID, BusinessID: businessID, Plan: pro.LegacyPlan, PlanCode: pro.PlanCode, CatalogVersion: CurrentSubscriptionCatalogVersion,
+		Status: models.SubscriptionStatusRenewalPending, BillingMode: models.SubscriptionBillingModeRenewable, ProviderMode: models.ProviderModeTest,
+		ProviderSubscriptionID: "sub_missing_boundary_fixture", ProviderPlanID: "plan_pro_test_01",
+		MaxInvoices: pro.Quotas[QuotaInvoices], MaxCustomers: pro.Quotas[QuotaCustomers], MaxUsers: pro.Quotas[QuotaUsers], MaxStorageMB: pro.Quotas[QuotaStorageMB],
+		StartDate: now.AddDate(0, -1, 0), LastProviderPaidCount: 1, LifecycleVersion: 1,
+	}).Error)
+	service := NewSubscriptionLifecycleService(postgresrepo.NewSubscriptionLifecycleRepository(db), &fakeSubscriptionProvider{}, SubscriptionLifecycleConfig{
+		ProviderMode: models.ProviderModeTest, WebhookSecret: "secret",
+		ProviderPlanIDs: map[string]string{"pro_monthly": "plan_pro_test_01"}, Now: func() time.Time { return now },
+	}, logger.New())
+	raw := []byte(fmt.Sprintf(`{"event":"subscription.charged","created_at":%d,"payload":{"subscription":{"entity":{"id":"sub_missing_boundary_fixture","plan_id":"plan_pro_test_01","status":"active","current_start":%d,"current_end":%d,"paid_count":2,"notes":{"business_id":"%s","subscription_id":"%s","provider_mode":"test"}}},"payment":{"entity":{"id":"pay_missing_boundary_fixture","amount":29900,"currency":"INR","status":"captured","captured":true}}}}`, now.Unix(), now.Unix(), now.AddDate(0, 1, 0).Unix(), businessID, localID))
+
+	result, err := service.HandleWebhook(context.Background(), hmacHex(string(raw), "secret"), "event-missing-boundary-fixture", raw)
+
+	require.ErrorIs(t, err, ErrSubscriptionProviderUnknown)
+	require.Equal(t, "provider_period_not_monotonic", result.Code)
+	var stored models.Subscription
+	require.NoError(t, db.First(&stored, "id = ?", localID).Error)
+	require.Equal(t, models.SubscriptionStatusReconciliationRequired, stored.Status)
+	require.EqualValues(t, 1, stored.LastProviderPaidCount)
+	require.Nil(t, stored.PeriodEnd)
+	var billingCount int64
+	require.NoError(t, db.Model(&models.SubscriptionBillingRecord{}).Count(&billingCount).Error)
+	require.Zero(t, billingCount)
+}
+
 func TestImmediateProviderCancellationCompletionFailureRollsBackWithoutReconciliation(t *testing.T) {
 	db := newSubscriptionLifecycleTestDB(t)
 	now := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
