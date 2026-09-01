@@ -31,6 +31,13 @@ const (
 	operationTypeNotification        = "notification"
 	operationTypeImport              = "import"
 	operationTypeVoiceReconciliation = "voice_reconciliation"
+
+	emailOperationTypeExpression = "CASE WHEN invoice_id IS NOT NULL AND render_job_id IS NOT NULL " +
+		"THEN 'invoice_delivery' ELSE 'email_delivery' END"
+	gstOperationTypeExpression = "CASE WHEN operation IN ('generate_ewaybill','update_eway_part_b','multi_vehicle','fetch_eway_pdf') " +
+		"THEN 'gst_ewaybill' ELSE 'gst_einvoice' END"
+	notificationOperationTypeExpression = "CASE WHEN channel = 'whatsapp' " +
+		"THEN 'whatsapp_delivery' ELSE 'notification' END"
 )
 
 type OperationRepository struct {
@@ -129,10 +136,13 @@ func (r *OperationRepository) ListOperationTimeline(
 	events := []interfaces.OperationTimelineRecord{{
 		Status: record.InternalStatus, Code: record.ErrorCode, OccurredAt: record.UpdatedAt,
 	}}
+	if limit == 1 {
+		return events, nil
+	}
 	var recoveries []models.OperationRecoveryCommand
 	if err := r.db.WithContext(ctx).
 		Where("business_id = ? AND operation_type = ? AND operation_id = ?", businessID, operationType, operationID).
-		Order("created_at ASC, id ASC").Limit(limit).Find(&recoveries).Error; err != nil {
+		Order("created_at DESC, id DESC").Limit(limit - 1).Find(&recoveries).Error; err != nil {
 		return nil, fmt.Errorf("list operation recovery timeline: %w", err)
 	}
 	for i := range recoveries {
@@ -140,9 +150,6 @@ func (r *OperationRepository) ListOperationTimeline(
 			Status: record.InternalStatus, Code: safeStoredOperationCode(recoveries[i].ResultCode),
 			OccurredAt: recoveries[i].CreatedAt,
 		})
-	}
-	if len(events) > limit {
-		events = events[len(events)-limit:]
 	}
 	return events, nil
 }
@@ -339,6 +346,11 @@ func (r *OperationRepository) listRenderOperations(
 ) ([]interfaces.OperationRecord, error) {
 	var rows []models.DocumentRenderJob
 	db := operationScope(r.db.WithContext(ctx).Model(&models.DocumentRenderJob{}), businessID, query, operationTypeInvoiceRender, true)
+	db = applyStoredOperationStatusFilter(db, "status", query.Statuses, map[string][]string{
+		"queued": {models.RenderJobStatusQueued}, "in_progress": {models.RenderJobStatusProcessing},
+		"succeeded": {models.RenderJobStatusCompleted, models.RenderJobStatusObsolete},
+		"failed":    {models.RenderJobStatusFailed},
+	})
 	if err := db.Order("updated_at DESC, id ASC").Limit(query.Limit).Find(&rows).Error; err != nil {
 		return nil, err
 	}
@@ -365,7 +377,23 @@ func (r *OperationRepository) listEmailOperations(
 ) ([]interfaces.OperationRecord, error) {
 	var rows []models.EmailDelivery
 	db := operationScope(r.db.WithContext(ctx).Model(&models.EmailDelivery{}), businessID, query, "", true)
-	if err := db.Order("updated_at DESC, id ASC").Limit(query.Limit * 2).Find(&rows).Error; err != nil {
+	db = applyCompositeOperationCursor(db, query, "updated_at", emailOperationTypeExpression)
+	db = applyStoredOperationStatusFilter(db, "status", query.Statuses, map[string][]string{
+		"queued":      {models.EmailDeliveryStatusWaitingForRender, models.EmailDeliveryStatusQueued},
+		"in_progress": {models.EmailDeliveryStatusProcessing},
+		"succeeded":   {models.EmailDeliveryStatusSent, models.EmailDeliveryStatusDelivered},
+		"failed":      {models.EmailDeliveryStatusFailed, models.EmailDeliveryStatusBounced, models.EmailDeliveryStatusComplained},
+	})
+	invoiceRequested := operationTypeRequested(query.Types, operationTypeInvoiceDelivery)
+	emailRequested := operationTypeRequested(query.Types, operationTypeEmailDelivery)
+	if invoiceRequested != emailRequested {
+		if invoiceRequested {
+			db = db.Where("invoice_id IS NOT NULL AND render_job_id IS NOT NULL")
+		} else {
+			db = db.Where("invoice_id IS NULL OR render_job_id IS NULL")
+		}
+	}
+	if err := db.Order("updated_at DESC, " + emailOperationTypeExpression + " ASC, id ASC").Limit(query.Limit).Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	records := make([]interfaces.OperationRecord, 0, len(rows))
@@ -400,6 +428,7 @@ func (r *OperationRepository) listOutboxOperations(
 ) ([]interfaces.OperationRecord, error) {
 	var rows []models.OutboxEvent
 	db := operationScope(r.db.WithContext(ctx).Model(&models.OutboxEvent{}), businessID, query, operationTypeOutbox, false)
+	db = applyOutboxOperationStatusFilter(db, query.Statuses, query.SnapshotAt)
 	if err := db.Order("created_at DESC, id ASC").Limit(query.Limit).Find(&rows).Error; err != nil {
 		return nil, err
 	}
@@ -433,8 +462,18 @@ func (r *OperationRepository) listRazorpayOperations(
 	ctx context.Context, businessID string, query interfaces.OperationRecordQuery,
 ) ([]interfaces.OperationRecord, error) {
 	var rows []models.RazorpayWebhookEvent
-	db := operationScope(r.db.WithContext(ctx).Model(&models.RazorpayWebhookEvent{}), businessID, query, operationTypeRazorpayWebhook, false)
-	if err := db.Order("received_at DESC, id ASC").Limit(query.Limit).Find(&rows).Error; err != nil {
+	timeExpression := "COALESCE(processed_at, received_at)"
+	db := operationScopeByColumn(
+		r.db.WithContext(ctx).Model(&models.RazorpayWebhookEvent{}), businessID, query,
+		operationTypeRazorpayWebhook, timeExpression,
+	)
+	db = applyStoredOperationStatusFilter(db, "processing_status", query.Statuses, map[string][]string{
+		"in_progress":             {"received", "processing"},
+		"succeeded":               {"processed"},
+		"failed":                  {"rejected"},
+		"reconciliation_required": {"reconciliation_required"},
+	})
+	if err := db.Order(timeExpression + " DESC, id ASC").Limit(query.Limit).Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	records := make([]interfaces.OperationRecord, 0, len(rows))
@@ -462,7 +501,28 @@ func (r *OperationRepository) listGSTOperations(
 ) ([]interfaces.OperationRecord, error) {
 	var rows []models.GSTSubmissionJob
 	db := operationScope(r.db.WithContext(ctx).Model(&models.GSTSubmissionJob{}), businessID, query, "", true)
-	if err := db.Order("updated_at DESC, id ASC").Limit(query.Limit * 2).Find(&rows).Error; err != nil {
+	db = applyCompositeOperationCursor(db, query, "updated_at", gstOperationTypeExpression)
+	db = applyStoredOperationStatusFilter(db, "status", query.Statuses, map[string][]string{
+		"queued":                  {models.GSTJobStatusQueued},
+		"in_progress":             {models.GSTJobStatusProcessing, models.GSTJobStatusRetrying},
+		"succeeded":               {models.GSTJobStatusSucceeded},
+		"failed":                  {models.GSTJobStatusFailed},
+		"reconciliation_required": {models.GSTJobStatusNeedsAttention},
+	})
+	eWayOperations := []string{
+		models.GSTOperationGenerateEWayBill, models.GSTOperationUpdateEWayPartB,
+		models.GSTOperationMultiVehicle, models.GSTOperationFetchEWayPDF,
+	}
+	eInvoiceRequested := operationTypeRequested(query.Types, operationTypeGSTEInvoice)
+	eWayRequested := operationTypeRequested(query.Types, operationTypeGSTEWayBill)
+	if eInvoiceRequested != eWayRequested {
+		if eWayRequested {
+			db = db.Where("operation IN ?", eWayOperations)
+		} else {
+			db = db.Where("operation NOT IN ?", eWayOperations)
+		}
+	}
+	if err := db.Order("updated_at DESC, " + gstOperationTypeExpression + " ASC, id ASC").Limit(query.Limit).Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	records := make([]interfaces.OperationRecord, 0, len(rows))
@@ -498,6 +558,7 @@ func (r *OperationRepository) listRecurringOperations(
 ) ([]interfaces.OperationRecord, error) {
 	var rows []models.InvoiceSubscriptionRun
 	db := operationScope(r.db.WithContext(ctx).Model(&models.InvoiceSubscriptionRun{}), businessID, query, operationTypeRecurringInvoice, true)
+	db = applyStoredOperationStatusFilter(db, "status", query.Statuses, genericOperationStatusValues())
 	if err := db.Order("updated_at DESC, id ASC").Limit(query.Limit).Find(&rows).Error; err != nil {
 		return nil, err
 	}
@@ -525,7 +586,18 @@ func (r *OperationRepository) listNotificationOperations(
 	if operationTypeRequested(query.Types, operationTypeWhatsAppDelivery) || operationTypeRequested(query.Types, operationTypeNotification) {
 		var deliveries []models.NotificationDelivery
 		db := operationScope(r.db.WithContext(ctx).Model(&models.NotificationDelivery{}), businessID, query, "", true)
-		if err := db.Order("updated_at DESC, id ASC").Limit(query.Limit * 2).Find(&deliveries).Error; err != nil {
+		db = applyCompositeOperationCursor(db, query, "updated_at", notificationOperationTypeExpression)
+		db = applyStoredOperationStatusFilter(db, "status", query.Statuses, genericOperationStatusValues())
+		whatsAppRequested := operationTypeRequested(query.Types, operationTypeWhatsAppDelivery)
+		notificationRequested := operationTypeRequested(query.Types, operationTypeNotification)
+		if whatsAppRequested != notificationRequested {
+			if whatsAppRequested {
+				db = db.Where("channel = ?", models.NotificationChannelWhatsApp)
+			} else {
+				db = db.Where("channel IS NULL OR channel <> ?", models.NotificationChannelWhatsApp)
+			}
+		}
+		if err := db.Order("updated_at DESC, " + notificationOperationTypeExpression + " ASC, id ASC").Limit(query.Limit).Find(&deliveries).Error; err != nil {
 			return nil, err
 		}
 		for i := range deliveries {
@@ -549,7 +621,7 @@ func (r *OperationRepository) listNotificationOperations(
 			}
 		}
 	}
-	if operationTypeRequested(query.Types, operationTypeNotification) {
+	if operationTypeRequested(query.Types, operationTypeNotification) && operationStatusRequested(query.Statuses, "succeeded") {
 		var notifications []models.Notification
 		db := operationScope(r.db.WithContext(ctx).Model(&models.Notification{}), businessID, query, operationTypeNotification, true)
 		if err := db.Order("updated_at DESC, id ASC").Limit(query.Limit).Find(&notifications).Error; err != nil {
@@ -579,6 +651,12 @@ func (r *OperationRepository) listImportOperations(
 			models.BulkJobTypeImportCustomers, models.BulkJobTypeImportVendors, models.BulkJobTypeImportProducts,
 			models.BulkJobTypeImportInvoices, models.BulkJobTypeImportDocuments,
 		})
+	db = applyStoredOperationStatusFilter(db, "status", query.Statuses, map[string][]string{
+		"queued":      {models.BulkJobStatusPending, models.BulkJobStatusQueued},
+		"in_progress": {models.BulkJobStatusProcessing},
+		"succeeded":   {models.BulkJobStatusCompleted},
+		"failed":      {models.BulkJobStatusFailed},
+	})
 	if err := db.Order("updated_at DESC, id ASC").Limit(query.Limit).Find(&rows).Error; err != nil {
 		return nil, err
 	}
@@ -685,6 +763,12 @@ func operationScope(
 	if usesUpdatedAt {
 		timeColumn = "updated_at"
 	}
+	return operationScopeByColumn(db, businessID, query, operationType, timeColumn)
+}
+
+func operationScopeByColumn(
+	db *gorm.DB, businessID string, query interfaces.OperationRecordQuery, operationType, timeColumn string,
+) *gorm.DB {
 	db = db.Where("business_id = ?", businessID).Where(timeColumn+" <= ?", query.SnapshotAt)
 	if query.ExactID != "" {
 		db = db.Where("id = ?", query.ExactID)
@@ -707,6 +791,9 @@ func operationRecordMatches(query interfaces.OperationRecordQuery, record interf
 	if !operationTypeRequested(query.Types, record.Type) {
 		return false
 	}
+	if !query.SnapshotAt.IsZero() && record.UpdatedAt.After(query.SnapshotAt) {
+		return false
+	}
 	if query.AfterUpdatedAt != nil {
 		if record.UpdatedAt.After(*query.AfterUpdatedAt) {
 			return false
@@ -722,6 +809,105 @@ func operationRecordMatches(query interfaces.OperationRecordQuery, record interf
 	normalized := normalizedRepositoryStatus(record.Type, record.InternalStatus)
 	for _, status := range query.Statuses {
 		if status == normalized {
+			return true
+		}
+	}
+	return false
+}
+
+func applyCompositeOperationCursor(
+	db *gorm.DB,
+	query interfaces.OperationRecordQuery,
+	timeExpression, typeExpression string,
+) *gorm.DB {
+	if query.AfterUpdatedAt == nil {
+		return db
+	}
+	return db.Where(
+		"("+timeExpression+" < ?) OR ("+timeExpression+" = ? AND ("+typeExpression+" > ? OR ("+
+			typeExpression+" = ? AND id > ?)))",
+		*query.AfterUpdatedAt, *query.AfterUpdatedAt, query.AfterType, query.AfterType, query.AfterID,
+	)
+}
+
+func applyStoredOperationStatusFilter(
+	db *gorm.DB,
+	column string,
+	statuses []string,
+	valuesByNormalizedStatus map[string][]string,
+) *gorm.DB {
+	if len(statuses) == 0 {
+		return db
+	}
+	knownValues := make([]string, 0)
+	for _, values := range valuesByNormalizedStatus {
+		knownValues = append(knownValues, values...)
+	}
+	if len(valuesByNormalizedStatus["reconciliation_required"]) == 0 {
+		knownValues = append(knownValues, "reconciliation_required")
+	}
+	predicates := make([]string, 0, len(statuses))
+	arguments := make([]any, 0, len(statuses))
+	for _, status := range statuses {
+		values := valuesByNormalizedStatus[status]
+		if status == "reconciliation_required" && len(values) == 0 {
+			values = []string{"reconciliation_required"}
+		}
+		if len(values) > 0 {
+			predicates = append(predicates, column+" IN ?")
+			arguments = append(arguments, values)
+		}
+		if status == "unknown" {
+			predicates = append(predicates, "("+column+" IS NULL OR "+column+" NOT IN ?)")
+			arguments = append(arguments, knownValues)
+		}
+	}
+	if len(predicates) == 0 {
+		return db.Where("1 = 0")
+	}
+	return db.Where("("+strings.Join(predicates, " OR ")+")", arguments...)
+}
+
+func applyOutboxOperationStatusFilter(db *gorm.DB, statuses []string, snapshotAt time.Time) *gorm.DB {
+	if len(statuses) == 0 {
+		return db
+	}
+	predicates := make([]string, 0, len(statuses))
+	arguments := make([]any, 0, len(statuses)*2)
+	for _, status := range statuses {
+		switch status {
+		case "queued":
+			predicates = append(predicates, "(published_at IS NULL AND (lease_expires_at IS NULL OR lease_expires_at <= ?))")
+			arguments = append(arguments, snapshotAt)
+		case "in_progress":
+			predicates = append(predicates, "(published_at IS NULL AND lease_expires_at > ?)")
+			arguments = append(arguments, snapshotAt)
+		case "succeeded":
+			predicates = append(predicates, "published_at IS NOT NULL")
+		}
+	}
+	if len(predicates) == 0 {
+		return db.Where("1 = 0")
+	}
+	return db.Where("("+strings.Join(predicates, " OR ")+")", arguments...)
+}
+
+func genericOperationStatusValues() map[string][]string {
+	return map[string][]string{
+		"queued":                  {"pending", "queued", "waiting"},
+		"in_progress":             {"processing", "running", "retrying", "received"},
+		"succeeded":               {"completed", "succeeded", "sent", "delivered", "processed"},
+		"failed":                  {"failed", "rejected", "bounced", "complained"},
+		"reconciliation_required": {"reconciliation_required"},
+	}
+}
+
+func operationStatusRequested(requested []string, status string) bool {
+	if len(requested) == 0 {
+		return true
+	}
+	for _, value := range requested {
+		if value == status {
 			return true
 		}
 	}

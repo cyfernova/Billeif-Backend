@@ -251,9 +251,6 @@ func (s *OperationService) RecoverBusinessOperation(
 	if record == nil || record.ID != operationID || record.Type != operationType {
 		return nil, ErrOperationNotFound
 	}
-	if normalizeOperationStatus(record.Type, record.InternalStatus) != OperationStatusFailed || !record.Retryable {
-		return nil, ErrUnsafeOperationReplay
-	}
 	if err := requireMutationPermission(ctx, s.permissions, businessID, PermissionDocumentsManage); err != nil {
 		return nil, err
 	}
@@ -334,6 +331,9 @@ func (s *OperationService) RecoverOperatorOperation(
 		}) != nil {
 			decision.ResultCode = OperationCodeStepUpRequired
 			if _, err := s.repository.RecordRecoveryDecision(ctx, decision); err != nil {
+				if errors.Is(err, interfaces.ErrUnsafeOperationReplay) {
+					return nil, ErrUnsafeOperationReplay
+				}
 				return nil, ErrOperationAuditUnavailable
 			}
 			return nil, ErrOperationStepUpRequired
@@ -341,6 +341,9 @@ func (s *OperationService) RecoverOperatorOperation(
 	}
 	decision.ResultCode = OperationCodeUnsupportedRecovery
 	if _, err := s.repository.RecordRecoveryDecision(ctx, decision); err != nil {
+		if errors.Is(err, interfaces.ErrUnsafeOperationReplay) {
+			return nil, ErrUnsafeOperationReplay
+		}
 		return nil, ErrOperationAuditUnavailable
 	}
 	return nil, ErrUnsupportedOperationRecovery
@@ -602,7 +605,7 @@ func normalizeOperationStatus(operationType, status string) OperationStatus {
 func recoveryActions(record interfaces.OperationRecord) []OperationRecoveryAction {
 	switch record.Type {
 	case OperationTypeInvoiceRender:
-		if normalizeOperationStatus(record.Type, record.InternalStatus) == OperationStatusFailed {
+		if normalizeOperationStatus(record.Type, record.InternalStatus) == OperationStatusFailed && record.Retryable {
 			return []OperationRecoveryAction{{Action: OperationActionRetry, Available: true}}
 		}
 		return []OperationRecoveryAction{{Action: OperationActionRetry, Available: false, RequirementCode: OperationCodeUnsupportedRecovery}}
@@ -742,18 +745,17 @@ func validOperationRecoveryInput(input OperationRecoveryInput) bool {
 
 func operationRecoveryRequestHash(command interfaces.RenderRecoveryCommand) string {
 	payload, _ := json.Marshal(struct {
-		BusinessID       string `json:"business_id"`
-		OperationID      string `json:"operation_id"`
-		ActorSubject     string `json:"actor_subject"`
-		PrincipalKind    string `json:"principal_kind"`
-		Action           string `json:"action"`
-		Reason           string `json:"reason"`
-		CorrelationID    string `json:"correlation_id"`
-		OperationVersion string `json:"operation_version"`
+		BusinessID    string `json:"business_id"`
+		OperationID   string `json:"operation_id"`
+		ActorSubject  string `json:"actor_subject"`
+		PrincipalKind string `json:"principal_kind"`
+		Action        string `json:"action"`
+		Reason        string `json:"reason"`
+		CorrelationID string `json:"correlation_id"`
 	}{
 		BusinessID: command.BusinessID, OperationID: command.OperationID, ActorSubject: command.ActorSubject,
 		PrincipalKind: command.PrincipalKind, Action: command.Action, Reason: command.Reason,
-		CorrelationID: command.CorrelationID, OperationVersion: command.OperationVersion,
+		CorrelationID: command.CorrelationID,
 	})
 	digest := sha256.Sum256(payload)
 	return hex.EncodeToString(digest[:])
@@ -761,19 +763,18 @@ func operationRecoveryRequestHash(command interfaces.RenderRecoveryCommand) stri
 
 func operationRecoveryDecisionHash(decision interfaces.OperationRecoveryDecision) string {
 	payload, _ := json.Marshal(struct {
-		BusinessID       string `json:"business_id"`
-		OperationType    string `json:"operation_type"`
-		OperationID      string `json:"operation_id"`
-		ActorSubject     string `json:"actor_subject"`
-		PrincipalKind    string `json:"principal_kind"`
-		Action           string `json:"action"`
-		Reason           string `json:"reason"`
-		CorrelationID    string `json:"correlation_id"`
-		OperationVersion string `json:"operation_version"`
+		BusinessID    string `json:"business_id"`
+		OperationType string `json:"operation_type"`
+		OperationID   string `json:"operation_id"`
+		ActorSubject  string `json:"actor_subject"`
+		PrincipalKind string `json:"principal_kind"`
+		Action        string `json:"action"`
+		Reason        string `json:"reason"`
+		CorrelationID string `json:"correlation_id"`
 	}{
 		BusinessID: decision.BusinessID, OperationType: decision.OperationType, OperationID: decision.OperationID,
 		ActorSubject: decision.ActorSubject, PrincipalKind: decision.PrincipalKind, Action: decision.Action,
-		Reason: decision.Reason, CorrelationID: decision.CorrelationID, OperationVersion: decision.OperationVersion,
+		Reason: decision.Reason, CorrelationID: decision.CorrelationID,
 	})
 	digest := sha256.Sum256(payload)
 	return hex.EncodeToString(digest[:])

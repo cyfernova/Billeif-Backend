@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -200,6 +201,56 @@ func TestOperationRepositoryPreservesCancellationAndStableCursorOrder(t *testing
 			}
 		})
 	}
+	if operationRecordMatches(
+		interfaces.OperationRecordQuery{SnapshotAt: now},
+		interfaces.OperationRecord{Type: operationTypeImport, ID: "future", UpdatedAt: now.Add(time.Second)},
+	) {
+		t.Fatal("record updated after the immutable snapshot was included")
+	}
+
+	businessID := uuid.NewString()
+	now = time.Now().UTC()
+	for index, status := range []string{models.RenderJobStatusCompleted, models.RenderJobStatusCompleted, models.RenderJobStatusFailed} {
+		job := models.DocumentRenderJob{
+			ID: uuid.NewString(), BusinessID: businessID, Kind: models.RenderKindPreview, Status: status,
+			RequestedAt: now.Add(-time.Duration(index) * time.Minute), CreatedAt: now.Add(-time.Duration(index) * time.Minute),
+			UpdatedAt: now.Add(-time.Duration(index) * time.Minute),
+		}
+		if err := createOperationFixture(database, &job); err != nil {
+			t.Fatalf("insert filtered render %d: %v", index, err)
+		}
+	}
+	filtered, err := NewOperationRepository(database).ListOperations(context.Background(), businessID, interfaces.OperationRecordQuery{
+		Types: []string{operationTypeInvoiceRender}, Statuses: []string{"failed"}, Limit: 2, SnapshotAt: now.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("filtered ListOperations() error = %v", err)
+	}
+	if len(filtered.Records) != 1 || filtered.Records[0].InternalStatus != models.RenderJobStatusFailed {
+		t.Fatalf("filtered operations were truncated before filtering: %#v", filtered.Records)
+	}
+
+	compositeBusinessID := uuid.NewString()
+	invoiceID := uuid.NewString()
+	renderID := uuid.NewString()
+	for _, delivery := range []models.EmailDelivery{
+		{ID: "00000000-0000-4000-8000-000000000001", BusinessID: compositeBusinessID, Status: models.EmailDeliveryStatusSent, CreatedAt: now, UpdatedAt: now},
+		{ID: "ffffffff-ffff-4fff-8fff-ffffffffffff", BusinessID: compositeBusinessID, InvoiceID: &invoiceID, RenderJobID: &renderID, Status: models.EmailDeliveryStatusSent, CreatedAt: now, UpdatedAt: now},
+	} {
+		if err := createOperationFixture(database, &delivery); err != nil {
+			t.Fatalf("insert composite delivery: %v", err)
+		}
+	}
+	compositePage, err := NewOperationRepository(database).ListOperations(context.Background(), compositeBusinessID, interfaces.OperationRecordQuery{
+		Types: []string{operationTypeEmailDelivery, operationTypeInvoiceDelivery}, Limit: 1, SnapshotAt: now.Add(time.Minute),
+		AfterUpdatedAt: &now, AfterType: operationTypeEmailDelivery, AfterID: "80000000-0000-4000-8000-000000000000",
+	})
+	if err != nil {
+		t.Fatalf("composite ListOperations() error = %v", err)
+	}
+	if len(compositePage.Records) != 1 || compositePage.Records[0].Type != operationTypeInvoiceDelivery {
+		t.Fatalf("composite operation cursor was truncated before type normalization: %#v", compositePage.Records)
+	}
 }
 
 func TestOperationRecoveryUniqueConstraintClassification(t *testing.T) {
@@ -300,6 +351,30 @@ func TestOperationRepositoryRenderRecoveryIsAuditedIdempotentAndRevisionBound(t 
 	var eventCount int64
 	if err := database.Model(&models.OutboxEvent{}).Count(&eventCount).Error; err != nil || eventCount != 1 {
 		t.Fatalf("outbox count after races = %d, %v", eventCount, err)
+	}
+	for index := 1; index <= 3; index++ {
+		audit := models.OperationRecoveryCommand{
+			ID: uuid.NewString(), BusinessID: businessID, OperationType: operationTypeInvoiceRender,
+			OperationID: renderID, ActorSubject: uuid.NewString(), PrincipalKind: "operator", Action: "resolve",
+			Reason: "bounded timeline review", IdempotencyKey: uuid.NewString(), RequestHash: strings.Repeat("d", 64),
+			OperationVersion: command.OperationVersion, CorrelationID: uuid.NewString(),
+			Status: models.OperationRecoveryStatusRejected, ResultCode: fmt.Sprintf("review_%d", index),
+			CreatedAt: now.Add(time.Duration(index) * time.Minute), CompletedAt: now.Add(time.Duration(index) * time.Minute),
+		}
+		if err := database.Create(&audit).Error; err != nil {
+			t.Fatalf("insert timeline audit %d: %v", index, err)
+		}
+	}
+	latest, err := repository.ListOperationTimeline(context.Background(), businessID, operationTypeInvoiceRender, renderID, 3)
+	if err != nil {
+		t.Fatalf("latest bounded timeline error = %v", err)
+	}
+	latestCodes := map[string]bool{}
+	for _, event := range latest {
+		latestCodes[event.Code] = true
+	}
+	if len(latest) != 3 || !latestCodes["render_failed"] || !latestCodes["review_2"] || !latestCodes["review_3"] {
+		t.Fatalf("latest bounded timeline = %#v", latest)
 	}
 }
 

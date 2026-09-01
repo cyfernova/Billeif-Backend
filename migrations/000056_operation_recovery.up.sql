@@ -1,6 +1,6 @@
 CREATE TABLE operation_recovery_commands (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    business_id UUID NOT NULL REFERENCES business_profiles(id) ON DELETE CASCADE,
+    business_id UUID NOT NULL REFERENCES business_profiles(id),
     operation_type VARCHAR(64) NOT NULL,
     operation_id UUID NOT NULL,
     actor_subject VARCHAR(255) NOT NULL,

@@ -26,6 +26,7 @@ type operationRepositoryFake struct {
 	recoveryCalls   int
 	decision        interfaces.OperationRecoveryDecision
 	decisionCalls   int
+	decisionErr     error
 	err             error
 }
 
@@ -35,6 +36,9 @@ func (f *operationRepositoryFake) RecordRecoveryDecision(
 ) (*interfaces.OperationRecoveryResult, error) {
 	f.decisionCalls++
 	f.decision = decision
+	if f.decisionErr != nil {
+		return nil, f.decisionErr
+	}
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -135,6 +139,26 @@ func TestOperationServiceOperatorDetailAndTimelineRemainSanitized(t *testing.T) 
 	_, err = service.GetOperationTimeline(context.Background(), businessID, OperationTypeRazorpayWebhook+":"+operationID, 101)
 	if !errors.Is(err, ErrInvalidOperationQuery) {
 		t.Fatalf("timeline limit error = %v, want ErrInvalidOperationQuery", err)
+	}
+}
+
+func TestOperationServiceOperatorDetailDoesNotAdvertiseUnsafeRenderRetry(t *testing.T) {
+	businessID := uuid.NewString()
+	operationID := uuid.NewString()
+	repository := &operationRepositoryFake{get: map[string]*interfaces.OperationRecord{
+		businessID + "/" + OperationTypeInvoiceRender + "/" + operationID: {
+			ID: operationID, Type: OperationTypeInvoiceRender, InternalStatus: "failed", Retryable: false,
+			CreatedAt: time.Now().UTC().Add(-time.Minute), UpdatedAt: time.Now().UTC(),
+		},
+	}}
+	detail, err := NewOperationService(repository, nil, nil, OperationServiceOptions{}).
+		GetOperatorOperation(context.Background(), businessID, OperationTypeInvoiceRender+":"+operationID)
+	if err != nil {
+		t.Fatalf("GetOperatorOperation() error = %v", err)
+	}
+	if len(detail.RecoveryActions) != 1 || detail.RecoveryActions[0].Available ||
+		detail.RecoveryActions[0].RequirementCode != OperationCodeUnsupportedRecovery {
+		t.Fatalf("unsafe render actions = %#v", detail.RecoveryActions)
 	}
 }
 
@@ -335,6 +359,51 @@ func TestOperationServiceRetriesOnlyExactFailedRenderAfterPermissionAndCapabilit
 	}
 }
 
+func TestOperationServiceReturnsAnIdempotentRenderReplayAfterTheWorkerChangesState(t *testing.T) {
+	now := time.Date(2026, time.September, 1, 12, 15, 0, 0, time.UTC)
+	businessID := uuid.NewString()
+	actorID := uuid.NewString()
+	operationID := uuid.NewString()
+	correlationID := uuid.NewString()
+	repository := &operationRepositoryFake{
+		get: map[string]*interfaces.OperationRecord{
+			businessID + "/" + OperationTypeInvoiceRender + "/" + operationID: {
+				ID: operationID, Type: OperationTypeInvoiceRender, InternalStatus: "completed", Retryable: false,
+				CreatedAt: now.Add(-time.Hour), UpdatedAt: now,
+			},
+		},
+		recoveryResult: &interfaces.OperationRecoveryResult{
+			CommandID: uuid.NewString(), ResultCode: OperationCodeAccepted, CorrelationID: correlationID,
+			Replayed: true, AcceptedAt: now.Add(-time.Minute),
+		},
+	}
+	service := NewOperationService(
+		repository,
+		&operationPermissionFake{allow: true},
+		&operationRecoveryCapabilityFake{},
+		OperationServiceOptions{Now: func() time.Time { return now }},
+	)
+	ctx := ContextWithActor(context.Background(), ActorContext{UserID: actorID})
+	result, err := service.RecoverBusinessOperation(
+		ctx,
+		businessID,
+		OperationTypeInvoiceRender+":"+operationID,
+		OperationRecoveryInput{
+			Action: OperationActionRetry, Reason: "retry deterministic render",
+			IdempotencyKey: uuid.NewString(), CorrelationID: correlationID,
+		},
+	)
+	if err != nil || result == nil || !result.Replayed || repository.recoveryCalls != 1 {
+		t.Fatalf("idempotent replay after state change = %#v, %v; recovery calls = %d", result, err, repository.recoveryCalls)
+	}
+	first := repository.recoveryCommand
+	second := first
+	second.OperationVersion = now.Add(time.Minute).Format(time.RFC3339Nano)
+	if operationRecoveryRequestHash(first) != operationRecoveryRequestHash(second) {
+		t.Fatal("client-equivalent recovery request hash changed with server-derived operation version")
+	}
+}
+
 func TestOperationServiceOperatorHighRiskRecoveryFailsClosedAndIsDurablyAudited(t *testing.T) {
 	now := time.Date(2026, time.September, 1, 12, 30, 0, 0, time.UTC)
 	businessID := uuid.NewString()
@@ -367,6 +436,41 @@ func TestOperationServiceOperatorHighRiskRecoveryFailsClosedAndIsDurablyAudited(
 		repository.decision.IdempotencyKey != input.IdempotencyKey || repository.decision.CorrelationID != input.CorrelationID ||
 		len(repository.decision.RequestHash) != 64 {
 		t.Fatalf("audited decision = %#v", repository.decision)
+	}
+	updatedDecision := repository.decision
+	updatedDecision.OperationVersion = now.Add(time.Minute).Format(time.RFC3339Nano)
+	if operationRecoveryDecisionHash(repository.decision) != operationRecoveryDecisionHash(updatedDecision) {
+		t.Fatal("operator idempotency hash changed with server-derived operation version")
+	}
+}
+
+func TestOperationServiceOperatorRecoveryRejectsConflictingIdempotencyReplayWithStableCode(t *testing.T) {
+	now := time.Date(2026, time.September, 1, 12, 45, 0, 0, time.UTC)
+	businessID := uuid.NewString()
+	operationID := uuid.NewString()
+	repository := &operationRepositoryFake{
+		get: map[string]*interfaces.OperationRecord{
+			businessID + "/" + OperationTypeRazorpayWebhook + "/" + operationID: {
+				ID: operationID, Type: OperationTypeRazorpayWebhook, InternalStatus: "reconciliation_required",
+				CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Minute),
+			},
+		},
+		decisionErr: interfaces.ErrUnsafeOperationReplay,
+	}
+	service := NewOperationService(repository, nil, nil, OperationServiceOptions{Now: func() time.Time { return now }})
+	ctx := ContextWithActor(context.Background(), ActorContext{UserID: "operator-subject"})
+	_, err := service.RecoverOperatorOperation(
+		ctx,
+		businessID,
+		OperationTypeRazorpayWebhook+":"+operationID,
+		OperationRecoveryInput{
+			Action: OperationActionReprocessWebhook, Reason: "conflicting command",
+			IdempotencyKey: uuid.NewString(), CorrelationID: uuid.NewString(),
+		},
+		"",
+	)
+	if !errors.Is(err, ErrUnsafeOperationReplay) {
+		t.Fatalf("conflicting operator replay error = %v, want ErrUnsafeOperationReplay", err)
 	}
 }
 
