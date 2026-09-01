@@ -204,6 +204,54 @@ func TestStaticSubscriptionContractsDocumentDistinctInternalFailures(t *testing.
 	}
 }
 
+func TestOperationContractsArePublishedAndExplicitlyFailClosed(t *testing.T) {
+	for _, fixture := range []struct {
+		path       string
+		pathPrefix string
+	}{
+		{path: "../../docs/openapi.yaml"},
+		{path: "../../openapi/openapi.yaml", pathPrefix: "/api/v1"},
+		{path: "../../docs/swagger.yaml"},
+	} {
+		raw, err := os.ReadFile(fixture.path)
+		if err != nil {
+			t.Fatalf("read %s: %v", fixture.path, err)
+		}
+		contract := string(raw)
+		for _, path := range []string{
+			"/operations:", "/operations/{operation_id}:",
+			"/operations/{operation_id}/timeline:", "/operations/{operation_id}/recovery:",
+			"/operator/operations/{operation_id}:",
+			"/operator/operations/{operation_id}/timeline:",
+			"/operator/operations/{operation_id}/recovery:",
+		} {
+			if !strings.Contains(contract, fixture.pathPrefix+path) {
+				t.Fatalf("%s missing operation contract %s", fixture.path, fixture.pathPrefix+path)
+			}
+		}
+		for _, exact := range []string{"reconciliation_required", "unknown", "step_up_required", "source_status", "recovery_actions"} {
+			if !strings.Contains(contract, exact) {
+				t.Fatalf("%s missing %q", fixture.path, exact)
+			}
+		}
+	}
+
+	handoff, err := os.ReadFile("../../docs/integration/BILLEIF_PHASE_2_FRONTEND_HANDOFF.md")
+	if err != nil {
+		t.Fatalf("read frontend handoff: %v", err)
+	}
+	for _, exact := range []string{
+		"## OPS-007: Aggregate business operational visibility and safe recovery",
+		"## OPS-008: Separately authorized operator detail and recovery boundary",
+		"403 operator_not_configured", "403 operator_access_denied", "409 unsafe_replay",
+		"422 unsupported_recovery", "HTTP status is `428`", "503 recovery_audit_unavailable",
+	} {
+		if !strings.Contains(string(handoff), exact) {
+			t.Fatalf("frontend handoff missing exact operation contract %q", exact)
+		}
+	}
+}
+
 func containsCapabilityMutationError(raw json.RawMessage) bool {
 	return strings.Contains(string(raw), "handlers.CapabilityMutationError")
 }

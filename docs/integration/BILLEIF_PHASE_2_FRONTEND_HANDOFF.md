@@ -44,6 +44,8 @@ route registration or current generated OpenAPI alone.
 | OPS-004 | Document GST compliance status and commands | `partial`, response `unsafe`, provider `externally unverified` | Keep customer success UI disabled; status can include simulated or provider-internal data. |
 | OPS-005 | GST integration accounts and GSTIN lookup | `partial` and `unsafe`, provider `externally unverified` | Internal setup only; never expose credentials, provider metadata, or simulated validation as government proof. |
 | OPS-006 | GSTR-2B reconciliation and GST report runs | `partial`; official filing `deferred` | Internal accounting operations only; exports are generated data, not filed returns. |
+| OPS-007 | Aggregate business operation list/detail/timeline and safe render retry | `complete` locally; workers/providers `externally unverified` | Use as the business-safe cross-domain status surface. Only exact failed versioned invoice renders advertise and accept customer retry. |
+| OPS-008 | Platform operator operation detail/timeline/recovery | Detail/timeline `complete` locally; high-risk recovery `blocked` by fail-closed step-up | Operator UI must require the separately configured operator group. Show high-risk actions as unavailable with `step_up_required`; never substitute owner/admin. |
 | SEC-001 | One-use WebSocket ticket | `complete` locally, deployed WebSocket `externally unverified` | Usable where the deployed WebSocket is separately verified. |
 | ACC-001 | Journal create/read/list/update/delete/post/reverse | `partial` accounting surface | Internal accounting UI only; no fiscal lock or stable error-code contract. |
 | ACC-002 | General-ledger list and balance | `partial` read surface | Internal accounting UI only; not a Trial Balance or Balance Sheet. |
@@ -73,6 +75,8 @@ omitted column to imply support.
 | OPS-004 | Bearer + effective business + all branches | Reads/PDF `documents.export`; mutations `documents.manage` | Generate e-invoice/e-way bill enforces its feature and monthly quota; other commands do not | None implemented | Required `Idempotency-Key`; key is business-global and a changed operation/payload can replay the first job |
 | OPS-005 | Bearer + effective business | GSTIN lookup `reports.view`; account CRUD/validate `tax.integrations.manage` + all branches | None | None implemented | Reads safe; account writes/validate have no command key |
 | OPS-006 | Bearer + effective business + all branches | Import `documents.manage`; reports/read `reports.view`; export `reports.export` | None | None implemented | Import deduplicates identical payload/period/source but has no client key; every export creates a run |
+| OPS-007 | Bearer + effective business + all branches | Reads need no additional permission; safe render retry requires `documents.manage` in the service | Runtime invoice queue, invoice bucket, SQS and S3 clients are re-evaluated before accepting retry | None for exact failed render retry | Body UUID `idempotency_key` is scoped to actor/business/action; changed reuse and a second command for the same operation revision return `unsafe_replay` |
+| OPS-008 | Bearer + separately configured verified JWT group; original `business_id` is mandatory | Business owner/admin roles are ignored | No provider capability is exercised while step-up is blocked | High-risk reconcile/webhook/DLQ/resolve commands require Task 5 one-time scoped step-up and currently return `step_up_required` | Every operator decision is durably audited with tenant, actor, operation, action, reason, command identity, correlation and safe result code |
 | SEC-001 | Bearer + effective business + authenticated user | No additional permission | None | None implemented | Ticket is one-use; issue has no command key |
 | ACC-001 | Bearer + effective business + all branches | Reads `reports.view`; writes `documents.manage` | None | None implemented | No command/version key; never retry writes after an ambiguous response |
 | ACC-002 | Bearer + effective business + all branches | `reports.view` | None | None implemented | Read-only |
@@ -96,6 +100,8 @@ omitted column to imply support.
 | OPS-004 | No pagination; PDF fetch returns `{"pdf_url":"..."}` JSON rather than file bytes | Poll job states; reuse the same key only for the identical command | No versioned event; invalidate compliance status while polling | `migrations/000027_add_gst_compliance.up.sql`, `migrations/000031_add_gst_execution_and_pos.up.sql`; provider/queue unverified | `internal/services/tax_compliance_service_test.go`, `tests/unit/document_handler_test.go`; unsafe projection and simulator fallback |
 | OPS-005 | Account list is an unpaginated array; GSTIN lookup has no file | Reads safe; account mutation result is synchronous | No event; refetch account list after write/validate | `migrations/000027_add_gst_compliance.up.sql`, `migrations/000031_add_gst_execution_and_pos.up.sql`; provider unverified | `internal/services/tax_compliance_service_test.go`, `tests/unit/tax_handler_test.go`; simulated validation and raw metadata possible |
 | OPS-006 | No pagination/file contract; payloads are JSON values/encoded strings | Import is synchronous `processed`; report run is immediately `completed` or `failed` | No event; refetch selected run | `migrations/000027_add_gst_compliance.up.sql`; official filing deferred | `internal/services/tax_compliance_service_test.go`, `tests/unit/tax_handler_test.go`; no filing acknowledgement |
+| OPS-007 | List `limit` 1-100, default 50; filter-bound opaque cursor; timeline limit 1-100, default 50; no file | `queued`, `in_progress`, `succeeded`, `failed`, `reconciliation_required`, `unknown`; source failures are reported in `unavailable_types` | No client event is promised; use bounded polling and retain the same cursor filters | Expand-first paired `000056_operation_recovery`; deploy migration before application | Service/repository/handler recovery, tenant, sanitization, pagination and race tests plus generated Swagger and both OpenAPI files |
+| OPS-008 | Detail and timeline are single-resource reads; timeline limit 1-100; no file | Detail remains sanitized. High-risk commands are audited rejections until Task 5; no provider call, message, or DLQ redrive occurs | No operator event is promised; refetch timeline after each definitive response | `PLATFORM_OPERATOR_GROUP` has no default and fails closed; no Cognito mutation was performed | `internal/middleware/operator_auth_test.go`, operator service/handler tests, migration audit tests, and mocked Terraform alarm tests |
 | SEC-001 | No pagination/file | Never reuse; issue another after expiry/failure | Successful connect owns later channel behavior; no issuance event | `migrations/000050_websocket_tickets.up.sql`; deployed WebSocket unverified | `internal/services/websocket_ticket_service_test.go`, `internal/repositories/postgres/websocket_ticket_repo_test.go`, `internal/handlers/websocket_ticket_handler_test.go`, `tests/unit/websocket_handler_test.go`; at most 60-second TTL |
 | ACC-001 | List uses page/limit, default 1/10, maximum 100; no file | Draft/posted/reversed; mutations unsafe to retry after timeout | No event; refetch journal and ledger after success | `migrations/000008_ledger_entries.up.sql`, `migrations/000025_add_document_platform.up.sql`, `migrations/000029_add_projects_and_reporting.up.sql` | `internal/services/journal_invariants_test.go`, `tests/unit/journal_handler_test.go`; no fiscal lock or versioning |
 | ACC-002 | List uses page/limit, default 1/10, maximum 100; no file | Synchronous reads; retry safe | No event; invalidate after journal/payment posting or reversal | `migrations/000008_ledger_entries.up.sql`, `migrations/000025_add_document_platform.up.sql`, `migrations/000029_add_projects_and_reporting.up.sql` | `tests/unit/ledger_service_test.go`; float response and no statement hierarchy |
@@ -601,6 +607,145 @@ of 50 reconciliation-plus-grace records, a 50-second invocation ceiling, and
 bounded provider fetch deadlines. It re-observes known provider subscriptions without
 creating charges or blindly retrying unknown mutations. Client event delivery
 is not promised; refetch after commands and on bounded polling/backoff.
+
+## OPS-007: Aggregate business operational visibility and safe recovery
+
+All aggregate business routes require bearer authentication, the effective
+business, and all-branches scope:
+
+- `GET /operations`
+- `GET /operations/{operation_id}`
+- `GET /operations/{operation_id}/timeline?limit=50`
+- `POST /operations/{operation_id}/recovery`
+
+`operation_id` is the composite `{type}:{UUID}` identity returned by list.
+List accepts repeated or comma-separated `type` and `status` filters, `limit`
+from 1 through 100 (default 50), and an opaque `cursor`. A cursor is bound to
+its original normalized filters and snapshot. A malformed cursor, changed
+filter, or out-of-range limit is `400 invalid_operation_query`.
+
+The complete type enum is `invoice_render`, `invoice_delivery`, `outbox`,
+`razorpay_webhook`, `gst_einvoice`, `gst_ewaybill`, `recurring_invoice`,
+`email_delivery`, `whatsapp_delivery`, `notification`, `import`, and
+`voice_reconciliation`. Voice currently has no coherent durable aggregate
+source and is explicitly returned in `unavailable_types`; it is never presented
+as success. A failed source adapter similarly adds its bounded type names to
+that array without forcing another domain to fail or inventing state.
+
+Normalized status is exactly `queued`, `in_progress`, `succeeded`, `failed`,
+`reconciliation_required`, or `unknown`. The last two never collapse to
+`failed`. Business projections may contain only the composite operation ID,
+type, safe resource type/ID, normalized status, attempts, last/next attempt,
+retryable/reconciliation/dead-letter flags, sanitized error code, UUID
+correlation ID, and lifecycle timestamps. They never contain source status,
+provider references, queue/message IDs, raw payload/error, account/secret IDs,
+lease details, object keys, recipients, or topology.
+
+```json
+{
+  "operations": [
+    {
+      "operation_id": "invoice_render:55555555-5555-4555-8555-555555555555",
+      "type": "invoice_render",
+      "resource": {"type": "document", "id": "66666666-6666-4666-8666-666666666666"},
+      "status": "failed",
+      "attempts": 2,
+      "retryable": true,
+      "reconciliation_required": false,
+      "dead_letter": false,
+      "error_code": "render_failed",
+      "created_at": "2026-09-02T08:00:00Z",
+      "updated_at": "2026-09-02T08:01:00Z"
+    }
+  ],
+  "next_cursor": "opaque-filter-bound-cursor",
+  "unavailable_types": ["voice_reconciliation"]
+}
+```
+
+Timeline returns `{ "operation_id": "...", "events": [...] }`; each event has
+only normalized `status`, optional safe `code`, and `occurred_at`. Recovery
+audit events are included without actor, reason, provider data, or raw errors.
+
+The only accepted business recovery in this revision is `retry` for the exact
+failed, retryable, versioned `invoice_render`. It requires `documents.manage`
+and re-evaluates the invoice queue/bucket and live SQS/S3 clients before the
+transaction. The original failed render remains the command target; the
+transaction verifies its tenant, failure state, immutable update revision,
+invoice/version/kind, issued facts for final PDFs, and deterministic object key,
+then inserts exactly one compatible outbox event and one sanitized command
+audit. It does not create a second render job or regenerate finance, tax,
+inventory, delivery, or provider outcomes.
+
+```json
+{
+  "action": "retry",
+  "reason": "retry deterministic final render",
+  "idempotency_key": "77777777-7777-4777-8777-777777777777",
+  "correlation_id": "88888888-8888-4888-8888-888888888888"
+}
+```
+
+Accepted response is `202`:
+
+```json
+{
+  "command_id": "99999999-9999-4999-8999-999999999999",
+  "operation_id": "invoice_render:55555555-5555-4555-8555-555555555555",
+  "action": "retry",
+  "result_code": "accepted",
+  "correlation_id": "88888888-8888-4888-8888-888888888888",
+  "replayed": false,
+  "accepted_at": "2026-09-02T08:02:00Z"
+}
+```
+
+Reuse the same UUID key and identical command after timeout. It returns the
+same command with `replayed: true` and no second outbox event. Changed reuse or
+a different key against the same source revision is `409 unsafe_replay`.
+Other type/action combinations are `422 unsupported_recovery`. Other stable
+errors are `400 invalid_recovery_request`, `403 operation_access_denied`, and
+`404 operation_not_found`. Do not retry a recovery after `409` or `422`.
+
+## OPS-008: Separately authorized operator detail and recovery boundary
+
+Operator routes are:
+
+- `GET /operator/operations/{operation_id}?business_id={UUID}`
+- `GET /operator/operations/{operation_id}/timeline?business_id={UUID}&limit=50`
+- `POST /operator/operations/{operation_id}/recovery?business_id={UUID}`
+
+They use bearer authentication but not business-role authorization. Access is
+granted only when the verified JWT groups contain the exact configured
+`PLATFORM_OPERATOR_GROUP`. The variable has no default. Missing configuration
+returns `403 operator_not_configured`; missing group returns
+`403 operator_access_denied`. Owner, admin, and business roles are ignored.
+The original owning `business_id` is mandatory and every lookup and audit is
+tenant-bound.
+
+Operator detail adds only sanitized `source_status` and bounded
+`recovery_actions` to OPS-007. It still never exposes provider identifiers,
+queue/message IDs, raw provider or queue payloads, raw errors, recipients,
+accounts/secrets, object keys, leases, or infrastructure topology. Each action
+has `action`, `available`, and optional `requirement_code`.
+
+High-risk `reconcile`, `reprocess_webhook`, `redrive_dead_letter`, and
+`resolve` requests cross a narrow one-time scoped step-up boundary. Task 5 has
+not yet supplied issuance/verification, so the verifier fails closed. The
+backend writes a durable rejected audit with operator subject, tenant,
+operation/resource identity, action, reason, idempotency/correlation,
+operation revision and safe `step_up_required` result, then returns:
+
+```json
+{"code":"step_up_required","error":"operation recovery step-up is required"}
+```
+
+HTTP status is `428`. If the audit cannot be stored, the response is
+`503 recovery_audit_unavailable`; the blocked action is still not executed.
+No live Cognito mutation, provider recovery, queue message, DLQ redrive, or
+production action is part of this revision. Operator UI must render these
+actions disabled and must not treat possession of an `X-Step-Up-Token` as
+sufficient until Task 5 changes the backend boundary.
 
 ## OPS-001: Invoice render status
 
@@ -1562,7 +1707,7 @@ and `tests/unit/report_handler_test.go`.
 | --- | --- | --- |
 | Internal capability diagnostics | `blocked` | Use customer-safe CAP-001 only. Provider internals require a future operator principal distinct from business owner/admin. |
 | Renewable subscription lifecycle, billing history, cancellation/grace/proration and reconciliation | `missing` around a `partial` one-month flow | Do not show auto-renewal or authoritative next charge. |
-| Aggregate operation status, operator detail and safe recovery actions | `missing` around complete individual statuses | Poll OPS-001/002 only; do not invent retries or DLQ actions. |
+| Aggregate operation status, operator detail and safe recovery actions | OPS-007 business projection and exact failed-render retry are `complete` locally; OPS-008 high-risk actions remain step-up-blocked | Use the aggregate projection and exact retry contract. Keep webhook/reconcile/DLQ/resolve disabled with `step_up_required`; never substitute admin/owner for operator. |
 | Customer-safe aggregate GST/provider truth and recovery | `missing` around OPS-004/005/006 | Keep provider-backed success UI disabled: absent provider configuration selects a simulator that can fabricate IRN/ack/e-way bill values. A local succeeded state is not government-system evidence. Evidence: `internal/services/gst_provider.go`. |
 | Staging verification evidence | `missing` and `externally unverified` | Do not label a provider operational from local tests. |
 | Step-up, TOTP, durable devices/sessions and privacy workflows | `missing` | Do not expose placeholder controls. |

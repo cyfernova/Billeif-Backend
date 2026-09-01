@@ -19,6 +19,10 @@ servers:
     description: Local development
 
 tags:
+  - name: Operations
+    description: Tenant-scoped sanitized aggregate operational visibility and proven safe recovery
+  - name: Operator Operations
+    description: Separately authorized platform operator detail and fail-closed high-risk recovery
   - name: Subscriptions
     description: Renewable subscription lifecycle and tenant billing records
   - name: Capabilities
@@ -37,6 +41,108 @@ tags:
     description: Payment processing and credentials
 
 paths:
+  /operations:
+    get:
+      tags: [Operations]
+      summary: List business operations
+      description: Returns a stable bounded aggregate across render, delivery, outbox, Razorpay, GST, recurring, email, WhatsApp, notifications, imports, and voice. Unsupported sources are named in unavailable_types; unknown and reconciliation_required remain distinct. No provider references, queue IDs, payloads, raw errors, account IDs, secrets, or topology are returned.
+      security: [{BearerAuth: []}]
+      parameters:
+        - {name: type, in: query, required: false, schema: {type: array, items: {$ref: "#/components/schemas/OperationType"}}}
+        - {name: status, in: query, required: false, schema: {type: array, items: {$ref: "#/components/schemas/OperationStatus"}}}
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 100, default: 50}}
+        - {name: cursor, in: query, required: false, schema: {type: string, maxLength: 2048}}
+      responses:
+        "200": {description: Sanitized tenant operation page, content: {application/json: {schema: {$ref: "#/components/schemas/OperationListResponse"}}}}
+        "400": {description: invalid_operation_query, content: {application/json: {schema: {$ref: "#/components/schemas/OperationError"}}}}
+        "403": {description: Business or all-branches scope required, content: {application/json: {schema: {$ref: "#/components/schemas/OperationError"}}}}
+  /operations/{operation_id}:
+    get:
+      tags: [Operations]
+      summary: Get a business operation
+      security: [{BearerAuth: []}]
+      parameters:
+        - {$ref: "#/components/parameters/OperationID"}
+      responses:
+        "200": {description: Sanitized operation, content: {application/json: {schema: {$ref: "#/components/schemas/OperationSummary"}}}}
+        "404": {description: operation_not_found, content: {application/json: {schema: {$ref: "#/components/schemas/OperationError"}}}}
+  /operations/{operation_id}/timeline:
+    get:
+      tags: [Operations]
+      summary: Get a sanitized business operation timeline
+      security: [{BearerAuth: []}]
+      parameters:
+        - {$ref: "#/components/parameters/OperationID"}
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 100, default: 50}}
+      responses:
+        "200": {description: Sanitized lifecycle and recovery events, content: {application/json: {schema: {$ref: "#/components/schemas/OperationTimeline"}}}}
+        "400": {description: invalid_operation_query, content: {application/json: {schema: {$ref: "#/components/schemas/OperationError"}}}}
+        "404": {description: operation_not_found, content: {application/json: {schema: {$ref: "#/components/schemas/OperationError"}}}}
+  /operations/{operation_id}/recovery:
+    post:
+      tags: [Operations]
+      summary: Retry an exact failed versioned invoice render
+      description: The only business recovery currently proven safe is retry of a failed invoice_render. Requires documents.manage, live render capabilities, original tenant/resource/revision binding, UUID idempotency and correlation IDs, and atomic audit plus outbox dispatch. All other actions return unsupported_recovery without side effects.
+      security: [{BearerAuth: []}]
+      parameters:
+        - {$ref: "#/components/parameters/OperationID"}
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/OperationRecoveryRequest"}}}
+      responses:
+        "202": {description: Accepted or idempotently replayed command, content: {application/json: {schema: {$ref: "#/components/schemas/OperationRecoveryResponse"}}}}
+        "400": {description: invalid_recovery_request, content: {application/json: {schema: {$ref: "#/components/schemas/OperationError"}}}}
+        "403": {description: operation_access_denied, content: {application/json: {schema: {$ref: "#/components/schemas/OperationError"}}}}
+        "404": {description: operation_not_found, content: {application/json: {schema: {$ref: "#/components/schemas/OperationError"}}}}
+        "409": {description: unsafe_replay, content: {application/json: {schema: {$ref: "#/components/schemas/OperationError"}}}}
+        "422": {description: unsupported_recovery, content: {application/json: {schema: {$ref: "#/components/schemas/OperationError"}}}}
+  /operator/operations/{operation_id}:
+    get:
+      tags: [Operator Operations]
+      summary: Get separately authorized operator detail
+      description: Requires the configured verified platform operator JWT group. Owner, admin, and other business roles never grant access. Missing group configuration fails closed. Detail remains sanitized and only advertises bounded recovery availability.
+      security: [{BearerAuth: []}]
+      parameters:
+        - {$ref: "#/components/parameters/OperationID"}
+        - {$ref: "#/components/parameters/OperationBusinessID"}
+      responses:
+        "200": {description: Sanitized operator detail, content: {application/json: {schema: {$ref: "#/components/schemas/OperationOperatorDetail"}}}}
+        "403": {description: operator_not_configured or operator_access_denied, content: {application/json: {schema: {$ref: "#/components/schemas/OperationError"}}}}
+        "404": {description: operation_not_found, content: {application/json: {schema: {$ref: "#/components/schemas/OperationError"}}}}
+  /operator/operations/{operation_id}/timeline:
+    get:
+      tags: [Operator Operations]
+      summary: Get separately authorized sanitized timeline
+      security: [{BearerAuth: []}]
+      parameters:
+        - {$ref: "#/components/parameters/OperationID"}
+        - {$ref: "#/components/parameters/OperationBusinessID"}
+        - {name: limit, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 100, default: 50}}
+      responses:
+        "200": {description: Sanitized timeline, content: {application/json: {schema: {$ref: "#/components/schemas/OperationTimeline"}}}}
+        "403": {description: Operator access denied, content: {application/json: {schema: {$ref: "#/components/schemas/OperationError"}}}}
+        "404": {description: operation_not_found, content: {application/json: {schema: {$ref: "#/components/schemas/OperationError"}}}}
+  /operator/operations/{operation_id}/recovery:
+    post:
+      tags: [Operator Operations]
+      summary: Request operator recovery
+      description: Requires the configured verified operator group. High-risk webhook, reconciliation, DLQ and resolution actions are durably audited but fail closed with step_up_required until Task 5 supplies a valid one-time scoped step-up token. No provider action or redrive occurs in this phase.
+      security: [{BearerAuth: []}]
+      parameters:
+        - {$ref: "#/components/parameters/OperationID"}
+        - {$ref: "#/components/parameters/OperationBusinessID"}
+        - {name: X-Step-Up-Token, in: header, required: false, schema: {type: string}}
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: "#/components/schemas/OperationRecoveryRequest"}}}
+      responses:
+        "202": {description: Accepted command after a future valid step-up boundary, content: {application/json: {schema: {$ref: "#/components/schemas/OperationRecoveryResponse"}}}}
+        "403": {description: Operator access denied, content: {application/json: {schema: {$ref: "#/components/schemas/OperationError"}}}}
+        "404": {description: operation_not_found, content: {application/json: {schema: {$ref: "#/components/schemas/OperationError"}}}}
+        "409": {description: unsafe_replay, content: {application/json: {schema: {$ref: "#/components/schemas/OperationError"}}}}
+        "422": {description: unsupported_recovery, content: {application/json: {schema: {$ref: "#/components/schemas/OperationError"}}}}
+        "428": {description: step_up_required, content: {application/json: {schema: {$ref: "#/components/schemas/OperationError"}}}}
+        "503": {description: recovery_audit_unavailable, content: {application/json: {schema: {$ref: "#/components/schemas/OperationError"}}}}
   /subscriptions/checkout:
     post:
       tags: [Subscriptions]
@@ -645,6 +751,20 @@ components:
       bearerFormat: JWT
       description: JWT token from authentication endpoint
 
+  parameters:
+    OperationID:
+      name: operation_id
+      in: path
+      required: true
+      description: Composite operation identity in type:UUID form
+      schema: {type: string, pattern: "^[a-z_]+:[0-9a-fA-F-]{36}$"}
+    OperationBusinessID:
+      name: business_id
+      in: query
+      required: true
+      description: Original tenant owning the operation
+      schema: {type: string, format: uuid}
+
   responses:
     SubscriptionBadRequest:
       description: Invalid subscription request
@@ -672,6 +792,98 @@ components:
       content: {application/json: {schema: {$ref: "#/components/schemas/SubscriptionError"}}}
 
   schemas:
+    OperationType:
+      type: string
+      enum: [invoice_render, invoice_delivery, outbox, razorpay_webhook, gst_einvoice, gst_ewaybill, recurring_invoice, email_delivery, whatsapp_delivery, notification, import, voice_reconciliation]
+    OperationStatus:
+      type: string
+      enum: [queued, in_progress, succeeded, failed, reconciliation_required, unknown]
+    OperationResource:
+      type: object
+      required: [type, id]
+      properties:
+        type: {type: string}
+        id: {type: string}
+    OperationSummary:
+      type: object
+      required: [operation_id, type, resource, status, attempts, retryable, reconciliation_required, dead_letter, created_at, updated_at]
+      properties:
+        operation_id: {type: string, description: "Composite type:UUID identity"}
+        type: {$ref: "#/components/schemas/OperationType"}
+        resource: {$ref: "#/components/schemas/OperationResource"}
+        status: {$ref: "#/components/schemas/OperationStatus"}
+        attempts: {type: integer, minimum: 0}
+        last_attempt_at: {type: string, format: date-time, nullable: true}
+        next_attempt_at: {type: string, format: date-time, nullable: true}
+        retryable: {type: boolean}
+        reconciliation_required: {type: boolean}
+        dead_letter: {type: boolean}
+        error_code: {type: string, maxLength: 80}
+        correlation_id: {type: string, format: uuid}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        completed_at: {type: string, format: date-time, nullable: true}
+    OperationListResponse:
+      type: object
+      required: [operations]
+      properties:
+        operations: {type: array, items: {$ref: "#/components/schemas/OperationSummary"}}
+        next_cursor: {type: string}
+        unavailable_types: {type: array, items: {$ref: "#/components/schemas/OperationType"}}
+    OperationTimelineEvent:
+      type: object
+      required: [status, occurred_at]
+      properties:
+        status: {$ref: "#/components/schemas/OperationStatus"}
+        code: {type: string, maxLength: 80}
+        occurred_at: {type: string, format: date-time}
+    OperationTimeline:
+      type: object
+      required: [operation_id, events]
+      properties:
+        operation_id: {type: string}
+        events: {type: array, items: {$ref: "#/components/schemas/OperationTimelineEvent"}}
+    OperationRecoveryAction:
+      type: object
+      required: [action, available]
+      properties:
+        action: {type: string, enum: [retry, reconcile, reprocess_webhook, redrive_dead_letter, resolve]}
+        available: {type: boolean}
+        requirement_code: {type: string, enum: [unsupported_recovery, step_up_required]}
+    OperationOperatorDetail:
+      allOf:
+        - {$ref: "#/components/schemas/OperationSummary"}
+        - type: object
+          required: [source_status, recovery_actions]
+          properties:
+            source_status: {type: string, maxLength: 80, description: Sanitized internal state label only}
+            recovery_actions: {type: array, items: {$ref: "#/components/schemas/OperationRecoveryAction"}}
+    OperationRecoveryRequest:
+      type: object
+      additionalProperties: false
+      required: [action, reason, idempotency_key, correlation_id]
+      properties:
+        action: {type: string, enum: [retry, reconcile, reprocess_webhook, redrive_dead_letter, resolve]}
+        reason: {type: string, minLength: 1, maxLength: 500}
+        idempotency_key: {type: string, format: uuid}
+        correlation_id: {type: string, format: uuid}
+    OperationRecoveryResponse:
+      type: object
+      required: [command_id, operation_id, action, result_code, correlation_id, replayed, accepted_at]
+      properties:
+        command_id: {type: string, format: uuid}
+        operation_id: {type: string}
+        action: {type: string}
+        result_code: {type: string, enum: [accepted]}
+        correlation_id: {type: string, format: uuid}
+        replayed: {type: boolean}
+        accepted_at: {type: string, format: date-time}
+    OperationError:
+      type: object
+      required: [code, error]
+      properties:
+        code: {type: string, enum: [invalid_operation_query, invalid_recovery_request, operation_not_found, operation_access_denied, operator_not_configured, operator_access_denied, unsafe_replay, unsupported_recovery, step_up_required, recovery_audit_unavailable, operation_unavailable]}
+        error: {type: string}
     SubscriptionCheckoutRequest:
       type: object
       required: [plan_id, idempotency_key]
