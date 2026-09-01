@@ -1,0 +1,425 @@
+# Billeif Backend Production Readiness Phase 2
+
+Status: in progress
+
+This is the living execution plan for the Phase 2 backend campaign. The supplied
+Phase 2 specification is authoritative. Every task below must finish as
+completed, already correct with evidence, intentionally deferred, externally
+blocked, or externally unverified. No live deployment, Terraform apply,
+production provider action, payment charge, or real outbound message is part of
+this campaign.
+
+## Verified baseline
+
+- Source revision: `5b58a56` on `main` before implementation.
+- `make test`: passed on 2026-09-01 with exit code 0, including `-race` and
+  repository coverage reporting.
+- Existing evidence indicates hardened tenant boundaries, single-use WebSocket
+  tickets, PostgreSQL notifications, atomic quota accounting, immutable posted
+  payments with compensating reversal, transactional canonical invoice issuance,
+  durable outbox processing, and idempotent recurring invoice drafts. Task 0
+  must verify these from concrete code and tests before marking them complete.
+
+The test result above is controller-provided evidence for revision `5b58a56`.
+Task 0 did not rerun the full suite. The inventory used source, migration, test,
+Terraform, workflow, and architecture-document evidence at that same revision.
+It does not establish the state of any deployed environment.
+
+## Priority and classification
+
+- P0: Tasks 0-4 - inventory, runtime capabilities, subscription truth,
+  operational recovery, and staging verification.
+- P1: Tasks 5-8 - security/privacy/recovery, accounting, durable imports, and
+  remaining core backend gaps.
+- P2: Tasks 9-10 - AI governance and complete release handoff/validation.
+- Deferred: official GST filing, saved payment-method vaulting, automatic
+  recurring issue/send, full offline POS synchronization, report PDF export,
+  web voice, marketplace/A2A/AP2 breadth, and new bargaining modes.
+- Externally blocked or unverified items must name the provider, configuration,
+  environment, exact safe check not run, and the reason it was not run.
+
+## Global engineering constraints
+
+- Enforce current-business membership and branch/warehouse scope server-side.
+- Include tenant identity in cache keys, queue messages, idempotency records,
+  object keys, exports, provider metadata, and real-time channels.
+- Use integer minor units or exact arithmetic. Posted journals balance; posted
+  financial records are immutable; corrections use compensating records.
+- Important multi-record events are transactional. External side effects are
+  idempotent and recoverable. Unknown provider outcomes require reconciliation.
+- Protected mutations authorize the resource and re-evaluate required runtime
+  capability. Never expose credentials, secret identifiers, raw provider errors,
+  account IDs, or infrastructure topology.
+- Preserve existing architecture and data. Add paired reversible migrations.
+- Add failing tests before behavior changes, then targeted and broader checks.
+- Keep Swagger/OpenAPI and the frontend handoff exact for public contract changes.
+
+## Task 0 evidence inventory
+
+### How classifications are used
+
+- `complete`: the audited Phase 2 slice exists with implementation and focused
+  test evidence. It may still be externally unverified.
+- `partial`: useful behavior exists, but the Phase 2 contract or invariant is
+  incomplete.
+- `missing`: no implementation evidence was found.
+- `unsafe`: current behavior can present a security, tenant, data-integrity,
+  financial, or truthfulness risk if treated as production-ready.
+- `deferred`: the specification explicitly excludes the work from this campaign.
+- `blocked`: a named dependency prevents implementation or safe verification.
+- `externally unverified`: source and local tests exist, but no safe provider or
+  deployed-environment check was run.
+
+Route registration alone was never counted as implementation. A route was
+classified only after its handler, service, persistence/provider behavior, and
+relevant tests were inspected.
+
+### Architecture findings
+
+1. The HTTP composition root is `internal/app/runtime.go`. Protected `/api/v1`
+   routes pass through Cognito authentication and business-membership middleware.
+   Branch and permission checks remain endpoint-specific. Resource identifiers
+   such as `:id` do not by themselves establish business scope; service and
+   repository queries must include the effective business and branch scope.
+   Evidence: `internal/middleware/business_auth.go`,
+   `internal/services/business_auth_service.go`, and
+   `internal/services/mutation_authorization.go`.
+2. The database is the authority for business state. PostgreSQL adapters sit
+   behind repository interfaces; durable side effects use outbox records and
+   SQS workers where implemented. Evidence: `internal/repositories/interfaces`,
+   `internal/repositories/postgres`, `internal/outbox`, `internal/workers`, and
+   ADRs `docs/adr/0001-canonical-invoice-transactional-projection-outbox.md`
+   and `docs/adr/0002-serverless-runtime-boundaries.md`.
+3. Subscription catalog and quota enforcement are stronger than subscription
+   lifecycle truth. Catalog `swipe-v1` and atomic monthly quota reservation are
+   implemented, but a paid Razorpay checkout grants exactly one month; it is not
+   a renewable provider subscription. Evidence: `internal/services/subscription_catalog.go`,
+   `internal/services/entitlements.go`, and
+   `internal/services/razorpay_payment_service.go`.
+4. Invoice render and delivery, WebSocket tickets, notifications, posted journal
+   invariants, and recurring draft creation have durable implementations and
+   focused tests. There is no aggregate operational read model or recovery API.
+5. Several apparent Phase 2 surfaces are not safe contracts yet: GST silently
+   falls back to a simulated provider, bulk imports have no commit worker and
+   read entire multipart files into memory, upload presigns have no completion
+   verification, coupon limits race at redemption, and the cart is a signed AP2
+   mandate rather than an editable tenant-versioned cart.
+6. Terraform defines private encrypted storage, queues and DLQs, scheduled
+   workers, Cognito, SES, WebSocket, payment, and observability resources, but
+   Apart from the controller's read-only STS identity check recorded below,
+   Task 0 performed no apply, application-provider call, charge, message, or
+   staging probe.
+
+### Milestone classification and impact ledger
+
+| Task | Baseline classification | Evidence | Expected smallest owners and impact |
+| --- | --- | --- | --- |
+| 0 | `complete` for inventory; external state `externally unverified` | This plan; `docs/integration/BILLEIF_PHASE_2_FRONTEND_HANDOFF.md`; evidence paths below | Documentation only. No migration, provider call, runtime, OpenAPI, Terraform, or test change. |
+| 1 | `missing` | No backend-authoritative runtime capability states or customer/diagnostic endpoints found; current entitlements are plan feature rows in `internal/services/entitlements.go` and `internal/services/commerce_service.go` | `internal/config`, `internal/services`, `internal/handlers`, `internal/app`, repository/model owners, paired migration if cached health is durable, permissions, OpenAPI, focused capability/tenant/cache tests. Secret-safe output and deny-by-default degradation are security impacts. |
+| 2 | `partial`, with an `unsafe` truth gap; Razorpay `externally unverified` | `internal/models/subscription.go`, `internal/models/payment_attempt.go`, `internal/services/subscription_service.go`, `internal/services/razorpay_payment_service.go`, `migrations/000041_add_razorpay_payment_attempts.up.sql`, payment tests | Subscription/payment models, repositories, services, handlers, webhook inbox/reconciliation worker, paired migrations, provider fixtures, OpenAPI and race/replay tests. Expand-first state conversion must not activate entitlements from stale or ambiguous events. |
+| 3 | `partial`; deployed queues/providers `externally unverified` | Render/delivery status in `internal/services/invoice_service.go` and `internal/services/invoice_delivery.go`; outbox/workers; `infrastructure/terraform/monitoring.tf` and `sns_sqs.tf` | Aggregate read service/repositories, customer and operator handlers, recovery commands, audit, metrics/alarms, permissions/step-up, OpenAPI, state/retry tests. Recovery must remain tenant-bound and idempotent. |
+| 4 | `missing`; every staging dependency `externally unverified` | No bounded environment-selecting verification command found under `cmd`; only unit/integration/Terraform tests exist | New verification command and focused test package; documentation and safe adapters only unless a real gap is found. No schema expected by default. Must refuse production, redact secrets, bound writes, and classify cleanup. |
+| 5 | `partial`, with `unsafe` upload/session/privacy gaps; AWS/Cognito restore state `externally unverified` | Middleware and permissions; WebSocket tickets; private S3 Terraform; `internal/services/report_service.go`; upload services; auth services; CI workflows | Step-up/session/MFA/privacy/upload/recovery owners across middleware, services, handlers, repositories, `cmd`, Terraform/CI and paired migrations. Security and data-retention impact is high; no live Cognito or paid scanner action. |
+| 6 | `partial`; banking, lock date, Trial Balance and Balance Sheet `missing` | `internal/services/journal_service.go`, `internal/services/payment_service.go`, `internal/reporting`, journal/payment invariant tests | Journal/payment/inventory/reporting services and repositories, new accounting/bank models, paired migrations, permissions/step-up, OpenAPI, concurrency/invariant/export tests. Posted records remain immutable and balanced by currency. |
+| 7 | `unsafe` and `partial` | `internal/handlers/billing_ops_handler.go`, `internal/models/swipe_ops.go`, migration `000030*`; no bulk-import worker in `internal/workers` or `cmd` | Narrow to customer/vendor/product validation and commit handlers/services/repository, S3 metadata, worker/queue/alarm, paired migrations if state is insufficient, OpenAPI and restart/idempotency/tenant/formula tests. Existing queued jobs require a compatibility and cleanup decision. |
+| 8 | `partial`, with `unsafe` asset/cart/coupon behavior; phone/S3/provider paths `externally unverified` | Auth, upload, drive, AP2 mandate, coupon and report sources/tests cited below | Existing owning services/handlers/models plus paired migrations for upload/cart/coupon state, report export implementation, permissions/entitlements, OpenAPI and concurrency/security tests. Saved methods remain unavailable. |
+| 9 | `partial`; AI providers `externally unverified` | `internal/models/agent.go`, `internal/handlers/agent_handler.go`, voice tool registry and tests | Agent/voice runtime authorization, governance models/repositories, audit/budget/approval/kill-switch services, paired migrations, provider-safe tests and AI contracts. Default deny unclassified tools; never persist secrets or unnecessary prompts. |
+| 10 | `pending`; GST filing is `deferred` | Existing OpenAPI and this initial handoff are evidence inputs, not final release proof | OpenAPI regeneration, exact handoff completion, full validation, final diff and the required non-filing GST reconciliation follow-up plan. No frontend files or deployment actions. |
+
+### Implemented contract and invariant evidence
+
+| Area | Classification | Concrete evidence and limitation |
+| --- | --- | --- |
+| Business and branch authorization | `partial` | Protected routes use `middleware.Auth` and `middleware.BusinessAuth`; scoped services/repositories generally recheck `business_id`. Endpoint permissions and branch requirements are not uniform, so each mutation remains an audit target. Evidence: `internal/app/runtime.go`, `internal/middleware/business_auth.go`, `internal/services/business_auth_service.go`. |
+| Subscription catalog | `complete` locally | `swipe-v1` defines free/pro/rise/biz amounts in integer paise, features and quotas. Evidence: `internal/services/subscription_catalog.go` and its tests. |
+| Entitlement resolution and quota reservation | `complete` for the implemented feature subset | Missing/inactive/expired subscription falls back to free; e-invoice/e-way bill usage is reserved atomically per month. It is not the Phase 2 runtime capability model. Evidence: `internal/services/entitlements.go` and `internal/services/entitlements_test.go`. |
+| Subscription lifecycle | `partial` and `unsafe` if described as recurring | Subscription state lacks provider mode/IDs, grace/cancel-at-period-end and billing history. Direct plan mutations produce unstable server errors. Paid checkout sets one one-month period. Evidence: `internal/models/subscription.go`, `internal/services/subscription_service.go`, `internal/services/razorpay_payment_service.go`. |
+| Razorpay event handling | `partial`, `externally unverified` | Raw-body HMAC and unique event ID exist. Inbox rows lack mode, payload hash, verification state, attempts, sanitized error, resolved IDs and replay audit; no reconciliation worker/read model exists. Evidence: `migrations/000041_add_razorpay_payment_attempts.up.sql`, payment service/tests, `pkg/razorpay`. |
+| Invoice render status | `complete` for customer-safe status | Tenant/invoice/job scoped projection exposes only kind, source version and timestamps. Evidence: `internal/services/invoice_service.go`, `internal/handlers/invoice_handler.go`, render service/handler/repository tests. |
+| Invoice delivery | `complete` for create/status | UUID idempotency key and canonical request hash are claimed atomically with activity/outbox state; status projection omits provider and lease details. Evidence: `internal/services/invoice_delivery.go`, PostgreSQL adapter and focused unit/integration tests. |
+| Notifications | `complete` for current list/read contract | Business+user-scoped list, read and read-all; source-event idempotency exists. List is capped but not cursor-paginated. Evidence: `internal/models/notification.go`, notification handler/service/repository tests, `migrations/000051_notifications.up.sql`. |
+| WebSocket tickets | `complete` locally | One-use, business+subject-bound, at most 60-second ticket; only SHA-256 digest is stored. Evidence: `internal/services/websocket_ticket_service.go`, PostgreSQL atomic-consume tests, WebSocket Lambda tests, `migrations/000050_websocket_tickets.up.sql`. |
+| Recurring invoice drafts | `complete` within deferral boundary; scheduler `externally unverified` | Durable runs create idempotent drafts; auto-send is rejected. Automatic issue/send remains deferred. Evidence: recurring service/Lambda tests and Terraform scheduler. |
+| Journals and payments | `complete` for existing invariant subset | Posted journals balance per currency, are immutable, and reverse via compensation; payment reversal has focused invariants. Fiscal lock, financial statements, opening balances and bank reconciliation are absent. Evidence: journal/payment services and invariant/integration tests. |
+| GST submission | `unsafe`, `partial`, provider `externally unverified` | Durable jobs/retries/DLQ exist, but absent provider configuration selects `simulatedGSTProvider`, which can fabricate success. Evidence: `internal/services/gst_provider.go` and `internal/services/tax_compliance_service.go`. |
+| Bulk import | `unsafe`, `partial` | Multipart content is read fully into memory and rows are persisted as queued, but no processing worker was found. Product/invoice/document imports also lack the complete permission model. Evidence: `internal/handlers/billing_ops_handler.go`, `internal/services/billing_ops_service.go`, `internal/models/swipe_ops.go`. |
+| Uploads and assets | `unsafe`, `partial`, S3 `externally unverified` | Logo and drive presigns bind declared size/type; Terraform blocks public access and encrypts/version-controls buckets. No pending-upload completion, checksum, quarantine/scan or object-metadata verification exists. Drive creates the asset before upload and returns internal object coordinates. |
+| Phone authentication | `partial`, Cognito/SMS `externally unverified` | Indian E.164 normalization, register/confirm/resend/login/verify/refresh/global logout exist. Login reveals local registration; explicit provider linking, durable device/session revocation, MFA and audit are absent. Evidence: `internal/services/auth_service.go`, handler and auth tests, `migrations/000023_add_phone_auth_fields.up.sql`. |
+| Cart | `partial` and `unsafe` for Phase 2 UI | Existing cart is a signed user/agent AP2 mandate with JSON-string items and float amount. Add-item creates a new one-item mandate; update/remove/clear, tenant/version checks and authoritative price/stock revalidation are absent. Evidence: `internal/models/ap2_mandate.go`, `internal/services/shopping_agent_service.go`, signature tests. |
+| Coupons | `partial` and `unsafe` under concurrency | Create/list/full update and checkout validation exist, but there is no delete policy and usage limits are counted before redemption without serializing the coupon row. Evidence: commerce service/model, `migrations/000032_add_storefront_enterprise_features.up.sql`, storefront checkout tests. |
+| Report export | `partial` | JSON and formula-neutralized CSV are returned inside a JSON envelope. Native typed XLSX, file response/disposition and timezone-aware cells are absent. Evidence: `internal/services/report_service.go`, report handler/service tests. |
+| AI agents | `partial`, providers `externally unverified` | Agent capability CRUD is owner-checked, and voice has a bounded read-only tool registry. There is no complete risk classification, scoped approval, budget reservation, kill-switch or governance audit. Evidence: agent handler/model/service and voice tool registry tests. |
+| Infrastructure and CI | `partial`, `externally unverified` | Terraform and tests define private buckets, SQS/DLQs, workers, schedules, Cognito, SES, WebSocket and alarms; deploy/leak scanning workflows exist. No apply, restore drill or staging verification was performed. Evidence: `infrastructure/terraform` and `.github/workflows`. |
+
+### Provider and environment truth
+
+| Provider/dependency | Source-level state | Task 0 verification state |
+| --- | --- | --- |
+| Razorpay | Order, verify and webhook adapters exist; purchase grants one month | `externally unverified`: no test-mode order, payment or webhook was sent because external writes/charges are outside scope. |
+| GST/e-invoice/e-way bill | HTTP adapter plus unsafe simulated fallback | `externally unverified`: no sandbox submission or reconciliation check; simulated results are not provider evidence. |
+| Cognito email/phone and SMS | SDK flows and separate phone pool configuration exist | `externally unverified`: no account, OTP, MFA or session mutation was performed. |
+| S3 | Presign clients and private Terraform buckets exist | `externally unverified`: no upload, HEAD, download, lifecycle or cleanup check was performed. |
+| SQS/EventBridge/Lambda | Worker, queue, DLQ and schedule Terraform exists | `externally unverified`: no deployed message or schedule was inspected. |
+| SES, WhatsApp, Sarvam, Claude, Gemini, AgentCore | Adapters or infrastructure exist in varying depth | `externally unverified`: no outbound message/model call was made. Runtime capability state must remain unknown or unavailable until Task 1 evidence exists. |
+| PostgreSQL and Redis/Valkey | Local adapters and tests exist | `externally unverified` for staging/production. Task 4 owns bounded environment checks. |
+| AWS control plane | Controller evidence records AWS CLI `2.36.7` and a successful read-only STS identity check for profile `default` in `ap-south-1` | Further live inspection was intentionally not run because the credentials resolved to the account root principal. No account identifier is recorded here; aside from that identity check, no resource mutation or application-provider call occurred. Task 4 requires a least-privilege non-production identity. |
+
+## Task 0: Baseline and contract inventory
+
+Status: completed (inventory and living-contract baseline)
+
+Audit Phase 2 routes, handlers, services, repositories, models, migrations,
+workers, queues, providers, states, idempotency, permissions, entitlements,
+tests, Terraform, and CI. Classify every area as complete, partial, missing,
+unsafe, deferred, blocked, or externally unverified and cite evidence paths.
+Verify provider and subscription semantics from implementation, not route
+presence. Create the initial exact frontend handoff and update this plan with
+architecture findings, expected files, migration/provider/test/rollout/security/
+data-integrity impacts, and milestone status.
+
+Task 0 changed only the two requested documentation artifacts. No migration,
+provider, rollout, infrastructure, production-code, OpenAPI, or test impact was
+introduced. The campaign remains in progress because Tasks 1-10 are pending.
+
+## Task 1: Runtime capability model
+
+Status: pending
+
+Implement business-scoped, backend-authoritative capability evaluation covering
+Razorpay, GST/e-invoice/e-way bill, WhatsApp, email, S3 uploads, voice, AI,
+storefront payments, report exports, bulk imports, and saved payment methods.
+Separate product support, configuration, cached provider health and timestamp,
+entitlement, quota, permission, business setup, platform support, final state,
+stable reason/setup/retry/degradation fields. Supported states are `available`,
+`setup_required`, `upgrade_required`, `quota_exhausted`, `permission_denied`,
+`temporarily_unavailable`, `unsupported_platform`, `unsupported`, and `unknown`.
+Add customer and separately authorized internal diagnostics endpoints, cache
+tenant-isolation and degradation tests, config-state/service/handler/permission
+tests, OpenAPI, and CAP handoff contracts. Customer output must be secret-safe.
+
+Inventory note: no equivalent runtime model was found. Existing plan
+entitlements must be an input, not a replacement. Expected owners are
+`internal/config`, capability models/repositories/services/handlers,
+`internal/app/runtime.go`, permissions, OpenAPI, and focused tests. Add a paired
+migration only if health/config snapshots are durable. Roll out customer-safe
+evaluation before any UI depends on it; keep unknown providers unavailable.
+
+## Task 2: Subscription and Razorpay lifecycle
+
+Status: pending
+
+Determine whether monthly plans are renewable subscriptions or one-time
+checkout and make wording and behavior truthful. Implement the durable state
+machine, provider IDs/mode separation, periods/renewal/grace/cancellation,
+plan changes and proration policy, billing history, entitlement/quota/storage
+effects, and audit. Add a signed provider-event inbox with unique provider event
+identity, mode, type, payload hash, verification, timestamps, processing state,
+attempts, sanitized error, resolved business/subscription, and replay audit.
+Prevent duplicate/stale/out-of-order/wrong-plan/test-live events from regressing
+or activating entitlement; serialize races; reconcile missing/ambiguous events
+with bounded provider fetches. Test every named race, replay, invalid signature,
+timeout, grace, failure, mismatch, and reconciliation scenario. Add SUB contracts.
+
+Inventory note: the current paid flow is a one-time checkout that sets one month
+of access, not a renewable subscription. The webhook record is too small for the
+specified inbox and reconciliation semantics. Expected owners are subscription,
+payment-attempt and webhook models/repositories/services/handlers, a
+reconciliation worker, paired migrations, OpenAPI and provider/race tests. Use
+expand-first compatibility for existing rows and never infer payment from an
+unknown provider outcome.
+
+## Task 3: Operational visibility and recovery
+
+Status: pending
+
+Build a secure aggregate operational read model across render, delivery, outbox,
+Razorpay, GST/e-invoice/e-way bill, recurring, email/SES, WhatsApp,
+notifications, imports, and voice reconciliation without forcing one storage
+model. Expose business-safe status and separately authorized operator detail.
+Distinguish unknown/reconciliation-required from failed. Implement only safe,
+audited, idempotent retry/reconcile/re-render/delivery/webhook/DLQ/resolution/
+timeline operations bound to original tenant/resource. Add step-up where needed,
+metrics/alarms for queue age, failures, DLQ growth, reconciliation, latency,
+webhooks, schedules, render and delivery, plus OPS contracts and tests.
+
+Inventory note: individual render, delivery, GST, recurring and notification
+states exist, plus queues/DLQs and some alarms; the aggregate projection and safe
+recovery commands do not. Expected owners span a new aggregate service over
+existing repositories, customer/operator handlers, audit, permissions/step-up,
+Terraform alarms, OpenAPI and recovery/idempotency tests. Do not collapse
+`unknown` into `failed` or reveal provider payloads.
+
+## Task 4: Staging verification harness
+
+Status: pending
+
+Create a bounded JSON-emitting verification command that explicitly selects an
+environment, refuses production by default, separates read-only from visible
+writes, redacts secrets/provider responses, classifies passed/failed/skipped/
+blocked/not-configured, records timestamps/evidence, bounds concurrency/retries,
+and safely cleans synthetic resources. Cover configured Cognito/Google/phone,
+PostgreSQL, Redis, S3, SQS, EventBridge, WebSocket tickets, Razorpay test, SES,
+WhatsApp/GST sandboxes, Claude/Gemini/Sarvam/AgentCore and controlled invoice,
+report, upload, recurring, WebSocket and checkout journeys. Unit-test refusal,
+redaction, classification, cleanup, schema; document non-production commands.
+
+Inventory note: no command with these refusal, redaction and classification
+properties was found. Expected owners are a focused `cmd` package and tests plus
+non-production documentation; reuse safe adapters rather than adding product
+state. Every provider and deployed resource is externally unverified until this
+harness records evidence.
+
+## Task 5: Security, privacy, and recovery
+
+Status: pending
+
+Implement scoped one-time step-up authorization bound to user, business, action,
+resource, time, assurance, expiry and identifier for high-risk actions. Implement
+truthful Cognito-compatible session/device registration and revocation semantics,
+TOTP MFA flows/configuration, safe tenant-bound pending uploads with metadata,
+checksum, quarantine/scan abstraction/download/cleanup/audit, spreadsheet formula
+neutralization preserving typed cells, durable privacy export/deletion/retention/
+purge/provider/S3 cleanup, backup/restore runbook/scripts/RPO/RTO and safe drill
+classification, and focused CI secret/dependency/static/migration/Terraform/
+OpenAPI/logging/tenant checks. No paid scanner or live Cognito changes.
+
+Inventory note: tenant middleware, permissions, secret resolution, private S3,
+single-use WebSocket tickets and CSV formula neutralization are useful foundations.
+Step-up, TOTP, durable session/device state, verified uploads, privacy workflows
+and restore drills are absent. Expected owners span auth/middleware, upload and
+privacy services/repositories, paired migrations, safe `cmd` utilities,
+Terraform/CI, OpenAPI and adversarial tests. Existing unverified presigns must
+not be presented as completed assets.
+
+## Task 6: Accounting completeness
+
+Status: pending
+
+First map existing fiscal year, lock date, Trial Balance, Balance Sheet, opening
+balances, bank and subledger/inventory/tax reconciliation. Implement only gaps.
+Enforce a business lock date across every posting/inventory/origination/background
+path with permission, scoped step-up override, reason, audit and explicit reversal
+period policy. Add posted-ledger Trial Balance and Balance Sheet with hierarchy,
+opening/period/closing totals, branch/currency/comparison/drilldown/export/share.
+Add read-only reconciliation diagnostics with no auto-repair. Add validated,
+idempotent, audited opening-balance postings and inventory facts. Add bank account,
+statement import/transaction, exact and bounded fuzzy suggestions, manual match/
+unmatch, fee/interest adjustment, reconciliation date, unreconciled/audit state.
+Include paired migrations, concurrency/invariant/permission tests and ACC contracts.
+
+Inventory note: journal and payment posting/reversal invariants exist, but fiscal
+lock, Trial Balance, Balance Sheet, opening balances and banking/reconciliation
+were not found. Expected owners are journal/payment/inventory/reporting services,
+new accounting/bank repositories and models, paired migrations, permissions and
+scoped step-up, OpenAPI and concurrency/invariant/export tests. Backfill and
+rounding policy must preserve existing posted data.
+
+## Task 7: Durable bulk import
+
+Status: pending
+
+Implement two-phase durable CSV import for customers, vendors, and products only.
+Validation/preview uses tenant-bound upload metadata, streaming parser, encoding/
+delimiter/columns/mapping/normalization/GSTIN/contact/unit/tax/price/currency and
+duplicate checks with durable row errors and no business mutation. Commit uses a
+UUID command bound to business/uploader, locked state transition, bounded batches,
+durable progress/results, worker retry, row idempotency, artifacts, notification,
+retention/cleanup/cancellation. Prevent cross-tenant access, replay after restart,
+partial invalid mutation, unscoped object keys, and formula injection. Reuse the
+existing bulk-job/SQS architecture; add migrations, worker/service/handler tests,
+alarms and IMP contracts.
+
+Inventory note: the current import intake is unsafe to expose as a finished
+workflow: it buffers the entire multipart file and creates queued rows without a
+worker. Expected owners are the existing bulk-job model/service/handler plus S3
+metadata, a dedicated worker/queue/alarm and repository transitions. Use paired
+migrations if current states cannot be expanded safely. Decide how existing
+queued jobs are failed, migrated or retried before enabling the frontend.
+
+## Task 8: Remaining core backend gaps
+
+Status: pending
+
+Strengthen phone authentication/account linking with E.164, resend/expiry/replay,
+refresh/logout, collision detection, explicit link (never silent merge), audit,
+enumeration-resistant errors/rates. Complete business-logo pending upload and
+tenant key/checksum/metadata/type/size verification with transactional idempotent
+reference update and post-commit old-object cleanup. Add cart update/remove/clear
+with owner/tenant/version/state checks and authoritative availability/pricing/tax.
+Add coupon update/activation/date/minimum/maximum/usage controls safe with
+redemption and no deletion of redeemed coupons. Add real bounded XLSX export with
+typed money/dates/timezone, formula safety, MIME/disposition, auth/entitlement/
+audit and native/web compatibility. Keep saved methods unavailable. Add AUTH,
+ASSET, CART, COUPON and REPORT contracts and concurrency/security tests.
+
+Inventory note: phone flows, presigns, AP2 cart mandates, coupons and JSON/CSV
+exports exist only partially. The upload completion gap, non-editable cart,
+non-serialized coupon usage and JSON-wrapped CSV are the main correctness risks.
+Expected owners stay within current auth/commerce/shopping/report handlers,
+services, models and repositories, with paired migrations where state/versioning
+is added, OpenAPI, and provider/concurrency/security tests. Saved payment methods
+remain explicitly unavailable.
+
+## Task 9: AI agent governance
+
+Status: pending
+
+Classify every existing tool into the specified eight risk classes and default
+deny missing classifications/permissions. Bind high-risk approvals to agent,
+business, user, tool, normalized arguments/hash, resource, impact, time, expiry,
+one-time ID and idempotency; argument changes invalidate approval. Enforce run,
+daily, business-spend, step, call, duration, retry, cancellation, kill-switch,
+circuit-breaker and concurrency-safe spend reservations without silent expensive
+fallback. Audit provider/model/config/template/run/tool/risk/approval/sanitized
+args/result/usage/cost/retries/failure/disposition without secrets or unnecessary
+prompts. Add adversarial tenant, prompt-injection, approval replay/change, budget,
+timeout-after-effect, false-success, bargaining, kill-switch and credential tests.
+Disable capabilities governance cannot cover and document AI contracts.
+
+Inventory note: current agent capability CRUD is descriptive configuration, not
+the specified runtime authorization model. Voice tools are a useful read-only
+bounded subset. Expected owners include agent and voice runtime services,
+approval/budget/audit models and repositories, paired migrations, kill-switch
+configuration, provider-safe tests and AI contracts. Default deny all tools not
+classified and disable high-risk execution until governance is proven.
+
+## Task 10: Frontend handoff and release validation
+
+Status: pending
+
+Regenerate Swagger/OpenAPI. Complete every CAP/SUB/OPS/SEC/ACC/IMP/AUTH/ASSET/
+CART/COUPON/REPORT/AI contract with exact status, method/path, auth, business,
+permission, entitlement, step-up, idempotency, schemas/examples, pagination/file
+behavior, stable errors/statuses, states/retries/events/invalidation, rollout,
+tests and limitations. Mark internal, blocked, deferred and externally unverified
+items. Run route/contract, migration, tenant, sensitive logging, finance/inventory
+idempotency, provider unknown-outcome and Terraform format/validate/test reviews.
+Create the non-filing GST reconciliation follow-up plan. Run full verification,
+inspect the final diff, and ensure no frontend or secret files changed.
+
+Inventory note: `docs/integration/BILLEIF_PHASE_2_FRONTEND_HANDOFF.md` is the
+initial evidence-backed handoff, not the final release contract. Task 10 must
+update it after behavior changes, regenerate OpenAPI, run the complete required
+validation, record external gaps truthfully, and produce the non-filing GST
+reconciliation follow-up plan without implementing deferred filing.
+
+## Expected change surface
+
+Expected areas include `internal/app`, `internal/config`, `internal/handlers`,
+`internal/middleware`, `internal/models`, `internal/repositories`,
+`internal/services`, `internal/workers`, `cmd`, `migrations`,
+`infrastructure/terraform`, `.github/workflows`, `openapi`, `docs`, and focused
+tests. Each task must narrow this list to the smallest existing owner.
+
+Task 0 touched documentation only. Future tasks must not treat the broad list as
+authorization to edit every area; the milestone ledger above names the expected
+smallest owners and each implementation task must narrow them again from evidence.
+
+## Rollout, security, and data integrity
+
+All schema work is expand-first and reversible. New infrastructure remains
+feature-gated and is validated without apply. Provider functionality remains
+unavailable or degraded until configuration and health evidence exist. Public
+contracts roll out behind backend authorization, tenant checks, entitlements,
+idempotency and stable errors. Recovery never duplicates financial, inventory,
+tax, file, notification, or external-message outcomes.
