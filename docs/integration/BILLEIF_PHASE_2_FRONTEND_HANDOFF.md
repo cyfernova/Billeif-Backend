@@ -40,13 +40,19 @@ route registration or current generated OpenAPI alone.
 | OPS-001 | Invoice render status | `complete` for current safe projection | Pollable. |
 | OPS-002 | Invoice delivery create/status | `complete` for current safe projection | Usable with UUID idempotency key; poll status. |
 | OPS-003 | In-app notifications | `complete` for current non-paginated contract | Usable; refresh/poll because no versioned event contract is promised here. |
+| OPS-004 | Document GST compliance status and commands | `partial`, response `unsafe`, provider `externally unverified` | Keep customer success UI disabled; status can include simulated or provider-internal data. |
+| OPS-005 | GST integration accounts and GSTIN lookup | `partial` and `unsafe`, provider `externally unverified` | Internal setup only; never expose credentials, provider metadata, or simulated validation as government proof. |
+| OPS-006 | GSTR-2B reconciliation and GST report runs | `partial`; official filing `deferred` | Internal accounting operations only; exports are generated data, not filed returns. |
 | SEC-001 | One-use WebSocket ticket | `complete` locally, deployed WebSocket `externally unverified` | Usable where the deployed WebSocket is separately verified. |
+| ACC-001 | Journal create/read/list/update/delete/post/reverse | `partial` accounting surface | Internal accounting UI only; no fiscal lock or stable error-code contract. |
+| ACC-002 | General-ledger list and balance | `partial` read surface | Internal accounting UI only; not a Trial Balance or Balance Sheet. |
 | AUTH-001 | Indian phone OTP auth | `partial`, Cognito/SMS `externally unverified` | Do not ship as hardened account-linking/session-management UX yet. |
 | ASSET-001 | Business-logo and drive presigns | `partial` and `unsafe` as completed-asset workflows; S3 `externally unverified` | Do not mark an asset complete after PUT; completion verification does not exist. |
 | IMP-001 | Current bulk import intake/read | `partial` and `unsafe` | Do not enable as a production import workflow; no processor was found. |
 | CART-001 | AP2 signed cart mandate | `partial` and `unsafe` as the requested editable cart | Existing clients only; no update/remove/clear contract. |
 | COUPON-001 | Storefront coupon list/create/update | `partial` and concurrency `unsafe` | Management UI may inspect it, but usage caps are not race-safe. |
 | REPORT-001 | Report JSON/CSV export envelope | `partial` | Existing synchronous JSON/CSV only; not an XLSX or file-download contract. |
+| AI-001 | Agent capability list/add/remove and permission probe | `partial` and `unsafe` as governance | Capability inventory only; do not treat it as execution authorization. |
 
 ## Cross-contract controls and client lifecycle
 
@@ -62,29 +68,41 @@ omitted column to imply support.
 | OPS-001 | Bearer + effective business + all branches | `documents.export` | None | None implemented | Read-only |
 | OPS-002 | Bearer + effective business + all branches | Create `documents.manage`; read `documents.export` | None | None implemented | Required UUID `Idempotency-Key`; same actor/payload replays, changed payload conflicts |
 | OPS-003 | Bearer + effective business + authenticated user | No additional permission | None | None implemented | Source ingestion is unique; read mutations have no client command key and are naturally convergent |
+| OPS-004 | Bearer + effective business + all branches | Reads/PDF `documents.export`; mutations `documents.manage` | Generate e-invoice/e-way bill enforces its feature and monthly quota; other commands do not | None implemented | Required `Idempotency-Key`; key is business-global and a changed operation/payload can replay the first job |
+| OPS-005 | Bearer + effective business | GSTIN lookup `reports.view`; account CRUD/validate `tax.integrations.manage` + all branches | None | None implemented | Reads safe; account writes/validate have no command key |
+| OPS-006 | Bearer + effective business + all branches | Import `documents.manage`; reports/read `reports.view`; export `reports.export` | None | None implemented | Import deduplicates identical payload/period/source but has no client key; every export creates a run |
 | SEC-001 | Bearer + effective business + authenticated user | No additional permission | None | None implemented | Ticket is one-use; issue has no command key |
+| ACC-001 | Bearer + effective business + all branches | Reads `reports.view`; writes `documents.manage` | None | None implemented | No command/version key; never retry writes after an ambiguous response |
+| ACC-002 | Bearer + effective business + all branches | `reports.view` | None | None implemented | Read-only |
 | AUTH-001 | Public except logout, which requires bearer + effective business through the protected group | No business scope during public flow | None | None implemented | No command key; provider OTP/session controls apply |
 | ASSET-001 | Logo: bearer + owned business; drive: bearer + effective business | Logo owner check; drive `drive.manage` | Logo none; drive `drive_storage_mb` | None implemented | No command key and no completion idempotency |
 | IMP-001 | Bearer + effective business + authenticated user | Customer/vendor create permissions; product/invoice/document incomplete | None enforced | None implemented | No command/row idempotency |
 | CART-001 | Bearer + effective business; user and owned shopping-agent checks | No additional permission | None | None implemented | No command key; signatures cover a created mandate but add creates a new mandate |
-| COUPON-001 | Bearer + effective business | View `storefront.view`; writes `storefront.manage` | None enforced on coupon routes | None implemented | No command/version key |
+| COUPON-001 | Management: bearer + effective business; validation: public slug route with rate limits | View `storefront.view`; writes `storefront.manage`; validation public | None enforced on coupon routes | None implemented | No command/version key |
 | REPORT-001 | Bearer + effective business + branch/warehouse scope | `reports.export` | No report-export plan entitlement enforced | None implemented | No command key; every request creates a report run |
+| AI-001 | Bearer + effective business; same-business access passes the current ownership helper | No additional permission | None | None implemented | Add/remove have no command/version key; reads are safe |
 
 | ID | Pagination / file behavior | State and retry | Event / invalidation | Existing migration and rollout | Proof and governing limitation |
 | --- | --- | --- | --- | --- | --- |
-| SUB-001 | No pagination or file | Synchronous read; retry safe | No event; invalidate on catalog-version/deployment change | No Task 0 migration; catalog is code-defined | Catalog service tests; one-month checkout is not renewal |
-| SUB-002 | No pagination or file | Stored `active`/`canceled`/`expired` model; refetch after payment | No versioned event; invalidate subscription and entitlement queries after verify/sync | Existing subscription and feature-entitlement schema; keep direct writes disabled | Subscription/commerce/entitlement tests; runtime capability and lifecycle are incomplete |
-| SUB-003 | No pagination or file | Attempt `created`/`pending`/`paid`/`failed`; do not blindly retry unknown provider outcomes | No client event; invalidate SUB-002 after verified paid response | `migrations/000041_add_razorpay_payment_attempts.up.sql`; test-mode/provider rollout unverified | Razorpay service/handler/IaC tests; no recurring lifecycle or reconciliation |
-| OPS-001 | No pagination or file; PDF download is separate | Poll `queued`/`processing`; stop on `completed`/`failed`/`obsolete` | No versioned client event; invalidate invoice PDF/download state on terminal state | Existing render/outbox migrations; deployed worker unverified | Render service/handler/repository/Lambda tests; no safe retry API |
-| OPS-002 | No pagination or file | Reuse same key after timeout; poll until terminal | No versioned client event promised; invalidate invoice and delivery queries on change | Existing canonical delivery/outbox schema; SES/deployed worker unverified | Delivery unit/integration tests; no customer retry action or provider detail |
-| OPS-003 | Limit only, maximum 200; no cursor/file | Read operations are retry-safe | No versioned notification-event name promised; invalidate list after mark-read | `migrations/000051_notifications.up.sql`; deployed delivery unverified | Handler/service/repository tests; capped non-cursor list |
-| SEC-001 | No pagination/file | Never reuse; issue another after expiry/failure | Successful connect owns later channel behavior; no issuance event | `migrations/000050_websocket_tickets.up.sql`; deployed WebSocket unverified | Ticket service/repository/handler/Lambda tests; at most 60-second TTL |
-| AUTH-001 | No pagination/file | OTP/session retry follows current rate/cooldown behavior; errors are not stable | No auth event contract; invalidate local session/profile after verify/refresh/logout | `migrations/000023_add_phone_auth_fields.up.sql`; Cognito/SMS rollout unverified | Auth tests; enumeration, linking, device/session, MFA and audit gaps |
-| ASSET-001 | PUT bytes to opaque signed URL; no download/completion contract here | Request a new URL after expiry; PUT success is not completion proof | No asset-ready event; do not invalidate/show final asset as complete | Existing asset schema and private-bucket Terraform; S3 externally unverified | S3/business/commerce tests; missing checksum/HEAD/scan/reference transaction |
-| IMP-001 | Job list uses page/limit; upload is multipart; job payloads are JSON strings | Queued rows have no processor/restart contract | No import event; do not depend on progress invalidation | `migrations/000030_add_swipe_billing_ops.up.sql`; keep UI disabled | Billing-ops tests prove intake/read only; no durable validation/commit worker |
-| CART-001 | Cart list uses page/limit; no file | Mandate states `pending`/`signed`/`rejected`/`expired`; do not retry checkout after ambiguous side effect | No versioned cart event; invalidate/refetch created mandate only | Existing AP2 mandate schema; keep out of new editable-cart UI | Shopping/AP2/signature tests; no mutation concurrency or authoritative pricing/stock |
-| COUPON-001 | List is an array without pagination; no file | Active/date rules exist; retrying writes can duplicate without a client key | No versioned coupon event; invalidate storefront coupon list after writes | `migrations/000032_add_storefront_enterprise_features.up.sql`; avoid claiming hard caps | Commerce/storefront tests; redemption/update concurrency is unsafe |
-| REPORT-001 | Input page/limit; response embeds JSON or CSV string, not a file response | Synchronous `completed`/`failed` run model; repeat creates another run | No export event; invalidate report-run/history views after success | Existing report-run schema; XLSX rollout missing | Report service/handler tests; no XLSX, typed cells, disposition or export idempotency |
+| SUB-001 | No pagination or file | Synchronous read; retry safe | No event; invalidate on catalog-version/deployment change | No Task 0 migration; catalog is code-defined | `internal/services/subscription_catalog_test.go`; one-month checkout is not renewal |
+| SUB-002 | No pagination or file | Stored `active`/`canceled`/`expired` model; refetch after payment | No versioned event; invalidate subscription and entitlement queries after verify/sync | Existing subscription and feature-entitlement schema; keep direct writes disabled | `tests/unit/subscription_service_test.go`, `internal/services/entitlements_test.go`, `internal/services/commerce_service_test.go`; runtime capability and lifecycle are incomplete |
+| SUB-003 | No pagination or file | Attempt `created`/`pending`/`paid`/`failed`; do not blindly retry unknown provider outcomes | No client event; invalidate SUB-002 after verified paid response | `migrations/000041_add_razorpay_payment_attempts.up.sql`; test-mode/provider rollout unverified | `internal/services/razorpay_payment_service_test.go`, `internal/handlers/payment_handler_idempotency_test.go`, `infrastructure/terraform/tests/razorpay.tftest.hcl`; no recurring lifecycle or reconciliation |
+| OPS-001 | No pagination or file; PDF download is separate | Poll `queued`/`processing`; stop on `completed`/`failed`/`obsolete` | No versioned client event; invalidate invoice PDF/download state on terminal state | Existing render/outbox migrations; deployed worker unverified | `tests/unit/invoice_service_test.go`, `internal/handlers/invoice_download_handler_test.go`, `internal/workers/pdf_renderer_snapshot_test.go`, `infrastructure/terraform/tests/outbox.tftest.hcl`; no safe retry API |
+| OPS-002 | No pagination or file | Reuse same key after timeout; poll until terminal | No versioned client event promised; invalidate invoice and delivery queries on change | Existing canonical delivery/outbox schema; SES/deployed worker unverified | `internal/services/invoice_delivery_test.go`, `internal/handlers/invoice_delivery_handler_test.go`, `internal/repositories/postgres/invoice_delivery_repo_test.go`; no customer retry action or provider detail |
+| OPS-003 | Limit only, maximum 200; no cursor/file | Read operations are retry-safe | No versioned notification-event name promised; invalidate list after mark-read | `migrations/000051_notifications.up.sql`; deployed delivery unverified | `internal/handlers/notification_handler_test.go`, `internal/services/notification_service_test.go`, `internal/repositories/postgres/notification_repo_test.go`; capped non-cursor list |
+| OPS-004 | No pagination; PDF fetch returns `{"pdf_url":"..."}` JSON rather than file bytes | Poll job states; reuse the same key only for the identical command | No versioned event; invalidate compliance status while polling | `migrations/000027_add_gst_compliance.up.sql`, `migrations/000031_add_gst_execution_and_pos.up.sql`; provider/queue unverified | `internal/services/tax_compliance_service_test.go`, `tests/unit/document_handler_test.go`; unsafe projection and simulator fallback |
+| OPS-005 | Account list is an unpaginated array; GSTIN lookup has no file | Reads safe; account mutation result is synchronous | No event; refetch account list after write/validate | `migrations/000027_add_gst_compliance.up.sql`, `migrations/000031_add_gst_execution_and_pos.up.sql`; provider unverified | `internal/services/tax_compliance_service_test.go`, `tests/unit/tax_handler_test.go`; simulated validation and raw metadata possible |
+| OPS-006 | No pagination/file contract; payloads are JSON values/encoded strings | Import is synchronous `processed`; report run is immediately `completed` or `failed` | No event; refetch selected run | `migrations/000027_add_gst_compliance.up.sql`; official filing deferred | `internal/services/tax_compliance_service_test.go`, `tests/unit/tax_handler_test.go`; no filing acknowledgement |
+| SEC-001 | No pagination/file | Never reuse; issue another after expiry/failure | Successful connect owns later channel behavior; no issuance event | `migrations/000050_websocket_tickets.up.sql`; deployed WebSocket unverified | `internal/services/websocket_ticket_service_test.go`, `internal/repositories/postgres/websocket_ticket_repo_test.go`, `internal/handlers/websocket_ticket_handler_test.go`, `tests/unit/websocket_handler_test.go`; at most 60-second TTL |
+| ACC-001 | List uses page/limit, default 1/10, maximum 100; no file | Draft/posted/reversed; mutations unsafe to retry after timeout | No event; refetch journal and ledger after success | `migrations/000008_ledger_entries.up.sql`, `migrations/000025_add_document_platform.up.sql`, `migrations/000029_add_projects_and_reporting.up.sql` | `internal/services/journal_invariants_test.go`, `tests/unit/journal_handler_test.go`; no fiscal lock or versioning |
+| ACC-002 | List uses page/limit, default 1/10, maximum 100; no file | Synchronous reads; retry safe | No event; invalidate after journal/payment posting or reversal | `migrations/000008_ledger_entries.up.sql`, `migrations/000025_add_document_platform.up.sql`, `migrations/000029_add_projects_and_reporting.up.sql` | `tests/unit/ledger_service_test.go`; float response and no statement hierarchy |
+| AUTH-001 | No pagination/file | OTP/session retry follows current rate/cooldown behavior; errors are not stable | No auth event contract; invalidate local session/profile after verify/refresh/logout | `migrations/000023_add_phone_auth_fields.up.sql`; Cognito/SMS rollout unverified | `internal/services/auth_phone_test.go`, `tests/unit/auth_service_test.go`, `tests/integration/auth_test.go`; enumeration, linking, device/session, MFA and audit gaps |
+| ASSET-001 | PUT bytes to opaque signed URL; no download/completion contract here | Request a new URL after expiry; PUT success is not completion proof | No asset-ready event; do not invalidate/show final asset as complete | `migrations/000032_add_storefront_enterprise_features.up.sql`, `migrations/000033_add_more_screen_parity.up.sql`, `infrastructure/terraform/s3.tf`; S3 externally unverified | `internal/services/s3_service_test.go`, `tests/unit/business_service_test.go`, `internal/services/commerce_service_test.go`, `tests/unit/commerce_handler_test.go`; missing checksum/HEAD/scan/reference transaction |
+| IMP-001 | Job list uses page/limit; upload is multipart; job payloads are JSON strings | Queued rows have no processor/restart contract | No import event; do not depend on progress invalidation | `migrations/000030_add_swipe_billing_ops.up.sql`; keep UI disabled | `tests/unit/billing_ops_handler_test.go`; no durable validation/commit worker found in `internal/workers`, `cmd`, or `infrastructure/terraform` |
+| CART-001 | Cart list uses page/limit; no file | Mandate states `pending`/`signed`/`rejected`/`expired`; do not retry checkout after ambiguous side effect | No versioned cart event; invalidate/refetch created mandate only | `migrations/000013_add_ap2_agent_marketplace.up.sql`, `migrations/000049_verify_cart_mandate_signatures.up.sql`; keep out of new editable-cart UI | `internal/services/shopping_agent_service_test.go`, `internal/services/shopping_agent_signature_test.go`, `tests/unit/shopping_handler_test.go`; no mutation concurrency or authoritative pricing/stock |
+| COUPON-001 | List is an array without pagination; no file | Active/date rules exist; retrying writes can duplicate without a client key | No versioned coupon event; invalidate storefront coupon list after writes | `migrations/000032_add_storefront_enterprise_features.up.sql`; avoid claiming hard caps | `internal/services/commerce_service_test.go`, `internal/services/commerce_checkout_postgres_integration_test.go`, `internal/services/storefront_tenant_scope_test.go`; redemption/update concurrency is unsafe |
+| REPORT-001 | Input page/limit; response embeds JSON or CSV string, not a file response | Synchronous `completed`/`failed` run model; repeat creates another run | No export event; invalidate report-run/history views after success | `migrations/000029_add_projects_and_reporting.up.sql`; XLSX rollout missing | `internal/services/report_service_test.go`, `tests/unit/report_handler_test.go`; no XLSX, typed cells, disposition or export idempotency |
+| AI-001 | Capability list is an unpaginated array; no file | Descriptive rows have no execution lifecycle; writes unsafe to retry | No event; refetch capability list after a confirmed write | `migrations/000013_add_ap2_agent_marketplace.up.sql`; AI providers unverified | `tests/unit/agent_handler_test.go`, `tests/integration/agent_test.go`; permission probe is not authorization |
 
 ## SUB-001: Subscription catalog
 
@@ -159,7 +177,7 @@ subscription.
 | Auth and scope | Bearer token plus effective business |
 | Permission | `subscriptions.view` |
 | Success | `200` subscription object; `404 {"error":"subscription not found"}` |
-| Evidence | `internal/handlers/subscription_handler.go`, `internal/models/subscription.go`, subscription service/repository tests |
+| Evidence | `internal/handlers/subscription_handler.go`, `internal/models/subscription.go`, `tests/unit/subscription_service_test.go`, `internal/services/entitlements_test.go` |
 
 Exact fields are `id`, `business_id`, `plan`, optional `plan_code`, optional
 `catalog_version`, `status`, `max_invoices`, `max_customers`, `max_users`,
@@ -224,7 +242,8 @@ feature-row endpoints. Stable enforcement failures, where used, are:
 ```
 
 Evidence: `internal/models/commerce.go`, `internal/services/commerce_service.go`,
-`internal/services/entitlements.go`, and entitlement/commerce tests.
+`internal/services/entitlements.go`, `internal/services/entitlements_test.go`,
+and `internal/services/commerce_service_test.go`.
 
 Do not use current `POST /subscriptions` or `PUT /subscriptions` to buy or switch
 paid plans. The service rejects paid creation and plan changes, while the handler
@@ -242,7 +261,7 @@ currently maps those errors to unstable `500` responses.
 | Idempotency | Body `idempotency_key`, required; scoped to user and business |
 | Success | `200` |
 | Provider state | `externally unverified`; returns `503` when unconfigured |
-| Evidence | `internal/handlers/razorpay_payment_handler.go`, `internal/services/razorpay_payment_service.go`, `internal/models/payment_attempt.go`, payment tests, `migrations/000041_add_razorpay_payment_attempts.up.sql` |
+| Evidence | `internal/handlers/razorpay_payment_handler.go`, `internal/services/razorpay_payment_service.go`, `internal/models/payment_attempt.go`, `internal/services/razorpay_payment_service_test.go`, `internal/handlers/payment_handler_idempotency_test.go`, `migrations/000041_add_razorpay_payment_attempts.up.sql` |
 
 Order request and response:
 
@@ -304,7 +323,7 @@ or retried blindly.
 | Stable states | `queued`, `processing`, `completed`, `failed`, `obsolete` |
 | Render kinds | `preview`, `final` |
 | Retry/event | No customer retry or event contract; poll with bounded backoff |
-| Evidence | `internal/handlers/invoice_handler.go`, `internal/services/invoice_service.go`, render model/repository and focused tests |
+| Evidence | `internal/handlers/invoice_handler.go`, `internal/services/invoice_service.go`, `internal/models/invoice_foundations.go`, `tests/unit/invoice_service_test.go`, `internal/handlers/invoice_download_handler_test.go`, `internal/workers/pdf_renderer_snapshot_test.go` |
 
 ```json
 {
@@ -336,7 +355,7 @@ final render can be downloaded through the separately implemented
 | Request | `{"recipient":"buyer@example.com"}` |
 | Success | `202` |
 | Retry/event | Reuse the same key and payload to recover the same result; poll status; no versioned client event is promised |
-| Evidence | `internal/handlers/invoice_handler.go`, `internal/services/invoice_delivery.go`, PostgreSQL atomic-delivery adapter and unit/integration tests |
+| Evidence | `internal/handlers/invoice_handler.go`, `internal/services/invoice_delivery.go`, `internal/repositories/postgres/invoice_delivery.go`, `internal/services/invoice_delivery_test.go`, `internal/handlers/invoice_delivery_handler_test.go`, `internal/repositories/postgres/invoice_delivery_repo_test.go` |
 
 ```json
 {
@@ -393,8 +412,14 @@ non-numeric value, and caps the service result at 200. It has no cursor or total
 
 Optional fields are omitted rather than guaranteed `null`. Exact current
 client-relevant errors include `400 invalid notification limit` and
-`404 notification not found`. Evidence: notification model, handler, service,
-repository, `migrations/000051_notifications.up.sql`, and focused tests.
+`404 notification not found`. Evidence: `internal/models/notification.go`,
+`internal/handlers/notification_handler.go`,
+`internal/services/notification_service.go`,
+`internal/repositories/postgres/notification_repo.go`,
+`migrations/000051_notifications.up.sql`,
+`internal/handlers/notification_handler_test.go`,
+`internal/services/notification_service_test.go`, and
+`internal/repositories/postgres/notification_repo_test.go`.
 
 ## SEC-001: WebSocket ticket
 
@@ -418,8 +443,13 @@ no public refresh or revoke endpoint. Deployed WebSocket connectivity remains
 externally unverified.
 
 Evidence: `internal/services/websocket_ticket_service.go`,
-`internal/handlers/websocket_ticket_handler.go`, WebSocket handler/Lambda and
-PostgreSQL atomic-consume tests, `migrations/000050_websocket_tickets.up.sql`.
+`internal/handlers/websocket_ticket_handler.go`,
+`internal/repositories/postgres/websocket_ticket_repo.go`,
+`internal/services/websocket_ticket_service_test.go`,
+`internal/handlers/websocket_ticket_handler_test.go`,
+`internal/repositories/postgres/websocket_ticket_repo_test.go`,
+`tests/unit/websocket_handler_test.go`, and
+`migrations/000050_websocket_tickets.up.sql`.
 
 ## AUTH-001: Indian phone OTP authentication
 
@@ -448,7 +478,361 @@ a local user before phone confirmation and has no durable device/session registr
 TOTP MFA, privacy audit, or one-time step-up. Treat error messages as unstable.
 
 Evidence: `internal/handlers/auth_handler.go`, `internal/services/auth_service.go`,
-auth handler/service tests, and `migrations/000023_add_phone_auth_fields.up.sql`.
+`internal/services/auth_phone_test.go`, `tests/unit/auth_service_test.go`,
+`tests/integration/auth_test.go`, and
+`migrations/000023_add_phone_auth_fields.up.sql`.
+
+## ACC-001: Current journal lifecycle
+
+All routes require bearer auth, effective business scope, and all-branches
+scope. Reads require `reports.view`; mutations require `documents.manage`.
+
+| Method and path | Request body | Success | Endpoint-specific failures |
+| --- | --- | --- | --- |
+| `GET /journals?page=1&limit=10` | none | `200 {"data":[],"total":0,"page":1,"limit":10}` | `500 {"error":"..."}` unstable |
+| `GET /journals/{id}` | none | `200` journal | `404 {"error":"journal not found"}` |
+| `POST /journals` | create input below | `201` journal | bind `400`; service errors, including some validation errors, are unstable `500` text |
+| `PUT /journals/{id}` | full create input below | `200` journal | `400` only for `only draft journals can be updated` or `journal is not balanced`; `404`; other `500` text |
+| `DELETE /journals/{id}` | none | `204` no body | `400` only for `only draft journals can be deleted`; `404`; other `500` text |
+| `POST /journals/{id}/post` | none | `200` journal | `400 {"error":"journal already posted"}`; `404`; other `500` text |
+| `POST /journals/{id}/reverse` | none | `201` compensating journal | `400` only for `only posted journals can be reversed`; `404`; other errors, including payment-workflow routing, are unstable `500` text |
+
+The exact create/update body has required `name` and `lines` with at least two
+entries; optional `business_id` is overwritten by effective scope. Optional
+top-level fields are `reference`, `project_id`, `posting_date`, `notes`, and
+`status`. Each line requires `account_code`, `account_name`, `entry_type`
+(`debit` or `credit`), and positive `amount`; optional fields are `currency`,
+`description`, `document_id`, and `metadata`.
+
+```json
+{
+  "name": "Opening adjustment",
+  "reference": "JV-42",
+  "posting_date": "2026-09-01T12:00:00Z",
+  "notes": "approved adjustment",
+  "status": "draft",
+  "lines": [
+    {"account_code":"1100","account_name":"Cash","entry_type":"debit","amount":100,"currency":"INR"},
+    {"account_code":"3100","account_name":"Equity","entry_type":"credit","amount":100,"currency":"INR"}
+  ]
+}
+```
+
+The exact response fields are `id`, `business_id`, `name`, optional `reference`,
+optional `project_id`, `status`, `posting_date`, optional `notes`, optional
+`source_type`, optional `source_id`, optional `reversal_of_id`, optional
+`posted_at`, optional `reversed_at`, `created_at`, `updated_at`, and optional
+`lines`. Each line has `id`, `journal_id`, `account_code`, `account_name`,
+`entry_type`, `amount`, `currency`, optional `description`, optional
+`document_id`, optional `document_line_id`, optional `metadata` as a
+JSON-encoded string, `created_at`, and `updated_at`.
+
+```json
+{
+  "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "business_id": "22222222-2222-4222-8222-222222222222",
+  "name": "Opening adjustment",
+  "reference": "JV-42",
+  "status": "draft",
+  "posting_date": "2026-09-01T12:00:00Z",
+  "created_at": "2026-09-01T12:00:00Z",
+  "updated_at": "2026-09-01T12:00:00Z",
+  "lines": [
+    {"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","journal_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","account_code":"1100","account_name":"Cash","entry_type":"debit","amount":100,"currency":"INR","created_at":"2026-09-01T12:00:00Z","updated_at":"2026-09-01T12:00:00Z"}
+  ]
+}
+```
+
+States are `draft`, `posted`, and `reversed`. Balancing is enforced per
+currency after rounding to cents; posted journals are immutable. Reversal
+creates a posted compensating journal and marks the original reversed. Payment
+journals must use the payment-reversal workflow. There is no request idempotency,
+optimistic version, fiscal lock, step-up, or stable error code. After an
+ambiguous mutation response, refetch and do not retry blindly.
+
+Evidence: `internal/app/runtime.go`, `internal/handlers/journal_handler.go`,
+`internal/services/journal_service.go`, `internal/models/journal.go`,
+`internal/services/journal_invariants_test.go`,
+`tests/unit/journal_handler_test.go`,
+`migrations/000025_add_document_platform.up.sql`.
+
+## ACC-002: Current general ledger reads
+
+`GET /ledger?page=1&limit=10` and `GET /ledger/balance` require bearer auth,
+effective business, all branches, and `reports.view`. Pagination defaults to
+page 1/limit 10 and caps at 100. The list returns `data`, `total`, `page`, and
+`limit`; balance returns `200 {"balance":100}`. Both map service failures to
+unstable `500 {"error":"..."}`.
+
+Each list entry has `id`, `business_id`, optional `invoice_id`, optional
+`payment_id`, optional `project_id`, `transaction_id`, `entry_date`,
+`entry_type`, optional `category`, `description`, `amount`, `currency`,
+`balance`, and `created_at`.
+
+```json
+{
+  "data": [{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","business_id":"22222222-2222-4222-8222-222222222222","transaction_id":"JV-42","entry_date":"2026-09-01T12:00:00Z","entry_type":"debit","description":"Opening adjustment","amount":100,"currency":"INR","balance":100,"created_at":"2026-09-01T12:00:00Z"}],
+  "total": 1,
+  "page": 1,
+  "limit": 10
+}
+```
+
+These floating-point projections are not a Trial Balance, Balance Sheet,
+opening-balance workflow, fiscal-lock contract, or bank reconciliation. Reads
+are safe to retry; no event contract exists. Evidence:
+`internal/app/runtime.go`, `internal/handlers/ledger_handler.go`,
+`internal/services/ledger_service.go`, `internal/models/ledger.go`,
+`tests/unit/ledger_service_test.go`, `migrations/000008_ledger_entries.up.sql`,
+and `migrations/000029_add_projects_and_reporting.up.sql`.
+
+## OPS-004: Document GST compliance commands and status
+
+Routes are business-scoped and all-branches. Reads and the PDF-job request use
+`documents.export`; mutations use `documents.manage`.
+
+| Method and path | Exact body | Success |
+| --- | --- | --- |
+| `GET /documents/{id}/compliance` | none | `200` compliance status |
+| `POST /documents/{id}/einvoice` | `{"source":"web"}` (`source` optional) | `202` job |
+| `GET /documents/{id}/einvoice` | none | `200` e-invoice record; `404 {"error":"e-invoice not found"}` |
+| `POST /documents/{id}/einvoice/cancel` | `{"reason":"duplicate","source":"web"}` | `202` job |
+| `POST /documents/{id}/ewaybill` | `{"source":"web","dispatch_from":{},"dispatch_to":{},"distance_km":12.5,"transporter":{},"vehicle":{}}` | `202` job |
+| `GET /documents/{id}/ewaybill` | none | `200` e-way-bill record; `404 {"error":"e-way bill not found"}` |
+| `GET /documents/{id}/ewaybill/pdf` | none | `200 {"pdf_url":"https://opaque-signed-url.example"}`; service errors are unstable `400` text |
+| `PATCH /documents/{id}/ewaybill/part-b` | `{"source":"web","transporter":{},"vehicle":{"number":"MH12AB1234"},"reason_code":"1"}` | `202` job |
+| `POST /documents/{id}/ewaybill/multi-vehicle` | `{"source":"web","movement_type":"add","vehicle_no":"MH12AB1234","transport_doc_no":"LR-42","from_place":"Pune","from_state":"27","reason_code":"1","payload":{}}` | `202` job |
+
+The invoice alias `POST /invoices/{id}/einvoice` has the same mutation
+permission and job semantics. Every mutation command in the table requires
+`Idempotency-Key`; reads and PDF retrieval do not. The
+current key is unique at business scope but is not bound to operation/payload;
+reusing it for changed input can return the first job. Use a fresh UUID for a
+new command and reuse a key only for the exact same command after timeout.
+Missing headers return exact `400 {"error":"Idempotency-Key header is
+required"}`; the helper does not require UUID syntax.
+
+The job response fields are `id`, `business_id`, `document_id`, `operation`,
+`status`, `idempotency_key`, optional `queue_message_id`, `attempt_count`,
+optional `next_attempt_at`, `last_attempt_at`, `succeeded_at`, `last_error`,
+`error_class`, optional `request_payload`, `result_payload`, `source`,
+`created_at`, and `updated_at`. Operations are `generate_einvoice`,
+`cancel_einvoice`, `generate_ewaybill`, `update_eway_part_b`, `multi_vehicle`,
+and `fetch_eway_pdf`. States are `queued`, `processing`, `succeeded`,
+`retrying`, `failed`, and `needs_attention`; error classes are `retriable`,
+`validation`, `credentials`, `duplicate`, `rule`, `unavailable`, and `unknown`.
+
+```json
+{
+  "id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+  "business_id": "22222222-2222-4222-8222-222222222222",
+  "document_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+  "operation": "generate_einvoice",
+  "status": "queued",
+  "idempotency_key": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "attempt_count": 0,
+  "source": "web",
+  "created_at": "2026-09-01T12:00:00Z",
+  "updated_at": "2026-09-01T12:00:00Z"
+}
+```
+
+The status projection has `compliance_status`, optional `portal_status`,
+`retry_count`, optional `irn`, `ack_number`, `ack_date`, `qr_code_url`,
+`eway_bill_number`, `eway_bill_valid_until`, `last_error`, and optional nested
+`job`, `einvoice`, and `ewaybill`. It begins as `idle`; the current read can
+return `idle` even for an unknown document ID, so `idle` is not existence proof.
+
+```json
+{"compliance_status":"idle","retry_count":0}
+```
+
+The exact e-invoice record fields are `id`, `business_id`, `document_id`,
+optional `integration_account_id`, `status`, optional `irn`, `ack_number`,
+`ack_date`, `signed_qr_code_payload`, `qr_code_url`, `provider_reference_id`,
+`provider_name`, `request_payload`, `response_payload`, `error_class`,
+`last_error`, `generated_at`, `cancelled_at`, `created_at`, and `updated_at`.
+States are `pending`, `generated`, `cancelled`, and `failed`. The exact e-way
+bill record additionally exposes `eway_bill_number`, `eway_bill_date`,
+`eway_bill_valid_until`, `supply_type`, `part_a_status`, `part_b_status`,
+`distance_km`, `distance_source`, JSON-encoded `transporter`, `vehicle`,
+`dispatch_from`, and `dispatch_to`, `pdf_url`, `updated_part_b_at`, plus the
+same provider/payload/error/timestamp fields. States are `pending`, `generated`,
+`part_b_updated`, `multi_vehicle`, `cancelled`, and `failed`.
+
+```json
+{"id":"12121212-aaaa-4aaa-8aaa-121212121212","business_id":"22222222-2222-4222-8222-222222222222","document_id":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","status":"generated","irn":"provider-or-simulated-value","ack_number":"provider-or-simulated-value","signed_qr_code_payload":"unsafe-provider-payload","qr_code_url":"https://unsafe-current-url.example","provider_reference_id":"unsafe-reference","provider_name":"simulated","request_payload":"{}","response_payload":"{}","created_at":"2026-09-01T12:00:00Z","updated_at":"2026-09-01T12:00:00Z"}
+```
+
+```json
+{"id":"13131313-aaaa-4aaa-8aaa-131313131313","business_id":"22222222-2222-4222-8222-222222222222","document_id":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","status":"generated","eway_bill_number":"provider-or-simulated-value","distance_km":12.5,"distance_source":"manual","transporter":"{}","vehicle":"{\"number\":\"MH12AB1234\"}","dispatch_from":"{}","dispatch_to":"{}","pdf_url":"https://unsafe-current-url.example","provider_name":"simulated","request_payload":"{}","response_payload":"{}","created_at":"2026-09-01T12:00:00Z","updated_at":"2026-09-01T12:00:00Z"}
+```
+
+> ⛔ **UNSAFE - DO NOT DISPLAY, LOG, OR PERSIST:** the exact current response
+> can expose `idempotency_key`, `queue_message_id`, provider names/references,
+> signed QR/PDF URLs, request/result/response payloads, and raw provider errors
+> through those nested objects. Task 3 must replace this with a customer-safe
+> projection and opaque operation/artifact identifiers. Until then, keep this
+> surface internal and discard all unsafe nested fields.
+
+Generate commands can return stable entitlement errors `403` with code
+`feature_disabled` and `429` with code `quota_exceeded`. Binding errors are
+`400`; other domain/provider text is unstable. Queue/provider execution is
+externally unverified. Missing provider configuration selects a simulator that
+can create provider-looking success, so even `succeeded`, IRN, ack, QR, or
+e-way-bill fields are not government proof.
+
+Evidence: `internal/app/runtime.go`, `internal/handlers/document_handler.go`,
+`internal/services/tax_compliance_execution.go`,
+`internal/services/gst_provider.go`, `internal/models/gst_compliance.go`,
+`internal/services/tax_compliance_service_test.go`,
+`tests/unit/document_handler_test.go`,
+`migrations/000027_add_gst_compliance.up.sql`, and
+`migrations/000031_add_gst_execution_and_pos.up.sql`.
+
+## OPS-005: GST integration accounts and GSTIN lookup
+
+| Method and path | Permission | Body / success |
+| --- | --- | --- |
+| `GET /tax/integrations` | `tax.integrations.manage`, all branches | `200 {"data":[]}` |
+| `POST /tax/integrations` | same | body below; `200` account |
+| `PUT /tax/integrations/{id}` | same | body below; `200` account |
+| `POST /tax/integrations/{id}/validate` | same | no body; `200` account or `400 {"error":"...","account":{...}}` |
+| `POST /utils/gstin/{gstin}/fetch` | `reports.view` | no body; `200` lookup result |
+
+The account body has optional `provider`, required `service_type`, optional
+`gsp_name`, optional `portal_username`, `credentials`, and optional `metadata`.
+Credentials may contain `portal_username`, `portal_password`, `api_username`,
+`api_password`, `api_key`, `api_secret`, and string-map `metadata`.
+
+```json
+{"provider":"configured-provider","service_type":"einvoice","gsp_name":"Example GSP","portal_username":"tenant-user","credentials":{"api_username":"runtime-secret","api_password":"runtime-secret"},"metadata":{"environment":"sandbox"}}
+```
+
+Never echo or persist request credentials client-side. The exact safe-listed
+account response fields are `id`, `business_id`, `provider`, `service_type`,
+optional `gsp_name`, optional `portal_username`, optional `credential_hint`,
+`status`, optional `last_validated_at`, optional `last_error`, optional
+`metadata` as a JSON-encoded string, `created_at`, and `updated_at`. Encrypted
+credentials are not serialized. Create/update binding and service failures are
+unstable `400` text. Account writes and validate are not idempotent.
+
+```json
+{"id":"14141414-aaaa-4aaa-8aaa-141414141414","business_id":"22222222-2222-4222-8222-222222222222","provider":"configured-provider","service_type":"einvoice","gsp_name":"Example GSP","portal_username":"tenant-user","credential_hint":"unsafe-hint","status":"pending","metadata":"{\"environment\":\"sandbox\"}","created_at":"2026-09-01T12:00:00Z","updated_at":"2026-09-01T12:00:00Z"}
+```
+
+GSTIN lookup returns `gstin`, optional `pan`, `legal_name`, `trade_name`,
+`address`, `state_code`, `status`, `registration_date`, `constitution`,
+`nature_of_business`, `provider_message`, `source`, `is_valid`, and optional
+`raw_metadata`. If the provider URL is absent, current code returns a local
+format-derived fallback. `raw_metadata`, provider names, validation status, and
+fallback success are internal-only and are not government registry proof.
+
+```json
+{"gstin":"27ABCDE1234F1Z5","pan":"ABCDE1234F","state_code":"27","source":"local_validation","is_valid":true}
+```
+
+> ⛔ **UNSAFE - DO NOT DISPLAY, LOG, OR PERSIST:** do not expose request
+> credentials, `credential_hint`, provider error text, `raw_metadata`, or
+> simulated provider status. Task 3 must add safe projections; Task 1 must make
+> provider readiness authoritative.
+
+Evidence: `internal/app/runtime.go`, `internal/handlers/tax_handler.go`,
+`internal/services/tax_compliance_execution.go`,
+`internal/services/tax_compliance_service.go`, `internal/models/gst_compliance.go`,
+`internal/services/tax_compliance_service_test.go`, and
+`tests/unit/tax_handler_test.go`.
+
+## OPS-006: GSTR-2B reconciliation and GST report runs
+
+`POST /tax/gstr-2b/import` requires `documents.manage` and all branches. The
+body requires `period_start`, `period_end`, and `lines`; optional fields are
+`source` and `notes`. A line can contain `supplier_gstin`, `supplier_name`,
+`document_number`, `document_date`, `document_type`, `taxable_amount`,
+`tax_amount`, `cgst_amount`, `sgst_amount`, `igst_amount`, `cess_amount`,
+`place_of_supply`, and map `raw_payload`.
+
+```json
+{"period_start":"2026-08-01T00:00:00Z","period_end":"2026-08-31T23:59:59Z","source":"api","lines":[{"supplier_gstin":"27ABCDE1234F1Z5","document_number":"INV-42","taxable_amount":1000,"tax_amount":180,"igst_amount":180}]}
+```
+
+Success is `201 {"import":{...},"results":[...]}`. Import fields are `id`,
+`business_id`, `period_start`, `period_end`, `source`, `status`, optional
+`notes`, optional JSON-encoded `raw_payload`, `created_at`, and `updated_at`.
+Status is synchronously `processed`. Result status values are `matched`,
+`value_mismatch`, `tax_mismatch`, `missing_in_books`, and `missing_in_portal`;
+result fields also include import/document IDs, mismatch text, book/import
+taxable/tax amounts, optional JSON-encoded metadata, and timestamps. Identical
+raw input/period/source is deduplicated, but there is no client idempotency key;
+service failures are unstable `500` text.
+
+```json
+{"import":{"id":"15151515-aaaa-4aaa-8aaa-151515151515","business_id":"22222222-2222-4222-8222-222222222222","period_start":"2026-08-01T00:00:00Z","period_end":"2026-08-31T23:59:59Z","source":"api","status":"processed","raw_payload":"{}","created_at":"2026-09-01T12:00:00Z","updated_at":"2026-09-01T12:00:00Z"},"results":[{"id":"16161616-aaaa-4aaa-8aaa-161616161616","import_id":"15151515-aaaa-4aaa-8aaa-151515151515","business_id":"22222222-2222-4222-8222-222222222222","status":"missing_in_books","books_taxable_amount":0,"import_taxable_amount":1000,"books_tax_amount":0,"import_tax_amount":180,"created_at":"2026-09-01T12:00:00Z","updated_at":"2026-09-01T12:00:00Z"}]}
+```
+
+GST reports use `GET /tax/reports/{report_type}` with required YYYY-MM-DD
+`period_start` and `period_end`, plus optional `filing_frequency` and
+`export_format`; success is `200` a report-specific JSON map. `POST` to
+`/tax/reports/{report_type}/export` accepts those same option fields as JSON and
+also syntactically accepts `created_by`, which the handler overwrites from the
+authenticated user; it returns `201` a `GSTReportRun`.
+`GET /tax/report-runs/{id}` returns `200` or
+`404 {"error":"report run not found"}`. Types are `gstr1`, `gstr2b`, `cmp08`,
+`gstr4`, `gstr7`, and `hsn_summary`. A run has `id`, `business_id`,
+`report_type`, `period_start`, `period_end`, `filing_frequency`,
+`export_format`, `status`, optional JSON-encoded `warnings` and `payload`,
+optional `created_by`, `created_at`, and `updated_at`; states are `queued`,
+`completed`, and `failed`.
+
+```json
+{"id":"17171717-aaaa-4aaa-8aaa-171717171717","business_id":"22222222-2222-4222-8222-222222222222","report_type":"gstr1","period_start":"2026-08-01T00:00:00Z","period_end":"2026-08-31T23:59:59Z","filing_frequency":"monthly","export_format":"json","status":"completed","warnings":"[]","payload":"{}","created_by":"user-id","created_at":"2026-09-01T12:00:00Z","updated_at":"2026-09-01T12:00:00Z"}
+```
+
+These are reconciliation/generated-report surfaces only. They do not file a
+return and have no government acknowledgement. Official GST filing remains
+deferred. Evidence: `internal/app/runtime.go`, `internal/handlers/tax_handler.go`,
+`internal/services/tax_compliance_service.go`, `internal/models/tax.go`,
+`internal/services/tax_compliance_service_test.go`,
+`tests/unit/tax_handler_test.go`, and
+`migrations/000027_add_gst_compliance.up.sql`.
+
+## AI-001: Descriptive agent capability CRUD
+
+| Method and path | Exact body | Current success |
+| --- | --- | --- |
+| `GET /agents/{id}/capabilities` | none | `200` array |
+| `POST /agents/{id}/capabilities` | `{"capability_type":"product_search","description":"Read catalog","config":{"limit":10}}` | `201 {"message":"capability added successfully"}` |
+| `DELETE /agents/{id}/capabilities/{capability_id}` | none | `200 {"message":"capability removed successfully"}` |
+| `POST /agents/validate-permissions/{id}` | none | nominally `200 {"has_permission":true}` |
+
+The add body requires `capability_type`; `description` and map `config` are
+optional. List entries have `id`, `agent_id`, `capability_type`, optional
+`description`, `config` as a JSON-encoded string, and `created_at`.
+
+```json
+[{"id":"11111111-aaaa-4aaa-8aaa-111111111111","agent_id":"22222222-aaaa-4aaa-8aaa-222222222222","capability_type":"product_search","description":"Read catalog","config":"{\"limit\":10}","created_at":"2026-09-01T12:00:00Z"}]
+```
+
+Binding errors are unstable `400`; an inaccessible agent/capability is `404`
+with current error text; service failures are unstable `500`. The current
+ownership helper admits the agent owner **or any effective user in the agent's
+business**; these routes add no explicit permission, entitlement, step-up,
+version, or command idempotency. Duplicate `(agent_id, capability_type)` is
+database-rejected but returned as unstable `500` text.
+
+> ⛔ **UNSAFE - NOT AN AUTHORIZATION CONTRACT:** capability rows are
+> descriptive configuration. `validate-permissions` only reuses the
+> owner/same-business lookup; it does not accept a tool, risk, arguments, or
+> requested action and can attempt a second response after a lookup failure.
+> Do not use it to authorize execution or show a governance approval.
+
+There is no risk class, scoped approval, budget reservation, audit, kill switch,
+or execution enforcement here. Task 9 must replace this governance gap and
+default-deny unclassified tools. Evidence: `internal/app/runtime.go`,
+`internal/handlers/agent_handler.go`, `internal/services/agent_service.go`,
+`internal/models/agent.go`, `tests/unit/agent_handler_test.go`,
+`tests/integration/agent_test.go`, and
+`migrations/000013_add_ap2_agent_marketplace.up.sql`.
 
 ## ASSET-001: Current upload presigns
 
@@ -468,6 +852,12 @@ and WebP; size must be 1 byte through 5 MiB. Success is:
   }
 }
 ```
+
+Success is `200`. Exact handled failures are `400 {"error":"size_bytes must be
+a positive integer"}`, `413 {"error":"upload exceeds the maximum allowed
+size"}`, `400` unsupported-content-type text, `404 {"error":"business not
+found"}`, and otherwise unstable `500` text. There is no command key; requesting
+a replacement URL after expiry is safe, but it is not completion proof.
 
 ### Drive asset
 
@@ -494,6 +884,57 @@ optional `category`, optional `metadata` (JSON-encoded string), `created_at`, an
 `updated_at`. `bucket` and `object_key` are currently leaked implementation
 coordinates and must not become frontend dependencies.
 
+```json
+{
+  "asset": {
+    "id": "33333333-aaaa-4aaa-8aaa-333333333333",
+    "business_id": "22222222-2222-4222-8222-222222222222",
+    "uploaded_by": "user-id",
+    "name": "receipt.pdf",
+    "folder_path": "receipts/2026",
+    "bucket": "current-private-bucket",
+    "object_key": "22222222-2222-4222-8222-222222222222/20260901/opaque-current-key",
+    "content_type": "application/pdf",
+    "size_bytes": 2048,
+    "category": "receipt",
+    "metadata": "{\"source\":\"web\"}",
+    "created_at": "2026-09-01T12:00:00Z",
+    "updated_at": "2026-09-01T12:00:00Z"
+  },
+  "upload_url": "https://opaque-signed-storage-url.example",
+  "required_headers": {"Content-Length":"2048","Content-Type":"application/pdf"}
+}
+```
+
+> ⛔ **UNSAFE - DO NOT DISPLAY, LOG, OR PERSIST:** `bucket`, `object_key`,
+> and `upload_url` are exact fields in the current response. They expose storage
+> topology or temporary credentials and are not customer identifiers. Task 5/8
+> must replace frontend-visible topology with an opaque asset/upload ID and a
+> verified completion projection. Until then, use `asset.id` only in memory and
+> discard the unsafe fields after the direct upload attempt.
+
+The complete drive route behavior is:
+
+| Method and path | Request | Success | Endpoint-specific failures |
+| --- | --- | --- | --- |
+| `GET /drive` | none | `200 {"items":[DriveAsset],"usage_bytes":2048}` | unstable `500` text |
+| `POST /drive/presign` | create body above | `201` session above | bind, unsupported type, quota, feature, storage/config errors are unstable `400` text |
+| `PATCH /drive/{id}` | `{"name":"receipt-final.pdf","folder_path":"receipts/final","category":"receipt","metadata":{"reviewed":true}}` | `200` asset | bind/service `400`; `404 {"error":"drive asset not found"}` |
+| `DELETE /drive/{id}` | none | `204` no body | `404` with unstable database text; otherwise `400` text |
+
+List wraps the same exact `DriveAsset` shape shown above:
+
+```json
+{"items":[{"id":"33333333-aaaa-4aaa-8aaa-333333333333","business_id":"22222222-2222-4222-8222-222222222222","name":"receipt.pdf","bucket":"current-private-bucket","object_key":"current/internal/object-key","content_type":"application/pdf","size_bytes":2048,"created_at":"2026-09-01T12:00:00Z","updated_at":"2026-09-01T12:00:00Z"}],"usage_bytes":2048}
+```
+
+All drive routes use bearer/effective-business scope. List requires `drive.view`;
+the other routes require `drive.manage`. PATCH is partial for name/category/
+metadata, but omission of `folder_path` clears it. DELETE soft-deletes the row
+even when object deletion fails; a retry after success normally becomes `404`.
+There is no idempotency or version control, so do not blindly retry PATCH/DELETE
+after an ambiguous result.
+
 For both flows, upload with exactly the returned headers. Critically, neither
 flow has a completion endpoint, checksum, HEAD/metadata verification,
 quarantine/scan, or transactional reference update. Drive creates the database
@@ -501,8 +942,13 @@ asset before bytes arrive; a failed PUT can leave a ghost record. Logo presign
 does not update `logo_url`. Therefore a successful PUT is not a proven completed
 asset at this revision.
 
-Evidence: business and commerce handlers/services/models, `internal/services/s3_service.go`,
-upload tests, and private-bucket Terraform.
+Evidence: `internal/handlers/business_handler.go`,
+`internal/services/business_service.go`, `internal/handlers/commerce_handler.go`,
+`internal/services/commerce_service.go`, `internal/models/commerce.go`,
+`internal/services/s3_service.go`, `internal/services/s3_service_test.go`,
+`tests/unit/business_service_test.go`, `internal/services/commerce_service_test.go`,
+`tests/unit/commerce_handler_test.go`, `tests/integration/s3_test.go`, and
+`infrastructure/terraform/s3.tf`.
 
 ## IMP-001: Current bulk import intake is not production-ready
 
@@ -515,7 +961,60 @@ in S3, parses CSV rows synchronously, and creates a queued `BulkJob`. No worker
 that commits those rows was found, so a successful intake can remain queued
 forever. Invoice/document import is outside Task 7's intended scope.
 
+Successful intake is `202` with the job object, not `201`:
+
+```http
+Content-Type: multipart/form-data; boundary=...
+
+--...
+Content-Disposition: form-data; name="file"; filename="customers.csv"
+Content-Type: text/csv
+
+name,email
+Asha,asha@example.test
+--...--
+```
+
+```json
+{
+  "id": "44444444-aaaa-4aaa-8aaa-444444444444",
+  "business_id": "22222222-2222-4222-8222-222222222222",
+  "created_by": "user-id",
+  "job_type": "import_customers",
+  "status": "queued",
+  "file_name": "customers.csv",
+  "file_key": "current/internal/import/key",
+  "content_type": "text/csv",
+  "total_rows": 1,
+  "processed_rows": 0,
+  "succeeded_rows": 0,
+  "failed_rows": 0,
+  "request_payload": "{\"source\":\"imports_api\"}",
+  "result_payload": "{}",
+  "queued_at": "2026-09-01T12:00:00Z",
+  "created_at": "2026-09-01T12:00:00Z",
+  "updated_at": "2026-09-01T12:00:00Z"
+}
+```
+
+> ⛔ **UNSAFE - DO NOT DISPLAY, LOG, OR PERSIST:** `file_key` is an exact
+> current response field on a job and its artifacts. It exposes internal storage
+> topology. Task 7 must replace it with an opaque upload/artifact identifier and
+> authorized download contract; frontend code must discard `file_key` now.
+
+Intake failures are `400 {"error":"file is required"}` for a missing part,
+unstable `400` file-open/read text, `403` unstable permission text where the
+service checks customer/vendor permissions, and otherwise unstable `500` text.
+There is no file-size limit, encoding/content validation, command key, or safe
+retry guarantee; a timeout may have created another queued job.
+
 `GET /bulk-jobs?page=1&limit=20` returns `data`, `total`, `page`, and `limit`.
+Defaults are page 1/limit 10 and the maximum limit is 100. Success example:
+
+```json
+{"data":[{"id":"44444444-aaaa-4aaa-8aaa-444444444444","business_id":"22222222-2222-4222-8222-222222222222","created_by":"user-id","job_type":"import_customers","status":"queued","total_rows":1,"processed_rows":0,"succeeded_rows":0,"failed_rows":0,"created_at":"2026-09-01T12:00:00Z","updated_at":"2026-09-01T12:00:00Z"}],"total":1,"page":1,"limit":20}
+```
+
 `GET /bulk-jobs/{id}` returns a business-scoped job with optional rows and
 artifacts. Job fields are `id`, `business_id`, `created_by`, `job_type`, optional
 `action`, `status`, optional `file_name`, optional `file_key`, optional
@@ -525,12 +1024,25 @@ optional `queued_at`, `started_at`, `completed_at`, `created_at`, `updated_at`,
 optional `rows`, and optional `artifacts`. JSON payload fields are encoded
 strings; internal file keys are exposed.
 
+A row has `id`, `bulk_job_id`, `row_number`, `status`, optional `entity_id`,
+optional `entity_type`, optional JSON-encoded `input` and `result`, optional
+`error`, `created_at`, and `updated_at`. An artifact has `id`, `bulk_job_id`,
+`artifact_type`, `file_name`, `file_key`, optional JSON-encoded `metadata`,
+`created_at`, and `updated_at`. GET-list errors are unstable `500`; GET-one is
+`404 {"error":"bulk job not found"}` for any lookup error. Reads are safe to
+retry. Model-declared job states are `pending`, `queued`, `processing`,
+`completed`, and `failed`, but this intake only establishes `queued` and has no
+progress/restart event or invalidation contract.
+
 Do not enable imports in a production frontend until Task 7 replaces this with
 preview/validation, explicit UUID commit, worker progress, restart-safe row
 idempotency, artifacts, cancellation, retention, stable errors and notifications.
-Evidence: billing-ops handler/service/model,
-`migrations/000030_add_swipe_billing_ops.up.sql`, and absence of
-a bulk-import processor under `internal/workers` and `cmd`.
+Evidence: `internal/app/runtime.go`, `internal/handlers/billing_ops_handler.go`,
+`internal/services/billing_ops_service.go`, `internal/models/swipe_ops.go`,
+`tests/unit/billing_ops_handler_test.go`,
+`migrations/000030_add_swipe_billing_ops.up.sql`. The processor absence claim
+comes from inspecting `internal/workers`, every entry point under `cmd`, and
+`infrastructure/terraform`; no bulk-import consumer or import queue was found.
 
 ## CART-001: Existing AP2 cart mandate
 
@@ -552,25 +1064,58 @@ a bulk-import processor under `internal/workers` and `cmd`.
 `created_at`, and optional `payment_mandates`. Public verification keys are not
 returned. States are `pending`, `signed`, `rejected`, and `expired`.
 
-Existing related endpoints are POST `/agents/shopping/cart/add` with
-`{"product_id":"..."}`, GET `/agents/shopping/cart/{id}`, GET
-`/agents/shopping/carts`, and checkout. They require bearer auth; access is
-user/owned-agent scoped. The add endpoint does not mutate `{id}`: it creates a
-new one-item mandate. There are no update/remove/clear, business/branch/version,
-or authoritative current price/availability/stock checks. Do not model this as
-the requested editable commerce cart.
+```json
+{"id":"55555555-aaaa-4aaa-8aaa-555555555555","user_id":"user-id","agent_id":"66666666-aaaa-4aaa-8aaa-666666666666","items":"[{\"product_id\":\"99999999-9999-4999-8999-999999999999\",\"quantity\":1}]","total_amount":299,"currency":"INR","signature":"opaque-signature","status":"pending","expires_at":"2026-09-02T12:00:00Z","created_at":"2026-09-01T12:00:00Z"}
+```
+
+| Method and path | Exact request | Success | Endpoint-specific failures |
+| --- | --- | --- | --- |
+| `POST /agents/shopping/cart?agent_id={id}` | body above | `201` `CartMandate` | missing query `400 {"error":"agent_id parameter is required"}`; inaccessible/non-shopping agent `404 {"error":"agent not found"}`; bind `400`; service `500` unstable text |
+| `POST /agents/shopping/cart/add?agent_id={id}` | `{"product_id":"99999999-9999-4999-8999-999999999999"}` | `201` a **new** one-item `CartMandate` | same missing-agent/bind/status mapping; service `500` unstable text |
+| `POST /agents/shopping/checkout` | `{"cart_mandate_id":"55555555-aaaa-4aaa-8aaa-555555555555","payment_method_id":"77777777-aaaa-4aaa-8aaa-777777777777"}` (`payment_method_id` optional) | `201` `PaymentMandate` | bind `400`; domain/signature/already-processed errors are unstable `500` text |
+| `GET /agents/shopping/cart/{id}` | none | `200` `CartMandate` | `404 {"error":"cart not found"}` for any lookup error |
+| `GET /agents/shopping/carts?page=1&limit=10` | none | `200 {"data":[],"total":0,"page":1,"limit":10}` | unstable `500` text |
+
+A checkout response has `id`, `cart_mandate_id`, `user_id`, optional
+`payment_method_id`, `amount`, `currency`, `signature`, optional
+`razorpay_order_id`, optional `razorpay_payment_id`, `status`, optional
+`processed_at`, and `created_at`.
+
+```json
+{"id":"88888888-aaaa-4aaa-8aaa-888888888888","cart_mandate_id":"55555555-aaaa-4aaa-8aaa-555555555555","user_id":"user-id","amount":299,"currency":"INR","signature":"opaque-signature","status":"pending","created_at":"2026-09-01T12:00:00Z"}
+```
+
+Payment states are `pending`, `authorized`, `captured`, `failed`, and
+`refunded`. Cart-list pagination defaults to 1/10 and caps at 100. All routes
+require bearer/effective-business context; cart creation additionally checks an
+owner-or-same-business shopping agent, and reads are user-scoped. No explicit
+permission, entitlement, step-up, command key, or event exists.
+
+The add endpoint does not mutate `{id}`: it creates a new one-item mandate.
+Create/add retries can duplicate mandates. Checkout checks for a prior payment
+mandate without a serialized unique claim, so concurrent/timeout retries may
+duplicate the side effect. After ambiguity, refetch and do not retry. There are
+no update/remove/clear, business/branch/version, or authoritative current
+price/availability/stock checks. Do not model this as the requested editable
+commerce cart.
 
 Evidence: `internal/handlers/shopping_agent_handler.go`,
 `internal/services/shopping_agent_service.go`, `internal/models/ap2_mandate.go`,
-AP2 repository and signature/checkout tests.
+`internal/repositories/interfaces/ap2_repository.go`,
+`internal/repositories/postgres/ap2_repo.go`,
+`internal/services/shopping_agent_service_test.go`,
+`internal/services/shopping_agent_signature_test.go`,
+`internal/handlers/shopping_agent_track_order_test.go`,
+`tests/unit/shopping_handler_test.go`, and `tests/integration/agent_test.go`.
 
 ## COUPON-001: Storefront coupon management
 
-| Method and path | Permission | Success |
-| --- | --- | --- |
-| `GET /storefronts/{storefront_id}/coupons` | `storefront.view` | `200` array |
-| `POST /storefronts/{storefront_id}/coupons` | `storefront.manage` | `201` coupon |
-| `PUT /storefronts/{storefront_id}/coupons/{coupon_id}` | `storefront.manage` | `200` coupon |
+| Method and path | Permission | Success | Endpoint-specific failures |
+| --- | --- | --- | --- |
+| `GET /storefronts/{storefront_id}/coupons` | `storefront.view` | `200` array | storefront `404` with unstable text; other unstable `500` text |
+| `POST /storefronts/{storefront_id}/coupons` | `storefront.manage` | `201` coupon | bind/service `400` unstable text; storefront `404` |
+| `PUT /storefronts/{storefront_id}/coupons/{coupon_id}` | `storefront.manage` | `200` coupon | bind/service `400`; coupon/storefront `404`, all with unstable text |
+| `POST /public/store/{slug}/coupons/validate` | public, rate-limited | `200` validation result | bind `400`; missing/unpublished/not-accepting storefront `404`; other `500` text |
 
 All require bearer auth and effective business scope. Create and update use the
 same full input: required `code`, required `discount_type` (`percentage` or
@@ -578,21 +1123,46 @@ same full input: required `code`, required `discount_type` (`percentage` or
 `max_discount_amount`, `usage_limit`, `usage_limit_per_customer`, optional
 `starts_at`, optional `ends_at`, optional `is_active`, and optional `metadata`.
 
+```json
+{"code":"WELCOME10","discount_type":"percentage","discount_value":10,"minimum_order_value":500,"max_discount_amount":200,"usage_limit":100,"usage_limit_per_customer":1,"starts_at":"2026-09-01T00:00:00Z","ends_at":"2026-09-30T23:59:59Z","is_active":true,"metadata":{"campaign":"launch"}}
+```
+
 The response fields are `id`, `storefront_id`, `code`, `discount_type`,
 `discount_value`, `minimum_order_value`, `max_discount_amount`, `usage_limit`,
 `usage_limit_per_customer`, optional `starts_at`, optional `ends_at`,
 `is_active`, optional `metadata` (JSON-encoded string), `created_at`, and
 `updated_at`.
 
+```json
+{"id":"99999999-aaaa-4aaa-8aaa-999999999999","storefront_id":"aaaaaaaa-bbbb-4aaa-8aaa-aaaaaaaaaaaa","code":"WELCOME10","discount_type":"percentage","discount_value":10,"minimum_order_value":500,"max_discount_amount":200,"usage_limit":100,"usage_limit_per_customer":1,"starts_at":"2026-09-01T00:00:00Z","ends_at":"2026-09-30T23:59:59Z","is_active":true,"metadata":"{\"campaign\":\"launch\"}","created_at":"2026-09-01T12:00:00Z","updated_at":"2026-09-01T12:00:00Z"}
+```
+
+The GET list response is an array of that same shape, for example
+`[{"id":"99999999-aaaa-4aaa-8aaa-999999999999","storefront_id":"aaaaaaaa-bbbb-4aaa-8aaa-aaaaaaaaaaaa","code":"WELCOME10","discount_type":"percentage","discount_value":10,"minimum_order_value":500,"max_discount_amount":200,"usage_limit":100,"usage_limit_per_customer":1,"is_active":true,"created_at":"2026-09-01T12:00:00Z","updated_at":"2026-09-01T12:00:00Z"}]`.
+
+Validation accepts exact body `{"code":"WELCOME10","customer_email":"asha@example.test","subtotal":1000}`. A valid coupon returns
+`200 {"valid":true,"discount_total":100}`. Rule failures such as inactive,
+not-yet-active, expired, minimum order, or usage limit also return HTTP `200`,
+for example `{"valid":false,"discount_total":0,"message":"coupon has
+expired"}`. That message is legacy text and is not a stable error code.
+
 There is no delete route or version field. Update is a full replacement for the
 required values and overwrites omitted numeric limits with zero. Checkout checks
 dates/minimum/usage, but usage counting and redemption insertion are not
 serialized on the coupon; concurrent orders can exceed caps. Do not promise a
-hard usage ceiling until Task 8 fixes this race.
+hard usage ceiling until Task 8 fixes this race. Writes have no command/version
+key; retrying create after ambiguity can duplicate or conflict, and retrying a
+full update can overwrite concurrent changes. Refetch after confirmed writes;
+there is no event contract.
 
-Evidence: commerce routes/handler/service/model,
+Evidence: `internal/app/runtime.go`, `internal/handlers/commerce_handler.go`,
+`internal/services/commerce_service.go`, `internal/models/commerce.go`,
 `migrations/000032_add_storefront_enterprise_features.up.sql`, and
-storefront checkout tests.
+`internal/services/commerce_service_test.go`,
+`internal/services/commerce_checkout_postgres_integration_test.go`,
+`internal/services/storefront_tenant_scope_test.go`,
+`tests/unit/commerce_handler_test.go`, and
+`tests/unit/commerce_public_handler_test.go`.
 
 ## REPORT-001: Current synchronous JSON/CSV export
 
@@ -645,6 +1215,15 @@ Success is `201` JSON, not a streamed file:
 }
 ```
 
+Binding failures are unstable `400` text. Exact current classified failures are
+`400 {"error":"unsupported export format"}`, `400 {"error":"at least one
+valid column is required"}`, `403 {"error":"report scope unavailable"}` or
+`403` for an unsafe branch/warehouse projection, `404 {"error":"report not
+found"}`, and otherwise unstable `500` text. Pagination defaults to 1/20 in the
+report handler and is bounded by the report service. A repeated request creates
+another run/filename; there is no command idempotency, event, or safe mutation
+retry contract. Refetch report history only after a confirmed `201`.
+
 `filters`, `visible_columns`, `payload`, and `summary` inside `run` are
 JSON-encoded strings. CSV cells beginning, after leading whitespace, with
 `=`, `+`, `-`, `@`, or tab are prefixed with an apostrophe; this is covered by
@@ -652,7 +1231,10 @@ tests. There is no XLSX, native file response, `Content-Disposition`, typed
 money/date cells, timezone-aware spreadsheet output, export idempotency key, or
 export event. Report PDF export is explicitly deferred.
 
-Evidence: report handler/service/model/reporting registry and focused tests.
+Evidence: `internal/app/runtime.go`, `internal/handlers/report_handler.go`,
+`internal/services/report_service.go`, `internal/models/report.go`,
+the registry under `internal/reporting`, `internal/services/report_service_test.go`,
+and `tests/unit/report_handler_test.go`.
 
 ## No frontend contract yet
 
@@ -661,13 +1243,13 @@ Evidence: report handler/service/model/reporting registry and focused tests.
 | CAP runtime capability endpoint and diagnostics | `missing` | Do not infer availability from route presence, environment variables, plan rows, or UI feature flags. |
 | Renewable subscription lifecycle, billing history, cancellation/grace/proration and reconciliation | `missing` around a `partial` one-month flow | Do not show auto-renewal or authoritative next charge. |
 | Aggregate operation status, operator detail and safe recovery actions | `missing` around complete individual statuses | Poll OPS-001/002 only; do not invent retries or DLQ actions. |
-| GST/e-invoice/e-way bill provider truth and reconciliation | `unsafe`, `partial`, provider `externally unverified` | Keep provider-backed success UI disabled: absent provider configuration selects a simulator that can fabricate IRN/ack/e-way bill values. A local succeeded state is not government-system evidence. Evidence: `internal/services/gst_provider.go`. |
+| Customer-safe aggregate GST/provider truth and recovery | `missing` around OPS-004/005/006 | Keep provider-backed success UI disabled: absent provider configuration selects a simulator that can fabricate IRN/ack/e-way bill values. A local succeeded state is not government-system evidence. Evidence: `internal/services/gst_provider.go`. |
 | Staging verification evidence | `missing` and `externally unverified` | Do not label a provider operational from local tests. |
 | Step-up, TOTP, durable devices/sessions and privacy workflows | `missing` | Do not expose placeholder controls. |
-| Trial Balance, Balance Sheet, fiscal lock/opening balance and bank reconciliation | `missing` around existing journal invariants | Existing reports/journals do not prove these Phase 2 contracts. |
+| Trial Balance, Balance Sheet, fiscal lock/opening balance and bank reconciliation | `missing` around ACC-001/002 | Current journals and ledger reads do not prove these Phase 2 contracts. |
 | Durable two-phase customer/vendor/product import | `missing` around unsafe intake | Keep imports disabled. |
 | Verified upload completion, editable cart, race-safe coupons and typed XLSX | `missing` around partial surfaces | Do not simulate completion client-side. |
-| AI risk/approval/budget/kill-switch governance | `missing` around descriptive capabilities and read-only voice tools | Do not enable governed high-risk agent actions. |
+| AI risk/approval/budget/kill-switch governance | `missing` around unsafe AI-001 descriptive capabilities and read-only voice tools | Do not enable governed high-risk agent actions. |
 | Saved payment methods | `deferred` | Keep unavailable. |
 | Official GST return filing | `deferred` | Do not expose filing. Existing simulated provider output is not filing evidence. |
 | Automatic recurring issue/send | `deferred`; recurring draft creation exists | Do not label recurring drafts as auto-sent invoices. |
@@ -679,12 +1261,6 @@ Evidence: report handler/service/model/reporting registry and focused tests.
 - No live deployment, Terraform apply, provider account mutation, Razorpay charge,
   OTP, object upload, queue message, outbound email/WhatsApp, GST submission, or
   AI call was made. All such behavior is externally unverified.
-- Controller evidence records AWS CLI `2.36.7` and a successful read-only STS
-  identity check for profile `default` in `ap-south-1`. The identity was the
-  account root principal, so all further live AWS inspection was intentionally
-  stopped for safety. No account identifier is included; aside from that
-  identity check, no AWS resource was mutated and no application-provider call
-  was made. Task 4 needs a least-privilege non-production identity.
 - The controller-recorded baseline at `5b58a56` is `make test` passing on
   2026-09-01, including race and coverage. Task 0 did not rerun it.
 - Task 10 must regenerate OpenAPI and replace these limitations only after the
