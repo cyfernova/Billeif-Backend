@@ -26,17 +26,45 @@ type CapabilityProbeTargetSource interface {
 	DiscoverCapabilityProbeTargets(ctx context.Context, limit int) ([]CapabilityProbeTarget, error)
 }
 
+type CapabilityProbeCensus struct {
+	ActiveTargets int
+	SweepCycles   int
+}
+
+type CapabilityProbeTargetCensus interface {
+	CapabilityProbeCensus(ctx context.Context, limit int) (CapabilityProbeCensus, error)
+}
+
+type CapabilityOutcomeCapacity interface {
+	EnsureActiveCapacity(activeTargets int)
+}
+
 type CapabilityProviderProber interface {
 	ProbeCapability(ctx context.Context, target CapabilityProbeTarget) CapabilityProviderOutcome
 }
 
 type CapabilityHealthObserverOptions struct {
-	MaxTargets   int
-	Concurrency  int
-	ProbeTimeout time.Duration
-	MaxAttempts  int
-	RetryDelay   time.Duration
+	MaxTargets       int
+	Concurrency      int
+	ProbeTimeout     time.Duration
+	MaxAttempts      int
+	RetryDelay       time.Duration
+	RefreshInterval  time.Duration
+	MaxCycleDuration time.Duration
+	OnCycleIssue     func(CapabilityHealthCycleIssue)
 }
+
+type CapabilityHealthCycleIssue struct {
+	Code string
+}
+
+type capabilityHealthCycleError struct {
+	code  string
+	cause error
+}
+
+func (e *capabilityHealthCycleError) Error() string { return e.code }
+func (e *capabilityHealthCycleError) Unwrap() error { return e.cause }
 
 type CapabilityHealthObserver struct {
 	targets  CapabilityProbeTargetSource
@@ -124,6 +152,39 @@ func (s *DBCapabilityProbeTargetSource) DiscoverCapabilityProbeTargets(ctx conte
 	return targets, nil
 }
 
+func (s *DBCapabilityProbeTargetSource) CapabilityProbeCensus(ctx context.Context, limit int) (CapabilityProbeCensus, error) {
+	if s == nil || s.db == nil {
+		return CapabilityProbeCensus{}, nil
+	}
+	var businessCount int64
+	if err := s.db.WithContext(ctx).Model(&models.BusinessProfile{}).Where("deleted_at IS NULL").Count(&businessCount).Error; err != nil {
+		return CapabilityProbeCensus{}, err
+	}
+	perBusiness := int64(0)
+	if s.configuration.Razorpay {
+		perBusiness++
+	}
+	if s.configuration.AI {
+		perBusiness++
+	}
+	active := businessCount * perBusiness
+	if s.configuration.GST && s.gstProbeSupported {
+		var gstBusinessCount int64
+		if err := s.db.WithContext(ctx).Model(&models.GSTIntegrationAccount{}).
+			Where("deleted_at IS NULL").Distinct("business_id").Count(&gstBusinessCount).Error; err != nil {
+			return CapabilityProbeCensus{}, err
+		}
+		active += gstBusinessCount
+	}
+	perBusinessMax := int(perBusiness)
+	if s.configuration.GST && s.gstProbeSupported {
+		perBusinessMax++
+	}
+	businessesPerCycle := max(1, limit/max(1, perBusinessMax))
+	sweepCycles := max(1, (int(businessCount)+businessesPerCycle-1)/businessesPerCycle)
+	return CapabilityProbeCensus{ActiveTargets: int(active), SweepCycles: sweepCycles}, nil
+}
+
 func NewCapabilityHealthObserver(
 	targets CapabilityProbeTargetSource,
 	probers map[CapabilityKey]CapabilityProviderProber,
@@ -131,7 +192,10 @@ func NewCapabilityHealthObserver(
 	options CapabilityHealthObserverOptions,
 ) *CapabilityHealthObserver {
 	if options.MaxTargets <= 0 || options.MaxTargets > 4096 {
-		options.MaxTargets = 256
+		// Twenty worst-case tenant-specific groups use at most five worker
+		// waves. Two five-second attempts therefore leave ten seconds of the
+		// one-minute cycle for census, discovery, recording, and shutdown.
+		options.MaxTargets = 20
 	}
 	if options.Concurrency <= 0 || options.Concurrency > 16 {
 		options.Concurrency = 4
@@ -145,6 +209,12 @@ func NewCapabilityHealthObserver(
 	if options.RetryDelay < 0 || options.RetryDelay > time.Second {
 		options.RetryDelay = 100 * time.Millisecond
 	}
+	if options.RefreshInterval <= 0 {
+		options.RefreshInterval = 2 * time.Minute
+	}
+	if options.MaxCycleDuration <= 0 || options.MaxCycleDuration > 5*time.Minute {
+		options.MaxCycleDuration = time.Minute
+	}
 	return &CapabilityHealthObserver{targets: targets, probers: probers, recorder: recorder, options: options}
 }
 
@@ -152,10 +222,30 @@ func (o *CapabilityHealthObserver) ObserveOnce(ctx context.Context) error {
 	if o == nil || o.targets == nil || o.recorder == nil {
 		return nil
 	}
-	targets, err := o.targets.DiscoverCapabilityProbeTargets(ctx, o.options.MaxTargets)
-	if err != nil {
-		return err
+	cycleCtx, cancel := context.WithTimeout(ctx, o.options.MaxCycleDuration)
+	defer cancel()
+	censusResult := CapabilityProbeCensus{}
+	if census, ok := o.targets.(CapabilityProbeTargetCensus); ok {
+		var err error
+		censusResult, err = census.CapabilityProbeCensus(cycleCtx, o.options.MaxTargets)
+		if err != nil {
+			return newCapabilityHealthCycleError("target_census_failed", err)
+		}
+		if capacity, ok := o.recorder.(CapabilityOutcomeCapacity); ok {
+			capacity.EnsureActiveCapacity(censusResult.ActiveTargets)
+		}
 	}
+	targets, err := o.targets.DiscoverCapabilityProbeTargets(cycleCtx, o.options.MaxTargets)
+	if err != nil {
+		return newCapabilityHealthCycleError("target_discovery_failed", err)
+	}
+	if censusResult.ActiveTargets == 0 {
+		censusResult.ActiveTargets = len(targets)
+	}
+	if censusResult.SweepCycles == 0 {
+		censusResult.SweepCycles = max(1, (censusResult.ActiveTargets+o.options.MaxTargets-1)/o.options.MaxTargets)
+	}
+	freshFor := o.fullSweepFreshness(censusResult.SweepCycles)
 	groups := groupCapabilityProbeTargets(targets, o.options.MaxTargets)
 	if len(groups) == 0 {
 		return nil
@@ -169,7 +259,7 @@ func (o *CapabilityHealthObserver) ObserveOnce(ctx context.Context) error {
 		go func() {
 			defer wait.Done()
 			for group := range jobs {
-				if err := o.observeGroup(ctx, group); err != nil {
+				if err := o.observeGroup(cycleCtx, group, freshFor); err != nil {
 					errorsOut <- err
 				}
 			}
@@ -177,10 +267,10 @@ func (o *CapabilityHealthObserver) ObserveOnce(ctx context.Context) error {
 	}
 	for _, group := range groups {
 		select {
-		case <-ctx.Done():
+		case <-cycleCtx.Done():
 			close(jobs)
 			wait.Wait()
-			return ctx.Err()
+			return newCapabilityHealthCycleError("cycle_deadline_exceeded", cycleCtx.Err())
 		case jobs <- group:
 		}
 	}
@@ -193,16 +283,37 @@ func (o *CapabilityHealthObserver) ObserveOnce(ctx context.Context) error {
 	return nil
 }
 
+func newCapabilityHealthCycleError(code string, cause error) error {
+	return &capabilityHealthCycleError{code: code, cause: cause}
+}
+
+func (o *CapabilityHealthObserver) fullSweepFreshness(cycles int) time.Duration {
+	return time.Duration(cycles)*(o.options.RefreshInterval+o.options.MaxCycleDuration) + o.options.MaxCycleDuration
+}
+
 // Run refreshes provider observations outside customer requests. Cycles never
 // overlap, and every probe remains bounded by ObserveOnce's worker and timeout
 // limits.
 func (o *CapabilityHealthObserver) Run(ctx context.Context, interval time.Duration) error {
 	if interval <= 0 {
-		interval = 2 * time.Minute
+		interval = o.options.RefreshInterval
+	}
+	if interval > o.options.RefreshInterval {
+		interval = o.options.RefreshInterval
 	}
 	for {
-		if err := o.ObserveOnce(ctx); err != nil && ctx.Err() != nil {
-			return ctx.Err()
+		if err := o.ObserveOnce(ctx); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if o.options.OnCycleIssue != nil {
+				code := "observation_cycle_failed"
+				var cycleError *capabilityHealthCycleError
+				if errors.As(err, &cycleError) {
+					code = cycleError.code
+				}
+				o.options.OnCycleIssue(CapabilityHealthCycleIssue{Code: code})
+			}
 		}
 		timer := time.NewTimer(interval)
 		select {
@@ -214,7 +325,7 @@ func (o *CapabilityHealthObserver) Run(ctx context.Context, interval time.Durati
 	}
 }
 
-func (o *CapabilityHealthObserver) observeGroup(ctx context.Context, targets []CapabilityProbeTarget) error {
+func (o *CapabilityHealthObserver) observeGroup(ctx context.Context, targets []CapabilityProbeTarget, freshFor time.Duration) error {
 	if len(targets) == 0 {
 		return nil
 	}
@@ -240,12 +351,16 @@ func (o *CapabilityHealthObserver) observeGroup(ctx context.Context, targets []C
 			}
 		}
 	}
+	if ctx.Err() != nil {
+		return newCapabilityHealthCycleError("cycle_deadline_exceeded", ctx.Err())
+	}
 	if errors.Is(outcome.Err, ErrCapabilityProbeUnsupported) {
 		return nil
 	}
+	outcome.FreshFor = freshFor
 	for _, target := range targets {
 		if err := o.recorder.RecordOutcome(target.BusinessID, target.HealthKey, outcome); err != nil {
-			return err
+			return newCapabilityHealthCycleError("observation_record_failed", err)
 		}
 	}
 	return nil

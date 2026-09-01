@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -77,23 +78,50 @@ func (s *LLMService) ProbeCapability(ctx context.Context, _ CapabilityProbeTarge
 		return CapabilityProviderOutcome{Err: err}
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	limitedBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if readErr != nil {
+		return CapabilityProviderOutcome{Err: fmt.Errorf("read LLM model list: %w", readErr)}
+	}
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
+		return CapabilityProviderOutcome{Err: ErrCapabilityProbeUnsupported}
+	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return CapabilityProviderOutcome{Err: &providerHTTPError{status: resp.StatusCode}}
 	}
-	return CapabilityProviderOutcome{}
+	var models struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(limitedBody, &models); err != nil {
+		return CapabilityProviderOutcome{Err: errors.New("LLM provider returned an invalid model list")}
+	}
+	configuredModel := strings.TrimSpace(providerCfg.Model)
+	for index, model := range models.Data {
+		if index >= 10_000 {
+			break
+		}
+		if strings.TrimSpace(model.ID) == configuredModel {
+			return CapabilityProviderOutcome{}
+		}
+	}
+	return CapabilityProviderOutcome{Err: errors.New("configured LLM model is unavailable")}
 }
 
-func llmModelProbeURL(apiURL, model string) (string, error) {
+func llmModelProbeURL(apiURL, _ string) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(apiURL))
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return "", ErrCapabilityProbeUnsupported
 	}
 	path := strings.TrimRight(parsed.Path, "/")
-	if !strings.HasSuffix(path, "/chat/completions") {
+	switch path {
+	case "/chat/completions":
+		parsed.Path = "/models"
+	case "/v1/chat/completions":
+		parsed.Path = "/v1/models"
+	default:
 		return "", ErrCapabilityProbeUnsupported
 	}
-	parsed.Path = strings.TrimSuffix(path, "/chat/completions") + "/models/" + url.PathEscape(strings.TrimSpace(model))
 	parsed.RawPath = ""
 	parsed.RawQuery = ""
 	parsed.Fragment = ""

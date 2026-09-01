@@ -61,20 +61,20 @@ func TestLLMServiceChatSendsOpenAICompatibleRequest(t *testing.T) {
 	}
 }
 
-func TestLLMCapabilityProbeUsesReadOnlyModelLookup(t *testing.T) {
+func TestLLMCapabilityProbeUsesDeepSeekReadOnlyModelList(t *testing.T) {
 	var calls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		if r.Method != http.MethodGet || r.URL.Path != "/v1/models/test-model" {
+		if r.Method != http.MethodGet || r.URL.Path != "/models" {
 			t.Fatalf("probe request = %s %s", r.Method, r.URL.Path)
 		}
 		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
 			t.Fatalf("authorization = %q", got)
 		}
-		_, _ = w.Write([]byte(`{"id":"test-model"}`))
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"deepseek-chat","object":"model"}]}`))
 	}))
 	defer server.Close()
-	service := NewLLMService(config.LLMConfig{APIKey: "test-key", APIURL: server.URL + "/v1/chat/completions", Model: "test-model", Timeout: 1}, logger.New())
+	service := NewLLMService(config.LLMConfig{APIKey: "test-key", APIURL: server.URL + "/chat/completions", Model: "deepseek-chat", Timeout: 1}, logger.New())
 
 	outcome := service.ProbeCapability(context.Background(), CapabilityProbeTarget{BusinessID: "biz-1", HealthKey: CapabilityAI})
 
@@ -83,6 +83,82 @@ func TestLLMCapabilityProbeUsesReadOnlyModelLookup(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("provider calls = %d, want 1", calls)
+	}
+}
+
+func TestLLMCapabilityProbeMarksMissingConfiguredModelUnavailableWithoutRawBody(t *testing.T) {
+	const rawBody = `{"object":"list","data":[{"id":"other-model","credential":"raw-secret"}]}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/models" {
+			t.Fatalf("probe request = %s %s", r.Method, r.URL.Path)
+		}
+		_, _ = w.Write([]byte(rawBody))
+	}))
+	defer server.Close()
+	service := NewLLMService(config.LLMConfig{APIKey: "test-key", APIURL: server.URL + "/v1/chat/completions", Model: "configured-model", Timeout: 1}, logger.New())
+
+	outcome := service.ProbeCapability(context.Background(), CapabilityProbeTarget{BusinessID: "biz-1", HealthKey: CapabilityAI})
+
+	if outcome.Err == nil {
+		t.Fatal("missing configured model must be unavailable")
+	}
+	if strings.Contains(outcome.Err.Error(), "other-model") || strings.Contains(outcome.Err.Error(), "raw-secret") {
+		t.Fatalf("probe error leaked model response: %v", outcome.Err)
+	}
+	cache := NewCapabilityHealthCache(CapabilityHealthCacheOptions{})
+	if err := NewCapabilityHealthRecorder(cache, nil).RecordOutcome("biz-1", CapabilityAI, outcome); err != nil {
+		t.Fatalf("record outcome: %v", err)
+	}
+	fact, found := cache.CustomerFact("biz-1", CapabilityAI)
+	if !found || fact.Status != CapabilityProviderUnavailable {
+		t.Fatalf("missing configured model fact = %#v, found=%v", fact, found)
+	}
+}
+
+func TestLLMUnsupportedProbeRouteLeavesHealthUnknownWithoutChatMutation(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusMethodNotAllowed} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			var methods []string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				methods = append(methods, r.Method+" "+r.URL.Path)
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(`{"error":"raw secret unsupported response"}`))
+			}))
+			defer server.Close()
+			service := NewLLMService(config.LLMConfig{APIKey: "test-key", APIURL: server.URL + "/chat/completions", Model: "deepseek-chat", Timeout: 1}, logger.New())
+			cache := NewCapabilityHealthCache(CapabilityHealthCacheOptions{})
+			observer := NewCapabilityHealthObserver(
+				&staticCapabilityProbeTargets{targets: []CapabilityProbeTarget{{BusinessID: "biz-1", HealthKey: CapabilityAI}}},
+				map[CapabilityKey]CapabilityProviderProber{CapabilityAI: service},
+				NewCapabilityHealthRecorder(cache, nil), CapabilityHealthObserverOptions{MaxAttempts: 1},
+			)
+
+			if err := observer.ObserveOnce(context.Background()); err != nil {
+				t.Fatalf("observe: %v", err)
+			}
+			if _, found := cache.CustomerFact("biz-1", CapabilityAI); found {
+				t.Fatal("unsupported model probe must leave health unknown")
+			}
+			if len(methods) != 1 || methods[0] != "GET /models" {
+				t.Fatalf("provider calls = %v, want only GET /models", methods)
+			}
+		})
+	}
+}
+
+func TestLLMUnrecognizedChatEndpointShapeDoesNotCallProvider(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }))
+	defer server.Close()
+	service := NewLLMService(config.LLMConfig{APIKey: "test-key", APIURL: server.URL + "/proxy/chat/completions", Model: "model", Timeout: 1}, logger.New())
+
+	outcome := service.ProbeCapability(context.Background(), CapabilityProbeTarget{BusinessID: "biz-1", HealthKey: CapabilityAI})
+
+	if !errors.Is(outcome.Err, ErrCapabilityProbeUnsupported) {
+		t.Fatalf("probe error = %v, want unsupported", outcome.Err)
+	}
+	if calls != 0 {
+		t.Fatalf("provider calls = %d, want zero", calls)
 	}
 }
 

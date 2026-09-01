@@ -105,10 +105,12 @@ type capabilityObserverRunner interface {
 }
 
 type capabilityObserverState struct {
-	runner capabilityObserverRunner
-	mu     sync.Mutex
-	cancel context.CancelFunc
-	log    *logger.Logger
+	runner  capabilityObserverRunner
+	mu      sync.Mutex
+	wait    sync.WaitGroup
+	running bool
+	cancel  context.CancelFunc
+	log     *logger.Logger
 }
 
 func (c *Container) StartCapabilityHealthObservation() {
@@ -117,16 +119,18 @@ func (c *Container) StartCapabilityHealthObservation() {
 	}
 	state := c.capabilityObserver
 	state.mu.Lock()
-	if state.cancel != nil {
-		state.mu.Unlock()
+	defer state.mu.Unlock()
+	if state.running {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	state.cancel = cancel
+	state.running = true
+	state.wait.Add(1)
 	observer := state.runner
 	log := state.log
-	state.mu.Unlock()
 	go func() {
+		defer state.wait.Done()
 		if err := observer.Run(ctx, 2*time.Minute); err != nil && !errors.Is(err, context.Canceled) && log != nil {
 			log.Warn("capability health observer stopped")
 		}
@@ -142,12 +146,17 @@ func (c *Container) StopCapabilityHealthObservation() {
 		return
 	}
 	state.mu.Lock()
+	defer state.mu.Unlock()
+	if !state.running {
+		return
+	}
 	cancel := state.cancel
-	state.cancel = nil
-	state.mu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
+	state.wait.Wait()
+	state.cancel = nil
+	state.running = false
 }
 
 func NewContainer(
@@ -285,7 +294,9 @@ func NewContainer(
 			CapabilityGSTProvider: taxComplianceSvc,
 		},
 		capabilityRecorder,
-		CapabilityHealthObserverOptions{},
+		CapabilityHealthObserverOptions{OnCycleIssue: func(issue CapabilityHealthCycleIssue) {
+			log.Warn("capability health observation cycle issue", "code", issue.Code)
+		}},
 	)
 	reportSvc.WithCapabilityGuard(capabilitySvc)
 	taxComplianceSvc.WithCapabilityGuard(capabilitySvc).WithCapabilityHealthRecorder(capabilityRecorder)

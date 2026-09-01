@@ -3,9 +3,11 @@ package services
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -21,8 +23,9 @@ import (
 )
 
 type staticCapabilityProbeTargets struct {
-	mu      sync.Mutex
-	targets []CapabilityProbeTarget
+	mu          sync.Mutex
+	targets     []CapabilityProbeTarget
+	activeCount int
 }
 
 func TestDBCapabilityProbeTargetSourceDiscoversConfiguredTenantsAndGSTAccounts(t *testing.T) {
@@ -63,6 +66,23 @@ func TestDBCapabilityProbeTargetSourceRotatesBoundedTenantBatches(t *testing.T) 
 	second, err := source.DiscoverCapabilityProbeTargets(context.Background(), 3)
 	require.NoError(t, err)
 	require.Contains(t, second, CapabilityProbeTarget{BusinessID: "biz-4", HealthKey: CapabilityRazorpay, ProbeGroup: "global:razorpay"})
+}
+
+func TestDBCapabilityProbeCensusDeclaresWorstCaseBusinessSweep(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(`CREATE TABLE business_profiles (id TEXT PRIMARY KEY, deleted_at DATETIME)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE gst_integration_accounts (id TEXT PRIMARY KEY, business_id TEXT, deleted_at DATETIME)`).Error)
+	for index := 0; index < 240; index++ {
+		require.NoError(t, db.Exec(`INSERT INTO business_profiles (id) VALUES (?)`, fmt.Sprintf("biz-%03d", index)).Error)
+	}
+	source := NewDBCapabilityProbeTargetSource(db, config.CapabilityConfiguration{Razorpay: true, AI: true, GST: true}, true)
+
+	census, err := source.CapabilityProbeCensus(context.Background(), 20)
+
+	require.NoError(t, err)
+	require.Equal(t, 480, census.ActiveTargets)
+	require.Equal(t, 40, census.SweepCycles, "20-target pages must reserve for the possible third GST target per business")
 }
 
 func TestGSTCapabilityProbeValidatesStoredCredentialsWithoutMutatingAccount(t *testing.T) {
@@ -107,10 +127,25 @@ func (s *staticCapabilityProbeTargets) set(targets []CapabilityProbeTarget) {
 	s.targets = append([]CapabilityProbeTarget(nil), targets...)
 }
 
+func (s *staticCapabilityProbeTargets) CapabilityProbeCensus(context.Context, int) (CapabilityProbeCensus, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.activeCount > 0 {
+		return CapabilityProbeCensus{ActiveTargets: s.activeCount}, nil
+	}
+	return CapabilityProbeCensus{ActiveTargets: len(s.targets)}, nil
+}
+
 type recordingCapabilityProber struct {
 	mu      sync.Mutex
 	calls   int
 	outcome CapabilityProviderOutcome
+}
+
+type failingCapabilityProbeTargets struct{ err error }
+
+func (s failingCapabilityProbeTargets) DiscoverCapabilityProbeTargets(context.Context, int) ([]CapabilityProbeTarget, error) {
+	return nil, s.err
 }
 
 type boundedCapabilityProber struct {
@@ -187,6 +222,7 @@ func TestCapabilityHealthObserverRunDiscoversNewTenantOnLaterCycle(t *testing.T)
 		CapabilityAI: &recordingCapabilityProber{},
 	}, NewCapabilityHealthRecorder(cache, nil), CapabilityHealthObserverOptions{MaxTargets: 10, Concurrency: 1, ProbeTimeout: time.Second, MaxAttempts: 1})
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- observer.Run(ctx, 10*time.Millisecond) }()
 	require.Eventually(t, func() bool {
@@ -252,4 +288,154 @@ func TestCapabilityHealthObserverBoundsConcurrencyAndLeavesUnsupportedUnknown(t 
 	require.NoError(t, unsupported.ObserveOnce(context.Background()))
 	_, found := cache.CustomerFact("biz-unsupported", CapabilityAI)
 	require.False(t, found)
+}
+
+func TestCapabilityHealthObserverDefaultTargetBoundLeavesCycleDeadlineMargin(t *testing.T) {
+	observer := NewCapabilityHealthObserver(nil, nil, nil, CapabilityHealthObserverOptions{})
+
+	require.Equal(t, 20, observer.options.MaxTargets)
+	worstCaseProbeTime := time.Duration((observer.options.MaxTargets+observer.options.Concurrency-1)/observer.options.Concurrency) *
+		time.Duration(observer.options.MaxAttempts) * observer.options.ProbeTimeout
+	require.Less(t, worstCaseProbeTime, observer.options.MaxCycleDuration,
+		"the default target bound must leave time for census, discovery and recording")
+}
+
+func TestCapabilityHealthObserverDeclaresSweepFreshnessBeyond170Businesses(t *testing.T) {
+	now := time.Date(2026, 9, 1, 16, 30, 0, 0, time.UTC)
+	cache := NewCapabilityHealthCache(CapabilityHealthCacheOptions{MaxAge: 5 * time.Minute, MaxEntries: 2, Now: func() time.Time { return now }})
+	targets := make([]CapabilityProbeTarget, 0, 600)
+	for index := 0; index < 600; index++ {
+		targets = append(targets, CapabilityProbeTarget{BusinessID: fmt.Sprintf("biz-%03d", index), HealthKey: CapabilityRazorpay})
+	}
+	observer := NewCapabilityHealthObserver(
+		&staticCapabilityProbeTargets{targets: targets, activeCount: 600},
+		map[CapabilityKey]CapabilityProviderProber{CapabilityRazorpay: &recordingCapabilityProber{}},
+		NewCapabilityHealthRecorder(cache, func() time.Time { return now }),
+		CapabilityHealthObserverOptions{
+			MaxTargets: 20, Concurrency: 4, ProbeTimeout: time.Second, MaxAttempts: 1,
+			RefreshInterval: 2 * time.Minute, MaxCycleDuration: time.Minute,
+		},
+	)
+
+	require.NoError(t, observer.ObserveOnce(context.Background()))
+	now = now.Add(6 * time.Minute)
+	fact, found := cache.CustomerFact("biz-000", CapabilityRazorpay)
+	require.True(t, found)
+	require.False(t, fact.Stale, "rotation scale must be reflected in the declared full-sweep freshness SLA")
+	for index := 0; index < 600; index++ {
+		require.NoError(t, cache.Record(fmt.Sprintf("pressure-%03d", index), CapabilityEmail, CapabilityHealthObservation{
+			Status: CapabilityProviderHealthy, ObservedAt: now.Add(time.Duration(index) * time.Millisecond),
+		}))
+	}
+	_, stillPresent := cache.CustomerFact("biz-000", CapabilityRazorpay)
+	require.True(t, stillPresent, "active target must survive cache pressure")
+}
+
+func TestCapabilityHealthObserverRefreshesEveryTenantAcrossBoundedGlobalProviderPages(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(`CREATE TABLE business_profiles (id TEXT PRIMARY KEY, deleted_at DATETIME)`).Error)
+	for index := 0; index < 240; index++ {
+		require.NoError(t, db.Exec(`INSERT INTO business_profiles (id) VALUES (?)`, fmt.Sprintf("biz-%03d", index)).Error)
+	}
+	now := time.Date(2026, 9, 1, 17, 0, 0, 0, time.UTC)
+	cache := NewCapabilityHealthCache(CapabilityHealthCacheOptions{MaxAge: 5 * time.Minute, MaxEntries: 2, Now: func() time.Time { return now }})
+	razorpayProbe := &recordingCapabilityProber{}
+	aiProbe := &recordingCapabilityProber{}
+	observer := NewCapabilityHealthObserver(
+		NewDBCapabilityProbeTargetSource(db, config.CapabilityConfiguration{Razorpay: true, AI: true}, false),
+		map[CapabilityKey]CapabilityProviderProber{CapabilityRazorpay: razorpayProbe, CapabilityAI: aiProbe},
+		NewCapabilityHealthRecorder(cache, func() time.Time { return now }),
+		CapabilityHealthObserverOptions{MaxTargets: 20, Concurrency: 4, MaxAttempts: 1, RefreshInterval: 2 * time.Minute, MaxCycleDuration: time.Minute},
+	)
+	for cycle := 0; cycle < 24; cycle++ {
+		require.NoError(t, observer.ObserveOnce(context.Background()))
+		now = now.Add(2 * time.Minute)
+	}
+	for index := 0; index < 240; index++ {
+		for _, capability := range []CapabilityKey{CapabilityRazorpay, CapabilityAI} {
+			fact, found := cache.CustomerFact(fmt.Sprintf("biz-%03d", index), capability)
+			require.True(t, found, "business %d capability %s was starved", index, capability)
+			require.False(t, fact.Stale, "business %d capability %s became stale inside the sweep SLA", index, capability)
+		}
+	}
+	require.Equal(t, 24, razorpayProbe.callCount(), "global Razorpay call count must stay one per bounded page")
+	require.Equal(t, 24, aiProbe.callCount(), "global AI call count must stay one per bounded page")
+	_, leaked := cache.CustomerFact("biz-outside", CapabilityRazorpay)
+	require.False(t, leaked)
+}
+
+func TestCapabilityHealthObserverRefreshesGSTTenantsAcrossBoundedProbePages(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(`CREATE TABLE business_profiles (id TEXT PRIMARY KEY, deleted_at DATETIME)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE gst_integration_accounts (id TEXT PRIMARY KEY, business_id TEXT, deleted_at DATETIME)`).Error)
+	for index := 0; index < 180; index++ {
+		businessID := fmt.Sprintf("biz-%03d", index)
+		require.NoError(t, db.Exec(`INSERT INTO business_profiles (id) VALUES (?)`, businessID).Error)
+		require.NoError(t, db.Exec(`INSERT INTO gst_integration_accounts (id, business_id) VALUES (?, ?)`, fmt.Sprintf("gst-%03d", index), businessID).Error)
+	}
+	now := time.Date(2026, 9, 1, 17, 0, 0, 0, time.UTC)
+	cache := NewCapabilityHealthCache(CapabilityHealthCacheOptions{MaxAge: 5 * time.Minute, MaxEntries: 2, Now: func() time.Time { return now }})
+	gstProbe := &recordingCapabilityProber{}
+	observer := NewCapabilityHealthObserver(
+		NewDBCapabilityProbeTargetSource(db, config.CapabilityConfiguration{GST: true}, true),
+		map[CapabilityKey]CapabilityProviderProber{CapabilityGSTProvider: gstProbe},
+		NewCapabilityHealthRecorder(cache, func() time.Time { return now }),
+		CapabilityHealthObserverOptions{MaxTargets: 20, Concurrency: 4, MaxAttempts: 1, RefreshInterval: 2 * time.Minute, MaxCycleDuration: time.Minute},
+	)
+	for cycle := 0; cycle < 9; cycle++ {
+		require.NoError(t, observer.ObserveOnce(context.Background()))
+		now = now.Add(2 * time.Minute)
+	}
+	for index := 0; index < 180; index++ {
+		fact, found := cache.CustomerFact(fmt.Sprintf("biz-%03d", index), CapabilityGSTProvider)
+		require.True(t, found, "GST business %d was starved", index)
+		require.False(t, fact.Stale)
+	}
+	require.GreaterOrEqual(t, gstProbe.callCount(), 180)
+	require.LessOrEqual(t, gstProbe.callCount(), 9*20, "GST provider calls must remain bounded by page size")
+	_, leaked := cache.CustomerFact("biz-outside", CapabilityGSTProvider)
+	require.False(t, leaked)
+}
+
+func TestCapabilityHealthObserverReportsSanitizedCycleErrorsWithoutBusyLoop(t *testing.T) {
+	issues := make(chan CapabilityHealthCycleIssue, 4)
+	observer := NewCapabilityHealthObserver(
+		failingCapabilityProbeTargets{err: errors.New("database secret credential raw failure")}, nil,
+		NewCapabilityHealthRecorder(NewCapabilityHealthCache(CapabilityHealthCacheOptions{}), nil),
+		CapabilityHealthObserverOptions{OnCycleIssue: func(issue CapabilityHealthCycleIssue) { issues <- issue }},
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	started := time.Now()
+	go func() { done <- observer.Run(ctx, 25*time.Millisecond) }()
+	first := <-issues
+	second := <-issues
+	if first.Code != "target_discovery_failed" || second.Code != first.Code {
+		t.Fatalf("cycle issues = %#v, %#v", first, second)
+	}
+	if strings.Contains(fmt.Sprintf("%#v", first), "secret") || strings.Contains(fmt.Sprintf("%#v", first), "raw failure") {
+		t.Fatalf("cycle issue leaked source error: %#v", first)
+	}
+	require.GreaterOrEqual(t, time.Since(started), 20*time.Millisecond, "recurring errors must wait for the refresh interval")
+	cancel()
+	require.ErrorIs(t, <-done, context.Canceled)
+}
+
+func TestCapabilityHealthObserverRunCannotExceedDeclaredRefreshInterval(t *testing.T) {
+	prober := &recordingCapabilityProber{}
+	observer := NewCapabilityHealthObserver(
+		&staticCapabilityProbeTargets{targets: []CapabilityProbeTarget{{BusinessID: "biz-1", HealthKey: CapabilityRazorpay}}},
+		map[CapabilityKey]CapabilityProviderProber{CapabilityRazorpay: prober},
+		NewCapabilityHealthRecorder(NewCapabilityHealthCache(CapabilityHealthCacheOptions{}), nil),
+		CapabilityHealthObserverOptions{RefreshInterval: 10 * time.Millisecond, MaxAttempts: 1},
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- observer.Run(ctx, time.Hour) }()
+	require.Eventually(t, func() bool { return prober.callCount() >= 2 }, time.Second, 5*time.Millisecond)
+	cancel()
+	require.ErrorIs(t, <-done, context.Canceled)
 }

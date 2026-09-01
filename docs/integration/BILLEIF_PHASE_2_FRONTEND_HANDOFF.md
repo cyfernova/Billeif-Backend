@@ -86,7 +86,7 @@ omitted column to imply support.
 
 | ID | Pagination / file behavior | State and retry | Event / invalidation | Existing migration and rollout | Proof and governing limitation |
 | --- | --- | --- | --- | --- | --- |
-| CAP-001 | Fixed 13-item array; no pagination or file | Synchronous cached evaluation; reads are retry-safe; honor `retry_at` for temporary provider failures | Provider operation outcomes plus a bounded recurring observer refresh local AI, shared Razorpay/storefront, and shared GST/e-invoice/e-way facts; refetch after readiness, subscription, permission, or setup changes | No migration; deploy before frontend capability gating | Capability, observer, recorder, guarded-mutation, quota, handler, and route tests beside their owners; each process-local cache starts unknown and bootstraps asynchronously |
+| CAP-001 | Fixed 13-item array; no pagination or file | Synchronous cached evaluation; reads are retry-safe; honor `retry_at` for temporary provider failures | Provider operation outcomes plus a bounded recurring observer refresh local AI, shared Razorpay/storefront, and shared GST/e-invoice/e-way facts; refetch after readiness, subscription, permission, or setup changes | No migration; deploy before frontend capability gating | Capability, observer, recorder, guarded-mutation, quota, handler, and route tests beside their owners; each process-local cache starts unknown and bootstraps asynchronously across a census-bounded full sweep |
 | SUB-001 | No pagination or file | Synchronous read; retry safe | No event; invalidate on catalog-version/deployment change | No Task 0 migration; catalog is code-defined | `internal/services/subscription_catalog_test.go`; one-month checkout is not renewal |
 | SUB-002 | No pagination or file | Stored `active`/`canceled`/`expired` model; refetch after payment | No versioned event; invalidate subscription and entitlement queries after verify/sync | Existing subscription and feature-entitlement schema; keep direct writes disabled | `tests/unit/subscription_service_test.go`, `internal/services/entitlements_test.go`, `internal/services/commerce_service_test.go`; runtime capability and lifecycle are incomplete |
 | SUB-003 | No pagination or file | Attempt `created`/`pending`/`paid`/`failed`; do not blindly retry unknown provider outcomes | No client event; invalidate SUB-002 after verified paid response | `migrations/000041_add_razorpay_payment_attempts.up.sql`; test-mode/provider rollout unverified | `internal/services/razorpay_payment_service_test.go`, `internal/handlers/payment_handler_idempotency_test.go`, `infrastructure/terraform/tests/razorpay.tftest.hcl`; no recurring lifecycle or reconciliation |
@@ -263,18 +263,33 @@ and `500 {"error":{"code":"capability_evaluation_failed","message":"Capability e
 Authentication and cross-business membership may be rejected earlier by shared
 middleware with HTTP `401` or `403` and the shared legacy error envelope.
 
-Known limitations: provider observations are held in a bounded, five-minute,
-process-local in-memory cache. Each process retains at most 4096
-tenant/capability observations and evicts the oldest observation when full.
+Known limitations: provider observations are held in a bounded process-local
+in-memory cache. Its ordinary operation-outcome budget is 4096 observations;
+the observer reserves one additional slot per censused active target so current
+scheduled facts are not silently evicted. Expired scheduled observations and
+ordinary outcomes are evicted first. A churn-only capacity conflict retains
+current observations and emits a sanitized `observation_record_failed` cycle
+issue instead of exposing or silently replacing an active fact.
 Actual Razorpay order, business-scoped LLM, and GST e-invoice/e-way provider
 outcomes record sanitized success, rate-limit, timeout, or unavailable facts
 monotonically for that tenant. Storefront uses the shared Razorpay fact;
 e-invoice and e-way bill use the shared GST-provider fact. HTTP runtime startup
-also launches a non-overlapping two-minute asynchronous observer. Each cycle
-rotates through at most 256 tenant/capability targets with four workers,
-five-second timeouts and no more than two attempts. It uses a read-only Razorpay
-order-list request, an authenticated read-only LLM model lookup, and per-tenant
-GST credential validation when a validation path and integration account exist.
+also launches a non-overlapping asynchronous observer. Each cycle rotates
+through one database page of at most 20 tenant/capability targets with four
+workers, five-second probe timeouts, no more than two attempts, and a one-minute
+cycle deadline. Five worst-case worker waves consume at most 50 seconds, leaving
+ten seconds for census, discovery, recording and cancellation. A census
+supplies active-target capacity and the worst-case
+number of pages. The declared freshness window covers a complete rotation:
+`sweep cycles * (two-minute interval + one-minute cycle bound) + one minute`.
+One global Razorpay order-list and one global AI probe are shared across each
+page but recorded per business; GST validation remains per tenant. The
+OpenAI-compatible/DeepSeek AI probe recognizes only `/chat/completions` and
+`/v1/chat/completions`, uses the documented read-only `GET /models` list,
+limits the response to 1 MiB, and verifies the configured model without
+returning or logging the provider body. Missing configured models are
+unavailable; unknown URL shapes and `404`/`405` probe routes record nothing and
+stay unknown. It never sends a chat mutation.
 Configuration presence alone never writes healthy. A Lambda cold start or
 another concurrent instance begins unknown briefly and builds its own local
 observations; instances may temporarily disagree. Unsupported probe shapes
@@ -288,6 +303,12 @@ internal diagnostics endpoint was added: the repository has no operator
 principal distinct from business owner/admin, which is insufficient
 authorization for provider internals. Operator diagnostics remain blocked
 until a genuine operator mechanism exists.
+
+Observer shutdown cancels and joins in-flight census, discovery and probes
+before database/provider dependencies close; repeated start/stop generations
+cannot overlap. A failed recurring cycle produces at most one bounded stable
+issue code and waits for the normal interval. Raw database/provider errors,
+credentials, identifiers and response bodies are never included.
 
 ## SUB-001: Subscription catalog
 

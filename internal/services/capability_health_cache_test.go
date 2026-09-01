@@ -55,6 +55,18 @@ func TestCapabilityHealthCacheMarksOldObservationsStale(t *testing.T) {
 	require.Equal(t, now.Add(-6*time.Minute), *fact.ObservedAt)
 }
 
+func TestCapabilityHealthCacheUsesDeclaredRefreshSLA(t *testing.T) {
+	now := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+	cache := NewCapabilityHealthCache(CapabilityHealthCacheOptions{MaxAge: 5 * time.Minute, Now: func() time.Time { return now }})
+	require.NoError(t, cache.Record("business-a", CapabilityGSTProvider, CapabilityHealthObservation{
+		Status: CapabilityProviderHealthy, ObservedAt: now.Add(-10 * time.Minute), FreshFor: 30 * time.Minute,
+	}))
+
+	fact, ok := cache.CustomerFact("business-a", CapabilityGSTProvider)
+	require.True(t, ok)
+	require.False(t, fact.Stale, "observation must remain fresh inside its declared full-sweep SLA")
+}
+
 func TestCapabilityHealthCacheDoesNotReplaceNewerObservation(t *testing.T) {
 	now := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
 	cache := NewCapabilityHealthCache(CapabilityHealthCacheOptions{Now: func() time.Time { return now }})
@@ -86,6 +98,58 @@ func TestCapabilityHealthCacheEvictsOldestObservationAtCapacity(t *testing.T) {
 	require.False(t, oldestPresent)
 	require.True(t, middlePresent)
 	require.True(t, newestPresent)
+}
+
+func TestCapabilityHealthCacheCapacityTracksActiveTargetsBeyondDefaultPressure(t *testing.T) {
+	now := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+	cache := NewCapabilityHealthCache(CapabilityHealthCacheOptions{MaxEntries: 2, Now: func() time.Time { return now }})
+	cache.EnsureActiveCapacity(600)
+	for index := 0; index < 600; index++ {
+		require.NoError(t, cache.Record(fmt.Sprintf("business-%03d", index), CapabilityRazorpay, CapabilityHealthObservation{
+			Status: CapabilityProviderHealthy, ObservedAt: now.Add(time.Duration(index) * time.Millisecond),
+		}))
+	}
+
+	for _, index := range []int{0, 169, 599} {
+		_, found := cache.CustomerFact(fmt.Sprintf("business-%03d", index), CapabilityRazorpay)
+		require.True(t, found, "active target %d must not be evicted", index)
+	}
+}
+
+func TestCapabilityHealthCacheExpiredSweepReservationCanBeEvicted(t *testing.T) {
+	now := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+	cache := NewCapabilityHealthCache(CapabilityHealthCacheOptions{MaxEntries: 1, Now: func() time.Time { return now }})
+	cache.EnsureActiveCapacity(1)
+	require.NoError(t, cache.Record("expired", CapabilityRazorpay, CapabilityHealthObservation{
+		Status: CapabilityProviderHealthy, ObservedAt: now.Add(-2 * time.Minute), FreshFor: time.Minute,
+	}))
+	require.NoError(t, cache.Record("current-a", CapabilityEmail, CapabilityHealthObservation{Status: CapabilityProviderHealthy, ObservedAt: now}))
+	require.NoError(t, cache.Record("current-b", CapabilityEmail, CapabilityHealthObservation{Status: CapabilityProviderHealthy, ObservedAt: now.Add(time.Second)}))
+
+	_, expiredFound := cache.CustomerFact("expired", CapabilityRazorpay)
+	require.False(t, expiredFound)
+}
+
+func TestCapabilityHealthCacheNeverSilentlyEvictsCurrentActiveObservations(t *testing.T) {
+	now := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+	cache := NewCapabilityHealthCache(CapabilityHealthCacheOptions{MaxEntries: 1, Now: func() time.Time { return now }})
+	cache.EnsureActiveCapacity(1)
+	for _, businessID := range []string{"business-a", "business-b"} {
+		require.NoError(t, cache.Record(businessID, CapabilityRazorpay, CapabilityHealthObservation{
+			Status: CapabilityProviderHealthy, ObservedAt: now, FreshFor: time.Hour,
+		}))
+	}
+
+	err := cache.Record("business-c", CapabilityRazorpay, CapabilityHealthObservation{
+		Status: CapabilityProviderHealthy, ObservedAt: now, FreshFor: time.Hour,
+	})
+	require.ErrorIs(t, err, ErrCapabilityHealthCapacity)
+	for _, businessID := range []string{"business-a", "business-b"} {
+		_, found := cache.CustomerFact(businessID, CapabilityRazorpay)
+		require.True(t, found, "current active observation %s must be retained", businessID)
+	}
+	_, found := cache.CustomerFact("business-c", CapabilityRazorpay)
+	require.False(t, found)
 }
 
 func TestCapabilityHealthCacheRetryAtIsMutationIsolatedOnRecordAndRead(t *testing.T) {

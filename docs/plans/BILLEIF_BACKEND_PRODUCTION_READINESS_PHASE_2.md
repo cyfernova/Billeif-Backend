@@ -123,7 +123,7 @@ relevant tests were inspected.
 | Task | Baseline classification | Evidence | Expected smallest owners and impact |
 | --- | --- | --- | --- |
 | 0 | `complete` for inventory; external state `externally unverified` | This plan; `docs/integration/BILLEIF_PHASE_2_FRONTEND_HANDOFF.md`; evidence paths below | Documentation only. No migration, provider call, runtime, OpenAPI, Terraform, or test change. |
-| 1 | `complete` locally including governed mutation preflights, production outcome recorders, and bounded asynchronous Razorpay/LLM/GST bootstrap observation; provider health `externally unverified`; internal diagnostics `blocked` | CAP-001 evaluation/cache/recorder plus guards at report, payment/storefront, GST command, drive upload, voice, business LLM, bulk-import, and saved-payment service boundaries; focused behavior/race tests are beside each owner | No migration. Customer output and typed mutation errors are secret-safe; unknown/stale fails closed. HTTP runtime startup asynchronously discovers tenant targets in rotating bounded batches, performs read-only Razorpay/LLM probes and GST credential validation when supported, and refreshes every two minutes without request-time fan-out. S3/voice/WhatsApp/email remain unknown without a safe producer. Internal diagnostics require a future operator principal distinct from business owner/admin. |
+| 1 | `complete` locally including governed mutation preflights, production outcome recorders, and bounded asynchronous Razorpay/LLM/GST bootstrap observation; provider health `externally unverified`; internal diagnostics `blocked` | CAP-001 evaluation/cache/recorder plus guards at report, payment/storefront, GST command, drive upload, voice, business LLM, bulk-import, and saved-payment service boundaries; focused behavior/race tests are beside each owner | No migration. Customer output and typed mutation errors are secret-safe; unknown/stale fails closed. HTTP runtime startup asynchronously discovers tenant targets in rotating 20-target pages, uses census-derived sweep freshness, performs read-only Razorpay and OpenAI-compatible model-list probes plus GST credential validation when supported, and never performs request-time provider I/O. Observer shutdown cancels and joins before dependencies close. S3/voice/WhatsApp/email remain unknown without a safe producer. Internal diagnostics require a future operator principal distinct from business owner/admin. |
 | 2 | `partial`, with an `unsafe` truth gap; Razorpay `externally unverified` | `internal/models/subscription.go`, `internal/models/payment_attempt.go`, `internal/services/subscription_service.go`, `internal/services/razorpay_payment_service.go`, `migrations/000041_add_razorpay_payment_attempts.up.sql`, `internal/services/razorpay_payment_service_test.go`, `internal/handlers/payment_handler_idempotency_test.go`, `infrastructure/terraform/tests/razorpay.tftest.hcl` | Subscription/payment models, repositories, services, handlers, webhook inbox/reconciliation worker, paired migrations, provider fixtures, OpenAPI and race/replay tests. Expand-first state conversion must not activate entitlements from stale or ambiguous events. |
 | 3 | `partial`; deployed queues/providers `externally unverified` | Render/delivery status in `internal/services/invoice_service.go` and `internal/services/invoice_delivery.go`; outbox/workers; `infrastructure/terraform/monitoring.tf` and `sns_sqs.tf` | Aggregate read service/repositories, customer and operator handlers, recovery commands, audit, metrics/alarms, permissions/step-up, OpenAPI, state/retry tests. Recovery must remain tenant-bound and idempotent. |
 | 4 | `missing`; every staging dependency `externally unverified` | No bounded environment-selecting verification command found after inspecting every entry point under `cmd`, `internal/config`, `Makefile`, `infrastructure/terraform`, `.github/workflows`, and `docs` | New verification command and an adjacent refusal/redaction/classification/cleanup test package; documentation and safe adapters only unless a real gap is found. No schema expected by default. Must refuse production, redact secrets, bound writes, and classify cleanup. |
@@ -259,21 +259,45 @@ Actual Razorpay order, business-scoped LLM, and GST e-invoice/e-way provider
 outcomes record sanitized tenant/provider-health observations. Storefront shares
 the Razorpay provider fact; e-invoice and e-way bill share the GST provider fact.
 In addition, the HTTP runtime starts a recurring asynchronous observer that
-discovers tenants in rotating bounded batches, shares one read-only Razorpay
-order-list and LLM model-lookup probe across each batch, and validates stored GST
-integration credentials per tenant when `GST_VALIDATE_PATH` is configured. It
-uses four workers, five-second probe deadlines, at most two attempts, a maximum
-of 256 targets per cycle, and a two-minute non-overlapping refresh. Success,
-rate-limit, timeout and unavailable classifications are monotonic by observation
-time and become stale after five minutes; configuration alone never records
-healthy. Missing and stale health fail closed and provider failure never changes
-the separately returned entitlement fact. Unsupported probe shapes record
-nothing and remain unknown. S3 presign, voice admission,
+discovers tenants in rotating bounded database pages. Each cycle accepts at
+most 20 tenant/capability targets, uses four workers, five-second probe
+deadlines, at most two attempts, and a one-minute cycle deadline; cycles are
+non-overlapping and start no more than two minutes apart after the preceding
+cycle. Five worst-case worker waves consume at most 50 seconds, leaving ten
+seconds for census, discovery, recording, and cancellation. A census declares
+the active target count and worst-case number of
+business pages. Each observation's freshness window covers that complete sweep:
+`sweep cycles * (two-minute interval + one-minute cycle bound) + one minute`.
+The cache reserves one slot per active target in addition to its bounded 4096
+operation-outcome budget, protects current sweep observations from eviction,
+and reports a sanitized cycle issue instead of silently evicting an active fact
+if churn temporarily exhausts the bound.
+
+Razorpay and AI are global configured providers, so one read-only probe is
+shared across the tenants in each page while its result is recorded separately
+for each business. The OpenAI-compatible/DeepSeek contract recognizes only
+configured `/chat/completions` or `/v1/chat/completions` shapes and performs the
+documented `GET /models` or `GET /v1/models`; it verifies the configured model
+from at most a 1 MiB sanitized response. An absent configured model is
+unavailable. Unrecognized shapes and `404`/`405` probe responses record nothing
+and stay unknown; no chat mutation is used for observation. Stored GST
+credentials are validated per tenant only when `GST_VALIDATE_PATH` is
+configured. Success, rate-limit, timeout and unavailable classifications are
+monotonic by observation time; configuration alone never records healthy.
+Missing and stale health fail closed and provider failure never changes the
+separately returned entitlement fact. S3 presign, voice admission,
 WhatsApp, and email have no safe business-scoped probe in this task and remain
 unknown until a future asynchronous producer exists. The cache is deliberately
 process-local: each Lambda instance begins unknown briefly and establishes its
 own observations asynchronously, so Task 1 makes no deployed-provider health
 claim and instances can temporarily disagree.
+
+Observer stop cancels in-flight discovery and probes, joins the observer before
+database/provider dependencies close, and serializes start/stop generations so
+they cannot overlap. Every failed recurring cycle emits at most one stable,
+sanitized issue code (`target_census_failed`, `target_discovery_failed`,
+`cycle_deadline_exceeded`, or `observation_record_failed`) and then waits for
+the normal interval; raw database or provider errors are never logged.
 
 No migration was added because configuration and setup use existing rows and
 provider health is ephemeral. A separately authorized internal diagnostics

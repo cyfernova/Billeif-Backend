@@ -10,6 +10,7 @@ import (
 type CapabilityProviderOutcome struct {
 	HTTPStatus int
 	Err        error
+	FreshFor   time.Duration
 }
 
 type providerHTTPError struct {
@@ -35,11 +36,17 @@ func NewCapabilityHealthRecorder(cache *CapabilityHealthCache, now func() time.T
 	return &CapabilityHealthRecorder{cache: cache, now: now}
 }
 
+func (r *CapabilityHealthRecorder) EnsureActiveCapacity(activeTargets int) {
+	if r != nil && r.cache != nil {
+		r.cache.EnsureActiveCapacity(activeTargets)
+	}
+}
+
 func (r *CapabilityHealthRecorder) RecordOutcome(businessID string, capability CapabilityKey, outcome CapabilityProviderOutcome) error {
 	outcome.HTTPStatus = providerOutcomeHTTPStatus(outcome)
 	now := r.now().UTC()
 	observation := CapabilityHealthObservation{
-		Status: CapabilityProviderHealthy, ObservedAt: now,
+		Status: CapabilityProviderHealthy, ObservedAt: now, FreshFor: outcome.FreshFor,
 	}
 	switch {
 	case outcome.HTTPStatus == 429:
