@@ -117,10 +117,25 @@ func subscriptionPlanForCode(code string) SubscriptionPlan {
 }
 
 func subscriptionPlanForSubscription(subscription *models.Subscription, now time.Time) SubscriptionPlan {
-	if subscription == nil || !strings.EqualFold(strings.TrimSpace(subscription.Status), "active") {
+	if subscription == nil {
 		return subscriptionPlanForCode("free")
 	}
-	if subscription.EndDate != nil && !subscription.EndDate.After(now.UTC()) {
+	now = now.UTC()
+	periodEnd := subscription.PeriodEnd
+	if periodEnd == nil {
+		periodEnd = subscription.EndDate
+	}
+	status := strings.ToLower(strings.TrimSpace(subscription.Status))
+	hasAccess := false
+	switch status {
+	case models.SubscriptionStatusActive, models.SubscriptionStatusRenewalPending, models.SubscriptionStatusCancellationScheduled:
+		hasAccess = periodEnd == nil || periodEnd.After(now)
+	case models.SubscriptionStatusPastDue, models.SubscriptionStatusGracePeriod:
+		hasAccess = subscription.GraceDeadline != nil && subscription.GraceDeadline.After(now)
+	case models.SubscriptionStatusReconciliationRequired:
+		hasAccess = subscription.LastProviderPaidCount > 0 && periodEnd != nil && periodEnd.After(now)
+	}
+	if !hasAccess {
 		return subscriptionPlanForCode("free")
 	}
 	return subscriptionPlanForCode(normalizePlanCode(subscription.Plan, subscription.PlanCode))

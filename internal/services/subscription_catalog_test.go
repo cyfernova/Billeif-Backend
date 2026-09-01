@@ -2,6 +2,9 @@ package services
 
 import (
 	"testing"
+	"time"
+
+	"invoice-backend/internal/models"
 
 	"github.com/stretchr/testify/require"
 )
@@ -58,6 +61,37 @@ func TestRazorpayPlanLookupUsesSubscriptionCatalog(t *testing.T) {
 
 	_, ok := paidSubscriptionPlan("free")
 	require.False(t, ok)
+}
+
+func TestSubscriptionPlanProjectionPreservesOnlyVerifiedCurrentLifecycleAccess(t *testing.T) {
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	periodEnd := now.Add(24 * time.Hour)
+	graceDeadline := now.Add(48 * time.Hour)
+	fixtures := []struct {
+		name      string
+		status    string
+		paidCount int64
+		grace     *time.Time
+		wantPlan  string
+	}{
+		{name: "cancellation scheduled", status: models.SubscriptionStatusCancellationScheduled, paidCount: 1, wantPlan: "pro_monthly"},
+		{name: "past due within grace", status: models.SubscriptionStatusPastDue, paidCount: 1, grace: &graceDeadline, wantPlan: "pro_monthly"},
+		{name: "grace period", status: models.SubscriptionStatusGracePeriod, paidCount: 1, grace: &graceDeadline, wantPlan: "pro_monthly"},
+		{name: "paid reconciliation", status: models.SubscriptionStatusReconciliationRequired, paidCount: 1, wantPlan: "pro_monthly"},
+		{name: "unpaid reconciliation", status: models.SubscriptionStatusReconciliationRequired, wantPlan: "free"},
+		{name: "pending payment", status: models.SubscriptionStatusPendingPayment, wantPlan: "free"},
+		{name: "suspended", status: models.SubscriptionStatusSuspended, paidCount: 1, wantPlan: "free"},
+	}
+	for _, fixture := range fixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			subscription := &models.Subscription{
+				Plan: "starter", PlanCode: "pro", BillingMode: models.SubscriptionBillingModeRenewable,
+				Status: fixture.status, PeriodEnd: &periodEnd, GraceDeadline: fixture.grace,
+				LastProviderPaidCount: fixture.paidCount,
+			}
+			require.Equal(t, fixture.wantPlan, subscriptionPlanForSubscription(subscription, now).ID)
+		})
+	}
 }
 
 func TestCatalogEntitlementSeedsMatchPlanQuotas(t *testing.T) {

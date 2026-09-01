@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"errors"
 	"invoice-backend/internal/models"
 	"net/http"
+	"strconv"
 
 	"invoice-backend/internal/services"
 	"invoice-backend/pkg/logger"
@@ -11,12 +13,197 @@ import (
 )
 
 type SubscriptionHandler struct {
-	svc *services.SubscriptionService
-	log *logger.Logger
+	svc       *services.SubscriptionService
+	lifecycle *services.SubscriptionLifecycleService
+	log       *logger.Logger
 }
 
-func NewSubscriptionHandler(svc *services.SubscriptionService, log *logger.Logger) *SubscriptionHandler {
-	return &SubscriptionHandler{svc: svc, log: log}
+func NewSubscriptionHandler(svc *services.SubscriptionService, log *logger.Logger, lifecycle ...*services.SubscriptionLifecycleService) *SubscriptionHandler {
+	h := &SubscriptionHandler{svc: svc, log: log}
+	if len(lifecycle) > 0 {
+		h.lifecycle = lifecycle[0]
+	}
+	return h
+}
+
+type SubscriptionAPIError struct {
+	Error struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+func subscriptionAPIError(code, message string) SubscriptionAPIError {
+	var response SubscriptionAPIError
+	response.Error.Code, response.Error.Message = code, message
+	return response
+}
+
+// Checkout starts a genuine renewable Razorpay subscription without granting paid access.
+// @Summary Start renewable subscription checkout
+// @Tags Subscriptions
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param input body services.StartRenewableSubscriptionInput true "Subscription checkout"
+// @Success 200 {object} services.SubscriptionCheckoutResponse
+// @Failure 400 {object} SubscriptionAPIError
+// @Failure 409 {object} SubscriptionAPIError
+// @Failure 503 {object} SubscriptionAPIError
+// @Router /subscriptions/checkout [post]
+func (h *SubscriptionHandler) Checkout(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
+	var input services.StartRenewableSubscriptionInput
+	if h.lifecycle == nil || c.ShouldBindJSON(&input) != nil {
+		c.JSON(http.StatusBadRequest, subscriptionAPIError("subscription_invalid_request", "invalid subscription request"))
+		return
+	}
+	response, err := h.lifecycle.StartRenewable(c.Request.Context(), businessID, userID, input)
+	if err != nil {
+		writeSubscriptionLifecycleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response)
+}
+
+// ChangePlan schedules a no-proration plan change at the next verified billing boundary.
+// @Summary Schedule subscription plan change
+// @Tags Subscriptions
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param input body services.ChangeSubscriptionPlanInput true "Scheduled plan change"
+// @Success 200 {object} services.SubscriptionMutationResponse
+// @Failure 400 {object} SubscriptionAPIError
+// @Failure 409 {object} SubscriptionAPIError
+// @Failure 503 {object} SubscriptionAPIError
+// @Router /subscriptions/plan-change [post]
+func (h *SubscriptionHandler) ChangePlan(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
+	var input services.ChangeSubscriptionPlanInput
+	if h.lifecycle == nil || c.ShouldBindJSON(&input) != nil {
+		c.JSON(http.StatusBadRequest, subscriptionAPIError("subscription_invalid_request", "invalid subscription request"))
+		return
+	}
+	response, err := h.lifecycle.SchedulePlanChange(c.Request.Context(), businessID, userID, input)
+	if err != nil {
+		writeSubscriptionLifecycleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response)
+}
+
+// Cancel schedules cancellation at the verified end of the current paid period.
+// @Summary Schedule subscription cancellation
+// @Tags Subscriptions
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param input body services.ScheduleSubscriptionCancellationInput true "Scheduled cancellation"
+// @Success 200 {object} services.SubscriptionMutationResponse
+// @Failure 400 {object} SubscriptionAPIError
+// @Failure 409 {object} SubscriptionAPIError
+// @Failure 503 {object} SubscriptionAPIError
+// @Router /subscriptions/cancellation [post]
+func (h *SubscriptionHandler) Cancel(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
+	var input services.ScheduleSubscriptionCancellationInput
+	if h.lifecycle == nil || c.ShouldBindJSON(&input) != nil {
+		c.JSON(http.StatusBadRequest, subscriptionAPIError("subscription_invalid_request", "invalid subscription request"))
+		return
+	}
+	response, err := h.lifecycle.ScheduleCancellation(c.Request.Context(), businessID, userID, input)
+	if err != nil {
+		writeSubscriptionLifecycleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response)
+}
+
+// BillingHistory lists tenant-scoped immutable provider-verified billing receipts.
+// @Summary List subscription billing history
+// @Tags Subscriptions
+// @Security BearerAuth
+// @Produce json
+// @Success 200 {object} services.SubscriptionBillingHistoryResponse
+// @Failure 500 {object} SubscriptionAPIError
+// @Router /subscriptions/billing-history [get]
+func (h *SubscriptionHandler) BillingHistory(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	if h.lifecycle == nil {
+		c.JSON(http.StatusServiceUnavailable, subscriptionAPIError("subscription_unavailable", "subscription service is temporarily unavailable"))
+		return
+	}
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	response, err := h.lifecycle.BillingHistory(c.Request.Context(), businessID, limit)
+	if err != nil {
+		writeSubscriptionLifecycleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response)
+}
+
+// AuditHistory lists tenant-scoped sanitized lifecycle decisions.
+// @Summary List subscription audit history
+// @Tags Subscriptions
+// @Security BearerAuth
+// @Produce json
+// @Success 200 {object} services.SubscriptionAuditHistoryResponse
+// @Failure 500 {object} SubscriptionAPIError
+// @Router /subscriptions/audit [get]
+func (h *SubscriptionHandler) AuditHistory(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	if h.lifecycle == nil {
+		c.JSON(http.StatusServiceUnavailable, subscriptionAPIError("subscription_unavailable", "subscription service is temporarily unavailable"))
+		return
+	}
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	response, err := h.lifecycle.AuditHistory(c.Request.Context(), businessID, limit)
+	if err != nil {
+		writeSubscriptionLifecycleError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response)
+}
+
+func writeSubscriptionLifecycleError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, services.ErrSubscriptionIdempotencyConflict), errors.Is(err, services.ErrSubscriptionLifecycleConflict):
+		c.JSON(http.StatusConflict, subscriptionAPIError("subscription_conflict", "subscription request conflicts with current lifecycle state"))
+	case errors.Is(err, services.ErrSubscriptionProviderUnknown):
+		c.JSON(http.StatusServiceUnavailable, subscriptionAPIError("subscription_reconciliation_required", "subscription outcome requires reconciliation"))
+	case errors.Is(err, services.ErrSubscriptionUnavailable):
+		c.JSON(http.StatusServiceUnavailable, subscriptionAPIError("subscription_unavailable", "subscription service is temporarily unavailable"))
+	default:
+		c.JSON(http.StatusBadRequest, subscriptionAPIError("subscription_invalid_request", "subscription request could not be processed"))
+	}
 }
 
 // Create creates a new subscription for a business
@@ -30,7 +217,6 @@ func NewSubscriptionHandler(svc *services.SubscriptionService, log *logger.Logge
 // @Success 201 {object} models.Subscription
 // @Failure 400 {object} map[string]string
 // @Failure 500 {object} map[string]string
-// @Router /subscriptions [post]
 func (h *SubscriptionHandler) Create(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("subscription_handler").With("operation", "create")
 	businessID, ok := requireBusinessScope(c)
@@ -78,7 +264,7 @@ func (h *SubscriptionHandler) Get(c *gin.Context) {
 	var subscription *models.Subscription
 	subscription, err := h.svc.GetByBusinessID(c.Request.Context(), businessID)
 	if err != nil {
-		log.Error("failed to get subscription", "error", err, "business_id", businessID)
+		log.Error("failed to get subscription", "code", "subscription_read_failed", "business_id", businessID)
 		c.JSON(http.StatusNotFound, gin.H{"error": "subscription not found"})
 		return
 	}
@@ -99,7 +285,6 @@ func (h *SubscriptionHandler) Get(c *gin.Context) {
 // @Success 200 {object} models.Subscription
 // @Failure 400 {object} map[string]string
 // @Failure 500 {object} map[string]string
-// @Router /subscriptions [put]
 func (h *SubscriptionHandler) Update(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("subscription_handler").With("operation", "update")
 	businessID, ok := requireBusinessScope(c)

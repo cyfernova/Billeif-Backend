@@ -64,6 +64,7 @@ type Container struct {
 	Team                   *TeamService
 	Webhook                *WebhookService
 	Subscription           *SubscriptionService
+	SubscriptionLifecycle  *SubscriptionLifecycleService
 	Commerce               *CommerceService
 	Barcode                *BarcodeService
 	POS                    *POSService
@@ -178,6 +179,7 @@ func NewContainer(
 	teamRepo interfaces.TeamMemberRepository,
 	webhookRepo interfaces.WebhookRepository,
 	subscriptionRepo interfaces.SubscriptionRepository,
+	subscriptionLifecycleRepo interfaces.SubscriptionLifecycleRepository,
 	websocketTicketRepo interfaces.WebSocketTicketRepository,
 	notificationRepo interfaces.NotificationRepository,
 	capabilityProviderHealthRepo interfaces.CapabilityProviderHealthRepository,
@@ -276,6 +278,9 @@ func NewContainer(
 	posSvc := NewPOSService(db, documentSvc, barcodeSvc, inventorySvc, taxComplianceSvc.entitlements, log)
 	commerceSvc := NewCommerceService(cfg, db, businessRepo, customerRepo, productRepo, subscriptionRepo, inventorySvc, documentSvc, s3Svc, log)
 	razorpayPaymentSvc := NewRazorpayPaymentService(cfg, db, log, resolver)
+	subscriptionLifecycleSvc := NewSubscriptionLifecycleService(subscriptionLifecycleRepo, razorpayPaymentSvc, SubscriptionLifecycleConfig{
+		Resolve: razorpayPaymentSvc.SubscriptionProviderSettings,
+	}, log)
 	capabilityGlobalHealth := NewCapabilityGlobalHealthCache(CapabilityGlobalHealthCacheOptions{})
 	capabilityConfiguration := config.CapabilityConfigurationSnapshot(cfg)
 	capabilityBusinessHealth := NewCapabilityBusinessHealthReader(capabilityProviderHealthRepo, nil)
@@ -344,6 +349,7 @@ func NewContainer(
 		Team:                   NewTeamService(teamRepo, log).WithDB(db),
 		Webhook:                webhookSvc,
 		Subscription:           NewSubscriptionService(subscriptionRepo, log),
+		SubscriptionLifecycle:  subscriptionLifecycleSvc,
 		Commerce:               commerceSvc,
 		Barcode:                barcodeSvc,
 		POS:                    posSvc,

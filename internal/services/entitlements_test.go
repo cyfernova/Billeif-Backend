@@ -192,6 +192,26 @@ func TestEntitlementServiceInspectFeatureReportsCurrentQuotaWithoutReserving(t *
 	require.False(t, access.Quota.Available)
 }
 
+func TestEntitlementQuotaUsesVerifiedSubscriptionPeriodStart(t *testing.T) {
+	db := newEntitlementsTestDB(t)
+	periodStart := time.Date(2026, 8, 20, 8, 30, 0, 0, time.UTC)
+	periodEnd := periodStart.AddDate(0, 1, 0)
+	seedActiveSubscription(t, db, "biz-period", "starter", "pro", &periodEnd)
+	require.NoError(t, db.Model(&models.Subscription{}).Where("business_id = ?", "biz-period").Updates(map[string]interface{}{
+		"billing_mode": "renewable", "period_start": periodStart, "period_end": periodEnd, "last_provider_paid_count": 1,
+	}).Error)
+	require.NoError(t, db.Exec(
+		"INSERT INTO subscription_quota_usage (business_id, feature_key, period_start, used_value) VALUES (?, ?, ?, ?)",
+		"biz-period", FeatureEInvoice, periodStart, int64(7),
+	).Error)
+	service := NewEntitlementService(&config.Config{}, db, postgresrepo.NewSubscriptionRepository(db), logger.New())
+
+	access, err := service.InspectFeature(context.Background(), "biz-period", FeatureEInvoice)
+
+	require.NoError(t, err)
+	require.EqualValues(t, 7, access.Quota.Used)
+}
+
 func TestEntitlementServiceInspectDriveStorageUsesTenantScopedAssetUsageInMB(t *testing.T) {
 	db := newEntitlementsTestDB(t)
 	seedActiveSubscription(t, db, "biz-below", "starter", "pro", nil)
@@ -252,6 +272,11 @@ func newEntitlementsTestDB(t *testing.T) *gorm.DB {
 			plan_code TEXT,
 			catalog_version TEXT,
 			status TEXT NOT NULL,
+			billing_mode TEXT,
+			provider_mode TEXT,
+			provider_customer_id TEXT,
+			provider_subscription_id TEXT,
+			provider_plan_id TEXT,
 			max_invoices INTEGER,
 			max_customers INTEGER,
 			max_users INTEGER,
@@ -259,6 +284,20 @@ func newEntitlementsTestDB(t *testing.T) *gorm.DB {
 			start_date DATETIME NOT NULL,
 			end_date DATETIME,
 			next_billing_date DATETIME,
+			period_start DATETIME,
+			period_end DATETIME,
+			next_renewal_at DATETIME,
+			grace_deadline DATETIME,
+			cancel_at_period_end NUMERIC,
+			cancellation_effective_at DATETIME,
+			cancelled_at DATETIME,
+			pending_plan_id TEXT,
+			pending_provider_plan_id TEXT,
+			pending_plan_effective_at DATETIME,
+			last_provider_event_at DATETIME,
+			last_provider_paid_count INTEGER,
+			reconciliation_code TEXT,
+			lifecycle_version INTEGER,
 			created_at DATETIME,
 			updated_at DATETIME,
 			deleted_at DATETIME

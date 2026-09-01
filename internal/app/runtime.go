@@ -397,6 +397,7 @@ type Repositories struct {
 	Team                     interfaces.TeamMemberRepository
 	Webhook                  interfaces.WebhookRepository
 	Subscription             interfaces.SubscriptionRepository
+	SubscriptionLifecycle    interfaces.SubscriptionLifecycleRepository
 	WebSocketTicket          interfaces.WebSocketTicketRepository
 	Notification             interfaces.NotificationRepository
 	CapabilityProviderHealth interfaces.CapabilityProviderHealthRepository
@@ -421,6 +422,7 @@ func initRepositories(db *gorm.DB) *Repositories {
 		Team:                     postgresrepo.NewTeamMemberRepository(db),
 		Webhook:                  postgresrepo.NewWebhookRepository(db),
 		Subscription:             postgresrepo.NewSubscriptionRepository(db),
+		SubscriptionLifecycle:    postgresrepo.NewSubscriptionLifecycleRepository(db),
 		WebSocketTicket:          postgresrepo.NewWebSocketTicketRepository(db),
 		Notification:             postgresrepo.NewNotificationRepository(db),
 		CapabilityProviderHealth: postgresrepo.NewCapabilityProviderHealthRepository(db),
@@ -431,7 +433,7 @@ func initRepositories(db *gorm.DB) *Repositories {
 func initServices(cfg *config.Config, db *gorm.DB, repos *Repositories, aws *awsclients.Config, resolver services.ProviderConfigResolver, log *logger.Logger) *services.Container {
 	return services.NewContainer(cfg, resolver, db, repos.User, repos.Business, repos.Customer, repos.Vendor,
 		repos.Product, repos.Document, repos.Journal, repos.Inventory, repos.Shipping, repos.Invoice, repos.Payment, repos.Ledger, repos.Reporting, repos.Team,
-		repos.Webhook, repos.Subscription, repos.WebSocketTicket, repos.Notification, repos.CapabilityProviderHealth, repos.AP2, aws, log)
+		repos.Webhook, repos.Subscription, repos.SubscriptionLifecycle, repos.WebSocketTicket, repos.Notification, repos.CapabilityProviderHealth, repos.AP2, aws, log)
 }
 
 type renderProfilePasswordBackfiller interface {
@@ -1036,8 +1038,11 @@ func setupRouter(
 			{
 				subscriptions.GET("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionSubscriptionsView), h.Subscription.Get)
 				subscriptions.GET("/catalog", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionSubscriptionsView), h.Commerce.ListSubscriptionCatalog)
-				subscriptions.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionSubscriptionsManage), h.Subscription.Create)
-				subscriptions.PUT("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionSubscriptionsManage), h.Subscription.Update)
+				subscriptions.POST("/checkout", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionSubscriptionsManage), rateLimit(userHeavyPolicy), h.Subscription.Checkout)
+				subscriptions.POST("/plan-change", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionSubscriptionsManage), rateLimit(userHeavyPolicy), h.Subscription.ChangePlan)
+				subscriptions.POST("/cancellation", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionSubscriptionsManage), rateLimit(userHeavyPolicy), h.Subscription.Cancel)
+				subscriptions.GET("/billing-history", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionSubscriptionsView), h.Subscription.BillingHistory)
+				subscriptions.GET("/audit", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionSubscriptionsView), h.Subscription.AuditHistory)
 				subscriptions.GET("/entitlements", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionSubscriptionsView), h.Commerce.ListEntitlements)
 				subscriptions.POST("/entitlements/sync", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionSubscriptionsManage), h.Commerce.SyncEntitlements)
 			}

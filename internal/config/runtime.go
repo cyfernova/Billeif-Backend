@@ -60,6 +60,8 @@ func SecretKindsForEntrypoint(entrypoint string) []SecretKind {
 		kinds = []SecretKind{SecretLLM, SecretExa}
 	case "outbox":
 		kinds = nil
+	case "subscription-reconciler":
+		kinds = []SecretKind{SecretRazorpay}
 	}
 	return append([]SecretKind(nil), kinds...)
 }
@@ -293,6 +295,10 @@ func (c *Config) secretBindings(kind SecretKind) []secretBinding {
 			{c.Secrets.Razorpay, "key_id", &c.Razorpay.KeyID},
 			{c.Secrets.Razorpay, "key_secret", &c.Razorpay.KeySecret},
 			{c.Secrets.Razorpay, "webhook_secret", &c.Razorpay.WebhookSecret},
+			{c.Secrets.Razorpay, "mode", &c.Razorpay.Mode},
+			{c.Secrets.Razorpay, "plan_pro_id", &c.Razorpay.PlanProID},
+			{c.Secrets.Razorpay, "plan_rise_id", &c.Razorpay.PlanRiseID},
+			{c.Secrets.Razorpay, "plan_biz_id", &c.Razorpay.PlanBizID},
 		}
 	case SecretLLM:
 		return []secretBinding{{c.Secrets.LLM, "api_key", &c.LLM.APIKey}}

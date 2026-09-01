@@ -12,17 +12,18 @@ import (
 type Profile string
 
 const (
-	ProfileHTTP              Profile = "http"
-	ProfileA2A               Profile = "a2a-stream"
-	ProfileInvoice           Profile = "sqs-invoice"
-	ProfileGST               Profile = "sqs-gst"
-	ProfileBargaining        Profile = "sqs-bargaining"
-	ProfileWebSocket         Profile = "websocket"
-	ProfileMigration         Profile = "migration"
-	ProfileOutbox            Profile = "outbox"
-	ProfileRecurringInvoices Profile = "recurring-invoices"
-	ProfileEmailDelivery     Profile = "sqs-email-delivery"
-	ProfileSESFeedback       Profile = "sqs-ses-feedback"
+	ProfileHTTP                   Profile = "http"
+	ProfileA2A                    Profile = "a2a-stream"
+	ProfileInvoice                Profile = "sqs-invoice"
+	ProfileGST                    Profile = "sqs-gst"
+	ProfileBargaining             Profile = "sqs-bargaining"
+	ProfileWebSocket              Profile = "websocket"
+	ProfileMigration              Profile = "migration"
+	ProfileOutbox                 Profile = "outbox"
+	ProfileRecurringInvoices      Profile = "recurring-invoices"
+	ProfileSubscriptionReconciler Profile = "subscription-reconciler"
+	ProfileEmailDelivery          Profile = "sqs-email-delivery"
+	ProfileSESFeedback            Profile = "sqs-ses-feedback"
 )
 
 func ValidateForProfile(cfg *Config, profile Profile) error {
@@ -59,6 +60,14 @@ func ValidateForProfile(cfg *Config, profile Profile) error {
 			return err
 		}
 		return validateProfileDatabase(cfg)
+	case ProfileSubscriptionReconciler:
+		if err := validateProfileBase(cfg); err != nil {
+			return err
+		}
+		if err := validateProfileDatabase(cfg); err != nil {
+			return err
+		}
+		return requireProviderIdentifier(cfg.Secrets.Razorpay, cfg.Razorpay.KeySecret, "RAZORPAY_SECRET_ARN")
 	case ProfileOutbox:
 		if err := validateProfileBase(cfg); err != nil {
 			return err

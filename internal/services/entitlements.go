@@ -117,7 +117,7 @@ func (s *EntitlementService) InspectFeature(ctx context.Context, businessID, fea
 		storage, err := s.InspectDriveStorage(ctx, businessID)
 		return storage.Access, err
 	}
-	plan, err := s.resolvePlan(ctx, businessID)
+	plan, periodStart, err := s.resolvePlanAndQuotaStart(ctx, businessID, time.Now().UTC())
 	if err != nil {
 		return FeatureAccess{}, err
 	}
@@ -132,7 +132,7 @@ func (s *EntitlementService) InspectFeature(ctx context.Context, businessID, fea
 	}
 	var usage models.SubscriptionQuotaUsage
 	err = s.db.WithContext(ctx).
-		Where("business_id = ? AND feature_key = ? AND period_start = ?", businessID, feature, currentQuotaPeriodStart(time.Now().UTC())).
+		Where("business_id = ? AND feature_key = ? AND period_start = ?", businessID, feature, periodStart).
 		First(&usage).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return FeatureAccess{}, err
@@ -181,17 +181,22 @@ func (s *EntitlementService) InspectDriveStorage(ctx context.Context, businessID
 }
 
 func (s *EntitlementService) resolvePlan(ctx context.Context, businessID string) (SubscriptionPlan, error) {
+	plan, _, err := s.resolvePlanAndQuotaStart(ctx, businessID, time.Now().UTC())
+	return plan, err
+}
+
+func (s *EntitlementService) resolvePlanAndQuotaStart(ctx context.Context, businessID string, now time.Time) (SubscriptionPlan, time.Time, error) {
 	if s.subscriptionRepo == nil {
-		return subscriptionPlanForCode("free"), nil
+		return subscriptionPlanForCode("free"), currentQuotaPeriodStart(now), nil
 	}
 	subscription, err := s.subscriptionRepo.GetByBusinessID(ctx, businessID)
 	if err != nil {
 		if isSubscriptionNotFoundError(err) {
-			return subscriptionPlanForCode("free"), nil
+			return subscriptionPlanForCode("free"), currentQuotaPeriodStart(now), nil
 		}
-		return SubscriptionPlan{}, err
+		return SubscriptionPlan{}, time.Time{}, err
 	}
-	return subscriptionPlanForSubscription(subscription, time.Now().UTC()), nil
+	return subscriptionPlanForSubscription(subscription, now), quotaPeriodStart(subscription, now), nil
 }
 
 func (s *EntitlementService) EnsureFeature(ctx context.Context, businessID, feature string) error {
@@ -213,7 +218,7 @@ func (s *EntitlementService) ReserveFeatureTx(ctx context.Context, tx *gorm.DB, 
 		return fmt.Errorf("quota reservation amount must be positive")
 	}
 
-	plan, err := s.resolvePlanTx(ctx, tx, businessID)
+	plan, periodStart, err := s.resolvePlanTx(ctx, tx, businessID)
 	if err != nil {
 		return err
 	}
@@ -229,7 +234,6 @@ func (s *EntitlementService) ReserveFeatureTx(ctx context.Context, tx *gorm.DB, 
 		return &QuotaExceededError{Code: "quota_exceeded", Feature: feature, Limit: limit, Used: 0, PlanID: plan.ID}
 	}
 
-	periodStart := currentQuotaPeriodStart(time.Now().UTC())
 	usage := models.SubscriptionQuotaUsage{
 		BusinessID: businessID, FeatureKey: feature, PeriodStart: periodStart, UsedValue: amount,
 	}
@@ -262,19 +266,27 @@ func (s *EntitlementService) ReserveFeatureTx(ctx context.Context, tx *gorm.DB, 
 	return &QuotaExceededError{Code: "quota_exceeded", Feature: feature, Limit: limit, Used: current.UsedValue, PlanID: plan.ID}
 }
 
-func (s *EntitlementService) resolvePlanTx(ctx context.Context, tx *gorm.DB, businessID string) (SubscriptionPlan, error) {
+func (s *EntitlementService) resolvePlanTx(ctx context.Context, tx *gorm.DB, businessID string) (SubscriptionPlan, time.Time, error) {
 	var subscription models.Subscription
 	err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("business_id = ? AND deleted_at IS NULL", businessID).
 		First(&subscription).Error
 	switch {
 	case err == nil:
-		return subscriptionPlanForSubscription(&subscription, time.Now().UTC()), nil
+		now := time.Now().UTC()
+		return subscriptionPlanForSubscription(&subscription, now), quotaPeriodStart(&subscription, now), nil
 	case errors.Is(err, gorm.ErrRecordNotFound):
-		return subscriptionPlanForCode("free"), nil
+		return subscriptionPlanForCode("free"), currentQuotaPeriodStart(time.Now().UTC()), nil
 	default:
-		return SubscriptionPlan{}, err
+		return SubscriptionPlan{}, time.Time{}, err
 	}
+}
+
+func quotaPeriodStart(subscription *models.Subscription, now time.Time) time.Time {
+	if subscription != nil && subscription.BillingMode == models.SubscriptionBillingModeRenewable && subscription.PeriodStart != nil {
+		return subscription.PeriodStart.UTC()
+	}
+	return currentQuotaPeriodStart(now)
 }
 
 func entitlementsForPlan(plan SubscriptionPlan) PlanEntitlements {

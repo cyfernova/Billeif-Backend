@@ -194,6 +194,10 @@ type RazorpayConfig struct {
 	KeyID         string `mapstructure:"KEY_ID"`
 	KeySecret     string `mapstructure:"KEY_SECRET"`
 	WebhookSecret string `mapstructure:"WEBHOOK_SECRET"`
+	Mode          string `mapstructure:"MODE"`
+	PlanProID     string `mapstructure:"PLAN_PRO_ID"`
+	PlanRiseID    string `mapstructure:"PLAN_RISE_ID"`
+	PlanBizID     string `mapstructure:"PLAN_BIZ_ID"`
 	BaseURL       string `mapstructure:"BASE_URL"`
 	Timeout       int    `mapstructure:"TIMEOUT"`
 }
@@ -555,6 +559,10 @@ func applyFlatEnvFileFallbacks(cfg *Config) {
 	setIfEmpty(&cfg.Razorpay.KeyID, "RAZORPAY_KEY_ID")
 	setIfEmpty(&cfg.Razorpay.KeySecret, "RAZORPAY_KEY_SECRET")
 	setIfEmpty(&cfg.Razorpay.WebhookSecret, "RAZORPAY_WEBHOOK_SECRET")
+	setIfEmpty(&cfg.Razorpay.Mode, "RAZORPAY_MODE")
+	setIfEmpty(&cfg.Razorpay.PlanProID, "RAZORPAY_PLAN_PRO_ID")
+	setIfEmpty(&cfg.Razorpay.PlanRiseID, "RAZORPAY_PLAN_RISE_ID")
+	setIfEmpty(&cfg.Razorpay.PlanBizID, "RAZORPAY_PLAN_BIZ_ID")
 	setIfEmpty(&cfg.Razorpay.BaseURL, "RAZORPAY_BASE_URL")
 	setIfZeroInt(&cfg.Razorpay.Timeout, "RAZORPAY_TIMEOUT")
 

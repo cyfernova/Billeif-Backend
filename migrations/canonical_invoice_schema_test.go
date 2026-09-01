@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	latestMigrationVersion       = 54
+	latestMigrationVersion       = 55
 	releasedManifestPrefixDigest = "e7c51b8069e0785e8d2881a4eb06070c3899107ad55a72166e86e26a7979e936"
 )
 
