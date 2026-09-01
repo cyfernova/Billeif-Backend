@@ -497,7 +497,7 @@ New monthly plans use these endpoints:
 | Auth and scope | Bearer token, effective business, all-branches scope |
 | Permission | Mutations `subscriptions.manage`; history/audit `subscriptions.view` |
 | Step-up / entitlement | None |
-| Idempotency | Every mutation requires body `idempotency_key`; scoped to actor, business and action; changed reuse is `SUB-002` |
+| Idempotency | Every mutation requires body `idempotency_key`; scoped to actor, business and action; changed reuse conflicts; successful checkout replay returns the immutable original pending response even after later activation |
 | Success | `200` |
 | Provider state | Locally verified against the official adapter; live provider deployment remains `externally unverified` |
 | Evidence | `internal/handlers/subscription_handler.go`, `internal/services/subscription_lifecycle_service.go`, `internal/repositories/postgres/subscription_lifecycle_repo.go`, `pkg/razorpay/client.go`, `internal/services/subscription_lifecycle_test.go`, migration `000055_subscription_lifecycle` |
@@ -522,7 +522,10 @@ Checkout request and response:
 ```
 
 The authorization URL is opaque. Pending checkout does not grant paid
-entitlements. `POST /payments/razorpay/order` now rejects `target_type: "plan"`;
+entitlements. Restarting an expired or cancelled lifecycle first resets the
+aggregate to a clean free/pending baseline; no prior plan, quota, period,
+provider clock, grace, or cancellation field carries into the new checkout.
+`POST /payments/razorpay/order` now rejects `target_type: "plan"`;
 it remains available only for authenticated store-order payments.
 
 Plan-change request:
@@ -548,17 +551,22 @@ Cancellation request is `{ "idempotency_key": "..." }`. Both return:
 }
 ```
 
-There is no proration. Plan changes take effect only on the matching signed
-provider charge at the next verified boundary. Cancellation is scheduled at
+There is no proration. Plan changes take effect only when the matching signed
+provider charge starts exactly at the stored verified boundary and advances the
+period monotonically. Cancellation is scheduled at
 the current paid period end. Concurrent plan change/cancellation conflicts are
 serialized. A downgrade above the target quota keeps existing rows and becomes
-restricted after the boundary rather than deleting data.
+restricted after the boundary rather than deleting data. A provider-confirmed
+immediate cancellation persists terminal state, command completion, and audit
+in one transaction.
 
 Billing history returns `{ "records": [...] }`. Each record exposes `id`,
 `business_id`, `subscription_id`, integer `amount_minor`, `currency`, `status`,
 `receipt_reference`, optional period/quota-window timestamps, `occurred_at`, and
 `created_at`. Audit has the same envelope and exposes sanitized lifecycle
 action/status/plan/code/timestamps. Neither surface returns provider IDs.
+The optional history `limit` defaults to `50` and must be an integer from `1`
+through `100`; malformed or out-of-range values return `400 subscription_invalid_limit`.
 
 Stable lifecycle errors are:
 
@@ -567,16 +575,22 @@ Stable lifecycle errors are:
 ```
 
 - `400 subscription_invalid_request`: invalid request or unsupported plan.
+- `400 subscription_invalid_limit`: malformed or out-of-range history limit.
 - `409 subscription_conflict`: current-state or changed-idempotency conflict.
+- `422 subscription_provider_rejected`: the provider deterministically rejected a mutation and the local lifecycle was restored.
 - `503 subscription_reconciliation_required`: provider outcome is ambiguous.
 - `503 subscription_unavailable`: provider configuration cannot be resolved safely.
+- `500 subscription_internal_error`: a history read failed without exposing database details.
 
 After a successful authorization, poll/refetch SUB-002 until a signed
 `subscription.charged` event activates the verified period. A `subscription.pending`
 event starts past-due/grace handling; grace expiry suspends access. Duplicate
 events replay their prior result, stale events cannot regress state, and
 wrong-plan/test-live/signature/race ambiguity becomes reconciliation-required.
-The five-minute bounded worker re-observes known provider subscriptions without
+Deterministic provider HTTP rejections do not become reconciliation; transport
+and otherwise unknown outcomes do. The five-minute worker has one total budget
+of 50 reconciliation-plus-grace records, a 50-second invocation ceiling, and
+bounded provider fetch deadlines. It re-observes known provider subscriptions without
 creating charges or blindly retrying unknown mutations. Client event delivery
 is not promised; refetch after commands and on bounded polling/backoff.
 

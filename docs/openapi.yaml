@@ -41,7 +41,7 @@ paths:
     post:
       tags: [Subscriptions]
       summary: Start a renewable monthly subscription checkout
-      description: Creates a genuine Razorpay subscription. Paid entitlements remain unchanged until a signed, provider-verified charge event is processed.
+      description: Creates a genuine Razorpay subscription. Paid entitlements remain unchanged until a signed, provider-verified charge event is processed. A successful idempotency replay returns the immutable original pending checkout response.
       security: [{BearerAuth: []}]
       requestBody:
         required: true
@@ -54,6 +54,7 @@ paths:
           content: {application/json: {schema: {$ref: "#/components/schemas/SubscriptionCheckoutResponse"}}}
         "400": {$ref: "#/components/responses/SubscriptionBadRequest"}
         "409": {$ref: "#/components/responses/SubscriptionConflict"}
+        "422": {$ref: "#/components/responses/SubscriptionProviderRejected"}
         "503": {$ref: "#/components/responses/SubscriptionReconciliation"}
 
   /subscriptions/plan-change:
@@ -71,6 +72,7 @@ paths:
           content: {application/json: {schema: {$ref: "#/components/schemas/SubscriptionMutationResponse"}}}
         "400": {$ref: "#/components/responses/SubscriptionBadRequest"}
         "409": {$ref: "#/components/responses/SubscriptionConflict"}
+        "422": {$ref: "#/components/responses/SubscriptionProviderRejected"}
         "503": {$ref: "#/components/responses/SubscriptionReconciliation"}
 
   /subscriptions/cancellation:
@@ -87,6 +89,7 @@ paths:
           content: {application/json: {schema: {$ref: "#/components/schemas/SubscriptionMutationResponse"}}}
         "400": {$ref: "#/components/responses/SubscriptionBadRequest"}
         "409": {$ref: "#/components/responses/SubscriptionConflict"}
+        "422": {$ref: "#/components/responses/SubscriptionProviderRejected"}
         "503": {$ref: "#/components/responses/SubscriptionReconciliation"}
 
   /subscriptions/billing-history:
@@ -106,6 +109,9 @@ paths:
                 required: [records]
                 properties:
                   records: {type: array, items: {$ref: "#/components/schemas/SubscriptionBillingRecord"}}
+        "400": {$ref: "#/components/responses/SubscriptionBadRequest"}
+        "500": {$ref: "#/components/responses/SubscriptionInternal"}
+        "503": {$ref: "#/components/responses/SubscriptionReconciliation"}
 
   /subscriptions/audit:
     get:
@@ -124,6 +130,9 @@ paths:
                 required: [records]
                 properties:
                   records: {type: array, items: {$ref: "#/components/schemas/SubscriptionAuditRecord"}}
+        "400": {$ref: "#/components/responses/SubscriptionBadRequest"}
+        "500": {$ref: "#/components/responses/SubscriptionInternal"}
+        "503": {$ref: "#/components/responses/SubscriptionReconciliation"}
 
   /capabilities:
     get:
@@ -640,6 +649,12 @@ components:
     SubscriptionConflict:
       description: Lifecycle or idempotency conflict
       content: {application/json: {schema: {$ref: "#/components/schemas/SubscriptionError"}}}
+    SubscriptionProviderRejected:
+      description: Provider deterministically rejected the mutation
+      content: {application/json: {schema: {$ref: "#/components/schemas/SubscriptionError"}}}
+    SubscriptionInternal:
+      description: Subscription history could not be loaded
+      content: {application/json: {schema: {$ref: "#/components/schemas/SubscriptionError"}}}
     SubscriptionReconciliation:
       description: Provider outcome requires reconciliation or the service is unavailable
       content: {application/json: {schema: {$ref: "#/components/schemas/SubscriptionError"}}}
@@ -664,7 +679,7 @@ components:
       required: [subscription_id, status, billing_mode, pending_plan_id]
       properties:
         subscription_id: {type: string, format: uuid}
-        status: {type: string, enum: [pending_payment, reconciliation_required]}
+        status: {type: string, enum: [pending_payment]}
         billing_mode: {type: string, enum: [renewable]}
         pending_plan_id: {type: string, enum: [pro_monthly, rise_monthly, biz_monthly]}
         authorization_url: {type: string, format: uri}
@@ -723,7 +738,7 @@ components:
           type: object
           required: [code, message]
           properties:
-            code: {type: string, enum: [subscription_invalid_request, subscription_conflict, subscription_reconciliation_required, subscription_unavailable]}
+            code: {type: string, enum: [subscription_invalid_request, subscription_invalid_limit, subscription_conflict, subscription_provider_rejected, subscription_reconciliation_required, subscription_unavailable, subscription_internal_error]}
             message: {type: string}
     CapabilityList:
       type: object
