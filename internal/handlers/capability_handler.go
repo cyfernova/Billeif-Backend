@@ -36,7 +36,7 @@ func NewCapabilityHandler(service CapabilityLister, log *logger.Logger) *Capabil
 
 // List godoc
 // @Summary List runtime capabilities
-// @Description Returns the backend-authoritative, customer-safe runtime capability evaluation for the active business. Provider health is read from cache; this request does not call providers.
+// @Description Returns the backend-authoritative, customer-safe runtime capability evaluation for the active business. Provider health is read from fixed global observations or a business-scoped durable GST snapshot; this request does not call providers.
 // @Tags Capabilities
 // @Produce json
 // @Param platform query string false "Client platform" Enums(web,ios,android) default(web)

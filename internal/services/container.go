@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -43,61 +42,61 @@ func applyCanonicalInvoiceIssueEffects(
 }
 
 type Container struct {
-	Auth                *AuthService
-	BusinessAuth        *BusinessAuthService
-	Business            *BusinessService
-	Customer            *CustomerService
-	Vendor              *VendorService
-	Product             *ProductService
-	Project             *ProjectService
-	Inventory           *InventoryService
-	Document            *DocumentService
-	Journal             *JournalService
-	Shipping            *ShippingService
-	Invoice             *InvoiceService
-	BillingOps          *BillingOpsService
-	Payment             *PaymentService
-	RazorpayPayment     *RazorpayPaymentService
-	Ledger              *LedgerService
-	Dashboard           *DashboardService
-	Report              *ReportService
-	TaxCompliance       *TaxComplianceService
-	Team                *TeamService
-	Webhook             *WebhookService
-	Subscription        *SubscriptionService
-	Commerce            *CommerceService
-	Barcode             *BarcodeService
-	POS                 *POSService
-	S3                  *S3Service
-	Email               *EmailService
-	Agent               *AgentService
-	ShoppingAgent       *ShoppingAgentService
-	MerchantAgent       *MerchantAgentService
-	CredentialProvider  *CredentialProviderService
-	PaymentProcessor    *PaymentProcessorService
-	Marketplace         *MarketplaceService
-	ProductMatching     *ProductMatchingService
-	IntentProcessing    *IntentProcessingService
-	AgentDiscovery      *AgentDiscoveryService
-	LLM                 *LLMService
-	LLMChatHistory      *LLMChatHistoryService
-	SarvamTTS           *SarvamTTSService
-	VoiceSession        *voicesession.Service
-	A2ATask             *A2ATaskService
-	A2APush             *A2APushService
-	Workflow            *WorkflowService
-	Mentee              *MenteeService
-	Bargaining          *BargainingService
-	Procurement         *ProcurementService
-	AgentConfig         *AgentConfigService
-	A2ABargaining       *A2ABargainingService
-	WebSocketConnection *WebSocketConnectionService
-	WebSocketTicket     *WebSocketTicketService
-	Notification        *NotificationService
-	Capability          *CapabilityService
-	CapabilityHealth    *CapabilityHealthCache
-	AWS                 *awsclients.Config
-	capabilityObserver  *capabilityObserverState
+	Auth                   *AuthService
+	BusinessAuth           *BusinessAuthService
+	Business               *BusinessService
+	Customer               *CustomerService
+	Vendor                 *VendorService
+	Product                *ProductService
+	Project                *ProjectService
+	Inventory              *InventoryService
+	Document               *DocumentService
+	Journal                *JournalService
+	Shipping               *ShippingService
+	Invoice                *InvoiceService
+	BillingOps             *BillingOpsService
+	Payment                *PaymentService
+	RazorpayPayment        *RazorpayPaymentService
+	Ledger                 *LedgerService
+	Dashboard              *DashboardService
+	Report                 *ReportService
+	TaxCompliance          *TaxComplianceService
+	Team                   *TeamService
+	Webhook                *WebhookService
+	Subscription           *SubscriptionService
+	Commerce               *CommerceService
+	Barcode                *BarcodeService
+	POS                    *POSService
+	S3                     *S3Service
+	Email                  *EmailService
+	Agent                  *AgentService
+	ShoppingAgent          *ShoppingAgentService
+	MerchantAgent          *MerchantAgentService
+	CredentialProvider     *CredentialProviderService
+	PaymentProcessor       *PaymentProcessorService
+	Marketplace            *MarketplaceService
+	ProductMatching        *ProductMatchingService
+	IntentProcessing       *IntentProcessingService
+	AgentDiscovery         *AgentDiscoveryService
+	LLM                    *LLMService
+	LLMChatHistory         *LLMChatHistoryService
+	SarvamTTS              *SarvamTTSService
+	VoiceSession           *voicesession.Service
+	A2ATask                *A2ATaskService
+	A2APush                *A2APushService
+	Workflow               *WorkflowService
+	Mentee                 *MenteeService
+	Bargaining             *BargainingService
+	Procurement            *ProcurementService
+	AgentConfig            *AgentConfigService
+	A2ABargaining          *A2ABargainingService
+	WebSocketConnection    *WebSocketConnectionService
+	WebSocketTicket        *WebSocketTicketService
+	Notification           *NotificationService
+	Capability             *CapabilityService
+	CapabilityGlobalHealth *CapabilityGlobalHealthCache
+	AWS                    *awsclients.Config
+	capabilityObserver     *capabilityObserverState
 }
 
 type capabilityObserverRunner interface {
@@ -181,6 +180,7 @@ func NewContainer(
 	subscriptionRepo interfaces.SubscriptionRepository,
 	websocketTicketRepo interfaces.WebSocketTicketRepository,
 	notificationRepo interfaces.NotificationRepository,
+	capabilityProviderHealthRepo interfaces.CapabilityProviderHealthRepository,
 	ap2Repo interfaces.AP2Repository,
 	aws *awsclients.Config,
 	log *logger.Logger,
@@ -276,35 +276,39 @@ func NewContainer(
 	posSvc := NewPOSService(db, documentSvc, barcodeSvc, inventorySvc, taxComplianceSvc.entitlements, log)
 	commerceSvc := NewCommerceService(cfg, db, businessRepo, customerRepo, productRepo, subscriptionRepo, inventorySvc, documentSvc, s3Svc, log)
 	razorpayPaymentSvc := NewRazorpayPaymentService(cfg, db, log, resolver)
-	capabilityHealth := NewCapabilityHealthCache(CapabilityHealthCacheOptions{})
+	capabilityGlobalHealth := NewCapabilityGlobalHealthCache(CapabilityGlobalHealthCacheOptions{})
 	capabilityConfiguration := config.CapabilityConfigurationSnapshot(cfg)
+	capabilityBusinessHealth := NewCapabilityBusinessHealthReader(capabilityProviderHealthRepo, nil)
 	capabilitySvc = NewCapabilityService(CapabilityServiceOptions{
-		Configuration: capabilityConfiguration,
-		Entitlements:  taxComplianceSvc.entitlements,
-		Permissions:   businessAuthSvc,
-		Setup:         NewDBCapabilityBusinessSetupReader(db),
-		Health:        capabilityHealth,
+		Configuration:  capabilityConfiguration,
+		Entitlements:   taxComplianceSvc.entitlements,
+		Permissions:    businessAuthSvc,
+		Setup:          NewDBCapabilityBusinessSetupReader(db),
+		GlobalHealth:   capabilityGlobalHealth,
+		BusinessHealth: capabilityBusinessHealth,
 	})
-	capabilityRecorder := NewCapabilityHealthRecorder(capabilityHealth, nil)
-	capabilityObserver := NewCapabilityHealthObserver(
-		NewDBCapabilityProbeTargetSource(db, capabilityConfiguration, cfg != nil && strings.TrimSpace(cfg.GST.ValidatePath) != ""),
-		map[CapabilityKey]CapabilityProviderProber{
-			CapabilityRazorpay:    razorpayPaymentSvc,
-			CapabilityAI:          llmSvc,
-			CapabilityGSTProvider: taxComplianceSvc,
-		},
-		capabilityRecorder,
-		CapabilityHealthObserverOptions{OnCycleIssue: func(issue CapabilityHealthCycleIssue) {
+	globalProbers := make(map[CapabilityKey]CapabilityGlobalProviderProber, 2)
+	if capabilityConfiguration.Razorpay {
+		globalProbers[CapabilityRazorpay] = razorpayPaymentSvc
+	}
+	if capabilityConfiguration.AI {
+		globalProbers[CapabilityAI] = llmSvc
+	}
+	capabilityObserver := NewCapabilityGlobalHealthObserver(
+		globalProbers,
+		NewCapabilityGlobalHealthRecorder(capabilityGlobalHealth, nil),
+		CapabilityGlobalHealthObserverOptions{OnCycleIssue: func(issue CapabilityHealthCycleIssue) {
 			log.Warn("capability health observation cycle issue", "code", issue.Code)
 		}},
 	)
+	gstHealthRecorder := NewGSTProviderHealthRecorder(capabilityProviderHealthRepo, GSTProviderHealthRecorderOptions{})
 	reportSvc.WithCapabilityGuard(capabilitySvc)
-	taxComplianceSvc.WithCapabilityGuard(capabilitySvc).WithCapabilityHealthRecorder(capabilityRecorder)
+	taxComplianceSvc.WithCapabilityGuard(capabilitySvc).WithGSTProviderHealthRecorder(gstHealthRecorder)
 	billingOpsSvc.WithCapabilityGuard(capabilitySvc)
 	commerceSvc.WithCapabilityControls(capabilitySvc, taxComplianceSvc.entitlements)
-	razorpayPaymentSvc.WithCapabilityGuard(capabilitySvc).WithCapabilityHealthRecorder(capabilityRecorder)
+	razorpayPaymentSvc.WithCapabilityGuard(capabilitySvc)
 	credentialProviderSvc.WithCapabilityGuard(capabilitySvc)
-	llmSvc.WithCapabilityGuard(capabilitySvc).WithCapabilityHealthRecorder(capabilityRecorder)
+	llmSvc.WithCapabilityGuard(capabilitySvc)
 	customerSvc := NewCustomerService(customerRepo, businessAuthSvc, log).WithCapabilityGuard(capabilitySvc)
 
 	log.Info("service container initialized",
@@ -318,60 +322,60 @@ func NewContainer(
 	a2aTaskSvc.ConfigureDomainServices(ap2Repo, merchantAgentSvc, sellerNegotiationSvc, ap2Signer)
 
 	return &Container{
-		Auth:                NewAuthService(cfg, userRepo, aws, emailSvc, s3Svc, log),
-		BusinessAuth:        businessAuthSvc,
-		Business:            NewBusinessService(businessRepo, s3Svc, log),
-		Customer:            customerSvc,
-		Vendor:              NewVendorService(vendorRepo, businessAuthSvc, log),
-		Product:             NewProductService(db, productRepo, s3Svc, inventorySvc, log),
-		Project:             projectSvc,
-		Inventory:           inventorySvc,
-		Document:            documentSvc,
-		Journal:             journalSvc,
-		Shipping:            shippingSvc,
-		Invoice:             invoiceSvc,
-		BillingOps:          billingOpsSvc,
-		Payment:             NewPaymentService(db, paymentRepo, invoiceRepo, documentSvc, journalSvc, log),
-		RazorpayPayment:     razorpayPaymentSvc,
-		Ledger:              NewLedgerService(ledgerRepo, log),
-		Dashboard:           NewDashboardService(db, log),
-		Report:              reportSvc,
-		TaxCompliance:       taxComplianceSvc,
-		Team:                NewTeamService(teamRepo, log).WithDB(db),
-		Webhook:             webhookSvc,
-		Subscription:        NewSubscriptionService(subscriptionRepo, log),
-		Commerce:            commerceSvc,
-		Barcode:             barcodeSvc,
-		POS:                 posSvc,
-		S3:                  s3Svc,
-		Email:               emailSvc,
-		Agent:               agentSvc,
-		ShoppingAgent:       shoppingAgentSvc,
-		MerchantAgent:       merchantAgentSvc,
-		CredentialProvider:  credentialProviderSvc,
-		PaymentProcessor:    NewPaymentProcessorService(ap2Repo, log),
-		Marketplace:         marketplaceSvc,
-		ProductMatching:     productMatchingSvc,
-		IntentProcessing:    intentProcessingSvc,
-		AgentDiscovery:      NewAgentDiscoveryService(ap2Repo, productRepo, llmSvc, log),
-		LLM:                 llmSvc,
-		LLMChatHistory:      llmChatHistorySvc,
-		SarvamTTS:           sarvamTTSSvc,
-		VoiceSession:        voiceSessionSvc,
-		A2ATask:             a2aTaskSvc,
-		A2APush:             a2aPushSvc,
-		Workflow:            workflowSvc,
-		Mentee:              menteeSvc,
-		Bargaining:          bargainingSvc,
-		Procurement:         procurementSvc,
-		AgentConfig:         agentConfigSvc,
-		A2ABargaining:       a2aBargainingSvc,
-		WebSocketConnection: websocketConnectionSvc,
-		WebSocketTicket:     websocketTicketSvc,
-		Notification:        notificationSvc,
-		Capability:          capabilitySvc,
-		CapabilityHealth:    capabilityHealth,
-		AWS:                 aws,
-		capabilityObserver:  &capabilityObserverState{runner: capabilityObserver, log: log},
+		Auth:                   NewAuthService(cfg, userRepo, aws, emailSvc, s3Svc, log),
+		BusinessAuth:           businessAuthSvc,
+		Business:               NewBusinessService(businessRepo, s3Svc, log),
+		Customer:               customerSvc,
+		Vendor:                 NewVendorService(vendorRepo, businessAuthSvc, log),
+		Product:                NewProductService(db, productRepo, s3Svc, inventorySvc, log),
+		Project:                projectSvc,
+		Inventory:              inventorySvc,
+		Document:               documentSvc,
+		Journal:                journalSvc,
+		Shipping:               shippingSvc,
+		Invoice:                invoiceSvc,
+		BillingOps:             billingOpsSvc,
+		Payment:                NewPaymentService(db, paymentRepo, invoiceRepo, documentSvc, journalSvc, log),
+		RazorpayPayment:        razorpayPaymentSvc,
+		Ledger:                 NewLedgerService(ledgerRepo, log),
+		Dashboard:              NewDashboardService(db, log),
+		Report:                 reportSvc,
+		TaxCompliance:          taxComplianceSvc,
+		Team:                   NewTeamService(teamRepo, log).WithDB(db),
+		Webhook:                webhookSvc,
+		Subscription:           NewSubscriptionService(subscriptionRepo, log),
+		Commerce:               commerceSvc,
+		Barcode:                barcodeSvc,
+		POS:                    posSvc,
+		S3:                     s3Svc,
+		Email:                  emailSvc,
+		Agent:                  agentSvc,
+		ShoppingAgent:          shoppingAgentSvc,
+		MerchantAgent:          merchantAgentSvc,
+		CredentialProvider:     credentialProviderSvc,
+		PaymentProcessor:       NewPaymentProcessorService(ap2Repo, log),
+		Marketplace:            marketplaceSvc,
+		ProductMatching:        productMatchingSvc,
+		IntentProcessing:       intentProcessingSvc,
+		AgentDiscovery:         NewAgentDiscoveryService(ap2Repo, productRepo, llmSvc, log),
+		LLM:                    llmSvc,
+		LLMChatHistory:         llmChatHistorySvc,
+		SarvamTTS:              sarvamTTSSvc,
+		VoiceSession:           voiceSessionSvc,
+		A2ATask:                a2aTaskSvc,
+		A2APush:                a2aPushSvc,
+		Workflow:               workflowSvc,
+		Mentee:                 menteeSvc,
+		Bargaining:             bargainingSvc,
+		Procurement:            procurementSvc,
+		AgentConfig:            agentConfigSvc,
+		A2ABargaining:          a2aBargainingSvc,
+		WebSocketConnection:    websocketConnectionSvc,
+		WebSocketTicket:        websocketTicketSvc,
+		Notification:           notificationSvc,
+		Capability:             capabilitySvc,
+		CapabilityGlobalHealth: capabilityGlobalHealth,
+		AWS:                    aws,
+		capabilityObserver:     &capabilityObserverState{runner: capabilityObserver, log: log},
 	}
 }

@@ -123,7 +123,7 @@ relevant tests were inspected.
 | Task | Baseline classification | Evidence | Expected smallest owners and impact |
 | --- | --- | --- | --- |
 | 0 | `complete` for inventory; external state `externally unverified` | This plan; `docs/integration/BILLEIF_PHASE_2_FRONTEND_HANDOFF.md`; evidence paths below | Documentation only. No migration, provider call, runtime, OpenAPI, Terraform, or test change. |
-| 1 | `complete` locally including governed mutation preflights, production outcome recorders, and bounded asynchronous Razorpay/LLM/GST bootstrap observation; provider health `externally unverified`; internal diagnostics `blocked` | CAP-001 evaluation/cache/recorder plus guards at report, payment/storefront, GST command, drive upload, voice, business LLM, bulk-import, and saved-payment service boundaries; focused behavior/race tests are beside each owner | No migration. Customer output and typed mutation errors are secret-safe; unknown/stale fails closed. HTTP runtime startup asynchronously discovers tenant targets in rotating 20-target pages, uses census-derived sweep freshness, performs read-only Razorpay and OpenAI-compatible model-list probes plus GST credential validation when supported, and never performs request-time provider I/O. Observer shutdown cancels and joins before dependencies close. S3/voice/WhatsApp/email remain unknown without a safe producer. Internal diagnostics require a future operator principal distinct from business owner/admin. |
+| 1 | `complete` locally with governed mutation preflights, fixed global Razorpay/LLM observation, and durable business-scoped GST health; provider health `externally unverified`; internal diagnostics `blocked` | CAP-001 evaluation, fixed global cache/observer, durable GST repository/recorder, migration 000054, and guards at report, payment/storefront, GST command, drive upload, voice, business LLM, bulk-import, and saved-payment service boundaries; focused behavior/race and migration-bundle tests are beside each owner | Expand-first migration 000054 precedes the application. Customer output and typed mutation errors are secret-safe; unknown/stale fails closed. The observer performs exactly the configured static global probes and no tenant census, discovery, rotation, or whole-table count. Explicit GST validation and real GST outcomes update one sanitized monotonic row per business/provider key; capability GET performs no provider I/O. Observer shutdown cancels and joins before dependencies close. S3/voice/WhatsApp/email remain unknown without a safe producer. Internal diagnostics require a future operator principal distinct from business owner/admin. |
 | 2 | `partial`, with an `unsafe` truth gap; Razorpay `externally unverified` | `internal/models/subscription.go`, `internal/models/payment_attempt.go`, `internal/services/subscription_service.go`, `internal/services/razorpay_payment_service.go`, `migrations/000041_add_razorpay_payment_attempts.up.sql`, `internal/services/razorpay_payment_service_test.go`, `internal/handlers/payment_handler_idempotency_test.go`, `infrastructure/terraform/tests/razorpay.tftest.hcl` | Subscription/payment models, repositories, services, handlers, webhook inbox/reconciliation worker, paired migrations, provider fixtures, OpenAPI and race/replay tests. Expand-first state conversion must not activate entitlements from stale or ambiguous events. |
 | 3 | `partial`; deployed queues/providers `externally unverified` | Render/delivery status in `internal/services/invoice_service.go` and `internal/services/invoice_delivery.go`; outbox/workers; `infrastructure/terraform/monitoring.tf` and `sns_sqs.tf` | Aggregate read service/repositories, customer and operator handlers, recovery commands, audit, metrics/alarms, permissions/step-up, OpenAPI, state/retry tests. Recovery must remain tenant-bound and idempotent. |
 | 4 | `missing`; every staging dependency `externally unverified` | No bounded environment-selecting verification command found after inspecting every entry point under `cmd`, `internal/config`, `Makefile`, `infrastructure/terraform`, `.github/workflows`, and `docs` | New verification command and an adjacent refusal/redaction/classification/cleanup test package; documentation and safe adapters only unless a real gap is found. No schema expected by default. Must refuse production, redact secrets, bound writes, and classify cleanup. |
@@ -217,7 +217,7 @@ diagnostics blocked pending a distinct operator authorization mechanism
 Implement business-scoped, backend-authoritative capability evaluation covering
 Razorpay, GST/e-invoice/e-way bill, WhatsApp, email, S3 uploads, voice, AI,
 storefront payments, report exports, bulk imports, and saved payment methods.
-Separate product support, configuration, cached provider health and timestamp,
+Separate product support, configuration, observed provider health and timestamp,
 entitlement, quota, permission, business setup, platform support, final state,
 stable reason/setup/retry/degradation fields. Supported states are `available`,
 `setup_required`, `upgrade_required`, `quota_exhausted`, `permission_denied`,
@@ -230,14 +230,14 @@ Inventory note: no equivalent runtime model was found. Existing plan
 entitlements must be an input, not a replacement. Expected owners are
 `internal/config`, capability models/repositories/services/handlers,
 `internal/app/runtime.go`, permissions, OpenAPI, and planned capability service,
-handler, tenant-cache, permission, and degradation test files beside their
+handler, scoped-health, permission, and degradation test files beside their
 owners. Add a paired
 migration only if health/config snapshots are durable. Roll out customer-safe
 evaluation before any UI depends on it; keep unknown providers unavailable.
 
 Implemented CAP-001 at `GET /api/v1/capabilities?platform=web|ios|android`.
 The response separately reports product support, configuration presence,
-cached health and observation time, subscription entitlement, quota,
+observed health and observation time, subscription entitlement, quota,
 permission, business setup, platform support, final availability, stable state
 and reason, setup action, retry time and customer-safe degradation. The bounded
 inventory covers Razorpay, GST provider, e-invoice, e-way bill, WhatsApp,
@@ -255,56 +255,59 @@ entitlements/quotas and permissions without reserving quota or calling a
 provider; existing transactional GST quota reservation and authoritative drive
 byte enforcement remain decisive.
 
-Actual Razorpay order, business-scoped LLM, and GST e-invoice/e-way provider
-outcomes record sanitized tenant/provider-health observations. Storefront shares
-the Razorpay provider fact; e-invoice and e-way bill share the GST provider fact.
-In addition, the HTTP runtime starts a recurring asynchronous observer that
-discovers tenants in rotating bounded database pages. Each cycle accepts at
-most 20 tenant/capability targets, uses four workers, five-second probe
-deadlines, at most two attempts, and a one-minute cycle deadline; cycles are
-non-overlapping and start no more than two minutes apart after the preceding
-cycle. Five worst-case worker waves consume at most 50 seconds, leaving ten
-seconds for census, discovery, recording, and cancellation. A census declares
-the active target count and worst-case number of
-business pages. Each observation's freshness window covers that complete sweep:
-`sweep cycles * (two-minute interval + one-minute cycle bound) + one minute`.
-The cache reserves one slot per active target in addition to its bounded 4096
-operation-outcome budget, protects current sweep observations from eviction,
-and reports a sanitized cycle issue instead of silently evicting an active fact
-if churn temporarily exhausts the bound.
+Provider-health scope is explicit. Razorpay and AI are global configured
+providers. HTTP runtime starts a recurring asynchronous observer with a fixed
+map containing only those configured providers. Every cycle calls each at most
+once, uses at most two workers, five-second probe deadlines, two attempts, a
+30-second cycle deadline, and a two-minute maximum refresh interval. Results
+enter a fixed two-key process-local cache whose API has no business identifier
+and whose observations contain no setup, entitlement, permission, quota,
+credential, account, response-body, or raw-error field. There is no tenant
+discovery, rotation, high-water reservation, census query, or full-cache scan.
 
-Razorpay and AI are global configured providers, so one read-only probe is
-shared across the tenants in each page while its result is recorded separately
-for each business. The OpenAI-compatible/DeepSeek contract recognizes only
-configured `/chat/completions` or `/v1/chat/completions` shapes and performs the
-documented `GET /models` or `GET /v1/models`; it verifies the configured model
-from at most a 1 MiB sanitized response. An absent configured model is
-unavailable. Unrecognized shapes and `404`/`405` probe responses record nothing
-and stay unknown; no chat mutation is used for observation. Stored GST
-credentials are validated per tenant only when `GST_VALIDATE_PATH` is
-configured. Success, rate-limit, timeout and unavailable classifications are
-monotonic by observation time; configuration alone never records healthy.
-Missing and stale health fail closed and provider failure never changes the
-separately returned entitlement fact. S3 presign, voice admission,
-WhatsApp, and email have no safe business-scoped probe in this task and remain
-unknown until a future asynchronous producer exists. The cache is deliberately
-process-local: each Lambda instance begins unknown briefly and establishes its
-own observations asynchronously, so Task 1 makes no deployed-provider health
-claim and instances can temporarily disagree.
+The OpenAI-compatible/DeepSeek contract recognizes only configured
+`/chat/completions` or `/v1/chat/completions` shapes and performs the documented
+read-only `GET /models` or `GET /v1/models`. Its streaming decoder requires a
+pagination-free HTTP `200` and a complete recognized `object: "list"` response
+with a complete `data` array, bounded to 1 MiB, 10,000 entries, and bounded
+nesting. Only a fully parsed configured-model presence is healthy, and only a
+fully parsed absence is unavailable. Empty/unrecognized objects, malformed JSON
+or entries, partial/paginated response headers, other successful statuses,
+oversized bodies, entry-cap exhaustion, unknown URL shapes, and `404`/`405`
+probe routes record nothing and remain unknown. It never decodes an unbounded
+list, returns or logs the provider body, or sends a chat mutation.
 
-Observer stop cancels in-flight discovery and probes, joins the observer before
+GST provider health is business-specific and durable. Expand-first migration
+`000054_capability_provider_health_snapshots` adds one sanitized row keyed by
+`(business_id, provider_key)`, constrained to `gst_provider`, with bounded
+status/customer code and observation, freshness, and retry timestamps. The
+repository uses exact tenant/provider reads and monotonic conflict updates.
+Credential upsert clears a prior snapshot but performs no provider call and
+cannot bootstrap itself healthy. The explicit
+`POST /tax/integrations/{id}/validate` action records a safe validation result;
+real e-invoice/e-way provider outcomes refresh the same row. Missing, stale, or
+unavailable GST health fails closed after the 24-hour observation freshness
+window with setup action
+`validate_gst_integration`; missing credentials still use `configure_gst`.
+`GET /capabilities` reads only the sanitized snapshot and never contacts a
+provider.
+
+Configuration alone never records healthy, and a provider failure never changes
+the separately returned entitlement fact. S3 presign, voice admission,
+WhatsApp, and email have no safe probe in this task and remain unknown until a
+future producer exists. Each Lambda instance begins without the two global
+observations and can temporarily disagree with another instance, while GST
+health survives process turnover. Task 1 makes no deployed-provider health
+claim.
+
+Observer stop cancels in-flight global probes, joins the observer before
 database/provider dependencies close, and serializes start/stop generations so
-they cannot overlap. Every failed recurring cycle emits at most one stable,
-sanitized issue code (`target_census_failed`, `target_discovery_failed`,
-`cycle_deadline_exceeded`, or `observation_record_failed`) and then waits for
-the normal interval; raw database or provider errors are never logged.
-
-No migration was added because configuration and setup use existing rows and
-provider health is ephemeral. A separately authorized internal diagnostics
-endpoint was not added: current `admin` is a business role, not a distinct
-operator principal, and exposing provider internals through it would violate
-the authorization requirement. This remains blocked until a genuine operator
-identity and policy exist.
+they cannot overlap. Every failed recurring cycle emits one stable sanitized
+issue code (`cycle_deadline_exceeded` or `observation_record_failed`) and then
+waits for the normal interval; the issue contains no raw database/provider
+error. A separately authorized internal diagnostics endpoint was not added:
+current `admin` is a business role, not a distinct operator principal. This
+remains blocked until a genuine operator identity and policy exists.
 
 Drive capability quota and upload enforcement share one tenant-scoped
 `InspectDriveStorage` reader. It reports MB limit/used/remaining while enforcing
@@ -312,9 +315,9 @@ at byte precision, rejects the exact limit before asset/presign effects, and the
 read path never reserves quota.
 
 Evidence: `internal/config/capabilities_test.go`,
-`internal/services/capability_health_cache_test.go`,
+`internal/services/capability_global_health_test.go`,
 `internal/services/capability_health_recorder_test.go`,
-`internal/services/capability_health_observer_test.go`,
+`internal/services/capability_business_health_test.go`,
 `internal/services/capability_service_test.go`,
 `internal/services/capability_setup_reader_test.go`,
 `internal/services/entitlements_test.go`,
@@ -325,6 +328,8 @@ Evidence: `internal/config/capabilities_test.go`,
 `internal/services/llm_service_test.go`,
 `internal/services/credential_provider_capability_test.go`,
 `internal/services/mutation_authorization_test.go`,
+`internal/repositories/postgres/capability_provider_health_repo_test.go`,
+`migrations/capability_provider_health_schema_test.go`,
 `internal/voice/session/service_test.go`,
 `internal/handlers/capability_handler_test.go`, and
 `internal/app/runtime_routes_test.go`, and

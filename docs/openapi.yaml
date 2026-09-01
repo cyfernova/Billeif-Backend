@@ -40,8 +40,9 @@ paths:
       summary: List runtime capabilities
       description: |
         Returns the customer-safe runtime capability evaluation for the authenticated
-        active business. Provider health comes from a tenant-isolated cache; this
-        request never synchronously contacts providers.
+        active business. Provider health comes from fixed global observations or
+        an exact business-scoped durable GST snapshot; this request never
+        synchronously contacts providers.
       tags:
         - Capabilities
       security:

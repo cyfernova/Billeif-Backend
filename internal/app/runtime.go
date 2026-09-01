@@ -381,55 +381,57 @@ func OpenDatabase(cfg *config.Config, resolver *config.RuntimeResolver, log *log
 }
 
 type Repositories struct {
-	User            interfaces.UserRepository
-	Business        interfaces.BusinessRepository
-	Customer        interfaces.CustomerRepository
-	Vendor          interfaces.VendorRepository
-	Product         interfaces.ProductRepository
-	Document        interfaces.DocumentRepository
-	Journal         interfaces.JournalRepository
-	Inventory       interfaces.InventoryRepository
-	Shipping        interfaces.ShippingRepository
-	Invoice         interfaces.CanonicalInvoiceRepository
-	Payment         interfaces.PaymentRepository
-	Ledger          interfaces.LedgerRepository
-	Reporting       interfaces.ReportingRepository
-	Team            interfaces.TeamMemberRepository
-	Webhook         interfaces.WebhookRepository
-	Subscription    interfaces.SubscriptionRepository
-	WebSocketTicket interfaces.WebSocketTicketRepository
-	Notification    interfaces.NotificationRepository
-	AP2             interfaces.AP2Repository
+	User                     interfaces.UserRepository
+	Business                 interfaces.BusinessRepository
+	Customer                 interfaces.CustomerRepository
+	Vendor                   interfaces.VendorRepository
+	Product                  interfaces.ProductRepository
+	Document                 interfaces.DocumentRepository
+	Journal                  interfaces.JournalRepository
+	Inventory                interfaces.InventoryRepository
+	Shipping                 interfaces.ShippingRepository
+	Invoice                  interfaces.CanonicalInvoiceRepository
+	Payment                  interfaces.PaymentRepository
+	Ledger                   interfaces.LedgerRepository
+	Reporting                interfaces.ReportingRepository
+	Team                     interfaces.TeamMemberRepository
+	Webhook                  interfaces.WebhookRepository
+	Subscription             interfaces.SubscriptionRepository
+	WebSocketTicket          interfaces.WebSocketTicketRepository
+	Notification             interfaces.NotificationRepository
+	CapabilityProviderHealth interfaces.CapabilityProviderHealthRepository
+	AP2                      interfaces.AP2Repository
 }
 
 func initRepositories(db *gorm.DB) *Repositories {
 	return &Repositories{
-		User:            postgresrepo.NewUserRepository(db),
-		Business:        postgresrepo.NewBusinessRepository(db),
-		Customer:        postgresrepo.NewCustomerRepository(db),
-		Vendor:          postgresrepo.NewVendorRepository(db),
-		Product:         postgresrepo.NewProductRepository(db),
-		Document:        postgresrepo.NewDocumentRepository(db),
-		Journal:         postgresrepo.NewJournalRepository(db),
-		Inventory:       postgresrepo.NewInventoryRepository(db),
-		Shipping:        postgresrepo.NewShippingRepository(db),
-		Invoice:         postgresrepo.NewInvoiceRepository(db),
-		Payment:         postgresrepo.NewPaymentRepository(db),
-		Ledger:          postgresrepo.NewLedgerRepository(db),
-		Reporting:       postgresrepo.NewReportingRepository(db),
-		Team:            postgresrepo.NewTeamMemberRepository(db),
-		Webhook:         postgresrepo.NewWebhookRepository(db),
-		Subscription:    postgresrepo.NewSubscriptionRepository(db),
-		WebSocketTicket: postgresrepo.NewWebSocketTicketRepository(db),
-		Notification:    postgresrepo.NewNotificationRepository(db),
-		AP2:             postgresrepo.NewAP2Repository(db),
+		User:                     postgresrepo.NewUserRepository(db),
+		Business:                 postgresrepo.NewBusinessRepository(db),
+		Customer:                 postgresrepo.NewCustomerRepository(db),
+		Vendor:                   postgresrepo.NewVendorRepository(db),
+		Product:                  postgresrepo.NewProductRepository(db),
+		Document:                 postgresrepo.NewDocumentRepository(db),
+		Journal:                  postgresrepo.NewJournalRepository(db),
+		Inventory:                postgresrepo.NewInventoryRepository(db),
+		Shipping:                 postgresrepo.NewShippingRepository(db),
+		Invoice:                  postgresrepo.NewInvoiceRepository(db),
+		Payment:                  postgresrepo.NewPaymentRepository(db),
+		Ledger:                   postgresrepo.NewLedgerRepository(db),
+		Reporting:                postgresrepo.NewReportingRepository(db),
+		Team:                     postgresrepo.NewTeamMemberRepository(db),
+		Webhook:                  postgresrepo.NewWebhookRepository(db),
+		Subscription:             postgresrepo.NewSubscriptionRepository(db),
+		WebSocketTicket:          postgresrepo.NewWebSocketTicketRepository(db),
+		Notification:             postgresrepo.NewNotificationRepository(db),
+		CapabilityProviderHealth: postgresrepo.NewCapabilityProviderHealthRepository(db),
+		AP2:                      postgresrepo.NewAP2Repository(db),
 	}
 }
 
 func initServices(cfg *config.Config, db *gorm.DB, repos *Repositories, aws *awsclients.Config, resolver services.ProviderConfigResolver, log *logger.Logger) *services.Container {
 	return services.NewContainer(cfg, resolver, db, repos.User, repos.Business, repos.Customer, repos.Vendor,
 		repos.Product, repos.Document, repos.Journal, repos.Inventory, repos.Shipping, repos.Invoice, repos.Payment, repos.Ledger, repos.Reporting, repos.Team,
-		repos.Webhook, repos.Subscription, repos.WebSocketTicket, repos.Notification, repos.AP2, aws, log)
+		repos.Webhook, repos.Subscription, repos.WebSocketTicket, repos.Notification, repos.CapabilityProviderHealth, repos.AP2, aws, log)
 }
 
 type renderProfilePasswordBackfiller interface {

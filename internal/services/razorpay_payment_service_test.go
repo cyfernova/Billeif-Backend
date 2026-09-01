@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"invoice-backend/internal/config"
 	"invoice-backend/internal/models"
@@ -33,7 +32,6 @@ type fakeRazorpayServer struct {
 	orders                map[string]razorpay.Order
 	payments              map[string]razorpay.Payment
 	dropNextOrderResponse bool
-	orderFailureStatus    int
 }
 
 func newFakeRazorpayServer(t *testing.T) *fakeRazorpayServer {
@@ -44,14 +42,6 @@ func newFakeRazorpayServer(t *testing.T) *fakeRazorpayServer {
 	}
 	fake.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fake.mu.Lock()
-		failureStatus := fake.orderFailureStatus
-		fake.mu.Unlock()
-		if failureStatus != 0 && strings.HasPrefix(r.URL.Path, "/v1/orders") {
-			w.WriteHeader(failureStatus)
-			_, _ = w.Write([]byte(`{"error":"raw account acct_123 secret provider body"}`))
-			return
-		}
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/orders":
 			var req razorpay.OrderParams
@@ -146,12 +136,6 @@ func (f *fakeRazorpayServer) dropNextCreateResponse() {
 	f.dropNextOrderResponse = true
 }
 
-func (f *fakeRazorpayServer) failOrdersWith(status int) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.orderFailureStatus = status
-}
-
 func newRazorpayPaymentTestService(t *testing.T) (*RazorpayPaymentService, *gorm.DB, *fakeRazorpayServer) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{
@@ -177,7 +161,7 @@ func newRazorpayPaymentTestService(t *testing.T) (*RazorpayPaymentService, *gorm
 func TestRazorpayCapabilityProbeDoesNotCreateOrder(t *testing.T) {
 	service, _, provider := newRazorpayPaymentTestService(t)
 
-	outcome := service.ProbeCapability(context.Background(), CapabilityProbeTarget{BusinessID: "biz-1", HealthKey: CapabilityRazorpay})
+	outcome := service.ProbeGlobalCapability(context.Background())
 
 	require.NoError(t, outcome.Err)
 	require.Equal(t, 0, provider.createCount())
@@ -315,72 +299,6 @@ func TestRazorpayCreateOrderRejectsUnavailablePaymentCapabilityBeforeDatabaseOrP
 			require.Equal(t, "user-1", guard.request.UserID)
 		})
 	}
-}
-
-func TestRazorpayCreateOrderRecordsTenantScopedProviderSuccess(t *testing.T) {
-	service, _, _ := newRazorpayPaymentTestService(t)
-	now := time.Date(2026, 9, 1, 14, 30, 0, 0, time.UTC)
-	cache := NewCapabilityHealthCache(CapabilityHealthCacheOptions{Now: func() time.Time { return now }})
-	service.WithCapabilityHealthRecorder(NewCapabilityHealthRecorder(cache, func() time.Time { return now }))
-
-	_, err := service.CreateOrder(context.Background(), "biz-1", "user-1", RazorpayCreateOrderInput{
-		TargetType: models.PaymentAttemptTargetPlan, PlanID: "pro_monthly", IdempotencyKey: "health-1",
-	})
-	require.NoError(t, err)
-
-	fact, ok := cache.CustomerFact("biz-1", CapabilityRazorpay)
-	require.True(t, ok)
-	require.Equal(t, CapabilityProviderHealthy, fact.Status)
-	_, otherTenant := cache.CustomerFact("biz-2", CapabilityRazorpay)
-	require.False(t, otherTenant)
-}
-
-func TestRazorpayStorefrontOrderRecordsSharedProviderHealthKey(t *testing.T) {
-	service, db, _ := newRazorpayPaymentTestService(t)
-	require.NoError(t, db.Exec(`INSERT INTO store_orders
-		(id, business_id, storefront_id, public_token, order_number, status, payment_status, payment_method, currency, total)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		"store-order-1", "biz-1", "storefront-1", "public-1", "SO-1", "pending", "pending", "online", "INR", 299.00,
-	).Error)
-	now := time.Date(2026, 9, 1, 14, 30, 0, 0, time.UTC)
-	cache := NewCapabilityHealthCache(CapabilityHealthCacheOptions{Now: func() time.Time { return now }})
-	service.WithCapabilityHealthRecorder(NewCapabilityHealthRecorder(cache, func() time.Time { return now }))
-
-	_, err := service.CreateOrder(context.Background(), "biz-1", "user-1", RazorpayCreateOrderInput{
-		TargetType: models.PaymentAttemptTargetStoreOrder, StoreOrderID: "store-order-1", IdempotencyKey: "store-health-1",
-	})
-	require.NoError(t, err)
-
-	fact, ok := cache.CustomerFact("biz-1", CapabilityRazorpay)
-	require.True(t, ok)
-	require.Equal(t, CapabilityProviderHealthy, fact.Status)
-	_, wrongKey := cache.CustomerFact("biz-1", CapabilityStorefrontPayments)
-	require.False(t, wrongKey, "provider health must be stored under the shared Razorpay health key")
-	_, otherTenant := cache.CustomerFact("biz-2", CapabilityRazorpay)
-	require.False(t, otherTenant)
-}
-
-func TestRazorpayAdapterStatusFeedsRateLimitHealthWithoutRawBody(t *testing.T) {
-	service, _, fake := newRazorpayPaymentTestService(t)
-	fake.failOrdersWith(http.StatusTooManyRequests)
-	now := time.Date(2026, 9, 1, 14, 30, 0, 0, time.UTC)
-	cache := NewCapabilityHealthCache(CapabilityHealthCacheOptions{Now: func() time.Time { return now }})
-	service.WithCapabilityHealthRecorder(NewCapabilityHealthRecorder(cache, func() time.Time { return now }))
-
-	_, err := service.CreateOrder(context.Background(), "biz-1", "user-1", RazorpayCreateOrderInput{
-		TargetType: models.PaymentAttemptTargetPlan, PlanID: "pro_monthly", IdempotencyKey: "rate-limit-health-1",
-	})
-	require.Error(t, err)
-	require.NotContains(t, err.Error(), "acct_123")
-	require.NotContains(t, err.Error(), "secret provider body")
-
-	fact, ok := cache.CustomerFact("biz-1", CapabilityRazorpay)
-	require.True(t, ok)
-	require.Equal(t, CapabilityProviderDegraded, fact.Status)
-	require.Equal(t, "provider_rate_limited", fact.Degradation.Code)
-	require.Equal(t, now.Add(time.Minute), *fact.RetryAt)
-	_, otherTenant := cache.CustomerFact("biz-2", CapabilityRazorpay)
-	require.False(t, otherTenant)
 }
 
 func TestRazorpayPaymentCreateOrderServerAmountAndIdempotency(t *testing.T) {

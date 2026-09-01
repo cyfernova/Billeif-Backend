@@ -6,12 +6,14 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"invoice-backend/internal/config"
 	"invoice-backend/pkg/logger"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestLLMServiceChatSendsOpenAICompatibleRequest(t *testing.T) {
@@ -76,7 +78,7 @@ func TestLLMCapabilityProbeUsesDeepSeekReadOnlyModelList(t *testing.T) {
 	defer server.Close()
 	service := NewLLMService(config.LLMConfig{APIKey: "test-key", APIURL: server.URL + "/chat/completions", Model: "deepseek-chat", Timeout: 1}, logger.New())
 
-	outcome := service.ProbeCapability(context.Background(), CapabilityProbeTarget{BusinessID: "biz-1", HealthKey: CapabilityAI})
+	outcome := service.ProbeGlobalCapability(context.Background())
 
 	if outcome.Err != nil {
 		t.Fatalf("probe error = %v", outcome.Err)
@@ -97,7 +99,7 @@ func TestLLMCapabilityProbeMarksMissingConfiguredModelUnavailableWithoutRawBody(
 	defer server.Close()
 	service := NewLLMService(config.LLMConfig{APIKey: "test-key", APIURL: server.URL + "/v1/chat/completions", Model: "configured-model", Timeout: 1}, logger.New())
 
-	outcome := service.ProbeCapability(context.Background(), CapabilityProbeTarget{BusinessID: "biz-1", HealthKey: CapabilityAI})
+	outcome := service.ProbeGlobalCapability(context.Background())
 
 	if outcome.Err == nil {
 		t.Fatal("missing configured model must be unavailable")
@@ -105,13 +107,91 @@ func TestLLMCapabilityProbeMarksMissingConfiguredModelUnavailableWithoutRawBody(
 	if strings.Contains(outcome.Err.Error(), "other-model") || strings.Contains(outcome.Err.Error(), "raw-secret") {
 		t.Fatalf("probe error leaked model response: %v", outcome.Err)
 	}
-	cache := NewCapabilityHealthCache(CapabilityHealthCacheOptions{})
-	if err := NewCapabilityHealthRecorder(cache, nil).RecordOutcome("biz-1", CapabilityAI, outcome); err != nil {
+	cache := NewCapabilityGlobalHealthCache(CapabilityGlobalHealthCacheOptions{})
+	if err := NewCapabilityGlobalHealthRecorder(cache, nil).RecordGlobalOutcome(CapabilityAI, outcome); err != nil {
 		t.Fatalf("record outcome: %v", err)
 	}
-	fact, found := cache.CustomerFact("biz-1", CapabilityAI)
+	fact, found := cache.CustomerFact(CapabilityAI)
 	if !found || fact.Status != CapabilityProviderUnavailable {
 		t.Fatalf("missing configured model fact = %#v, found=%v", fact, found)
+	}
+}
+
+func TestLLMCapabilityProbeLeavesUnprovenModelListsUnknown(t *testing.T) {
+	oversized := `{"object":"list","data":[]}` + strings.Repeat(" ", (1<<20)+1)
+	tooManyModels := strings.Builder{}
+	tooManyModels.WriteString(`{"object":"list","data":[{"id":"configured-model"}`)
+	for index := 1; index <= 10_000; index++ {
+		tooManyModels.WriteString(`,{"id":"other-`)
+		tooManyModels.WriteString(strconv.Itoa(index))
+		tooManyModels.WriteString(`"}`)
+	}
+	tooManyModels.WriteString(`]}`)
+
+	for _, fixture := range []struct {
+		name string
+		body string
+	}{
+		{name: "missing required list marker", body: `{"data":[]}`},
+		{name: "missing data", body: `{"object":"list"}`},
+		{name: "empty object", body: `{}`},
+		{name: "malformed JSON", body: `{"object":"list","data":[`},
+		{name: "malformed model entry", body: `{"object":"list","data":[{}]}`},
+		{name: "pagination marker makes completeness unproven", body: `{"object":"list","data":[],"has_more":true}`},
+		{name: "unrecognized top-level field", body: `{"object":"list","data":[],"next_page":"secret-cursor"}`},
+		{name: "response exceeds byte limit", body: oversized},
+		{name: "response exceeds model scan limit", body: tooManyModels.String()},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(fixture.body))
+			}))
+			defer server.Close()
+			service := NewLLMService(config.LLMConfig{
+				APIKey: "test-key", APIURL: server.URL + "/v1/chat/completions",
+				Model: "configured-model", Timeout: 1,
+			}, logger.New())
+
+			outcome := service.ProbeGlobalCapability(context.Background())
+
+			if !errors.Is(outcome.Err, ErrCapabilityProbeUnsupported) {
+				t.Fatalf("probe error = %v, want unsupported/unknown", outcome.Err)
+			}
+		})
+	}
+}
+
+func TestLLMCapabilityProbeRejectsHTTPResponsesThatDoNotProveACompleteList(t *testing.T) {
+	for _, fixture := range []struct {
+		name    string
+		status  int
+		headers map[string]string
+	}{
+		{name: "unrecognized successful status", status: http.StatusCreated},
+		{name: "partial content", status: http.StatusPartialContent},
+		{name: "link pagination", status: http.StatusOK, headers: map[string]string{"Link": `<https://provider.test/models?page=2>; rel="next"`}},
+		{name: "content range", status: http.StatusOK, headers: map[string]string{"Content-Range": "items 0-0/2"}},
+		{name: "next cursor", status: http.StatusOK, headers: map[string]string{"X-Next-Cursor": "raw-secret-cursor"}},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				for name, value := range fixture.headers {
+					w.Header().Set(name, value)
+				}
+				w.WriteHeader(fixture.status)
+				_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"other-model"}]}`))
+			}))
+			defer server.Close()
+			service := NewLLMService(config.LLMConfig{
+				APIKey: "test-key", APIURL: server.URL + "/v1/chat/completions",
+				Model: "configured-model", Timeout: 1,
+			}, logger.New())
+
+			outcome := service.ProbeGlobalCapability(context.Background())
+
+			require.ErrorIs(t, outcome.Err, ErrCapabilityProbeUnsupported)
+			require.NotContains(t, outcome.Err.Error(), "raw-secret-cursor")
+		})
 	}
 }
 
@@ -126,17 +206,16 @@ func TestLLMUnsupportedProbeRouteLeavesHealthUnknownWithoutChatMutation(t *testi
 			}))
 			defer server.Close()
 			service := NewLLMService(config.LLMConfig{APIKey: "test-key", APIURL: server.URL + "/chat/completions", Model: "deepseek-chat", Timeout: 1}, logger.New())
-			cache := NewCapabilityHealthCache(CapabilityHealthCacheOptions{})
-			observer := NewCapabilityHealthObserver(
-				&staticCapabilityProbeTargets{targets: []CapabilityProbeTarget{{BusinessID: "biz-1", HealthKey: CapabilityAI}}},
-				map[CapabilityKey]CapabilityProviderProber{CapabilityAI: service},
-				NewCapabilityHealthRecorder(cache, nil), CapabilityHealthObserverOptions{MaxAttempts: 1},
+			cache := NewCapabilityGlobalHealthCache(CapabilityGlobalHealthCacheOptions{})
+			observer := NewCapabilityGlobalHealthObserver(
+				map[CapabilityKey]CapabilityGlobalProviderProber{CapabilityAI: service},
+				NewCapabilityGlobalHealthRecorder(cache, nil), CapabilityGlobalHealthObserverOptions{MaxAttempts: 1},
 			)
 
 			if err := observer.ObserveOnce(context.Background()); err != nil {
 				t.Fatalf("observe: %v", err)
 			}
-			if _, found := cache.CustomerFact("biz-1", CapabilityAI); found {
+			if _, found := cache.CustomerFact(CapabilityAI); found {
 				t.Fatal("unsupported model probe must leave health unknown")
 			}
 			if len(methods) != 1 || methods[0] != "GET /models" {
@@ -152,7 +231,7 @@ func TestLLMUnrecognizedChatEndpointShapeDoesNotCallProvider(t *testing.T) {
 	defer server.Close()
 	service := NewLLMService(config.LLMConfig{APIKey: "test-key", APIURL: server.URL + "/proxy/chat/completions", Model: "model", Timeout: 1}, logger.New())
 
-	outcome := service.ProbeCapability(context.Background(), CapabilityProbeTarget{BusinessID: "biz-1", HealthKey: CapabilityAI})
+	outcome := service.ProbeGlobalCapability(context.Background())
 
 	if !errors.Is(outcome.Err, ErrCapabilityProbeUnsupported) {
 		t.Fatalf("probe error = %v, want unsupported", outcome.Err)
@@ -212,33 +291,6 @@ func TestLLMServiceBusinessAgentAssistRejectsUnavailableAICapabilityBeforeProvid
 	}
 	if providerCalls != 0 {
 		t.Fatalf("provider calls = %d, want zero", providerCalls)
-	}
-}
-
-func TestLLMServiceBusinessChatRecordsTenantScopedProviderOutcome(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}],"model":"test"}`))
-	}))
-	defer server.Close()
-	now := time.Date(2026, 9, 1, 14, 0, 0, 0, time.UTC)
-	cache := NewCapabilityHealthCache(CapabilityHealthCacheOptions{Now: func() time.Time { return now }})
-	recorder := NewCapabilityHealthRecorder(cache, func() time.Time { return now })
-	service := NewLLMService(config.LLMConfig{APIKey: "test", APIURL: server.URL, Model: "test", Timeout: 1}, logger.New()).
-		WithCapabilityGuard(&recordingCapabilityGuard{}).
-		WithCapabilityHealthRecorder(recorder)
-
-	_, err := service.ChatWithWebSearchForBusiness(context.Background(), "biz-1", "user-1", []ChatMessage{{Role: "user", Content: "hello"}})
-	if err != nil {
-		t.Fatalf("business chat: %v", err)
-	}
-
-	fact, ok := cache.CustomerFact("biz-1", CapabilityAI)
-	if !ok || fact.Status != CapabilityProviderHealthy || fact.ObservedAt == nil || !fact.ObservedAt.Equal(now) {
-		t.Fatalf("provider fact = %#v, found=%v", fact, ok)
-	}
-	if _, otherTenant := cache.CustomerFact("biz-2", CapabilityAI); otherTenant {
-		t.Fatal("provider outcome leaked to another tenant")
 	}
 }
 

@@ -23,13 +23,7 @@ type RazorpayPaymentService struct {
 	client   *razorpay.Client
 	resolver ProviderConfigResolver
 	guard    CapabilityGuard
-	health   CapabilityOutcomeRecorder
 	log      *logger.Logger
-}
-
-func (s *RazorpayPaymentService) WithCapabilityHealthRecorder(recorder CapabilityOutcomeRecorder) *RazorpayPaymentService {
-	s.health = recorder
-	return s
 }
 
 func (s *RazorpayPaymentService) WithCapabilityGuard(guard CapabilityGuard) *RazorpayPaymentService {
@@ -83,7 +77,7 @@ func (s *RazorpayPaymentService) clientFor(ctx context.Context) (*razorpay.Clien
 	return client, nil
 }
 
-func (s *RazorpayPaymentService) ProbeCapability(ctx context.Context, _ CapabilityProbeTarget) CapabilityProviderOutcome {
+func (s *RazorpayPaymentService) ProbeGlobalCapability(ctx context.Context) CapabilityProviderOutcome {
 	client, err := s.clientFor(ctx)
 	if err == nil {
 		err = client.Probe(ctx)
@@ -161,9 +155,6 @@ func (s *RazorpayPaymentService) CreateOrder(ctx context.Context, businessID, us
 			}
 		} else {
 			order, err = s.createRazorpayOrder(ctx, client, attempt)
-		}
-		if s.health != nil {
-			_ = s.health.RecordOutcome(businessID, providerHealthKeyForCapability(capability), CapabilityProviderOutcome{Err: err})
 		}
 		if err != nil {
 			s.log.Warn("failed to initialize Razorpay payment order", "payment_attempt_id", attempt.ID, "business_id", businessID, "error", err)

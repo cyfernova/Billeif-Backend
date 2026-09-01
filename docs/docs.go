@@ -5070,7 +5070,7 @@ const docTemplate = `{
         },
         "/capabilities": {
             "get": {
-                "description": "Returns the backend-authoritative, customer-safe runtime capability evaluation for the active business. Provider health is read from cache; this request does not call providers.",
+                "description": "Returns the backend-authoritative, customer-safe runtime capability evaluation for the active business. Provider health is read from fixed global observations or a business-scoped durable GST snapshot; this request does not call providers.",
                 "produces": [
                     "application/json"
                 ],

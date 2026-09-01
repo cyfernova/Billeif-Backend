@@ -159,22 +159,32 @@ type CapabilityBusinessSetupReader interface {
 	ReadCapabilityBusinessSetup(ctx context.Context, businessID string) (CapabilityBusinessSetup, error)
 }
 
+type CapabilityHealthScope string
+
+const (
+	CapabilityHealthScopeGlobal     CapabilityHealthScope = "global"
+	CapabilityHealthScopeBusiness   CapabilityHealthScope = "business"
+	CapabilityHealthScopeUnobserved CapabilityHealthScope = "unobserved"
+)
+
 type CapabilityServiceOptions struct {
-	Configuration config.CapabilityConfiguration
-	Entitlements  CapabilityEntitlementResolver
-	Permissions   PermissionChecker
-	Setup         CapabilityBusinessSetupReader
-	Health        *CapabilityHealthCache
-	Now           func() time.Time
+	Configuration  config.CapabilityConfiguration
+	Entitlements   CapabilityEntitlementResolver
+	Permissions    PermissionChecker
+	Setup          CapabilityBusinessSetupReader
+	GlobalHealth   *CapabilityGlobalHealthCache
+	BusinessHealth CapabilityBusinessHealthFactReader
+	Now            func() time.Time
 }
 
 type CapabilityService struct {
-	configuration config.CapabilityConfiguration
-	entitlements  CapabilityEntitlementResolver
-	permissions   PermissionChecker
-	setup         CapabilityBusinessSetupReader
-	health        *CapabilityHealthCache
-	now           func() time.Time
+	configuration  config.CapabilityConfiguration
+	entitlements   CapabilityEntitlementResolver
+	permissions    PermissionChecker
+	setup          CapabilityBusinessSetupReader
+	globalHealth   *CapabilityGlobalHealthCache
+	businessHealth CapabilityBusinessHealthFactReader
+	now            func() time.Time
 }
 
 type capabilityDefinition struct {
@@ -188,22 +198,23 @@ type capabilityDefinition struct {
 	Setup             func(CapabilityBusinessSetup) bool
 	SetupAction       string
 	HealthKey         CapabilityKey
+	HealthScope       CapabilityHealthScope
 }
 
 var capabilityDefinitions = []capabilityDefinition{
-	{Key: CapabilityRazorpay, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.Razorpay }, Permission: PermissionPaymentsManage, Platforms: allCapabilityPlatforms(), Setup: businessExistsSetup, SetupAction: "contact_support", HealthKey: CapabilityRazorpay},
-	{Key: CapabilityGSTProvider, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.GST }, Feature: FeatureGSTAPI, Permission: PermissionTaxIntegrationsManage, Platforms: allCapabilityPlatforms(), Setup: func(s CapabilityBusinessSetup) bool { return s.GST }, SetupAction: "configure_gst", HealthKey: CapabilityGSTProvider},
-	{Key: CapabilityEInvoice, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.GST }, Feature: FeatureEInvoice, Permission: PermissionDocumentsManage, Platforms: allCapabilityPlatforms(), Setup: func(s CapabilityBusinessSetup) bool { return s.GST }, SetupAction: "configure_gst", HealthKey: CapabilityGSTProvider},
-	{Key: CapabilityEWayBill, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.GST }, Feature: FeatureEWayBill, Permission: PermissionDocumentsManage, Platforms: allCapabilityPlatforms(), Setup: func(s CapabilityBusinessSetup) bool { return s.GST }, SetupAction: "configure_gst", HealthKey: CapabilityGSTProvider},
-	{Key: CapabilityWhatsApp, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.WhatsApp }, Feature: FeatureWhatsAppNotifications, Permission: PermissionNotificationsManage, Platforms: allCapabilityPlatforms(), Setup: func(s CapabilityBusinessSetup) bool { return s.WhatsApp }, SetupAction: "configure_whatsapp", HealthKey: CapabilityWhatsApp},
-	{Key: CapabilityEmail, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.Email }, Permission: PermissionNotificationsManage, Platforms: allCapabilityPlatforms(), Setup: func(s CapabilityBusinessSetup) bool { return s.Email }, SetupAction: "configure_email", HealthKey: CapabilityEmail},
-	{Key: CapabilityS3Uploads, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.S3Uploads }, Feature: FeatureDriveStorageMB, Permission: PermissionDriveManage, Platforms: allCapabilityPlatforms(), Setup: businessExistsSetup, SetupAction: "contact_support", HealthKey: CapabilityS3Uploads},
-	{Key: CapabilityVoice, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.Voice }, Permission: PermissionVoiceUse, Platforms: []CapabilityPlatform{CapabilityPlatformIOS, CapabilityPlatformAndroid}, Setup: func(s CapabilityBusinessSetup) bool { return s.Voice }, SetupAction: "enable_voice", HealthKey: CapabilityVoice},
-	{Key: CapabilityAI, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.AI }, Permission: PermissionAgentsView, Platforms: allCapabilityPlatforms(), Setup: businessExistsSetup, SetupAction: "contact_support", HealthKey: CapabilityAI},
-	{Key: CapabilityStorefrontPayments, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.Razorpay }, Feature: FeatureOnlineStore, Permission: PermissionStorefrontManage, Platforms: allCapabilityPlatforms(), Setup: func(s CapabilityBusinessSetup) bool { return s.StorefrontPayments }, SetupAction: "enable_storefront_payments", HealthKey: CapabilityRazorpay},
-	{Key: CapabilityReportExports, Supported: true, Feature: FeatureExportDocuments, Permission: PermissionReportsExport, Platforms: allCapabilityPlatforms(), Setup: businessExistsSetup, SetupAction: "complete_business_setup"},
-	{Key: CapabilityBulkImports, Supported: false, UnsupportedReason: ReasonBulkProcessorUnavailable, Platforms: allCapabilityPlatforms()},
-	{Key: CapabilitySavedPayments, Supported: false, UnsupportedReason: ReasonSavedPaymentsUnsupported, Permission: PermissionPaymentsManage, Platforms: allCapabilityPlatforms()},
+	{Key: CapabilityRazorpay, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.Razorpay }, Permission: PermissionPaymentsManage, Platforms: allCapabilityPlatforms(), Setup: businessExistsSetup, SetupAction: "contact_support", HealthKey: CapabilityRazorpay, HealthScope: CapabilityHealthScopeGlobal},
+	{Key: CapabilityGSTProvider, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.GST }, Feature: FeatureGSTAPI, Permission: PermissionTaxIntegrationsManage, Platforms: allCapabilityPlatforms(), Setup: func(s CapabilityBusinessSetup) bool { return s.GST }, SetupAction: "configure_gst", HealthKey: CapabilityGSTProvider, HealthScope: CapabilityHealthScopeBusiness},
+	{Key: CapabilityEInvoice, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.GST }, Feature: FeatureEInvoice, Permission: PermissionDocumentsManage, Platforms: allCapabilityPlatforms(), Setup: func(s CapabilityBusinessSetup) bool { return s.GST }, SetupAction: "configure_gst", HealthKey: CapabilityGSTProvider, HealthScope: CapabilityHealthScopeBusiness},
+	{Key: CapabilityEWayBill, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.GST }, Feature: FeatureEWayBill, Permission: PermissionDocumentsManage, Platforms: allCapabilityPlatforms(), Setup: func(s CapabilityBusinessSetup) bool { return s.GST }, SetupAction: "configure_gst", HealthKey: CapabilityGSTProvider, HealthScope: CapabilityHealthScopeBusiness},
+	{Key: CapabilityWhatsApp, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.WhatsApp }, Feature: FeatureWhatsAppNotifications, Permission: PermissionNotificationsManage, Platforms: allCapabilityPlatforms(), Setup: func(s CapabilityBusinessSetup) bool { return s.WhatsApp }, SetupAction: "configure_whatsapp", HealthKey: CapabilityWhatsApp, HealthScope: CapabilityHealthScopeUnobserved},
+	{Key: CapabilityEmail, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.Email }, Permission: PermissionNotificationsManage, Platforms: allCapabilityPlatforms(), Setup: func(s CapabilityBusinessSetup) bool { return s.Email }, SetupAction: "configure_email", HealthKey: CapabilityEmail, HealthScope: CapabilityHealthScopeUnobserved},
+	{Key: CapabilityS3Uploads, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.S3Uploads }, Feature: FeatureDriveStorageMB, Permission: PermissionDriveManage, Platforms: allCapabilityPlatforms(), Setup: businessExistsSetup, SetupAction: "contact_support", HealthKey: CapabilityS3Uploads, HealthScope: CapabilityHealthScopeUnobserved},
+	{Key: CapabilityVoice, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.Voice }, Permission: PermissionVoiceUse, Platforms: []CapabilityPlatform{CapabilityPlatformIOS, CapabilityPlatformAndroid}, Setup: func(s CapabilityBusinessSetup) bool { return s.Voice }, SetupAction: "enable_voice", HealthKey: CapabilityVoice, HealthScope: CapabilityHealthScopeUnobserved},
+	{Key: CapabilityAI, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.AI }, Permission: PermissionAgentsView, Platforms: allCapabilityPlatforms(), Setup: businessExistsSetup, SetupAction: "contact_support", HealthKey: CapabilityAI, HealthScope: CapabilityHealthScopeGlobal},
+	{Key: CapabilityStorefrontPayments, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.Razorpay }, Feature: FeatureOnlineStore, Permission: PermissionStorefrontManage, Platforms: allCapabilityPlatforms(), Setup: func(s CapabilityBusinessSetup) bool { return s.StorefrontPayments }, SetupAction: "enable_storefront_payments", HealthKey: CapabilityRazorpay, HealthScope: CapabilityHealthScopeGlobal},
+	{Key: CapabilityReportExports, Supported: true, Feature: FeatureExportDocuments, Permission: PermissionReportsExport, Platforms: allCapabilityPlatforms(), Setup: businessExistsSetup, SetupAction: "complete_business_setup", HealthScope: CapabilityHealthScopeUnobserved},
+	{Key: CapabilityBulkImports, Supported: false, UnsupportedReason: ReasonBulkProcessorUnavailable, Platforms: allCapabilityPlatforms(), HealthScope: CapabilityHealthScopeUnobserved},
+	{Key: CapabilitySavedPayments, Supported: false, UnsupportedReason: ReasonSavedPaymentsUnsupported, Permission: PermissionPaymentsManage, Platforms: allCapabilityPlatforms(), HealthScope: CapabilityHealthScopeUnobserved},
 }
 
 func NewCapabilityService(opts CapabilityServiceOptions) *CapabilityService {
@@ -211,12 +222,13 @@ func NewCapabilityService(opts CapabilityServiceOptions) *CapabilityService {
 		opts.Now = time.Now
 	}
 	return &CapabilityService{
-		configuration: opts.Configuration,
-		entitlements:  opts.Entitlements,
-		permissions:   opts.Permissions,
-		setup:         opts.Setup,
-		health:        opts.Health,
-		now:           opts.Now,
+		configuration:  opts.Configuration,
+		entitlements:   opts.Entitlements,
+		permissions:    opts.Permissions,
+		setup:          opts.Setup,
+		globalHealth:   opts.GlobalHealth,
+		businessHealth: opts.BusinessHealth,
+		now:            opts.Now,
 	}
 }
 
@@ -325,8 +337,18 @@ func (s *CapabilityService) evaluateDefinition(ctx context.Context, request Capa
 	if definition.Setup != nil {
 		result.BusinessSetup.Complete = definition.Setup(setup)
 	}
-	if definition.HealthKey != "" && s.health != nil {
-		if health, ok := s.health.CustomerFact(request.BusinessID, definition.HealthKey); ok {
+	if definition.HealthScope == CapabilityHealthScopeGlobal && s.globalHealth != nil {
+		if health, ok := s.globalHealth.CustomerFact(definition.HealthKey); ok {
+			result.ProviderHealth = health
+			result.RetryAt = health.RetryAt
+			result.Degradation = health.Degradation
+		}
+	} else if definition.HealthScope == CapabilityHealthScopeBusiness && s.businessHealth != nil {
+		health, ok, err := s.businessHealth.CustomerFact(ctx, request.BusinessID, definition.HealthKey)
+		if err != nil {
+			return Capability{}, fmt.Errorf("read capability provider health: %w", err)
+		}
+		if ok {
 			result.ProviderHealth = health
 			result.RetryAt = health.RetryAt
 			result.Degradation = health.Degradation
@@ -363,12 +385,21 @@ func (s *CapabilityService) evaluateDefinition(ctx context.Context, request Capa
 	case definition.HealthKey != "" && result.ProviderHealth.Status == CapabilityProviderUnknown:
 		result.State = CapabilityStateUnknown
 		result.ReasonCode = ReasonProviderHealthUnknown
+		if definition.HealthScope == CapabilityHealthScopeBusiness {
+			result.SetupAction = "validate_gst_integration"
+		}
 	case result.ProviderHealth.Stale:
 		result.State = CapabilityStateTemporarilyUnavailable
 		result.ReasonCode = ReasonProviderHealthStale
+		if definition.HealthScope == CapabilityHealthScopeBusiness {
+			result.SetupAction = "validate_gst_integration"
+		}
 	case result.ProviderHealth.Status == CapabilityProviderUnavailable:
 		result.State = CapabilityStateTemporarilyUnavailable
 		result.ReasonCode = ReasonProviderUnavailable
+		if definition.HealthScope == CapabilityHealthScopeBusiness {
+			result.SetupAction = "validate_gst_integration"
+		}
 	case result.ProviderHealth.Status == CapabilityProviderDegraded:
 		result.Available = true
 		result.State = CapabilityStateAvailable
@@ -395,14 +426,6 @@ func capabilityDefinitionByKey(key CapabilityKey) (capabilityDefinition, bool) {
 		}
 	}
 	return capabilityDefinition{}, false
-}
-
-func providerHealthKeyForCapability(key CapabilityKey) CapabilityKey {
-	definition, ok := capabilityDefinitionByKey(key)
-	if ok && definition.HealthKey != "" {
-		return definition.HealthKey
-	}
-	return key
 }
 
 func unknownCapability(request CapabilityRequest, evaluatedAt time.Time) Capability {

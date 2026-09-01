@@ -22,14 +22,8 @@ type LLMService struct {
 	appCfg   *config.Config
 	resolver ProviderConfigResolver
 	guard    CapabilityGuard
-	health   CapabilityOutcomeRecorder
 	log      *logger.Logger
 	client   *http.Client
-}
-
-func (s *LLMService) WithCapabilityHealthRecorder(recorder CapabilityOutcomeRecorder) *LLMService {
-	s.health = recorder
-	return s
 }
 
 func (s *LLMService) WithCapabilityGuard(guard CapabilityGuard) *LLMService {
@@ -58,7 +52,7 @@ func (s *LLMService) providerConfig(ctx context.Context, kind config.SecretKind)
 	return resolved.LLM, nil
 }
 
-func (s *LLMService) ProbeCapability(ctx context.Context, _ CapabilityProbeTarget) CapabilityProviderOutcome {
+func (s *LLMService) ProbeGlobalCapability(ctx context.Context) CapabilityProviderOutcome {
 	providerCfg, err := s.providerConfig(ctx, config.SecretLLM)
 	if err != nil {
 		return CapabilityProviderOutcome{Err: err}
@@ -78,34 +72,189 @@ func (s *LLMService) ProbeCapability(ctx context.Context, _ CapabilityProbeTarge
 		return CapabilityProviderOutcome{Err: err}
 	}
 	defer resp.Body.Close()
-	limitedBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if readErr != nil {
-		return CapabilityProviderOutcome{Err: fmt.Errorf("read LLM model list: %w", readErr)}
-	}
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
 		return CapabilityProviderOutcome{Err: ErrCapabilityProbeUnsupported}
 	}
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+			return CapabilityProviderOutcome{Err: ErrCapabilityProbeUnsupported}
+		}
 		return CapabilityProviderOutcome{Err: &providerHTTPError{status: resp.StatusCode}}
 	}
-	var models struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
+	if llmModelListHasPaginationHeaders(resp.Header) {
+		return CapabilityProviderOutcome{Err: ErrCapabilityProbeUnsupported}
 	}
-	if err := json.Unmarshal(limitedBody, &models); err != nil {
-		return CapabilityProviderOutcome{Err: errors.New("LLM provider returned an invalid model list")}
+	present, complete := inspectLLMModelList(resp.Body, strings.TrimSpace(providerCfg.Model))
+	if !complete {
+		return CapabilityProviderOutcome{Err: ErrCapabilityProbeUnsupported}
 	}
-	configuredModel := strings.TrimSpace(providerCfg.Model)
-	for index, model := range models.Data {
-		if index >= 10_000 {
-			break
-		}
-		if strings.TrimSpace(model.ID) == configuredModel {
-			return CapabilityProviderOutcome{}
-		}
+	if present {
+		return CapabilityProviderOutcome{}
 	}
 	return CapabilityProviderOutcome{Err: errors.New("configured LLM model is unavailable")}
+}
+
+func llmModelListHasPaginationHeaders(header http.Header) bool {
+	for _, name := range []string{"Link", "Content-Range", "X-Next-Page", "X-Next-Cursor", "Next-Cursor", "X-Has-More"} {
+		if strings.TrimSpace(header.Get(name)) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+const (
+	maxLLMModelListBytes   = 1 << 20
+	maxLLMModelListEntries = 10_000
+	maxLLMModelJSONDepth   = 64
+)
+
+// inspectLLMModelList streams a complete OpenAI-compatible list response. It
+// deliberately returns complete=false for every body that cannot prove the
+// full list, including oversized responses and entry-cap exhaustion.
+func inspectLLMModelList(body io.Reader, configuredModel string) (present bool, complete bool) {
+	if body == nil || configuredModel == "" {
+		return false, false
+	}
+	limited := &io.LimitedReader{R: body, N: maxLLMModelListBytes + 1}
+	decoder := json.NewDecoder(limited)
+	opening, err := decoder.Token()
+	if err != nil || opening != json.Delim('{') {
+		return false, false
+	}
+	var markerSeen, dataSeen bool
+	markerValid := false
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		key, ok := keyToken.(string)
+		if err != nil || !ok {
+			return false, false
+		}
+		switch key {
+		case "object":
+			if markerSeen {
+				return false, false
+			}
+			markerSeen = true
+			value, err := decoder.Token()
+			marker, ok := value.(string)
+			if err != nil || !ok {
+				return false, false
+			}
+			markerValid = marker == "list"
+		case "data":
+			if dataSeen {
+				return false, false
+			}
+			dataSeen = true
+			var dataComplete bool
+			present, dataComplete = inspectLLMModelEntries(decoder, configuredModel)
+			if !dataComplete {
+				return false, false
+			}
+		default:
+			// The OpenAI-compatible complete-list envelope is exactly object +
+			// data. Unknown top-level fields may be pagination markers, so they
+			// make absence unprovable even if their value looks harmless.
+			return false, false
+		}
+	}
+	closing, err := decoder.Token()
+	if err != nil || closing != json.Delim('}') || !markerSeen || !markerValid || !dataSeen {
+		return false, false
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return false, false
+	}
+	if limited.N == 0 {
+		return false, false
+	}
+	return present, true
+}
+
+func inspectLLMModelEntries(decoder *json.Decoder, configuredModel string) (present bool, complete bool) {
+	opening, err := decoder.Token()
+	if err != nil || opening != json.Delim('[') {
+		return false, false
+	}
+	entries := 0
+	for decoder.More() {
+		entries++
+		if entries > maxLLMModelListEntries {
+			return false, false
+		}
+		itemOpening, err := decoder.Token()
+		if err != nil || itemOpening != json.Delim('{') {
+			return false, false
+		}
+		idSeen := false
+		modelID := ""
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			key, ok := keyToken.(string)
+			if err != nil || !ok {
+				return false, false
+			}
+			if key != "id" {
+				if !skipLLMJSONValue(decoder) {
+					return false, false
+				}
+				continue
+			}
+			if idSeen {
+				return false, false
+			}
+			idSeen = true
+			value, err := decoder.Token()
+			id, ok := value.(string)
+			if err != nil || !ok || strings.TrimSpace(id) == "" {
+				return false, false
+			}
+			modelID = strings.TrimSpace(id)
+		}
+		itemClosing, err := decoder.Token()
+		if err != nil || itemClosing != json.Delim('}') || !idSeen {
+			return false, false
+		}
+		present = present || modelID == configuredModel
+	}
+	closing, err := decoder.Token()
+	if err != nil || closing != json.Delim(']') {
+		return false, false
+	}
+	return present, true
+}
+
+func skipLLMJSONValue(decoder *json.Decoder) bool {
+	token, err := decoder.Token()
+	if err != nil {
+		return false
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok || (delimiter != json.Delim('{') && delimiter != json.Delim('[')) {
+		return true
+	}
+	depth := 1
+	for depth > 0 {
+		token, err = decoder.Token()
+		if err != nil {
+			return false
+		}
+		delimiter, ok = token.(json.Delim)
+		if !ok {
+			continue
+		}
+		switch delimiter {
+		case json.Delim('{'), json.Delim('['):
+			depth++
+			if depth > maxLLMModelJSONDepth {
+				return false
+			}
+		case json.Delim('}'), json.Delim(']'):
+			depth--
+		}
+	}
+	return true
 }
 
 func llmModelProbeURL(apiURL, _ string) (string, error) {
@@ -348,9 +497,6 @@ func (s *LLMService) ChatWithWebSearchForBusiness(ctx context.Context, businessI
 		return nil, err
 	}
 	result, err := s.ChatWithWebSearch(ctx, messages)
-	if s.health != nil {
-		_ = s.health.RecordOutcome(businessID, CapabilityAI, CapabilityProviderOutcome{Err: err})
-	}
 	return result, err
 }
 
@@ -800,8 +946,5 @@ func (s *LLMService) ProcessAgentIntentForBusiness(ctx context.Context, business
 		return "", err
 	}
 	response, err := s.ProcessAgentIntent(ctx, intent, contextInfo)
-	if s.health != nil {
-		_ = s.health.RecordOutcome(businessID, CapabilityAI, CapabilityProviderOutcome{Err: err})
-	}
 	return response, err
 }

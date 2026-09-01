@@ -34,10 +34,12 @@ func TestGSTAdapterHTTPStatusFeedsRateLimitHealthWithoutRawBody(t *testing.T) {
 	require.False(t, strings.Contains(err.Error(), "secret response"))
 
 	now := time.Date(2026, 9, 1, 15, 0, 0, 0, time.UTC)
-	cache := NewCapabilityHealthCache(CapabilityHealthCacheOptions{Now: func() time.Time { return now }})
-	recorder := NewCapabilityHealthRecorder(cache, func() time.Time { return now })
-	require.NoError(t, recorder.RecordOutcome("biz-1", CapabilityGSTProvider, CapabilityProviderOutcome{Err: err}))
-	fact, ok := cache.CustomerFact("biz-1", CapabilityGSTProvider)
+	repository := newMemoryCapabilityProviderHealthRepository()
+	recorder := NewGSTProviderHealthRecorder(repository, GSTProviderHealthRecorderOptions{Now: func() time.Time { return now }})
+	require.NoError(t, recorder.RecordGSTOutcome(context.Background(), "biz-1", CapabilityProviderOutcome{Err: err}))
+	fact, ok, readErr := NewCapabilityBusinessHealthReader(repository, func() time.Time { return now }).
+		CustomerFact(context.Background(), "biz-1", CapabilityGSTProvider)
+	require.NoError(t, readErr)
 	require.True(t, ok)
 	require.Equal(t, CapabilityProviderDegraded, fact.Status)
 	require.Equal(t, "provider_rate_limited", fact.Degradation.Code)
@@ -59,10 +61,12 @@ func TestGSTAdapterTimeoutFeedsUnavailableHealth(t *testing.T) {
 	require.Error(t, err)
 
 	now := time.Date(2026, 9, 1, 15, 0, 0, 0, time.UTC)
-	cache := NewCapabilityHealthCache(CapabilityHealthCacheOptions{Now: func() time.Time { return now }})
-	recorder := NewCapabilityHealthRecorder(cache, func() time.Time { return now })
-	require.NoError(t, recorder.RecordOutcome("biz-1", CapabilityGSTProvider, CapabilityProviderOutcome{Err: err}))
-	fact, ok := cache.CustomerFact("biz-1", CapabilityGSTProvider)
+	repository := newMemoryCapabilityProviderHealthRepository()
+	recorder := NewGSTProviderHealthRecorder(repository, GSTProviderHealthRecorderOptions{Now: func() time.Time { return now }})
+	require.NoError(t, recorder.RecordGSTOutcome(context.Background(), "biz-1", CapabilityProviderOutcome{Err: err}))
+	fact, ok, readErr := NewCapabilityBusinessHealthReader(repository, func() time.Time { return now }).
+		CustomerFact(context.Background(), "biz-1", CapabilityGSTProvider)
+	require.NoError(t, readErr)
 	require.True(t, ok)
 	require.Equal(t, CapabilityProviderUnavailable, fact.Status)
 	require.Equal(t, now.Add(30*time.Second), *fact.RetryAt)

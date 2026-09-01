@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"invoice-backend/internal/config"
+	"invoice-backend/internal/models"
 
 	"github.com/stretchr/testify/require"
 )
@@ -26,23 +27,21 @@ func TestCapabilityServiceConfigurationHealthSetupAndDegradationStatesAreStable(
 		{name: "business setup missing", configured: true, setup: false, health: &CapabilityHealthObservation{Status: CapabilityProviderHealthy, ObservedAt: now}, wantState: CapabilityStateSetupRequired, wantReason: ReasonBusinessSetupRequired},
 		{name: "health unknown", configured: true, setup: true, wantState: CapabilityStateUnknown, wantReason: ReasonProviderHealthUnknown},
 		{name: "health stale", configured: true, setup: true, health: &CapabilityHealthObservation{Status: CapabilityProviderHealthy, ObservedAt: now.Add(-10 * time.Minute)}, wantState: CapabilityStateTemporarilyUnavailable, wantReason: ReasonProviderHealthStale},
-		{name: "health degraded", configured: true, setup: true, health: &CapabilityHealthObservation{Status: CapabilityProviderDegraded, ObservedAt: now, CustomerCode: "provider_degraded", OperatorDetail: "raw secret provider trace"}, wantState: CapabilityStateAvailable, wantReason: ReasonProviderDegraded, available: true},
+		{name: "health degraded", configured: true, setup: true, health: &CapabilityHealthObservation{Status: CapabilityProviderDegraded, ObservedAt: now, CustomerCode: "provider_degraded"}, wantState: CapabilityStateAvailable, wantReason: ReasonProviderDegraded, available: true},
 		{name: "healthy", configured: true, setup: true, health: &CapabilityHealthObservation{Status: CapabilityProviderHealthy, ObservedAt: now}, wantState: CapabilityStateAvailable, wantReason: ReasonAvailable, available: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			health := NewCapabilityHealthCache(CapabilityHealthCacheOptions{MaxAge: 5 * time.Minute, Now: func() time.Time { return now }})
-			if tt.health != nil {
-				require.NoError(t, health.Record("biz-1", CapabilityEmail, *tt.health))
-			}
+			health := capabilityBusinessHealthForTest(now, "biz-1", tt.health, 5*time.Minute)
 			service := NewCapabilityService(CapabilityServiceOptions{
-				Configuration: config.CapabilityConfiguration{Email: tt.configured},
-				Permissions:   staticCapabilityPermissions{PermissionNotificationsManage: true},
-				Setup:         staticCapabilitySetup{snapshot: CapabilityBusinessSetup{BusinessExists: true, Email: tt.setup}},
-				Health:        health, Now: func() time.Time { return now },
+				Configuration:  config.CapabilityConfiguration{GST: tt.configured},
+				Entitlements:   staticCapabilityEntitlements{FeatureGSTAPI: {Required: true, Entitled: true, Quota: CapabilityQuota{Available: true}}},
+				Permissions:    staticCapabilityPermissions{PermissionTaxIntegrationsManage: true},
+				Setup:          staticCapabilitySetup{snapshot: CapabilityBusinessSetup{BusinessExists: true, GST: tt.setup}},
+				BusinessHealth: health, Now: func() time.Time { return now },
 			})
-			result, err := service.Evaluate(context.Background(), CapabilityRequest{BusinessID: "biz-1", UserID: "user-1", Platform: CapabilityPlatformWeb, Capability: CapabilityEmail})
+			result, err := service.Evaluate(context.Background(), CapabilityRequest{BusinessID: "biz-1", UserID: "user-1", Platform: CapabilityPlatformWeb, Capability: CapabilityGSTProvider})
 			require.NoError(t, err)
 			require.Equal(t, tt.wantState, result.State)
 			require.Equal(t, tt.wantReason, result.ReasonCode)
@@ -67,17 +66,16 @@ func TestCapabilityServiceUnknownCapabilityFailsClosed(t *testing.T) {
 
 func TestGSTFeaturesShareTenantScopedProviderHealth(t *testing.T) {
 	now := time.Date(2026, 9, 1, 16, 10, 0, 0, time.UTC)
-	health := NewCapabilityHealthCache(CapabilityHealthCacheOptions{Now: func() time.Time { return now }})
-	require.NoError(t, health.Record("biz-1", CapabilityGSTProvider, CapabilityHealthObservation{Status: CapabilityProviderHealthy, ObservedAt: now}))
+	health := capabilityBusinessHealthForTest(now, "biz-1", &CapabilityHealthObservation{Status: CapabilityProviderHealthy, ObservedAt: now}, 24*time.Hour)
 	service := NewCapabilityService(CapabilityServiceOptions{
 		Configuration: config.CapabilityConfiguration{GST: true},
 		Entitlements: staticCapabilityEntitlements{
 			FeatureEInvoice: {Required: true, Entitled: true, Quota: CapabilityQuota{Available: true}},
 			FeatureEWayBill: {Required: true, Entitled: true, Quota: CapabilityQuota{Available: true}},
 		},
-		Permissions: staticCapabilityPermissions{PermissionDocumentsManage: true},
-		Setup:       staticCapabilitySetup{snapshot: CapabilityBusinessSetup{BusinessExists: true, GST: true}},
-		Health:      health, Now: func() time.Time { return now },
+		Permissions:    staticCapabilityPermissions{PermissionDocumentsManage: true},
+		Setup:          staticCapabilitySetup{snapshot: CapabilityBusinessSetup{BusinessExists: true, GST: true}},
+		BusinessHealth: health, Now: func() time.Time { return now },
 	})
 
 	for _, capability := range []CapabilityKey{CapabilityEInvoice, CapabilityEWayBill} {
@@ -109,10 +107,9 @@ func TestCapabilityServiceRequireRejectsUnsupportedCapabilityWithTypedError(t *t
 
 func TestCapabilityServiceRequireFailsClosedForEveryUnavailableState(t *testing.T) {
 	now := time.Date(2026, 9, 1, 11, 0, 0, 0, time.UTC)
-	staleHealth := NewCapabilityHealthCache(CapabilityHealthCacheOptions{MaxAge: time.Minute, Now: func() time.Time { return now }})
-	require.NoError(t, staleHealth.Record("biz-1", CapabilityEmail, CapabilityHealthObservation{
+	staleHealth := capabilityBusinessHealthForTest(now, "biz-1", &CapabilityHealthObservation{
 		Status: CapabilityProviderHealthy, ObservedAt: now.Add(-2 * time.Minute),
-	}))
+	}, time.Minute)
 
 	tests := []struct {
 		name      string
@@ -158,12 +155,13 @@ func TestCapabilityServiceRequireFailsClosedForEveryUnavailableState(t *testing.
 		{
 			name: "stale", wantState: CapabilityStateTemporarilyUnavailable,
 			service: NewCapabilityService(CapabilityServiceOptions{
-				Configuration: config.CapabilityConfiguration{Email: true},
-				Permissions:   staticCapabilityPermissions{PermissionNotificationsManage: true},
-				Setup:         staticCapabilitySetup{snapshot: CapabilityBusinessSetup{BusinessExists: true, Email: true}},
-				Health:        staleHealth, Now: func() time.Time { return now },
+				Configuration:  config.CapabilityConfiguration{GST: true},
+				Entitlements:   staticCapabilityEntitlements{FeatureGSTAPI: {Required: true, Entitled: true, Quota: CapabilityQuota{Available: true}}},
+				Permissions:    staticCapabilityPermissions{PermissionTaxIntegrationsManage: true},
+				Setup:          staticCapabilitySetup{snapshot: CapabilityBusinessSetup{BusinessExists: true, GST: true}},
+				BusinessHealth: staleHealth, Now: func() time.Time { return now },
 			}),
-			request: CapabilityRequest{BusinessID: "biz-1", UserID: "user-1", Capability: CapabilityEmail},
+			request: CapabilityRequest{BusinessID: "biz-1", UserID: "user-1", Capability: CapabilityGSTProvider},
 		},
 		{
 			name: "unsupported platform", wantState: CapabilityStateUnsupportedPlatform,
@@ -221,22 +219,21 @@ func TestCapabilityQuotaSerializesZeroValuesExplicitly(t *testing.T) {
 
 func TestCapabilityServiceSeparatesHealthEntitlementPermissionAndFinalState(t *testing.T) {
 	now := time.Date(2026, 9, 1, 11, 0, 0, 0, time.UTC)
-	health := NewCapabilityHealthCache(CapabilityHealthCacheOptions{Now: func() time.Time { return now }})
 	retryAt := now.Add(time.Minute)
-	require.NoError(t, health.Record("biz-1", CapabilityGSTProvider, CapabilityHealthObservation{
+	health := capabilityBusinessHealthForTest(now, "biz-1", &CapabilityHealthObservation{
 		Status: CapabilityProviderUnavailable, ObservedAt: now, RetryAt: &retryAt,
-		CustomerCode: "provider_unavailable", OperatorDetail: "secret arn and raw provider error",
-	}))
+		CustomerCode: "provider_unavailable",
+	}, 24*time.Hour)
 
 	service := NewCapabilityService(CapabilityServiceOptions{
 		Configuration: config.CapabilityConfiguration{GST: true},
 		Entitlements: staticCapabilityEntitlements{
 			FeatureEInvoice: {Required: true, Entitled: true, Quota: CapabilityQuota{Limited: true, Limit: 100, Used: 20, Remaining: 80, Available: true}},
 		},
-		Permissions: staticCapabilityPermissions{PermissionDocumentsManage: true},
-		Setup:       staticCapabilitySetup{snapshot: CapabilityBusinessSetup{BusinessExists: true, GST: true}},
-		Health:      health,
-		Now:         func() time.Time { return now },
+		Permissions:    staticCapabilityPermissions{PermissionDocumentsManage: true},
+		Setup:          staticCapabilitySetup{snapshot: CapabilityBusinessSetup{BusinessExists: true, GST: true}},
+		BusinessHealth: health,
+		Now:            func() time.Time { return now },
 	})
 
 	result, err := service.Evaluate(context.Background(), CapabilityRequest{
@@ -259,10 +256,8 @@ func TestCapabilityServiceSeparatesHealthEntitlementPermissionAndFinalState(t *t
 
 func TestCapabilityServiceReturnsStableProductPlatformEntitlementQuotaAndPermissionStates(t *testing.T) {
 	now := time.Date(2026, 9, 1, 11, 0, 0, 0, time.UTC)
-	health := NewCapabilityHealthCache(CapabilityHealthCacheOptions{Now: func() time.Time { return now }})
-	for _, capability := range []CapabilityKey{CapabilityRazorpay, CapabilityReportExports} {
-		require.NoError(t, health.Record("biz-1", capability, CapabilityHealthObservation{Status: CapabilityProviderHealthy, ObservedAt: now}))
-	}
+	health := NewCapabilityGlobalHealthCache(CapabilityGlobalHealthCacheOptions{Now: func() time.Time { return now }})
+	require.NoError(t, health.Record(CapabilityRazorpay, CapabilityHealthObservation{Status: CapabilityProviderHealthy, ObservedAt: now}))
 
 	tests := []struct {
 		name        string
@@ -291,8 +286,8 @@ func TestCapabilityServiceReturnsStableProductPlatformEntitlementQuotaAndPermiss
 			service := NewCapabilityService(CapabilityServiceOptions{
 				Configuration: config.CapabilityConfiguration{Razorpay: true, GST: true, Voice: true},
 				Entitlements:  entitlements, Permissions: tt.permissions,
-				Setup:  staticCapabilitySetup{snapshot: CapabilityBusinessSetup{BusinessExists: true, GST: true, Voice: true}},
-				Health: health, Now: func() time.Time { return now },
+				Setup:        staticCapabilitySetup{snapshot: CapabilityBusinessSetup{BusinessExists: true, GST: true, Voice: true}},
+				GlobalHealth: health, Now: func() time.Time { return now },
 			})
 			result, err := service.Evaluate(context.Background(), CapabilityRequest{BusinessID: "biz-1", UserID: "user-1", Platform: tt.platform, Capability: tt.capability})
 			require.NoError(t, err)
@@ -329,4 +324,21 @@ type staticCapabilitySetup struct {
 
 func (s staticCapabilitySetup) ReadCapabilityBusinessSetup(context.Context, string) (CapabilityBusinessSetup, error) {
 	return s.snapshot, s.err
+}
+
+func capabilityBusinessHealthForTest(
+	now time.Time,
+	businessID string,
+	observation *CapabilityHealthObservation,
+	freshFor time.Duration,
+) *CapabilityBusinessHealthReader {
+	repository := newMemoryCapabilityProviderHealthRepository()
+	if observation != nil {
+		repository.snapshots[businessID+"\x00gst_provider"] = models.CapabilityProviderHealthSnapshot{
+			BusinessID: businessID, ProviderKey: "gst_provider", Status: string(observation.Status),
+			ObservedAt: observation.ObservedAt, FreshUntil: observation.ObservedAt.Add(freshFor),
+			RetryAt: cloneCapabilityTime(observation.RetryAt), CustomerCode: observation.CustomerCode,
+		}
+	}
+	return NewCapabilityBusinessHealthReader(repository, func() time.Time { return now })
 }

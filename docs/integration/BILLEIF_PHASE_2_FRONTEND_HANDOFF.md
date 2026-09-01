@@ -63,7 +63,7 @@ omitted column to imply support.
 
 | ID | Auth and business scope | Permission | Entitlement | Step-up | Idempotency |
 | --- | --- | --- | --- | --- | --- |
-| CAP-001 | Bearer + effective business; every setup and cache lookup is scoped by that business | No endpoint-wide permission; each result evaluates its listed operation permission | Each result evaluates the current subscription catalog feature where applicable | None; read-only | Read-only and safe to repeat |
+| CAP-001 | Bearer + effective business; setup, entitlement, quota, permission, and GST snapshot reads are business-scoped, while global provider facts contain no tenant data | No endpoint-wide permission; each result evaluates its listed operation permission | Each result evaluates the current subscription catalog feature where applicable | None; read-only | Read-only and safe to repeat |
 | SUB-001 | Bearer + effective business | `subscriptions.view` | None | None implemented | Read-only |
 | SUB-002 | Bearer + effective business | `subscriptions.view`; sync/direct mutations use `subscriptions.manage` | Subscription is the entitlement source | None implemented | Reads are safe to repeat; sync is convergent but has no command key; direct mutation has no idempotency key |
 | SUB-003 | Bearer + effective business + all branches | `payments.manage` | None | None implemented | Required body `idempotency_key` for order; verify locks and safely re-observes a paid attempt |
@@ -86,7 +86,7 @@ omitted column to imply support.
 
 | ID | Pagination / file behavior | State and retry | Event / invalidation | Existing migration and rollout | Proof and governing limitation |
 | --- | --- | --- | --- | --- | --- |
-| CAP-001 | Fixed 13-item array; no pagination or file | Synchronous cached evaluation; reads are retry-safe; honor `retry_at` for temporary provider failures | Provider operation outcomes plus a bounded recurring observer refresh local AI, shared Razorpay/storefront, and shared GST/e-invoice/e-way facts; refetch after readiness, subscription, permission, or setup changes | No migration; deploy before frontend capability gating | Capability, observer, recorder, guarded-mutation, quota, handler, and route tests beside their owners; each process-local cache starts unknown and bootstraps asynchronously across a census-bounded full sweep |
+| CAP-001 | Fixed 13-item array; no pagination or file | Synchronous observed-state evaluation; reads are retry-safe; honor `retry_at` for temporary provider failures | A fixed global observer refreshes AI and shared Razorpay/storefront health; explicit GST validation and real GST outcomes update the business GST snapshot; refetch after readiness, subscription, permission, credential, or setup changes | Expand first with `migrations/000054_capability_provider_health_snapshots.up.sql`, then deploy the application | Capability, fixed-global-observer, durable-GST-repository, guarded-mutation, quota, handler, migration-bundle, and route tests beside their owners; no tenant census or rotating cache exists |
 | SUB-001 | No pagination or file | Synchronous read; retry safe | No event; invalidate on catalog-version/deployment change | No Task 0 migration; catalog is code-defined | `internal/services/subscription_catalog_test.go`; one-month checkout is not renewal |
 | SUB-002 | No pagination or file | Stored `active`/`canceled`/`expired` model; refetch after payment | No versioned event; invalidate subscription and entitlement queries after verify/sync | Existing subscription and feature-entitlement schema; keep direct writes disabled | `tests/unit/subscription_service_test.go`, `internal/services/entitlements_test.go`, `internal/services/commerce_service_test.go`; runtime capability and lifecycle are incomplete |
 | SUB-003 | No pagination or file | Attempt `created`/`pending`/`paid`/`failed`; do not blindly retry unknown provider outcomes | No client event; invalidate SUB-002 after verified paid response | `migrations/000041_add_razorpay_payment_attempts.up.sql`; test-mode/provider rollout unverified | `internal/services/razorpay_payment_service_test.go`, `internal/handlers/payment_handler_idempotency_test.go`, `infrastructure/terraform/tests/razorpay.tftest.hcl`; no recurring lifecycle or reconciliation |
@@ -123,9 +123,9 @@ omitted column to imply support.
 | Response | `200` `CapabilityList` below |
 | Pagination and file behavior | Fixed 13-item array; no pagination or file |
 | Idempotency and retry | Read-only and safe to repeat; for `temporarily_unavailable`, wait until `retry_at` when supplied |
-| State transitions | No durable transition is performed. Re-evaluation may change when configuration, health observation, subscription/quota, permission, setup, or platform changes |
+| State transitions | This GET performs no transition. Re-evaluation may change after a global observation, explicit GST credential validation, real GST operation, subscription/quota, permission, setup, or platform change |
 | Event and invalidation | No event in Task 1. Invalidate after subscription, permission, business setup or provider-readiness changes |
-| Migration and rollout | No migration. Deploy backend first; frontend must not infer availability from route presence or environment values |
+| Migration and rollout | Apply expand-first migration `000054_capability_provider_health_snapshots`, deploy the backend, then enable frontend gating. Roll back application code before the optional down migration, which removes only derived GST health snapshots |
 
 Capability keys are `razorpay_payments`, `gst_provider`, `e_invoice`,
 `e_way_bill`, `whatsapp_messaging`, `email_delivery`, `s3_uploads`, `voice`,
@@ -190,7 +190,9 @@ state `unknown` when the evaluator itself cannot read an authoritative fact.
 Stable setup actions are `contact_support`, `configure_gst`,
 `configure_whatsapp`, `configure_email`, `enable_voice`,
 `enable_storefront_payments`, `complete_business_setup`,
-`upgrade_subscription`, and `request_permission`.
+`upgrade_subscription`, `request_permission`, and
+`validate_gst_integration`. Missing, stale, or unavailable GST health uses
+`validate_gst_integration`; missing GST credentials still uses `configure_gst`.
 
 Permission mapping is: Razorpay and saved methods `payments.manage`; GST setup
 `tax.integrations.manage`; e-invoice/e-way bill `documents.manage`; WhatsApp
@@ -205,7 +207,7 @@ e-way bill `ewaybill`; WhatsApp `whatsapp_notifications`; S3
 `export_documents`. Other listed capabilities have no current plan gate.
 
 Evaluation precedence is product support, platform, backend configuration,
-entitlement, quota, permission, business setup, then cached provider health.
+entitlement, quota, permission, business setup, then observed provider health.
 All underlying facts remain present even when an earlier fact determines the
 final state. A health failure therefore never changes `entitlement.entitled`.
 Configured means only that a binding exists; it never means healthy. Missing,
@@ -245,7 +247,7 @@ Governed mutations return a stable customer-safe body:
   "capability": "e_invoice",
   "state": "unknown",
   "reason_code": "provider_health_unknown",
-  "setup_action": "configure_gst",
+  "setup_action": "validate_gst_integration",
   "retry_at": "2026-09-01T12:01:00Z"
 }
 ```
@@ -263,52 +265,57 @@ and `500 {"error":{"code":"capability_evaluation_failed","message":"Capability e
 Authentication and cross-business membership may be rejected earlier by shared
 middleware with HTTP `401` or `403` and the shared legacy error envelope.
 
-Known limitations: provider observations are held in a bounded process-local
-in-memory cache. Its ordinary operation-outcome budget is 4096 observations;
-the observer reserves one additional slot per censused active target so current
-scheduled facts are not silently evicted. Expired scheduled observations and
-ordinary outcomes are evicted first. A churn-only capacity conflict retains
-current observations and emits a sanitized `observation_record_failed` cycle
-issue instead of exposing or silently replacing an active fact.
-Actual Razorpay order, business-scoped LLM, and GST e-invoice/e-way provider
-outcomes record sanitized success, rate-limit, timeout, or unavailable facts
-monotonically for that tenant. Storefront uses the shared Razorpay fact;
-e-invoice and e-way bill use the shared GST-provider fact. HTTP runtime startup
-also launches a non-overlapping asynchronous observer. Each cycle rotates
-through one database page of at most 20 tenant/capability targets with four
-workers, five-second probe timeouts, no more than two attempts, and a one-minute
-cycle deadline. Five worst-case worker waves consume at most 50 seconds, leaving
-ten seconds for census, discovery, recording and cancellation. A census
-supplies active-target capacity and the worst-case
-number of pages. The declared freshness window covers a complete rotation:
-`sweep cycles * (two-minute interval + one-minute cycle bound) + one minute`.
-One global Razorpay order-list and one global AI probe are shared across each
-page but recorded per business; GST validation remains per tenant. The
-OpenAI-compatible/DeepSeek AI probe recognizes only `/chat/completions` and
-`/v1/chat/completions`, uses the documented read-only `GET /models` list,
-limits the response to 1 MiB, and verifies the configured model without
-returning or logging the provider body. Missing configured models are
-unavailable; unknown URL shapes and `404`/`405` probe routes record nothing and
-stay unknown. It never sends a chat mutation.
-Configuration presence alone never writes healthy. A Lambda cold start or
-another concurrent instance begins unknown briefly and builds its own local
-observations; instances may temporarily disagree. Unsupported probe shapes
-remain unknown. No safe producer was added for S3 because presign success does
-not prove object-store health; voice admission does not
-prove the downstream media/runtime path, and WhatsApp/email lack a safe
-business-scoped probe here, so those capabilities remain unknown until a future
-producer exists. The API never pings providers while serving
-`GET /capabilities` and no live provider is claimed healthy by local tests. No
-internal diagnostics endpoint was added: the repository has no operator
-principal distinct from business owner/admin, which is insufficient
-authorization for provider internals. Operator diagnostics remain blocked
-until a genuine operator mechanism exists.
+Provider-health scope is explicit. Razorpay and AI are configured, truly global
+provider-network observations held in a fixed two-key process-local cache. The
+global cache API accepts no business identifier and contains no setup,
+entitlement, permission, quota, credential, account, or raw-error field. HTTP
+runtime startup launches a non-overlapping asynchronous observer that probes
+each configured global provider once per cycle, with at most two workers,
+five-second probe timeouts, two attempts, a 30-second cycle deadline, and a
+two-minute maximum refresh interval. It performs no tenant discovery, census,
+table count, rotation, or business-keyed cache write.
 
-Observer shutdown cancels and joins in-flight census, discovery and probes
-before database/provider dependencies close; repeated start/stop generations
-cannot overlap. A failed recurring cycle produces at most one bounded stable
-issue code and waits for the normal interval. Raw database/provider errors,
-credentials, identifiers and response bodies are never included.
+GST health is business-specific and durable in
+`capability_provider_health_snapshots`, keyed by `(business_id, gst_provider)`.
+The row contains only a bounded status, observation/freshness/retry timestamps,
+and customer-safe code; the primary key and provider constraint bound it to one
+row per business GST key. Credential upsert clears an earlier observation but
+does not validate or mark the provider healthy. The existing explicit
+`POST /tax/integrations/{id}/validate` action validates the stored credentials
+and records the sanitized result, and real e-invoice/e-way provider outcomes
+refresh the same row. Each observation is fresh for 24 hours and upserts are
+monotonic by `observed_at`. A missing or stale row stays fail-closed and directs
+the user to `validate_gst_integration`.
+`GET /capabilities` performs only exact business-keyed snapshot reads and never
+contacts a provider.
+
+The OpenAI-compatible/DeepSeek AI probe recognizes only configured
+`/chat/completions` or `/v1/chat/completions` shapes and uses the read-only
+`GET /models` list. A response proves health or model absence only after a
+pagination-free HTTP `200` and a complete recognized `object: "list"` and
+`data` array streamed within the 1 MiB and 10,000-entry bounds. Only complete
+presence is healthy and only complete absence is unavailable.
+Empty/unrecognized objects, malformed JSON or entries, pagination/partial
+response headers, other successful statuses, oversized bodies, scan-cap
+exhaustion, unknown URL shapes, and `404`/`405` routes record nothing and remain
+unknown. The probe never decodes an unbounded array, logs or returns the body,
+or sends a chat mutation.
+
+Configuration presence alone never writes healthy. A Lambda cold start may
+briefly lack global Razorpay/AI observations, and instances may temporarily
+disagree about those two global facts; durable GST observations survive process
+turnover. No safe producer was added for S3 because presign success does not
+prove object-store health; voice admission does not prove the downstream
+media/runtime path; and WhatsApp/email lack a safe probe here. Those providers
+remain unknown until a future producer exists. No live provider is claimed
+healthy by local tests. No internal diagnostics endpoint was added because the
+repository has no operator principal distinct from business owner/admin.
+
+Observer shutdown cancels and joins in-flight global probes before
+database/provider dependencies close; repeated start/stop generations cannot
+overlap. A failed recurring cycle produces one bounded stable issue code and
+waits for the normal interval. Cycle reporting never includes raw
+database/provider errors, credentials, identifiers, or response bodies.
 
 ## SUB-001: Subscription catalog
 

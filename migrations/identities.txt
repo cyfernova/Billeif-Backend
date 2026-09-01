@@ -51,3 +51,4 @@
 000051_notifications
 000052_subscription_quota_usage
 000053_payment_reversals
+000054_capability_provider_health_snapshots

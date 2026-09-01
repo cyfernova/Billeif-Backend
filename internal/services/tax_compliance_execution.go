@@ -32,6 +32,8 @@ const (
 	eWayBillBackdateWindow = 180 * 24 * time.Hour
 )
 
+var ErrGSTCredentialValidationFailed = errors.New("GST integration credential validation failed")
+
 type UpsertGSTIntegrationAccountInput struct {
 	Provider       string                           `json:"provider"`
 	ServiceType    string                           `json:"service_type" binding:"required"`
@@ -166,10 +168,20 @@ func (s *TaxComplianceService) UpsertIntegrationAccount(ctx context.Context, bus
 		existing.Metadata = account.Metadata
 		existing.Status = "pending"
 		existing.LastError = ""
+		if s.gstHealth != nil {
+			if err := s.gstHealth.ClearGSTOutcome(ctx, businessID); err != nil {
+				return nil, fmt.Errorf("clear prior GST provider health: %w", err)
+			}
+		}
 		if err := s.db.WithContext(ctx).Save(&existing).Error; err != nil {
 			return nil, err
 		}
 		return &existing, nil
+	}
+	if s.gstHealth != nil {
+		if err := s.gstHealth.ClearGSTOutcome(ctx, businessID); err != nil {
+			return nil, fmt.Errorf("clear prior GST provider health: %w", err)
+		}
 	}
 	if err := s.db.WithContext(ctx).Create(account).Error; err != nil {
 		return nil, err
@@ -189,11 +201,17 @@ func (s *TaxComplianceService) ValidateIntegrationAccount(ctx context.Context, b
 		return nil, err
 	}
 	credentials.PortalUsername = coalesceString(account.PortalUsername, credentials.PortalUsername)
-	if err := s.provider.ValidateCredentials(ctx, &credentials); err != nil {
+	validationErr := s.provider.ValidateCredentials(ctx, &credentials)
+	if s.gstHealth != nil {
+		if err := s.gstHealth.RecordGSTOutcome(ctx, businessID, CapabilityProviderOutcome{Err: validationErr}); err != nil {
+			return &account, fmt.Errorf("persist GST provider health: %w", err)
+		}
+	}
+	if validationErr != nil {
 		account.Status = models.GSTJobStatusFailed
-		account.LastError = err.Error()
+		account.LastError = ErrGSTCredentialValidationFailed.Error()
 		_ = s.db.WithContext(ctx).Save(&account).Error
-		return &account, err
+		return &account, ErrGSTCredentialValidationFailed
 	}
 	now := time.Now().UTC()
 	account.Status = models.GSTJobStatusSucceeded
@@ -565,7 +583,7 @@ func (s *TaxComplianceService) processGSTJob(ctx context.Context, job *models.GS
 			SerialNo:   document.SerialNumber,
 			Payload:    reqPayload,
 		})
-		s.recordGSTProviderOutcome(job.BusinessID, CapabilityEInvoice, opErr)
+		s.recordGSTProviderOutcome(ctx, job.BusinessID, CapabilityEInvoice, opErr)
 		if opErr == nil {
 			opErr = s.applyEInvoiceResult(ctx, document, job, account, result)
 			resultPayload = result.RawResponse
@@ -584,7 +602,7 @@ func (s *TaxComplianceService) processGSTJob(ctx context.Context, job *models.GS
 			Reason:     readStringCandidate(reqPayload, "reason"),
 			Payload:    reqPayload,
 		})
-		s.recordGSTProviderOutcome(job.BusinessID, CapabilityEInvoice, opErr)
+		s.recordGSTProviderOutcome(ctx, job.BusinessID, CapabilityEInvoice, opErr)
 		if opErr == nil {
 			opErr = s.applyCancelledEInvoice(ctx, document, job, record, result)
 			resultPayload = result.RawResponse
@@ -597,7 +615,7 @@ func (s *TaxComplianceService) processGSTJob(ctx context.Context, job *models.GS
 			SerialNo:   document.SerialNumber,
 			Payload:    reqPayload,
 		})
-		s.recordGSTProviderOutcome(job.BusinessID, CapabilityEWayBill, opErr)
+		s.recordGSTProviderOutcome(ctx, job.BusinessID, CapabilityEWayBill, opErr)
 		if opErr == nil {
 			opErr = s.applyEWayBillResult(ctx, document, job, account, result, false)
 			resultPayload = result.RawResponse
@@ -615,7 +633,7 @@ func (s *TaxComplianceService) processGSTJob(ctx context.Context, job *models.GS
 			EWayBillNo: record.EWayBillNumber,
 			Payload:    reqPayload,
 		})
-		s.recordGSTProviderOutcome(job.BusinessID, CapabilityEWayBill, opErr)
+		s.recordGSTProviderOutcome(ctx, job.BusinessID, CapabilityEWayBill, opErr)
 		if opErr == nil {
 			opErr = s.applyEWayBillResult(ctx, document, job, account, result, true)
 			if opErr == nil {
@@ -636,7 +654,7 @@ func (s *TaxComplianceService) processGSTJob(ctx context.Context, job *models.GS
 			EWayBillNo: record.EWayBillNumber,
 			Payload:    reqPayload,
 		})
-		s.recordGSTProviderOutcome(job.BusinessID, CapabilityEWayBill, opErr)
+		s.recordGSTProviderOutcome(ctx, job.BusinessID, CapabilityEWayBill, opErr)
 		if opErr == nil {
 			opErr = s.recordVehicleMovement(ctx, document, record, reqPayload, coalesceString(readStringCandidate(reqPayload, "movement_type"), "multi_vehicle"))
 			resultPayload = result.RawResponse
@@ -663,9 +681,9 @@ func (s *TaxComplianceService) processGSTJob(ctx context.Context, job *models.GS
 	return nil
 }
 
-func (s *TaxComplianceService) recordGSTProviderOutcome(businessID string, capability CapabilityKey, err error) {
-	if s.health != nil {
-		_ = s.health.RecordOutcome(businessID, providerHealthKeyForCapability(capability), CapabilityProviderOutcome{Err: err})
+func (s *TaxComplianceService) recordGSTProviderOutcome(ctx context.Context, businessID string, _ CapabilityKey, err error) {
+	if s.gstHealth != nil {
+		_ = s.gstHealth.RecordGSTOutcome(ctx, businessID, CapabilityProviderOutcome{Err: err})
 	}
 }
 

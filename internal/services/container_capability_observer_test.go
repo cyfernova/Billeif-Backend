@@ -29,24 +29,12 @@ type generationCapabilityObserverRunner struct {
 	entered   chan int
 }
 
-type cancelAwareCapabilityProbeTargets struct {
-	started chan struct{}
-	exited  chan struct{}
-}
-
-func (s *cancelAwareCapabilityProbeTargets) DiscoverCapabilityProbeTargets(ctx context.Context, _ int) ([]CapabilityProbeTarget, error) {
-	close(s.started)
-	<-ctx.Done()
-	close(s.exited)
-	return nil, ctx.Err()
-}
-
 type cancelAwareCapabilityProber struct {
 	started chan struct{}
 	exited  chan struct{}
 }
 
-func (p *cancelAwareCapabilityProber) ProbeCapability(ctx context.Context, _ CapabilityProbeTarget) CapabilityProviderOutcome {
+func (p *cancelAwareCapabilityProber) ProbeGlobalCapability(ctx context.Context) CapabilityProviderOutcome {
 	close(p.started)
 	<-ctx.Done()
 	close(p.exited)
@@ -152,40 +140,23 @@ func TestContainerRepeatedStartStopNeverOverlapsObserverGenerations(t *testing.T
 	require.Zero(t, runner.active)
 }
 
-func TestContainerStopJoinsConcreteObserverDiscoveryAndProbe(t *testing.T) {
-	t.Run("discovery", func(t *testing.T) {
-		source := &cancelAwareCapabilityProbeTargets{started: make(chan struct{}), exited: make(chan struct{})}
-		observer := NewCapabilityHealthObserver(source, nil, NewCapabilityHealthRecorder(NewCapabilityHealthCache(CapabilityHealthCacheOptions{}), nil), CapabilityHealthObserverOptions{})
-		container := &Container{capabilityObserver: &capabilityObserverState{runner: observer}}
-		container.StartCapabilityHealthObservation()
-		<-source.started
-		container.StopCapabilityHealthObservation()
-		select {
-		case <-source.exited:
-		default:
-			t.Fatal("Stop returned before discovery exited")
-		}
-	})
-
-	t.Run("probe", func(t *testing.T) {
-		prober := &cancelAwareCapabilityProber{started: make(chan struct{}), exited: make(chan struct{})}
-		cache := NewCapabilityHealthCache(CapabilityHealthCacheOptions{})
-		observer := NewCapabilityHealthObserver(
-			&staticCapabilityProbeTargets{targets: []CapabilityProbeTarget{{BusinessID: "biz-1", HealthKey: CapabilityRazorpay}}},
-			map[CapabilityKey]CapabilityProviderProber{CapabilityRazorpay: prober},
-			NewCapabilityHealthRecorder(cache, nil), CapabilityHealthObserverOptions{MaxAttempts: 1},
-		)
-		container := &Container{capabilityObserver: &capabilityObserverState{runner: observer}}
-		container.StartCapabilityHealthObservation()
-		<-prober.started
-		container.StopCapabilityHealthObservation()
-		select {
-		case <-prober.exited:
-		default:
-			t.Fatal("Stop returned before probe exited")
-		}
-		if _, found := cache.CustomerFact("biz-1", CapabilityRazorpay); found {
-			t.Fatal("shutdown cancellation must not become a provider-health observation")
-		}
-	})
+func TestContainerStopJoinsConcreteGlobalObserverProbe(t *testing.T) {
+	prober := &cancelAwareCapabilityProber{started: make(chan struct{}), exited: make(chan struct{})}
+	cache := NewCapabilityGlobalHealthCache(CapabilityGlobalHealthCacheOptions{})
+	observer := NewCapabilityGlobalHealthObserver(
+		map[CapabilityKey]CapabilityGlobalProviderProber{CapabilityRazorpay: prober},
+		NewCapabilityGlobalHealthRecorder(cache, nil), CapabilityGlobalHealthObserverOptions{MaxAttempts: 1},
+	)
+	container := &Container{capabilityObserver: &capabilityObserverState{runner: observer}}
+	container.StartCapabilityHealthObservation()
+	<-prober.started
+	container.StopCapabilityHealthObservation()
+	select {
+	case <-prober.exited:
+	default:
+		t.Fatal("Stop returned before probe exited")
+	}
+	if _, found := cache.CustomerFact(CapabilityRazorpay); found {
+		t.Fatal("shutdown cancellation must not become a provider-health observation")
+	}
 }
