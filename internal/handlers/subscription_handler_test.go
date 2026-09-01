@@ -81,9 +81,26 @@ func TestSubscriptionHistoryMapsInternalFailuresToSanitizedServerError(t *testin
 			var body SubscriptionAPIError
 			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
 			require.Equal(t, "subscription_internal_error", body.Error.Code)
+			require.Equal(t, "subscription history could not be loaded", body.Error.Message)
 			require.NotContains(t, response.Body.String(), "no such table")
 		})
 	}
+}
+
+func TestSubscriptionMutationInternalFailureMapsToStableGenericServerError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	response := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(response)
+
+	writeSubscriptionLifecycleError(context, services.ErrSubscriptionMutationInternal)
+
+	require.Equal(t, http.StatusInternalServerError, response.Code)
+	var body SubscriptionAPIError
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	require.Equal(t, "subscription_mutation_internal_error", body.Error.Code)
+	require.Equal(t, "subscription request could not be completed", body.Error.Message)
+	require.NotContains(t, response.Body.String(), "provider rejected fixture")
+	require.NotContains(t, response.Body.String(), "compensation failure")
 }
 
 func TestSubscriptionProviderRejectionMapsToStableUnprocessableResponse(t *testing.T) {

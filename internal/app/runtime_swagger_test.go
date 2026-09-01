@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
 	"invoice-backend/internal/config"
 
 	"github.com/gin-gonic/gin"
+	"gopkg.in/yaml.v3"
 )
 
 func TestRegisterSwaggerRoutes(t *testing.T) {
@@ -107,7 +109,7 @@ func TestSwaggerDocumentsExactSubscriptionMutationAndHistoryStatuses(t *testing.
 	}
 	for _, path := range []string{"/subscriptions/checkout", "/subscriptions/plan-change", "/subscriptions/cancellation"} {
 		responses := document.Paths[path]["post"].Responses
-		for _, status := range []string{"200", "400", "409", "422", "503"} {
+		for _, status := range []string{"200", "400", "409", "422", "500", "503"} {
 			if _, ok := responses[status]; !ok {
 				t.Fatalf("%s response %s is undocumented", path, status)
 			}
@@ -123,6 +125,81 @@ func TestSwaggerDocumentsExactSubscriptionMutationAndHistoryStatuses(t *testing.
 		if len(operation.Parameters) != 1 || operation.Parameters[0].Name != "limit" ||
 			fmt.Sprint(operation.Parameters[0].Minimum) != "1" || fmt.Sprint(operation.Parameters[0].Maximum) != "100" || fmt.Sprint(operation.Parameters[0].Default) != "50" {
 			t.Fatalf("%s limit contract = %#v", path, operation.Parameters)
+		}
+	}
+}
+
+func TestStaticSubscriptionContractsDocumentDistinctInternalFailures(t *testing.T) {
+	type errorExample struct {
+		Error struct {
+			Code    string `yaml:"code"`
+			Message string `yaml:"message"`
+		} `yaml:"error"`
+	}
+	type contractDocument struct {
+		Paths map[string]map[string]struct {
+			Responses map[string]struct {
+				Ref string `yaml:"$ref"`
+			} `yaml:"responses"`
+		} `yaml:"paths"`
+		Components struct {
+			Responses map[string]struct {
+				Description string `yaml:"description"`
+				Content     map[string]struct {
+					Example errorExample `yaml:"example"`
+				} `yaml:"content"`
+			} `yaml:"responses"`
+		} `yaml:"components"`
+	}
+
+	for _, fixture := range []struct {
+		name       string
+		path       string
+		pathPrefix string
+	}{
+		{name: "docs", path: "../../docs/openapi.yaml"},
+		{name: "root", path: "../../openapi/openapi.yaml", pathPrefix: "/api/v1"},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			raw, err := os.ReadFile(fixture.path)
+			if err != nil {
+				t.Fatalf("read contract: %v", err)
+			}
+			var document contractDocument
+			if err := yaml.Unmarshal(raw, &document); err != nil {
+				t.Fatalf("parse contract: %v", err)
+			}
+			for _, path := range []string{"/subscriptions/checkout", "/subscriptions/plan-change", "/subscriptions/cancellation"} {
+				got := document.Paths[fixture.pathPrefix+path]["post"].Responses["500"].Ref
+				if got != "#/components/responses/SubscriptionMutationInternal" {
+					t.Fatalf("%s mutation 500 ref = %q", path, got)
+				}
+			}
+			mutation := document.Components.Responses["SubscriptionMutationInternal"]
+			if mutation.Description != "Subscription request could not be completed" {
+				t.Fatalf("mutation 500 description = %q", mutation.Description)
+			}
+			mutationExample := mutation.Content["application/json"].Example.Error
+			if mutationExample.Code != "subscription_mutation_internal_error" || mutationExample.Message != "subscription request could not be completed" {
+				t.Fatalf("mutation 500 example = %#v", mutationExample)
+			}
+			history := document.Components.Responses["SubscriptionInternal"].Content["application/json"].Example.Error
+			if history.Code != "subscription_internal_error" || history.Message != "subscription history could not be loaded" {
+				t.Fatalf("history 500 example = %#v", history)
+			}
+		})
+	}
+
+	handoff, err := os.ReadFile("../../docs/integration/BILLEIF_PHASE_2_FRONTEND_HANDOFF.md")
+	if err != nil {
+		t.Fatalf("read frontend handoff: %v", err)
+	}
+	for _, exact := range []string{
+		`{"error":{"code":"subscription_mutation_internal_error","message":"subscription request could not be completed"}}`,
+		`{"error":{"code":"subscription_internal_error","message":"subscription history could not be loaded"}}`,
+	} {
+		if !strings.Contains(string(handoff), exact) {
+			t.Fatalf("frontend handoff is missing exact response %s", exact)
 		}
 	}
 }

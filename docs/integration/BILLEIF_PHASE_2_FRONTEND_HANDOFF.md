@@ -574,10 +574,18 @@ Stable lifecycle errors are:
 {"error":{"code":"subscription_invalid_request","message":"subscription request could not be processed"}}
 ```
 
+Mutation-internal and history-internal failures have distinct safe responses:
+
+```json
+{"error":{"code":"subscription_mutation_internal_error","message":"subscription request could not be completed"}}
+{"error":{"code":"subscription_internal_error","message":"subscription history could not be loaded"}}
+```
+
 - `400 subscription_invalid_request`: invalid request or unsupported plan.
 - `400 subscription_invalid_limit`: malformed or out-of-range history limit.
 - `409 subscription_conflict`: current-state or changed-idempotency conflict.
 - `422 subscription_provider_rejected`: the provider deterministically rejected a mutation and the local lifecycle was restored.
+- `500 subscription_mutation_internal_error`: a known non-applied provider rejection could not be compensated locally; do not infer success, and refetch SUB-002 before retrying.
 - `503 subscription_reconciliation_required`: provider outcome is ambiguous.
 - `503 subscription_unavailable`: provider configuration cannot be resolved safely.
 - `500 subscription_internal_error`: a history read failed without exposing database details.

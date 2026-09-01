@@ -34,6 +34,7 @@ var (
 	ErrSubscriptionLifecycleConflict   = errors.New("subscription lifecycle conflict")
 	ErrSubscriptionUnavailable         = errors.New("subscription lifecycle is unavailable")
 	ErrSubscriptionInternal            = errors.New("subscription lifecycle internal failure")
+	ErrSubscriptionMutationInternal    = errors.New("subscription lifecycle mutation persistence failure")
 	ErrSubscriptionWebhookRejected     = errors.New("subscription webhook was rejected")
 )
 
@@ -456,7 +457,7 @@ func (s *SubscriptionLifecycleService) StartRenewable(
 	if createErr != nil {
 		if providerMutationRejected(createErr) {
 			if rejectErr := s.rejectProviderMutation(ctx, aggregate, previous, actorUserID, subscriptionCommandStart, idempotencyKey, requestHash, "provider_create_rejected", now); rejectErr != nil {
-				return nil, ErrSubscriptionInternal
+				return nil, ErrSubscriptionMutationInternal
 			}
 			return nil, ErrSubscriptionProviderRejected
 		}
@@ -868,7 +869,7 @@ func (s *SubscriptionLifecycleService) SchedulePlanChange(
 	if providerErr != nil {
 		if providerMutationRejected(providerErr) {
 			if rejectErr := s.rejectProviderMutation(ctx, aggregate, previous, actorUserID, subscriptionCommandPlanChange, idempotencyKey, requestHash, "plan_change_provider_rejected", now); rejectErr != nil {
-				return nil, ErrSubscriptionInternal
+				return nil, ErrSubscriptionMutationInternal
 			}
 			return nil, ErrSubscriptionProviderRejected
 		}
@@ -969,7 +970,7 @@ func (s *SubscriptionLifecycleService) ScheduleCancellation(
 	if providerErr != nil {
 		if providerMutationRejected(providerErr) {
 			if rejectErr := s.rejectProviderMutation(ctx, aggregate, previous, actorUserID, subscriptionCommandCancellation, idempotencyKey, requestHash, "cancellation_provider_rejected", now); rejectErr != nil {
-				return nil, ErrSubscriptionInternal
+				return nil, ErrSubscriptionMutationInternal
 			}
 			return nil, ErrSubscriptionProviderRejected
 		}

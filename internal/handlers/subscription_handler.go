@@ -50,6 +50,7 @@ func subscriptionAPIError(code, message string) SubscriptionAPIError {
 // @Failure 400 {object} SubscriptionAPIError
 // @Failure 409 {object} SubscriptionAPIError
 // @Failure 422 {object} SubscriptionAPIError
+// @Failure 500 {object} SubscriptionAPIError
 // @Failure 503 {object} SubscriptionAPIError
 // @Router /subscriptions/checkout [post]
 func (h *SubscriptionHandler) Checkout(c *gin.Context) {
@@ -85,6 +86,7 @@ func (h *SubscriptionHandler) Checkout(c *gin.Context) {
 // @Failure 400 {object} SubscriptionAPIError
 // @Failure 409 {object} SubscriptionAPIError
 // @Failure 422 {object} SubscriptionAPIError
+// @Failure 500 {object} SubscriptionAPIError
 // @Failure 503 {object} SubscriptionAPIError
 // @Router /subscriptions/plan-change [post]
 func (h *SubscriptionHandler) ChangePlan(c *gin.Context) {
@@ -120,6 +122,7 @@ func (h *SubscriptionHandler) ChangePlan(c *gin.Context) {
 // @Failure 400 {object} SubscriptionAPIError
 // @Failure 409 {object} SubscriptionAPIError
 // @Failure 422 {object} SubscriptionAPIError
+// @Failure 500 {object} SubscriptionAPIError
 // @Failure 503 {object} SubscriptionAPIError
 // @Router /subscriptions/cancellation [post]
 func (h *SubscriptionHandler) Cancel(c *gin.Context) {
@@ -231,6 +234,8 @@ func writeSubscriptionLifecycleError(c *gin.Context, err error) {
 		c.JSON(http.StatusServiceUnavailable, subscriptionAPIError("subscription_reconciliation_required", "subscription outcome requires reconciliation"))
 	case errors.Is(err, services.ErrSubscriptionUnavailable):
 		c.JSON(http.StatusServiceUnavailable, subscriptionAPIError("subscription_unavailable", "subscription service is temporarily unavailable"))
+	case errors.Is(err, services.ErrSubscriptionMutationInternal):
+		c.JSON(http.StatusInternalServerError, subscriptionAPIError("subscription_mutation_internal_error", "subscription request could not be completed"))
 	case errors.Is(err, services.ErrSubscriptionInternal):
 		c.JSON(http.StatusInternalServerError, subscriptionAPIError("subscription_internal_error", "subscription history could not be loaded"))
 	default:

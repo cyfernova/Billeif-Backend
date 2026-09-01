@@ -56,6 +56,7 @@ paths:
         '400': {$ref: '#/components/responses/SubscriptionBadRequest'}
         '409': {$ref: '#/components/responses/SubscriptionConflict'}
         '422': {$ref: '#/components/responses/SubscriptionProviderRejected'}
+        '500': {$ref: '#/components/responses/SubscriptionMutationInternal'}
         '503': {$ref: '#/components/responses/SubscriptionReconciliation'}
 
   /api/v1/subscriptions/plan-change:
@@ -72,6 +73,7 @@ paths:
         '400': {$ref: '#/components/responses/SubscriptionBadRequest'}
         '409': {$ref: '#/components/responses/SubscriptionConflict'}
         '422': {$ref: '#/components/responses/SubscriptionProviderRejected'}
+        '500': {$ref: '#/components/responses/SubscriptionMutationInternal'}
         '503': {$ref: '#/components/responses/SubscriptionReconciliation'}
 
   /api/v1/subscriptions/cancellation:
@@ -87,6 +89,7 @@ paths:
         '400': {$ref: '#/components/responses/SubscriptionBadRequest'}
         '409': {$ref: '#/components/responses/SubscriptionConflict'}
         '422': {$ref: '#/components/responses/SubscriptionProviderRejected'}
+        '500': {$ref: '#/components/responses/SubscriptionMutationInternal'}
         '503': {$ref: '#/components/responses/SubscriptionReconciliation'}
 
   /api/v1/subscriptions/billing-history:
@@ -1271,7 +1274,16 @@ components:
       content: {application/json: {schema: {$ref: '#/components/schemas/SubscriptionError'}}}
     SubscriptionInternal:
       description: Subscription history could not be loaded
-      content: {application/json: {schema: {$ref: '#/components/schemas/SubscriptionError'}}}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/SubscriptionError'}
+          example: {error: {code: subscription_internal_error, message: subscription history could not be loaded}}
+    SubscriptionMutationInternal:
+      description: Subscription request could not be completed
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/SubscriptionError'}
+          example: {error: {code: subscription_mutation_internal_error, message: subscription request could not be completed}}
     SubscriptionReconciliation:
       description: Provider outcome requires reconciliation or the service is unavailable
       content: {application/json: {schema: {$ref: '#/components/schemas/SubscriptionError'}}}
@@ -1372,7 +1384,7 @@ components:
           type: object
           required: [code, message]
           properties:
-            code: {type: string, enum: [subscription_invalid_request, subscription_invalid_limit, subscription_conflict, subscription_provider_rejected, subscription_reconciliation_required, subscription_unavailable, subscription_internal_error]}
+            code: {type: string, enum: [subscription_invalid_request, subscription_invalid_limit, subscription_conflict, subscription_provider_rejected, subscription_reconciliation_required, subscription_unavailable, subscription_internal_error, subscription_mutation_internal_error]}
             message: {type: string}
     Error:
       type: object

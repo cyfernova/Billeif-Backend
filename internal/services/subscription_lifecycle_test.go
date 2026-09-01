@@ -1018,6 +1018,93 @@ func TestDeterministicProviderCancellationRejectionRestoresActiveAccess(t *testi
 	require.Empty(t, stored.ReconciliationCode)
 }
 
+func TestDeterministicProviderRejectionCompensationFailuresReturnMutationInternalError(t *testing.T) {
+	now := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+
+	t.Run("checkout", func(t *testing.T) {
+		db := newSubscriptionLifecycleTestDB(t)
+		businessID := uuid.NewString()
+		require.NoError(t, db.Create(&models.Subscription{
+			ID: uuid.NewString(), BusinessID: businessID, Plan: "free", PlanCode: "free",
+			CatalogVersion: CurrentSubscriptionCatalogVersion, Status: models.SubscriptionStatusActive,
+			BillingMode: models.SubscriptionBillingModeFree, StartDate: now, LifecycleVersion: 1,
+		}).Error)
+		installRejectedCommandFailureTrigger(t, db)
+		provider := &fakeSubscriptionProvider{createErr: subscriptionProviderStatusError{status: 400}}
+		service := NewSubscriptionLifecycleService(postgresrepo.NewSubscriptionLifecycleRepository(db), provider, SubscriptionLifecycleConfig{
+			ProviderMode: models.ProviderModeTest, ProviderPlanIDs: map[string]string{"pro_monthly": "plan_pro_test_01"}, Now: func() time.Time { return now },
+		}, logger.New())
+
+		_, err := service.StartRenewable(context.Background(), businessID, "user-a", StartRenewableSubscriptionInput{
+			PlanID: "pro_monthly", IdempotencyKey: "checkout-compensation-failure",
+		})
+
+		require.ErrorIs(t, err, ErrSubscriptionMutationInternal)
+		require.NotErrorIs(t, err, ErrSubscriptionInternal)
+		require.NotContains(t, err.Error(), "fixture compensation failure")
+	})
+
+	t.Run("plan_change", func(t *testing.T) {
+		db := newSubscriptionLifecycleTestDB(t)
+		periodStart, periodEnd := now.AddDate(0, 0, -9), now.AddDate(0, 1, -9)
+		businessID := uuid.NewString()
+		require.NoError(t, db.Create(&models.Subscription{
+			ID: uuid.NewString(), BusinessID: businessID, Plan: "starter", PlanCode: "pro", CatalogVersion: CurrentSubscriptionCatalogVersion,
+			Status: models.SubscriptionStatusActive, BillingMode: models.SubscriptionBillingModeRenewable, ProviderMode: models.ProviderModeTest,
+			ProviderSubscriptionID: "sub_plan_compensation_fixture", ProviderPlanID: "plan_pro_test_01", PeriodStart: &periodStart,
+			PeriodEnd: &periodEnd, StartDate: periodStart, EndDate: &periodEnd, LastProviderPaidCount: 1, LifecycleVersion: 1,
+		}).Error)
+		installRejectedCommandFailureTrigger(t, db)
+		provider := &fakeSubscriptionProvider{updateErr: subscriptionProviderStatusError{status: 422}}
+		service := NewSubscriptionLifecycleService(postgresrepo.NewSubscriptionLifecycleRepository(db), provider, SubscriptionLifecycleConfig{
+			ProviderMode:    models.ProviderModeTest,
+			ProviderPlanIDs: map[string]string{"pro_monthly": "plan_pro_test_01", "rise_monthly": "plan_rise_test_01"},
+			Now:             func() time.Time { return now },
+		}, logger.New())
+
+		_, err := service.SchedulePlanChange(context.Background(), businessID, "user-a", ChangeSubscriptionPlanInput{
+			PlanID: "rise_monthly", IdempotencyKey: "plan-compensation-failure",
+		})
+
+		require.ErrorIs(t, err, ErrSubscriptionMutationInternal)
+		require.NotErrorIs(t, err, ErrSubscriptionInternal)
+		require.NotContains(t, err.Error(), "fixture compensation failure")
+	})
+
+	t.Run("cancellation", func(t *testing.T) {
+		db := newSubscriptionLifecycleTestDB(t)
+		periodStart, periodEnd := now.AddDate(0, 0, -9), now.AddDate(0, 1, -9)
+		businessID := uuid.NewString()
+		require.NoError(t, db.Create(&models.Subscription{
+			ID: uuid.NewString(), BusinessID: businessID, Plan: "starter", PlanCode: "pro", CatalogVersion: CurrentSubscriptionCatalogVersion,
+			Status: models.SubscriptionStatusActive, BillingMode: models.SubscriptionBillingModeRenewable, ProviderMode: models.ProviderModeTest,
+			ProviderSubscriptionID: "sub_cancel_compensation_fixture", ProviderPlanID: "plan_pro_test_01", PeriodStart: &periodStart,
+			PeriodEnd: &periodEnd, StartDate: periodStart, EndDate: &periodEnd, LastProviderPaidCount: 1, LifecycleVersion: 1,
+		}).Error)
+		installRejectedCommandFailureTrigger(t, db)
+		provider := &fakeSubscriptionProvider{cancelErr: subscriptionProviderStatusError{status: 400}}
+		service := NewSubscriptionLifecycleService(postgresrepo.NewSubscriptionLifecycleRepository(db), provider, SubscriptionLifecycleConfig{
+			ProviderMode: models.ProviderModeTest, ProviderPlanIDs: map[string]string{"pro_monthly": "plan_pro_test_01"}, Now: func() time.Time { return now },
+		}, logger.New())
+
+		_, err := service.ScheduleCancellation(context.Background(), businessID, "user-a", ScheduleSubscriptionCancellationInput{
+			IdempotencyKey: "cancellation-compensation-failure",
+		})
+
+		require.ErrorIs(t, err, ErrSubscriptionMutationInternal)
+		require.NotErrorIs(t, err, ErrSubscriptionInternal)
+		require.NotContains(t, err.Error(), "fixture compensation failure")
+	})
+}
+
+func installRejectedCommandFailureTrigger(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	require.NoError(t, db.Exec(`CREATE TRIGGER reject_rejected_subscription_command
+		BEFORE UPDATE OF status ON subscription_commands
+		WHEN NEW.status = 'rejected'
+		BEGIN SELECT RAISE(FAIL, 'fixture compensation failure'); END`).Error)
+}
+
 func TestPendingRenewableCheckoutRejectsSecondActorBeforeAnotherProviderMutation(t *testing.T) {
 	db := newSubscriptionLifecycleTestDB(t)
 	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
