@@ -9,17 +9,18 @@ locals {
   websocket_management_api_endpoint = "https://${aws_apigatewayv2_api.websocket.id}.execute-api.${var.aws_region}.amazonaws.com/${var.environment}"
 
   lambda_artifacts = {
-    api_http           = "${var.lambda_artifact_dir}/http.zip"
-    a2a_stream         = "${var.lambda_artifact_dir}/a2a-stream.zip"
-    sqs_invoice        = "${var.lambda_artifact_dir}/sqs-invoice.zip"
-    sqs_gst            = "${var.lambda_artifact_dir}/sqs-gst.zip"
-    sqs_bargaining     = "${var.lambda_artifact_dir}/sqs-bargaining.zip"
-    ws_handler         = "${var.lambda_artifact_dir}/ws.zip"
-    custom_sms_sender  = "${var.lambda_artifact_dir}/custom-sms-sender.zip"
-    outbox             = "${var.lambda_artifact_dir}/outbox.zip"
-    recurring_invoices = "${var.lambda_artifact_dir}/recurring-invoices.zip"
-    sqs_email_delivery = "${var.lambda_artifact_dir}/sqs-email-delivery.zip"
-    sqs_ses_feedback   = "${var.lambda_artifact_dir}/sqs-ses-feedback.zip"
+    api_http                = "${var.lambda_artifact_dir}/http.zip"
+    a2a_stream              = "${var.lambda_artifact_dir}/a2a-stream.zip"
+    sqs_invoice             = "${var.lambda_artifact_dir}/sqs-invoice.zip"
+    sqs_gst                 = "${var.lambda_artifact_dir}/sqs-gst.zip"
+    sqs_bargaining          = "${var.lambda_artifact_dir}/sqs-bargaining.zip"
+    ws_handler              = "${var.lambda_artifact_dir}/ws.zip"
+    custom_sms_sender       = "${var.lambda_artifact_dir}/custom-sms-sender.zip"
+    outbox                  = "${var.lambda_artifact_dir}/outbox.zip"
+    recurring_invoices      = "${var.lambda_artifact_dir}/recurring-invoices.zip"
+    subscription_reconciler = "${var.lambda_artifact_dir}/subscription-reconciler.zip"
+    sqs_email_delivery      = "${var.lambda_artifact_dir}/sqs-email-delivery.zip"
+    sqs_ses_feedback        = "${var.lambda_artifact_dir}/sqs-ses-feedback.zip"
   }
 
   lambda_artifact_hashes = {

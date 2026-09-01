@@ -12,7 +12,7 @@ mock_provider "aws" {
 
   mock_resource "aws_lambda_invocation" {
     defaults = {
-      result = "{\"status\":\"applied\",\"version\":54,\"latest_version\":54,\"dirty\":false,\"manifest_checksum\":\"c76eceb1cc2dd54fd67b620bc082dbd65c6453d621665575e83e95fb9e7426c1\"}"
+      result = "{\"status\":\"applied\",\"version\":55,\"latest_version\":55,\"dirty\":false,\"manifest_checksum\":\"372cd4f33e86f10b8f3d5771f22d661b04b111b1a440246291aacca1a10588a0\"}"
     }
   }
 
@@ -379,6 +379,22 @@ run "secret_metadata_rds_lambda_iam_and_output" {
   assert {
     condition     = aws_kms_key.application_secrets.enable_key_rotation
     error_message = "The application Secrets Manager KMS key must enable rotation."
+  }
+
+  assert {
+    condition = (
+      local.lambda_artifacts.subscription_reconciler == "${var.lambda_artifact_dir}/subscription-reconciler.zip" &&
+      aws_lambda_function.subscription_reconciler.runtime == "provided.al2023" &&
+      aws_lambda_function.subscription_reconciler.architectures[0] == "arm64" &&
+      aws_lambda_function.subscription_reconciler.reserved_concurrent_executions == 0 &&
+      aws_lambda_function.subscription_reconciler.environment[0].variables["RAZORPAY_SECRET_ARN"] == aws_secretsmanager_secret.razorpay.arn &&
+      aws_scheduler_schedule.subscription_reconciler.schedule_expression == "rate(5 minutes)" &&
+      aws_scheduler_schedule.subscription_reconciler.state == "DISABLED" &&
+      aws_scheduler_schedule.subscription_reconciler.target[0].retry_policy[0].maximum_retry_attempts == 2 &&
+      aws_sqs_queue.subscription_reconciler_scheduler_dlq.sqs_managed_sse_enabled &&
+      aws_cloudwatch_metric_alarm.subscription_reconciliation_failed.namespace == "Billeif/SubscriptionLifecycle"
+    )
+    error_message = "Subscription reconciliation must be bounded, private, secret-bound, scheduled, alarmed, and disabled until background processing is enabled."
   }
 
   assert {
