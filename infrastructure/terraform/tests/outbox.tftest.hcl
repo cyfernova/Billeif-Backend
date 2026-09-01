@@ -10,7 +10,7 @@ mock_provider "aws" {
 
   mock_resource "aws_lambda_invocation" {
     defaults = {
-      result = "{\"status\":\"applied\",\"version\":55,\"latest_version\":55,\"dirty\":false,\"manifest_checksum\":\"c6f27e2f4e235d5fbfbbe3f739deb4ad3277c0bfeb6c78ebdb27c41b8c1e1d57\"}"
+      result = "{\"status\":\"applied\",\"version\":56,\"latest_version\":56,\"dirty\":false,\"manifest_checksum\":\"7885c669dbdd056c1ac3f43620d739682f69860f274afbf52d65633b1dae4794\"}"
     }
   }
 
@@ -827,5 +827,63 @@ run "standard_resolution_operational_alarms_use_two_of_three" {
       aws_cloudwatch_metric_alarm.recurring_invoice_failed_runs.treat_missing_data == "notBreaching"
     )
     error_message = "Recurring invoice runtime and failed-run metrics must use explicit two-of-three alarms."
+  }
+}
+
+run "aggregate_operations_alarms_are_low_cardinality_and_fail_safe" {
+  command = plan
+
+  variables {
+    enable_application                 = true
+    enable_background_processing       = true
+    alert_email                        = "alerts@example.com"
+    alert_email_subscription_confirmed = true
+  }
+
+  assert {
+    condition = alltrue([
+      for alarm in [
+        aws_cloudwatch_metric_alarm.operations_repeated_failures,
+        aws_cloudwatch_metric_alarm.operations_dlq_growth,
+        aws_cloudwatch_metric_alarm.operations_reconciliation_backlog,
+        aws_cloudwatch_metric_alarm.operations_webhook_failures,
+        aws_cloudwatch_metric_alarm.operations_recurring_schedule_failures,
+        aws_cloudwatch_metric_alarm.operations_render_failure_rate,
+        aws_cloudwatch_metric_alarm.operations_delivery_failure_rate
+        ] : (
+        alarm.namespace == "Billeif/Operations" &&
+        alarm.evaluation_periods == 3 &&
+        alarm.datapoints_to_alarm == 2 &&
+        alarm.treat_missing_data == "notBreaching" &&
+        toset(keys(alarm.dimensions)) == toset(["Environment", "Category"]) &&
+        length(alarm.alarm_actions) == 1 &&
+        contains(alarm.alarm_actions, aws_sns_topic.alerts.arn)
+      )
+    ])
+    error_message = "Every sparse operational error, backlog, and failure-rate alarm must use low-cardinality dimensions, two-of-three evaluation, non-breaching missing data, and the existing alert topic."
+  }
+
+  assert {
+    condition = (
+      aws_cloudwatch_metric_alarm.operations_provider_latency.metric_name == "ProviderLatencyMilliseconds" &&
+      aws_cloudwatch_metric_alarm.operations_provider_latency.namespace == "Billeif/Operations" &&
+      aws_cloudwatch_metric_alarm.operations_provider_latency.extended_statistic == "p99" &&
+      aws_cloudwatch_metric_alarm.operations_provider_latency.statistic == null &&
+      aws_cloudwatch_metric_alarm.operations_provider_latency.evaluation_periods == 3 &&
+      aws_cloudwatch_metric_alarm.operations_provider_latency.datapoints_to_alarm == 2 &&
+      aws_cloudwatch_metric_alarm.operations_provider_latency.treat_missing_data == "notBreaching" &&
+      toset(keys(aws_cloudwatch_metric_alarm.operations_provider_latency.dimensions)) == toset(["Environment", "Category"]) &&
+      length(aws_cloudwatch_metric_alarm.operations_provider_latency.alarm_actions) == 1 &&
+      contains(aws_cloudwatch_metric_alarm.operations_provider_latency.alarm_actions, aws_sns_topic.alerts.arn)
+    )
+    error_message = "Provider latency must use p99, low-cardinality dimensions, two-of-three evaluation, and the existing alert topic."
+  }
+
+  assert {
+    condition = (
+      length(aws_cloudwatch_metric_alarm.worker_queue_age) == 5 &&
+      alltrue([for alarm in aws_cloudwatch_metric_alarm.worker_queue_age : alarm.metric_name == "ApproximateAgeOfOldestMessage" && alarm.statistic == "Maximum" && alarm.evaluation_periods == 3 && alarm.datapoints_to_alarm == 2])
+    )
+    error_message = "Queue age must remain covered by bounded native SQS maximum-age alarms using two-of-three evaluation."
   }
 }

@@ -110,6 +110,10 @@ locals {
     INVOICE_CURSOR_HMAC_SECRET_ARN = aws_secretsmanager_secret.billeif_invoice_cursor_hmac.arn
   }
 
+  operator_http_env = var.platform_operator_group != "" ? {
+    PLATFORM_OPERATOR_GROUP = var.platform_operator_group
+  } : {}
+
   worker_secret_env = {
     invoice = merge(local.database_runtime_env, {
       CREDENTIAL_ENCRYPTION_SECRET_ARN = aws_secretsmanager_secret.credential_encryption.arn
@@ -393,7 +397,7 @@ resource "aws_lambda_function" "api_http" {
   }
 
   environment {
-    variables = merge(local.common_lambda_env, local.http_secret_env, local.http_cursor_secret_env, local.voice_http_lambda_env, local.rate_limit_http_env, {
+    variables = merge(local.common_lambda_env, local.http_secret_env, local.http_cursor_secret_env, local.operator_http_env, local.voice_http_lambda_env, local.rate_limit_http_env, {
       WEBSOCKET_API_ENDPOINT = local.websocket_api_invoke_url
       SERVER_BASE_URL        = local.http_api_invoke_url
     })

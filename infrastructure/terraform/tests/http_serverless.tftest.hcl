@@ -10,7 +10,7 @@ mock_provider "aws" {
 
   mock_resource "aws_lambda_invocation" {
     defaults = {
-      result = "{\"status\":\"applied\",\"version\":55,\"latest_version\":55,\"dirty\":false,\"manifest_checksum\":\"c6f27e2f4e235d5fbfbbe3f739deb4ad3277c0bfeb6c78ebdb27c41b8c1e1d57\"}"
+      result = "{\"status\":\"applied\",\"version\":56,\"latest_version\":56,\"dirty\":false,\"manifest_checksum\":\"7885c669dbdd056c1ac3f43620d739682f69860f274afbf52d65633b1dae4794\"}"
     }
   }
 
@@ -509,5 +509,18 @@ run "launch_safe_throttling_allows_mobile_startup_bursts" {
       contains(split(",", aws_lambda_function.api_http.environment[0].variables["ALLOWED_ORIGINS"]), local.http_api_invoke_url)
     )
     error_message = "The application Lambda must allow both Billeif website origins and its invoke URL without using wildcard CORS."
+  }
+}
+
+run "operator_group_is_explicitly_configured" {
+  command = plan
+
+  variables {
+    platform_operator_group = "platform-operators"
+  }
+
+  assert {
+    condition     = aws_lambda_function.api_http.environment[0].variables["PLATFORM_OPERATOR_GROUP"] == "platform-operators"
+    error_message = "The HTTP Lambda must receive only the explicitly configured Cognito platform operator group."
   }
 }
