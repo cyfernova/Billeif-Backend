@@ -249,10 +249,6 @@ func (r *AgentGovernanceRepository) AuthorizeToolExecution(ctx context.Context, 
 			policyErr = scopedNotFound(err)
 			return nil
 		}
-		if err := activeRunError(run, c.Now); err != nil {
-			policyErr = err
-			return nil
-		}
 		if run.RequestHash != c.RequestHash {
 			policyErr = interfaces.ErrAgentGovernanceConflict
 			return nil
@@ -275,6 +271,10 @@ func (r *AgentGovernanceRepository) AuthorizeToolExecution(ctx context.Context, 
 		}
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
+		}
+		if err := activeRunError(run, c.Now); err != nil {
+			policyErr = err
+			return nil
 		}
 		if run.ToolCallsUsed >= run.MaxToolCalls {
 			policyErr = interfaces.ErrAgentGovernanceToolCallLimit
@@ -399,6 +399,18 @@ func (r *AgentGovernanceRepository) CompleteToolExecution(ctx context.Context, c
 		return nil, policyErr
 	}
 	return result, nil
+}
+
+func (r *AgentGovernanceRepository) ReadToolExecution(ctx context.Context, query interfaces.ReadAgentToolExecutionQuery) (*interfaces.AgentToolExecutionResult, error) {
+	if r == nil || r.db == nil || query.ExecutionID == "" || query.RunID == "" || !validGovernanceScope(query.BusinessID, query.AgentID, query.UserID) {
+		return nil, interfaces.ErrAgentGovernanceInvalidScope
+	}
+	var execution models.AIToolExecution
+	err := r.db.WithContext(ctx).Where("id = ? AND run_id = ? AND business_id = ? AND agent_id = ? AND user_id = ?", query.ExecutionID, query.RunID, query.BusinessID, query.AgentID, query.UserID).First(&execution).Error
+	if err != nil {
+		return nil, scopedNotFound(err)
+	}
+	return toolResult(execution, true), nil
 }
 
 func (r *AgentGovernanceRepository) CompleteRun(ctx context.Context, c interfaces.CompleteAgentRunCommand) (*interfaces.AgentRunResult, error) {
@@ -911,5 +923,9 @@ func reservationResult(row models.AISpendReservation, replayed bool) *interfaces
 	return &interfaces.AgentSpendReservationResult{ID: row.ID, Status: row.Status, Replayed: replayed}
 }
 func toolResult(row models.AIToolExecution, replayed bool) *interfaces.AgentToolExecutionResult {
-	return &interfaces.AgentToolExecutionResult{ID: row.ID, Status: row.Status, FinalDisposition: row.FinalDisposition, Replayed: replayed}
+	return &interfaces.AgentToolExecutionResult{
+		ID: row.ID, Status: row.Status, FinalDisposition: row.FinalDisposition,
+		ResultType: row.ResultType, ResultID: row.ResultID, FailureCode: row.FailureCode,
+		EffectDisposition: row.EffectDisposition, Replayed: replayed,
+	}
 }

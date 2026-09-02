@@ -35,11 +35,15 @@ const (
 )
 
 var (
-	ErrAgentGovernanceUnavailable      = errors.New("agent governance unavailable")
-	ErrAgentGovernanceInvalidArguments = errors.New("agent tool arguments invalid")
-	ErrAgentToolDenied                 = errors.New("agent tool denied")
-	ErrAgentToolReplayUnavailable      = errors.New("agent tool replay output unavailable")
-	ErrAgentToolExecutionFailed        = errors.New("agent tool execution failed")
+	ErrAgentGovernanceUnavailable            = errors.New("agent governance unavailable")
+	ErrAgentGovernanceInvalidArguments       = errors.New("agent tool arguments invalid")
+	ErrAgentToolDenied                       = errors.New("agent tool denied")
+	ErrAgentToolReplayUnavailable            = errors.New("agent tool replay output unavailable")
+	ErrAgentToolExecutionInProgress          = errors.New("agent tool execution in progress")
+	ErrAgentToolReplayCancelled              = errors.New("agent tool replay cancelled")
+	ErrAgentToolReplayTimedOut               = errors.New("agent tool replay timed out")
+	ErrAgentToolReplayReconciliationRequired = errors.New("agent tool replay requires reconciliation")
+	ErrAgentToolExecutionFailed              = errors.New("agent tool execution failed")
 )
 
 func AgentToolRiskClasses() []AgentToolRiskClass {
@@ -243,24 +247,32 @@ type AgentGovernanceExecutor interface {
 }
 
 type AgentGovernanceServiceConfig struct {
-	ExecutionEnabled bool
-	Repository       interfaces.AgentGovernanceRepository
-	Permissions      PermissionChecker
-	Now              func() time.Time
+	ExecutionEnabled       bool
+	Repository             interfaces.AgentGovernanceRepository
+	Permissions            PermissionChecker
+	Now                    func() time.Time
+	ExecutionCheckInterval time.Duration
 }
 
 type AgentGovernanceService struct {
-	executionEnabled bool
-	repository       interfaces.AgentGovernanceRepository
-	permissions      PermissionChecker
-	now              func() time.Time
+	executionEnabled       bool
+	repository             interfaces.AgentGovernanceRepository
+	permissions            PermissionChecker
+	now                    func() time.Time
+	executionCheckInterval time.Duration
 }
 
 func NewAgentGovernanceService(config AgentGovernanceServiceConfig) *AgentGovernanceService {
 	if config.Now == nil {
 		config.Now = time.Now
 	}
-	return &AgentGovernanceService{executionEnabled: config.ExecutionEnabled, repository: config.Repository, permissions: config.Permissions, now: config.Now}
+	if config.ExecutionCheckInterval <= 0 {
+		config.ExecutionCheckInterval = 100 * time.Millisecond
+	}
+	return &AgentGovernanceService{
+		executionEnabled: config.ExecutionEnabled, repository: config.Repository, permissions: config.Permissions,
+		now: config.Now, executionCheckInterval: config.ExecutionCheckInterval,
+	}
 }
 
 func (service *AgentGovernanceService) Ready() bool {
@@ -338,7 +350,14 @@ func (service *AgentGovernanceService) ExecuteTool(ctx context.Context, request 
 		return nil, fmt.Errorf("%w: authorize tool", ErrAgentToolDenied)
 	}
 	if execution.Replayed {
-		return nil, ErrAgentToolReplayUnavailable
+		durable, readErr := service.repository.ReadToolExecution(ctx, interfaces.ReadAgentToolExecutionQuery{
+			ExecutionID: execution.ID, RunID: request.RunID, BusinessID: request.BusinessID,
+			AgentID: request.AgentID, UserID: request.UserID,
+		})
+		if readErr != nil || durable == nil {
+			return nil, ErrAgentToolReplayUnavailable
+		}
+		return replayedAgentToolResult(durable)
 	}
 	check := interfaces.CheckAgentExecutionCommand{
 		RunID: request.RunID, BusinessID: request.BusinessID, AgentID: request.AgentID,
@@ -385,13 +404,18 @@ func (service *AgentGovernanceService) ExecuteTool(ctx context.Context, request 
 		return nil, ErrAgentToolExecutionFailed
 	}
 	executionCtx, cancelExecution := context.WithDeadline(ctx, request.DeadlineAt)
+	stopWatcher := service.watchExecution(executionCtx, check, cancelExecution)
 	invocation, invokeErr := invoke(executionCtx, request.ToolKey, request.CanonicalArguments)
+	watcherErr := stopWatcher()
 	executionCtxErr := executionCtx.Err()
 	cancelExecution()
 	persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancelPersist()
 	check.Now = service.now().UTC()
 	controlErr := service.repository.CheckExecution(persistCtx, check)
+	if controlErr == nil {
+		controlErr = watcherErr
+	}
 	outcomeErr := service.repository.RecordProviderOutcome(persistCtx, interfaces.ProviderOutcomeCommand{
 		ProviderKey: request.ProviderKey, ProbeToken: admission.ProbeToken, Success: invokeErr == nil && executionCtxErr == nil,
 		FailureCode: "tool_transport_failed", FailureThreshold: request.ProviderFailureThreshold,
@@ -409,7 +433,7 @@ func (service *AgentGovernanceService) ExecuteTool(ctx context.Context, request 
 	if invocation.EffectDisposition != "" {
 		completion.EffectDisposition = safeCode(invocation.EffectDisposition)
 	}
-	completion.ResultType, completion.ResultID = safeCode(invocation.ResultType), safeCode(invocation.ResultID)
+	completion.ResultType, completion.ResultID = safeReference(invocation.ResultType), safeReference(invocation.ResultID)
 	if invokeErr != nil {
 		completion.Status = "failed"
 		completion.FailureCode = "tool_transport_failed"
@@ -454,6 +478,65 @@ func (service *AgentGovernanceService) ExecuteTool(ctx context.Context, request 
 		return nil, ErrAgentToolExecutionFailed
 	}
 	return invocation.Output, nil
+}
+
+func (service *AgentGovernanceService) watchExecution(executionCtx context.Context, check interfaces.CheckAgentExecutionCommand, cancelExecution context.CancelFunc) func() error {
+	watchCtx, stopWatch := context.WithCancel(context.WithoutCancel(executionCtx))
+	done := make(chan error, 1)
+	go func() {
+		ticker := time.NewTicker(service.executionCheckInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-watchCtx.Done():
+				done <- nil
+				return
+			case <-ticker.C:
+				check.Now = service.now().UTC()
+				checkCtx, cancelCheck := context.WithTimeout(watchCtx, 250*time.Millisecond)
+				err := service.repository.CheckExecution(checkCtx, check)
+				cancelCheck()
+				if err != nil {
+					cancelExecution()
+					done <- err
+					return
+				}
+			}
+		}
+	}()
+	return func() error {
+		stopWatch()
+		return <-done
+	}
+}
+
+func replayedAgentToolResult(result *interfaces.AgentToolExecutionResult) (json.RawMessage, error) {
+	switch result.Status {
+	case "authorized", "running":
+		return nil, ErrAgentToolExecutionInProgress
+	case "succeeded":
+		if safeReference(result.ResultType) == "" || safeReference(result.ResultID) == "" {
+			return nil, ErrAgentToolReplayUnavailable
+		}
+		encoded, err := json.Marshal(struct {
+			ResultID   string `json:"result_id"`
+			ResultType string `json:"result_type"`
+		}{ResultID: result.ResultID, ResultType: result.ResultType})
+		if err != nil {
+			return nil, ErrAgentToolReplayUnavailable
+		}
+		return encoded, nil
+	case "cancelled":
+		return nil, ErrAgentToolReplayCancelled
+	case "timed_out":
+		return nil, ErrAgentToolReplayTimedOut
+	case "reconciliation_required":
+		return nil, ErrAgentToolReplayReconciliationRequired
+	case "failed", "denied":
+		return nil, ErrAgentToolExecutionFailed
+	default:
+		return nil, ErrAgentToolReplayUnavailable
+	}
 }
 
 func governanceControlFailureStatus(err error) string {
@@ -587,6 +670,21 @@ func safeCode(value string) string {
 	}
 	for _, character := range value {
 		if character < 0x20 || character > 0x7e {
+			return ""
+		}
+	}
+	return value
+}
+
+func safeReference(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 255 || !utf8.ValidString(value) {
+		return ""
+	}
+	for _, character := range value {
+		if !((character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') || character == '_' || character == '-' ||
+			character == '.' || character == ':' || character == '/') {
 			return ""
 		}
 	}

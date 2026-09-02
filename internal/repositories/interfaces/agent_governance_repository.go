@@ -85,9 +85,14 @@ type AuthorizeAgentToolCommand struct {
 }
 
 type AgentToolExecutionResult struct {
-	ID, Status, FinalDisposition string
-	SpendReservationID           string
-	Replayed                     bool
+	ID, Status, FinalDisposition          string
+	ResultType, ResultID, FailureCode     string
+	EffectDisposition, SpendReservationID string
+	Replayed                              bool
+}
+
+type ReadAgentToolExecutionQuery struct {
+	ExecutionID, RunID, BusinessID, AgentID, UserID string
 }
 
 type CompleteAgentToolCommand struct {
@@ -151,6 +156,7 @@ type AgentGovernanceRepository interface {
 	StartRun(context.Context, StartAgentRunCommand) (*AgentRunResult, error)
 	ReserveRunCapacity(context.Context, ReserveAgentRunCapacityCommand) (*AgentSpendReservationResult, error)
 	AuthorizeToolExecution(context.Context, AuthorizeAgentToolCommand) (*AgentToolExecutionResult, error)
+	ReadToolExecution(context.Context, ReadAgentToolExecutionQuery) (*AgentToolExecutionResult, error)
 	CompleteToolExecution(context.Context, CompleteAgentToolCommand) (*AgentToolExecutionResult, error)
 	CompleteRun(context.Context, CompleteAgentRunCommand) (*AgentRunResult, error)
 	CheckExecution(context.Context, CheckAgentExecutionCommand) error

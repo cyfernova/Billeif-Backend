@@ -37,7 +37,7 @@ func TestAgentGovernancePostgresConcurrentReplayAndBudgetSettlement(t *testing.T
 			close(started)
 			<-release
 		}
-		return GovernedToolInvocationResult{Output: json.RawMessage(`{"items":[]}`)}, nil
+		return GovernedToolInvocationResult{Output: json.RawMessage(`{"items":[]}`), ResultType: "invoice", ResultID: "inv-safe-1"}, nil
 	}
 	type result struct {
 		output json.RawMessage
@@ -62,12 +62,16 @@ func TestAgentGovernancePostgresConcurrentReplayAndBudgetSettlement(t *testing.T
 	if first.err == nil && second.err == nil {
 		t.Fatalf("duplicate executions both succeeded: %#v %#v", first, second)
 	}
-	if !errors.Is(first.err, ErrAgentToolReplayUnavailable) && !errors.Is(second.err, ErrAgentToolReplayUnavailable) {
+	if !errors.Is(first.err, ErrAgentToolExecutionInProgress) && !errors.Is(second.err, ErrAgentToolExecutionInProgress) {
 		t.Fatalf("duplicate replay errors = %v, %v", first.err, second.err)
 	}
 	var executionCount int64
 	if err := database.Table("ai_tool_executions").Where("run_id = ?", request.RunID).Count(&executionCount).Error; err != nil || executionCount != 1 {
 		t.Fatalf("tool execution count = %d, error = %v", executionCount, err)
+	}
+	replayedOutput, replayErr := service.ExecuteTool(context.Background(), request, invoke)
+	if replayErr != nil || string(replayedOutput) != `{"result_id":"inv-safe-1","result_type":"invoice"}` || invocations.Load() != 1 {
+		t.Fatalf("terminal replay = (%s, %v, invocations=%d)", replayedOutput, replayErr, invocations.Load())
 	}
 
 	secondRequest := fixture.serviceRequest(t, "budget-second", 30)
@@ -248,6 +252,41 @@ func TestAgentGovernancePostgresApprovalScopeReplayAndKillSwitch(t *testing.T) {
 		RunID: runID, BusinessID: fixture.businessID, AgentID: fixture.agentID, UserID: fixture.userID, Now: fixture.now.Add(time.Second),
 	}); !errors.Is(err, interfaces.ErrAgentGovernanceGateDisabled) {
 		t.Fatalf("kill-switch execution check error = %v", err)
+	}
+}
+
+func TestAgentGovernancePostgresTimeoutAfterPossibleEffectRetainsReservation(t *testing.T) {
+	database := newAgentGovernancePostgresIntegrationDB(t)
+	repository := postgresrepo.NewAgentGovernanceRepository(database)
+	fixture := seedAgentGovernanceFixture(t, database, repository)
+	original := codeOwnedAgentToolCatalog["list_invoices"]
+	effectPolicy := original
+	effectPolicy.Risk = RiskReversibleWrite
+	codeOwnedAgentToolCatalog["list_invoices"] = effectPolicy
+	t.Cleanup(func() { codeOwnedAgentToolCatalog["list_invoices"] = original })
+	service := NewAgentGovernanceService(AgentGovernanceServiceConfig{
+		ExecutionEnabled: true, Repository: repository, Permissions: allowGovernancePermission{}, Now: time.Now,
+		ExecutionCheckInterval: time.Second,
+	})
+	request := fixture.serviceRequest(t, "timeout-effect", 100)
+	request.Risk = RiskReversibleWrite
+	request.DeadlineAt = time.Now().UTC().Add(20 * time.Millisecond)
+	_, err := service.ExecuteTool(context.Background(), request, func(callCtx context.Context, _ string, _ json.RawMessage) (GovernedToolInvocationResult, error) {
+		<-callCtx.Done()
+		return GovernedToolInvocationResult{Chargeable: true}, nil
+	})
+	if !errors.Is(err, ErrAgentToolExecutionFailed) {
+		t.Fatalf("timeout-after-effect error = %v", err)
+	}
+	var reservationStatus, executionStatus string
+	if err := database.Table("ai_spend_reservations").Select("status").Where("run_id = ?", request.RunID).Scan(&reservationStatus).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Table("ai_tool_executions").Select("status").Where("run_id = ?", request.RunID).Scan(&executionStatus).Error; err != nil {
+		t.Fatal(err)
+	}
+	if reservationStatus != "reconciliation_required" || executionStatus != "reconciliation_required" {
+		t.Fatalf("timeout states reservation=%q execution=%q", reservationStatus, executionStatus)
 	}
 }
 
