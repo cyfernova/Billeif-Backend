@@ -11,6 +11,7 @@ import (
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/reporting"
 	"invoice-backend/pkg/logger"
+	"invoice-backend/pkg/spreadsheet"
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
@@ -190,6 +191,88 @@ func TestReportServiceExportRejectsUnavailableCapabilityBeforeQueryOrRun(t *test
 type recordingCapabilityGuard struct {
 	request CapabilityRequest
 	err     error
+}
+
+type businessTimezoneStub struct {
+	profile *models.BusinessProfile
+	err     error
+}
+
+func (s businessTimezoneStub) GetByID(context.Context, string) (*models.BusinessProfile, error) {
+	return s.profile, s.err
+}
+
+func TestReportServiceExportXLSXIsTypedBoundedTimezoneAwareAndAudited(t *testing.T) {
+	repo := &reportingRepoStub{queryResult: &reporting.Result{
+		Columns: []reporting.Column{
+			{Key: "party_name", Label: "Party", Type: "string"},
+			{Key: "total", Label: "Total", Type: "number"},
+			{Key: "issue_date", Label: "Date", Type: "date"},
+		},
+		Rows: []map[string]interface{}{{
+			"party_name": "=HYPERLINK(\"https://attacker.example\")",
+			"total":      "125.50",
+			"issue_date": time.Date(2026, 9, 1, 20, 0, 0, 0, time.UTC),
+		}},
+		Pagination: reporting.Pagination{Page: 1, Limit: 50, Total: 1},
+	}}
+	guard := &recordingCapabilityGuard{}
+	svc := NewReportService(&config.Config{}, repo, logger.New()).
+		WithCapabilityGuard(guard).
+		WithBusinessTimezoneProvider(businessTimezoneStub{profile: &models.BusinessProfile{ID: "biz-1", Timezone: "Asia/Kolkata"}})
+
+	response, err := svc.Export(context.Background(), "biz-1", "user-1", "sales_register", ReportExportInput{
+		Columns: []string{"party_name", "total", "issue_date"}, Format: "xlsx",
+	})
+	require.NoError(t, err)
+	require.Equal(t, ReportXLSXContentType, response.ContentType)
+	require.True(t, strings.HasSuffix(response.Filename, ".xlsx"))
+	require.Equal(t, []byte("PK"), response.Binary[:2])
+	require.Empty(t, response.Data)
+	require.Len(t, repo.createdRuns, 1)
+	require.Equal(t, "user-1", repo.createdRuns[0].GeneratedBy)
+	require.Contains(t, repo.createdRuns[0].Payload, `"delivery":"attachment"`)
+	require.Contains(t, repo.createdRuns[0].Payload, `"timezone":"Asia/Kolkata"`)
+	require.NotContains(t, repo.createdRuns[0].Payload, "attacker.example")
+	require.Equal(t, CapabilityRequest{
+		BusinessID: "biz-1", UserID: "user-1", Platform: CapabilityPlatformWeb, Capability: CapabilityReportExports,
+	}, guard.request)
+}
+
+func TestReportServiceExportXLSXRejectsRowsBeyondBoundWithoutAuditRun(t *testing.T) {
+	rows := make([]map[string]interface{}, spreadsheet.MaxXLSXRows+1)
+	for index := range rows {
+		rows[index] = map[string]interface{}{"serial_number": fmt.Sprintf("INV-%04d", index)}
+	}
+	repo := &reportingRepoStub{queryResult: &reporting.Result{
+		Columns:    []reporting.Column{{Key: "serial_number", Label: "Number", Type: "string"}},
+		Rows:       rows,
+		Pagination: reporting.Pagination{Page: 1, Limit: len(rows), Total: int64(len(rows))},
+	}}
+	svc := NewReportService(&config.Config{}, repo, logger.New()).
+		WithCapabilityGuard(&recordingCapabilityGuard{}).
+		WithBusinessTimezoneProvider(businessTimezoneStub{profile: &models.BusinessProfile{Timezone: "UTC"}})
+
+	_, err := svc.Export(context.Background(), "biz-1", "user-1", "sales_register", ReportExportInput{
+		Columns: []string{"serial_number"}, Format: "xlsx",
+	})
+	require.ErrorIs(t, err, ErrReportExportTooLarge)
+	require.Empty(t, repo.createdRuns)
+}
+
+func TestReportServiceExportXLSXFailsClosedWithoutBusinessTimezone(t *testing.T) {
+	repo := &reportingRepoStub{queryResult: &reporting.Result{
+		Columns:    []reporting.Column{{Key: "issue_date", Label: "Date", Type: "date"}},
+		Rows:       []map[string]interface{}{{"issue_date": "2026-09-02"}},
+		Pagination: reporting.Pagination{Page: 1, Limit: 1, Total: 1},
+	}}
+	svc := NewReportService(&config.Config{}, repo, logger.New()).WithCapabilityGuard(&recordingCapabilityGuard{})
+
+	_, err := svc.Export(context.Background(), "biz-1", "user-1", "sales_register", ReportExportInput{
+		Columns: []string{"issue_date"}, Format: "xlsx",
+	})
+	require.EqualError(t, err, "business timezone unavailable")
+	require.Empty(t, repo.createdRuns)
 }
 
 func (g *recordingCapabilityGuard) Require(_ context.Context, request CapabilityRequest) error {

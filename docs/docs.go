@@ -2408,6 +2408,311 @@ const docTemplate = `{
                 ]
             }
         },
+        "/agents/shopping/cart/{id}/items": {
+            "delete": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Shopping"
+                ],
+                "summary": "Clear editable cart",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cart ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Expected cart version",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CartVersionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.CartMandate"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/agents/shopping/cart/{id}/items/{product_id}": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Shopping"
+                ],
+                "summary": "Add item to editable cart",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cart ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Marketplace product ID",
+                        "name": "product_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Expected version and quantity",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CartItemMutationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.CartMandate"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "delete": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Shopping"
+                ],
+                "summary": "Remove editable cart item",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cart ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Marketplace product ID",
+                        "name": "product_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Expected cart version",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CartVersionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.CartMandate"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "patch": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Shopping"
+                ],
+                "summary": "Update editable cart item",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cart ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Marketplace product ID",
+                        "name": "product_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Expected version and quantity",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CartItemMutationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.CartMandate"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/agents/shopping/carts": {
             "get": {
                 "description": "Returns all shopping carts for the user",
@@ -3990,6 +4295,418 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ]
+            }
+        },
+        "/auth/phone/confirm": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Confirm phone registration OTP",
+                "parameters": [
+                    {
+                        "description": "Phone and OTP",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/services.PhoneConfirmInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/phone/link": {
+            "post": {
+                "description": "Sends an OTP but does not mutate the account until confirmation.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Start explicit phone link",
+                "parameters": [
+                    {
+                        "description": "Phone to link",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/services.PhoneLinkInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/services.PhoneLinkOutput"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/auth/phone/link/confirm": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Confirm explicit phone link",
+                "parameters": [
+                    {
+                        "description": "Phone and OTP",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/services.PhoneConfirmInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/auth/phone/login": {
+            "post": {
+                "description": "Authentication failures do not reveal whether an account exists.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Start phone OTP login",
+                "parameters": [
+                    {
+                        "description": "Indian mobile number",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/services.PhoneLoginInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/services.PhoneLoginChallengeOutput"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/phone/logout": {
+            "post": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Globally revoke phone-auth sessions",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/auth/phone/refresh": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Refresh phone-auth session",
+                "parameters": [
+                    {
+                        "description": "Refresh token",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/services.RefreshInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/services.LoginOutput"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/phone/register": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Register with phone OTP",
+                "parameters": [
+                    {
+                        "description": "Indian mobile registration",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/services.PhoneRegisterInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/services.PhoneRegisterOutput"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/phone/resend-confirmation": {
+            "post": {
+                "description": "Returns the same response whether or not the phone is registered.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Resend phone registration OTP",
+                "parameters": [
+                    {
+                        "description": "Indian mobile number",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/services.PhoneLinkInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/phone/verify-login": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Verify phone login OTP",
+                "parameters": [
+                    {
+                        "description": "OTP challenge response",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/services.PhoneVerifyLoginInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/services.LoginOutput"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
             }
         },
         "/auth/profile": {
@@ -5885,14 +6602,17 @@ const docTemplate = `{
         },
         "/business-profiles/{id}/logo": {
             "post": {
-                "description": "Returns a presigned S3 URL and the exact headers required to upload a business logo. Uploads are limited to 5 MiB.",
+                "description": "Creates an opaque pending upload whose checksum, metadata, MIME type, and size are bound into the signed request. JPEG, PNG, and WebP are supported up to 5 MiB.",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Businesses"
                 ],
-                "summary": "Upload business logo",
+                "summary": "Create business logo upload",
                 "parameters": [
                     {
                         "type": "string",
@@ -5902,26 +6622,20 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "type": "string",
-                        "description": "MIME type (default: image/png)",
-                        "name": "Content-Type",
-                        "in": "header"
-                    },
-                    {
-                        "maximum": 5242880,
-                        "minimum": 1,
-                        "type": "integer",
-                        "description": "Exact upload size in bytes",
-                        "name": "size_bytes",
-                        "in": "query",
-                        "required": true
+                        "description": "Exact upload metadata",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/services.BusinessLogoUploadInput"
+                        }
                     }
                 ],
                 "responses": {
-                    "200": {
-                        "description": "OK",
+                    "201": {
+                        "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/services.PresignedUpload"
+                            "$ref": "#/definitions/services.PendingUploadCreated"
                         }
                     },
                     "400": {
@@ -5933,8 +6647,90 @@ const docTemplate = `{
                             }
                         }
                     },
-                    "413": {
-                        "description": "Request Entity Too Large",
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/business-profiles/{id}/logo/complete": {
+            "post": {
+                "description": "Verifies the tenant- and uploader-bound object metadata, atomically attaches it once, and cleans up the replaced logo after commit.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Businesses"
+                ],
+                "summary": "Complete business logo upload",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Business ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Pending upload identity",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/services.BusinessLogoCompletionInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/services.BusinessLogoCompletion"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -13988,7 +14784,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/public/store/coupons/validate/{slug}": {
+        "/public/store/{slug}/coupons/validate": {
             "post": {
                 "description": "Validates a coupon code for a storefront",
                 "consumes": [
@@ -14673,12 +15469,13 @@ const docTemplate = `{
         },
         "/reports/{key}/export": {
             "post": {
-                "description": "Exports a report in the specified format",
+                "description": "Exports JSON/CSV in the compatibility envelope; XLSX is a native attachment with Content-Disposition and X-Report-Run-ID headers",
                 "consumes": [
                     "application/json"
                 ],
                 "produces": [
-                    "application/json"
+                    "application/json",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 ],
                 "tags": [
                     "Reports"
@@ -14705,7 +15502,9 @@ const docTemplate = `{
                 "responses": {
                     "201": {
                         "description": "Created",
-                        "schema": {}
+                        "schema": {
+                            "$ref": "#/definitions/services.ReportExportResponse"
+                        }
                     },
                     "400": {
                         "description": "Bad Request",
@@ -14724,6 +15523,15 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "413": {
+                        "description": "Request Entity Too Large",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -15836,6 +16644,66 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "delete": {
+                "description": "Soft-deletes a coupon only when it has never been redeemed",
+                "tags": [
+                    "Storefronts"
+                ],
+                "summary": "Delete an unredeemed storefront coupon",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Storefront ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Coupon ID",
+                        "name": "coupon_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -20271,6 +21139,35 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.CartItemMutationRequest": {
+            "type": "object",
+            "required": [
+                "version"
+            ],
+            "properties": {
+                "quantity": {
+                    "type": "integer",
+                    "maximum": 10000,
+                    "minimum": 1
+                },
+                "version": {
+                    "type": "integer",
+                    "minimum": 1
+                }
+            }
+        },
+        "handlers.CartVersionRequest": {
+            "type": "object",
+            "required": [
+                "version"
+            ],
+            "properties": {
+                "version": {
+                    "type": "integer",
+                    "minimum": 1
+                }
+            }
+        },
         "handlers.CheckoutRequest": {
             "type": "object",
             "required": [
@@ -21956,6 +22853,92 @@ const docTemplate = `{
                 }
             }
         },
+        "models.CartMandate": {
+            "type": "object",
+            "required": [
+                "agent_id",
+                "business_id",
+                "currency",
+                "expires_at",
+                "items",
+                "signature",
+                "status",
+                "user_id"
+            ],
+            "properties": {
+                "agent_id": {
+                    "type": "string"
+                },
+                "business_id": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "intent_mandate_id": {
+                    "type": "string"
+                },
+                "items": {
+                    "type": "string"
+                },
+                "merchant_id": {
+                    "type": "string"
+                },
+                "merchant_signature": {
+                    "type": "string",
+                    "maxLength": 1000
+                },
+                "payment_mandates": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.PaymentMandate"
+                    }
+                },
+                "signature": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "pending",
+                        "signed",
+                        "rejected",
+                        "expired"
+                    ]
+                },
+                "subtotal_amount": {
+                    "type": "number",
+                    "minimum": 0
+                },
+                "tax_amount": {
+                    "type": "number",
+                    "minimum": 0
+                },
+                "total_amount": {
+                    "type": "number",
+                    "minimum": 0
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer",
+                    "minimum": 1
+                }
+            }
+        },
         "models.Customer": {
             "type": "object",
             "required": [
@@ -22769,6 +23752,64 @@ const docTemplate = `{
                 }
             }
         },
+        "models.PaymentMandate": {
+            "type": "object",
+            "required": [
+                "amount",
+                "cart_mandate_id",
+                "currency",
+                "signature",
+                "status",
+                "user_id"
+            ],
+            "properties": {
+                "amount": {
+                    "type": "number"
+                },
+                "cart_mandate_id": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "payment_method_id": {
+                    "type": "string"
+                },
+                "processed_at": {
+                    "type": "string"
+                },
+                "razorpay_order_id": {
+                    "type": "string",
+                    "maxLength": 100
+                },
+                "razorpay_payment_id": {
+                    "type": "string",
+                    "maxLength": 100
+                },
+                "signature": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "pending",
+                        "authorized",
+                        "captured",
+                        "failed",
+                        "refunded"
+                    ]
+                },
+                "user_id": {
+                    "type": "string"
+                }
+            }
+        },
         "models.PendingUpload": {
             "type": "object",
             "properties": {
@@ -23333,6 +24374,50 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "watermark_text": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.ReportRun": {
+            "type": "object",
+            "properties": {
+                "business_id": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "export_format": {
+                    "type": "string"
+                },
+                "filters": {
+                    "type": "string"
+                },
+                "generated_by": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "payload": {
+                    "type": "string"
+                },
+                "report_key": {
+                    "type": "string"
+                },
+                "run_kind": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "summary": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "visible_columns": {
                     "type": "string"
                 }
             }
@@ -24245,6 +25330,56 @@ const docTemplate = `{
                 },
                 "url": {
                     "type": "string"
+                }
+            }
+        },
+        "services.BusinessLogoCompletion": {
+            "type": "object",
+            "properties": {
+                "business_id": {
+                    "type": "string"
+                },
+                "cleanup_pending": {
+                    "type": "boolean"
+                },
+                "replayed": {
+                    "type": "boolean"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "upload_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.BusinessLogoCompletionInput": {
+            "type": "object",
+            "required": [
+                "upload_id"
+            ],
+            "properties": {
+                "upload_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.BusinessLogoUploadInput": {
+            "type": "object",
+            "required": [
+                "checksum_sha256",
+                "content_type",
+                "size_bytes"
+            ],
+            "properties": {
+                "checksum_sha256": {
+                    "type": "string"
+                },
+                "content_type": {
+                    "type": "string"
+                },
+                "size_bytes": {
+                    "type": "integer"
                 }
             }
         },
@@ -26912,6 +28047,121 @@ const docTemplate = `{
                 }
             }
         },
+        "services.PhoneConfirmInput": {
+            "type": "object",
+            "required": [
+                "code",
+                "phone_number"
+            ],
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "maxLength": 8,
+                    "minLength": 6
+                },
+                "phone_number": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.PhoneLinkInput": {
+            "type": "object",
+            "required": [
+                "phone_number"
+            ],
+            "properties": {
+                "phone_number": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.PhoneLinkOutput": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string"
+                },
+                "phone_number": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.PhoneLoginChallengeOutput": {
+            "type": "object",
+            "properties": {
+                "challenge_name": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "session": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.PhoneLoginInput": {
+            "type": "object",
+            "required": [
+                "phone_number"
+            ],
+            "properties": {
+                "phone_number": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.PhoneRegisterInput": {
+            "type": "object",
+            "required": [
+                "name",
+                "phone_number"
+            ],
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string",
+                    "minLength": 2
+                },
+                "phone_number": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.PhoneRegisterOutput": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string"
+                },
+                "phone_number": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.PhoneVerifyLoginInput": {
+            "type": "object",
+            "required": [
+                "code",
+                "phone_number",
+                "session"
+            ],
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "maxLength": 8,
+                    "minLength": 6
+                },
+                "phone_number": {
+                    "type": "string"
+                },
+                "session": {
+                    "type": "string"
+                }
+            }
+        },
         "services.PresignedUpload": {
             "type": "object",
             "properties": {
@@ -27403,6 +28653,23 @@ const docTemplate = `{
                 },
                 "page": {
                     "type": "integer"
+                }
+            }
+        },
+        "services.ReportExportResponse": {
+            "type": "object",
+            "properties": {
+                "content_type": {
+                    "type": "string"
+                },
+                "data": {
+                    "type": "string"
+                },
+                "filename": {
+                    "type": "string"
+                },
+                "run": {
+                    "$ref": "#/definitions/models.ReportRun"
                 }
             }
         },
@@ -28927,6 +30194,10 @@ const docTemplate = `{
                 },
                 "usage_limit_per_customer": {
                     "type": "integer"
+                },
+                "version": {
+                    "type": "integer",
+                    "minimum": 1
                 }
             }
         },

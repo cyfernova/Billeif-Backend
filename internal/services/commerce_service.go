@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -117,7 +118,13 @@ type UpsertStorefrontCouponInput struct {
 	EndsAt                *time.Time             `json:"ends_at,omitempty"`
 	IsActive              *bool                  `json:"is_active,omitempty"`
 	Metadata              map[string]interface{} `json:"metadata,omitempty"`
+	Version               *int64                 `json:"version,omitempty" binding:"omitempty,gte=1"`
 }
+
+var (
+	ErrCouponRedeemed        = errors.New("redeemed coupon cannot be deleted")
+	ErrCouponVersionConflict = errors.New("coupon version conflict")
+)
 
 type CheckoutCustomerInput struct {
 	Name       string                 `json:"name" binding:"required"`
@@ -931,6 +938,9 @@ func (s *CommerceService) ListStorefrontCoupons(ctx context.Context, businessID,
 }
 
 func (s *CommerceService) CreateStorefrontCoupon(ctx context.Context, businessID, storefrontID string, input UpsertStorefrontCouponInput) (*models.StorefrontCoupon, error) {
+	if err := validateCouponInput(input); err != nil {
+		return nil, err
+	}
 	coupon := &models.StorefrontCoupon{
 		StorefrontID:          storefrontID,
 		Code:                  strings.ToUpper(strings.TrimSpace(input.Code)),
@@ -944,6 +954,7 @@ func (s *CommerceService) CreateStorefrontCoupon(ctx context.Context, businessID
 		EndsAt:                input.EndsAt,
 		IsActive:              boolValueOrDefault(input.IsActive, true),
 		Metadata:              mustMarshalMap(input.Metadata),
+		Version:               1,
 	}
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := requireOwnedStorefrontTx(tx, businessID, storefrontID); err != nil {
@@ -967,6 +978,41 @@ func (s *CommerceService) UpdateStorefrontCoupon(ctx context.Context, businessID
 			First(&coupon).Error; err != nil {
 			return err
 		}
+		if input.Version != nil && coupon.Version != *input.Version {
+			return ErrCouponVersionConflict
+		}
+		candidate := input
+		candidate.Code = firstNonEmpty(input.Code, coupon.Code)
+		candidate.DiscountType = firstNonEmpty(input.DiscountType, coupon.DiscountType)
+		if candidate.DiscountValue <= 0 {
+			candidate.DiscountValue = coupon.DiscountValue
+		}
+		if err := validateCouponInput(candidate); err != nil {
+			return err
+		}
+		var totalRedemptions int64
+		if err := tx.Model(&models.StorefrontCouponRedemption{}).
+			Where("storefront_coupon_id = ? AND deleted_at IS NULL", coupon.ID).
+			Count(&totalRedemptions).Error; err != nil {
+			return err
+		}
+		if input.UsageLimit > 0 && input.UsageLimit < max(coupon.RedemptionCount, totalRedemptions) {
+			return fmt.Errorf("usage limit cannot be below existing redemptions")
+		}
+		if input.UsageLimitPerCustomer > 0 {
+			var maximumCustomerUsage struct{ Total int64 }
+			if err := tx.Model(&models.StorefrontCouponRedemption{}).
+				Select("COUNT(*) AS total").
+				Where("storefront_coupon_id = ? AND deleted_at IS NULL", coupon.ID).
+				Group("customer_id, LOWER(customer_email)").
+				Order("total DESC").Limit(1).
+				Scan(&maximumCustomerUsage).Error; err != nil {
+				return err
+			}
+			if input.UsageLimitPerCustomer < maximumCustomerUsage.Total {
+				return fmt.Errorf("customer usage limit cannot be below existing redemptions")
+			}
+		}
 		coupon.Code = strings.ToUpper(strings.TrimSpace(firstNonEmpty(input.Code, coupon.Code)))
 		if input.DiscountType != "" {
 			coupon.DiscountType = input.DiscountType
@@ -986,11 +1032,55 @@ func (s *CommerceService) UpdateStorefrontCoupon(ctx context.Context, businessID
 		if input.Metadata != nil {
 			coupon.Metadata = mustMarshalMap(input.Metadata)
 		}
+		coupon.Version++
 		return tx.Save(&coupon).Error
 	}); err != nil {
 		return nil, err
 	}
 	return &coupon, nil
+}
+
+func validateCouponInput(input UpsertStorefrontCouponInput) error {
+	if strings.TrimSpace(input.Code) == "" {
+		return fmt.Errorf("coupon code is required")
+	}
+	if input.DiscountType != models.StoreCouponDiscountTypePercent && input.DiscountType != models.StoreCouponDiscountTypeFixed {
+		return fmt.Errorf("unsupported coupon type")
+	}
+	if input.DiscountValue <= 0 || (input.DiscountType == models.StoreCouponDiscountTypePercent && input.DiscountValue > 100) {
+		return fmt.Errorf("discount value is invalid")
+	}
+	if input.MinimumOrderValue < 0 || input.MaxDiscountAmount < 0 || input.UsageLimit < 0 || input.UsageLimitPerCustomer < 0 {
+		return fmt.Errorf("coupon limits must be non-negative")
+	}
+	if input.StartsAt != nil && input.EndsAt != nil && !input.StartsAt.Before(*input.EndsAt) {
+		return fmt.Errorf("coupon start must be before end")
+	}
+	return nil
+}
+
+func (s *CommerceService) DeleteStorefrontCoupon(ctx context.Context, businessID, storefrontID, couponID string) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := requireOwnedStorefrontTx(tx, businessID, storefrontID); err != nil {
+			return err
+		}
+		var coupon models.StorefrontCoupon
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND storefront_id = ? AND deleted_at IS NULL", couponID, storefrontID).
+			First(&coupon).Error; err != nil {
+			return err
+		}
+		var redemptions int64
+		if err := tx.Model(&models.StorefrontCouponRedemption{}).
+			Where("storefront_coupon_id = ? AND deleted_at IS NULL", coupon.ID).
+			Count(&redemptions).Error; err != nil {
+			return err
+		}
+		if coupon.RedemptionCount > 0 || redemptions > 0 {
+			return ErrCouponRedeemed
+		}
+		return tx.Delete(&coupon).Error
+	})
 }
 
 func requireOwnedStorefrontTx(tx *gorm.DB, businessID, storefrontID string) error {
@@ -1448,6 +1538,15 @@ func (s *CommerceService) Checkout(ctx context.Context, slug, idempotencyKey str
 	order.SalesOrderID = stringPointer(salesOrder.ID)
 
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if couponCode != "" {
+			coupon, discount, err := s.resolveCouponTx(tx, storefront, couponCode, customer.ID, customer.Email, order.Subtotal, true)
+			if err != nil {
+				return err
+			}
+			if order.CouponID == nil || *order.CouponID != coupon.ID || roundMoney(discount) != order.DiscountTotal {
+				return fmt.Errorf("coupon changed during checkout; retry")
+			}
+		}
 		if err := tx.Create(salesOrder).Error; err != nil {
 			return err
 		}
@@ -1476,6 +1575,14 @@ func (s *CommerceService) Checkout(ctx context.Context, slug, idempotencyKey str
 			}
 			if err := tx.Create(redemption).Error; err != nil {
 				return err
+			}
+			if result := tx.Model(&models.StorefrontCoupon{}).
+				Where("id = ? AND deleted_at IS NULL", *order.CouponID).
+				UpdateColumn("redemption_count", gorm.Expr("redemption_count + 1")); result.Error != nil || result.RowsAffected != 1 {
+				if result.Error != nil {
+					return result.Error
+				}
+				return fmt.Errorf("coupon is no longer available")
 			}
 		}
 		if err := tx.Create(&models.StoreOrderEvent{
@@ -2121,9 +2228,16 @@ func (s *CommerceService) buildStoreOrderLines(ctx context.Context, storefront *
 }
 
 func (s *CommerceService) resolveCoupon(ctx context.Context, storefront *models.Storefront, code, customerID, customerEmail string, subtotal float64) (*models.StorefrontCoupon, float64, error) {
+	return s.resolveCouponTx(s.db.WithContext(ctx), storefront, code, customerID, customerEmail, subtotal, false)
+}
+
+func (s *CommerceService) resolveCouponTx(db *gorm.DB, storefront *models.Storefront, code, customerID, customerEmail string, subtotal float64, lock bool) (*models.StorefrontCoupon, float64, error) {
 	var coupon models.StorefrontCoupon
-	if err := s.db.WithContext(ctx).
-		Where("storefront_id = ? AND code = ? AND deleted_at IS NULL", storefront.ID, code).
+	query := db.Where("storefront_id = ? AND code = ? AND deleted_at IS NULL", storefront.ID, code)
+	if lock {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	if err := query.
 		First(&coupon).Error; err != nil {
 		return nil, 0, fmt.Errorf("coupon not found")
 	}
@@ -2142,7 +2256,7 @@ func (s *CommerceService) resolveCoupon(ctx context.Context, storefront *models.
 	}
 	if coupon.UsageLimit > 0 {
 		var total int64
-		if err := s.db.WithContext(ctx).
+		if err := db.
 			Model(&models.StorefrontCouponRedemption{}).
 			Where("storefront_coupon_id = ? AND deleted_at IS NULL", coupon.ID).
 			Count(&total).Error; err != nil {
@@ -2153,7 +2267,7 @@ func (s *CommerceService) resolveCoupon(ctx context.Context, storefront *models.
 		}
 	}
 	if coupon.UsageLimitPerCustomer > 0 {
-		query := s.db.WithContext(ctx).
+		query := db.
 			Model(&models.StorefrontCouponRedemption{}).
 			Where("storefront_coupon_id = ? AND deleted_at IS NULL", coupon.ID)
 		if customerID != "" {

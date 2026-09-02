@@ -708,14 +708,12 @@ func TestAuthService_UpdateProfile(t *testing.T) {
 	}
 
 	input := services.UpdateProfileInput{
-		Name:        testStringPtr("New Name"),
-		Email:       testStringPtr("new@example.com"),
-		PhoneNumber: testStringPtr("9876543210"),
+		Name:  testStringPtr("New Name"),
+		Email: testStringPtr("new@example.com"),
 	}
 
 	mockUserRepo.On("GetByID", ctx, userID).Return(existingUser, nil)
 	mockUserRepo.On("GetByEmail", ctx, "new@example.com").Return(nil, errors.New("user not found"))
-	mockUserRepo.On("GetByPhoneNumber", ctx, "+919876543210").Return(nil, errors.New("user not found"))
 	mockUserRepo.On("Update", ctx, mock.AnythingOfType("*models.User")).Return(nil)
 
 	user, err := svc.UpdateProfile(ctx, userID, input)
@@ -723,7 +721,7 @@ func TestAuthService_UpdateProfile(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "New Name", user.Name)
 	assert.Equal(t, "new@example.com", user.Email)
-	assert.Equal(t, "+919876543210", user.PhoneNumber)
+	assert.Equal(t, "+919999999999", user.PhoneNumber)
 	mockUserRepo.AssertExpectations(t)
 }
 
@@ -759,7 +757,7 @@ func TestAuthService_UpdateProfileRejectsInvalidPhone(t *testing.T) {
 	mockUserRepo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything)
 }
 
-func TestAuthService_UpdateProfileAllowsPartialPhoneOnly(t *testing.T) {
+func TestAuthService_UpdateProfileRequiresExplicitPhoneLink(t *testing.T) {
 	mockCognito := new(MockCognitoIdentityProviderAPI)
 	mockUserRepo := new(MockUserRepository)
 	log := logger.New()
@@ -777,16 +775,13 @@ func TestAuthService_UpdateProfileAllowsPartialPhoneOnly(t *testing.T) {
 	}
 
 	mockUserRepo.On("GetByID", ctx, userID).Return(existingUser, nil)
-	mockUserRepo.On("GetByPhoneNumber", ctx, "+919876543210").Return(nil, errors.New("user not found"))
-	mockUserRepo.On("Update", ctx, mock.AnythingOfType("*models.User")).Return(nil)
-
 	user, err := svc.UpdateProfile(ctx, userID, services.UpdateProfileInput{
 		PhoneNumber: testStringPtr("9876543210"),
 	})
 
-	assert.NoError(t, err)
-	assert.Equal(t, "Existing Name", user.Name)
-	assert.Equal(t, "+919876543210", user.PhoneNumber)
+	assert.Nil(t, user)
+	assert.ErrorIs(t, err, services.ErrPhoneLinkRequired)
+	mockUserRepo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything)
 	mockUserRepo.AssertExpectations(t)
 }
 

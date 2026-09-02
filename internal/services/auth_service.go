@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"regexp"
@@ -29,9 +30,9 @@ const (
 	phoneSignupCooldownPurpose  = "signup"
 	phoneResendCooldownPurpose  = "resend"
 	phoneLoginCooldownPurpose   = "login"
+	phoneLinkCooldownPurpose    = "link"
 	phoneOTPCooldownWindow      = time.Minute
 	phoneAuthDisabledMessage    = "phone authentication is not configured"
-	phoneAuthConflictMessage    = "phone number already registered"
 	phoneAuthEmailConflict      = "email already registered with another account"
 	phoneAuthEmailUnsupported   = "email cannot be set during phone registration"
 	phoneAuthRateLimitMessage   = "too many OTP requests, please wait before trying again"
@@ -42,7 +43,15 @@ const (
 	defaultPhoneChallengePrompt = "OTP sent to your phone number"
 )
 
-var indianMobileNumberPattern = regexp.MustCompile(`^[6-9][0-9]{9}$`)
+var (
+	ErrPhoneLinkConflict = errors.New("phone number is linked to another account")
+	ErrPhoneLinkRequired = errors.New("use the explicit phone link flow to change phone_number")
+)
+
+var (
+	indianMobileNumberPattern = regexp.MustCompile(`^[6-9][0-9]{9}$`)
+	phoneOTPPattern           = regexp.MustCompile(`^[0-9]{6,8}$`)
+)
 
 type cognitoIdentityProviderAPI interface {
 	ChangePassword(ctx context.Context, params *cognitoidentityprovider.ChangePasswordInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.ChangePasswordOutput, error)
@@ -72,6 +81,12 @@ type AuthService struct {
 	email        *EmailService
 	s3           *S3Service
 	log          *logger.Logger
+	authAudit    authAuditRecorder
+	phoneLink    interfaces.PhoneLinkAuditRepository
+}
+
+type authAuditRecorder interface {
+	RecordSecurityAudit(context.Context, *models.SecurityAuditEvent) error
 }
 
 func NewAuthService(cfg *config.Config, userRepo interfaces.UserRepository, awsCfg *awsclients.Config, email *EmailService, s3 *S3Service, log *logger.Logger) *AuthService {
@@ -96,6 +111,14 @@ func NewAuthService(cfg *config.Config, userRepo interfaces.UserRepository, awsC
 	}
 
 	return svc
+}
+
+func (s *AuthService) WithAuthAuditRecorder(recorder authAuditRecorder) *AuthService {
+	s.authAudit = recorder
+	if committer, ok := recorder.(interfaces.PhoneLinkAuditRepository); ok {
+		s.phoneLink = committer
+	}
+	return s
 }
 
 type RegisterInput struct {
@@ -585,6 +608,15 @@ func (s *AuthService) UpdateProfile(ctx context.Context, userID string, input Up
 	if err != nil {
 		return nil, err
 	}
+	if input.PhoneNumber != nil {
+		normalizedPhone, err := normalizeIndianPhoneNumber(*input.PhoneNumber)
+		if err != nil {
+			return nil, err
+		}
+		if normalizedPhone != user.PhoneNumber {
+			return nil, ErrPhoneLinkRequired
+		}
+	}
 
 	if input.Name != nil {
 		name := strings.TrimSpace(*input.Name)
@@ -604,22 +636,6 @@ func (s *AuthService) UpdateProfile(ctx context.Context, userID string, input Up
 				return nil, err
 			}
 			user.Email = email
-		}
-	}
-	if input.PhoneNumber != nil {
-		normalizedPhone, err := normalizeIndianPhoneNumber(*input.PhoneNumber)
-		if err != nil {
-			return nil, err
-		}
-		if normalizedPhone != user.PhoneNumber {
-			existing, err := s.userRepo.GetByPhoneNumber(ctx, normalizedPhone)
-			if err == nil && existing != nil && existing.ID != user.ID {
-				return nil, errors.New(phoneAuthConflictMessage)
-			}
-			if err != nil && !isUserNotFoundError(err) {
-				return nil, err
-			}
-			user.PhoneNumber = normalizedPhone
 		}
 	}
 	if input.ProfilePictureURL != nil {
@@ -857,7 +873,6 @@ type PhoneRegisterInput struct {
 }
 
 type PhoneRegisterOutput struct {
-	UserID      string `json:"user_id"`
 	PhoneNumber string `json:"phone_number"`
 	Message     string `json:"message"`
 }
@@ -875,12 +890,14 @@ func (s *AuthService) PhoneRegister(ctx context.Context, input PhoneRegisterInpu
 	if strings.TrimSpace(input.Email) != "" {
 		return nil, errors.New(phoneAuthEmailUnsupported)
 	}
-	if _, err := s.userRepo.GetByPhoneNumber(ctx, normalizedPhone); err == nil {
-		return nil, errors.New(phoneAuthConflictMessage)
-	}
-
 	if err := s.enforcePhoneOTPCooldown(ctx, phoneSignupCooldownPurpose, normalizedPhone); err != nil {
 		return nil, err
+	}
+	if existing, lookupErr := s.userRepo.GetByPhoneNumber(ctx, normalizedPhone); lookupErr == nil && existing != nil {
+		s.recordPhoneAuthAudit(ctx, phoneAuditSubject(normalizedPhone), "phone_registration_started", "accepted", "response_normalized", normalizedPhone)
+		return &PhoneRegisterOutput{PhoneNumber: normalizedPhone, Message: defaultPhoneRegisterPrompt}, nil
+	} else if lookupErr != nil && !isUserNotFoundError(lookupErr) {
+		return nil, errors.New(phoneAuthGenericFailure)
 	}
 
 	userAttributes := []types.AttributeType{
@@ -895,11 +912,18 @@ func (s *AuthService) PhoneRegister(ctx context.Context, input PhoneRegisterInpu
 		UserAttributes: userAttributes,
 	})
 	if err != nil {
+		var usernameExists *types.UsernameExistsException
+		var aliasExists *types.AliasExistsException
+		if errors.As(err, &usernameExists) || errors.As(err, &aliasExists) {
+			s.recordPhoneAuthAudit(ctx, phoneAuditSubject(normalizedPhone), "phone_registration_started", "accepted", "response_normalized", normalizedPhone)
+			return &PhoneRegisterOutput{PhoneNumber: normalizedPhone, Message: defaultPhoneRegisterPrompt}, nil
+		}
 		s.log.Warn("phone registration failed", "phone_number", maskPhoneNumber(normalizedPhone), "error", err)
-		return nil, fmt.Errorf("phone registration failed: %w", err)
+		s.recordPhoneAuthAudit(ctx, phoneAuditSubject(normalizedPhone), "phone_registration_started", "rejected", phoneAuthReasonCode(err), normalizedPhone)
+		return nil, classifyPhoneAuthError(err)
 	}
 	if signUpResp.UserSub == nil || *signUpResp.UserSub == "" {
-		return nil, fmt.Errorf("phone registration failed: missing user identity")
+		return nil, errors.New(phoneAuthGenericFailure)
 	}
 
 	user := &models.User{
@@ -911,11 +935,12 @@ func (s *AuthService) PhoneRegister(ctx context.Context, input PhoneRegisterInpu
 
 	if err := s.userRepo.Create(ctx, user); err != nil {
 		s.log.Error("failed to create phone user record", "phone_number", maskPhoneNumber(normalizedPhone), "error", err)
-		return nil, fmt.Errorf("failed to create user: %w", err)
+		s.recordPhoneAuthAudit(ctx, phoneAuditSubject(normalizedPhone), "phone_registration_started", "failed", "local_persistence_failed", normalizedPhone)
+		return nil, errors.New(phoneAuthGenericFailure)
 	}
+	s.recordPhoneAuthAudit(ctx, user.ID, "phone_registration_started", "accepted", "otp_dispatched", normalizedPhone)
 
 	return &PhoneRegisterOutput{
-		UserID:      user.ID,
 		PhoneNumber: normalizedPhone,
 		Message:     defaultPhoneRegisterPrompt,
 	}, nil
@@ -958,13 +983,22 @@ func (s *AuthService) PhoneConfirm(ctx context.Context, input PhoneConfirmInput)
 	if err != nil {
 		return err
 	}
+	code, err := normalizePhoneOTPCode(input.Code)
+	if err != nil {
+		return err
+	}
 
 	_, err = s.cognitoPhone.ConfirmSignUp(ctx, &cognitoidentityprovider.ConfirmSignUpInput{
 		ClientId:         aws.String(s.cfg.Cognito.Phone.ClientID),
 		Username:         aws.String(normalizedPhone),
-		ConfirmationCode: aws.String(strings.TrimSpace(input.Code)),
+		ConfirmationCode: aws.String(code),
 	})
-	return err
+	if err != nil {
+		s.recordPhoneAuthAudit(ctx, phoneAuditSubject(normalizedPhone), "phone_registration_confirmed", "rejected", phoneAuthReasonCode(err), normalizedPhone)
+		return classifyPhoneAuthError(err)
+	}
+	s.recordPhoneAuthAudit(ctx, phoneAuditSubject(normalizedPhone), "phone_registration_confirmed", "completed", "otp_verified", normalizedPhone)
+	return nil
 }
 
 func (s *AuthService) PhoneResendConfirmation(ctx context.Context, phoneNumber string) error {
@@ -984,7 +1018,16 @@ func (s *AuthService) PhoneResendConfirmation(ctx context.Context, phoneNumber s
 		ClientId: aws.String(s.cfg.Cognito.Phone.ClientID),
 		Username: aws.String(normalizedPhone),
 	})
-	return err
+	if err != nil {
+		if isPhoneEnumerationStateError(err) {
+			s.recordPhoneAuthAudit(ctx, phoneAuditSubject(normalizedPhone), "phone_otp_resent", "accepted", "response_normalized", normalizedPhone)
+			return nil
+		}
+		s.recordPhoneAuthAudit(ctx, phoneAuditSubject(normalizedPhone), "phone_otp_resent", "rejected", phoneAuthReasonCode(err), normalizedPhone)
+		return classifyPhoneAuthError(err)
+	}
+	s.recordPhoneAuthAudit(ctx, phoneAuditSubject(normalizedPhone), "phone_otp_resent", "accepted", "otp_dispatched", normalizedPhone)
+	return nil
 }
 
 type PhoneLoginInput struct {
@@ -1007,15 +1050,6 @@ func (s *AuthService) PhoneLogin(ctx context.Context, input PhoneLoginInput) (*P
 		return nil, err
 	}
 
-	// Surface a clear error before contacting Cognito when the number isn't registered locally.
-	if _, err := s.userRepo.GetByPhoneNumber(ctx, normalizedPhone); err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "user not found") {
-			return nil, fmt.Errorf("phone number not registered")
-		}
-		s.log.Error("phone login precheck failed", "phone_number", maskPhoneNumber(normalizedPhone), "error", err)
-		return nil, errors.New(phoneAuthGenericFailure)
-	}
-
 	if err := s.enforcePhoneOTPCooldown(ctx, phoneLoginCooldownPurpose, normalizedPhone); err != nil {
 		return nil, err
 	}
@@ -1030,9 +1064,11 @@ func (s *AuthService) PhoneLogin(ctx context.Context, input PhoneLoginInput) (*P
 	})
 	if err != nil {
 		s.log.Warn("phone login failed", "phone_number", maskPhoneNumber(normalizedPhone), "error", err)
-		return nil, classifyPhoneAuthError(err)
+		s.recordPhoneAuthAudit(ctx, phoneAuditSubject(normalizedPhone), "phone_login_started", "rejected", phoneAuthReasonCode(err), normalizedPhone)
+		return nil, classifyPhoneSessionError(err)
 	}
 	if result.Session == nil || *result.Session == "" {
+		s.recordPhoneAuthAudit(ctx, phoneAuditSubject(normalizedPhone), "phone_login_started", "rejected", "missing_challenge", normalizedPhone)
 		return nil, fmt.Errorf("authentication failed: missing challenge session")
 	}
 
@@ -1041,11 +1077,13 @@ func (s *AuthService) PhoneLogin(ctx context.Context, input PhoneLoginInput) (*P
 		challengeName = "SMS_OTP"
 	}
 
-	return &PhoneLoginChallengeOutput{
+	output := &PhoneLoginChallengeOutput{
 		ChallengeName: challengeName,
 		Session:       *result.Session,
 		Message:       defaultPhoneChallengePrompt,
-	}, nil
+	}
+	s.recordPhoneAuthAudit(ctx, phoneAuditSubject(normalizedPhone), "phone_login_started", "accepted", "otp_dispatched", normalizedPhone)
+	return output, nil
 }
 
 type PhoneVerifyLoginInput struct {
@@ -1063,22 +1101,37 @@ func (s *AuthService) PhoneVerifyLogin(ctx context.Context, input PhoneVerifyLog
 	if err != nil {
 		return nil, err
 	}
+	code, err := normalizePhoneOTPCode(input.Code)
+	if err != nil {
+		return nil, err
+	}
+	session := strings.TrimSpace(input.Session)
+	if session == "" || len(session) > 4096 {
+		return nil, errors.New(phoneAuthGenericFailure)
+	}
 
 	result, err := s.cognitoPhone.RespondToAuthChallenge(ctx, &cognitoidentityprovider.RespondToAuthChallengeInput{
 		ClientId:      aws.String(s.cfg.Cognito.Phone.ClientID),
 		ChallengeName: types.ChallengeNameTypeSmsOtp,
-		Session:       aws.String(strings.TrimSpace(input.Session)),
+		Session:       aws.String(session),
 		ChallengeResponses: map[string]string{
 			"USERNAME":     normalizedPhone,
-			"SMS_OTP_CODE": strings.TrimSpace(input.Code),
+			"SMS_OTP_CODE": code,
 		},
 	})
 	if err != nil {
 		s.log.Warn("phone OTP verification failed", "phone_number", maskPhoneNumber(normalizedPhone), "error", err)
+		s.recordPhoneAuthAudit(ctx, phoneAuditSubject(normalizedPhone), "phone_login_verified", "rejected", phoneAuthReasonCode(err), normalizedPhone)
 		return nil, classifyPhoneAuthError(err)
 	}
 
-	return loginOutputFromAuthResult(result.AuthenticationResult)
+	output, err := loginOutputFromAuthResult(result.AuthenticationResult)
+	if err != nil {
+		s.recordPhoneAuthAudit(ctx, phoneAuditSubject(normalizedPhone), "phone_login_verified", "rejected", "incomplete_provider_response", normalizedPhone)
+		return nil, err
+	}
+	s.recordPhoneAuthAudit(ctx, phoneAuditSubject(normalizedPhone), "phone_login_verified", "completed", "otp_verified", normalizedPhone)
+	return output, nil
 }
 
 func (s *AuthService) PhoneRefresh(ctx context.Context, input RefreshInput) (*LoginOutput, error) {
@@ -1086,18 +1139,28 @@ func (s *AuthService) PhoneRefresh(ctx context.Context, input RefreshInput) (*Lo
 		return nil, err
 	}
 
+	refreshToken := strings.TrimSpace(input.RefreshToken)
+	if refreshToken == "" || len(refreshToken) > 8192 {
+		return nil, errors.New(phoneAuthGenericFailure)
+	}
 	result, err := s.cognitoPhone.InitiateAuth(ctx, &cognitoidentityprovider.InitiateAuthInput{
 		ClientId: aws.String(s.cfg.Cognito.Phone.ClientID),
 		AuthFlow: types.AuthFlowTypeRefreshTokenAuth,
 		AuthParameters: map[string]string{
-			"REFRESH_TOKEN": input.RefreshToken,
+			"REFRESH_TOKEN": refreshToken,
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("token refresh failed: %w", err)
+		s.recordPhoneAuthAudit(ctx, "anonymous", "phone_session_refreshed", "rejected", phoneAuthReasonCode(err), "")
+		return nil, classifyPhoneSessionError(err)
 	}
 
-	return loginOutputFromRefreshResult(result.AuthenticationResult, input.RefreshToken)
+	output, err := loginOutputFromRefreshResult(result.AuthenticationResult, refreshToken)
+	if err != nil {
+		return nil, err
+	}
+	s.recordPhoneAuthAudit(ctx, "anonymous", "phone_session_refreshed", "completed", "token_rotated", "")
+	return output, nil
 }
 
 func (s *AuthService) PhoneLogout(ctx context.Context, accessToken string) error {
@@ -1105,10 +1168,137 @@ func (s *AuthService) PhoneLogout(ctx context.Context, accessToken string) error
 		return err
 	}
 
+	accessToken = strings.TrimSpace(accessToken)
+	if accessToken == "" || len(accessToken) > 8192 {
+		return errors.New(phoneAuthGenericFailure)
+	}
 	_, err := s.cognitoPhone.GlobalSignOut(ctx, &cognitoidentityprovider.GlobalSignOutInput{
 		AccessToken: aws.String(accessToken),
 	})
-	return err
+	if err != nil {
+		s.recordPhoneAuthAudit(ctx, accessTokenAuditSubject(accessToken), "phone_session_revoked", "rejected", phoneAuthReasonCode(err), "")
+		return classifyPhoneSessionError(err)
+	}
+	s.recordPhoneAuthAudit(ctx, accessTokenAuditSubject(accessToken), "phone_session_revoked", "completed", "global_sign_out", "")
+	return nil
+}
+
+type PhoneLinkInput struct {
+	PhoneNumber string `json:"phone_number" binding:"required"`
+}
+
+type PhoneLinkOutput struct {
+	PhoneNumber string `json:"phone_number"`
+	Message     string `json:"message"`
+}
+
+// PhoneLinkStart sends a possession challenge without changing the authenticated account.
+func (s *AuthService) PhoneLinkStart(ctx context.Context, userID string, input PhoneLinkInput) (*PhoneLinkOutput, error) {
+	if err := s.ensurePhoneAuthConfigured(); err != nil {
+		return nil, err
+	}
+	normalizedPhone, err := normalizeIndianPhoneNumber(input.PhoneNumber)
+	if err != nil {
+		return nil, err
+	}
+	user, err := s.userRepo.GetByID(ctx, strings.TrimSpace(userID))
+	if err != nil {
+		return nil, errors.New(phoneAuthGenericFailure)
+	}
+	if err := s.ensurePhoneLinkAvailable(ctx, user, normalizedPhone); err != nil {
+		s.recordPhoneAuthAudit(ctx, user.ID, "phone_link_started", "rejected", "identity_collision", normalizedPhone)
+		return nil, err
+	}
+	if err := s.enforcePhoneOTPCooldown(ctx, phoneLinkCooldownPurpose, normalizedPhone); err != nil {
+		return nil, err
+	}
+
+	_, err = s.cognitoPhone.SignUp(ctx, &cognitoidentityprovider.SignUpInput{
+		ClientId: aws.String(s.cfg.Cognito.Phone.ClientID), Username: aws.String(normalizedPhone),
+		UserAttributes: []types.AttributeType{
+			{Name: aws.String("name"), Value: aws.String(strings.TrimSpace(user.Name))},
+			{Name: aws.String("phone_number"), Value: aws.String(normalizedPhone)},
+		},
+	})
+	if err != nil {
+		var exists *types.UsernameExistsException
+		if !errors.As(err, &exists) {
+			s.recordPhoneAuthAudit(ctx, user.ID, "phone_link_started", "rejected", phoneAuthReasonCode(err), normalizedPhone)
+			return nil, classifyPhoneAuthError(err)
+		}
+		if _, resendErr := s.cognitoPhone.ResendConfirmationCode(ctx, &cognitoidentityprovider.ResendConfirmationCodeInput{
+			ClientId: aws.String(s.cfg.Cognito.Phone.ClientID), Username: aws.String(normalizedPhone),
+		}); resendErr != nil {
+			s.recordPhoneAuthAudit(ctx, user.ID, "phone_link_started", "rejected", phoneAuthReasonCode(resendErr), normalizedPhone)
+			return nil, classifyPhoneAuthError(resendErr)
+		}
+	}
+
+	s.recordPhoneAuthAudit(ctx, user.ID, "phone_link_started", "accepted", "otp_dispatched", normalizedPhone)
+	return &PhoneLinkOutput{PhoneNumber: normalizedPhone, Message: defaultPhoneChallengePrompt}, nil
+}
+
+// PhoneLinkConfirm links a phone only after Cognito proves possession of that exact number.
+func (s *AuthService) PhoneLinkConfirm(ctx context.Context, userID string, input PhoneConfirmInput) error {
+	if err := s.ensurePhoneAuthConfigured(); err != nil {
+		return err
+	}
+	normalizedPhone, err := normalizeIndianPhoneNumber(input.PhoneNumber)
+	if err != nil {
+		return err
+	}
+	code, err := normalizePhoneOTPCode(input.Code)
+	if err != nil {
+		return err
+	}
+	user, err := s.userRepo.GetByID(ctx, strings.TrimSpace(userID))
+	if err != nil {
+		return errors.New(phoneAuthGenericFailure)
+	}
+	if err := s.ensurePhoneLinkAvailable(ctx, user, normalizedPhone); err != nil {
+		s.recordPhoneAuthAudit(ctx, user.ID, "phone_link_confirmed", "rejected", "identity_collision", normalizedPhone)
+		return err
+	}
+
+	_, err = s.cognitoPhone.ConfirmSignUp(ctx, &cognitoidentityprovider.ConfirmSignUpInput{
+		ClientId: aws.String(s.cfg.Cognito.Phone.ClientID), Username: aws.String(normalizedPhone),
+		ConfirmationCode: aws.String(code),
+	})
+	if err != nil {
+		s.recordPhoneAuthAudit(ctx, user.ID, "phone_link_confirmed", "rejected", phoneAuthReasonCode(err), normalizedPhone)
+		return classifyPhoneAuthError(err)
+	}
+
+	if s.phoneLink == nil {
+		return errors.New(phoneAuthGenericFailure)
+	}
+	event := newPhoneAuthAuditEvent(user.ID, "phone_link_confirmed", "completed", "otp_verified", normalizedPhone)
+	linked, linkErr := s.phoneLink.LinkUserPhoneWithAudit(ctx, user.ID, normalizedPhone, time.Now().UTC(), event)
+	if linkErr != nil {
+		s.log.Error("failed to atomically link phone and audit", "user_id", user.ID, "error", linkErr)
+		return errors.New(phoneAuthGenericFailure)
+	}
+	if !linked {
+		return ErrPhoneLinkConflict
+	}
+	return nil
+}
+
+func (s *AuthService) ensurePhoneLinkAvailable(ctx context.Context, user *models.User, phoneNumber string) error {
+	if user == nil || strings.TrimSpace(user.ID) == "" {
+		return errors.New(phoneAuthGenericFailure)
+	}
+	if current := strings.TrimSpace(user.PhoneNumber); current != "" {
+		return ErrPhoneLinkConflict
+	}
+	existing, err := s.userRepo.GetByPhoneNumber(ctx, phoneNumber)
+	if err == nil && existing != nil {
+		return ErrPhoneLinkConflict
+	}
+	if err != nil && !isUserNotFoundError(err) {
+		return errors.New(phoneAuthGenericFailure)
+	}
+	return nil
 }
 
 func (s *AuthService) ensurePhoneAuthConfigured() error {
@@ -1133,8 +1323,11 @@ func (s *AuthService) cognitoClientForAccessToken(accessToken string) cognitoIde
 }
 
 func (s *AuthService) enforcePhoneOTPCooldown(ctx context.Context, purpose, phoneNumber string) error {
-	if s.dynamoDB == nil || s.cfg == nil || s.cfg.Cognito.Phone.OTPCooldownTable == "" {
+	if s.cfg == nil || s.cfg.Cognito.Phone.OTPCooldownTable == "" {
 		return nil
+	}
+	if s.dynamoDB == nil {
+		return fmt.Errorf("phone OTP rate limit is unavailable")
 	}
 
 	now := time.Now().Unix()
@@ -1223,6 +1416,14 @@ func normalizeIndianPhoneNumber(input string) (string, error) {
 	return "+91" + trimmed, nil
 }
 
+func normalizePhoneOTPCode(input string) (string, error) {
+	code := strings.TrimSpace(input)
+	if !phoneOTPPattern.MatchString(code) {
+		return "", errors.New("OTP code must contain 6 to 8 digits")
+	}
+	return code, nil
+}
+
 func normalizeOptionalEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
@@ -1275,7 +1476,7 @@ func classifyPhoneAuthError(err error) error {
 
 	var userNotFound *types.UserNotFoundException
 	if errors.As(err, &userNotFound) {
-		return fmt.Errorf("phone number not registered")
+		return errors.New(phoneAuthGenericFailure)
 	}
 
 	var userNotConfirmed *types.UserNotConfirmedException
@@ -1299,6 +1500,23 @@ func classifyPhoneAuthError(err error) error {
 	}
 
 	return errors.New(phoneAuthGenericFailure)
+}
+
+func classifyPhoneSessionError(err error) error {
+	classified := classifyPhoneAuthError(err)
+	switch classified.Error() {
+	case phoneAuthRateLimitMessage, "unable to deliver OTP SMS right now", "SMS delivery is not configured correctly":
+		return classified
+	default:
+		return errors.New(phoneAuthGenericFailure)
+	}
+}
+
+func isPhoneEnumerationStateError(err error) bool {
+	var userNotFound *types.UserNotFoundException
+	var invalidParameter *types.InvalidParameterException
+	var notAuthorized *types.NotAuthorizedException
+	return errors.As(err, &userNotFound) || errors.As(err, &invalidParameter) || errors.As(err, &notAuthorized)
 }
 
 func classifyEmailAuthError(err error) error {
@@ -1336,6 +1554,59 @@ func maskPhoneNumber(phoneNumber string) string {
 		return "****"
 	}
 	return normalized[:3] + strings.Repeat("*", len(normalized)-7) + normalized[len(normalized)-4:]
+}
+
+func phoneAuthReasonCode(err error) string {
+	switch classifyPhoneAuthError(err).Error() {
+	case phoneAuthRateLimitMessage:
+		return "rate_limited"
+	case "unable to deliver OTP SMS right now":
+		return "delivery_unavailable"
+	case "SMS delivery is not configured correctly":
+		return "delivery_misconfigured"
+	case "invalid OTP code":
+		return "code_mismatch"
+	case "OTP code expired, please request a new code":
+		return "code_expired"
+	case "phone number not verified":
+		return "identity_unconfirmed"
+	default:
+		return "authentication_failed"
+	}
+}
+
+func phoneAuditSubject(phoneNumber string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(phoneNumber)))
+	return fmt.Sprintf("phone:%x", sum[:16])
+}
+
+func accessTokenAuditSubject(accessToken string) string {
+	claims := &jwt.RegisteredClaims{}
+	if _, _, err := new(jwt.Parser).ParseUnverified(strings.TrimSpace(accessToken), claims); err == nil && strings.TrimSpace(claims.Subject) != "" {
+		return claims.Subject
+	}
+	return "anonymous"
+}
+
+func (s *AuthService) recordPhoneAuthAudit(ctx context.Context, subject, eventType, outcome, reasonCode, phoneNumber string) {
+	if s == nil || s.authAudit == nil {
+		return
+	}
+	event := newPhoneAuthAuditEvent(subject, eventType, outcome, reasonCode, phoneNumber)
+	if err := s.authAudit.RecordSecurityAudit(ctx, event); err != nil && s.log != nil {
+		s.log.Error("failed to record phone authentication audit", "event_type", eventType, "outcome", outcome, "error", err)
+	}
+}
+
+func newPhoneAuthAuditEvent(subject, eventType, outcome, reasonCode, phoneNumber string) *models.SecurityAuditEvent {
+	event := &models.SecurityAuditEvent{
+		ID: uuid.NewString(), Subject: subject, EventType: eventType, ResourceType: "phone_auth",
+		ResourceID: phoneAuditSubject(phoneNumber), Outcome: outcome, ReasonCode: reasonCode, OccurredAt: time.Now().UTC(),
+	}
+	if strings.TrimSpace(phoneNumber) == "" {
+		event.ResourceID = "session"
+	}
+	return event
 }
 
 // TestAuthConfig holds minimal config for testing AuthService

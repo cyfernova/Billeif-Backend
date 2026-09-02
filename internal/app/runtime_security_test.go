@@ -315,6 +315,7 @@ func TestJournalTaxAndPOSRoutesRequireFineGrainedPermissions(t *testing.T) {
 		`tax.POST("/gstr-2b/import", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), h.Tax.ImportGSTR2B)`,
 		`tax.GET("/reports/:type", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Tax.GetReport)`,
 		`tax.POST("/reports/:type/export", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsExport), h.Tax.ExportReport)`,
+		`reports.POST("/:key/export", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsExport), userReportRL, h.Report.Export)`,
 		`pos.POST("/sessions", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPOSOperate), h.POS.CreateSession)`,
 		`pos.POST("/carts/:id/checkout", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPOSOperate), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAccountingManage), h.POS.Checkout)`,
 	}

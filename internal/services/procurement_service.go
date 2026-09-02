@@ -751,8 +751,13 @@ func (s *ProcurementService) completePurchase(ctx context.Context, run *models.P
 
 	merchantID := winner.candidate.MerchantAgentID
 	unitPrice := *winner.candidate.FinalAmount / float64(req.Quantity)
+	shoppingAgent, err := s.ap2Repo.GetAgentByID(ctx, req.ShoppingAgentID)
+	if err != nil {
+		return fmt.Errorf("load shopping agent scope: %w", err)
+	}
 	cartMandate, err := s.shoppingSvc.CreateCartMandate(ctx, &CreateCartMandateRequest{
 		UserID:          req.UserID,
+		BusinessID:      shoppingAgent.BusinessID,
 		ShoppingAgentID: req.ShoppingAgentID,
 		MerchantID:      &merchantID,
 		IntentMandateID: run.IntentMandateID,
@@ -787,6 +792,7 @@ func (s *ProcurementService) completePurchase(ctx context.Context, run *models.P
 
 	paymentMandate, err := s.shoppingSvc.CompleteCheckout(ctx, &CheckoutRequest{
 		UserID:        req.UserID,
+		BusinessID:    shoppingAgent.BusinessID,
 		CartMandateID: cartMandate.ID,
 	})
 	if err != nil {

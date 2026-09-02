@@ -2,9 +2,11 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"invoice-backend/internal/models"
 	postgresrepo "invoice-backend/internal/repositories/postgres"
@@ -182,6 +184,106 @@ func TestStorefrontCheckoutPostgresSerializesClaimOrderAndReservation(t *testing
 	require.NoError(t, err)
 	require.Equal(t, firstCancellation.CancellationReason, secondCancellation.CancellationReason)
 	assertStorefrontCancellationCounts(t, database, fixture, cancellable.Order)
+
+	coupon := &models.StorefrontCoupon{
+		ID: uuid.NewString(), StorefrontID: storefront.ID, Code: "ONLYONCE",
+		DiscountType: models.StoreCouponDiscountTypeFixed, DiscountValue: 1,
+		UsageLimit: 1, IsActive: true, Version: 1,
+	}
+	require.NoError(t, database.Create(coupon).Error)
+	couponInput := input
+	couponInput.Items = []CheckoutItemInput{{ProductID: fixture.productID, Quantity: 1}}
+	couponInput.CouponCode = coupon.Code
+	couponInput.Customer = CheckoutCustomerInput{Name: "Coupon buyer", Email: "coupon@example.com"}
+	couponErrors := make(chan error, 2)
+	couponStart := make(chan struct{})
+	for index := 0; index < 2; index++ {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			<-couponStart
+			_, checkoutErr := service.Checkout(context.Background(), storefront.Slug, uuid.NewString(), couponInput)
+			couponErrors <- checkoutErr
+		}()
+	}
+	close(couponStart)
+	group.Wait()
+	close(couponErrors)
+	successes := 0
+	for checkoutErr := range couponErrors {
+		if checkoutErr == nil {
+			successes++
+			continue
+		}
+		require.ErrorContains(t, checkoutErr, "coupon usage limit reached")
+	}
+	require.Equal(t, 1, successes)
+	var persistedCoupon models.StorefrontCoupon
+	require.NoError(t, database.First(&persistedCoupon, "id = ?", coupon.ID).Error)
+	require.Equal(t, int64(1), persistedCoupon.RedemptionCount)
+	var couponRedemptions int64
+	require.NoError(t, database.Model(&models.StorefrontCouponRedemption{}).
+		Where("storefront_coupon_id = ? AND deleted_at IS NULL", coupon.ID).
+		Count(&couponRedemptions).Error)
+	require.Equal(t, int64(1), couponRedemptions)
+}
+
+func TestCartMandatePostgresCASAllowsSingleConcurrentMutation(t *testing.T) {
+	database := newInventoryPostgresIntegrationDB(t)
+	require.NoError(t, database.Exec(`CREATE TABLE cart_mandates (
+		id UUID PRIMARY KEY, business_id UUID NOT NULL, user_id UUID NOT NULL, agent_id UUID NOT NULL,
+		items JSONB NOT NULL, subtotal_amount DECIMAL(15,2) NOT NULL, tax_amount DECIMAL(15,2) NOT NULL,
+		total_amount DECIMAL(15,2) NOT NULL, currency VARCHAR(3) NOT NULL, signature VARCHAR(1000) NOT NULL,
+		signature_public_key VARCHAR(500), merchant_signature VARCHAR(1000), merchant_signature_public_key VARCHAR(500),
+		status VARCHAR(50) NOT NULL, version BIGINT NOT NULL, expires_at TIMESTAMPTZ NOT NULL,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	)`).Error)
+
+	base := &models.CartMandate{
+		ID: uuid.NewString(), BusinessID: uuid.NewString(), UserID: uuid.NewString(), AgentID: uuid.NewString(),
+		Items: `[{"product_id":"one","quantity":1}]`, SubtotalAmount: 10, TotalAmount: 10,
+		Currency: "INR", Signature: "initial", Status: "pending", Version: 1,
+		ExpiresAt: time.Now().Add(time.Hour),
+	}
+	require.NoError(t, database.Create(base).Error)
+	repository := postgresrepo.NewAP2Repository(database)
+	versioned, ok := repository.(interface {
+		UpdateCartMandateVersioned(context.Context, *models.CartMandate, int64) error
+	})
+	require.True(t, ok)
+
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var group sync.WaitGroup
+	for _, total := range []float64{20, 30} {
+		candidate := *base
+		candidate.SubtotalAmount = total
+		candidate.TotalAmount = total
+		candidate.Signature = fmt.Sprintf("signature-%.0f", total)
+		group.Add(1)
+		go func(cart models.CartMandate) {
+			defer group.Done()
+			<-start
+			errs <- versioned.UpdateCartMandateVersioned(context.Background(), &cart, 1)
+		}(candidate)
+	}
+	close(start)
+	group.Wait()
+	close(errs)
+
+	successes := 0
+	for err := range errs {
+		if err == nil {
+			successes++
+			continue
+		}
+		require.ErrorContains(t, err, "cart version or state conflict")
+	}
+	require.Equal(t, 1, successes)
+	var persisted models.CartMandate
+	require.NoError(t, database.First(&persisted, "id = ?", base.ID).Error)
+	require.Equal(t, int64(2), persisted.Version)
+	require.Contains(t, []float64{20, 30}, persisted.TotalAmount)
 }
 
 func assertStorefrontCheckoutCounts(t *testing.T, database *gorm.DB, fixture inventoryTransferFixture, storefrontID string, reserved float64) {

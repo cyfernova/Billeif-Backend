@@ -219,7 +219,7 @@ func NewContainer(
 	documentSvc := NewDocumentService(db, cfg, resolver, documentRepo, businessRepo, customerRepo, vendorRepo, productRepo, inventorySvc, journalSvc, shippingSvc, aws, businessAuthSvc, log)
 	barcodeSvc := NewBarcodeService(db, log)
 	projectSvc := NewProjectService(db, log)
-	reportSvc := NewReportService(cfg, reportingRepo, log)
+	reportSvc := NewReportService(cfg, reportingRepo, log).WithBusinessTimezoneProvider(businessRepo)
 	marketplaceSvc := NewMarketplaceService(ap2Repo, log)
 	productMatchingSvc := NewProductMatchingService(marketplaceSvc, log)
 	intentProcessingSvc, _ := NewIntentProcessingService(productMatchingSvc, marketplaceSvc, log)
@@ -317,6 +317,9 @@ func NewContainer(
 		BusinessHealth: capabilityBusinessHealth,
 	})
 	pendingUploadSvc := NewPendingUploadService(securityRepo, s3Svc, FailClosedUploadScanner{}, PendingUploadOptions{Bucket: cfg.S3.BucketDrive})
+	logoUploadSvc := NewPendingUploadService(securityRepo, s3Svc, nil, PendingUploadOptions{Bucket: cfg.S3.BucketLogos})
+	businessSvc := NewBusinessService(businessRepo, s3Svc, log).
+		WithLogoUploadWorkflow(securityRepo, logoUploadSvc, s3Svc, cfg.S3.BucketLogos)
 	privacySvc := NewPrivacyService(
 		securityRepo,
 		NewDatabasePrivacyExporter(db, s3Svc, cfg.S3.BucketDrive),
@@ -368,9 +371,9 @@ func NewContainer(
 	a2aTaskSvc.ConfigureDomainServices(ap2Repo, merchantAgentSvc, sellerNegotiationSvc, ap2Signer)
 
 	return &Container{
-		Auth:                   NewAuthService(cfg, userRepo, aws, emailSvc, s3Svc, log),
+		Auth:                   NewAuthService(cfg, userRepo, aws, emailSvc, s3Svc, log).WithAuthAuditRecorder(securityRepo),
 		BusinessAuth:           businessAuthSvc,
-		Business:               NewBusinessService(businessRepo, s3Svc, log),
+		Business:               businessSvc,
 		Customer:               customerSvc,
 		Vendor:                 NewVendorService(vendorRepo, businessAuthSvc, log),
 		Product:                NewProductService(db, productRepo, s3Svc, inventorySvc, log),

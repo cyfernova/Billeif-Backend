@@ -28,10 +28,11 @@ func TestEveryGinRouteRegistrationHasAnExplicitAccessClass(t *testing.T) {
 		"public": routePublic,
 		"store":  routePublic,
 
-		"mcpGroup":   routeUser,
-		"googleAuth": routeUser,
-		"admin":      routeUser,
-		"operator":   routeOperator,
+		"mcpGroup":    routeUser,
+		"googleAuth":  routeUser,
+		"accountAuth": routeUser,
+		"admin":       routeUser,
+		"operator":    routeOperator,
 
 		"protected":            routeBusiness,
 		"operations":           routeBusiness,

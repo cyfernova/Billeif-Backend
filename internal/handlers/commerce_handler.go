@@ -637,11 +637,46 @@ func (h *CommerceHandler) UpdateStorefrontCoupon(c *gin.Context) {
 		status := http.StatusBadRequest
 		if isNotFoundErr(err) {
 			status = http.StatusNotFound
+		} else if errors.Is(err, services.ErrCouponVersionConflict) {
+			status = http.StatusConflict
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, coupon)
+}
+
+// DeleteStorefrontCoupon godoc
+// @Summary Delete an unredeemed storefront coupon
+// @Description Soft-deletes a coupon only when it has never been redeemed
+// @Tags Storefronts
+// @Security BearerAuth
+// @Param id path string true "Storefront ID"
+// @Param coupon_id path string true "Coupon ID"
+// @Success 204
+// @Failure 401 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Router /storefronts/{id}/coupons/{coupon_id} [delete]
+func (h *CommerceHandler) DeleteStorefrontCoupon(c *gin.Context) {
+	requestContextWithActor(c)
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	err := h.svc.DeleteStorefrontCoupon(c.Request.Context(), businessID, c.Param("id"), c.Param("coupon_id"))
+	if err != nil {
+		status := http.StatusBadRequest
+		switch {
+		case isNotFoundErr(err):
+			status = http.StatusNotFound
+		case errors.Is(err, services.ErrCouponRedeemed):
+			status = http.StatusConflict
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 // ListStorefrontOrders godoc
@@ -1006,7 +1041,7 @@ func (h *CommerceHandler) PublicCategories(c *gin.Context) {
 // @Success 200 {object} map[string]interface{}
 // @Failure 400 {object} map[string]string
 // @Failure 404 {object} map[string]string
-// @Router /public/store/coupons/validate/{slug} [post]
+// @Router /public/store/{slug}/coupons/validate [post]
 func (h *CommerceHandler) PublicValidateCoupon(c *gin.Context) {
 	var input services.ValidateCouponInput
 	if err := c.ShouldBindJSON(&input); err != nil {

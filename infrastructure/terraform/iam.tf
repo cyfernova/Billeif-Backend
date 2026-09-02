@@ -697,7 +697,18 @@ data "aws_iam_policy_document" "lambda_http_app" {
     actions = ["s3:PutObject"]
     resources = [
       "${aws_s3_bucket.business_logos.arn}/logos/*",
+      "${aws_s3_bucket.business_logos.arn}/pending/*",
       "${aws_s3_bucket.business_logos.arn}/profile-pictures/*",
+    ]
+  }
+
+  statement {
+    sid     = "HTTPBusinessLogoLifecycle"
+    effect  = "Allow"
+    actions = ["s3:DeleteObject", "s3:GetObject"]
+    resources = [
+      "${aws_s3_bucket.business_logos.arn}/logos/*",
+      "${aws_s3_bucket.business_logos.arn}/pending/*",
     ]
   }
 

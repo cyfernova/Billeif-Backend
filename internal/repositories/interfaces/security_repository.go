@@ -2,10 +2,13 @@ package interfaces
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"invoice-backend/internal/models"
 )
+
+var ErrBusinessLogoFinalizeConflict = errors.New("business logo finalization conflict")
 
 type StepUpConsumeRequest struct {
 	TokenHash   string
@@ -22,6 +25,10 @@ type SecurityRepository interface {
 	ConsumeStepUpGrant(context.Context, StepUpConsumeRequest) (bool, error)
 }
 
+type PhoneLinkAuditRepository interface {
+	LinkUserPhoneWithAudit(context.Context, string, string, time.Time, *models.SecurityAuditEvent) (bool, error)
+}
+
 type PendingUploadRepository interface {
 	CreatePendingUpload(context.Context, *models.PendingUpload) error
 	GetPendingUpload(context.Context, string, string, string) (*models.PendingUpload, error)
@@ -29,9 +36,33 @@ type PendingUploadRepository interface {
 	SavePendingUpload(context.Context, *models.PendingUpload) error
 }
 
+type BusinessLogoFinalizeRequest struct {
+	BusinessID     string
+	UploaderID     string
+	UploadID       string
+	Bucket         string
+	ObjectKey      string
+	ContentType    string
+	SizeBytes      int64
+	ChecksumSHA256 string
+	CompletedAt    time.Time
+}
+
+type BusinessLogoFinalizeResult struct {
+	Business          *models.BusinessProfile
+	PreviousObjectKey string
+	Replayed          bool
+}
+
+type BusinessLogoRepository interface {
+	PendingUploadRepository
+	FinalizeBusinessLogo(context.Context, BusinessLogoFinalizeRequest) (*BusinessLogoFinalizeResult, error)
+	CompleteBusinessLogoCleanup(context.Context, string, string, string, string) error
+}
+
 type SecurityPrivacyRepository interface {
 	SecurityRepository
-	PendingUploadRepository
+	BusinessLogoRepository
 	PrivacyRepository
 }
 

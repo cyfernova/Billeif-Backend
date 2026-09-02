@@ -107,6 +107,17 @@ func (r *ap2Repository) GetCartMandateByID(ctx context.Context, id, userID strin
 	return &mandate, err
 }
 
+func (r *ap2Repository) GetCartMandateForScope(ctx context.Context, id, userID, businessID string) (*models.CartMandate, error) {
+	var mandate models.CartMandate
+	err := r.db.WithContext(ctx).Preload("PaymentMandates").
+		Where("id = ? AND user_id = ? AND business_id = ?", id, userID, businessID).
+		First(&mandate).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, errors.New("cart mandate not found")
+	}
+	return &mandate, err
+}
+
 func (r *ap2Repository) GetCartMandateByMerchant(ctx context.Context, id, merchantID string) (*models.CartMandate, error) {
 	var mandate models.CartMandate
 	err := r.db.WithContext(ctx).Preload("PaymentMandates").Where("id = ? AND merchant_id = ?", id, merchantID).First(&mandate).Error
@@ -138,8 +149,54 @@ func (r *ap2Repository) GetCartMandatesByUser(ctx context.Context, userID string
 	return result, total, nil
 }
 
+func (r *ap2Repository) GetCartMandatesForScope(ctx context.Context, userID, businessID string, page, limit int) ([]*models.CartMandate, int64, error) {
+	var mandates []models.CartMandate
+	var total int64
+	offset := (page - 1) * limit
+	query := r.db.WithContext(ctx).Model(&models.CartMandate{}).
+		Where("user_id = ? AND business_id = ?", userID, businessID)
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	if err := query.Order("created_at DESC").Offset(offset).Limit(limit).Find(&mandates).Error; err != nil {
+		return nil, 0, err
+	}
+	result := make([]*models.CartMandate, len(mandates))
+	for i := range mandates {
+		result[i] = &mandates[i]
+	}
+	return result, total, nil
+}
+
 func (r *ap2Repository) UpdateCartMandate(ctx context.Context, mandate *models.CartMandate) error {
 	return r.db.WithContext(ctx).Save(mandate).Error
+}
+
+func (r *ap2Repository) UpdateCartMandateVersioned(ctx context.Context, mandate *models.CartMandate, expectedVersion int64) error {
+	result := r.db.WithContext(ctx).Model(&models.CartMandate{}).
+		Where("id = ? AND user_id = ? AND business_id = ? AND version = ? AND status = ?",
+			mandate.ID, mandate.UserID, mandate.BusinessID, expectedVersion, "pending").
+		Updates(map[string]interface{}{
+			"items":                         mandate.Items,
+			"subtotal_amount":               mandate.SubtotalAmount,
+			"tax_amount":                    mandate.TaxAmount,
+			"total_amount":                  mandate.TotalAmount,
+			"currency":                      mandate.Currency,
+			"signature":                     mandate.Signature,
+			"signature_public_key":          mandate.SignaturePublicKey,
+			"merchant_signature":            nil,
+			"merchant_signature_public_key": nil,
+			"version":                       gorm.Expr("version + 1"),
+			"updated_at":                    time.Now().UTC(),
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return errors.New("cart version or state conflict")
+	}
+	mandate.Version = expectedVersion + 1
+	return nil
 }
 
 func (r *ap2Repository) SignCartMandate(ctx context.Context, id, merchantID, signature, publicKey string) error {
@@ -155,6 +212,28 @@ func (r *ap2Repository) SignCartMandate(ctx context.Context, id, merchantID, sig
 	}
 	if result.RowsAffected != 1 {
 		return errors.New("cart mandate is not pending or does not belong to merchant")
+	}
+	return nil
+}
+
+func (r *ap2Repository) RespondToCartMandateVersioned(ctx context.Context, id, merchantID, status, signature, publicKey string, expectedVersion int64) error {
+	updates := map[string]interface{}{
+		"status":     status,
+		"version":    gorm.Expr("version + 1"),
+		"updated_at": time.Now().UTC(),
+	}
+	if status == "signed" {
+		updates["merchant_signature"] = signature
+		updates["merchant_signature_public_key"] = publicKey
+	}
+	result := r.db.WithContext(ctx).Model(&models.CartMandate{}).
+		Where("id = ? AND merchant_id = ? AND status = ? AND version = ?", id, merchantID, "pending", expectedVersion).
+		Updates(updates)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return errors.New("cart version or state conflict")
 	}
 	return nil
 }

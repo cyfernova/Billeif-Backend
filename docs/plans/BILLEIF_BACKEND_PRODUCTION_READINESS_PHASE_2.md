@@ -534,7 +534,7 @@ queued jobs are failed, migrated or retried before enabling the frontend.
 
 ## Task 8: Remaining core backend gaps
 
-Status: pending
+Status: complete locally; PostgreSQL integration externally unverified
 
 Strengthen phone authentication/account linking with E.164, resend/expiry/replay,
 refresh/logout, collision detection, explicit link (never silent merge), audit,

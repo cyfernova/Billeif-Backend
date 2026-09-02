@@ -664,7 +664,7 @@ func setupRouter(
 			auth.POST("/phone/resend-confirmation", sensitiveRL, h.Auth.PhoneResendConfirmation)
 			auth.POST("/phone/login", loginRL, h.Auth.PhoneLogin)
 			auth.POST("/phone/verify-login", sensitiveRL, h.Auth.PhoneVerifyLogin)
-			auth.POST("/phone/refresh", h.Auth.PhoneRefresh)
+			auth.POST("/phone/refresh", sensitiveRL, h.Auth.PhoneRefresh)
 			auth.POST("/forgot-password", sensitiveRL, h.Auth.ForgotPassword)
 			auth.POST("/reset-password", sensitiveRL, h.Auth.ResetPassword)
 			auth.POST("/verify-email", h.Auth.VerifyEmail)
@@ -685,6 +685,14 @@ func setupRouter(
 		googleAuth.Use(middleware.AuthWithTokenUse(cfg.Cognito, log, middleware.TokenUseID))
 		{
 			googleAuth.POST("/google", h.Auth.GoogleLogin)
+		}
+
+		accountAuth := api.Group("/auth")
+		accountAuth.Use(middleware.Auth(cfg.Cognito, log))
+		{
+			accountAuth.POST("/phone/link", sensitiveRL, h.Auth.PhoneLinkStart)
+			accountAuth.POST("/phone/link/confirm", sensitiveRL, h.Auth.PhoneLinkConfirm)
+			accountAuth.POST("/phone/logout", sensitiveRL, h.Auth.PhoneLogout)
 		}
 
 		public := api.Group("/public")
@@ -733,7 +741,6 @@ func setupRouter(
 			protected.GET("/auth/me", h.Auth.Me)
 			protected.PUT("/auth/profile", h.Auth.UpdateProfile)
 			protected.POST("/auth/change-password", h.Auth.ChangePassword)
-			protected.POST("/auth/phone/logout", h.Auth.PhoneLogout)
 			protected.POST("/auth/profile-picture", h.Auth.UploadProfilePicture)
 			protected.PUT("/auth/profile-picture", h.Auth.UpdateProfilePicture)
 			protected.POST("/auth/step-up", sensitiveRL, h.Security.IssueStepUp)
@@ -771,7 +778,8 @@ func setupRouter(
 				businesses.POST("", userWriteRL, h.Business.Create)
 				businesses.PUT("/:id", userWriteRL, h.Business.Update)
 				businesses.DELETE("/:id", userWriteRL, h.Business.Delete)
-				businesses.POST("/:id/logo", h.Business.UploadLogo)
+				businesses.POST("/:id/logo", userWriteRL, h.Business.UploadLogo)
+				businesses.POST("/:id/logo/complete", userWriteRL, h.Business.CompleteLogo)
 			}
 
 			customers := protected.Group("/customers")
@@ -1151,6 +1159,7 @@ func setupRouter(
 				storefronts.GET("/:id/coupons", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionStorefrontView), h.Commerce.ListStorefrontCoupons)
 				storefronts.POST("/:id/coupons", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionStorefrontManage), h.Commerce.CreateStorefrontCoupon)
 				storefronts.PUT("/:id/coupons/:coupon_id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionStorefrontManage), h.Commerce.UpdateStorefrontCoupon)
+				storefronts.DELETE("/:id/coupons/:coupon_id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionStorefrontManage), h.Commerce.DeleteStorefrontCoupon)
 				storefronts.GET("/:id/orders", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionOrdersView), h.Commerce.ListStorefrontOrders)
 				storefronts.POST("/:id/orders/:order_id/approve", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionOrdersManage), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAccountingManage), h.Commerce.ApproveStorefrontOrder)
 				storefronts.POST("/:id/orders/:order_id/cancel", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionOrdersManage), h.Commerce.CancelStorefrontOrder)
@@ -1204,6 +1213,10 @@ func setupRouter(
 					shopping.GET("/search", commonRL, h.ShoppingAgent.SearchProducts)
 					shopping.POST("/cart", rateLimit(shoppingIntentPolicy), h.ShoppingAgent.CreateCart)
 					shopping.POST("/cart/add", rateLimit(shoppingIntentPolicy), h.ShoppingAgent.AddToCart)
+					shopping.POST("/cart/:id/items/:product_id", rateLimit(shoppingIntentPolicy), h.ShoppingAgent.AddCartItem)
+					shopping.PATCH("/cart/:id/items/:product_id", rateLimit(shoppingIntentPolicy), h.ShoppingAgent.UpdateCartItem)
+					shopping.DELETE("/cart/:id/items/:product_id", rateLimit(shoppingIntentPolicy), h.ShoppingAgent.RemoveCartItem)
+					shopping.DELETE("/cart/:id/items", rateLimit(shoppingIntentPolicy), h.ShoppingAgent.ClearCart)
 					shopping.POST("/checkout", rateLimit(paymentPolicy, bulkPolicy), h.ShoppingAgent.Checkout)
 					shopping.GET("/cart/:id", h.ShoppingAgent.GetCart)
 					shopping.GET("/carts", h.ShoppingAgent.ListCarts)

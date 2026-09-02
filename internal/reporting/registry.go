@@ -242,7 +242,7 @@ func inventoryColumns(key, label string) []Column {
 
 func stockMovementColumns() []Column {
 	return []Column{
-		{Key: "recorded_at", Label: "Recorded At", Type: "date"},
+		{Key: "recorded_at", Label: "Recorded At", Type: "datetime"},
 		{Key: "product_name", Label: "Product", Type: "string"},
 		{Key: "variant_name", Label: "Variant", Type: "string"},
 		{Key: "warehouse_name", Label: "Warehouse", Type: "string"},
@@ -281,7 +281,7 @@ func serialColumns() []Column {
 
 func warehouseTransferColumns() []Column {
 	return []Column{
-		{Key: "recorded_at", Label: "Transfer Date", Type: "date"},
+		{Key: "recorded_at", Label: "Transfer Date", Type: "datetime"},
 		{Key: "product_name", Label: "Product", Type: "string"},
 		{Key: "variant_name", Label: "Variant", Type: "string"},
 		{Key: "source_warehouse_name", Label: "From", Type: "string"},

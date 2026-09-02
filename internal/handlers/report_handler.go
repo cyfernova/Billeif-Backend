@@ -88,17 +88,18 @@ func (h *ReportHandler) Query(c *gin.Context) {
 
 // Export exports a report
 // @Summary Export report
-// @Description Exports a report in the specified format
+// @Description Exports JSON/CSV in the compatibility envelope; XLSX is a native attachment with Content-Disposition and X-Report-Run-ID headers
 // @Tags Reports
 // @Accept json
-// @Produce json
+// @Produce json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
 // @Security BearerAuth
 // @Param key path string true "Report key"
 // @Param input body services.ReportExportInput true "Export parameters"
-// @Success 201 {object} interface{}
+// @Success 201 {object} services.ReportExportResponse
 // @Failure 400 {object} map[string]string
 // @Failure 403 {object} CapabilityMutationError
 // @Failure 404 {object} map[string]string
+// @Failure 413 {object} map[string]string
 // @Failure 422 {object} CapabilityMutationError
 // @Failure 429 {object} CapabilityMutationError
 // @Failure 500 {object} map[string]string
@@ -131,10 +132,25 @@ func (h *ReportHandler) Export(c *gin.Context) {
 			statusCode = http.StatusNotFound
 		} else if errors.Is(err, services.ErrReportScopeUnsupported) {
 			statusCode = http.StatusForbidden
+		} else if errors.Is(err, services.ErrReportExportTooLarge) {
+			statusCode = http.StatusRequestEntityTooLarge
 		} else if errors.Is(err, services.ErrReportInvalidFilters) || err.Error() == "unsupported export format" || err.Error() == "at least one valid column is required" {
 			statusCode = http.StatusBadRequest
 		}
 		c.JSON(statusCode, gin.H{"error": err.Error()})
+		return
+	}
+	writeReportExportResponse(c, result)
+}
+
+func writeReportExportResponse(c *gin.Context, result *services.ReportExportResponse) {
+	if result.ContentType == services.ReportXLSXContentType {
+		c.Header("Content-Disposition", `attachment; filename="`+result.Filename+`"`)
+		c.Header("Cache-Control", "no-store")
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("X-Report-Run-ID", result.Run.ID)
+		c.Header("Access-Control-Expose-Headers", "Content-Disposition, X-Report-Run-ID")
+		c.Data(http.StatusCreated, result.ContentType, result.Binary)
 		return
 	}
 	c.JSON(http.StatusCreated, result)

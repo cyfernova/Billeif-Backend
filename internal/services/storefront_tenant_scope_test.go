@@ -82,7 +82,8 @@ func newStorefrontTenantScopeTestDB(t *testing.T) *gorm.DB {
 			id TEXT PRIMARY KEY, storefront_id TEXT NOT NULL, code TEXT NOT NULL, discount_type TEXT NOT NULL,
 			discount_value NUMERIC DEFAULT 0, minimum_order_value NUMERIC DEFAULT 0,
 			max_discount_amount NUMERIC DEFAULT 0, usage_limit INTEGER DEFAULT 0,
-			usage_limit_per_customer INTEGER DEFAULT 0, starts_at DATETIME, ends_at DATETIME,
+			usage_limit_per_customer INTEGER DEFAULT 0, redemption_count INTEGER DEFAULT 0,
+			version INTEGER DEFAULT 1, starts_at DATETIME, ends_at DATETIME,
 			is_active NUMERIC DEFAULT 1, metadata TEXT DEFAULT '{}', created_at DATETIME,
 			updated_at DATETIME, deleted_at DATETIME
 		)`,

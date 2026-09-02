@@ -50,12 +50,12 @@ route registration or current generated OpenAPI alone.
 | SEC-001 | One-use WebSocket ticket | `complete` locally, deployed WebSocket `externally unverified` | Usable where the deployed WebSocket is separately verified. |
 | ACC-001 | Fiscal policy, chart of accounts, journal/opening posting and banking reconciliation | `complete` locally | Use authoritative account classes/hierarchy and locked-period override contract; bank statement upload/storage is externally unverified. |
 | ACC-002 | Trial Balance, Balance Sheet, account drilldown and read-only reconciliation diagnostics | `complete` locally | Use required currency and posted-ledger minor-unit results; exports/shares reuse REPORT-001. |
-| AUTH-001 | Indian phone OTP auth | `partial`, Cognito/SMS `externally unverified` | Do not ship as hardened account-linking/session-management UX yet. |
-| ASSET-001 | Business-logo and drive presigns | `partial` and `unsafe` as completed-asset workflows; S3 `externally unverified` | Drive intake now enforces CAP-001 plus the authoritative tenant storage quota; do not mark an asset complete after PUT because completion verification does not exist. |
+| AUTH-001 | Indian phone OTP auth | `implemented`, Cognito/SMS `externally unverified` | Ship only after staging OTP delivery, expiry, replay, refresh and global-logout verification. |
+| ASSET-001 | Verified business-logo upload and drive presigns | Logo `complete` locally; drive remains `partial` and `unsafe`; S3 `externally unverified` | Mark a logo ready only after its completion response. A drive PUT still is not completion proof. |
 | IMP-001 | Durable customer/vendor/product import | `complete` locally; S3/SQS deployment `externally unverified` | Enable after migration `000059` and worker deployment verification. |
-| CART-001 | AP2 signed cart mandate | `partial` and `unsafe` as the requested editable cart | Existing clients only; no update/remove/clear contract. |
-| COUPON-001 | Storefront coupon list/create/update | `partial` and concurrency `unsafe` | Management UI may inspect it, but usage caps are not race-safe. |
-| REPORT-001 | Report JSON/CSV export envelope | `partial` | Existing synchronous JSON/CSV only; runtime export capability and plan/permission checks are enforced, but this is not an XLSX or file-download contract. |
+| CART-001 | Tenant-versioned editable AP2 cart mandate | `complete` locally | Mutate only `pending` carts with the current version; refetch on `409`. |
+| COUPON-001 | Storefront coupon controls and serialized redemption | `complete` locally | Hard usage caps require migration `000060`; redeemed coupons remain immutable to deletion. |
+| REPORT-001 | Report JSON/CSV compatibility envelope and native XLSX download | `complete` locally | XLSX is bounded, formula-safe, typed, business-timezone aware and returned as an attachment; runtime capability and permission checks remain mandatory. |
 | AI-001 | Agent capability list/add/remove and permission probe | `partial` and `unsafe` as governance | Capability inventory only; do not treat it as execution authorization. |
 
 ## Cross-contract controls and client lifecycle
@@ -81,11 +81,11 @@ omitted column to imply support.
 | SEC-001 | Bearer + effective business + authenticated user | No additional permission | None | None implemented | Ticket is one-use; issue has no command key |
 | ACC-001 | Bearer + effective business + all branches | Reads `reports.view`; fiscal/account writes `accounting.manage`; bank writes `banking.manage`; posting document/payment routes also retain their domain permission | None | Locked-date postings require `X-Step-Up-Token`, `X-Lock-Override-Reason`, and a scoped `Idempotency-Key`; `428` code `accounting_period_locked` otherwise | Opening and statement imports bind payload hashes to tenant command keys; an override is one-time and scoped to resource/date/subject |
 | ACC-002 | Bearer + effective business + branch authorization | `reports.view`; export `reports.export`; share `reports.share` | Existing report capability checks apply to export/share | None; read-only | Query/read safe; every export/share creates its existing report record |
-| AUTH-001 | Public except logout, which requires bearer + effective business through the protected group | No business scope during public flow | None | None implemented | No command key; provider OTP/session controls apply |
-| ASSET-001 | Logo: bearer + owned business; drive: bearer + effective business | Logo owner check; drive `drive.manage` | Logo none; drive `drive_storage_mb`, measured from tenant drive assets in MB | None implemented | No command key and no completion idempotency |
+| AUTH-001 | Register/confirm/resend/login/verify/refresh are public; link/link-confirm/logout require bearer only | No business scope; linking binds the resolved authenticated database user | None | Durable hashed-subject security audit | Provider OTP expiry/replay controls apply; explicit linking never mutates before OTP confirmation |
+| ASSET-001 | Logo: bearer + effective business + owned path business + uploader-bound upload; drive: bearer + effective business | Logo owner check; drive `drive.manage` | Logo none; drive `drive_storage_mb`, measured from tenant drive assets in MB | None implemented | Logo upload ID is idempotent and never reattaches after supersession; drive has no command key |
 | IMP-001 | Bearer + effective business + authenticated user; jobs are uploader-bound for validation/commit/cancel | Customer `customers.create`; vendor `vendors.create`; product `products.manage` | CAP-001 `bulk_imports` plus business setup and the matching permission | None | Validation replays by tenant/uploader/upload; commit requires a UUID `Idempotency-Key`; identical retry republishes safely |
-| CART-001 | Bearer + effective business; user and owned shopping-agent checks | No additional permission | None | None implemented | No command key; signatures cover a created mandate but add creates a new mandate |
-| COUPON-001 | Management: bearer + effective business; validation: public slug route with rate limits | View `storefront.view`; writes `storefront.manage`; validation public | None enforced on coupon routes | None implemented | No command/version key |
+| CART-001 | Bearer + effective business; cart mutations require matching user, business and owned shopping-agent scope | No additional permission | None | None implemented | Required body `version` is an optimistic command precondition; stale/state conflicts return `409` |
+| COUPON-001 | Management: bearer + effective business; validation: public slug route with rate limits | View `storefront.view`; writes/delete `storefront.manage`; validation public | None enforced on coupon routes | None implemented | Update accepts optional `version`; redemption and management changes serialize on the coupon row |
 | REPORT-001 | Bearer + effective business + branch/warehouse scope | `reports.export` | `export_documents` through CAP-001 | None implemented | No command key; every accepted request creates a report run |
 | AI-001 | Bearer + effective business; same-business access passes the current ownership helper | No additional permission | None | None implemented | Add/remove have no command/version key; reads are safe |
 
@@ -106,12 +106,12 @@ omitted column to imply support.
 | SEC-001 | No pagination/file | Never reuse; issue another after expiry/failure | Successful connect owns later channel behavior; no issuance event | `migrations/000050_websocket_tickets.up.sql`; deployed WebSocket unverified | `internal/services/websocket_ticket_service_test.go`, `internal/repositories/postgres/websocket_ticket_repo_test.go`, `internal/handlers/websocket_ticket_handler_test.go`, `tests/unit/websocket_handler_test.go`; at most 60-second TTL |
 | ACC-001 | Account/bank/audit lists are bounded unpaginated responses; bank import parses at most 10,000 CSV rows from verified pending upload metadata | Journal states remain draft/posted/reversed; reversal follows configured blocked/next-open policy; statement pending/reconciled | No event; invalidate policy/accounts/journal/ledger/bank state after confirmed mutation | Expand-first paired `000058_accounting_completeness`; deploy migration before application | Journal lock/override/reversal/branch tests, accounting migration tests, payment invariants, route-permission tests; S3 upload path externally unverified |
 | ACC-002 | Report query uses standard page/limit and CSV export/share behavior; `currency` is required for accounting statements/diagnostics | Posted-ledger read-only projection; safe to repeat; diagnostics never repair | No event; invalidate after any posting/reversal/opening/bank adjustment | `000058` backfills branch and authoritative account metadata before enabling reports | PostgreSQL reporting query tests, service reconciliation checks, generated Swagger and both OpenAPI files |
-| AUTH-001 | No pagination/file | OTP/session retry follows current rate/cooldown behavior; errors are not stable | No auth event contract; invalidate local session/profile after verify/refresh/logout | `migrations/000023_add_phone_auth_fields.up.sql`; Cognito/SMS rollout unverified | `internal/services/auth_phone_test.go`, `tests/unit/auth_service_test.go`, `tests/integration/auth_test.go`; enumeration, linking, device/session, MFA and audit gaps |
-| ASSET-001 | PUT bytes to opaque signed URL; no download/completion contract here | Request a new URL after expiry; PUT success is not completion proof | No asset-ready event; do not invalidate/show final asset as complete | `migrations/000032_add_storefront_enterprise_features.up.sql`, `migrations/000033_add_more_screen_parity.up.sql`, `infrastructure/terraform/s3.tf`; S3 externally unverified | `internal/services/s3_service_test.go`, `tests/unit/business_service_test.go`, `internal/services/commerce_service_test.go`, `tests/unit/commerce_handler_test.go`; missing checksum/HEAD/scan/reference transaction |
+| AUTH-001 | No pagination/file | OTP starts use IP/target rate limits plus durable provider-purpose cooldown; public resend and login do not expose account existence | Refetch profile after link; replace tokens after refresh; clear every local token after logout | Existing phone uniqueness migration; Cognito/SMS rollout unverified | Focused service/handler tests cover E.164, collision, explicit linking, provider error normalization and expiry/replay classifications |
+| ASSET-001 | Logo uses opaque pending upload ID and exact signed headers; drive remains unchanged | Logo create may be retried with a fresh upload; completion is idempotent for the same upload ID and reports `cleanup_pending` without rolling back the new reference | No asset-ready event; invalidate business profile only after logo completion says `ready` | Existing security pending-upload schema and `infrastructure/terraform/s3.tf`; S3 externally unverified | `internal/services/business_logo_service_test.go`, pending-upload/S3 tests, scoped IAM test; drive still lacks completion and version control |
 | IMP-001 | Upload uses the verified pending-upload flow; validate body is JSON; list page/limit; result is an authorized job artifact | `validating`, `validated`, `commit_queued`, `committing`, `completed`, `failed`, `canceled`, `expired`; retry same commands after ambiguity | Completion creates an idempotent in-app notification; poll job detail with bounded backoff | Expand-first paired `000059`; deploy application and bulk-import worker before enabling | Service restart/idempotency/formula/tenant tests, route-permission tests, migration tests, worker partial-batch tests, mocked Terraform topology |
-| CART-001 | Cart list uses page/limit; no file | Mandate states `pending`/`signed`/`rejected`/`expired`; do not retry checkout after ambiguous side effect | No versioned cart event; invalidate/refetch created mandate only | `migrations/000013_add_ap2_agent_marketplace.up.sql`, `migrations/000049_verify_cart_mandate_signatures.up.sql`; keep out of new editable-cart UI | `internal/services/shopping_agent_service_test.go`, `internal/services/shopping_agent_signature_test.go`, `tests/unit/shopping_handler_test.go`; no mutation concurrency or authoritative pricing/stock |
-| COUPON-001 | List is an array without pagination; no file | Active/date rules exist; retrying writes can duplicate without a client key | No versioned coupon event; invalidate storefront coupon list after writes | `migrations/000032_add_storefront_enterprise_features.up.sql`; avoid claiming hard caps | `internal/services/commerce_service_test.go`, `internal/services/commerce_checkout_postgres_integration_test.go`, `internal/services/storefront_tenant_scope_test.go`; redemption/update concurrency is unsafe |
-| REPORT-001 | Input page/limit; response embeds JSON or CSV string, not a file response | Synchronous `completed`/`failed` run model; repeat creates another run | No export event; invalidate report-run/history views after success | `migrations/000029_add_projects_and_reporting.up.sql`; XLSX rollout missing | `internal/services/report_service_test.go`, `tests/unit/report_handler_test.go`; no XLSX, typed cells, disposition or export idempotency |
+| CART-001 | Cart list uses page/limit; no file | Only `pending`, unexpired, unpaid carts are editable; every mutation increments `version` and refreshes availability, stock, price and tax | No event; replace the cached cart with the mutation response or refetch after conflict | Expand-first `000060` after existing AP2/signature migrations | Signature/service/repository tests cover tenant, stale version and authoritative totals |
+| COUPON-001 | List is an array without pagination; no file | Activation/date/minimum/discount/total/per-customer limits are validated; checkout locks through redemption | No event; invalidate coupon list after management writes or redemption-visible order changes | Expand-first `000060` changes redemption FK to restrict deletion and backfills counts | Service tests plus PostgreSQL concurrent checkout prove one redemption at a hard cap of one |
+| REPORT-001 | Input page/limit; JSON/CSV retain their envelope; XLSX is a native attachment capped at 500 rows, 64 columns, 32,767 characters per cell and 8 MiB uncompressed worksheet XML | Synchronous completed run; repeat creates another run | No export event; `X-Report-Run-ID` identifies the durable audit record | Existing `migrations/000029_add_projects_and_reporting.up.sql`; no schema rollout | Spreadsheet/service/handler/route tests cover typing, timezone, formulas, bounds, headers, permission and entitlement; no export idempotency |
 | AI-001 | Capability list is an unpaginated array; no file | Descriptive rows have no execution lifecycle; writes unsafe to retry | No event; refetch capability list after a confirmed write | `migrations/000013_add_ap2_agent_marketplace.up.sql`; AI providers unverified | `tests/unit/agent_handler_test.go`, `tests/integration/agent_test.go`; permission probe is not authorization |
 
 ## CAP-001: Runtime capability evaluation
@@ -890,29 +890,31 @@ Evidence: `internal/services/websocket_ticket_service.go`,
 
 ## AUTH-001: Indian phone OTP authentication
 
-These endpoints are public except logout. Logout is in the bearer- and
-business-protected route group. They are rate limited in
+Registration/session-start endpoints are public. Link, link-confirm and logout
+require a bearer access token without requiring business selection. They are rate limited in
 `internal/app/runtime.go`; Cognito and SMS are externally unverified.
 
 | Method and path | Exact request | Current success |
 | --- | --- | --- |
-| `POST /auth/phone/register` | `{"phone_number":"9876543210","name":"Asha"}` | `201 {"user_id":"...","phone_number":"+919876543210","message":"OTP sent to your phone number"}` |
+| `POST /auth/phone/register` | `{"phone_number":"9876543210","name":"Asha"}` | `201 {"phone_number":"+919876543210","message":"OTP sent to your phone number"}` |
 | `POST /auth/phone/confirm` | `{"phone_number":"+919876543210","code":"123456"}` | `200 {"message":"phone number verified successfully"}` |
 | `POST /auth/phone/resend-confirmation` | `{"phone_number":"+919876543210"}` | `200 {"message":"verification code resent"}` |
 | `POST /auth/phone/login` | `{"phone_number":"+919876543210"}` | `200 {"challenge_name":"SMS_OTP","session":"opaque","message":"OTP sent to your phone number"}` |
 | `POST /auth/phone/verify-login` | `{"phone_number":"+919876543210","code":"123456","session":"opaque"}` | `200` token object |
 | `POST /auth/phone/refresh` | `{"refresh_token":"opaque"}` | `200` token object |
+| `POST /auth/phone/link` | bearer plus `{"phone_number":"+919876543210"}` | `202 {"phone_number":"+919876543210","message":"OTP sent to your phone number"}` |
+| `POST /auth/phone/link/confirm` | bearer plus `{"phone_number":"+919876543210","code":"123456"}` | `200 {"message":"phone number linked successfully"}` |
 | `POST /auth/phone/logout` | no body; bearer access token | `200 {"message":"logged out successfully"}` |
 
 The token object fields are `access_token`, `refresh_token`, `expires_in`, and
-`token_type`. Registration accepts an optional `email` field syntactically but
-the service deliberately rejects non-empty email; explicit cross-provider
-linking does not exist. Phone input is normalized to an Indian `+91` E.164
-number. The login precheck currently distinguishes an unregistered number, so
-errors are not enumeration-resistant. The OTP cooldown returns without enforcing
-a durable cooldown when its DynamoDB table/client is unavailable. The app stores
-a local user before phone confirmation and has no durable device/session registry,
-TOTP MFA, privacy audit, or one-time step-up. Treat error messages as unstable.
+`token_type`. Registration rejects email prebinding. Phone input is normalized
+to Indian `+91` E.164. Profile updates cannot silently set or replace a phone;
+clients must use the explicit link and confirm routes. Collision checks run both
+before provider confirmation and at the database uniqueness boundary. Cognito is
+the authority for OTP expiry and replay rejection. Public login/resend normalize
+unknown-account behavior for register/login/resend, refresh/logout hide provider details, and security
+events store hashed phone subjects rather than raw numbers. A configured durable
+cooldown fails closed if its DynamoDB client is unavailable.
 
 Evidence: `internal/handlers/auth_handler.go`, `internal/services/auth_service.go`,
 `internal/services/auth_phone_test.go`, `tests/unit/auth_service_test.go`,
@@ -1286,30 +1288,71 @@ default-deny unclassified tools. Evidence: `internal/app/runtime.go`,
 `tests/integration/agent_test.go`, and
 `migrations/000013_add_ap2_agent_marketplace.up.sql`.
 
-## ASSET-001: Current upload presigns
+## ASSET-001: Verified logo upload and current drive presigns
 
 ### Business logo
 
-`POST /business-profiles/{business_id}/logo?size_bytes=2048` requires bearer auth
-and business ownership. Send the intended MIME type as `Content-Type`; if absent,
-the handler defaults to `image/png`. Allowed image types are GIF, JPEG, PNG, SVG,
-and WebP; size must be 1 byte through 5 MiB. Success is:
+`POST /business-profiles/{business_id}/logo` requires bearer auth, the matching
+effective business, and business ownership. Send JSON with the exact intended
+metadata. JPEG, PNG, and WebP are allowed from 1 byte through 5 MiB.
 
 ```json
 {
+  "content_type": "image/png",
+  "size_bytes": 2048,
+  "checksum_sha256": "base64-encoded-32-byte-sha256"
+}
+```
+
+Success is `201`. The upload ID is opaque. PUT bytes to `upload_url` using every
+returned header exactly; the signature binds checksum, length, type, business,
+uploader, and upload ID.
+
+```json
+{
+  "upload": {
+    "id": "33333333-aaaa-4aaa-8aaa-333333333333",
+    "business_id": "22222222-2222-4222-8222-222222222222",
+    "uploader_id": "user-id",
+    "kind": "business_logo",
+    "content_type": "image/png",
+    "size_bytes": 2048,
+    "checksum_sha256": "base64-encoded-32-byte-sha256",
+    "status": "pending"
+  },
   "upload_url": "https://opaque-signed-storage-url.example",
   "required_headers": {
     "Content-Length": "2048",
-    "Content-Type": "image/png"
+    "Content-Type": "image/png",
+    "x-amz-checksum-sha256": "base64-encoded-32-byte-sha256",
+    "x-amz-meta-business-id": "22222222-2222-4222-8222-222222222222",
+    "x-amz-meta-uploader-id": "user-id",
+    "x-amz-meta-upload-id": "33333333-aaaa-4aaa-8aaa-333333333333"
   }
 }
 ```
 
-Success is `200`. Exact handled failures are `400 {"error":"size_bytes must be
-a positive integer"}`, `413 {"error":"upload exceeds the maximum allowed
-size"}`, `400` unsupported-content-type text, `404 {"error":"business not
-found"}`, and otherwise unstable `500` text. There is no command key; requesting
-a replacement URL after expiry is safe, but it is not completion proof.
+After PUT, call `POST /business-profiles/{business_id}/logo/complete` with
+`{"upload_id":"33333333-aaaa-4aaa-8aaa-333333333333"}`. Success is:
+
+```json
+{
+  "business_id": "22222222-2222-4222-8222-222222222222",
+  "upload_id": "33333333-aaaa-4aaa-8aaa-333333333333",
+  "status": "ready",
+  "replayed": false,
+  "cleanup_pending": false
+}
+```
+
+Completion rechecks the exact object key and HEAD metadata, then updates the
+business reference transactionally. Repeating the same upload ID is safe and
+returns `replayed:true`; an older completed upload never replaces a newer logo.
+`cleanup_pending:true` means the new reference is committed but deletion of the
+old object still needs storage cleanup. `400` means invalid
+create input, `404` hides business/upload scope mismatches, and `409` means the
+uploaded object failed completion verification. A successful PUT alone is not
+asset completion.
 
 ### Drive asset
 
@@ -1358,12 +1401,9 @@ coordinates and must not become frontend dependencies.
 }
 ```
 
-> ⛔ **UNSAFE - DO NOT DISPLAY, LOG, OR PERSIST:** `bucket`, `object_key`,
-> and `upload_url` are exact fields in the current response. They expose storage
-> topology or temporary credentials and are not customer identifiers. Task 5/8
-> must replace frontend-visible topology with an opaque asset/upload ID and a
-> verified completion projection. Until then, use `asset.id` only in memory and
-> discard the unsafe fields after the direct upload attempt.
+> ⛔ **DRIVE ONLY - UNSAFE - DO NOT DISPLAY, LOG, OR PERSIST:** `bucket`,
+> `object_key`, and `upload_url` below expose storage topology or temporary
+> credentials. Use `asset.id` only in memory and discard unsafe fields after PUT.
 
 The complete drive route behavior is:
 
@@ -1387,15 +1427,13 @@ even when object deletion fails; a retry after success normally becomes `404`.
 There is no idempotency or version control, so do not blindly retry PATCH/DELETE
 after an ambiguous result.
 
-For both flows, upload with exactly the returned headers. Critically, neither
-flow has a completion endpoint, checksum, HEAD/metadata verification,
-quarantine/scan, or transactional reference update. Drive creates the database
-asset before bytes arrive; a failed PUT can leave a ghost record. Logo presign
-does not update `logo_url`. Therefore a successful PUT is not a proven completed
-asset at this revision.
+For both flows, upload with exactly the returned headers. Logo is complete only
+after its completion endpoint returns `ready`. Drive still has no checksum,
+HEAD/metadata verification, completion transaction, or version control; a failed
+drive PUT can leave a ghost row and must not be shown as a completed asset.
 
 Evidence: `internal/handlers/business_handler.go`,
-`internal/services/business_service.go`, `internal/handlers/commerce_handler.go`,
+`internal/services/business_service.go`, `internal/services/business_logo_service_test.go`, `internal/handlers/commerce_handler.go`,
 `internal/services/commerce_service.go`, `internal/models/commerce.go`,
 `internal/services/s3_service.go`, `internal/services/s3_service_test.go`,
 `tests/unit/business_service_test.go`, `internal/services/commerce_service_test.go`,
@@ -1520,7 +1558,7 @@ the two-phase JSON contract above. Evidence: `internal/app/runtime.go`,
 `migrations/000059_durable_bulk_imports.up.sql`, the bulk-import worker tests,
 and `infrastructure/terraform/bulk_import.tf`.
 
-## CART-001: Existing AP2 cart mandate
+## CART-001: Tenant-versioned editable AP2 cart mandate
 
 `POST /agents/shopping/cart?agent_id={owned_shopping_agent_id}` accepts:
 
@@ -1534,10 +1572,10 @@ and `infrastructure/terraform/bulk_import.tf`.
 ```
 
 `expiration` defaults to 24 when zero. The result is a `CartMandate` with fields
-`id`, optional `intent_mandate_id`, `user_id`, `agent_id`, optional
-`merchant_id`, `items` (JSON-encoded string), `total_amount` (floating-point),
+`id`, `business_id`, optional `intent_mandate_id`, `user_id`, `agent_id`, optional
+`merchant_id`, `items` (JSON-encoded string), `subtotal_amount`, `tax_amount`, `total_amount` (floating-point),
 `currency`, `signature`, optional `merchant_signature`, `status`, `expires_at`,
-`created_at`, and optional `payment_mandates`. Public verification keys are not
+`version`, `created_at`, `updated_at`, and optional `payment_mandates`. Public verification keys are not
 returned. States are `pending`, `signed`, `rejected`, and `expired`.
 
 ```json
@@ -1548,6 +1586,10 @@ returned. States are `pending`, `signed`, `rejected`, and `expired`.
 | --- | --- | --- | --- |
 | `POST /agents/shopping/cart?agent_id={id}` | body above | `201` `CartMandate` | missing query `400 {"error":"agent_id parameter is required"}`; inaccessible/non-shopping agent `404 {"error":"agent not found"}`; bind `400`; service `500` unstable text |
 | `POST /agents/shopping/cart/add?agent_id={id}` | `{"product_id":"99999999-9999-4999-8999-999999999999"}` | `201` a **new** one-item `CartMandate` | same missing-agent/bind/status mapping; service `500` unstable text |
+| `POST /agents/shopping/cart/{id}/items/{product_id}` | `{"version":1,"quantity":2}` | `200` updated cart, version incremented | bind/domain `400`; scope `404`; stale/state/stock/expiry `409` |
+| `PATCH /agents/shopping/cart/{id}/items/{product_id}` | `{"version":2,"quantity":3}` | `200` updated cart, version incremented | bind/domain `400`; scope `404`; stale/state/stock/expiry `409` |
+| `DELETE /agents/shopping/cart/{id}/items/{product_id}` | `{"version":3}` | `200` updated cart, version incremented | bind/domain `400`; scope `404`; stale/state/stock/expiry `409` |
+| `DELETE /agents/shopping/cart/{id}/items` | `{"version":4}` | `200` empty pending cart, version incremented | bind `400`; scope `404`; stale/state/expiry `409` |
 | `POST /agents/shopping/checkout` | `{"cart_mandate_id":"55555555-aaaa-4aaa-8aaa-555555555555","payment_method_id":"77777777-aaaa-4aaa-8aaa-777777777777"}` (`payment_method_id` optional) | `201` `PaymentMandate` | bind `400`; domain/signature/already-processed errors are unstable `500` text |
 | `GET /agents/shopping/cart/{id}` | none | `200` `CartMandate` | `404 {"error":"cart not found"}` for any lookup error |
 | `GET /agents/shopping/carts?page=1&limit=10` | none | `200 {"data":[],"total":0,"page":1,"limit":10}` | unstable `500` text |
@@ -1567,13 +1609,12 @@ require bearer/effective-business context; cart creation additionally checks an
 owner-or-same-business shopping agent, and reads are user-scoped. No explicit
 permission, entitlement, step-up, command key, or event exists.
 
-The add endpoint does not mutate `{id}`: it creates a new one-item mandate.
-Create/add retries can duplicate mandates. Checkout checks for a prior payment
-mandate without a serialized unique claim, so concurrent/timeout retries may
-duplicate the side effect. After ambiguity, refetch and do not retry. There are
-no update/remove/clear, business/branch/version, or authoritative current
-price/availability/stock checks. Do not model this as the requested editable
-commerce cart.
+The legacy `/cart/add` endpoint still creates a new one-item mandate. New item
+routes mutate only an owned, same-business, unexpired `pending` cart without a
+payment. Every accepted mutation re-reads authoritative marketplace availability,
+unreserved stock and price, resolves backing-product tax, recalculates totals,
+clears merchant signature state, re-signs the buyer snapshot and atomically
+increments `version`. A `409` is not success: refetch before another mutation.
 
 Evidence: `internal/handlers/shopping_agent_handler.go`,
 `internal/services/shopping_agent_service.go`, `internal/models/ap2_mandate.go`,
@@ -1591,6 +1632,7 @@ Evidence: `internal/handlers/shopping_agent_handler.go`,
 | `GET /storefronts/{storefront_id}/coupons` | `storefront.view` | `200` array | storefront `404` with unstable text; other unstable `500` text |
 | `POST /storefronts/{storefront_id}/coupons` | `storefront.manage` | `201` coupon | bind/service `400` unstable text; storefront `404` |
 | `PUT /storefronts/{storefront_id}/coupons/{coupon_id}` | `storefront.manage` | `200` coupon | bind/service `400`; coupon/storefront `404`, all with unstable text |
+| `DELETE /storefronts/{storefront_id}/coupons/{coupon_id}` | `storefront.manage` | `204` | coupon/storefront `404`; redeemed coupon `409` |
 | `POST /public/store/{slug}/coupons/validate` | public, rate-limited | `200` validation result | bind `400`; missing/unpublished/not-accepting storefront `404`; other `500` text |
 
 All require bearer auth and effective business scope. Create and update use the
@@ -1607,7 +1649,7 @@ The response fields are `id`, `storefront_id`, `code`, `discount_type`,
 `discount_value`, `minimum_order_value`, `max_discount_amount`, `usage_limit`,
 `usage_limit_per_customer`, optional `starts_at`, optional `ends_at`,
 `is_active`, optional `metadata` (JSON-encoded string), `created_at`, and
-`updated_at`.
+`updated_at`, `redemption_count`, and `version`.
 
 ```json
 {"id":"99999999-aaaa-4aaa-8aaa-999999999999","storefront_id":"aaaaaaaa-bbbb-4aaa-8aaa-aaaaaaaaaaaa","code":"WELCOME10","discount_type":"percentage","discount_value":10,"minimum_order_value":500,"max_discount_amount":200,"usage_limit":100,"usage_limit_per_customer":1,"starts_at":"2026-09-01T00:00:00Z","ends_at":"2026-09-30T23:59:59Z","is_active":true,"metadata":"{\"campaign\":\"launch\"}","created_at":"2026-09-01T12:00:00Z","updated_at":"2026-09-01T12:00:00Z"}
@@ -1622,32 +1664,33 @@ not-yet-active, expired, minimum order, or usage limit also return HTTP `200`,
 for example `{"valid":false,"discount_total":0,"message":"coupon has
 expired"}`. That message is legacy text and is not a stable error code.
 
-There is no delete route or version field. Update is a full replacement for the
-required values and overwrites omitted numeric limits with zero. Checkout checks
-dates/minimum/usage, but usage counting and redemption insertion are not
-serialized on the coupon; concurrent orders can exceed caps. Do not promise a
-hard usage ceiling until Task 8 fixes this race. Writes have no command/version
-key; retrying create after ambiguity can duplicate or conflict, and retrying a
-full update can overwrite concurrent changes. Refetch after confirmed writes;
-there is no event contract.
+Update remains full replacement for backward compatibility and accepts optional
+`version`; a stale version returns `409`. The service validates activation
+windows, non-negative minimum/maximum/usage controls, percentage bounds and
+prevents lowering caps below redeemed usage. Checkout holds a coupon row lock
+while rechecking all rules, writing the order/redemption and incrementing
+`redemption_count`, so concurrent orders cannot exceed total or per-customer
+caps. Delete returns `409` after any redemption. Create still has no command key;
+refetch after ambiguous writes. There is no event contract.
 
 Evidence: `internal/app/runtime.go`, `internal/handlers/commerce_handler.go`,
 `internal/services/commerce_service.go`, `internal/models/commerce.go`,
-`migrations/000032_add_storefront_enterprise_features.up.sql`, and
+`migrations/000032_add_storefront_enterprise_features.up.sql`,
+`migrations/000060_cart_coupon_controls.up.sql`, and
 `internal/services/commerce_service_test.go`,
 `internal/services/commerce_checkout_postgres_integration_test.go`,
 `internal/services/storefront_tenant_scope_test.go`,
 `tests/unit/commerce_handler_test.go`, and
 `tests/unit/commerce_public_handler_test.go`.
 
-## REPORT-001: Current synchronous JSON/CSV export
+## REPORT-001: Synchronous JSON/CSV and native XLSX export
 
 `POST /reports/{report_key}/export` requires bearer auth, effective business and
 `reports.export`. Branch/warehouse scope is constrained by the handler; a report
 that cannot be safely scoped returns `403`.
 
 Exact request fields are optional `page`, `limit`, `columns`, `filters`, and
-`format`. `format` is `json` by default and accepts only `json` or `csv`.
+`format`. `format` is `json` by default and accepts `json`, `csv`, or `xlsx`.
 Filter fields are `date_from`, `date_to`, `project_id`, `warehouse_id`,
 `party_id`, `product_id`, `variant_id`, `category_id`, `search`, and
 `include_cancelled`.
@@ -1666,7 +1709,7 @@ Filter fields are `date_from`, `date_to`, `project_id`, `warehouse_id`,
 }
 ```
 
-Success is `201` JSON, not a streamed file:
+JSON and CSV success remains the backward-compatible `201` JSON envelope:
 
 ```json
 {
@@ -1697,22 +1740,44 @@ unstable `400` text. Exact current classified failures are
 `400 {"error":"unsupported export format"}`, `400 {"error":"at least one
 valid column is required"}`, `403 {"error":"report scope unavailable"}` or
 `403` for an unsafe branch/warehouse projection, `404 {"error":"report not
-found"}`, and otherwise unstable `500` text. Pagination defaults to 1/20 in the
-report handler and is bounded by the report service. A repeated request creates
+found"}`, `413 {"error":"report export exceeds safe bounds"}`, and otherwise
+unstable `500` text. The repository defaults to page 1 and 50 rows and caps a
+page at 500 rows. A repeated request creates
 another run/filename; there is no command idempotency, event, or safe mutation
 retry contract. Refetch report history only after a confirmed `201`.
 
 `filters`, `visible_columns`, `payload`, and `summary` inside `run` are
 JSON-encoded strings. CSV cells beginning, after leading whitespace, with
 `=`, `+`, `-`, `@`, or tab are prefixed with an apostrophe; this is covered by
-tests. There is no XLSX, native file response, `Content-Disposition`, typed
-money/date cells, timezone-aware spreadsheet output, export idempotency key, or
-export event. Report PDF export is explicitly deferred.
+tests.
+
+For `format: "xlsx"`, success is `201` binary XLSX with:
+
+```http
+Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+Content-Disposition: attachment; filename="sales_register-20260902-120000.xlsx"
+Cache-Control: no-store
+X-Content-Type-Options: nosniff
+X-Report-Run-ID: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
+Access-Control-Expose-Headers: Content-Disposition, X-Report-Run-ID
+```
+
+The Lambda adapter base64-encodes non-UTF-8 response bytes for API Gateway, and
+direct HTTP clients receive the same XLSX bytes. Number/integer columns are
+native numeric cells. Date/timestamp columns are native Excel date cells after
+conversion to the business profile timezone. String headers and cells use the
+same formula neutralization as CSV. Workbook generation rejects more than 500
+rows, 64 columns, 32,767 characters in one cell, or 8 MiB of uncompressed
+worksheet XML. Each accepted export creates a completed `report_runs` audit
+record with business, actor, report, format, visible columns, filters, output
+metadata, byte size and timezone; XLSX bytes are not persisted in that record.
+There is no export idempotency key or export event. Report PDF remains deferred.
 
 Evidence: `internal/app/runtime.go`, `internal/handlers/report_handler.go`,
 `internal/services/report_service.go`, `internal/models/report.go`,
 the registry under `internal/reporting`, `internal/services/report_service_test.go`,
-and `tests/unit/report_handler_test.go`.
+`pkg/spreadsheet/xlsx_test.go`, `internal/handlers/report_handler_xlsx_test.go`,
+and `internal/app/runtime_security_test.go`.
 
 ## Remaining frontend contracts
 

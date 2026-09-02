@@ -26,24 +26,26 @@ const (
 	PendingUploadStatusClean       = "clean"
 	PendingUploadStatusRejected    = "rejected"
 	PendingUploadStatusDeleted     = "deleted"
+	PendingUploadScanBusinessLogo  = "business_logo_attached"
 )
 
 type PendingUpload struct {
-	ID             string     `gorm:"primaryKey;type:uuid" json:"id"`
-	BusinessID     string     `gorm:"type:uuid;not null;index" json:"business_id"`
-	UploaderID     string     `gorm:"not null;size:255;index" json:"uploader_id"`
-	Kind           string     `gorm:"not null;size:64" json:"kind"`
-	Bucket         string     `gorm:"not null;size:128" json:"-"`
-	ObjectKey      string     `gorm:"not null;size:1024;uniqueIndex" json:"-"`
-	ContentType    string     `gorm:"not null;size:128" json:"content_type"`
-	SizeBytes      int64      `gorm:"not null" json:"size_bytes"`
-	ChecksumSHA256 string     `gorm:"not null;size:64" json:"checksum_sha256"`
-	Status         string     `gorm:"not null;size:24;index" json:"status"`
-	ScanCode       string     `gorm:"not null;size:80" json:"scan_code,omitempty"`
-	CreatedAt      time.Time  `gorm:"autoCreateTime" json:"created_at"`
-	ExpiresAt      time.Time  `gorm:"not null;index" json:"expires_at"`
-	CompletedAt    *time.Time `json:"completed_at,omitempty"`
-	DeletedAt      *time.Time `json:"deleted_at,omitempty"`
+	ID               string     `gorm:"primaryKey;type:uuid" json:"id"`
+	BusinessID       string     `gorm:"type:uuid;not null;index" json:"business_id"`
+	UploaderID       string     `gorm:"not null;size:255;index" json:"uploader_id"`
+	Kind             string     `gorm:"not null;size:64" json:"kind"`
+	Bucket           string     `gorm:"not null;size:128" json:"-"`
+	ObjectKey        string     `gorm:"not null;size:1024;uniqueIndex" json:"-"`
+	ContentType      string     `gorm:"not null;size:128" json:"content_type"`
+	SizeBytes        int64      `gorm:"not null" json:"size_bytes"`
+	ChecksumSHA256   string     `gorm:"not null;size:64" json:"checksum_sha256"`
+	CleanupObjectKey string     `gorm:"not null;size:1024" json:"-"`
+	Status           string     `gorm:"not null;size:24;index" json:"status"`
+	ScanCode         string     `gorm:"not null;size:80" json:"scan_code,omitempty"`
+	CreatedAt        time.Time  `gorm:"autoCreateTime" json:"created_at"`
+	ExpiresAt        time.Time  `gorm:"not null;index" json:"expires_at"`
+	CompletedAt      *time.Time `json:"completed_at,omitempty"`
+	DeletedAt        *time.Time `json:"deleted_at,omitempty"`
 }
 
 func (*PendingUpload) TableName() string { return "security_pending_uploads" }
@@ -79,7 +81,7 @@ func (*PrivacyRequest) TableName() string { return "privacy_requests" }
 
 type SecurityAuditEvent struct {
 	ID           string    `gorm:"primaryKey;type:uuid"`
-	BusinessID   string    `gorm:"type:uuid;index"`
+	BusinessID   string    `gorm:"type:uuid;index;default:null"`
 	Subject      string    `gorm:"not null;size:255"`
 	EventType    string    `gorm:"not null;size:80"`
 	ResourceType string    `gorm:"not null;size:64"`
