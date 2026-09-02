@@ -115,7 +115,7 @@ func TestAggregateComputationCoversEveryStatus(t *testing.T) {
 		{name: "any failed wins", status: []Status{StatusPassed, StatusFailed}, wantAgg: "failed"},
 		{name: "blocked when no failure", status: []Status{StatusPassed, StatusBlocked}, wantAgg: "blocked"},
 		{name: "not configured when nothing verified", status: []Status{StatusNotConfigured, StatusNotConfigured}, wantAgg: "not_configured"},
-		{name: "not configured alongside passed", status: []Status{StatusPassed, StatusNotConfigured}, wantAgg: "passed"},
+		{name: "not configured alongside passed", status: []Status{StatusPassed, StatusNotConfigured}, wantAgg: "not_configured"},
 		{name: "all skipped", status: []Status{StatusSkipped, StatusSkipped}, wantAgg: "skipped"},
 	}
 	for _, tc := range cases {

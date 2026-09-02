@@ -88,7 +88,12 @@ func TestRedactValueRedactsSecretsInsideStringValues(t *testing.T) {
 		{
 			name:  "query token parameter",
 			input: "https://example.com/cb?token=abc123def456&other=keep",
-			want:  "https://example.com/cb?token=[REDACTED]&other=keep",
+			want:  "[REDACTED_URL]",
+		},
+		{
+			name:  "account identifier",
+			input: "account 123456789012 refused",
+			want:  "account [REDACTED_ACCOUNT_ID] refused",
 		},
 		{
 			name:  "long hex credential",

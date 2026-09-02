@@ -126,7 +126,7 @@ relevant tests were inspected.
 | 1 | `complete` locally with governed mutation preflights, fixed global Razorpay/LLM observation, and durable business-scoped GST health; provider health `externally unverified`; internal diagnostics `blocked` | CAP-001 evaluation, fixed global cache/observer, durable GST repository/recorder, migration 000054, and guards at report, payment/storefront, GST command, drive upload, voice, business LLM, bulk-import, and saved-payment service boundaries; focused behavior/race and migration-bundle tests are beside each owner | Expand-first migration 000054 precedes the application. Customer output and typed mutation errors are secret-safe; unknown/stale fails closed. The observer performs exactly the configured static global probes and no tenant census, discovery, rotation, or whole-table count. Explicit GST validation and real GST outcomes update one sanitized credential-revision-bound row per business/provider key; capability GET performs no provider I/O. Observer shutdown cancels and joins before dependencies close. S3/voice/WhatsApp/email remain unknown without a safe producer. Internal diagnostics require a future operator principal distinct from business owner/admin. |
 | 2 | `partial`, with an `unsafe` truth gap; Razorpay `externally unverified` | `internal/models/subscription.go`, `internal/models/payment_attempt.go`, `internal/services/subscription_service.go`, `internal/services/razorpay_payment_service.go`, `migrations/000041_add_razorpay_payment_attempts.up.sql`, `internal/services/razorpay_payment_service_test.go`, `internal/handlers/payment_handler_idempotency_test.go`, `infrastructure/terraform/tests/razorpay.tftest.hcl` | Subscription/payment models, repositories, services, handlers, webhook inbox/reconciliation worker, paired migrations, provider fixtures, OpenAPI and race/replay tests. Expand-first state conversion must not activate entitlements from stale or ambiguous events. |
 | 3 | `partial`; deployed queues/providers `externally unverified` | Render/delivery status in `internal/services/invoice_service.go` and `internal/services/invoice_delivery.go`; outbox/workers; `infrastructure/terraform/monitoring.tf` and `sns_sqs.tf` | Aggregate read service/repositories, customer and operator handlers, recovery commands, audit, metrics/alarms, permissions/step-up, OpenAPI, state/retry tests. Recovery must remain tenant-bound and idempotent. |
-| 4 | `missing`; every staging dependency `externally unverified` | No bounded environment-selecting verification command found after inspecting every entry point under `cmd`, `internal/config`, `Makefile`, `infrastructure/terraform`, `.github/workflows`, and `docs` | New verification command and an adjacent refusal/redaction/classification/cleanup test package; documentation and safe adapters only unless a real gap is found. No schema expected by default. Must refuse production, redact secrets, bound writes, and classify cleanup. |
+| 4 | `complete` locally; every deployed dependency remains `externally unverified` | `cmd/verify`, `internal/verify`, `Makefile`; focused refusal, environment/account binding, redaction, classification, retry/concurrency, cleanup, schema and probe tests | No schema/product-state change. Read mode uses bounded control-plane/API reads; visible sandbox journeys require write mode plus explicit acknowledgement. AWS checks require the default profile, an expected account match and a non-root principal. No live verification was run in this campaign. |
 | 5 | `partial`, with `unsafe` upload/session/privacy gaps; AWS/Cognito restore state `externally unverified` | `internal/middleware/business_auth.go`, `internal/services/websocket_ticket_service.go`, `infrastructure/terraform/s3.tf`, `internal/services/report_service.go`, `internal/services/auth_service.go`, `internal/services/auth_upload_test.go`, `internal/services/auth_phone_test.go`, `.github/workflows/deploy.yml` | Step-up/session/MFA/privacy/upload/recovery owners across middleware, services, handlers, repositories, `cmd`, Terraform/CI and paired migrations. Security and data-retention impact is high; no live Cognito or paid scanner action. |
 | 6 | `partial`; banking, lock date, Trial Balance and Balance Sheet `missing` | `internal/services/journal_service.go`, `internal/services/payment_service.go`, `internal/reporting`, `internal/services/journal_invariants_test.go`, `internal/services/payment_invariants_test.go`, `internal/services/payment_postgres_integration_test.go`, `tests/unit/journal_handler_test.go`, `tests/unit/ledger_service_test.go` | Journal/payment/inventory/reporting services and repositories, new accounting/bank models, paired migrations, permissions/step-up, OpenAPI, concurrency/invariant/export tests. Posted records remain immutable and balanced by currency. |
 | 7 | `unsafe` and `partial` | `internal/handlers/billing_ops_handler.go`, `internal/services/billing_ops_service.go`, `internal/models/swipe_ops.go`, `tests/unit/billing_ops_handler_test.go`, `migrations/000030_add_swipe_billing_ops.up.sql`; no bulk-import worker found in `internal/workers`, `cmd`, or `infrastructure/terraform` | Narrow to customer/vendor/product validation and commit handlers/services/repository, S3 metadata, worker/queue/alarm, paired migrations if state is insufficient, OpenAPI and restart/idempotency/tenant/formula tests. Existing queued jobs require a compatibility and cleanup decision. |
@@ -395,7 +395,7 @@ Terraform alarms, OpenAPI and recovery/idempotency tests. Do not collapse
 
 ## Task 4: Staging verification harness
 
-Status: pending
+Status: completed locally; deployed resources and providers externally unverified
 
 Create a bounded JSON-emitting verification command that explicitly selects an
 environment, refuses production by default, separates read-only from visible
@@ -412,6 +412,58 @@ properties was found. Expected owners are a focused `cmd` package and tests plus
 non-production documentation; reuse safe adapters rather than adding product
 state. Every provider and deployed resource is externally unverified until this
 harness records evidence.
+
+Implemented `cmd/verify` and `internal/verify`. The deterministic schema records
+the explicit environment, mode, selection, timestamps, bounded attempts,
+evidence, aggregate status and cleanup disposition. It refuses production before
+building adapters unless deliberately overridden, requires
+`VERIFY_TARGET_ENVIRONMENT` to match the selected environment, permits only the
+`default` AWS profile, requires `VERIFY_AWS_ACCOUNT_ID` to match STS, and refuses
+an AWS root principal before dependent AWS reads. Configured database, cache,
+gateway and journey targets must also match the exact-host
+`VERIFY_ALLOWED_HOSTS` environment manifest. Credentialed HTTP probes refuse
+redirects. Reports redact credentials,
+ARNs, account IDs, URLs, provider bodies and raw provider/SDK errors; configured
+buckets and queues appear only as ordinal aliases.
+
+Read-only checks cover Cognito user/phone pools and Google federation,
+PostgreSQL, Redis/Valkey, S3, SQS, EventBridge Scheduler, the WebSocket endpoint,
+Razorpay test plans and SES identity state. Configured sandbox/controlled checks
+cover WhatsApp, GST, Claude/Gemini gateway families, Sarvam, AgentCore and
+invoice, report, upload, recurring, WebSocket-ticket and checkout journeys.
+Externally visible checks are skipped in read mode and require both
+`--mode write` and `--allow-writes`; synthetic resources are classified as
+cleaned, cleanup-failed, or intentionally preserved. Journey cleanup requires a
+resource identifier extracted from the response and a cleanup URL containing
+`{reference}`; cleanup failure fails the aggregate gate. AgentCore is verified
+with a read-only control-plane lookup and is never invoked.
+
+Non-production read command (credentials should be supplied to the child process
+through the repository-approved runtime secret mechanism, never printed or
+written to a report):
+
+```bash
+VERIFY_ENVIRONMENT=staging VERIFY_TARGET_ENVIRONMENT=staging \
+  VERIFY_AWS_ACCOUNT_ID="${STAGING_AWS_ACCOUNT_ID}" \
+  VERIFY_ALLOWED_HOSTS="api.staging.example.com,db.staging.example.com,cache.staging.example.com" \
+  make verify-environment
+```
+
+Non-production visible-write command:
+
+```bash
+VERIFY_ENVIRONMENT=staging VERIFY_TARGET_ENVIRONMENT=staging \
+  VERIFY_AWS_ACCOUNT_ID="${STAGING_AWS_ACCOUNT_ID}" \
+  VERIFY_ALLOWED_HOSTS="api.staging.example.com" \
+  VERIFY_MODE=write VERIFY_ALLOW_WRITES=true make verify-environment
+```
+
+Visible sandbox journeys additionally require explicit per-journey URLs,
+bodies, response reference fields and `{reference}` cleanup URL templates.
+Production verification was not run;
+no provider mutation, payment, message, database write, infrastructure action or
+deployed-environment claim was made. Focused evidence:
+`go test ./internal/verify ./cmd/verify` passed on 2026-09-02.
 
 ## Task 5: Security, privacy, and recovery
 

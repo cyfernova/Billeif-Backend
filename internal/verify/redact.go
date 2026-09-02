@@ -2,7 +2,6 @@ package verify
 
 import (
 	"fmt"
-	"net/url"
 	"reflect"
 	"regexp"
 	"strings"
@@ -20,6 +19,8 @@ const (
 	redactedRazorpayKeyID  = "[REDACTED_RAZORPAY_KEY_ID]"
 	redactedCredential     = "[REDACTED_CREDENTIAL]"
 	redactedARN            = "[REDACTED_ARN]"
+	redactedAccountID      = "[REDACTED_ACCOUNT_ID]"
+	redactedURL            = "[REDACTED_URL]"
 	truncationMarker       = "[truncated]"
 )
 
@@ -46,6 +47,8 @@ var (
 	awsAccessKeyPattern = regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`)
 	razorpayKeyPattern  = regexp.MustCompile(`\brzp_(?:test|live)_[A-Za-z0-9]{6,}\b`)
 	arnPattern          = regexp.MustCompile(`\barn:[a-z0-9-]*:[^\s"']+`)
+	accountIDPattern    = regexp.MustCompile(`\b[0-9]{12}\b`)
+	urlPattern          = regexp.MustCompile(`https?://[^\s"']+`)
 	hexCredential       = regexp.MustCompile(`\b[0-9a-fA-F]{32,}\b`)
 	// querySecretPattern redacts values of secret-bearing query parameters.
 	querySecretPattern = regexp.MustCompile(`(?i)((?:token|secret|password|passwd|sig|signature|api_?key|access_?key|code|otp)=)([^&\s]+)`)
@@ -62,6 +65,8 @@ func RedactString(s string) string {
 	s = awsAccessKeyPattern.ReplaceAllString(s, redactedAWSAccessKeyID)
 	s = razorpayKeyPattern.ReplaceAllString(s, redactedRazorpayKeyID)
 	s = arnPattern.ReplaceAllString(s, redactedARN)
+	s = accountIDPattern.ReplaceAllString(s, redactedAccountID)
+	s = urlPattern.ReplaceAllString(s, redactedURL)
 	s = hexCredential.ReplaceAllString(s, redactedCredential)
 	s = dsnCredentialPattern.ReplaceAllString(s, "$1[REDACTED]@")
 	s = querySecretPattern.ReplaceAllString(s, "$1[REDACTED]")
@@ -211,17 +216,4 @@ func sortEvidence(evidence []Evidence) {
 			evidence[j], evidence[j-1] = evidence[j-1], evidence[j]
 		}
 	}
-}
-
-// urlSafeString returns the host+path of a URL with any userinfo or query
-// material stripped, for safe evidence.
-func urlSafeString(raw string) string {
-	parsed, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil {
-		return RedactString(raw)
-	}
-	parsed.User = nil
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	return parsed.String()
 }

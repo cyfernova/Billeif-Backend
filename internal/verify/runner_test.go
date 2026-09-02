@@ -41,10 +41,6 @@ func newCheck(id string, impact Impact, deps ...string) *fakeCheck {
 	}
 }
 
-func passingOutcome(evidence ...Evidence) Outcome {
-	return Outcome{Status: StatusPassed, Evidence: evidence}
-}
-
 func optionsForRun() RunOptions {
 	return RunOptions{
 		Environment:  "staging",
@@ -138,7 +134,7 @@ func TestWriteChecksExecuteOnlyWithWriteModeAndAllowWrites(t *testing.T) {
 	opts := optionsForRun()
 	opts.Mode = ModeWrite
 	opts.AllowWrites = false
-	results, err := executeChecks(context.Background(), opts, []Check{check})
+	_, err := executeChecks(context.Background(), opts, []Check{check})
 	if err == nil {
 		t.Fatal("write mode without allow-writes must be refused")
 	}
@@ -151,7 +147,7 @@ func TestWriteChecksExecuteOnlyWithWriteModeAndAllowWrites(t *testing.T) {
 	}
 
 	opts.AllowWrites = true
-	results = executeForTest(t, opts, []Check{check})
+	results := executeForTest(t, opts, []Check{check})
 	if resultFor(t, results, "journey.x").Status != StatusPassed {
 		t.Fatal("write check must execute with mode=write and allow-writes")
 	}
@@ -189,6 +185,11 @@ func TestRunnerBoundsGlobalConcurrency(t *testing.T) {
 	}
 	if got := max.Load(); got < 2 {
 		t.Fatalf("checks did not run concurrently (max=%d)", got)
+	}
+	for _, check := range checks {
+		if got := check.(*fakeCheck).attempts(); got != 1 {
+			t.Fatalf("check %s attempts=%d, want exactly 1", check.Metadata().ID, got)
+		}
 	}
 }
 
@@ -258,6 +259,22 @@ func TestRunnerDoesNotRetryNonRetryableFailures(t *testing.T) {
 	}
 }
 
+func TestRunnerNeverBlindlyRetriesExternalWrites(t *testing.T) {
+	check := &fakeCheck{
+		meta: Metadata{ID: "visible", Impact: ImpactExternalWrite},
+		outcome: func(context.Context, int) Outcome {
+			return Outcome{Status: StatusFailed, Err: errors.New("unknown outcome"), ErrCode: "unknown", Retryable: true}
+		},
+	}
+	opts := optionsForRun()
+	opts.Mode = ModeWrite
+	opts.AllowWrites = true
+	result := resultFor(t, executeForTest(t, opts, []Check{check}), "visible")
+	if result.Attempts != 1 || check.attempts() != 1 {
+		t.Fatalf("attempts=%d probe_attempts=%d, want one", result.Attempts, check.attempts())
+	}
+}
+
 func TestRunnerEnforcesPerCheckDeadline(t *testing.T) {
 	check := &fakeCheck{
 		meta: Metadata{ID: "slow", Impact: ImpactReadOnly},
@@ -279,6 +296,49 @@ func TestRunnerEnforcesPerCheckDeadline(t *testing.T) {
 	}
 	if result.DurationMS < 25 {
 		t.Fatalf("duration %dms should reflect the deadline", result.DurationMS)
+	}
+}
+
+func TestCanceledWriteIsJoinedAndCleanedWithFreshContext(t *testing.T) {
+	started := make(chan struct{})
+	cleaned := make(chan struct{}, 1)
+	check := &fakeCheck{
+		meta: Metadata{ID: "write.cancel", Impact: ImpactExternalWrite},
+		outcome: func(ctx context.Context, _ int) Outcome {
+			close(started)
+			<-ctx.Done()
+			return Outcome{
+				Status: StatusFailed, Err: ctx.Err(), ErrCode: "journey_unknown_outcome",
+				Resources: []Resource{{Kind: "synthetic", Reference: "run-marker"}},
+				Cleanup: func(cleanupCtx context.Context) ([]Evidence, error) {
+					if cleanupCtx.Err() != nil {
+						return nil, cleanupCtx.Err()
+					}
+					cleaned <- struct{}{}
+					return nil, nil
+				},
+			}
+		},
+	}
+	opts := optionsForRun()
+	opts.Mode, opts.AllowWrites = ModeWrite, true
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan []CheckResult, 1)
+	go func() {
+		results, _ := executeChecks(ctx, opts, []Check{check})
+		done <- results
+	}()
+	<-started
+	cancel()
+	results := <-done
+	result := resultFor(t, results, check.meta.ID)
+	if result.Status != StatusFailed || result.Cleanup.Status != CleanupSucceeded {
+		t.Fatalf("result=%+v", result)
+	}
+	select {
+	case <-cleaned:
+	default:
+		t.Fatal("cleanup did not run")
 	}
 }
 
@@ -412,6 +472,9 @@ func TestCleanupFailurePreservesResourcesWithDiagnosticReference(t *testing.T) {
 	if result.Cleanup.Status != CleanupFailed {
 		t.Fatalf("cleanup status = %q, want failed", result.Cleanup.Status)
 	}
+	if result.Status != StatusFailed || result.Error == nil || result.Error.Code != "cleanup_failed" {
+		t.Fatalf("status=%s error=%+v, want failed cleanup_failed", result.Status, result.Error)
+	}
 	if len(result.Cleanup.Resources) != 1 || !result.Cleanup.Resources[0].Preserved {
 		t.Fatalf("resources = %+v, want preserved", result.Cleanup.Resources)
 	}
@@ -424,6 +487,32 @@ func TestCleanupFailurePreservesResourcesWithDiagnosticReference(t *testing.T) {
 	}
 	if !strings.Contains(result.Cleanup.Error, "delete denied") {
 		t.Fatalf("cleanup error lost sanitized context: %q", result.Cleanup.Error)
+	}
+}
+
+func TestResourceWithoutCleanupIsClassifiedPreserved(t *testing.T) {
+	check := &fakeCheck{
+		meta: Metadata{ID: "journey.non_deletable", Impact: ImpactExternalWrite},
+		outcome: func(context.Context, int) Outcome {
+			return Outcome{Status: StatusPassed, Resources: []Resource{{Kind: "provider-test-order", Reference: "synthetic/order-1"}}}
+		},
+	}
+	opts := optionsForRun()
+	opts.Mode = ModeWrite
+	opts.AllowWrites = true
+	result := resultFor(t, executeForTest(t, opts, []Check{check}), "journey.non_deletable")
+	if result.Cleanup.Status != CleanupPreserved || len(result.Cleanup.Resources) != 1 || !result.Cleanup.Resources[0].Preserved {
+		t.Fatalf("cleanup = %+v, want preserved resource", result.Cleanup)
+	}
+}
+
+func TestRunHarnessPropagatesExecutionValidationError(t *testing.T) {
+	a := newCheck("a", ImpactReadOnly, "b")
+	b := newCheck("b", ImpactReadOnly, "a")
+	_, err := RunHarness(context.Background(), optionsForRun(), []Check{a, b})
+	var refusal *UsageRefusalError
+	if !errors.As(err, &refusal) || refusal.Reason != ReasonDependencyCycle {
+		t.Fatalf("error = %v, want dependency-cycle refusal", err)
 	}
 }
 
@@ -448,12 +537,11 @@ func TestPanickingProbeBecomesFailedResult(t *testing.T) {
 }
 
 func TestCanceledRunMarksPendingChecksBlocked(t *testing.T) {
-	release := make(chan struct{})
 	blocker := &fakeCheck{
 		meta: Metadata{ID: "blocker", Impact: ImpactReadOnly},
 		outcome: func(ctx context.Context, _ int) Outcome {
-			<-release
-			return Outcome{Status: StatusPassed}
+			<-ctx.Done()
+			return Outcome{Status: StatusBlocked, Evidence: []Evidence{{Key: "reason", Value: ReasonRunContextCanceled}}}
 		},
 	}
 	dependent := newCheck("dependent", ImpactReadOnly, "blocker")
@@ -476,10 +564,8 @@ func TestCanceledRunMarksPendingChecksBlocked(t *testing.T) {
 			t.Fatalf("interrupted check status = %q, want blocked", got)
 		}
 	case <-time.After(2 * time.Second):
-		close(release)
 		t.Fatal("executeChecks did not finish after cancel")
 	}
-	close(release)
 	if err := <-errCh; err != nil {
 		t.Fatalf("canceled run must not error, got %v", err)
 	}
@@ -494,6 +580,18 @@ func TestRunnerRejectsCyclesAndMissingDependencies(t *testing.T) {
 	orphan := newCheck("orphan", ImpactReadOnly, "missing")
 	if _, err := executeChecks(context.Background(), optionsForRun(), []Check{orphan}); err == nil {
 		t.Fatal("missing dependency must be rejected")
+	}
+}
+
+func TestSelectionRejectsOnlyExcludeConflict(t *testing.T) {
+	check := newCheck("same", ImpactReadOnly)
+	opts := optionsForRun()
+	opts.Only = []string{"same"}
+	opts.Exclude = []string{"same"}
+	_, err := RunHarness(context.Background(), opts, []Check{check})
+	var refusal *UsageRefusalError
+	if !errors.As(err, &refusal) || refusal.Reason != ReasonSelectionConflict {
+		t.Fatalf("error=%v, want selection conflict", err)
 	}
 }
 

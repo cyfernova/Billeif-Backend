@@ -17,6 +17,7 @@ const (
 	ReasonEmptySelection             = "empty_selection"
 	ReasonDependencyMissing          = "dependency_missing"
 	ReasonDependencyCycle            = "dependency_cycle"
+	ReasonSelectionConflict          = "selection_conflict"
 )
 
 // Defaults honored by the runner unless overridden.
@@ -24,7 +25,9 @@ const (
 	DefaultConcurrency  = 4
 	MaximumConcurrency  = 16
 	DefaultCheckTimeout = 30 * time.Second
+	MaximumCheckTimeout = 2 * time.Minute
 	DefaultCleanupTime  = 60 * time.Second
+	MaximumCleanupTime  = 2 * time.Minute
 	DefaultMaxAttempts  = 3
 	MaximumAttempts     = 5
 	DefaultBackoffBase  = 500 * time.Millisecond
@@ -82,8 +85,14 @@ func (o *RunOptions) normalize() error {
 	if o.CheckTimeout <= 0 {
 		o.CheckTimeout = DefaultCheckTimeout
 	}
+	if o.CheckTimeout > MaximumCheckTimeout {
+		o.CheckTimeout = MaximumCheckTimeout
+	}
 	if o.CleanupTimout <= 0 {
 		o.CleanupTimout = DefaultCleanupTime
+	}
+	if o.CleanupTimout > MaximumCleanupTime {
+		o.CleanupTimout = MaximumCleanupTime
 	}
 	if o.MaxAttempts <= 0 {
 		o.MaxAttempts = DefaultMaxAttempts
@@ -148,7 +157,7 @@ func RunHarness(ctx context.Context, options RunOptions, checks []Check) (*Repor
 	results, execErr := executeChecks(ctx, opts, selected)
 	finishedAt := options.Now().UTC()
 	if execErr != nil {
-		return nil, err
+		return nil, execErr
 	}
 
 	runID := options.RunID
@@ -162,7 +171,7 @@ func RunHarness(ctx context.Context, options RunOptions, checks []Check) (*Repor
 	report := &Report{
 		SchemaVersion:           SchemaVersion,
 		RunID:                   runID,
-		Harness:                 HarnessInfo{Name: HarnessName},
+		Harness:                 HarnessInfo{Name: HarnessName, Version: HarnessVersion},
 		Environment:             environment.String(),
 		Mode:                    options.Mode,
 		AllowProductionOverride: options.AllowProductionOverride && environment.IsProduction(),
@@ -214,6 +223,9 @@ func selectChecks(checks []Check, only, exclude []string) ([]Check, error) {
 		}
 		if _, done := selected[id]; done {
 			return nil
+		}
+		if _, skip := excluded[id]; skip {
+			return &UsageRefusalError{Reason: ReasonSelectionConflict, Detail: id + " is both selected and excluded"}
 		}
 		selected[id] = struct{}{}
 		for _, dep := range byID[id].Metadata().Dependencies {
@@ -300,13 +312,17 @@ func executeChecks(ctx context.Context, options RunOptions, checks []Check) ([]C
 	}
 
 	statuses := make(map[string]Status, len(checks))
+	launched := make(map[string]bool, len(checks))
 	results := make([]CheckResult, 0, len(checks))
 	completions := make(chan completion, len(checks))
 	running := 0
 	sem := make(chan struct{}, options.Concurrency)
+	canceled := false
+	ctxDone := ctx.Done()
 
 	launch := func(id string) {
 		check := byID[id]
+		launched[id] = true
 		running++
 		go func() {
 			// Acquire a bounded slot before executing so the global concurrency
@@ -332,6 +348,15 @@ func executeChecks(ctx context.Context, options RunOptions, checks []Check) ([]C
 				continue
 			}
 			if _, terminal := statuses[id]; terminal {
+				continue
+			}
+			if launched[id] {
+				continue
+			}
+			if canceled {
+				meta := byID[id].Metadata()
+				statuses[id] = StatusBlocked
+				results = append(results, blockedCanceledResult(meta, ctx))
 				continue
 			}
 			blockedResult, hasBlocker := blockForDependencies(byID[id], statuses, ctx)
@@ -370,25 +395,19 @@ func executeChecks(ctx context.Context, options RunOptions, checks []Check) ([]C
 		}
 		var done completion
 		select {
-		case <-ctx.Done():
-			// Mark everything non-terminal blocked so the run finishes while
-			// in-flight probes wind down on their own deadline contexts.
+		case <-ctxDone:
+			// Stop launching, but join every already-launched probe. A canceled
+			// write may have committed remotely and must retain its real unknown
+			// outcome and cleanup disposition.
+			canceled = true
+			ctxDone = nil
 			for id := range remainingDeps {
-				if _, terminal := statuses[id]; terminal {
+				if _, terminal := statuses[id]; terminal || launched[id] {
 					continue
 				}
 				meta := byID[id].Metadata()
 				statuses[id] = StatusBlocked
-				results = append(results, CheckResult{
-					ID:           id,
-					Provider:     meta.Provider,
-					Description:  meta.Description,
-					Impact:       meta.Impact,
-					Dependencies: meta.Dependencies,
-					Status:       StatusBlocked,
-					Evidence:     []Evidence{{Key: "reason", Value: ReasonRunContextCanceled}},
-					Cleanup:      CleanupRecord{Status: CleanupNotApplicable, Resources: []ResourceRecord{}},
-				})
+				results = append(results, blockedCanceledResult(meta, ctx))
 			}
 			continue
 		case done = <-completions:
@@ -450,7 +469,7 @@ func blockForDependencies(check Check, statuses map[string]Status, ctx context.C
 		Provider:     meta.Provider,
 		Description:  meta.Description,
 		Impact:       meta.Impact,
-		Dependencies: meta.Dependencies,
+		Dependencies: cloneStrings(meta.Dependencies),
 		Status:       status,
 		Evidence:     evidence,
 		Cleanup:      CleanupRecord{Status: CleanupNotApplicable, Resources: []ResourceRecord{}},
@@ -469,7 +488,7 @@ func blockedCanceledResult(meta Metadata, ctx context.Context) CheckResult {
 		Provider:     meta.Provider,
 		Description:  meta.Description,
 		Impact:       meta.Impact,
-		Dependencies: meta.Dependencies,
+		Dependencies: cloneStrings(meta.Dependencies),
 		Status:       StatusBlocked,
 		Evidence:     evidence,
 		Cleanup:      CleanupRecord{Status: CleanupNotApplicable, Resources: []ResourceRecord{}},
@@ -519,7 +538,7 @@ func runSingleCheck(ctx context.Context, options RunOptions, check Check) CheckR
 		Provider:     meta.Provider,
 		Description:  meta.Description,
 		Impact:       meta.Impact,
-		Dependencies: meta.Dependencies,
+		Dependencies: cloneStrings(meta.Dependencies),
 		Cleanup:      CleanupRecord{Status: CleanupNotApplicable, Resources: []ResourceRecord{}},
 	}
 	if meta.Impact == ImpactExternalWrite && !(options.Mode == ModeWrite && options.AllowWrites) {
@@ -531,7 +550,13 @@ func runSingleCheck(ctx context.Context, options RunOptions, check Check) CheckR
 	started := options.Now().UTC()
 	result.StartedAt = Timestamp(started)
 	var outcome Outcome
-	for attempt := 1; attempt <= options.MaxAttempts; attempt++ {
+	maxAttempts := options.MaxAttempts
+	if meta.Impact == ImpactExternalWrite {
+		// Unknown outcomes from visible writes must not be replayed blindly.
+		// Journey-level idempotency and reconciliation remain authoritative.
+		maxAttempts = 1
+	}
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		result.Attempts = attempt
 		attemptCtx, cancel := context.WithTimeout(ctx, options.CheckTimeout)
 		outcome = runProbeOnce(attemptCtx, check)
@@ -539,7 +564,7 @@ func runSingleCheck(ctx context.Context, options RunOptions, check Check) CheckR
 		if outcome.Status != StatusFailed || !outcome.Retryable || ctx.Err() != nil {
 			break
 		}
-		if attempt < options.MaxAttempts {
+		if attempt < maxAttempts {
 			backoff := options.BackoffBase << (attempt - 1)
 			if backoff > options.BackoffMax {
 				backoff = options.BackoffMax
@@ -559,7 +584,9 @@ func runSingleCheck(ctx context.Context, options RunOptions, check Check) CheckR
 		if code == "" || isTimeout(outcome.Err) {
 			code = "deadline_exceeded"
 		}
-		result.Error = &ErrorDetail{Code: code, Message: RedactString(outcome.Err.Error())}
+		// Raw provider, database and SDK errors may contain account identifiers,
+		// resource names or endpoint topology. Reports carry only the stable code.
+		result.Error = &ErrorDetail{Code: code, Message: code}
 	}
 	result.Evidence = SanitizeEvidence(outcome.Evidence)
 
@@ -575,9 +602,13 @@ func runSingleCheck(ctx context.Context, options RunOptions, check Check) CheckR
 	}
 	result.Cleanup.Resources = resources
 	if outcome.Cleanup == nil {
+		result.Cleanup.Status = CleanupPreserved
+		for i := range result.Cleanup.Resources {
+			result.Cleanup.Resources[i].Preserved = true
+		}
 		return result
 	}
-	cleanupCtx, cancel := context.WithTimeout(ctx, options.CleanupTimout)
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), options.CleanupTimout)
 	defer cancel()
 	cleanupEvidence, cleanupErr := safeCleanup(cleanupCtx, outcome.Cleanup)
 	result.Cleanup.Attempts = 1
@@ -588,6 +619,8 @@ func runSingleCheck(ctx context.Context, options RunOptions, check Check) CheckR
 		for i := range result.Cleanup.Resources {
 			result.Cleanup.Resources[i].Preserved = true
 		}
+		result.Status = StatusFailed
+		result.Error = &ErrorDetail{Code: "cleanup_failed", Message: "cleanup_failed"}
 		return result
 	}
 	result.Cleanup.Status = CleanupSucceeded
@@ -649,4 +682,11 @@ func isTimeout(err error) bool {
 		return false
 	}
 	return errors.Is(err, context.DeadlineExceeded)
+}
+
+func cloneStrings(values []string) []string {
+	if len(values) == 0 {
+		return []string{}
+	}
+	return append([]string(nil), values...)
 }

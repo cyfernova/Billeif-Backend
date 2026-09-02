@@ -11,7 +11,7 @@ import (
 const (
 	SchemaVersion  = 1
 	HarnessName    = "billeif-staging-verification-harness"
-	HarnessVendore = "billeif-backend"
+	HarnessVersion = "1"
 )
 
 // Run modes. Read mode only executes read-only checks; write mode additionally
@@ -178,7 +178,9 @@ func (t *TimestampValue) UnmarshalJSON(raw []byte) error {
 }
 
 // ComputeAggregate derives the aggregate status. Precedence: failed > blocked
-// > not_configured-with-nothing-verified > passed > skipped.
+// > not_configured > passed > skipped. Optional checks must be explicitly
+// excluded; silently treating missing configuration as an overall pass would
+// overstate release evidence.
 func ComputeAggregate(statuses []Status) Aggregate {
 	counts := map[string]int{
 		string(StatusPassed):        0,
@@ -199,7 +201,7 @@ func ComputeAggregate(statuses []Status) Aggregate {
 		status = string(StatusFailed)
 	case counts[string(StatusBlocked)] > 0:
 		status = string(StatusBlocked)
-	case counts[string(StatusPassed)] == 0 && counts[string(StatusNotConfigured)] == total:
+	case counts[string(StatusNotConfigured)] > 0:
 		status = string(StatusNotConfigured)
 	case counts[string(StatusPassed)] == 0:
 		status = string(StatusSkipped)
