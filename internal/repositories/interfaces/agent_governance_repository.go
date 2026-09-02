@@ -95,6 +95,7 @@ type CompleteAgentToolCommand struct {
 	RequestHash, Status, EffectDisposition          string
 	ResultType, ResultID, FailureCode               string
 	InputTokens, OutputTokens, CostMicros           int64
+	Chargeable                                      bool
 	SpendReservationID                              string
 	Now                                             time.Time
 }
@@ -109,6 +110,11 @@ type CompleteAgentRunCommand struct {
 type CancelAgentRunCommand struct {
 	RunID, BusinessID, AgentID, UserID, ReasonCode string
 	Now                                            time.Time
+}
+
+type CheckAgentExecutionCommand struct {
+	RunID, BusinessID, AgentID, UserID string
+	Now                                time.Time
 }
 
 type AgentExecutionGateCommand struct {
@@ -147,6 +153,7 @@ type AgentGovernanceRepository interface {
 	AuthorizeToolExecution(context.Context, AuthorizeAgentToolCommand) (*AgentToolExecutionResult, error)
 	CompleteToolExecution(context.Context, CompleteAgentToolCommand) (*AgentToolExecutionResult, error)
 	CompleteRun(context.Context, CompleteAgentRunCommand) (*AgentRunResult, error)
+	CheckExecution(context.Context, CheckAgentExecutionCommand) error
 	RequestCancellation(context.Context, CancelAgentRunCommand) error
 	SetExecutionGate(context.Context, AgentExecutionGateCommand) error
 	AdmitProvider(context.Context, ProviderAdmissionCommand) (*ProviderAdmission, error)

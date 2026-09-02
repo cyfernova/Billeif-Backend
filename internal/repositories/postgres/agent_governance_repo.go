@@ -113,7 +113,7 @@ func (r *AgentGovernanceRepository) StartRun(ctx context.Context, c interfaces.S
 func (r *AgentGovernanceRepository) replayRun(ctx context.Context, c interfaces.StartAgentRunCommand) (*interfaces.AgentRunResult, error) {
 	var existing models.AIAgentRun
 	err := r.db.WithContext(ctx).Where("business_id = ? AND agent_id = ? AND user_id = ? AND idempotency_key = ?", c.BusinessID, c.AgentID, c.UserID, c.IdempotencyKey).First(&existing).Error
-	if err != nil || existing.RequestHash != c.RequestHash || existing.ProviderKey != c.ProviderKey || existing.ModelKey != c.ModelKey {
+	if err != nil || existing.RequestHash != c.RequestHash || existing.ProviderKey != c.ProviderKey || existing.ModelKey != c.ModelKey || existing.ModelConfig != c.ModelConfig || existing.PromptTemplateVersion != c.PromptTemplateVersion {
 		return nil, interfaces.ErrAgentGovernanceConflict
 	}
 	return runResult(existing, true), nil
@@ -168,18 +168,11 @@ func (r *AgentGovernanceRepository) ReserveRunCapacity(ctx context.Context, c in
 			policyErr = interfaces.ErrAgentGovernanceRetryLimit
 			return nil
 		}
-		run.TokenReserved += c.TokenAmount
-		if c.Step {
-			run.StepsUsed++
-		}
-		if c.Retry {
-			run.RetriesUsed++
-		}
-		run.UpdatedAt = c.Now.UTC()
-		if err := tx.Save(&run).Error; err != nil {
-			return err
-		}
 		if c.SpendMicros == 0 {
+			applyRunCapacity(&run, c)
+			if err := tx.Save(&run).Error; err != nil {
+				return err
+			}
 			result = &interfaces.AgentSpendReservationResult{Status: "reserved"}
 			return nil
 		}
@@ -209,6 +202,10 @@ func (r *AgentGovernanceRepository) ReserveRunCapacity(ctx context.Context, c in
 		if err := tx.Save(&agentBudget).Error; err != nil {
 			return err
 		}
+		applyRunCapacity(&run, c)
+		if err := tx.Save(&run).Error; err != nil {
+			return err
+		}
 		reservation := models.AISpendReservation{ID: uuid.NewString(), RunID: c.RunID, BusinessBudgetPeriodID: businessBudget.ID, AgentBudgetPeriodID: agentBudget.ID, ProviderKey: c.ProviderKey, ModelKey: c.ModelKey, SpendCurrency: strings.ToUpper(c.SpendCurrency), ReservedMicros: c.SpendMicros, Status: "reserved", IdempotencyKey: c.IdempotencyKey, RequestHash: c.RequestHash, ReservedAt: c.Now.UTC(), ExpiresAt: c.ExpiresAt.UTC(), UpdatedAt: c.Now.UTC()}
 		if err := tx.Create(&reservation).Error; err != nil {
 			return err
@@ -223,6 +220,17 @@ func (r *AgentGovernanceRepository) ReserveRunCapacity(ctx context.Context, c in
 		return nil, policyErr
 	}
 	return result, nil
+}
+
+func applyRunCapacity(run *models.AIAgentRun, c interfaces.ReserveAgentRunCapacityCommand) {
+	run.TokenReserved += c.TokenAmount
+	if c.Step {
+		run.StepsUsed++
+	}
+	if c.Retry {
+		run.RetriesUsed++
+	}
+	run.UpdatedAt = c.Now.UTC()
 }
 
 func (r *AgentGovernanceRepository) AuthorizeToolExecution(ctx context.Context, c interfaces.AuthorizeAgentToolCommand) (*interfaces.AgentToolExecutionResult, error) {
@@ -243,6 +251,10 @@ func (r *AgentGovernanceRepository) AuthorizeToolExecution(ctx context.Context, 
 		}
 		if err := activeRunError(run, c.Now); err != nil {
 			policyErr = err
+			return nil
+		}
+		if run.RequestHash != c.RequestHash {
+			policyErr = interfaces.ErrAgentGovernanceConflict
 			return nil
 		}
 		var existing models.AIToolExecution
@@ -464,6 +476,30 @@ func (r *AgentGovernanceRepository) RequestCancellation(ctx context.Context, c i
 	return nil
 }
 
+func (r *AgentGovernanceRepository) CheckExecution(ctx context.Context, c interfaces.CheckAgentExecutionCommand) error {
+	if r == nil || r.db == nil || !validGovernanceScope(c.BusinessID, c.AgentID, c.UserID) || c.RunID == "" || c.Now.IsZero() {
+		return interfaces.ErrAgentGovernanceInvalidScope
+	}
+	var policyErr error
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := requireExecutionGates(tx, c.BusinessID, c.AgentID); err != nil {
+			policyErr = err
+			return nil
+		}
+		var run models.AIAgentRun
+		if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).Where("id = ? AND business_id = ? AND agent_id = ? AND user_id = ?", c.RunID, c.BusinessID, c.AgentID, c.UserID).First(&run).Error; err != nil {
+			policyErr = scopedNotFound(err)
+			return nil
+		}
+		policyErr = activeRunError(run, c.Now)
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("check agent execution: %w", err)
+	}
+	return policyErr
+}
+
 func (r *AgentGovernanceRepository) SetExecutionGate(ctx context.Context, c interfaces.AgentExecutionGateCommand) error {
 	if r == nil || r.db == nil || !validGateCommand(c) {
 		return interfaces.ErrAgentGovernanceInvalidScope
@@ -551,7 +587,22 @@ func (r *AgentGovernanceRepository) AdmitProvider(ctx context.Context, c interfa
 			}
 			admission = &interfaces.ProviderAdmission{ProbeToken: token, HalfOpen: true}
 		case "half_open":
-			policyErr = interfaces.ErrAgentGovernanceProbeBusy
+			if breaker.ProbeExpiresAt == nil || breaker.ProbeExpiresAt.After(c.Now) {
+				policyErr = interfaces.ErrAgentGovernanceProbeBusy
+				return nil
+			}
+			token := c.ProbeToken
+			if token == "" {
+				token = uuid.NewString()
+			}
+			expires := c.Now.UTC().Add(c.ProbeLease)
+			breaker.ProbeToken, breaker.ProbeExpiresAt = &token, &expires
+			breaker.Version++
+			breaker.UpdatedAt = c.Now.UTC()
+			if err := tx.Save(&breaker).Error; err != nil {
+				return err
+			}
+			admission = &interfaces.ProviderAdmission{ProbeToken: token, HalfOpen: true}
 		default:
 			policyErr = interfaces.ErrAgentGovernanceCircuitOpen
 		}
@@ -738,7 +789,7 @@ func finalizeSpendReservation(tx *gorm.DB, c interfaces.CompleteAgentToolCommand
 	if business.ReservedMicros < 0 || agent.ReservedMicros < 0 {
 		return interfaces.ErrAgentGovernanceUnsafeTransition
 	}
-	if status == "succeeded" {
+	if status == "succeeded" || c.Chargeable {
 		business.SettledMicros += c.CostMicros
 		agent.SettledMicros += c.CostMicros
 		reservation.Status, reservation.SettledMicros, reservation.SettledAt = "settled", c.CostMicros, &now

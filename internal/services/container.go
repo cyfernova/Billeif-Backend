@@ -244,7 +244,7 @@ func NewContainer(
 	merchantAgentSvc := NewMerchantAgentService(ap2Repo, ap2Signer, log)
 	agentConfigSvc := NewAgentConfigService(".well-known", log)
 	sellerNegotiationSvc := NewSellerNegotiationService(ap2Repo, agentConfigSvc, log)
-	a2aBargainingSvc := NewA2ABargainingService(a2aClient, bargainingSvc, menteeSvc, ap2Repo, aws.SQS, cfg, log).DisableUngovernedExecution()
+	a2aBargainingSvc := NewA2ABargainingService(a2aClient, bargainingSvc, menteeSvc, ap2Repo, aws.SQS, cfg, log)
 	websocketConnectionSvc := NewWebSocketConnectionService(cfg, aws, log)
 	websocketTicketSvc := NewWebSocketTicketService(websocketTicketRepo, WebSocketTicketServiceOptions{})
 	notificationSvc := NewNotificationService(notificationRepo, NotificationServiceOptions{})
@@ -268,9 +268,15 @@ func NewContainer(
 		})
 		voiceSessionSvc = voicesession.NewService(voiceStore, voicesession.NewAgentCoreRuntimeStopper(aws.AgentCore), voiceConfig, voicesession.ServiceOptions{
 			CreateGuard: func(ctx context.Context, scope voicesession.Scope, input voicesession.CreateInput) error {
-				return requireCapability(ctx, capabilitySvc, CapabilityRequest{
+				if err := requireCapability(ctx, capabilitySvc, CapabilityRequest{
 					BusinessID: scope.BusinessID, UserID: scope.UserID,
 					Platform: CapabilityPlatform(input.Client.Platform), Capability: CapabilityVoice,
+				}); err != nil {
+					return err
+				}
+				return requireCapability(ctx, capabilitySvc, CapabilityRequest{
+					BusinessID: scope.BusinessID, UserID: scope.UserID,
+					Platform: CapabilityPlatform(input.Client.Platform), Capability: CapabilityAI,
 				})
 			},
 		})
@@ -375,9 +381,8 @@ func NewContainer(
 	)
 
 	shoppingAgentSvc := NewShoppingAgentService(ap2Repo, agentSvc, intentProcessingSvc, ap2Signer, ap2MandateSvc, a2aClient, cfg.Server.A2AMessageEndpoint(), log)
-	procurementSvc := NewProcurementService(ap2Repo, agentSvc, intentProcessingSvc, shoppingAgentSvc, merchantAgentSvc, bargainingSvc, agentConfigSvc, ap2Signer, log).DisableUngovernedExecution()
+	procurementSvc := NewProcurementService(ap2Repo, agentSvc, intentProcessingSvc, shoppingAgentSvc, merchantAgentSvc, bargainingSvc, agentConfigSvc, ap2Signer, log)
 	a2aTaskSvc.ConfigureDomainServices(ap2Repo, merchantAgentSvc, sellerNegotiationSvc, ap2Signer)
-	a2aTaskSvc.DisableUngovernedExecution()
 
 	return &Container{
 		Auth:                   NewAuthService(cfg, userRepo, aws, emailSvc, s3Svc, log).WithAuthAuditRecorder(securityRepo),

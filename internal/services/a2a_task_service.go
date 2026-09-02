@@ -34,9 +34,10 @@ type A2ATaskService struct {
 
 func NewA2ATaskService(db *gorm.DB, log *logger.Logger, pushService *A2APushService) *A2ATaskService {
 	return &A2ATaskService{
-		db:          db,
-		log:         log,
-		pushService: pushService,
+		db:                          db,
+		log:                         log,
+		pushService:                 pushService,
+		ungovernedExecutionDisabled: true,
 	}
 }
 

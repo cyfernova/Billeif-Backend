@@ -33,6 +33,15 @@ func TestAgentToolRiskClassesAreExact(t *testing.T) {
 	}
 }
 
+func TestInvoiceAgentToolsUseExistingExportPermission(t *testing.T) {
+	for _, key := range []string{"list_invoices", "get_invoice"} {
+		policy, ok := AgentToolPolicyFor(key)
+		if !ok || policy.Permission != PermissionDocumentsExport {
+			t.Fatalf("policy %q = %#v, want %q", key, policy, PermissionDocumentsExport)
+		}
+	}
+}
+
 func TestAgentGovernanceCannotReturnSuccessWhenDurableAuditFails(t *testing.T) {
 	repository := &governanceRepositoryFake{completeToolErr: errors.New("audit unavailable")}
 	service := NewAgentGovernanceService(AgentGovernanceServiceConfig{
@@ -50,11 +59,11 @@ func TestAgentGovernanceCannotReturnSuccessWhenDurableAuditFails(t *testing.T) {
 		IdempotencyKey: "read-1", ProviderKey: "sarvam", ModelKey: "sarvam-m",
 		ModelConfig: `{}`, PromptTemplateVersion: "voice-v1", TokenBudget: 180, ExpectedCostMicros: 20,
 		BusinessSpendCeilingMicros: 1_000, AgentDailySpendLimitMicros: 500, SpendCurrency: "INR",
-		MaxSteps: 2, MaxToolCalls: 4, MaxRetries: 1, DeadlineAt: time.Date(2026, 9, 2, 12, 0, 20, 0, time.UTC),
+		MaxSteps: 2, MaxToolCalls: 4, MaxRetries: 1, DeadlineAt: time.Date(2099, 9, 2, 12, 0, 20, 0, time.UTC),
 		ProviderFailureThreshold: 3, ProviderCooldown: time.Minute, ProviderProbeLease: 10 * time.Second,
 	}
-	output, err := service.ExecuteTool(context.Background(), request, func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
-		return json.RawMessage(`{"items":[]}`), nil
+	output, err := service.ExecuteTool(context.Background(), request, func(context.Context, string, json.RawMessage) (GovernedToolInvocationResult, error) {
+		return GovernedToolInvocationResult{Output: json.RawMessage(`{"items":[]}`)}, nil
 	})
 	if output != nil || !errors.Is(err, ErrAgentToolExecutionFailed) {
 		t.Fatalf("ExecuteTool() = (%s, %v), want durable failure", output, err)
@@ -77,6 +86,103 @@ func TestCanonicalAgentToolArgumentsNormalizeAndRejectDuplicateKeys(t *testing.T
 	}
 	if _, _, err := CanonicalAgentToolArguments(json.RawMessage(`{"authorization":"Bearer sensitive"}`)); !errors.Is(err, ErrAgentGovernanceInvalidArguments) {
 		t.Fatalf("sensitive-key error = %v", err)
+	}
+}
+
+func TestAgentGovernanceRejectsArgumentsHashMismatchBeforeAdmission(t *testing.T) {
+	repository := &governanceRepositoryFake{}
+	service := NewAgentGovernanceService(AgentGovernanceServiceConfig{
+		ExecutionEnabled: true, Repository: repository, Permissions: allowGovernancePermission{},
+		Now: func() time.Time { return time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC) },
+	})
+	request := validGovernedToolRequest(t)
+	request.ArgumentsHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	invoked := false
+	_, err := service.ExecuteTool(context.Background(), request, func(context.Context, string, json.RawMessage) (GovernedToolInvocationResult, error) {
+		invoked = true
+		return GovernedToolInvocationResult{Output: json.RawMessage(`{"items":[]}`)}, nil
+	})
+	if !errors.Is(err, ErrAgentGovernanceInvalidArguments) || invoked {
+		t.Fatalf("ExecuteTool() = (%v, invoked=%v), want invalid arguments before invocation", err, invoked)
+	}
+}
+
+func TestAgentGovernanceReplayNeverInvokesTransportTwice(t *testing.T) {
+	repository := &governanceRepositoryFake{authorizeReplayed: true}
+	service := NewAgentGovernanceService(AgentGovernanceServiceConfig{
+		ExecutionEnabled: true, Repository: repository, Permissions: allowGovernancePermission{},
+		Now: func() time.Time { return time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC) },
+	})
+	invocations := 0
+	_, err := service.ExecuteTool(context.Background(), validGovernedToolRequest(t), func(context.Context, string, json.RawMessage) (GovernedToolInvocationResult, error) {
+		invocations++
+		return GovernedToolInvocationResult{Output: json.RawMessage(`{"items":[]}`)}, nil
+	})
+	if !errors.Is(err, ErrAgentToolReplayUnavailable) || invocations != 0 {
+		t.Fatalf("ExecuteTool() = (%v, invocations=%d), want replay failure without invocation", err, invocations)
+	}
+}
+
+func TestAgentGovernancePersistsAuthoritativeUsageAndCost(t *testing.T) {
+	repository := &governanceRepositoryFake{}
+	service := NewAgentGovernanceService(AgentGovernanceServiceConfig{
+		ExecutionEnabled: true, Repository: repository, Permissions: allowGovernancePermission{},
+		Now: func() time.Time { return time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC) },
+	})
+	output, err := service.ExecuteTool(context.Background(), validGovernedToolRequest(t), func(context.Context, string, json.RawMessage) (GovernedToolInvocationResult, error) {
+		return GovernedToolInvocationResult{Output: json.RawMessage(`{"items":[]}`), InputTokens: 11, OutputTokens: 7, CostMicros: 18}, nil
+	})
+	if err != nil || string(output) != `{"items":[]}` {
+		t.Fatalf("ExecuteTool() = (%s, %v)", output, err)
+	}
+	if got := repository.completeTool; got.InputTokens != 11 || got.OutputTokens != 7 || got.CostMicros != 18 || !got.Chargeable {
+		t.Fatalf("tool usage = %#v, want authoritative metering", got)
+	}
+	if got := repository.completeRun; got.InputTokens != 11 || got.OutputTokens != 7 || got.CostMicros != 18 || got.Status != "completed" {
+		t.Fatalf("run usage = %#v, want authoritative metering", got)
+	}
+}
+
+func TestAgentGovernanceDeadlineCannotReturnFalseSuccess(t *testing.T) {
+	repository := &governanceRepositoryFake{}
+	now := time.Now().UTC()
+	service := NewAgentGovernanceService(AgentGovernanceServiceConfig{
+		ExecutionEnabled: true, Repository: repository, Permissions: allowGovernancePermission{}, Now: time.Now,
+	})
+	request := validGovernedToolRequest(t)
+	request.DeadlineAt = now.Add(20 * time.Millisecond)
+	output, err := service.ExecuteTool(context.Background(), request, func(callCtx context.Context, _ string, _ json.RawMessage) (GovernedToolInvocationResult, error) {
+		deadline, bounded := callCtx.Deadline()
+		if !bounded || !deadline.Equal(request.DeadlineAt) {
+			return GovernedToolInvocationResult{Output: json.RawMessage(`{"unsafe":true}`)}, nil
+		}
+		<-callCtx.Done()
+		return GovernedToolInvocationResult{Output: json.RawMessage(`{"unsafe":true}`), Chargeable: true}, nil
+	})
+	if output != nil || !errors.Is(err, ErrAgentToolExecutionFailed) {
+		t.Fatalf("ExecuteTool() = (%s, %v), want no false success", output, err)
+	}
+	if repository.completeTool.Status != "timed_out" || repository.completeTool.CostMicros != request.ExpectedCostMicros {
+		t.Fatalf("completion = %#v, want timed-out chargeable audit", repository.completeTool)
+	}
+}
+
+func TestAgentGovernanceRechecksDurableGateAfterInvocation(t *testing.T) {
+	repository := &governanceRepositoryFake{executionCheckErrors: []error{nil, interfaces.ErrAgentGovernanceGateDisabled}}
+	service := NewAgentGovernanceService(AgentGovernanceServiceConfig{
+		ExecutionEnabled: true, Repository: repository, Permissions: allowGovernancePermission{},
+		Now: func() time.Time { return time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC) },
+	})
+	invocations := 0
+	output, err := service.ExecuteTool(context.Background(), validGovernedToolRequest(t), func(context.Context, string, json.RawMessage) (GovernedToolInvocationResult, error) {
+		invocations++
+		return GovernedToolInvocationResult{Output: json.RawMessage(`{"unsafe":true}`)}, nil
+	})
+	if output != nil || !errors.Is(err, ErrAgentToolExecutionFailed) || invocations != 1 {
+		t.Fatalf("ExecuteTool() = (%s, %v, invocations=%d), want durable gate failure", output, err, invocations)
+	}
+	if repository.executionChecks != 2 || repository.completeTool.Status == "succeeded" {
+		t.Fatalf("checks=%d completion=%#v, want post-invocation denial", repository.executionChecks, repository.completeTool)
 	}
 }
 
@@ -121,7 +227,8 @@ func (f *governanceToolTransportFake) Execute(context.Context, string, json.RawM
 type governanceExecutorFake struct{}
 
 func (*governanceExecutorFake) ExecuteTool(_ context.Context, request GovernedToolRequest, invoke GovernedToolInvoker) (json.RawMessage, error) {
-	return invoke(context.Background(), request.ToolKey, request.CanonicalArguments)
+	result, err := invoke(context.Background(), request.ToolKey, request.CanonicalArguments)
+	return result.Output, err
 }
 
 type allowGovernancePermission struct{}
@@ -132,15 +239,38 @@ func (allowGovernancePermission) UserHasPermission(context.Context, string, stri
 
 type governanceRepositoryFake struct {
 	interfaces.AgentGovernanceRepository
-	completeToolErr error
+	completeToolErr      error
+	authorizeReplayed    bool
+	completeTool         interfaces.CompleteAgentToolCommand
+	completeRun          interfaces.CompleteAgentRunCommand
+	executionCheckErrors []error
+	executionChecks      int
+}
+
+func validGovernedToolRequest(t *testing.T) GovernedToolRequest {
+	t.Helper()
+	canonical, hash, err := CanonicalAgentToolArguments(json.RawMessage(`{"limit":10}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return GovernedToolRequest{
+		RunID: "11111111-1111-4111-8111-111111111111", BusinessID: "22222222-2222-4222-8222-222222222222",
+		AgentID: "33333333-3333-4333-8333-333333333333", UserID: "44444444-4444-4444-8444-444444444444",
+		ToolKey: "list_invoices", CanonicalArguments: canonical, ArgumentsHash: hash, Risk: RiskReadOnly,
+		IdempotencyKey: "read-1", ProviderKey: "sarvam", ModelKey: "sarvam-m",
+		ModelConfig: `{}`, PromptTemplateVersion: "voice-v1", TokenBudget: 180, ExpectedCostMicros: 20,
+		BusinessSpendCeilingMicros: 1_000, AgentDailySpendLimitMicros: 500, SpendCurrency: "INR",
+		MaxSteps: 2, MaxToolCalls: 4, MaxRetries: 1, DeadlineAt: time.Date(2099, 9, 2, 12, 0, 20, 0, time.UTC),
+		ProviderFailureThreshold: 3, ProviderCooldown: time.Minute, ProviderProbeLease: 10 * time.Second,
+	}
 }
 
 func (*governanceRepositoryFake) StartRun(context.Context, interfaces.StartAgentRunCommand) (*interfaces.AgentRunResult, error) {
 	return &interfaces.AgentRunResult{ID: "11111111-1111-4111-8111-111111111111", Status: "running"}, nil
 }
 
-func (*governanceRepositoryFake) AuthorizeToolExecution(context.Context, interfaces.AuthorizeAgentToolCommand) (*interfaces.AgentToolExecutionResult, error) {
-	return &interfaces.AgentToolExecutionResult{ID: "55555555-5555-4555-8555-555555555555", Status: "authorized", SpendReservationID: "66666666-6666-4666-8666-666666666666"}, nil
+func (f *governanceRepositoryFake) AuthorizeToolExecution(context.Context, interfaces.AuthorizeAgentToolCommand) (*interfaces.AgentToolExecutionResult, error) {
+	return &interfaces.AgentToolExecutionResult{ID: "55555555-5555-4555-8555-555555555555", Status: "authorized", SpendReservationID: "66666666-6666-4666-8666-666666666666", Replayed: f.authorizeReplayed}, nil
 }
 
 func (*governanceRepositoryFake) AdmitProvider(context.Context, interfaces.ProviderAdmissionCommand) (*interfaces.ProviderAdmission, error) {
@@ -151,6 +281,21 @@ func (*governanceRepositoryFake) RecordProviderOutcome(context.Context, interfac
 	return nil
 }
 
-func (f *governanceRepositoryFake) CompleteToolExecution(context.Context, interfaces.CompleteAgentToolCommand) (*interfaces.AgentToolExecutionResult, error) {
-	return nil, f.completeToolErr
+func (f *governanceRepositoryFake) CompleteToolExecution(_ context.Context, command interfaces.CompleteAgentToolCommand) (*interfaces.AgentToolExecutionResult, error) {
+	f.completeTool = command
+	return &interfaces.AgentToolExecutionResult{ID: "55555555-5555-4555-8555-555555555555", Status: command.Status}, f.completeToolErr
+}
+
+func (f *governanceRepositoryFake) CompleteRun(_ context.Context, command interfaces.CompleteAgentRunCommand) (*interfaces.AgentRunResult, error) {
+	f.completeRun = command
+	return &interfaces.AgentRunResult{ID: "11111111-1111-4111-8111-111111111111", Status: command.Status, FinalDisposition: command.FinalDisposition}, nil
+}
+
+func (f *governanceRepositoryFake) CheckExecution(context.Context, interfaces.CheckAgentExecutionCommand) error {
+	index := f.executionChecks
+	f.executionChecks++
+	if index < len(f.executionCheckErrors) {
+		return f.executionCheckErrors[index]
+	}
+	return nil
 }

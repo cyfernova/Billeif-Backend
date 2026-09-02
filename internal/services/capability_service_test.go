@@ -211,6 +211,27 @@ func TestCapabilityServiceListCoversAuthoritativeCapabilityInventory(t *testing.
 	}, keys)
 }
 
+func TestCapabilityServiceKeepsUngovernedAIAndVoiceUnavailable(t *testing.T) {
+	service := NewCapabilityService(CapabilityServiceOptions{
+		Configuration: config.CapabilityConfiguration{AI: true, Voice: true},
+		Permissions: staticCapabilityPermissions{
+			PermissionAgentsView: true,
+			PermissionVoiceUse:   true,
+		},
+		Setup:        staticCapabilitySetup{snapshot: CapabilityBusinessSetup{BusinessExists: true, Voice: true}},
+		AIGovernance: readyCapabilityAIGovernance{},
+	})
+	for _, capability := range []CapabilityKey{CapabilityAI, CapabilityVoice} {
+		result, err := service.Evaluate(context.Background(), CapabilityRequest{
+			BusinessID: "biz-1", UserID: "user-1", Platform: CapabilityPlatformIOS, Capability: capability,
+		})
+		require.NoError(t, err)
+		require.False(t, result.Available)
+		require.Equal(t, CapabilityStateTemporarilyUnavailable, result.State)
+		require.Equal(t, ReasonAIGovernanceUnavailable, result.ReasonCode)
+	}
+}
+
 func TestCapabilityQuotaSerializesZeroValuesExplicitly(t *testing.T) {
 	raw, err := json.Marshal(CapabilityQuota{Limited: true, Available: false})
 	require.NoError(t, err)
@@ -303,6 +324,10 @@ func TestCapabilityServiceReturnsStableProductPlatformEntitlementQuotaAndPermiss
 }
 
 type staticCapabilityEntitlements map[string]FeatureAccess
+
+type readyCapabilityAIGovernance struct{}
+
+func (readyCapabilityAIGovernance) ReadyForBusiness(context.Context, string) bool { return true }
 
 func (s staticCapabilityEntitlements) InspectFeature(_ context.Context, _, feature string) (FeatureAccess, error) {
 	if access, ok := s[feature]; ok {

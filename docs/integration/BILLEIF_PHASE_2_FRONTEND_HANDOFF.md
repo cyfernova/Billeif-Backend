@@ -1312,6 +1312,12 @@ metadata, hashes, bounded configuration, usage, integer-micro cost, safe result
 references, retry/failure codes, and dispositions, never prompts, credentials,
 Bearer values, or provider bodies.
 
+AI and voice capabilities remain explicitly unavailable even when durable gates
+are enabled because no production adapter yet governs the model call and tool
+call as one run. Voice session creation checks both unavailable capabilities,
+and production runtime composition has no governance factory. Enabling database
+gates alone therefore cannot advertise or dispatch ungoverned model inference.
+
 External communication, financial, tax, security, and legal classes require an
 exact one-use approval plus an effect adapter with idempotency and reconciliation.
 No such high-risk adapter is registered. Production A2A task execution,

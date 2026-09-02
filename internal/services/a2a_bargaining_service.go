@@ -184,16 +184,17 @@ type WebhookPayload struct {
 
 func NewA2ABargainingService(a2aClient *a2a.A2AClient, bargaining *BargainingService, mentee *MenteeService, ap2Repo interfaces.AP2Repository, sqsClient *sqs.Client, cfg *config.Config, log *logger.Logger) *A2ABargainingService {
 	return &A2ABargainingService{
-		a2aClient:     a2aClient,
-		bargaining:    bargaining,
-		mentee:        mentee,
-		ap2Repo:       ap2Repo,
-		sqs:           sqsClient,
-		cfg:           cfg,
-		log:           log,
-		webhookClient: newWebhookDeliveryHTTPClient(webhookTimeout),
-		sessions:      make(map[string]*A2ASession),
-		sessionLocks:  make(map[string]*sync.Mutex),
+		a2aClient:                   a2aClient,
+		bargaining:                  bargaining,
+		mentee:                      mentee,
+		ap2Repo:                     ap2Repo,
+		sqs:                         sqsClient,
+		cfg:                         cfg,
+		log:                         log,
+		webhookClient:               newWebhookDeliveryHTTPClient(webhookTimeout),
+		sessions:                    make(map[string]*A2ASession),
+		sessionLocks:                make(map[string]*sync.Mutex),
+		ungovernedExecutionDisabled: true,
 	}
 }
 

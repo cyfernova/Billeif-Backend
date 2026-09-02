@@ -112,15 +112,16 @@ func NewProcurementService(
 	log *logger.Logger,
 ) *ProcurementService {
 	return &ProcurementService{
-		ap2Repo:     ap2Repo,
-		agentSvc:    agentSvc,
-		intentSvc:   intentSvc,
-		shoppingSvc: shoppingSvc,
-		merchantSvc: merchantSvc,
-		bargaining:  bargaining,
-		agentConfig: agentConfig,
-		signer:      signer,
-		log:         log,
+		ap2Repo:                     ap2Repo,
+		agentSvc:                    agentSvc,
+		intentSvc:                   intentSvc,
+		shoppingSvc:                 shoppingSvc,
+		merchantSvc:                 merchantSvc,
+		bargaining:                  bargaining,
+		agentConfig:                 agentConfig,
+		signer:                      signer,
+		log:                         log,
+		ungovernedExecutionDisabled: true,
 	}
 }
 

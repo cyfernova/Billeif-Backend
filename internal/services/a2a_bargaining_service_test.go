@@ -202,7 +202,9 @@ func newA2ANegotiationServiceForTest(t *testing.T, repo *a2aNegotiationRepoFake)
 	log := logger.New()
 	agentService := NewAgentService(repo, nil, nil, log)
 	bargaining := NewBargainingService(repo, nil, agentService, nil, nil, log)
-	return NewA2ABargainingService(nil, bargaining, nil, repo, nil, nil, log)
+	service := NewA2ABargainingService(nil, bargaining, nil, repo, nil, nil, log)
+	service.ungovernedExecutionDisabled = false // legacy behavior fixture; production constructors remain fail closed
+	return service
 }
 
 func validA2ANegotiationRepo() *a2aNegotiationRepoFake {

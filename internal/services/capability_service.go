@@ -181,6 +181,7 @@ type CapabilityServiceOptions struct {
 	AIGovernance   interface {
 		ReadyForBusiness(context.Context, string) bool
 	}
+	GovernedModelExecution bool
 }
 
 type CapabilityService struct {
@@ -194,6 +195,7 @@ type CapabilityService struct {
 	aiGovernance   interface {
 		ReadyForBusiness(context.Context, string) bool
 	}
+	governedModelExecution bool
 }
 
 type capabilityDefinition struct {
@@ -231,14 +233,15 @@ func NewCapabilityService(opts CapabilityServiceOptions) *CapabilityService {
 		opts.Now = time.Now
 	}
 	return &CapabilityService{
-		configuration:  opts.Configuration,
-		entitlements:   opts.Entitlements,
-		permissions:    opts.Permissions,
-		setup:          opts.Setup,
-		globalHealth:   opts.GlobalHealth,
-		businessHealth: opts.BusinessHealth,
-		now:            opts.Now,
-		aiGovernance:   opts.AIGovernance,
+		configuration:          opts.Configuration,
+		entitlements:           opts.Entitlements,
+		permissions:            opts.Permissions,
+		setup:                  opts.Setup,
+		globalHealth:           opts.GlobalHealth,
+		businessHealth:         opts.BusinessHealth,
+		now:                    opts.Now,
+		aiGovernance:           opts.AIGovernance,
+		governedModelExecution: opts.GovernedModelExecution,
 	}
 }
 
@@ -373,7 +376,8 @@ func (s *CapabilityService) evaluateDefinition(ctx context.Context, request Capa
 			result.Degradation = health.Degradation
 		}
 	}
-	aiGovernanceReady := definition.Key != CapabilityAI || (s.aiGovernance != nil && s.aiGovernance.ReadyForBusiness(ctx, request.BusinessID))
+	requiresGovernedModel := definition.Key == CapabilityAI || definition.Key == CapabilityVoice
+	aiGovernanceReady := !requiresGovernedModel || (s.governedModelExecution && s.aiGovernance != nil && s.aiGovernance.ReadyForBusiness(ctx, request.BusinessID))
 
 	switch {
 	case !definition.Supported:

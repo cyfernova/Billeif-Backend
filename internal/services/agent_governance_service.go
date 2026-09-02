@@ -38,6 +38,7 @@ var (
 	ErrAgentGovernanceUnavailable      = errors.New("agent governance unavailable")
 	ErrAgentGovernanceInvalidArguments = errors.New("agent tool arguments invalid")
 	ErrAgentToolDenied                 = errors.New("agent tool denied")
+	ErrAgentToolReplayUnavailable      = errors.New("agent tool replay output unavailable")
 	ErrAgentToolExecutionFailed        = errors.New("agent tool execution failed")
 )
 
@@ -76,8 +77,8 @@ type AgentToolPolicy struct {
 }
 
 var codeOwnedAgentToolCatalog = map[string]AgentToolPolicy{
-	"list_invoices":  {Key: "list_invoices", Permission: "invoices.view", Risk: RiskReadOnly, Enabled: true},
-	"get_invoice":    {Key: "get_invoice", Permission: "invoices.view", Risk: RiskReadOnly, Enabled: true},
+	"list_invoices":  {Key: "list_invoices", Permission: PermissionDocumentsExport, Risk: RiskReadOnly, Enabled: true},
+	"get_invoice":    {Key: "get_invoice", Permission: PermissionDocumentsExport, Risk: RiskReadOnly, Enabled: true},
 	"list_customers": {Key: "list_customers", Permission: "customers.view", Risk: RiskReadOnly, Enabled: false},
 	"get_customer":   {Key: "get_customer", Permission: "customers.view", Risk: RiskReadOnly, Enabled: false},
 }
@@ -226,7 +227,16 @@ type GovernedToolRequest struct {
 	ProviderCooldown, ProviderProbeLease        time.Duration
 }
 
-type GovernedToolInvoker func(context.Context, string, json.RawMessage) (json.RawMessage, error)
+type GovernedToolInvocationResult struct {
+	Output                    json.RawMessage
+	InputTokens, OutputTokens int64
+	CostMicros                int64
+	Chargeable                bool
+	EffectDisposition         string
+	ResultType, ResultID      string
+}
+
+type GovernedToolInvoker func(context.Context, string, json.RawMessage) (GovernedToolInvocationResult, error)
 
 type AgentGovernanceExecutor interface {
 	ExecuteTool(context.Context, GovernedToolRequest, GovernedToolInvoker) (json.RawMessage, error)
@@ -273,6 +283,11 @@ func (service *AgentGovernanceService) ExecuteTool(ctx context.Context, request 
 	if !ok || !policy.Enabled || policy.Risk != request.Risk || (policy.Risk.ApprovalRequired() && !policy.HighRiskAdapter) {
 		return nil, ErrAgentToolDenied
 	}
+	canonicalArguments, argumentsHash, err := CanonicalAgentToolArguments(request.CanonicalArguments)
+	if err != nil || request.ArgumentsHash != argumentsHash {
+		return nil, ErrAgentGovernanceInvalidArguments
+	}
+	request.CanonicalArguments, request.ArgumentsHash = canonicalArguments, argumentsHash
 	if request.BusinessID == "" || request.UserID == "" || request.AgentID == "" || request.RunID == "" ||
 		request.ArgumentsHash == "" || request.IdempotencyKey == "" || request.DeadlineAt.IsZero() ||
 		request.ProviderKey == "" || request.ModelKey == "" || request.ExpectedCostMicros <= 0 ||
@@ -285,15 +300,17 @@ func (service *AgentGovernanceService) ExecuteTool(ctx context.Context, request 
 	if !request.DeadlineAt.After(now) {
 		return nil, interfaces.ErrAgentGovernanceRunExpired
 	}
+	modelConfig := safeJSONObject(request.ModelConfig)
+	templateVersion := safeCode(request.PromptTemplateVersion)
 	requestHash := hashGovernanceFields(request.BusinessID, request.AgentID, request.UserID, request.ToolKey,
 		request.ArgumentsHash, request.ResourceType, request.ResourceID, request.IdempotencyKey,
-		request.ProviderKey, request.ModelKey)
-	_, err := service.repository.StartRun(ctx, interfaces.StartAgentRunCommand{
+		request.ProviderKey, request.ModelKey, modelConfig, templateVersion)
+	_, err = service.repository.StartRun(ctx, interfaces.StartAgentRunCommand{
 		ID: request.RunID, BusinessID: request.BusinessID, AgentID: request.AgentID, UserID: request.UserID,
 		IdempotencyKey: request.IdempotencyKey + ":run", RequestHash: requestHash,
-		ProviderKey: request.ProviderKey, ModelKey: request.ModelKey, ModelConfig: safeJSONObject(request.ModelConfig),
+		ProviderKey: request.ProviderKey, ModelKey: request.ModelKey, ModelConfig: modelConfig,
 		SpendCurrency:         request.SpendCurrency,
-		PromptTemplateVersion: safeCode(request.PromptTemplateVersion), TokenBudget: request.TokenBudget,
+		PromptTemplateVersion: templateVersion, TokenBudget: request.TokenBudget,
 		MaxSteps: request.MaxSteps, MaxToolCalls: request.MaxToolCalls, MaxRetries: request.MaxRetries,
 		DeadlineAt: request.DeadlineAt, Now: now,
 	})
@@ -320,6 +337,36 @@ func (service *AgentGovernanceService) ExecuteTool(ctx context.Context, request 
 	if err != nil {
 		return nil, fmt.Errorf("%w: authorize tool", ErrAgentToolDenied)
 	}
+	if execution.Replayed {
+		return nil, ErrAgentToolReplayUnavailable
+	}
+	check := interfaces.CheckAgentExecutionCommand{
+		RunID: request.RunID, BusinessID: request.BusinessID, AgentID: request.AgentID,
+		UserID: request.UserID, Now: service.now().UTC(),
+	}
+	if err := service.repository.CheckExecution(ctx, check); err != nil {
+		persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		defer cancelPersist()
+		status := governanceControlFailureStatus(err)
+		completedTool, completeErr := service.repository.CompleteToolExecution(persistCtx, interfaces.CompleteAgentToolCommand{
+			ExecutionID: execution.ID, RunID: request.RunID, BusinessID: request.BusinessID, AgentID: request.AgentID,
+			UserID: request.UserID, RequestHash: requestHash, Status: status, EffectDisposition: "none",
+			FailureCode: "governance_pre_dispatch_denied", SpendReservationID: execution.SpendReservationID, Now: service.now().UTC(),
+		})
+		if completeErr != nil || completedTool == nil || completedTool.Status != status {
+			return nil, ErrAgentToolExecutionFailed
+		}
+		runStatus := terminalRunStatus(status)
+		completedRun, completeErr := service.repository.CompleteRun(persistCtx, interfaces.CompleteAgentRunCommand{
+			RunID: request.RunID, BusinessID: request.BusinessID, AgentID: request.AgentID, UserID: request.UserID,
+			RequestHash: requestHash, Status: runStatus, FailureCode: "governance_pre_dispatch_denied",
+			FinalDisposition: runStatus, Now: service.now().UTC(),
+		})
+		if completeErr != nil || completedRun == nil || completedRun.Status != runStatus {
+			return nil, ErrAgentToolExecutionFailed
+		}
+		return nil, ErrAgentToolExecutionFailed
+	}
 	admission, err := service.repository.AdmitProvider(ctx, interfaces.ProviderAdmissionCommand{
 		ProviderKey: request.ProviderKey, FailureThreshold: request.ProviderFailureThreshold,
 		Cooldown: request.ProviderCooldown, ProbeLease: request.ProviderProbeLease, Now: now,
@@ -337,53 +384,97 @@ func (service *AgentGovernanceService) ExecuteTool(ctx context.Context, request 
 		})
 		return nil, ErrAgentToolExecutionFailed
 	}
-	output, invokeErr := invoke(ctx, request.ToolKey, request.CanonicalArguments)
+	executionCtx, cancelExecution := context.WithDeadline(ctx, request.DeadlineAt)
+	invocation, invokeErr := invoke(executionCtx, request.ToolKey, request.CanonicalArguments)
+	executionCtxErr := executionCtx.Err()
+	cancelExecution()
 	persistCtx, cancelPersist := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancelPersist()
+	check.Now = service.now().UTC()
+	controlErr := service.repository.CheckExecution(persistCtx, check)
 	outcomeErr := service.repository.RecordProviderOutcome(persistCtx, interfaces.ProviderOutcomeCommand{
-		ProviderKey: request.ProviderKey, ProbeToken: admission.ProbeToken, Success: invokeErr == nil && ctx.Err() == nil,
+		ProviderKey: request.ProviderKey, ProbeToken: admission.ProbeToken, Success: invokeErr == nil && executionCtxErr == nil,
 		FailureCode: "tool_transport_failed", FailureThreshold: request.ProviderFailureThreshold,
 		Cooldown: request.ProviderCooldown, Now: service.now().UTC(),
 	})
 	completion := interfaces.CompleteAgentToolCommand{
 		ExecutionID: execution.ID, RunID: request.RunID, BusinessID: request.BusinessID, AgentID: request.AgentID, UserID: request.UserID,
 		RequestHash: requestHash, Status: "succeeded", EffectDisposition: "none", SpendReservationID: execution.SpendReservationID, Now: service.now().UTC(),
+		InputTokens: invocation.InputTokens, OutputTokens: invocation.OutputTokens, CostMicros: invocation.CostMicros,
+		Chargeable: invokeErr == nil || invocation.Chargeable,
 	}
+	if completion.Chargeable && completion.CostMicros == 0 {
+		completion.CostMicros = request.ExpectedCostMicros
+	}
+	if invocation.EffectDisposition != "" {
+		completion.EffectDisposition = safeCode(invocation.EffectDisposition)
+	}
+	completion.ResultType, completion.ResultID = safeCode(invocation.ResultType), safeCode(invocation.ResultID)
 	if invokeErr != nil {
 		completion.Status = "failed"
 		completion.FailureCode = "tool_transport_failed"
 	}
-	if ctxErr := ctx.Err(); ctxErr != nil {
+	if executionCtxErr != nil {
 		completion.Status = "timed_out"
-		if errors.Is(ctxErr, context.Canceled) {
+		if errors.Is(executionCtxErr, context.Canceled) {
 			completion.Status = "cancelled"
 		}
+		if policy.Risk != RiskReadOnly {
+			completion.Status = "reconciliation_required"
+			completion.EffectDisposition = "unknown"
+		}
 	}
-	if outcomeErr != nil {
+	if controlErr != nil {
+		completion.Status = governanceControlFailureStatus(controlErr)
+		completion.FailureCode = "governance_state_changed"
+		if policy.Risk != RiskReadOnly {
+			completion.Status = "reconciliation_required"
+			completion.EffectDisposition = "unknown"
+		}
+	}
+	if outcomeErr != nil && completion.EffectDisposition != "unknown" {
 		completion.Status = "failed"
 		completion.FailureCode = "provider_outcome_audit_failed"
 	}
-	if _, err := service.repository.CompleteToolExecution(persistCtx, completion); err != nil {
+	completedTool, err := service.repository.CompleteToolExecution(persistCtx, completion)
+	if err != nil || completedTool == nil || completedTool.Status != completion.Status {
 		return nil, ErrAgentToolExecutionFailed
 	}
-	runStatus := "completed"
-	if completion.Status != "succeeded" {
-		runStatus = completion.Status
-		if runStatus != "cancelled" && runStatus != "timed_out" {
-			runStatus = "failed"
-		}
-	}
-	if _, err := service.repository.CompleteRun(persistCtx, interfaces.CompleteAgentRunCommand{
+	runStatus := terminalRunStatus(completion.Status)
+	completedRun, err := service.repository.CompleteRun(persistCtx, interfaces.CompleteAgentRunCommand{
 		RunID: request.RunID, BusinessID: request.BusinessID, AgentID: request.AgentID, UserID: request.UserID,
 		RequestHash: requestHash, Status: runStatus, FailureCode: completion.FailureCode,
-		FinalDisposition: runStatus, Now: service.now().UTC(),
-	}); err != nil {
+		FinalDisposition: runStatus, InputTokens: completion.InputTokens, OutputTokens: completion.OutputTokens,
+		CostMicros: completion.CostMicros, Now: service.now().UTC(),
+	})
+	if err != nil || completedRun == nil || completedRun.Status != runStatus {
 		return nil, ErrAgentToolExecutionFailed
 	}
-	if invokeErr != nil || outcomeErr != nil {
+	if invokeErr != nil || outcomeErr != nil || completion.Status != "succeeded" {
 		return nil, ErrAgentToolExecutionFailed
 	}
-	return output, nil
+	return invocation.Output, nil
+}
+
+func governanceControlFailureStatus(err error) string {
+	if errors.Is(err, interfaces.ErrAgentGovernanceRunExpired) {
+		return "timed_out"
+	}
+	if errors.Is(err, interfaces.ErrAgentGovernanceRunCancelled) || errors.Is(err, interfaces.ErrAgentGovernanceGateDisabled) {
+		return "cancelled"
+	}
+	return "failed"
+}
+
+func terminalRunStatus(toolStatus string) string {
+	switch toolStatus {
+	case "succeeded":
+		return "completed"
+	case "cancelled", "timed_out", "reconciliation_required":
+		return toolStatus
+	default:
+		return "failed"
+	}
 }
 
 type GovernedToolExecutorConfig struct {
@@ -474,7 +565,10 @@ func (executor *GovernedToolExecutor) Execute(ctx context.Context, name string, 
 		ProviderFailureThreshold: executor.config.ProviderFailureThreshold,
 		ProviderCooldown:         executor.config.ProviderCooldown, ProviderProbeLease: executor.config.ProviderProbeLease,
 	}
-	return executor.config.Governance.ExecuteTool(ctx, request, executor.transport.Execute)
+	return executor.config.Governance.ExecuteTool(ctx, request, func(callCtx context.Context, toolKey string, arguments json.RawMessage) (GovernedToolInvocationResult, error) {
+		output, err := executor.transport.Execute(callCtx, toolKey, arguments)
+		return GovernedToolInvocationResult{Output: output}, err
+	})
 }
 
 func hashGovernanceFields(values ...string) string {
