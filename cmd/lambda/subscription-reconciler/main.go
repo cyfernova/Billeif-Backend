@@ -81,21 +81,22 @@ func (h lambdaHandler) Handle(ctx context.Context) (services.SubscriptionMainten
 		}}},
 		"Environment": strings.TrimSpace(h.environment), "Reconciled": result.Reconciled, "Suspended": result.Suspended, "Failed": result.Failed,
 	})
-	return result, errors.Join(runErr, metricErr, h.emitReconciliationBacklog(now().UTC()))
+	h.emitReconciliationBacklog(runCtx, now().UTC())
+	return result, errors.Join(runErr, metricErr)
 }
 
-// emitReconciliationBacklog emits the periodic aggregate backlog gauge. A nil
-// counter or an empty environment disables emission without failing the run.
-func (h lambdaHandler) emitReconciliationBacklog(now time.Time) error {
-	if h.backlog == nil || operationsmetrics.NewRuntimeEmitter(h.environment) == nil {
-		return nil
+// emitReconciliationBacklog emits the periodic aggregate backlog gauge. It is
+// fully fail-open telemetry: nil counter, unusable environment, cancellation,
+// count failures, and encode failures are all swallowed so the maintenance
+// outcome and its retry behavior are never changed by observability. The
+// bounded run context is honored so Lambda cancellation reaches the counter.
+func (h lambdaHandler) emitReconciliationBacklog(ctx context.Context, now time.Time) {
+	if h.backlog == nil || h.metricWriter == nil || operationsmetrics.NewRuntimeEmitter(h.environment) == nil {
+		return
 	}
-	count, err := h.backlog.CountReconciliationBacklog(context.Background())
-	if err != nil {
-		return fmt.Errorf("count reconciliation backlog: %w", err)
-	}
-	if count < 0 {
-		return nil
+	count, err := h.backlog.CountReconciliationBacklog(ctx)
+	if err != nil || count < 0 {
+		return
 	}
 	metric := map[string]any{
 		"_aws": map[string]any{
@@ -109,7 +110,7 @@ func (h lambdaHandler) emitReconciliationBacklog(now time.Time) error {
 		"Category":              "reconciliation",
 		"ReconciliationBacklog": count,
 	}
-	return json.NewEncoder(h.metricWriter).Encode(metric)
+	_ = json.NewEncoder(h.metricWriter).Encode(metric)
 }
 
 func newSubscriptionMaintenanceHandler(ctx context.Context) (*lambdaHandler, error) {

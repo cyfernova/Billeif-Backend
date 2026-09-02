@@ -458,11 +458,34 @@ func (r *OperationRepository) listOutboxOperations(
 	return records, nil
 }
 
+// razorpayLifecycleTimeExpression is the safe latest lifecycle timestamp of a
+// Razorpay webhook event: the newest of the received, processed, and last
+// replayed times. A later replay payload mismatch moves the row to
+// reconciliation_required and stamps last_replayed_at, so the urgent operation
+// must be surfaced, filtered, and ordered at the replay time rather than its
+// original processing time. Pure COALESCE/CASE keeps the expression portable
+// across PostgreSQL and the SQLite test fixtures.
+const razorpayLifecycleTimeExpression = "CASE WHEN COALESCE(last_replayed_at, received_at) > COALESCE(processed_at, received_at) " +
+	"THEN COALESCE(last_replayed_at, received_at) ELSE COALESCE(processed_at, received_at) END"
+
+// latestRazorpayLifecycleTime mirrors razorpayLifecycleTimeExpression in Go
+// for the projection and the row-derived direct-read snapshot.
+func latestRazorpayLifecycleTime(event models.RazorpayWebhookEvent) time.Time {
+	latest := event.ReceivedAt
+	if event.ProcessedAt != nil && event.ProcessedAt.After(latest) {
+		latest = *event.ProcessedAt
+	}
+	if event.LastReplayedAt != nil && event.LastReplayedAt.After(latest) {
+		latest = *event.LastReplayedAt
+	}
+	return latest
+}
+
 func (r *OperationRepository) listRazorpayOperations(
 	ctx context.Context, businessID string, query interfaces.OperationRecordQuery,
 ) ([]interfaces.OperationRecord, error) {
 	var rows []models.RazorpayWebhookEvent
-	timeExpression := "COALESCE(processed_at, received_at)"
+	timeExpression := razorpayLifecycleTimeExpression
 	db := operationScopeByColumn(
 		r.db.WithContext(ctx).Model(&models.RazorpayWebhookEvent{}), businessID, query,
 		operationTypeRazorpayWebhook, timeExpression,
@@ -478,16 +501,12 @@ func (r *OperationRepository) listRazorpayOperations(
 	}
 	records := make([]interfaces.OperationRecord, 0, len(rows))
 	for i := range rows {
-		updatedAt := rows[i].ReceivedAt
-		if rows[i].ProcessedAt != nil {
-			updatedAt = *rows[i].ProcessedAt
-		}
 		record := interfaces.OperationRecord{
 			ID: rows[i].ID, Type: operationTypeRazorpayWebhook, ResourceType: "subscription", ResourceID: rows[i].SubscriptionID,
 			InternalStatus: rows[i].ProcessingStatus, Attempts: rows[i].AttemptCount,
 			ReconciliationRequired: rows[i].ProcessingStatus == "reconciliation_required",
 			ErrorCode:              safeStoredOperationCode(rows[i].SanitizedErrorCode), CreatedAt: rows[i].ReceivedAt,
-			UpdatedAt: updatedAt, CompletedAt: rows[i].ProcessedAt,
+			UpdatedAt: latestRazorpayLifecycleTime(rows[i]), CompletedAt: rows[i].ProcessedAt,
 		}
 		if operationRecordMatches(query, record) {
 			records = append(records, record)
@@ -733,7 +752,9 @@ func (r *OperationRepository) getOperationDirect(
 		var row models.RazorpayWebhookEvent
 		err = r.db.WithContext(ctx).Where("id = ? AND business_id = ?", operationID, businessID).First(&row).Error
 		if err == nil {
-			query.SnapshotAt = time.Now().UTC().Add(time.Minute)
+			// The snapshot derives from the row's own lifecycle expression, not
+			// the wall clock, so a read cannot depend on the host clock.
+			query.SnapshotAt = latestRazorpayLifecycleTime(row).Add(time.Second)
 			records, err = r.listRazorpayOperations(ctx, businessID, query)
 		}
 	case operationTypeGSTEInvoice, operationTypeGSTEWayBill:

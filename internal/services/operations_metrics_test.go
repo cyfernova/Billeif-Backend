@@ -14,6 +14,8 @@ import (
 	"invoice-backend/internal/models"
 	"invoice-backend/pkg/logger"
 	"invoice-backend/pkg/operationsmetrics"
+
+	"github.com/google/uuid"
 )
 
 func newTestOperationsEmitter(t *testing.T) (*operationsmetrics.Emitter, *bytes.Buffer) {
@@ -189,4 +191,108 @@ func decodeWebhookFailureSamples(t *testing.T, output string) []map[string]any {
 		}
 	}
 	return events
+}
+
+func TestRazorpayWebhookTransactionFailureEmitsWebhookFailureMetric(t *testing.T) {
+	svc, db, _ := newRazorpayPaymentTestService(t)
+	emitter, output := newTestOperationsEmitter(t)
+	svc.WithOperationsMetrics(emitter)
+
+	if err := db.Exec("DROP TABLE razorpay_webhook_events").Error; err != nil {
+		t.Fatalf("drop webhook events table: %v", err)
+	}
+	raw := []byte(`{"event":"payment.captured","payload":{"payment":{"entity":{"id":"pay_tx","order_id":"order_tx","amount":100,"currency":"INR","status":"captured","captured":true}}}}`)
+	signature := hmacHex(string(raw), "webhook_secret")
+	if _, err := svc.HandleWebhook(context.Background(), signature, "evt_tx_failure", raw); err == nil {
+		t.Fatalf("expected the webhook transaction failure to surface")
+	}
+	events := decodeWebhookFailureSamples(t, output.String())
+	if len(events) != 1 {
+		t.Fatalf("expected exactly one webhook failure metric for the transaction failure, got %s", output.String())
+	}
+}
+
+func TestRazorpayWebhookSuccessfulDuplicateEmitsNoFailureMetric(t *testing.T) {
+	svc, db, _ := newRazorpayPaymentTestService(t)
+	emitter, output := newTestOperationsEmitter(t)
+	svc.WithOperationsMetrics(emitter)
+
+	businessID := uuid.NewString()
+	if err := db.Create(&models.StoreOrder{
+		ID:            businessID,
+		BusinessID:    businessID,
+		StorefrontID:  uuid.NewString(),
+		PublicToken:   "public-token-dup",
+		OrderNumber:   "SO-DUP",
+		Status:        models.StoreOrderStatusPending,
+		PaymentStatus: models.StoreOrderPaymentStatusPending,
+		PaymentMethod: "online",
+		Currency:      "INR",
+		Total:         10.00,
+	}).Error; err != nil {
+		t.Fatalf("create store order: %v", err)
+	}
+	if err := db.Create(&models.PaymentAttempt{
+		ID:              uuid.NewString(),
+		UserID:          "user_1",
+		BusinessID:      businessID,
+		TargetType:      models.PaymentAttemptTargetStoreOrder,
+		TargetID:        businessID,
+		AmountPaise:     1000,
+		Currency:        "INR",
+		RazorpayOrderID: "order_dup",
+		Status:          models.PaymentAttemptStatusCreated,
+		IdempotencyKey:  "idem-dup",
+	}).Error; err != nil {
+		t.Fatalf("create payment attempt: %v", err)
+	}
+	raw := []byte(`{"event":"payment.captured","payload":{"payment":{"entity":{"id":"pay_dup","order_id":"order_dup","amount":1000,"currency":"INR","status":"captured","captured":true}}}}`)
+	signature := hmacHex(string(raw), "webhook_secret")
+	if _, err := svc.HandleWebhook(context.Background(), signature, "evt_dup", raw); err != nil {
+		t.Fatalf("first webhook: %v", err)
+	}
+	if _, err := svc.HandleWebhook(context.Background(), signature, "evt_dup", raw); err != nil {
+		t.Fatalf("duplicate webhook: %v", err)
+	}
+	if events := decodeWebhookFailureSamples(t, output.String()); len(events) != 0 {
+		t.Fatalf("ordinary successful duplicates must not emit failure metrics, got %s", output.String())
+	}
+}
+
+func TestConfiguredGSTProviderLatencyIncludesResponseBodyReadAndDecode(t *testing.T) {
+	var output bytes.Buffer
+	emitter, err := operationsmetrics.NewEmitter(&output, "test", time.Now)
+	if err != nil {
+		t.Fatalf("NewEmitter() error = %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		time.Sleep(60 * time.Millisecond)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	provider := &configuredGSTProvider{
+		cfg:        &config.Config{GST: config.GSTConfig{BaseURL: server.URL}},
+		httpClient: server.Client(),
+		log:        logger.New(),
+	}
+	provider.WithOperationsMetrics(emitter)
+
+	payload, err := provider.doJSON(context.Background(), http.MethodPost, "/einvoice", map[string]string{}, nil)
+	if err != nil || payload == nil {
+		t.Fatalf("doJSON: %v, %v", payload, err)
+	}
+	var sample map[string]any
+	if err := json.Unmarshal(output.Bytes(), &sample); err != nil {
+		t.Fatalf("decode EMF: %v", err)
+	}
+	latency, ok := sample["ProviderLatencyMilliseconds"].(float64)
+	if !ok || latency < 40 {
+		t.Fatalf("ProviderLatencyMilliseconds = %#v, want a full round trip including the delayed response body (>=40ms)", sample["ProviderLatencyMilliseconds"])
+	}
 }

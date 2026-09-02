@@ -403,9 +403,11 @@ func (p *configuredGSTProvider) doJSON(ctx context.Context, method, path string,
 		}
 	}
 
+	// The latency metric covers the complete provider round trip: request,
+	// response headers, body read, and decode, including every error return.
 	requestStart := time.Now()
+	defer func() { p.emitProviderLatency(time.Since(requestStart)) }()
 	resp, err := p.httpClient.Do(req)
-	p.emitProviderLatency(time.Since(requestStart))
 	if err != nil {
 		return nil, err
 	}

@@ -215,3 +215,25 @@ func TestEmitterQueueAgeSecondsUsesEmitterClock(t *testing.T) {
 		t.Fatalf("nil emitter must report no age")
 	}
 }
+
+func TestEmitRepeatedFailureIsBoundedAndFailSafe(t *testing.T) {
+	var output bytes.Buffer
+	emitter, err := NewEmitter(&output, "test", time.Now)
+	if err != nil {
+		t.Fatalf("NewEmitter() error = %v", err)
+	}
+	if err := emitter.EmitRepeatedFailure(); err != nil {
+		t.Fatalf("EmitRepeatedFailure() error = %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(output.Bytes(), &payload); err != nil {
+		t.Fatalf("decode EMF: %v", err)
+	}
+	if payload["Category"] != string(CategoryRecovery) || payload["RepeatedFailures"] != float64(1) {
+		t.Fatalf("repeated failure sample = %#v", payload)
+	}
+	var nilEmitter *Emitter
+	if err := nilEmitter.EmitRepeatedFailure(); !errors.Is(err, ErrInvalidSample) {
+		t.Fatalf("nil emitter error = %v", err)
+	}
+}

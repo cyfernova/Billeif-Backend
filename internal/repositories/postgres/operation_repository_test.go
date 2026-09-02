@@ -380,7 +380,7 @@ func TestOperationRepositoryRenderRecoveryIsAuditedIdempotentAndRevisionBound(t 
 
 func operationFixtureSchemas() []string {
 	return []string{
-		`CREATE TABLE document_render_jobs (id TEXT PRIMARY KEY, business_id TEXT, document_id TEXT, invoice_id TEXT, kind TEXT, status TEXT, attempts INTEGER, error_message TEXT, object_key TEXT, requested_at DATETIME, created_at DATETIME, updated_at DATETIME, completed_at DATETIME, deleted_at DATETIME)`,
+		`CREATE TABLE document_render_jobs (id TEXT PRIMARY KEY, business_id TEXT, document_id TEXT, invoice_id TEXT, kind TEXT, status TEXT, attempts INTEGER, error_message TEXT, object_key TEXT, source_invoice_version INTEGER, lease_owner TEXT, lease_expires_at DATETIME, locale TEXT, template_version TEXT, output_url TEXT, output_filename TEXT, requested_at DATETIME, created_at DATETIME, updated_at DATETIME, completed_at DATETIME, deleted_at DATETIME, render_profile_id TEXT)`,
 		`CREATE TABLE email_deliveries (id TEXT PRIMARY KEY, business_id TEXT, email_account_id TEXT, invoice_id TEXT, render_job_id TEXT, status TEXT, provider_message_id TEXT, error_message TEXT, attempts INTEGER, sent_at DATETIME, delivered_at DATETIME, failed_at DATETIME, created_at DATETIME, updated_at DATETIME, deleted_at DATETIME)`,
 		`CREATE TABLE outbox_events (id TEXT PRIMARY KEY, business_id TEXT, aggregate_type TEXT, aggregate_id TEXT, event_type TEXT, payload TEXT, publish_attempts INTEGER, available_at DATETIME, lease_expires_at DATETIME, published_at DATETIME, created_at DATETIME)`,
 		`CREATE TABLE razorpay_webhook_events (id TEXT PRIMARY KEY, razorpay_event_id TEXT, provider_mode TEXT, event_type TEXT, payload_hash TEXT, signature_verified BOOLEAN, received_at DATETIME, provider_occurred_at DATETIME, processing_status TEXT, attempt_count INTEGER, sanitized_error_code TEXT, processed_at DATETIME, business_id TEXT, subscription_id TEXT, replay_count INTEGER, last_replayed_at DATETIME, created_at DATETIME)`,
@@ -462,5 +462,101 @@ func TestOperationRepositoryCountsReconciliationBacklogAcrossAllTenants(t *testi
 	}
 	if count != 3 {
 		t.Fatalf("reconciliation backlog = %d, want 3", count)
+	}
+}
+
+func TestOperationRepositorySurfacesRazorpayReplayReconciliationAtReplayTime(t *testing.T) {
+	database, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	for _, statement := range operationFixtureSchemas() {
+		if err := database.Exec(statement).Error; err != nil {
+			t.Fatalf("create operation fixture schema: %v", err)
+		}
+	}
+	repository := NewOperationRepository(database)
+	businessID := uuid.NewString()
+	eventID := uuid.NewString()
+	renderID := uuid.NewString()
+
+	received := time.Date(2026, time.September, 2, 9, 0, 0, 0, time.UTC)
+	processed := received.Add(2 * time.Minute)
+	otherUpdated := received.Add(3 * time.Minute)
+	replayed := received.Add(4 * time.Minute)
+
+	event := models.RazorpayWebhookEvent{
+		ID: eventID, RazorpayEventID: "evt-replay-clock", ProviderMode: "test", EventType: "subscription.charged",
+		PayloadHash: strings.Repeat("a", 64), SignatureVerified: true, ReceivedAt: received, ProcessedAt: &processed,
+		ProcessingStatus: "processed", AttemptCount: 1, BusinessID: businessID, CreatedAt: received,
+	}
+	if err := database.Create(&event).Error; err != nil {
+		t.Fatalf("create webhook event: %v", err)
+	}
+	// An unrelated operation updated between processing and the replay.
+	invoiceID := uuid.NewString()
+	if err := database.Create(&models.DocumentRenderJob{
+		ID: renderID, BusinessID: businessID, InvoiceID: &invoiceID, Kind: models.RenderKindFinal,
+		Status: models.RenderJobStatusFailed, Attempts: 1, ObjectKey: "invoices/secret/internal.pdf",
+		RequestedAt: otherUpdated.Add(-time.Minute), CreatedAt: otherUpdated.Add(-time.Minute), UpdatedAt: otherUpdated,
+	}).Error; err != nil {
+		t.Fatalf("create render job: %v", err)
+	}
+
+	// A later replay payload mismatch moves the row to reconciliation_required
+	// and stamps last_replayed_at strictly after the original processing time.
+	if err := database.Model(&models.RazorpayWebhookEvent{}).Where("id = ?", eventID).Updates(map[string]any{
+		"processing_status": "reconciliation_required", "sanitized_error_code": "replay_payload_mismatch",
+		"replay_count": 1, "last_replayed_at": replayed,
+	}).Error; err != nil {
+		t.Fatalf("replay webhook event: %v", err)
+	}
+
+	snapshot := replayed.Add(time.Minute)
+	// 1) The urgent transition is surfaced at the replay time, not the old
+	//    processing time.
+	record, err := repository.GetOperation(context.Background(), businessID, "razorpay_webhook", eventID)
+	if err != nil {
+		t.Fatalf("GetOperation: %v", err)
+	}
+	if !record.UpdatedAt.Equal(replayed) {
+		t.Fatalf("UpdatedAt = %v, want the replay time %v", record.UpdatedAt, replayed)
+	}
+	if record.InternalStatus != "reconciliation_required" {
+		t.Fatalf("InternalStatus = %q, want reconciliation_required", record.InternalStatus)
+	}
+	// 2) A snapshot from before the replay must not surface the transition.
+	page, err := repository.ListOperations(context.Background(), businessID, interfaces.OperationRecordQuery{
+		Types: []string{"razorpay_webhook"}, SnapshotAt: processed.Add(30 * time.Second), Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("ListOperations pre-replay: %v", err)
+	}
+	if len(page.Records) != 0 {
+		t.Fatalf("pre-replay snapshot surfaced %d records, want 0", len(page.Records))
+	}
+	// 3) At the post-replay snapshot the webhook operation orders first, ahead
+	//    of the operation updated between processing and the replay.
+	page, err = repository.ListOperations(context.Background(), businessID, interfaces.OperationRecordQuery{
+		Types: []string{"razorpay_webhook", "invoice_render"}, SnapshotAt: snapshot, Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("ListOperations post-replay: %v", err)
+	}
+	if len(page.Records) < 2 || page.Records[0].ID != eventID || !page.Records[0].UpdatedAt.Equal(replayed) {
+		t.Fatalf("post-replay order = %+v", page.Records)
+	}
+	// 4) The cursor must stay consistent with the surfaced replay time.
+	page, err = repository.ListOperations(context.Background(), businessID, interfaces.OperationRecordQuery{
+		Types: []string{"razorpay_webhook", "invoice_render"}, SnapshotAt: snapshot, Limit: 10,
+		AfterUpdatedAt: &replayed, AfterType: "razorpay_webhook", AfterID: eventID,
+	})
+	if err != nil {
+		t.Fatalf("ListOperations after replay cursor: %v", err)
+	}
+	for _, record := range page.Records {
+		if record.ID == eventID {
+			t.Fatalf("cursor after the replay still returned the webhook operation")
+		}
 	}
 }

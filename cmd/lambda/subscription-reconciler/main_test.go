@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -72,6 +73,74 @@ func TestHandlerEmitsReconciliationBacklogMetric(t *testing.T) {
 		}
 	}
 	require.True(t, found, "expected one reconciliation backlog sample, got %s", metrics.String())
+}
+
+// failOnSecondWriteWriter succeeds for the lifecycle metric and fails for the
+// backlog sample so backlog-only encode failures are provably fail-open.
+type failOnSecondWrite struct {
+	writes int
+}
+
+func (w *failOnSecondWrite) Write(p []byte) (int, error) {
+	w.writes++
+	if w.writes >= 2 {
+		return 0, errors.New("backlog encode failure")
+	}
+	return len(p), nil
+}
+
+type contextCapturingBacklogCounter struct {
+	seenErr error
+	count   int64
+	err     error
+}
+
+func (c *contextCapturingBacklogCounter) CountReconciliationBacklog(ctx context.Context) (int64, error) {
+	c.seenErr = ctx.Err()
+	return c.count, c.err
+}
+
+func TestHandlerCancellationReachesBacklogCounter(t *testing.T) {
+	runner := &recordingRunner{}
+	var metrics bytes.Buffer
+	counter := &contextCapturingBacklogCounter{count: 4}
+	h := lambdaHandler{
+		runner: runner, backlog: counter, limit: 50, runTimeout: 10 * time.Second,
+		metricWriter: &metrics, environment: "test",
+	}
+	parent, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := h.Handle(lambdacontext.NewContext(parent, &lambdacontext.LambdaContext{AwsRequestID: "request-cancelled"}))
+	require.NoError(t, err)
+	require.ErrorIs(t, counter.seenErr, context.Canceled)
+}
+
+func TestHandlerFailingBacklogCounterKeepsMaintenanceOutcome(t *testing.T) {
+	runner := &recordingRunner{}
+	var metrics bytes.Buffer
+	counter := &contextCapturingBacklogCounter{err: errors.New("backlog query failed")}
+	h := lambdaHandler{
+		runner: runner, backlog: counter, limit: 50, runTimeout: 10 * time.Second,
+		metricWriter: &metrics, environment: "test",
+	}
+	result, err := h.Handle(lambdacontext.NewContext(context.Background(), &lambdacontext.LambdaContext{AwsRequestID: "request-counter-fail"}))
+	require.NoError(t, err)
+	require.EqualValues(t, 2, result.Reconciled)
+	require.Contains(t, metrics.String(), "Billeif/SubscriptionLifecycle")
+}
+
+func TestHandlerBacklogEncodeFailureKeepsMaintenanceOutcome(t *testing.T) {
+	runner := &recordingRunner{}
+	writer := &failOnSecondWrite{}
+	counter := &contextCapturingBacklogCounter{count: 9}
+	h := lambdaHandler{
+		runner: runner, backlog: counter, limit: 50, runTimeout: 10 * time.Second,
+		metricWriter: writer, environment: "test",
+	}
+	result, err := h.Handle(lambdacontext.NewContext(context.Background(), &lambdacontext.LambdaContext{AwsRequestID: "request-encode-fail"}))
+	require.NoError(t, err)
+	require.EqualValues(t, 2, result.Reconciled)
+	require.GreaterOrEqual(t, writer.writes, 2)
 }
 
 func TestHandlerNilBacklogCounterKeepsMaintenanceBehavior(t *testing.T) {

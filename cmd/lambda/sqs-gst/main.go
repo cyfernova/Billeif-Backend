@@ -39,31 +39,47 @@ func handleSQSEvent(ctx context.Context, event events.SQSEvent) (events.SQSEvent
 	}
 	failures := make([]events.SQSBatchItemFailure, 0)
 	for _, record := range event.Records {
-		if err := workers.ProcessGSTQueueMessage(ctx, gstRT.Svcs, gstRT.Log, record.Body); err != nil {
-			gstRT.Log.Error("failed to process gst queue record", "message_id", record.MessageId, "error", err)
+		processErr := workers.ProcessGSTQueueMessage(ctx, gstRT.Svcs, gstRT.Log, record.Body)
+		emitGSTRecordMetrics(gstRT.Metrics, record, processErr != nil, gstRT.Log)
+		if processErr != nil {
+			gstRT.Log.Error("failed to process gst queue record", "message_id", record.MessageId, "error", processErr)
 			failures = append(failures, events.SQSBatchItemFailure{ItemIdentifier: record.MessageId})
 		}
-		emitGSTRecordMetrics(gstRT.Metrics, record, gstRT.Log)
 	}
 
 	return events.SQSEventResponse{BatchItemFailures: failures}, nil
 }
 
-// emitGSTRecordMetrics reports the observed queue age of one processed GST
-// record. Provider call latency is emitted inside the GST provider itself.
-func emitGSTRecordMetrics(metrics *operationsmetrics.Emitter, record events.SQSMessage, log *logger.Logger) {
+// emitGSTRecordMetrics reports the bounded outcome of one processed GST
+// record: the observed queue age and, when the record failed after SQS
+// already redelivered it, one recovery sample. GST records never invent a
+// render or delivery rate. Provider call latency is emitted inside the GST
+// provider itself.
+func emitGSTRecordMetrics(
+	metrics *operationsmetrics.Emitter,
+	record events.SQSMessage,
+	failed bool,
+	log *logger.Logger,
+) {
 	if metrics == nil {
 		return
 	}
-	age, ok := metrics.QueueAgeSeconds(record.Attributes)
-	if !ok {
+	if age, ok := metrics.QueueAgeSeconds(record.Attributes); ok {
+		if err := metrics.Emit(operationsmetrics.Sample{
+			Category: operationsmetrics.CategoryProvider,
+			Values:   map[operationsmetrics.Metric]float64{operationsmetrics.MetricQueueAgeSeconds: age},
+		}); err != nil {
+			log.Warn("emit gst queue age metric", "error", err)
+		}
+	}
+	if !failed {
 		return
 	}
-	if err := metrics.Emit(operationsmetrics.Sample{
-		Category: operationsmetrics.CategoryProvider,
-		Values:   map[operationsmetrics.Metric]float64{operationsmetrics.MetricQueueAgeSeconds: age},
-	}); err != nil {
-		log.Warn("emit gst queue age metric", "error", err)
+	if count, ok := operationsmetrics.SQSReceiveCount(record.Attributes); !ok || count < 2 {
+		return
+	}
+	if err := metrics.EmitRepeatedFailure(); err != nil {
+		log.Warn("emit gst repeated failure metric", "error", err)
 	}
 }
 

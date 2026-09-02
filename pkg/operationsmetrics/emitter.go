@@ -161,6 +161,16 @@ func (e *Emitter) EmitRecordOutcome(outcome RecordOutcome) error {
 	if count, ok := SQSReceiveCount(outcome.Attributes); !ok || count < 2 {
 		return nil
 	}
+	return e.EmitRepeatedFailure()
+}
+
+// EmitRepeatedFailure emits one RepeatedFailures recovery sample for work that
+// failed after the transport already redelivered it at least once. It is the
+// bounded, pipeline-agnostic recovery signal behind the repeated-failure alarm.
+func (e *Emitter) EmitRepeatedFailure() error {
+	if e == nil || e.writer == nil || e.now == nil {
+		return ErrInvalidSample
+	}
 	return e.Emit(Sample{Category: CategoryRecovery, Values: map[Metric]float64{MetricRepeatedFailures: 1}})
 }
 

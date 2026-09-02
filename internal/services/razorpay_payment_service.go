@@ -596,6 +596,10 @@ func (s *RazorpayPaymentService) HandleWebhook(ctx context.Context, signature, e
 		return tx.Save(&record).Error
 	})
 	if err != nil {
+		// A valid signed webhook whose durable processing failed is still one
+		// failed webhook: emit one bounded fail-open failure sample before the
+		// transport error surfaces.
+		s.emitWebhookFailure()
 		return false, err
 	}
 	// The reconciliation decision is only counted once the transaction that
