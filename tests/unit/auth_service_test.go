@@ -162,6 +162,30 @@ func (m *MockCognitoIdentityProviderAPI) RespondToAuthChallenge(ctx context.Cont
 	return args.Get(0).(*cognitoidentityprovider.RespondToAuthChallengeOutput), args.Error(1)
 }
 
+func (m *MockCognitoIdentityProviderAPI) AssociateSoftwareToken(context.Context, *cognitoidentityprovider.AssociateSoftwareTokenInput, ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.AssociateSoftwareTokenOutput, error) {
+	return &cognitoidentityprovider.AssociateSoftwareTokenOutput{}, nil
+}
+
+func (m *MockCognitoIdentityProviderAPI) VerifySoftwareToken(context.Context, *cognitoidentityprovider.VerifySoftwareTokenInput, ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.VerifySoftwareTokenOutput, error) {
+	return &cognitoidentityprovider.VerifySoftwareTokenOutput{}, nil
+}
+
+func (m *MockCognitoIdentityProviderAPI) SetUserMFAPreference(context.Context, *cognitoidentityprovider.SetUserMFAPreferenceInput, ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.SetUserMFAPreferenceOutput, error) {
+	return &cognitoidentityprovider.SetUserMFAPreferenceOutput{}, nil
+}
+
+func (m *MockCognitoIdentityProviderAPI) ListDevices(context.Context, *cognitoidentityprovider.ListDevicesInput, ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.ListDevicesOutput, error) {
+	return &cognitoidentityprovider.ListDevicesOutput{}, nil
+}
+
+func (m *MockCognitoIdentityProviderAPI) ForgetDevice(context.Context, *cognitoidentityprovider.ForgetDeviceInput, ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.ForgetDeviceOutput, error) {
+	return &cognitoidentityprovider.ForgetDeviceOutput{}, nil
+}
+
+func (m *MockCognitoIdentityProviderAPI) UpdateDeviceStatus(context.Context, *cognitoidentityprovider.UpdateDeviceStatusInput, ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.UpdateDeviceStatusOutput, error) {
+	return &cognitoidentityprovider.UpdateDeviceStatusOutput{}, nil
+}
+
 // TestAuthService_Register tests the Register method
 func TestAuthService_Register(t *testing.T) {
 	mockCognito := new(MockCognitoIdentityProviderAPI)

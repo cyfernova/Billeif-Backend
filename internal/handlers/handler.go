@@ -61,6 +61,7 @@ type Handler struct {
 	Notification    *NotificationHandler
 	Capability      *CapabilityHandler
 	Operation       *OperationHandler
+	Security        *SecurityHandler
 	LLM             *LLMHandler
 	SarvamTTS       *SarvamTTSHandler
 	VoiceSession    *VoiceSessionHandler
@@ -144,6 +145,7 @@ func New(
 		Notification:    NewNotificationHandler(svcs.Notification, log),
 		Capability:      NewCapabilityHandler(svcs.Capability, log),
 		Operation:       NewOperationHandler(svcs.Operation, log),
+		Security:        NewSecurityHandler(svcs.Security, svcs.Auth, svcs.PendingUpload, svcs.Privacy),
 		LLM:             NewLLMHandler(svcs.LLM, svcs.LLMChatHistory, log),
 		SarvamTTS:       NewSarvamTTSHandler(svcs.SarvamTTS, log),
 		VoiceSession:    NewVoiceSessionHandler(svcs.VoiceSession, log),

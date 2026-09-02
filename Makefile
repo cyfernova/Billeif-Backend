@@ -3,7 +3,7 @@
 -include .env.local
 export
 
-.PHONY: help infra-backend-init infra-init infra-validate infra-apply infra-plan infra-destroy infra-output build-agentcore test-agentcore build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-email-delivery build-lambda-sqs-ses-feedback build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-outbox build-lambda-recurring-invoices build-lambda-subscription-reconciler build-lambda-migrator build-lambda-voice-reconciler build-lambda-custom-sms-sender package-lambda package-lambda-email-delivery package-lambda-ses-feedback package-lambda-outbox package-lambda-recurring-invoices package-lambda-subscription-reconciler package-lambda-migrator package-lambda-voice-reconciler migration-manifest migration-manifest-verify rds-tunnel run-local verify-environment test test-integration migrate-up migrate-down migrate-rds-up migrate-rds-down migrate-create fmt lint clean deps test-coverage swagger
+.PHONY: help infra-backend-init infra-init infra-validate infra-apply infra-plan infra-destroy infra-output build-agentcore test-agentcore build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-email-delivery build-lambda-sqs-ses-feedback build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-outbox build-lambda-recurring-invoices build-lambda-subscription-reconciler build-lambda-migrator build-lambda-voice-reconciler build-lambda-custom-sms-sender package-lambda package-lambda-email-delivery package-lambda-ses-feedback package-lambda-outbox package-lambda-recurring-invoices package-lambda-subscription-reconciler package-lambda-migrator package-lambda-voice-reconciler migration-manifest migration-manifest-verify rds-tunnel run-local verify-environment recovery-drill test test-integration migrate-up migrate-down migrate-rds-up migrate-rds-down migrate-create fmt lint clean deps test-coverage swagger
 
 LAMBDA_BUILD_DIR := .build/lambda
 AGENTCORE_BUILD_DIR := .build/agentcore
@@ -59,6 +59,9 @@ verify-environment: ## Run bounded JSON verification; requires matching VERIFY_E
 		$(if $(filter true,$(VERIFY_ALLOW_WRITES)),--allow-writes) \
 		$(if $(VERIFY_ONLY),--only "$(VERIFY_ONLY)") \
 		$(if $(VERIFY_EXCLUDE),--exclude "$(VERIFY_EXCLUDE)")
+
+recovery-drill: ## Classify an isolated non-production recovery drill
+	go run ./cmd/recovery-drill $(RECOVERY_DRILL_ARGS)
 
 # Infrastructure targets
 infra-backend-init: ## Create S3 bucket and DynamoDB table for Terraform backend

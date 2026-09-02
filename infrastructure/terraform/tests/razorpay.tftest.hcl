@@ -12,7 +12,7 @@ mock_provider "aws" {
 
   mock_resource "aws_lambda_invocation" {
     defaults = {
-      result = "{\"status\":\"applied\",\"version\":56,\"latest_version\":56,\"dirty\":false,\"manifest_checksum\":\"7b89918bd0f37f7350ef47a331bbd69020f3d6a8086984502d434c23ca49bc52\"}"
+      result = "{\"status\":\"applied\",\"version\":57,\"latest_version\":57,\"dirty\":false,\"manifest_checksum\":\"7aecea605a7c7380d20f1f95076018c02b2625288f8020436a08ee7b10db03bd\"}"
     }
   }
 

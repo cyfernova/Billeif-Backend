@@ -80,6 +80,35 @@ func TestS3ServiceGeneratePresignedUploadRejectsNonPositiveLength(t *testing.T) 
 	}
 }
 
+func TestS3ServicePresignPendingUploadBindsChecksumAndTenantMetadata(t *testing.T) {
+	client := s3.NewFromConfig(aws.Config{
+		Region:      "us-east-1",
+		Credentials: credentials.NewStaticCredentialsProvider("test", "test", ""),
+	}, func(options *s3.Options) {
+		options.BaseEndpoint = aws.String("https://storage.example.com")
+		options.UsePathStyle = true
+	})
+	service := &S3Service{client: client}
+	result, err := service.PresignPendingUpload(context.Background(), PendingObjectSpec{
+		Bucket: "quarantine", Key: "pending/business/upload/import", ContentType: "text/csv", SizeBytes: 12,
+		ChecksumSHA256: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+		Metadata:       map[string]string{"business-id": "business", "uploader-id": "user", "upload-id": "upload"},
+	})
+	if err != nil {
+		t.Fatalf("presign pending upload: %v", err)
+	}
+	parsed, err := url.Parse(result.UploadURL)
+	if err != nil {
+		t.Fatalf("parse presigned URL: %v", err)
+	}
+	signedHeaders := strings.Split(parsed.Query().Get("X-Amz-SignedHeaders"), ";")
+	for _, required := range []string{"content-length", "content-type", "host", "x-amz-checksum-sha256", "x-amz-meta-business-id", "x-amz-meta-uploader-id", "x-amz-meta-upload-id"} {
+		if !containsSignedHeader(signedHeaders, required) {
+			t.Fatalf("signed headers %v do not include %q", signedHeaders, required)
+		}
+	}
+}
+
 func containsSignedHeader(values []string, target string) bool {
 	for _, value := range values {
 		if value == target {

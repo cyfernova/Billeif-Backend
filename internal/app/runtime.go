@@ -408,6 +408,7 @@ type Repositories struct {
 	Notification             interfaces.NotificationRepository
 	CapabilityProviderHealth interfaces.CapabilityProviderHealthRepository
 	Operation                interfaces.OperationRepository
+	Security                 interfaces.SecurityPrivacyRepository
 	AP2                      interfaces.AP2Repository
 }
 
@@ -445,6 +446,7 @@ func initRepositories(db *gorm.DB) *Repositories {
 		Notification:             postgresrepo.NewNotificationRepository(db),
 		CapabilityProviderHealth: postgresrepo.NewCapabilityProviderHealthRepository(db),
 		Operation:                postgresrepo.NewOperationRepository(db),
+		Security:                 postgresrepo.NewSecurityRepository(db),
 		AP2:                      postgresrepo.NewAP2Repository(db),
 	}
 }
@@ -452,7 +454,7 @@ func initRepositories(db *gorm.DB) *Repositories {
 func initServices(cfg *config.Config, db *gorm.DB, repos *Repositories, aws *awsclients.Config, resolver services.ProviderConfigResolver, log *logger.Logger) *services.Container {
 	return services.NewContainer(cfg, resolver, db, repos.User, repos.Business, repos.Customer, repos.Vendor,
 		repos.Product, repos.Document, repos.Journal, repos.Inventory, repos.Shipping, repos.Invoice, repos.Payment, repos.Ledger, repos.Reporting, repos.Team,
-		repos.Webhook, repos.Subscription, repos.SubscriptionLifecycle, repos.WebSocketTicket, repos.Notification, repos.CapabilityProviderHealth, repos.Operation, repos.AP2, aws, log)
+		repos.Webhook, repos.Subscription, repos.SubscriptionLifecycle, repos.WebSocketTicket, repos.Notification, repos.CapabilityProviderHealth, repos.Operation, repos.Security, repos.AP2, aws, log)
 }
 
 type renderProfilePasswordBackfiller interface {
@@ -654,6 +656,7 @@ func setupRouter(
 		{
 			auth.POST("/register", sensitiveRL, h.Auth.Register)
 			auth.POST("/login", loginRL, h.Auth.Login)
+			auth.POST("/login/mfa", sensitiveRL, h.Auth.CompleteLoginMFA)
 			auth.POST("/logout", h.Auth.Logout)
 			auth.POST("/refresh", h.Auth.Refresh)
 			auth.POST("/phone/register", sensitiveRL, h.Auth.PhoneRegister)
@@ -706,6 +709,9 @@ func setupRouter(
 		operator.Use(middleware.Auth(cfg.Cognito, log))
 		operator.Use(middleware.RequirePlatformOperator(cfg.Cognito.OperatorGroup))
 		{
+			operator.POST("/step-up", sensitiveRL, h.Security.IssueOperatorStepUp)
+			operator.POST("/privacy/requests/:request_id/process", sensitiveRL, h.Security.ProcessPrivacyRequest)
+			operator.POST("/security/uploads/cleanup", sensitiveRL, h.Security.CleanupPendingUploads)
 			operator.GET("/operations/:operation_id", h.Operation.GetOperator)
 			operator.GET("/operations/:operation_id/timeline", h.Operation.TimelineOperator)
 			operator.POST("/operations/:operation_id/recovery", userWriteRL, h.Operation.RecoverOperator)
@@ -730,6 +736,20 @@ func setupRouter(
 			protected.POST("/auth/phone/logout", h.Auth.PhoneLogout)
 			protected.POST("/auth/profile-picture", h.Auth.UploadProfilePicture)
 			protected.PUT("/auth/profile-picture", h.Auth.UpdateProfilePicture)
+			protected.POST("/auth/step-up", sensitiveRL, h.Security.IssueStepUp)
+			protected.POST("/auth/totp/setup", sensitiveRL, h.Auth.BeginTOTP)
+			protected.POST("/auth/totp/confirm", sensitiveRL, h.Auth.ConfirmTOTP)
+			protected.DELETE("/auth/totp", sensitiveRL, h.Auth.DisableTOTP)
+			protected.GET("/auth/devices", h.Auth.ListDevices)
+			protected.PUT("/auth/devices/:device_key", sensitiveRL, h.Auth.SetDeviceRemembered)
+			protected.DELETE("/auth/devices/:device_key", sensitiveRL, h.Auth.ForgetDevice)
+			protected.POST("/security/uploads", userHeavyRL, h.Security.CreatePendingUpload)
+			protected.POST("/security/uploads/:upload_id/complete", userHeavyRL, h.Security.CompletePendingUpload)
+			protected.GET("/security/uploads/:upload_id/download", userHeavyRL, h.Security.DownloadPendingUpload)
+			protected.POST("/privacy/exports", userHeavyRL, h.Security.RequestPrivacyExport)
+			protected.POST("/privacy/deletions", sensitiveRL, h.Security.RequestPrivacyDeletion)
+			protected.GET("/privacy/requests/:request_id", h.Security.GetPrivacyRequest)
+			protected.GET("/privacy/requests/:request_id/download", h.Security.DownloadPrivacyExport)
 			protected.POST("/websocket/tickets", websocketRL, h.WebSocketTicket.Issue)
 
 			notifications := protected.Group("/notifications")

@@ -19,6 +19,7 @@ import (
 	"invoice-backend/internal/reporting"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/logger"
+	"invoice-backend/pkg/spreadsheet"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -759,19 +760,7 @@ func encodeCSV(result *reporting.Result) (string, error) {
 }
 
 func sanitizeSpreadsheetCell(value string) string {
-	if value == "" {
-		return value
-	}
-	trimmedLeft := strings.TrimLeft(value, " \r\n")
-	if trimmedLeft == "" {
-		return value
-	}
-	switch trimmedLeft[0] {
-	case '=', '+', '-', '@', '\t':
-		return "'" + value
-	default:
-		return value
-	}
+	return spreadsheet.SafeCell(value).(string)
 }
 
 func encodeJSON(value interface{}) (string, error) {

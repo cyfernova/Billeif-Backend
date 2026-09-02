@@ -243,6 +243,9 @@ type CognitoClaims struct {
 	Role          string   `json:"custom:role"`
 	Picture       string   `json:"picture"`
 	Name          string   `json:"name"`
+	AuthTime      int64    `json:"auth_time"`
+	AMR           []string `json:"amr"`
+	CognitoAMR    []string `json:"cognito:amr"`
 }
 
 type cognitoPool struct {
@@ -333,6 +336,10 @@ func AuthWithTokenUse(cfg config.CognitoConfig, log *logger.Logger, allowedToken
 		c.Set("role", claims.Role)
 		c.Set("picture", claims.Picture)
 		c.Set("name", claims.Name)
+		c.Set("auth_time", claims.AuthTime)
+		methods := append([]string(nil), claims.AMR...)
+		methods = append(methods, claims.CognitoAMR...)
+		c.Set("auth_methods", methods)
 		c.Set("authorization_header", authHeader)
 		c.Request = c.Request.WithContext(logger.ToContext(c.Request.Context(), reqLog.With(
 			"user_id", claims.Subject,

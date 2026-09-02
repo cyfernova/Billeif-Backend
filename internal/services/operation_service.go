@@ -153,6 +153,7 @@ type OperationStepUpRequest struct {
 	BusinessID      string
 	OperationID     string
 	Action          string
+	CommandIdentity string
 	Token           string
 }
 
@@ -327,7 +328,7 @@ func (s *OperationService) RecoverOperatorOperation(
 	if highRiskOperationAction(input.Action) {
 		if s.stepUp == nil || s.stepUp.VerifyOperationStepUp(ctx, OperationStepUpRequest{
 			OperatorSubject: actor.UserID, BusinessID: businessID, OperationID: publicOperationID,
-			Action: input.Action, Token: strings.TrimSpace(stepUpToken),
+			Action: input.Action, CommandIdentity: decision.IdempotencyKey, Token: strings.TrimSpace(stepUpToken),
 		}) != nil {
 			decision.ResultCode = OperationCodeStepUpRequired
 			if _, err := s.repository.RecordRecoveryDecision(ctx, decision); err != nil {

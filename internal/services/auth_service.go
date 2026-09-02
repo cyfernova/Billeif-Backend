@@ -55,6 +55,12 @@ type cognitoIdentityProviderAPI interface {
 	ResendConfirmationCode(ctx context.Context, params *cognitoidentityprovider.ResendConfirmationCodeInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.ResendConfirmationCodeOutput, error)
 	RespondToAuthChallenge(ctx context.Context, params *cognitoidentityprovider.RespondToAuthChallengeInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.RespondToAuthChallengeOutput, error)
 	SignUp(ctx context.Context, params *cognitoidentityprovider.SignUpInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.SignUpOutput, error)
+	AssociateSoftwareToken(ctx context.Context, params *cognitoidentityprovider.AssociateSoftwareTokenInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.AssociateSoftwareTokenOutput, error)
+	VerifySoftwareToken(ctx context.Context, params *cognitoidentityprovider.VerifySoftwareTokenInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.VerifySoftwareTokenOutput, error)
+	SetUserMFAPreference(ctx context.Context, params *cognitoidentityprovider.SetUserMFAPreferenceInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.SetUserMFAPreferenceOutput, error)
+	ListDevices(ctx context.Context, params *cognitoidentityprovider.ListDevicesInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.ListDevicesOutput, error)
+	ForgetDevice(ctx context.Context, params *cognitoidentityprovider.ForgetDeviceInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.ForgetDeviceOutput, error)
+	UpdateDeviceStatus(ctx context.Context, params *cognitoidentityprovider.UpdateDeviceStatusInput, optFns ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.UpdateDeviceStatusOutput, error)
 }
 
 type AuthService struct {
@@ -212,10 +218,13 @@ type LoginInput struct {
 }
 
 type LoginOutput struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	ExpiresIn    int32  `json:"expires_in"`
-	TokenType    string `json:"token_type"`
+	AccessToken  string `json:"access_token,omitempty"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	ExpiresIn    int32  `json:"expires_in,omitempty"`
+	TokenType    string `json:"token_type,omitempty"`
+	Challenge    string `json:"challenge,omitempty"`
+	Session      string `json:"session,omitempty"`
+	Username     string `json:"username,omitempty"`
 }
 
 func (s *AuthService) Login(ctx context.Context, input LoginInput) (*LoginOutput, error) {
@@ -231,6 +240,9 @@ func (s *AuthService) Login(ctx context.Context, input LoginInput) (*LoginOutput
 		s.log.Warn("login failed", "email", input.Email, "error", err)
 		return nil, classifyEmailAuthError(err)
 	}
+	if result.ChallengeName == types.ChallengeNameTypeSoftwareTokenMfa && strings.TrimSpace(aws.ToString(result.Session)) != "" {
+		return &LoginOutput{Challenge: string(result.ChallengeName), Session: aws.ToString(result.Session), Username: strings.TrimSpace(input.Email)}, nil
+	}
 
 	// Ensure local user record exists (handles users created outside the app)
 	if result.AuthenticationResult != nil && result.AuthenticationResult.AccessToken != nil {
@@ -241,6 +253,57 @@ func (s *AuthService) Login(ctx context.Context, input LoginInput) (*LoginOutput
 	}
 
 	return loginOutputFromAuthResult(result.AuthenticationResult)
+}
+
+type LoginMFAInput struct {
+	Username string `json:"username" binding:"required"`
+	Session  string `json:"session" binding:"required"`
+	Code     string `json:"code" binding:"required,len=6"`
+}
+
+func (s *AuthService) CompleteLoginMFA(ctx context.Context, input LoginMFAInput) (*LoginOutput, error) {
+	input.Username, input.Session, input.Code = strings.TrimSpace(input.Username), strings.TrimSpace(input.Session), strings.TrimSpace(input.Code)
+	if input.Username == "" || input.Session == "" || !sixDigitCode(input.Code) {
+		return nil, fmt.Errorf("invalid MFA challenge")
+	}
+	result, err := s.cognito.RespondToAuthChallenge(ctx, &cognitoidentityprovider.RespondToAuthChallengeInput{
+		ClientId: aws.String(s.cfg.Cognito.ClientID), ChallengeName: types.ChallengeNameTypeSoftwareTokenMfa,
+		Session: aws.String(input.Session), ChallengeResponses: map[string]string{"USERNAME": input.Username, "SOFTWARE_TOKEN_MFA_CODE": input.Code},
+	})
+	if err != nil || result == nil {
+		return nil, fmt.Errorf("MFA challenge failed")
+	}
+	output, err := loginOutputFromAuthResult(result.AuthenticationResult)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.ensureUserFromCognito(ctx, output.AccessToken); err != nil {
+		s.log.Warn("failed to ensure MFA user exists", "error", err)
+	}
+	return output, nil
+}
+
+func sixDigitCode(value string) bool {
+	if len(value) != 6 {
+		return false
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// CognitoAccessTokenSubject reads a token returned directly by Cognito in the
+// same request. Callers must not use it for arbitrary client-supplied tokens.
+func CognitoAccessTokenSubject(accessToken string) (string, error) {
+	claims := &jwt.RegisteredClaims{}
+	parser := jwt.Parser{}
+	if _, _, err := parser.ParseUnverified(strings.TrimSpace(accessToken), claims); err != nil || strings.TrimSpace(claims.Subject) == "" {
+		return "", errors.New("Cognito access token subject is unavailable")
+	}
+	return strings.TrimSpace(claims.Subject), nil
 }
 
 type RefreshInput struct {
@@ -268,6 +331,146 @@ func (s *AuthService) Logout(ctx context.Context, accessToken string) error {
 		AccessToken: aws.String(accessToken),
 	})
 	return err
+}
+
+type TOTPSetup struct {
+	SecretCode string `json:"secret_code"`
+	Session    string `json:"session,omitempty"`
+}
+
+func (s *AuthService) BeginTOTP(ctx context.Context, accessToken string) (*TOTPSetup, error) {
+	accessToken = strings.TrimSpace(accessToken)
+	if accessToken == "" {
+		return nil, fmt.Errorf("access token is required")
+	}
+	output, err := s.cognitoClientForAccessToken(accessToken).AssociateSoftwareToken(ctx, &cognitoidentityprovider.AssociateSoftwareTokenInput{AccessToken: aws.String(accessToken)})
+	if err != nil || output == nil || strings.TrimSpace(aws.ToString(output.SecretCode)) == "" {
+		return nil, fmt.Errorf("TOTP setup failed")
+	}
+	return &TOTPSetup{SecretCode: aws.ToString(output.SecretCode), Session: aws.ToString(output.Session)}, nil
+}
+
+type TOTPConfirmInput struct {
+	Code               string `json:"code" binding:"required,len=6"`
+	Session            string `json:"session"`
+	FriendlyDeviceName string `json:"friendly_device_name"`
+}
+
+func (s *AuthService) ConfirmTOTP(ctx context.Context, accessToken string, input TOTPConfirmInput) error {
+	accessToken, input.Code = strings.TrimSpace(accessToken), strings.TrimSpace(input.Code)
+	if accessToken == "" || len(input.Code) != 6 {
+		return fmt.Errorf("invalid TOTP confirmation")
+	}
+	client := s.cognitoClientForAccessToken(accessToken)
+	verifyInput := &cognitoidentityprovider.VerifySoftwareTokenInput{
+		UserCode: aws.String(input.Code), FriendlyDeviceName: aws.String(strings.TrimSpace(input.FriendlyDeviceName)),
+	}
+	if session := strings.TrimSpace(input.Session); session != "" {
+		verifyInput.Session = aws.String(session)
+	} else {
+		verifyInput.AccessToken = aws.String(accessToken)
+	}
+	verified, err := client.VerifySoftwareToken(ctx, verifyInput)
+	if err != nil || verified == nil || verified.Status != types.VerifySoftwareTokenResponseTypeSuccess {
+		return fmt.Errorf("TOTP verification failed")
+	}
+	_, err = client.SetUserMFAPreference(ctx, &cognitoidentityprovider.SetUserMFAPreferenceInput{
+		AccessToken:              aws.String(accessToken),
+		SoftwareTokenMfaSettings: &types.SoftwareTokenMfaSettingsType{Enabled: true, PreferredMfa: true},
+	})
+	if err != nil {
+		return fmt.Errorf("TOTP preference update failed")
+	}
+	return nil
+}
+
+func (s *AuthService) DisableTOTP(ctx context.Context, accessToken string) error {
+	accessToken = strings.TrimSpace(accessToken)
+	if accessToken == "" {
+		return fmt.Errorf("access token is required")
+	}
+	_, err := s.cognitoClientForAccessToken(accessToken).SetUserMFAPreference(ctx, &cognitoidentityprovider.SetUserMFAPreferenceInput{
+		AccessToken:              aws.String(accessToken),
+		SoftwareTokenMfaSettings: &types.SoftwareTokenMfaSettingsType{Enabled: false, PreferredMfa: false},
+	})
+	if err != nil {
+		return fmt.Errorf("TOTP preference update failed")
+	}
+	return nil
+}
+
+type AuthDevice struct {
+	DeviceKey       string     `json:"device_key"`
+	CreatedAt       *time.Time `json:"created_at,omitempty"`
+	LastAccessedAt  *time.Time `json:"last_accessed_at,omitempty"`
+	RememberedState string     `json:"remembered_state,omitempty"`
+}
+
+type AuthDevicePage struct {
+	Devices   []AuthDevice `json:"devices"`
+	NextToken string       `json:"next_token,omitempty"`
+}
+
+func (s *AuthService) ListDevices(ctx context.Context, accessToken, nextToken string) (*AuthDevicePage, error) {
+	accessToken = strings.TrimSpace(accessToken)
+	if accessToken == "" {
+		return nil, fmt.Errorf("access token is required")
+	}
+	output, err := s.cognitoClientForAccessToken(accessToken).ListDevices(ctx, &cognitoidentityprovider.ListDevicesInput{
+		AccessToken: aws.String(accessToken), Limit: aws.Int32(20), PaginationToken: optionalString(nextToken),
+	})
+	if err != nil || output == nil {
+		return nil, fmt.Errorf("device listing failed")
+	}
+	page := &AuthDevicePage{Devices: make([]AuthDevice, 0, len(output.Devices)), NextToken: aws.ToString(output.PaginationToken)}
+	for _, device := range output.Devices {
+		item := AuthDevice{DeviceKey: aws.ToString(device.DeviceKey), CreatedAt: device.DeviceCreateDate, LastAccessedAt: device.DeviceLastModifiedDate}
+		for _, attribute := range device.DeviceAttributes {
+			if aws.ToString(attribute.Name) == "device_status" {
+				item.RememberedState = aws.ToString(attribute.Value)
+			}
+		}
+		page.Devices = append(page.Devices, item)
+	}
+	return page, nil
+}
+
+func (s *AuthService) ForgetDevice(ctx context.Context, accessToken, deviceKey string) error {
+	accessToken, deviceKey = strings.TrimSpace(accessToken), strings.TrimSpace(deviceKey)
+	if accessToken == "" || deviceKey == "" || len(deviceKey) > 512 {
+		return fmt.Errorf("invalid device request")
+	}
+	_, err := s.cognitoClientForAccessToken(accessToken).ForgetDevice(ctx, &cognitoidentityprovider.ForgetDeviceInput{AccessToken: aws.String(accessToken), DeviceKey: aws.String(deviceKey)})
+	if err != nil {
+		return fmt.Errorf("device revocation failed")
+	}
+	return nil
+}
+
+func (s *AuthService) SetDeviceRemembered(ctx context.Context, accessToken, deviceKey string, remembered bool) error {
+	accessToken, deviceKey = strings.TrimSpace(accessToken), strings.TrimSpace(deviceKey)
+	if accessToken == "" || deviceKey == "" || len(deviceKey) > 512 {
+		return fmt.Errorf("invalid device request")
+	}
+	status := types.DeviceRememberedStatusTypeNotRemembered
+	if remembered {
+		status = types.DeviceRememberedStatusTypeRemembered
+	}
+	_, err := s.cognitoClientForAccessToken(accessToken).UpdateDeviceStatus(ctx, &cognitoidentityprovider.UpdateDeviceStatusInput{
+		AccessToken: aws.String(accessToken), DeviceKey: aws.String(deviceKey), DeviceRememberedStatus: status,
+	})
+	if err != nil {
+		return fmt.Errorf("device status update failed")
+	}
+	return nil
+}
+
+func optionalString(value string) *string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return aws.String(value)
 }
 
 type ForgotPasswordInput struct {

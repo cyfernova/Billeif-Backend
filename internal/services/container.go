@@ -96,6 +96,9 @@ type Container struct {
 	Notification           *NotificationService
 	Capability             *CapabilityService
 	Operation              *OperationService
+	Security               *SecurityService
+	PendingUpload          *PendingUploadService
+	Privacy                *PrivacyService
 	CapabilityGlobalHealth *CapabilityGlobalHealthCache
 	AWS                    *awsclients.Config
 	capabilityObserver     *capabilityObserverState
@@ -185,6 +188,7 @@ func NewContainer(
 	notificationRepo interfaces.NotificationRepository,
 	capabilityProviderHealthRepo interfaces.CapabilityProviderHealthRepository,
 	operationRepo interfaces.OperationRepository,
+	securityRepo interfaces.SecurityPrivacyRepository,
 	ap2Repo interfaces.AP2Repository,
 	aws *awsclients.Config,
 	log *logger.Logger,
@@ -294,11 +298,23 @@ func NewContainer(
 		GlobalHealth:   capabilityGlobalHealth,
 		BusinessHealth: capabilityBusinessHealth,
 	})
+	securitySvc := NewSecurityService(securityRepo, SecurityServiceOptions{})
+	pendingUploadSvc := NewPendingUploadService(securityRepo, s3Svc, FailClosedUploadScanner{}, PendingUploadOptions{Bucket: cfg.S3.BucketDrive})
+	privacySvc := NewPrivacyService(
+		securityRepo,
+		NewDatabasePrivacyExporter(db, s3Svc, cfg.S3.BucketDrive),
+		NewPrivacyCleanupCoordinator(
+			NewDatabasePrivacyCleanupTarget(db),
+			NewS3PrivacyCleanupTarget(s3Svc, cfg.S3.BucketDrive),
+			NewCognitoPrivacyCleanupTarget(aws.Cognito, cfg.Cognito.UserPoolID, cfg.Cognito.Phone.UserPoolID),
+		),
+		nil,
+	)
 	operationSvc := NewOperationService(
 		operationRepo,
 		businessAuthSvc,
 		NewConfiguredOperationRecoveryCapabilityGuard(cfg, aws),
-		OperationServiceOptions{},
+		OperationServiceOptions{StepUpVerifier: securitySvc},
 	)
 	globalProbers := make(map[CapabilityKey]CapabilityGlobalProviderProber, 2)
 	if capabilityConfiguration.Razorpay {
@@ -389,6 +405,9 @@ func NewContainer(
 		Notification:           notificationSvc,
 		Capability:             capabilitySvc,
 		Operation:              operationSvc,
+		Security:               securitySvc,
+		PendingUpload:          pendingUploadSvc,
+		Privacy:                privacySvc,
 		CapabilityGlobalHealth: capabilityGlobalHealth,
 		AWS:                    aws,
 		capabilityObserver:     &capabilityObserverState{runner: capabilityObserver, log: log},

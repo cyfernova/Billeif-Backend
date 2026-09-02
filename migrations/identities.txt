@@ -54,3 +54,4 @@
 000054_capability_provider_health_snapshots
 000055_subscription_lifecycle
 000056_operation_recovery
+000057_security_privacy_foundations

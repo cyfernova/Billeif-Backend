@@ -16,6 +16,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
@@ -99,6 +100,49 @@ func (s *S3Service) GeneratePresignedDownloadURL(ctx context.Context, bucket, ke
 
 	log.Debug("generated S3 download URL", "expires_in_seconds", expiresIn, "duration_ms", time.Since(start).Milliseconds())
 	return request.URL, nil
+}
+
+func (s *S3Service) PresignPendingUpload(ctx context.Context, spec PendingObjectSpec) (*PresignedUpload, error) {
+	presignClient := s3.NewPresignClient(s.client)
+	request, err := presignClient.PresignPutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(spec.Bucket), Key: aws.String(spec.Key), ContentType: aws.String(spec.ContentType),
+		ContentLength: aws.Int64(spec.SizeBytes), ChecksumSHA256: aws.String(spec.ChecksumSHA256), Metadata: spec.Metadata,
+	}, s3.WithPresignExpires(spec.ExpiresIn))
+	if err != nil {
+		return nil, fmt.Errorf("presign pending upload: %w", err)
+	}
+	required := map[string]string{
+		"Content-Length": spec.RequiredLength(), "Content-Type": spec.ContentType, "x-amz-checksum-sha256": spec.ChecksumSHA256,
+	}
+	for key, value := range spec.Metadata {
+		required["x-amz-meta-"+key] = value
+	}
+	for name, expected := range required {
+		if signed := request.SignedHeader.Get(name); signed != expected {
+			return nil, fmt.Errorf("presigned pending upload did not bind %s", name)
+		}
+	}
+	return &PresignedUpload{UploadURL: request.URL, RequiredHeaders: required}, nil
+}
+
+func (s *S3Service) InspectPendingObject(ctx context.Context, bucket, key string) (PendingObjectMetadata, error) {
+	output, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String(key), ChecksumMode: s3types.ChecksumModeEnabled})
+	if err != nil {
+		return PendingObjectMetadata{}, err
+	}
+	return PendingObjectMetadata{ContentType: aws.ToString(output.ContentType), SizeBytes: aws.ToInt64(output.ContentLength), ChecksumSHA256: aws.ToString(output.ChecksumSHA256), Metadata: output.Metadata}, nil
+}
+
+func (s *S3Service) PresignPendingDownload(ctx context.Context, bucket, key string, expires time.Duration) (string, error) {
+	return s.GeneratePresignedDownloadURL(ctx, bucket, key, int64(expires/time.Second))
+}
+
+func (s *S3Service) DeletePendingObject(ctx context.Context, bucket, key string) error {
+	return s.Delete(ctx, bucket, key)
+}
+
+func (s *S3Service) ReadPendingObject(ctx context.Context, bucket, key string) ([]byte, error) {
+	return s.Download(ctx, bucket, key)
 }
 
 func (s *S3Service) Upload(ctx context.Context, bucket, key string, data []byte, contentType string) error {

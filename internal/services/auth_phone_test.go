@@ -130,6 +130,25 @@ func (m *mockCognitoClient) SignUp(ctx context.Context, params *cognitoidentityp
 	return &cognitoidentityprovider.SignUpOutput{}, nil
 }
 
+func (m *mockCognitoClient) AssociateSoftwareToken(context.Context, *cognitoidentityprovider.AssociateSoftwareTokenInput, ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.AssociateSoftwareTokenOutput, error) {
+	return &cognitoidentityprovider.AssociateSoftwareTokenOutput{}, nil
+}
+func (m *mockCognitoClient) VerifySoftwareToken(context.Context, *cognitoidentityprovider.VerifySoftwareTokenInput, ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.VerifySoftwareTokenOutput, error) {
+	return &cognitoidentityprovider.VerifySoftwareTokenOutput{}, nil
+}
+func (m *mockCognitoClient) SetUserMFAPreference(context.Context, *cognitoidentityprovider.SetUserMFAPreferenceInput, ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.SetUserMFAPreferenceOutput, error) {
+	return &cognitoidentityprovider.SetUserMFAPreferenceOutput{}, nil
+}
+func (m *mockCognitoClient) ListDevices(context.Context, *cognitoidentityprovider.ListDevicesInput, ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.ListDevicesOutput, error) {
+	return &cognitoidentityprovider.ListDevicesOutput{}, nil
+}
+func (m *mockCognitoClient) ForgetDevice(context.Context, *cognitoidentityprovider.ForgetDeviceInput, ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.ForgetDeviceOutput, error) {
+	return &cognitoidentityprovider.ForgetDeviceOutput{}, nil
+}
+func (m *mockCognitoClient) UpdateDeviceStatus(context.Context, *cognitoidentityprovider.UpdateDeviceStatusInput, ...func(*cognitoidentityprovider.Options)) (*cognitoidentityprovider.UpdateDeviceStatusOutput, error) {
+	return &cognitoidentityprovider.UpdateDeviceStatusOutput{}, nil
+}
+
 func newPhoneAuthService(t *testing.T, repo *mockUserRepo, phoneClient *mockCognitoClient) *AuthService {
 	t.Helper()
 
@@ -147,6 +166,31 @@ func newPhoneAuthService(t *testing.T, repo *mockUserRepo, phoneClient *mockCogn
 		cognito:      &mockCognitoClient{},
 		cognitoPhone: phoneClient,
 		log:          logger.New(),
+	}
+}
+
+func TestEmailLoginCompletesSoftwareTokenMFAChallenge(t *testing.T) {
+	client := &mockCognitoClient{
+		initiateAuth: func(context.Context, *cognitoidentityprovider.InitiateAuthInput) (*cognitoidentityprovider.InitiateAuthOutput, error) {
+			return &cognitoidentityprovider.InitiateAuthOutput{ChallengeName: cognitotypes.ChallengeNameTypeSoftwareTokenMfa, Session: aws.String("mfa-session")}, nil
+		},
+		respondToAuthChallenge: func(_ context.Context, input *cognitoidentityprovider.RespondToAuthChallengeInput) (*cognitoidentityprovider.RespondToAuthChallengeOutput, error) {
+			if input.ChallengeName != cognitotypes.ChallengeNameTypeSoftwareTokenMfa || aws.ToString(input.Session) != "mfa-session" || input.ChallengeResponses["SOFTWARE_TOKEN_MFA_CODE"] != "123456" {
+				t.Fatalf("challenge input=%+v", input)
+			}
+			return &cognitoidentityprovider.RespondToAuthChallengeOutput{AuthenticationResult: &cognitotypes.AuthenticationResultType{
+				AccessToken: aws.String("access"), RefreshToken: aws.String("refresh"), TokenType: aws.String("Bearer"), ExpiresIn: 3600,
+			}}, nil
+		},
+	}
+	service := &AuthService{cfg: &config.Config{Cognito: config.CognitoConfig{ClientID: "client"}}, userRepo: &mockUserRepo{}, cognito: client, log: logger.New()}
+	started, err := service.Login(context.Background(), LoginInput{Email: "user@example.com", Password: "password"})
+	if err != nil || started.Challenge != string(cognitotypes.ChallengeNameTypeSoftwareTokenMfa) || started.Session != "mfa-session" {
+		t.Fatalf("started=%+v err=%v", started, err)
+	}
+	completed, err := service.CompleteLoginMFA(context.Background(), LoginMFAInput{Username: "user@example.com", Session: started.Session, Code: "123456"})
+	if err != nil || completed.AccessToken != "access" || completed.RefreshToken != "refresh" {
+		t.Fatalf("completed=%+v err=%v", completed, err)
 	}
 }
 

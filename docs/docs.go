@@ -3044,6 +3044,129 @@ const docTemplate = `{
                 ]
             }
         },
+        "/auth/devices": {
+            "get": {
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "List authentication devices",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Pagination token",
+                        "name": "next_token",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/services.AuthDevicePage"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/auth/devices/{device_key}": {
+            "put": {
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Update device remembered state",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cognito device key",
+                        "name": "device_key",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Remembered state",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "boolean"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "delete": {
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Revoke authentication device",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Cognito device key",
+                        "name": "device_key",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/auth/forgot-password": {
             "post": {
                 "description": "Send a reset code to the user's email if it exists.",
@@ -3146,6 +3269,48 @@ const docTemplate = `{
                         "required": true,
                         "schema": {
                             "$ref": "#/definitions/services.LoginInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/services.LoginOutput"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/login/mfa": {
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Complete TOTP login challenge",
+                "parameters": [
+                    {
+                        "description": "Cognito MFA challenge",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/services.LoginMFAInput"
                         }
                     }
                 ],
@@ -3618,6 +3783,154 @@ const docTemplate = `{
                         }
                     }
                 }
+            }
+        },
+        "/auth/step-up": {
+            "post": {
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Issue scoped step-up grant",
+                "parameters": [
+                    {
+                        "description": "MFA challenge and command scope",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.IssueStepUpInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/services.StepUpIssued"
+                        }
+                    },
+                    "428": {
+                        "description": "Precondition Required",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/auth/totp": {
+            "delete": {
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Disable TOTP",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/auth/totp/confirm": {
+            "post": {
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Confirm TOTP enrollment",
+                "parameters": [
+                    {
+                        "description": "TOTP confirmation",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/services.TOTPConfirmInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/auth/totp/setup": {
+            "post": {
+                "tags": [
+                    "Authentication"
+                ],
+                "summary": "Start TOTP enrollment",
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/services.TOTPSetup"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
             }
         },
         "/auth/verify-email": {
@@ -10523,6 +10836,130 @@ const docTemplate = `{
                 ]
             }
         },
+        "/operator/privacy/requests/{request_id}/process": {
+            "post": {
+                "tags": [
+                    "Operator"
+                ],
+                "summary": "Process privacy request",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Privacy request ID",
+                        "name": "request_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Scoped one-time step-up token",
+                        "name": "X-Step-Up-Token",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Processing scope",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ProcessPrivacyInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "412": {
+                        "description": "Precondition Failed",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/operator/security/uploads/cleanup": {
+            "post": {
+                "tags": [
+                    "Operator"
+                ],
+                "summary": "Cleanup expired pending uploads",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/services.PendingUploadCleanupResult"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/services.PendingUploadCleanupResult"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/operator/step-up": {
+            "post": {
+                "tags": [
+                    "Operator"
+                ],
+                "summary": "Issue operator step-up grant",
+                "parameters": [
+                    {
+                        "description": "MFA challenge and command scope",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.IssueStepUpInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/services.StepUpIssued"
+                        }
+                    },
+                    "428": {
+                        "description": "Precondition Required",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/payments": {
             "get": {
                 "description": "Returns a paginated list of payments recorded for the active business. Provide invoice_id to limit results to one invoice.",
@@ -11525,6 +11962,163 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/privacy/deletions": {
+            "post": {
+                "tags": [
+                    "Privacy"
+                ],
+                "summary": "Request privacy deletion",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Idempotency key",
+                        "name": "Idempotency-Key",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/models.PrivacyRequest"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/privacy/exports": {
+            "post": {
+                "tags": [
+                    "Privacy"
+                ],
+                "summary": "Request privacy export",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Idempotency key",
+                        "name": "Idempotency-Key",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/models.PrivacyRequest"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/privacy/requests/{request_id}": {
+            "get": {
+                "tags": [
+                    "Privacy"
+                ],
+                "summary": "Get privacy request",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Privacy request ID",
+                        "name": "request_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.PrivacyRequest"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/privacy/requests/{request_id}/download": {
+            "get": {
+                "tags": [
+                    "Privacy"
+                ],
+                "summary": "Download privacy export",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Privacy request ID",
+                        "name": "request_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -13611,6 +14205,126 @@ const docTemplate = `{
                             "additionalProperties": {
                                 "type": "string"
                             }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/security/uploads": {
+            "post": {
+                "tags": [
+                    "Security"
+                ],
+                "summary": "Create pending upload",
+                "parameters": [
+                    {
+                        "description": "Pending object metadata",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.PendingUploadInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/services.PendingUploadCreated"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/security/uploads/{upload_id}/complete": {
+            "post": {
+                "tags": [
+                    "Security"
+                ],
+                "summary": "Complete pending upload",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Upload ID",
+                        "name": "upload_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.PendingUpload"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/security/uploads/{upload_id}/download": {
+            "get": {
+                "tags": [
+                    "Security"
+                ],
+                "summary": "Download verified upload",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Upload ID",
+                        "name": "upload_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     },
                     "404": {
@@ -19000,6 +19714,39 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.IssueStepUpInput": {
+            "type": "object",
+            "required": [
+                "action",
+                "command_identity",
+                "mfa_code",
+                "mfa_session",
+                "resource"
+            ],
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "business_id": {
+                    "type": "string"
+                },
+                "command_identity": {
+                    "type": "string"
+                },
+                "mfa_code": {
+                    "type": "string"
+                },
+                "mfa_session": {
+                    "type": "string"
+                },
+                "resource": {
+                    "type": "string"
+                },
+                "ttl_seconds": {
+                    "type": "integer"
+                }
+            }
+        },
         "handlers.ListToolsResponse": {
             "type": "object",
             "properties": {
@@ -19057,6 +19804,29 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.PendingUploadInput": {
+            "type": "object",
+            "required": [
+                "checksum_sha256",
+                "content_type",
+                "kind",
+                "size_bytes"
+            ],
+            "properties": {
+                "checksum_sha256": {
+                    "type": "string"
+                },
+                "content_type": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "size_bytes": {
+                    "type": "integer"
+                }
+            }
+        },
         "handlers.ProcessIntentRequest": {
             "type": "object",
             "required": [
@@ -19068,6 +19838,33 @@ const docTemplate = `{
                 },
                 "max_results": {
                     "type": "integer"
+                }
+            }
+        },
+        "handlers.ProcessPrivacyInput": {
+            "type": "object",
+            "required": [
+                "business_id",
+                "command_identity",
+                "kind",
+                "subject"
+            ],
+            "properties": {
+                "business_id": {
+                    "type": "string"
+                },
+                "command_identity": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": [
+                        "export",
+                        "delete"
+                    ]
+                },
+                "subject": {
+                    "type": "string"
                 }
             }
         },
@@ -20488,6 +21285,88 @@ const docTemplate = `{
                 }
             }
         },
+        "models.PendingUpload": {
+            "type": "object",
+            "properties": {
+                "business_id": {
+                    "type": "string"
+                },
+                "checksum_sha256": {
+                    "type": "string"
+                },
+                "completed_at": {
+                    "type": "string"
+                },
+                "content_type": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "deleted_at": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "scan_code": {
+                    "type": "string"
+                },
+                "size_bytes": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "uploader_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.PrivacyRequest": {
+            "type": "object",
+            "properties": {
+                "artifact_hash": {
+                    "type": "string"
+                },
+                "business_id": {
+                    "type": "string"
+                },
+                "completed_at": {
+                    "type": "string"
+                },
+                "error_code": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "purge_after": {
+                    "type": "string"
+                },
+                "requested_at": {
+                    "type": "string"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "subject": {
+                    "type": "string"
+                }
+            }
+        },
         "models.Product": {
             "type": "object",
             "required": [
@@ -21595,6 +22474,37 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "variant_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.AuthDevice": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "device_key": {
+                    "type": "string"
+                },
+                "last_accessed_at": {
+                    "type": "string"
+                },
+                "remembered_state": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.AuthDevicePage": {
+            "type": "object",
+            "properties": {
+                "devices": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/services.AuthDevice"
+                    }
+                },
+                "next_token": {
                     "type": "string"
                 }
             }
@@ -23783,10 +24693,32 @@ const docTemplate = `{
                 }
             }
         },
+        "services.LoginMFAInput": {
+            "type": "object",
+            "required": [
+                "code",
+                "session",
+                "username"
+            ],
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "session": {
+                    "type": "string"
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
         "services.LoginOutput": {
             "type": "object",
             "properties": {
                 "access_token": {
+                    "type": "string"
+                },
+                "challenge": {
                     "type": "string"
                 },
                 "expires_in": {
@@ -23795,7 +24727,13 @@ const docTemplate = `{
                 "refresh_token": {
                     "type": "string"
                 },
+                "session": {
+                    "type": "string"
+                },
                 "token_type": {
+                    "type": "string"
+                },
+                "username": {
                     "type": "string"
                 }
             }
@@ -24146,6 +25084,37 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "variant_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.PendingUploadCleanupResult": {
+            "type": "object",
+            "properties": {
+                "deleted": {
+                    "type": "integer"
+                },
+                "examined": {
+                    "type": "integer"
+                },
+                "failed": {
+                    "type": "integer"
+                }
+            }
+        },
+        "services.PendingUploadCreated": {
+            "type": "object",
+            "properties": {
+                "required_headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "upload": {
+                    "$ref": "#/definitions/models.PendingUpload"
+                },
+                "upload_url": {
                     "type": "string"
                 }
             }
@@ -24853,6 +25822,20 @@ const docTemplate = `{
                 }
             }
         },
+        "services.StepUpIssued": {
+            "type": "object",
+            "properties": {
+                "expires_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "token": {
+                    "type": "string"
+                }
+            }
+        },
         "services.StockAdjustmentInput": {
             "type": "object",
             "required": [
@@ -25051,6 +26034,34 @@ const docTemplate = `{
                         "type": "integer",
                         "format": "int64"
                     }
+                }
+            }
+        },
+        "services.TOTPConfirmInput": {
+            "type": "object",
+            "required": [
+                "code"
+            ],
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "friendly_device_name": {
+                    "type": "string"
+                },
+                "session": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.TOTPSetup": {
+            "type": "object",
+            "properties": {
+                "secret_code": {
+                    "type": "string"
+                },
+                "session": {
+                    "type": "string"
                 }
             }
         },

@@ -76,6 +76,29 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// CompleteLoginMFA completes Cognito's SOFTWARE_TOKEN_MFA challenge.
+// @Summary Complete TOTP login challenge
+// @Tags Authentication
+// @Accept json
+// @Produce json
+// @Param input body services.LoginMFAInput true "Cognito MFA challenge"
+// @Success 200 {object} services.LoginOutput
+// @Failure 401 {object} map[string]string
+// @Router /auth/login/mfa [post]
+func (h *AuthHandler) CompleteLoginMFA(c *gin.Context) {
+	var input services.LoginMFAInput
+	if c.ShouldBindJSON(&input) != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid MFA challenge"})
+		return
+	}
+	result, err := h.svc.CompleteLoginMFA(c.Request.Context(), input)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "MFA challenge failed"})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 // PhoneRegister registers a user with an Indian mobile number.
 func (h *AuthHandler) PhoneRegister(c *gin.Context) {
 	var input services.PhoneRegisterInput
@@ -182,7 +205,108 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "logged out successfully"})
+	c.JSON(http.StatusOK, gin.H{"message": "all Cognito sessions revoked"})
+}
+
+// BeginTOTP starts software-token enrollment.
+// @Summary Start TOTP enrollment
+// @Tags Authentication
+// @Security BearerAuth
+// @Success 201 {object} services.TOTPSetup
+// @Failure 400 {object} map[string]string
+// @Router /auth/totp/setup [post]
+func (h *AuthHandler) BeginTOTP(c *gin.Context) {
+	result, err := h.svc.BeginTOTP(c.Request.Context(), extractToken(c))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "TOTP setup failed"})
+		return
+	}
+	c.JSON(http.StatusCreated, result)
+}
+
+// ConfirmTOTP verifies and enables software-token MFA.
+// @Summary Confirm TOTP enrollment
+// @Tags Authentication
+// @Security BearerAuth
+// @Param input body services.TOTPConfirmInput true "TOTP confirmation"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Router /auth/totp/confirm [post]
+func (h *AuthHandler) ConfirmTOTP(c *gin.Context) {
+	var input services.TOTPConfirmInput
+	if c.ShouldBindJSON(&input) != nil || h.svc.ConfirmTOTP(c.Request.Context(), extractToken(c), input) != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "TOTP verification failed"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "TOTP enabled"})
+}
+
+// DisableTOTP disables software-token MFA preference.
+// @Summary Disable TOTP
+// @Tags Authentication
+// @Security BearerAuth
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Router /auth/totp [delete]
+func (h *AuthHandler) DisableTOTP(c *gin.Context) {
+	if h.svc.DisableTOTP(c.Request.Context(), extractToken(c)) != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "TOTP preference update failed"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "TOTP disabled"})
+}
+
+// ListDevices lists Cognito devices for the current session.
+// @Summary List authentication devices
+// @Tags Authentication
+// @Security BearerAuth
+// @Param next_token query string false "Pagination token"
+// @Success 200 {object} services.AuthDevicePage
+// @Failure 400 {object} map[string]string
+// @Router /auth/devices [get]
+func (h *AuthHandler) ListDevices(c *gin.Context) {
+	result, err := h.svc.ListDevices(c.Request.Context(), extractToken(c), c.Query("next_token"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "device listing failed"})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+// ForgetDevice revokes one Cognito device.
+// @Summary Revoke authentication device
+// @Tags Authentication
+// @Security BearerAuth
+// @Param device_key path string true "Cognito device key"
+// @Success 204
+// @Failure 400 {object} map[string]string
+// @Router /auth/devices/{device_key} [delete]
+func (h *AuthHandler) ForgetDevice(c *gin.Context) {
+	if h.svc.ForgetDevice(c.Request.Context(), extractToken(c), c.Param("device_key")) != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "device revocation failed"})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// SetDeviceRemembered updates Cognito's remembered state.
+// @Summary Update device remembered state
+// @Tags Authentication
+// @Security BearerAuth
+// @Param device_key path string true "Cognito device key"
+// @Param input body object true "Remembered state"
+// @Success 200 {object} map[string]bool
+// @Failure 400 {object} map[string]string
+// @Router /auth/devices/{device_key} [put]
+func (h *AuthHandler) SetDeviceRemembered(c *gin.Context) {
+	var input struct {
+		Remembered bool `json:"remembered"`
+	}
+	if c.ShouldBindJSON(&input) != nil || h.svc.SetDeviceRemembered(c.Request.Context(), extractToken(c), c.Param("device_key"), input.Remembered) != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "device status update failed"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"remembered": input.Remembered})
 }
 
 // Refresh renews an access token
