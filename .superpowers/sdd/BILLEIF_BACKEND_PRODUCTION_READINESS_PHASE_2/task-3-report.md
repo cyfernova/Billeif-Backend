@@ -78,10 +78,10 @@ trusted. My verification and corrections are in commit `99591a2`. Findings:
 
 | Alarm | Metric (namespace `Billeif/Operations`) | Truthful producer |
 | --- | --- | --- |
-| `operations_repeated_failures` | `RepeatedFailures` (category `recovery`) | `cmd/lambda/sqs-invoice` and `cmd/lambda/sqs-email-delivery` consumers emit 1 per failed record that SQS has already redelivered (`ApproximateReceiveCount >= 2`) |
-| `operations_reconciliation_backlog` | `ReconciliationBacklog` (category `reconciliation`, Maximum) | `cmd/lambda/subscription-reconciler` periodically counts `razorpay_webhook_events.processing_status='reconciliation_required'` plus `gst_submission_jobs.status='needs_attention'` via `OperationRepository.CountReconciliationBacklog` (telemetry-only aggregate; no tenant detail leaves the database) |
-| `operations_provider_latency` | `ProviderLatencyMilliseconds` (category `provider`, p99) | `configuredGSTProvider.doJSON` around the real HTTP round trip, forwarded through the lazy provider to every resolved configuration |
-| `operations_webhook_failures` | `WebhookFailures` (category `webhook`) | `RazorpayPaymentService.HandleWebhook` on signature rejection, payload rejection, replay mismatch, and apply-failure reconciliation |
+| `operations_repeated_failures` | `RepeatedFailures` (category `recovery`) | `cmd/lambda/sqs-invoice`, `cmd/lambda/sqs-email-delivery`, and `cmd/lambda/sqs-gst` consumers emit 1 per failed record that SQS has already redelivered (`ApproximateReceiveCount >= 2`); GST records emit only the recovery sample, never an invented render or delivery rate |
+| `operations_reconciliation_backlog` | `ReconciliationBacklog` (category `reconciliation`, Maximum) | `cmd/lambda/subscription-reconciler` periodically counts `razorpay_webhook_events.processing_status='reconciliation_required'` plus `gst_submission_jobs.status='needs_attention'` via `OperationRepository.CountReconciliationBacklog` with the bounded run context (telemetry-only aggregate; no tenant detail leaves the database); fully fail-open — counter, cancellation, and encode failures never change the maintenance outcome |
+| `operations_provider_latency` | `ProviderLatencyMilliseconds` (category `provider`, p99) | `configuredGSTProvider.doJSON` around the complete provider round trip — request, response headers, body read, and decode, including error returns — forwarded through the lazy provider to every resolved configuration |
+| `operations_webhook_failures` | `WebhookFailures` (category `webhook`) | `RazorpayPaymentService.HandleWebhook` on signature rejection, payload rejection, durable transaction failure, replay mismatch, and apply-failure reconciliation; ordinary successful duplicates are never counted |
 | `operations_recurring_schedule_failures` | `RecurringScheduleFailures` (category `schedule`) | `cmd/lambda/recurring-invoices` dispatcher result |
 | `operations_render_failure_rate` | `RenderFailureRate` 0/100 (category `render`) | `cmd/lambda/sqs-invoice` consumer per processed record |
 | `operations_delivery_failure_rate` | `DeliveryFailureRate` 0/100 (category `delivery`) | `cmd/lambda/sqs-email-delivery` consumer per processed record |
@@ -171,7 +171,65 @@ Every behavior change was written test-first.
      DLQ-coverage assertion now requires the five native
      `worker_dlq_messages` alarms on `ApproximateNumberOfMessagesVisible`.
 
-## 4. Validation (final gate, all on commit `99591a2`)
+## 3b. Review-correction wave (parent review round 2)
+
+The parent review found five defects; all were fixed test-first and verified.
+
+1. **Backlog telemetry could fail the maintenance run and ignored Lambda
+   cancellation** (`cmd/lambda/subscription-reconciler/main.go`): the backlog
+   gauge now receives the bounded run context (`runCtx`) instead of
+   `context.Background()` and is fully fail-open — nil counter, unusable
+   environment, cancellation, count failures, and encode failures are all
+   swallowed so the maintenance outcome and its retry behavior never change.
+   The pre-existing lifecycle metric error behavior is preserved.
+   RED: `TestHandlerCancellationReachesBacklogCounter`,
+   `TestHandlerFailingBacklogCounterKeepsMaintenanceOutcome`,
+   `TestHandlerBacklogEncodeFailureKeepsMaintenanceOutcome` all failed
+   (cancellation never reached the counter; failures surfaced from `Handle`).
+   GREEN: `ok invoice-backend/cmd/lambda/subscription-reconciler 0.698s`.
+2. **Webhook database transaction failures were not counted**
+   (`internal/services/razorpay_payment_service.go`): a valid signed webhook
+   whose durable transaction fails now emits exactly one fail-open
+   `WebhookFailures` sample before the error surfaces. Ordinary successful
+   duplicates remain uncounted.
+   RED: `TestRazorpayWebhookTransactionFailureEmitsWebhookFailureMetric`
+   (deterministic `no such table` transaction failure emitted nothing).
+   GREEN: passes; `TestRazorpayWebhookSuccessfulDuplicateEmitsNoFailureMetric`
+   proves duplicates stay uncounted.
+3. **Provider latency excluded response-body read and decode time**
+   (`internal/services/gst_provider.go`): the emission point moved to a
+   deferred closure that measures the complete round trip — request, response
+   headers, body read, and decode — on every return path, success or error.
+   RED: `TestConfiguredGSTProviderLatencyIncludesResponseBodyReadAndDecode`
+   measured 0.000083 ms against a 60 ms delayed response body. GREEN: latency
+   covers the delayed body (>= 40 ms asserted).
+4. **Failed redelivered GST records emitted no recovery sample**
+   (`cmd/lambda/sqs-gst/main.go`): the metrics helper now receives the real
+   processing outcome and emits one `RepeatedFailures` recovery sample via the
+   new bounded `Emitter.EmitRepeatedFailure()` — without inventing a render or
+   delivery rate, which GST records never emit.
+   RED: `TestEmitGSTRecordMetricsCoversFailureOutcomesWithoutInventingRates`
+   plus `TestEmitRepeatedFailureIsBoundedAndFailSafe` (build failure = RED).
+   GREEN: success (queue age only), first failure (no recovery sample), and
+   redelivered failure (exactly one recovery sample) all asserted.
+5. **Razorpay operations stayed timestamped at their old processing time after
+   a replay-to-reconciliation transition**
+   (`internal/repositories/postgres/operation_repository.go`): the safe latest
+   lifecycle expression
+   `CASE WHEN COALESCE(last_replayed_at, received_at) > COALESCE(processed_at,
+   received_at) THEN COALESCE(last_replayed_at, received_at) ELSE
+   COALESCE(processed_at, received_at) END` (portable across PostgreSQL and
+   the SQLite fixtures) now drives snapshot filtering, cursoring, and ordering,
+   with a Go mirror (`latestRazorpayLifecycleTime`) for the projection and the
+   direct-read snapshot, which previously used the host wall clock. The urgent
+   operation is surfaced, filtered, and ordered at the replay time.
+   RED: `TestOperationRepositorySurfacesRazorpayReplayReconciliationAtReplayTime`
+   (UpdatedAt stayed at the old processing time). GREEN: UpdatedAt equals the
+   replay time; a pre-replay snapshot surfaces nothing; the post-replay list
+   orders the webhook operation first; the cursor after the replay time
+   excludes it.
+
+## 4. Validation (final gate, all on commit `99591a2` and the review-correction wave)
 
 - `make fmt` — clean.
 - `make lint` — clean (exit 0).
@@ -193,6 +251,18 @@ Every behavior change was written test-first.
   full suite — **85 passed, 0 failed**.
 - `git diff --check` — clean. Changed-line secret scan — clean (only prose
   mentions and pre-existing secret-ARN indirections; no values).
+
+### Review-correction wave gate (round 2)
+
+- Focused suites for every touched package: `ok` for operationsmetrics,
+  services, repositories/postgres, app, handlers, middleware, all
+  `cmd/lambda/...`, and migrations, plus `-race` on services,
+  repositories/postgres, operationsmetrics, subscription-reconciler, and
+  sqs-gst.
+- `make fmt` clean; `make lint` clean; `make test` exit 0 with 52 packages ok
+  and zero failures; `terraform fmt -check` and `terraform validate` clean
+  (no Terraform files changed in the round, so the mocked Terraform tests were
+  not re-run).
 - Migrations package tests (`migrations/embedded_test.go`,
   `manifest.sha256` validation, `operation_recovery_schema_test.go`) pass as
   part of `make test`.
@@ -262,9 +332,14 @@ Every behavior change was written test-first.
 
 ## 9. Commits
 
+- `1322e9e` — fix: harden operation telemetry and razorpay ordering
+  (parent-review round 2: fail-open backlog telemetry with bounded context,
+  webhook transaction-failure metric, complete provider round-trip latency,
+  GST repeated-failure recovery sample, Razorpay replay-time lifecycle
+  ordering; all with RED→GREEN tests)
 - `99591a2` — ops: back operations alarms with truthful producers
-  (my corrections: metric producers at boundaries, fabricated-alarm removal,
-  stale Terraform mock checksums, branding allowlist, all with RED→GREEN tests)
+  (metric producers at boundaries, fabricated-alarm removal, stale Terraform
+  mock checksums, branding allowlist, all with RED→GREEN tests)
 - `d63b501`, `a8dad0a`, `2ceb835`, `fa9f8ef` — inherited partial
   implementation (verified, retained)
 
