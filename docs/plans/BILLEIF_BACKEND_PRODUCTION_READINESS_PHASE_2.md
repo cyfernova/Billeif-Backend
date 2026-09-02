@@ -132,7 +132,7 @@ relevant tests were inspected.
 | 7 | `unsafe` and `partial` | `internal/handlers/billing_ops_handler.go`, `internal/services/billing_ops_service.go`, `internal/models/swipe_ops.go`, `tests/unit/billing_ops_handler_test.go`, `migrations/000030_add_swipe_billing_ops.up.sql`; no bulk-import worker found in `internal/workers`, `cmd`, or `infrastructure/terraform` | Narrow to customer/vendor/product validation and commit handlers/services/repository, S3 metadata, worker/queue/alarm, paired migrations if state is insufficient, OpenAPI and restart/idempotency/tenant/formula tests. Existing queued jobs require a compatibility and cleanup decision. |
 | 8 | `partial`, with `unsafe` asset/cart/coupon behavior; phone/S3/provider paths `externally unverified` | `internal/services/auth_phone_test.go`, `internal/services/s3_service_test.go`, `internal/services/commerce_service_test.go`, `internal/services/shopping_agent_service_test.go`, `internal/services/shopping_agent_signature_test.go`, `internal/services/report_service_test.go`, `tests/unit/commerce_handler_test.go`, `tests/unit/report_handler_test.go` | Existing owning services/handlers/models plus paired migrations for upload/cart/coupon state, report export implementation, permissions/entitlements, OpenAPI and concurrency/security tests. Saved methods remain unavailable. |
 | 9 | `complete` locally; all model execution and high-risk effects remain unavailable; live PostgreSQL and AI providers `externally unverified` | Exact eight-class catalog, service/repository governance, migration 000061, default-denied AI/voice/A2A/procurement surfaces, adversarial and race tests, and `docs/integration/BILLEIF_PHASE_2_FRONTEND_HANDOFF.md` AI-001 | Expand-first migration 000061. Code and durable gates default disabled; no public approval/operator API or high-risk effect adapter exists. Live PostgreSQL governance tests skip without `MIGRATION_TEST_DATABASE_URL`. |
-| 10 | `complete` locally; GST filing remains `deferred`; deployed dependencies remain `externally unverified` | Regenerated Swagger, completed frontend handoff, full local validation, final diff inspection, and `docs/plans/GST_RECONCILIATION_NON_FILING_FOLLOW_UP.md` | Documentation and generated-contract validation only. No frontend file, deployment, Terraform apply, provider action, outbound message, payment, or filing action. |
+| 10 | `complete` locally; GST filing remains `deferred`; deployed dependencies remain `externally unverified` | Regenerated Swagger, completed frontend handoff, full local validation, final diff inspection, and `docs/plans/BILLEIF_GST_RECONCILIATION_FOLLOWUP.md` | Documentation and generated-contract validation only. No frontend file, deployment, Terraform apply, provider action, outbound message, payment, or filing action. |
 
 ### Implemented contract and invariant evidence
 
@@ -350,7 +350,7 @@ provider-backed actions unavailable while health is unknown.
 
 ## Task 2: Subscription and Razorpay lifecycle
 
-Status: pending
+Status: complete locally; Razorpay deployment externally unverified
 
 Determine whether monthly plans are renewable subscriptions or one-time
 checkout and make wording and behavior truthful. Implement the durable state
@@ -374,7 +374,7 @@ unknown provider outcome.
 
 ## Task 3: Operational visibility and recovery
 
-Status: pending
+Status: complete locally; high-risk provider recovery intentionally blocked
 
 Build a secure aggregate operational read model across render, delivery, outbox,
 Razorpay, GST/e-invoice/e-way bill, recurring, email/SES, WhatsApp,
@@ -467,7 +467,7 @@ deployed-environment claim was made. Focused evidence:
 
 ## Task 5: Security, privacy, and recovery
 
-Status: pending
+Status: complete locally; Cognito, S3, and restore drills externally unverified
 
 Implement scoped one-time step-up authorization bound to user, business, action,
 resource, time, assurance, expiry and identifier for high-risk actions. Implement
@@ -489,7 +489,7 @@ not be presented as completed assets.
 
 ## Task 6: Accounting completeness
 
-Status: pending
+Status: complete locally; bank storage and scanner deployment externally unverified
 
 First map existing fiscal year, lock date, Trial Balance, Balance Sheet, opening
 balances, bank and subledger/inventory/tax reconciliation. Implement only gaps.
@@ -581,7 +581,7 @@ classified and disable high-risk execution until governance is proven.
 
 ## Task 10: Frontend handoff and release validation
 
-Status: pending
+Status: complete locally; deployed dependencies externally unverified
 
 Regenerate Swagger/OpenAPI. Complete every CAP/SUB/OPS/SEC/ACC/IMP/AUTH/ASSET/
 CART/COUPON/REPORT/AI contract with exact status, method/path, auth, business,

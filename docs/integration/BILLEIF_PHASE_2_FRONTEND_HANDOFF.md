@@ -1841,7 +1841,7 @@ and `internal/app/runtime_security_test.go`.
 | Aggregate operation status, operator detail and safe recovery actions | OPS-007 business projection and exact failed-render retry are `complete` locally; OPS-008 high-risk actions remain step-up-blocked | Use the aggregate projection and exact retry contract. Keep webhook/reconcile/DLQ/resolve disabled with `step_up_required`; never substitute admin/owner for operator. |
 | Customer-safe aggregate GST/provider truth and recovery | `missing` around OPS-004/005/006 | Keep provider-backed success UI disabled: absent provider configuration selects a simulator that can fabricate IRN/ack/e-way bill values. A local succeeded state is not government-system evidence. Evidence: `internal/services/gst_provider.go`. |
 | Staging verification evidence | `missing` and `externally unverified` | Do not label a provider operational from local tests. |
-| Step-up, TOTP, durable devices/sessions and privacy workflows | `missing` | Do not expose placeholder controls. |
+| Step-up, TOTP, durable devices/sessions and privacy workflows | Task 5 is `complete` locally; Cognito, S3, and restore drills remain `externally unverified` | Use only the generated contracts after deployment verification. OPS-008 provider-effect recovery remains intentionally blocked despite the separate scoped step-up surface. |
 | Trial Balance, Balance Sheet, fiscal lock/opening balance and bank reconciliation | ACC-001/002 `complete` locally; bank object/scanner deployment externally unverified | Enable from the ACC contracts after migration `000058`; do not label uploaded bank files operational until storage/scanning is verified. |
 | Durable two-phase customer/vendor/product import | IMP-001 `complete` locally; S3/SQS deployment externally unverified | Enable after migration `000059`, worker deployment, queue alarm, upload, artifact, and notification smoke verification. |
 | Verified upload completion, editable cart, race-safe coupons and typed XLSX | ASSET-001 logo, CART-001, COUPON-001, and REPORT-001 are `complete` locally; drive completion remains `partial`; S3 is `externally unverified` | Use the completed contracts after their migrations. Keep drive completion unavailable and never simulate upload completion client-side. |
@@ -1860,10 +1860,20 @@ and `internal/app/runtime_security_test.go`.
 - Swagger was regenerated from `internal/app/runtime.go` during Task 10; the
   tracked generated files were already current and produced no diff. The two
   manually curated OpenAPI contracts remain covered by route/contract tests.
-- Local Task 10 validation includes formatting, lint, the full Go race/coverage
-  suite, migration bundle checks, route/security/idempotency/unknown-outcome
-  tests, and Terraform format, validate, and mocked tests. Live PostgreSQL AI
-  governance cases skip without `MIGRATION_TEST_DATABASE_URL`.
+- At `bc0c138` on 2026-09-02, `make fmt`, `make lint`, and `make test` passed;
+  `make test` ran the full Go race/coverage suite. A focused `go test` over
+  `internal/app`, `internal/config`, `internal/handlers`, `internal/middleware`,
+  `internal/repositories/postgres`, `internal/services`, `internal/verify`,
+  `migrations`, and `tests/...` also passed route, Swagger/OpenAPI, migration,
+  tenant, sensitive-data, idempotency, reconciliation, inventory, and payment
+  name filters with `-count=1`.
+- `terraform -chdir=infrastructure/terraform fmt -check -recursive`,
+  `terraform -chdir=infrastructure/terraform validate`, and
+  `terraform -chdir=infrastructure/terraform test` passed without apply; mocked
+  Terraform tests reported 88 passed and 0 failed.
+  Validate/test retained existing DynamoDB key deprecation warnings. Live
+  PostgreSQL AI governance cases skipped because `MIGRATION_TEST_DATABASE_URL`
+  was not configured.
 - The non-filing GST reconciliation follow-up is
-  `docs/plans/GST_RECONCILIATION_NON_FILING_FOLLOW_UP.md`. It does not authorize
+  `docs/plans/BILLEIF_GST_RECONCILIATION_FOLLOWUP.md`. It does not authorize
   filing, provider mutation, or exposure of current unsafe GST projections.

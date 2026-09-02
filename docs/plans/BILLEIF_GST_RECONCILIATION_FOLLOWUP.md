@@ -78,7 +78,8 @@ security review, approval model, provider certification, and release gate.
 
 Deploy migrations before workers and handlers. Keep capability unavailable until
 storage, queues, scanners, provider credentials, and alarms are verified. Enable
-read-only internal review first, then bounded imports and exports. Roll back the
-application and workers before down migrations; retain reconciliation evidence
-according to the accounting retention policy. A rollback never deletes source
-evidence or converts an unknown outcome into failure or success.
+read-only internal review first, then bounded imports and exports. Down migrations
+are permitted only before any reconciliation source or run data exists. After
+data exists, use an application-only rollback and a tested forward migration or
+archival strategy that preserves retained evidence. A rollback never deletes
+source evidence or converts an unknown outcome into failure or success.
