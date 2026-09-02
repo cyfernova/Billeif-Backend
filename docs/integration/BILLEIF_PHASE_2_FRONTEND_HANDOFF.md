@@ -56,7 +56,7 @@ route registration or current generated OpenAPI alone.
 | CART-001 | Tenant-versioned editable AP2 cart mandate | `complete` locally | Mutate only `pending` carts with the current version; refetch on `409`. |
 | COUPON-001 | Storefront coupon controls and serialized redemption | `complete` locally | Hard usage caps require migration `000060`; redeemed coupons remain immutable to deletion. |
 | REPORT-001 | Report JSON/CSV compatibility envelope and native XLSX download | `complete` locally | XLSX is bounded, formula-safe, typed, business-timezone aware and returned as an attachment; runtime capability and permission checks remain mandatory. |
-| AI-001 | Agent capability list/add/remove and permission probe | `partial` and `unsafe` as governance | Capability inventory only; do not treat it as execution authorization. |
+| AI-001 | Agent capability list/add/remove and permission probe | `partial` and `unsafe` as governance | Capability inventory only; do not treat it as execution authorization. Governed runtime authority is internal and default-disabled. |
 
 ## Cross-contract controls and client lifecycle
 
@@ -1280,13 +1280,45 @@ database-rejected but returned as unstable `500` text.
 > requested action and can attempt a second response after a lookup failure.
 > Do not use it to authorize execution or show a governance approval.
 
-There is no risk class, scoped approval, budget reservation, audit, kill switch,
-or execution enforcement here. Task 9 must replace this governance gap and
-default-deny unclassified tools. Evidence: `internal/app/runtime.go`,
+These CRUD rows still provide no execution authority. Runtime execution now has
+a separate code-owned, default-deny governance contract with exact risk,
+permission, approval, budget, audit, kill-switch and breaker checks. Evidence:
+`internal/services/agent_governance_service.go`,
+`internal/repositories/interfaces/agent_governance_repository.go`,
+`internal/repositories/postgres/agent_governance_repo.go`,
+`migrations/000061_ai_agent_governance.up.sql`, and `internal/app/runtime.go`.
+The descriptive CRUD evidence remains:
 `internal/handlers/agent_handler.go`, `internal/services/agent_service.go`,
 `internal/models/agent.go`, `tests/unit/agent_handler_test.go`,
 `tests/integration/agent_test.go`, and
 `migrations/000013_add_ap2_agent_marketplace.up.sql`.
+
+### Internal governed AI execution contract
+
+There is no public approval or kill-switch API in this release. The independent
+`AI_AGENT_EXECUTION_ENABLED` hard gate defaults false, and the durable global
+gate also defaults disabled. Missing catalog, permission, repository, gate,
+budget, breaker, or audit state denies execution. Both agent and business spend
+ceilings are explicit UTC-day windows in integer micros; provider and model are
+immutable for a run, so an open circuit cannot trigger a costlier fallback.
+
+The code-owned catalog classifies the four existing voice reads as `read-only`.
+Only `list_invoices` and `get_invoice` are eligible for production advertising;
+customer reads remain disabled. The voice runtime requires a governed-executor
+factory and advertises zero tools when it is absent or unready. Tool arguments
+are duplicate-key-rejected canonical JSON, hashed with SHA-256, bounded, and
+rejected when sensitive key names are present. Stored audit data is sanitized
+metadata, hashes, bounded configuration, usage, integer-micro cost, safe result
+references, retry/failure codes, and dispositions, never prompts, credentials,
+Bearer values, or provider bodies.
+
+External communication, financial, tax, security, and legal classes require an
+exact one-use approval plus an effect adapter with idempotency and reconciliation.
+No such high-risk adapter is registered. Production A2A task execution,
+autonomous bargaining, and procurement start/auto-buy therefore fail closed;
+unknown A2A task types are denied, and `payment.process` can no longer return a
+false success. A timeout or ambiguous outcome after dispatch is
+`reconciliation_required`, never success or an automatic release/retry.
 
 ## ASSET-001: Verified logo upload and current drive presigns
 
@@ -1792,7 +1824,7 @@ and `internal/app/runtime_security_test.go`.
 | Trial Balance, Balance Sheet, fiscal lock/opening balance and bank reconciliation | ACC-001/002 `complete` locally; bank object/scanner deployment externally unverified | Enable from the ACC contracts after migration `000058`; do not label uploaded bank files operational until storage/scanning is verified. |
 | Durable two-phase customer/vendor/product import | IMP-001 `complete` locally; S3/SQS deployment externally unverified | Enable after migration `000059`, worker deployment, queue alarm, upload, artifact, and notification smoke verification. |
 | Verified upload completion, editable cart, race-safe coupons and typed XLSX | `missing` around partial surfaces | Do not simulate completion client-side. |
-| AI risk/approval/budget/kill-switch governance | `missing` around unsafe AI-001 descriptive capabilities and read-only voice tools | Do not enable governed high-risk agent actions. |
+| Governed high-risk AI effect adapters and public operator controls | Core runtime governance exists; no high-risk adapter or public approval/kill-switch API is registered | Keep `AI_AGENT_EXECUTION_ENABLED=false`; do not enable high-risk agent actions. |
 | Saved payment methods | `deferred`; every current mutation is fail-closed by CAP-001 | Keep unavailable; read-only legacy views do not authorize creation or token use. |
 | Official GST return filing | `deferred` | Do not expose filing. Existing simulated provider output is not filing evidence. |
 | Automatic recurring issue/send | `deferred`; recurring draft creation exists | Do not label recurring drafts as auto-sent invoices. |

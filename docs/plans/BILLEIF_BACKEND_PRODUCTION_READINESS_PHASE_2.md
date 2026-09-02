@@ -558,7 +558,7 @@ remain explicitly unavailable.
 
 ## Task 9: AI agent governance
 
-Status: pending
+Status: complete
 
 Classify every existing tool into the specified eight risk classes and default
 deny missing classifications/permissions. Bind high-risk approvals to agent,

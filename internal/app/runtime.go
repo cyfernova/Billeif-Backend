@@ -409,6 +409,7 @@ type Repositories struct {
 	CapabilityProviderHealth interfaces.CapabilityProviderHealthRepository
 	Operation                interfaces.OperationRepository
 	Security                 interfaces.SecurityPrivacyRepository
+	AgentGovernance          interfaces.AgentGovernanceRepository
 	AP2                      interfaces.AP2Repository
 }
 
@@ -447,6 +448,7 @@ func initRepositories(db *gorm.DB) *Repositories {
 		CapabilityProviderHealth: postgresrepo.NewCapabilityProviderHealthRepository(db),
 		Operation:                postgresrepo.NewOperationRepository(db),
 		Security:                 postgresrepo.NewSecurityRepository(db),
+		AgentGovernance:          postgresrepo.NewAgentGovernanceRepository(db),
 		AP2:                      postgresrepo.NewAP2Repository(db),
 	}
 }
@@ -454,7 +456,7 @@ func initRepositories(db *gorm.DB) *Repositories {
 func initServices(cfg *config.Config, db *gorm.DB, repos *Repositories, aws *awsclients.Config, resolver services.ProviderConfigResolver, log *logger.Logger) *services.Container {
 	return services.NewContainer(cfg, resolver, db, repos.User, repos.Business, repos.Customer, repos.Vendor,
 		repos.Product, repos.Document, repos.Journal, repos.Inventory, repos.Shipping, repos.Invoice, repos.Payment, repos.Ledger, repos.Reporting, repos.Team,
-		repos.Webhook, repos.Subscription, repos.SubscriptionLifecycle, repos.WebSocketTicket, repos.Notification, repos.CapabilityProviderHealth, repos.Operation, repos.Security, repos.AP2, aws, log)
+		repos.Webhook, repos.Subscription, repos.SubscriptionLifecycle, repos.WebSocketTicket, repos.Notification, repos.CapabilityProviderHealth, repos.Operation, repos.Security, repos.AgentGovernance, repos.AP2, aws, log)
 }
 
 type renderProfilePasswordBackfiller interface {

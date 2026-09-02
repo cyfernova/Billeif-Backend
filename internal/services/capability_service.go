@@ -38,6 +38,7 @@ const (
 	ReasonPlatformUnsupported      = "platform_unsupported"
 	ReasonSavedPaymentsUnsupported = "saved_payment_methods_unsupported"
 	ReasonBulkProcessorUnavailable = "bulk_import_processor_unavailable"
+	ReasonAIGovernanceUnavailable  = "ai_governance_unavailable"
 )
 
 type CapabilityPlatform string
@@ -177,6 +178,9 @@ type CapabilityServiceOptions struct {
 	GlobalHealth   *CapabilityGlobalHealthCache
 	BusinessHealth CapabilityBusinessHealthFactReader
 	Now            func() time.Time
+	AIGovernance   interface {
+		ReadyForBusiness(context.Context, string) bool
+	}
 }
 
 type CapabilityService struct {
@@ -187,6 +191,9 @@ type CapabilityService struct {
 	globalHealth   *CapabilityGlobalHealthCache
 	businessHealth CapabilityBusinessHealthFactReader
 	now            func() time.Time
+	aiGovernance   interface {
+		ReadyForBusiness(context.Context, string) bool
+	}
 }
 
 type capabilityDefinition struct {
@@ -231,6 +238,7 @@ func NewCapabilityService(opts CapabilityServiceOptions) *CapabilityService {
 		globalHealth:   opts.GlobalHealth,
 		businessHealth: opts.BusinessHealth,
 		now:            opts.Now,
+		aiGovernance:   opts.AIGovernance,
 	}
 }
 
@@ -365,6 +373,7 @@ func (s *CapabilityService) evaluateDefinition(ctx context.Context, request Capa
 			result.Degradation = health.Degradation
 		}
 	}
+	aiGovernanceReady := definition.Key != CapabilityAI || (s.aiGovernance != nil && s.aiGovernance.ReadyForBusiness(ctx, request.BusinessID))
 
 	switch {
 	case !definition.Supported:
@@ -393,6 +402,9 @@ func (s *CapabilityService) evaluateDefinition(ctx context.Context, request Capa
 		result.State = CapabilityStateSetupRequired
 		result.ReasonCode = ReasonBusinessSetupRequired
 		result.SetupAction = definition.SetupAction
+	case !aiGovernanceReady:
+		result.State = CapabilityStateTemporarilyUnavailable
+		result.ReasonCode = ReasonAIGovernanceUnavailable
 	case definition.HealthKey != "" && result.ProviderHealth.Status == CapabilityProviderUnknown:
 		result.State = CapabilityStateUnknown
 		result.ReasonCode = ReasonProviderHealthUnknown

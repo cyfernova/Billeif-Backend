@@ -36,6 +36,7 @@ type Config struct {
 	DeepSeek       DeepSeekConfig     `mapstructure:"DEEPSEEK"`
 	Sarvam         SarvamConfig       `mapstructure:"SARVAM"`
 	VoiceSession   VoiceSessionConfig `mapstructure:"VOICE_SESSION"`
+	AIGovernance   AIGovernanceConfig `mapstructure:"AI_GOVERNANCE"`
 	Credentials    CredentialsConfig  `mapstructure:"CREDENTIALS"`
 	MCP            MCPConfig          `mapstructure:"MCP"`
 }
@@ -62,6 +63,22 @@ type SarvamConfig struct {
 	APIKey  string `mapstructure:"API_KEY"`
 	BaseURL string `mapstructure:"BASE_URL"`
 	Timeout int    `mapstructure:"TIMEOUT"`
+}
+
+// AIGovernanceConfig is the independent hard gate and bounded execution policy.
+// Provider spend is represented in integer millionths of SpendCurrency.
+type AIGovernanceConfig struct {
+	ExecutionEnabled         bool          `mapstructure:"EXECUTION_ENABLED"`
+	SpendCurrency            string        `mapstructure:"SPEND_CURRENCY"`
+	BusinessDailyLimitMicros int64         `mapstructure:"BUSINESS_DAILY_LIMIT_MICROS"`
+	AgentDailyLimitMicros    int64         `mapstructure:"AGENT_DAILY_LIMIT_MICROS"`
+	RunTokenBudget           int64         `mapstructure:"RUN_TOKEN_BUDGET"`
+	MaxSteps                 int           `mapstructure:"MAX_STEPS"`
+	MaxToolCalls             int           `mapstructure:"MAX_TOOL_CALLS"`
+	MaxRetries               int           `mapstructure:"MAX_RETRIES"`
+	MaxDuration              time.Duration `mapstructure:"MAX_DURATION"`
+	ProviderFailureThreshold int           `mapstructure:"PROVIDER_FAILURE_THRESHOLD"`
+	ProviderCooldown         time.Duration `mapstructure:"PROVIDER_COOLDOWN"`
 }
 
 type VoiceSessionConfig struct {
@@ -463,6 +480,17 @@ func LoadForProfile(profile Profile) (*Config, error) {
 	_ = viper.BindEnv("VOICE_SESSION.LEASE_INDEX_NAME", "VOICE_SESSION_LEASE_INDEX_NAME")
 	_ = viper.BindEnv("VOICE_SESSION.GLOBAL_CAPACITY_LIMIT", "VOICE_GLOBAL_CAPACITY_LIMIT")
 	_ = viper.BindEnv("VOICE_SESSION.PER_USER_CAPACITY_LIMIT", "VOICE_PER_USER_CAPACITY_LIMIT")
+	_ = viper.BindEnv("AI_GOVERNANCE.EXECUTION_ENABLED", "AI_AGENT_EXECUTION_ENABLED")
+	_ = viper.BindEnv("AI_GOVERNANCE.SPEND_CURRENCY", "AI_SPEND_CURRENCY")
+	_ = viper.BindEnv("AI_GOVERNANCE.BUSINESS_DAILY_LIMIT_MICROS", "AI_BUSINESS_DAILY_LIMIT_MICROS")
+	_ = viper.BindEnv("AI_GOVERNANCE.AGENT_DAILY_LIMIT_MICROS", "AI_AGENT_DAILY_LIMIT_MICROS")
+	_ = viper.BindEnv("AI_GOVERNANCE.RUN_TOKEN_BUDGET", "AI_RUN_TOKEN_BUDGET")
+	_ = viper.BindEnv("AI_GOVERNANCE.MAX_STEPS", "AI_MAX_STEPS")
+	_ = viper.BindEnv("AI_GOVERNANCE.MAX_TOOL_CALLS", "AI_MAX_TOOL_CALLS")
+	_ = viper.BindEnv("AI_GOVERNANCE.MAX_RETRIES", "AI_MAX_RETRIES")
+	_ = viper.BindEnv("AI_GOVERNANCE.MAX_DURATION", "AI_MAX_DURATION")
+	_ = viper.BindEnv("AI_GOVERNANCE.PROVIDER_FAILURE_THRESHOLD", "AI_PROVIDER_FAILURE_THRESHOLD")
+	_ = viper.BindEnv("AI_GOVERNANCE.PROVIDER_COOLDOWN", "AI_PROVIDER_COOLDOWN")
 	_ = viper.BindEnv("CREDENTIALS.ENCRYPTION_KEY", "CREDENTIAL_ENCRYPTION_KEY")
 	_ = viper.BindEnv("MCP.SERVER_URL", "MCP_SERVER_URL")
 	_ = viper.BindEnv("MCP.TIMEOUT", "MCP_TIMEOUT")

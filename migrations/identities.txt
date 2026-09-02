@@ -58,3 +58,4 @@
 000058_accounting_completeness
 000059_durable_bulk_imports
 000060_cart_coupon_controls
+000061_ai_agent_governance

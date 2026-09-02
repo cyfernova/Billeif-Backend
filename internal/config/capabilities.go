@@ -37,7 +37,7 @@ func CapabilityConfigurationSnapshot(cfg *Config) CapabilityConfiguration {
 		WhatsApp:  anyConfigured(cfg.WhatsApp.BaseURL),
 		Email:     allConfigured(cfg.SES.SenderEmail, cfg.SES.ConfigurationSet),
 		S3Uploads: anyConfigured(cfg.S3.BucketDrive, cfg.S3.BucketInvoices, cfg.S3.BucketLogos, cfg.S3.BucketProducts),
-		AI:        hasAICredentials && anyConfigured(cfg.LLM.APIURL),
+		AI:        cfg.AIGovernance.ExecutionEnabled && hasAICredentials && anyConfigured(cfg.LLM.APIURL),
 		Voice:     cfg.VoiceSession.Enabled() && cfg.VoiceSession.AdmissionEnabled && hasSarvamCredentials,
 	}
 }

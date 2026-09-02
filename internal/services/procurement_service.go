@@ -37,15 +37,23 @@ const (
 )
 
 type ProcurementService struct {
-	ap2Repo     interfaces.AP2Repository
-	agentSvc    *AgentService
-	intentSvc   *IntentProcessingService
-	shoppingSvc *ShoppingAgentService
-	merchantSvc *MerchantAgentService
-	bargaining  *BargainingService
-	agentConfig *AgentConfigService
-	signer      *ap2.SignatureService
-	log         *logger.Logger
+	ap2Repo                     interfaces.AP2Repository
+	agentSvc                    *AgentService
+	intentSvc                   *IntentProcessingService
+	shoppingSvc                 *ShoppingAgentService
+	merchantSvc                 *MerchantAgentService
+	bargaining                  *BargainingService
+	agentConfig                 *AgentConfigService
+	signer                      *ap2.SignatureService
+	log                         *logger.Logger
+	ungovernedExecutionDisabled bool
+}
+
+func (s *ProcurementService) DisableUngovernedExecution() *ProcurementService {
+	if s != nil {
+		s.ungovernedExecutionDisabled = true
+	}
+	return s
 }
 
 type CreateProcurementRunRequest struct {
@@ -117,6 +125,9 @@ func NewProcurementService(
 }
 
 func (s *ProcurementService) StartProcurement(ctx context.Context, req *CreateProcurementRunRequest) (*models.ProcurementRun, error) {
+	if s.ungovernedExecutionDisabled {
+		return nil, ErrA2AGovernanceRequired
+	}
 	ctx, cancel := withUpperBoundTimeout(ctx, procurementRunTotalTimeout)
 	defer cancel()
 

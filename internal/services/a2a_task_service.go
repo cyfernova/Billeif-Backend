@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -15,14 +16,20 @@ import (
 	"gorm.io/gorm"
 )
 
+var (
+	ErrA2ATaskTypeUnsupported = errors.New("A2A task type unsupported")
+	ErrA2AGovernanceRequired  = errors.New("A2A task requires unavailable agent governance")
+)
+
 type A2ATaskService struct {
-	db                *gorm.DB
-	log               *logger.Logger
-	pushService       *A2APushService
-	ap2Repo           interfaces.AP2Repository
-	merchantSvc       *MerchantAgentService
-	sellerNegotiation *SellerNegotiationService
-	signer            *ap2.SignatureService
+	db                          *gorm.DB
+	log                         *logger.Logger
+	pushService                 *A2APushService
+	ap2Repo                     interfaces.AP2Repository
+	merchantSvc                 *MerchantAgentService
+	sellerNegotiation           *SellerNegotiationService
+	signer                      *ap2.SignatureService
+	ungovernedExecutionDisabled bool
 }
 
 func NewA2ATaskService(db *gorm.DB, log *logger.Logger, pushService *A2APushService) *A2ATaskService {
@@ -31,6 +38,13 @@ func NewA2ATaskService(db *gorm.DB, log *logger.Logger, pushService *A2APushServ
 		log:         log,
 		pushService: pushService,
 	}
+}
+
+func (s *A2ATaskService) DisableUngovernedExecution() *A2ATaskService {
+	if s != nil {
+		s.ungovernedExecutionDisabled = true
+	}
+	return s
 }
 
 func (s *A2ATaskService) ConfigureDomainServices(ap2Repo interfaces.AP2Repository, merchantSvc *MerchantAgentService, sellerNegotiation *SellerNegotiationService, signer *ap2.SignatureService) {
@@ -43,6 +57,11 @@ func (s *A2ATaskService) ConfigureDomainServices(ap2Repo interfaces.AP2Repositor
 func (s *A2ATaskService) SendMessage(ctx context.Context, req *a2a.SendMessageRequest, userID, businessID string) (*a2a.SendMessageResponse, error) {
 	if err := a2a.ValidateSendMessageRequest(req); err != nil {
 		return nil, err
+	}
+	if s.ungovernedExecutionDisabled {
+		if err := rejectUngovernedA2ATask(req); err != nil {
+			return nil, err
+		}
 	}
 
 	task, err := s.loadOrCreateTask(ctx, req, userID, businessID)
@@ -76,6 +95,11 @@ func (s *A2ATaskService) SendMessage(ctx context.Context, req *a2a.SendMessageRe
 func (s *A2ATaskService) SendStreamingMessage(ctx context.Context, req *a2a.SendMessageRequest, userID, businessID string, events chan<- a2a.StreamEvent) error {
 	if err := a2a.ValidateSendMessageRequest(req); err != nil {
 		return err
+	}
+	if s.ungovernedExecutionDisabled {
+		if err := rejectUngovernedA2ATask(req); err != nil {
+			return err
+		}
 	}
 
 	task, err := s.loadOrCreateTask(ctx, req, userID, businessID)
@@ -359,6 +383,14 @@ func (s *A2ATaskService) runTask(ctx context.Context, task *a2a.Task, req *a2a.S
 }
 
 func (s *A2ATaskService) executeTask(ctx context.Context, task *a2a.Task, req *a2a.SendMessageRequest) (a2a.Message, *a2a.Artifact, error) {
+	if taskType := a2aTaskType(req); taskType == "payment.process" {
+		return a2a.Message{}, nil, ErrA2AGovernanceRequired
+	}
+	if s.ungovernedExecutionDisabled {
+		if err := rejectUngovernedA2ATask(req); err != nil {
+			return a2a.Message{}, nil, err
+		}
+	}
 	taskType := metadataString(req.Metadata, "taskType")
 	if taskType == "" {
 		taskType = metadataString(req.Message.Metadata, "taskType")
@@ -413,6 +445,29 @@ func (s *A2ATaskService) executeTask(ctx context.Context, task *a2a.Task, req *a
 
 	message, artifact := s.buildTaskResult(task, req)
 	return message, artifact, nil
+}
+
+func rejectUngovernedA2ATask(req *a2a.SendMessageRequest) error {
+	taskType := a2aTaskType(req)
+	switch taskType {
+	case "merchant.process_cart", taskTypeProcurementQuoteRequest,
+		taskTypeProcurementNegotiationCounter, taskTypeProcurementNegotiationAccept,
+		taskTypeProcurementNegotiationReject, "payment.process", "bargaining.notification":
+		return ErrA2AGovernanceRequired
+	default:
+		return ErrA2ATaskTypeUnsupported
+	}
+}
+
+func a2aTaskType(req *a2a.SendMessageRequest) string {
+	if req == nil {
+		return ""
+	}
+	taskType := metadataString(req.Metadata, "taskType")
+	if taskType == "" {
+		taskType = metadataString(req.Message.Metadata, "taskType")
+	}
+	return taskType
 }
 
 func (s *A2ATaskService) buildTaskResult(task *a2a.Task, req *a2a.SendMessageRequest) (a2a.Message, *a2a.Artifact) {

@@ -102,6 +102,7 @@ type Container struct {
 	Capability             *CapabilityService
 	Operation              *OperationService
 	Security               *SecurityService
+	AgentGovernance        *AgentGovernanceService
 	PendingUpload          *PendingUploadService
 	Privacy                *PrivacyService
 	Accounting             *AccountingService
@@ -195,12 +196,18 @@ func NewContainer(
 	capabilityProviderHealthRepo interfaces.CapabilityProviderHealthRepository,
 	operationRepo interfaces.OperationRepository,
 	securityRepo interfaces.SecurityPrivacyRepository,
+	agentGovernanceRepo interfaces.AgentGovernanceRepository,
 	ap2Repo interfaces.AP2Repository,
 	aws *awsclients.Config,
 	log *logger.Logger,
 ) *Container {
 	s3Svc := NewS3Service(cfg, aws, log)
 	businessAuthSvc := NewBusinessAuthService(db, businessRepo, teamRepo, log)
+	agentGovernanceSvc := NewAgentGovernanceService(AgentGovernanceServiceConfig{
+		ExecutionEnabled: cfg.AIGovernance.ExecutionEnabled,
+		Repository:       agentGovernanceRepo,
+		Permissions:      businessAuthSvc,
+	})
 	emailSvc := NewEmailService(cfg, aws, s3Svc, log).WithDB(db)
 	ap2Signer, _ := ap2.NewSignatureService()
 	ap2MandateSigner := ap2.NewMandateSigner(ap2Signer)
@@ -237,7 +244,7 @@ func NewContainer(
 	merchantAgentSvc := NewMerchantAgentService(ap2Repo, ap2Signer, log)
 	agentConfigSvc := NewAgentConfigService(".well-known", log)
 	sellerNegotiationSvc := NewSellerNegotiationService(ap2Repo, agentConfigSvc, log)
-	a2aBargainingSvc := NewA2ABargainingService(a2aClient, bargainingSvc, menteeSvc, ap2Repo, aws.SQS, cfg, log)
+	a2aBargainingSvc := NewA2ABargainingService(a2aClient, bargainingSvc, menteeSvc, ap2Repo, aws.SQS, cfg, log).DisableUngovernedExecution()
 	websocketConnectionSvc := NewWebSocketConnectionService(cfg, aws, log)
 	websocketTicketSvc := NewWebSocketTicketService(websocketTicketRepo, WebSocketTicketServiceOptions{})
 	notificationSvc := NewNotificationService(notificationRepo, NotificationServiceOptions{})
@@ -315,6 +322,7 @@ func NewContainer(
 		Setup:          NewDBCapabilityBusinessSetupReader(db),
 		GlobalHealth:   capabilityGlobalHealth,
 		BusinessHealth: capabilityBusinessHealth,
+		AIGovernance:   agentGovernanceSvc,
 	})
 	pendingUploadSvc := NewPendingUploadService(securityRepo, s3Svc, FailClosedUploadScanner{}, PendingUploadOptions{Bucket: cfg.S3.BucketDrive})
 	logoUploadSvc := NewPendingUploadService(securityRepo, s3Svc, nil, PendingUploadOptions{Bucket: cfg.S3.BucketLogos})
@@ -367,8 +375,9 @@ func NewContainer(
 	)
 
 	shoppingAgentSvc := NewShoppingAgentService(ap2Repo, agentSvc, intentProcessingSvc, ap2Signer, ap2MandateSvc, a2aClient, cfg.Server.A2AMessageEndpoint(), log)
-	procurementSvc := NewProcurementService(ap2Repo, agentSvc, intentProcessingSvc, shoppingAgentSvc, merchantAgentSvc, bargainingSvc, agentConfigSvc, ap2Signer, log)
+	procurementSvc := NewProcurementService(ap2Repo, agentSvc, intentProcessingSvc, shoppingAgentSvc, merchantAgentSvc, bargainingSvc, agentConfigSvc, ap2Signer, log).DisableUngovernedExecution()
 	a2aTaskSvc.ConfigureDomainServices(ap2Repo, merchantAgentSvc, sellerNegotiationSvc, ap2Signer)
+	a2aTaskSvc.DisableUngovernedExecution()
 
 	return &Container{
 		Auth:                   NewAuthService(cfg, userRepo, aws, emailSvc, s3Svc, log).WithAuthAuditRecorder(securityRepo),
@@ -427,6 +436,7 @@ func NewContainer(
 		Capability:             capabilitySvc,
 		Operation:              operationSvc,
 		Security:               securitySvc,
+		AgentGovernance:        agentGovernanceSvc,
 		PendingUpload:          pendingUploadSvc,
 		Privacy:                privacySvc,
 		Accounting:             accountingSvc,

@@ -340,6 +340,9 @@ func validate(cfg *Config) error {
 	if err := validateVoiceSessionConfig(cfg.VoiceSession); err != nil {
 		return err
 	}
+	if err := validateAIGovernanceConfig(cfg.AIGovernance); err != nil {
+		return err
+	}
 
 	if cfg.JWT.AccessTokenExpiry <= 0 {
 		return fmt.Errorf("JWT_ACCESS_TOKEN_EXPIRY must be positive")
@@ -437,6 +440,18 @@ func validate(cfg *Config) error {
 		}
 	}
 
+	return nil
+}
+
+func validateAIGovernanceConfig(cfg AIGovernanceConfig) error {
+	if !cfg.ExecutionEnabled {
+		return nil
+	}
+	if len(strings.TrimSpace(cfg.SpendCurrency)) != 3 || cfg.BusinessDailyLimitMicros <= 0 || cfg.AgentDailyLimitMicros <= 0 ||
+		cfg.RunTokenBudget <= 0 || cfg.MaxSteps <= 0 || cfg.MaxToolCalls <= 0 || cfg.MaxRetries < 0 ||
+		cfg.MaxDuration <= 0 || cfg.MaxDuration > 5*time.Minute || cfg.ProviderFailureThreshold <= 0 || cfg.ProviderCooldown <= 0 {
+		return fmt.Errorf("AI agent governance policy is incomplete")
+	}
 	return nil
 }
 

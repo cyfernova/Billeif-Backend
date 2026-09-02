@@ -50,17 +50,25 @@ func a2aScopedLookupError(operation string, err error) error {
 }
 
 type A2ABargainingService struct {
-	a2aClient     *a2a.A2AClient
-	bargaining    *BargainingService
-	mentee        *MenteeService
-	ap2Repo       interfaces.AP2Repository
-	sqs           *sqs.Client
-	cfg           *config.Config
-	log           *logger.Logger
-	webhookClient *http.Client
-	sessions      map[string]*A2ASession
-	sessionsLock  sync.RWMutex
-	sessionLocks  map[string]*sync.Mutex
+	a2aClient                   *a2a.A2AClient
+	bargaining                  *BargainingService
+	mentee                      *MenteeService
+	ap2Repo                     interfaces.AP2Repository
+	sqs                         *sqs.Client
+	cfg                         *config.Config
+	log                         *logger.Logger
+	webhookClient               *http.Client
+	sessions                    map[string]*A2ASession
+	sessionsLock                sync.RWMutex
+	sessionLocks                map[string]*sync.Mutex
+	ungovernedExecutionDisabled bool
+}
+
+func (s *A2ABargainingService) DisableUngovernedExecution() *A2ABargainingService {
+	if s != nil {
+		s.ungovernedExecutionDisabled = true
+	}
+	return s
 }
 
 type A2ASession struct {
@@ -196,6 +204,9 @@ func (s *A2ABargainingService) StartNegotiation(
 	sellerAgentID string,
 	initialAmount float64,
 ) (*A2ASession, error) {
+	if s.ungovernedExecutionDisabled {
+		return nil, ErrA2AGovernanceRequired
+	}
 	return s.startNegotiation(ctx, scope, &AutonomousNegotiationRequest{
 		BuyerAgentID: buyerAgentID, SellerAgentID: sellerAgentID,
 		InitialAmount: initialAmount, MaxRounds: 5,
@@ -207,6 +218,9 @@ func (s *A2ABargainingService) StartAutonomousNegotiation(
 	scope A2ANegotiationScope,
 	req *AutonomousNegotiationRequest,
 ) (*A2ASession, error) {
+	if s.ungovernedExecutionDisabled {
+		return nil, ErrA2AGovernanceRequired
+	}
 	return s.startNegotiation(ctx, scope, req)
 }
 
@@ -305,6 +319,9 @@ func (s *A2ABargainingService) startNegotiation(
 }
 
 func (s *A2ABargainingService) RunAutonomousNegotiation(ctx context.Context, sessionID string) (err error) {
+	if s.ungovernedExecutionDisabled {
+		return ErrA2AGovernanceRequired
+	}
 	var session *A2ASession
 	defer func() {
 		if r := recover(); r != nil {
@@ -509,6 +526,9 @@ func (s *A2ABargainingService) RunAutonomousNegotiationRound(
 	negotiationID string,
 	expectedRound int,
 ) error {
+	if s.ungovernedExecutionDisabled {
+		return ErrA2AGovernanceRequired
+	}
 	if sessionID == "" || negotiationID == "" || expectedRound <= 0 {
 		return fmt.Errorf("invalid expected negotiation round: %d", expectedRound)
 	}
