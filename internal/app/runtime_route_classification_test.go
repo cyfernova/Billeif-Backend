@@ -58,6 +58,7 @@ func TestEveryGinRouteRegistrationHasAnExplicitAccessClass(t *testing.T) {
 		"imports":              routeBusiness,
 		"invoiceSubscriptions": routeBusiness,
 		"journals":             routeBusiness,
+		"accounting":           routeBusiness,
 		"renderProfiles":       routeBusiness,
 		"utils":                routeBusiness,
 		"tax":                  routeBusiness,

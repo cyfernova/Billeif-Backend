@@ -803,7 +803,7 @@ func setupRouter(
 				products.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), userWriteRL, h.Product.Delete)
 				products.POST("/:id/clone", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), userWriteRL, h.Product.Clone)
 				products.POST("/:id/image", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), h.Product.UploadImage)
-				products.POST("/:id/stock", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), userWriteRL, h.Product.AdjustStock)
+				products.POST("/:id/stock", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAccountingManage), userWriteRL, h.Product.AdjustStock)
 			}
 
 			projects := protected.Group("/projects")
@@ -839,10 +839,10 @@ func setupRouter(
 
 			inventory := protected.Group("/inventory")
 			{
-				inventory.POST("/adjustments", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), h.Inventory.CreateAdjustment)
+				inventory.POST("/adjustments", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAccountingManage), h.Inventory.CreateAdjustment)
 				inventory.GET("/transfers", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Inventory.ListTransfers)
-				inventory.POST("/transfers", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), h.Inventory.CreateTransfer)
-				inventory.POST("/resets", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), h.Inventory.ResetStock)
+				inventory.POST("/transfers", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAccountingManage), h.Inventory.CreateTransfer)
+				inventory.POST("/resets", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAccountingManage), h.Inventory.ResetStock)
 				inventory.GET("/timeline", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Inventory.Timeline)
 				inventory.GET("/valuation", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Inventory.Valuation)
 				inventory.GET("/alerts", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Inventory.Alerts)
@@ -854,8 +854,8 @@ func setupRouter(
 			{
 				assemblies.GET("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsView), h.Inventory.ListAssemblyRecipes)
 				assemblies.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), h.Inventory.CreateAssemblyRecipe)
-				assemblies.POST("/:id/build", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), h.Inventory.BuildAssembly)
-				assemblies.POST("/:id/disassemble", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), h.Inventory.DisassembleAssembly)
+				assemblies.POST("/:id/build", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAccountingManage), h.Inventory.BuildAssembly)
+				assemblies.POST("/:id/disassemble", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAccountingManage), h.Inventory.DisassembleAssembly)
 			}
 
 			barcodes := protected.Group("/barcodes")
@@ -874,8 +874,8 @@ func setupRouter(
 				group.Use(middleware.RequireAllBranches())
 				group.GET("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), handler.List)
 				group.GET("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), handler.Get)
-				group.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), handler.Create)
-				group.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), handler.Update)
+				group.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAccountingManage), handler.Create)
+				group.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAccountingManage), handler.Update)
 				group.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), handler.Delete)
 				group.POST("/:id/cancel", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), handler.Cancel)
 				group.GET("/:id/pdf", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), handler.GetPDF)
@@ -900,7 +900,7 @@ func setupRouter(
 				invoices.GET("", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.List)
 				invoices.GET("/:id", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.Invoice.Get)
 				invoices.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userWriteRL, h.Invoice.Create)
-				invoices.POST("/:id/issue", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userWriteRL, h.Invoice.Issue)
+				invoices.POST("/:id/issue", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAccountingManage), userWriteRL, h.Invoice.Issue)
 				invoices.POST("/:id/previews", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), userHeavyRL, h.Invoice.Preview)
 				invoices.PATCH("/:id/draft", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userWriteRL, h.Invoice.UpdateDraft)
 				invoices.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userWriteRL, h.Invoice.Update)
@@ -920,8 +920,8 @@ func setupRouter(
 				payments.POST("/razorpay/order", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), rateLimit(razorpayOrderPolicy, userHeavyPolicy), h.RazorpayPayment.CreateOrder)
 				payments.POST("/razorpay/verify", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), rateLimit(razorpayVerifyPolicy, userHeavyPolicy), h.RazorpayPayment.VerifyPayment)
 				payments.GET("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsView), h.Payment.Get)
-				payments.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), userWriteRL, h.Payment.Create)
-				payments.POST("/:id/reverse", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), userWriteRL, h.Payment.Reverse)
+				payments.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAccountingManage), userWriteRL, h.Payment.Create)
+				payments.POST("/:id/reverse", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAccountingManage), userWriteRL, h.Payment.Reverse)
 				payments.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), userWriteRL, h.Payment.Update)
 				payments.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPaymentsManage), userWriteRL, h.Payment.Delete)
 			}
@@ -931,7 +931,7 @@ func setupRouter(
 				documents.Use(middleware.RequireAllBranches())
 				documents.POST("/merge", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userHeavyRL, h.DocumentUtility.Merge)
 				documents.POST("/bulk-actions", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userHeavyRL, h.BillingOps.CreateDocumentBulkAction)
-				documents.POST("/:id/convert", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userHeavyRL, h.DocumentUtility.Convert)
+				documents.POST("/:id/convert", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAccountingManage), userHeavyRL, h.DocumentUtility.Convert)
 				documents.POST("/:id/duplicate", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userHeavyRL, h.DocumentUtility.Duplicate)
 				documents.GET("/:id/history", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.DocumentUtility.History)
 				documents.GET("/:id/compliance", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.DocumentUtility.GetComplianceStatus)
@@ -1012,11 +1012,32 @@ func setupRouter(
 			{
 				journals.GET("", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Journal.List)
 				journals.GET("/:id", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Journal.Get)
-				journals.POST("", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userWriteRL, h.Journal.Create)
-				journals.PUT("/:id", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userWriteRL, h.Journal.Update)
-				journals.DELETE("/:id", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userWriteRL, h.Journal.Delete)
-				journals.POST("/:id/post", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userWriteRL, h.Journal.Post)
-				journals.POST("/:id/reverse", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userWriteRL, h.Journal.Reverse)
+				journals.POST("", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAccountingManage), userWriteRL, h.Journal.Create)
+				journals.PUT("/:id", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAccountingManage), userWriteRL, h.Journal.Update)
+				journals.DELETE("/:id", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAccountingManage), userWriteRL, h.Journal.Delete)
+				journals.POST("/:id/post", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAccountingManage), userWriteRL, h.Journal.Post)
+				journals.POST("/:id/reverse", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAccountingManage), userWriteRL, h.Journal.Reverse)
+			}
+
+			accounting := protected.Group("/accounting")
+			accounting.Use(middleware.RequireAllBranches())
+			{
+				accounting.GET("/policy", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Accounting.GetPolicy)
+				accounting.PUT("/policy", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAccountingManage), userWriteRL, h.Accounting.SetPolicy)
+				accounting.GET("/accounts", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Accounting.ListAccounts)
+				accounting.PUT("/accounts/:code", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAccountingManage), userWriteRL, h.Accounting.UpsertAccount)
+				accounting.POST("/opening-balances", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAccountingManage), userWriteRL, h.Accounting.PostOpeningBalance)
+				accounting.GET("/reconciliation-diagnostics", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Accounting.Diagnostics)
+				accounting.GET("/audit", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Accounting.ListAudit)
+				accounting.GET("/bank-accounts", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Accounting.ListBankAccounts)
+				accounting.POST("/bank-accounts", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionBankingManage), userWriteRL, h.Accounting.CreateBankAccount)
+				accounting.POST("/bank-statements", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionBankingManage), userWriteRL, h.Accounting.ImportBankStatement)
+				accounting.GET("/bank-statements/:id/transactions", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Accounting.ListBankTransactions)
+				accounting.POST("/bank-statements/:id/reconcile", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionBankingManage), userWriteRL, h.Accounting.ReconcileStatement)
+				accounting.GET("/bank-transactions/:id/suggestions", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionReportsView), h.Accounting.SuggestBankMatches)
+				accounting.POST("/bank-transactions/:id/match", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionBankingManage), userWriteRL, h.Accounting.MatchBankTransaction)
+				accounting.DELETE("/bank-transactions/:id/match", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionBankingManage), userWriteRL, h.Accounting.UnmatchBankTransaction)
+				accounting.POST("/bank-transactions/:id/adjustment", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAccountingManage), userWriteRL, h.Accounting.CreateBankAdjustment)
 			}
 
 			renderProfiles := protected.Group("/render-profiles")
@@ -1054,7 +1075,7 @@ func setupRouter(
 				pos.POST("/sessions/:id/close", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPOSOperate), h.POS.CloseSession)
 				pos.GET("/catalog/search", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPOSOperate), h.POS.SearchCatalog)
 				pos.POST("/carts/:id/items/scan", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPOSOperate), h.POS.ScanItem)
-				pos.POST("/carts/:id/checkout", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPOSOperate), h.POS.Checkout)
+				pos.POST("/carts/:id/checkout", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPOSOperate), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAccountingManage), h.POS.Checkout)
 				pos.GET("/receipts/:documentID", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionPOSOperate), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.POS.GetReceipt)
 			}
 
@@ -1131,7 +1152,7 @@ func setupRouter(
 				storefronts.POST("/:id/coupons", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionStorefrontManage), h.Commerce.CreateStorefrontCoupon)
 				storefronts.PUT("/:id/coupons/:coupon_id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionStorefrontManage), h.Commerce.UpdateStorefrontCoupon)
 				storefronts.GET("/:id/orders", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionOrdersView), h.Commerce.ListStorefrontOrders)
-				storefronts.POST("/:id/orders/:order_id/approve", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionOrdersManage), h.Commerce.ApproveStorefrontOrder)
+				storefronts.POST("/:id/orders/:order_id/approve", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionOrdersManage), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionAccountingManage), h.Commerce.ApproveStorefrontOrder)
 				storefronts.POST("/:id/orders/:order_id/cancel", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionOrdersManage), h.Commerce.CancelStorefrontOrder)
 			}
 

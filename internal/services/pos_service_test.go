@@ -201,11 +201,18 @@ func TestPOSCheckoutCreatesAndIssuesCanonicalInvoice(t *testing.T) {
 	`).Error; err != nil {
 		t.Fatalf("create POS session table: %v", err)
 	}
+	if err := db.Exec(`CREATE TABLE warehouses (id TEXT PRIMARY KEY,business_id TEXT NOT NULL,branch_id TEXT,deleted_at DATETIME)`).Error; err != nil {
+		t.Fatalf("create warehouse table: %v", err)
+	}
 
 	businessID := uuid.NewString()
 	userID := uuid.NewString()
 	sessionID := uuid.NewString()
 	warehouseID := uuid.NewString()
+	branchID := uuid.NewString()
+	if err := db.Exec(`INSERT INTO warehouses(id,business_id,branch_id) VALUES (?,?,?)`, warehouseID, businessID, branchID).Error; err != nil {
+		t.Fatalf("seed warehouse branch: %v", err)
+	}
 	session := &models.POSSession{
 		ID:          sessionID,
 		BusinessID:  businessID,
@@ -277,6 +284,7 @@ func TestPOSCheckoutCreatesAndIssuesCanonicalInvoice(t *testing.T) {
 	if creator.input.IdempotencyKey != idempotencyKey ||
 		creator.input.Origin != models.InvoiceOriginPOS ||
 		creator.input.Currency != "INR" ||
+		creator.input.BranchID != branchID ||
 		creator.input.BuyerSnapshot.Name != "Counter sale" {
 		t.Fatalf("canonical POS command = %#v", creator.input)
 	}

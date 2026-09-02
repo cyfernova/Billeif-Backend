@@ -31,7 +31,10 @@ type ReportService struct {
 	log        *logger.Logger
 }
 
-var ErrReportScopeUnsupported = errors.New("report cannot be safely limited to the caller's branch or warehouse scope")
+var (
+	ErrReportScopeUnsupported = errors.New("report cannot be safely limited to the caller's branch or warehouse scope")
+	ErrReportInvalidFilters   = errors.New("invalid report filters")
+)
 
 type ReportQueryInput struct {
 	Page    int               `json:"page,omitempty"`
@@ -473,10 +476,20 @@ func (s *ReportService) CreateShare(ctx context.Context, businessID, userID, rep
 }
 
 func validateReportScope(def reporting.Definition, filters reporting.Filters) error {
+	if (def.Family == "trial_balance" || def.Family == "balance_sheet" || def.Family == "account_drilldown") && strings.TrimSpace(filters.Currency) == "" {
+		return fmt.Errorf("%w: currency is required", ErrReportInvalidFilters)
+	}
+	if def.Family == "account_drilldown" && strings.TrimSpace(filters.AccountCode) == "" {
+		return fmt.Errorf("%w: account_code is required", ErrReportInvalidFilters)
+	}
 	if !filters.BranchScopeRestricted && !filters.WarehouseScopeRestricted {
 		return nil
 	}
 	switch def.Family {
+	case "trial_balance", "balance_sheet", "account_drilldown":
+		// Accounting reports contain no warehouse dimension. Branch restrictions
+		// are enforced by buildPostedAccountingFilters through AllowedBranchIDs.
+		return nil
 	case "document_register", "daily_documents", "line_summary", "line_profit", "gst_hsn_summary",
 		"profit_and_loss", "receivables", "payables", "aging_receivables", "aging_payables":
 		return nil

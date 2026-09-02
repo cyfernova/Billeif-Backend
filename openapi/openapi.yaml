@@ -1308,6 +1308,129 @@ paths:
                     items:
                       $ref: '#/components/schemas/EmailPayload'
 
+  /api/v1/accounting/policy:
+    get:
+      tags: [Accounting]
+      summary: Get fiscal lock and reversal policy
+      security: [{bearerAuth: []}]
+      responses: {"200": {description: Accounting policy}}
+    put:
+      tags: [Accounting]
+      summary: Change fiscal lock and reversal policy with scoped step-up
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: Idempotency-Key, in: header, required: true, schema: {type: string}}
+        - {name: X-Step-Up-Token, in: header, required: true, schema: {type: string}}
+        - {name: X-Lock-Override-Reason, in: header, required: true, schema: {type: string}}
+      requestBody: {required: true, content: {application/json: {schema: {type: object}}}}
+      responses: {"200": {description: Updated policy}, "428": {description: Scoped step-up required}}
+  /api/v1/accounting/opening-balances:
+    post:
+      tags: [Accounting]
+      summary: Post idempotent journal and inventory opening facts
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: X-Step-Up-Token, in: header, required: false, schema: {type: string}}
+        - {name: X-Lock-Override-Reason, in: header, required: false, schema: {type: string, minLength: 8, maxLength: 500}}
+      requestBody: {required: true, content: {application/json: {schema: {type: object}}}}
+      responses: {"201": {description: Posted opening journal}, "428": {description: Scoped step-up required for locked date}}
+  /api/v1/accounting/accounts:
+    get:
+      tags: [Accounting]
+      summary: List authoritative chart of accounts
+      security: [{bearerAuth: []}]
+      responses: {"200": {description: Tenant account hierarchy}}
+  /api/v1/accounting/accounts/{code}:
+    put:
+      tags: [Accounting]
+      summary: Upsert authoritative account metadata
+      security: [{bearerAuth: []}]
+      parameters: [{name: code, in: path, required: true, schema: {type: string}}]
+      requestBody: {required: true, content: {application/json: {schema: {type: object}}}}
+      responses: {"200": {description: Account metadata}, "400": {description: Invalid class or hierarchy}}
+  /api/v1/accounting/reconciliation-diagnostics:
+    get:
+      tags: [Accounting]
+      summary: Read journal, inventory, and tax reconciliation diagnostics
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: through, in: query, required: false, schema: {type: string, format: date-time}}
+        - {name: currency, in: query, required: true, schema: {type: string, minLength: 3, maxLength: 3}}
+      responses: {"200": {description: Read-only reconciliation differences}, "400": {description: Valid currency required}}
+  /api/v1/accounting/audit:
+    get:
+      tags: [Accounting]
+      summary: List accounting audit events
+      security: [{bearerAuth: []}]
+      responses: {"200": {description: Tenant accounting audit events}}
+  /api/v1/accounting/bank-accounts:
+    get:
+      tags: [Banking]
+      summary: List bank accounts
+      security: [{bearerAuth: []}]
+      responses: {"200": {description: Bank accounts}}
+    post:
+      tags: [Banking]
+      summary: Create bank account mapped to a ledger account
+      security: [{bearerAuth: []}]
+      requestBody: {required: true, content: {application/json: {schema: {type: object}}}}
+      responses: {"201": {description: Bank account created}}
+  /api/v1/accounting/bank-statements:
+    post:
+      tags: [Banking]
+      summary: Import a verified clean pending-upload CSV statement
+      security: [{bearerAuth: []}]
+      requestBody: {required: true, content: {application/json: {schema: {type: object}}}}
+      responses: {"201": {description: Statement imported}}
+  /api/v1/accounting/bank-statements/{id}/transactions:
+    get:
+      tags: [Banking]
+      summary: List statement transactions and match state
+      security: [{bearerAuth: []}]
+      parameters: [{name: id, in: path, required: true, schema: {type: string, format: uuid}}]
+      responses: {"200": {description: Statement transactions}}
+  /api/v1/accounting/bank-statements/{id}/reconcile:
+    post:
+      tags: [Banking]
+      summary: Reconcile a fully matched statement
+      security: [{bearerAuth: []}]
+      parameters: [{name: id, in: path, required: true, schema: {type: string, format: uuid}}]
+      requestBody: {required: true, content: {application/json: {schema: {type: object}}}}
+      responses: {"200": {description: Statement reconciled}}
+  /api/v1/accounting/bank-transactions/{id}/suggestions:
+    get:
+      tags: [Banking]
+      summary: Suggest bounded account- and direction-safe ledger matches
+      security: [{bearerAuth: []}]
+      parameters: [{name: id, in: path, required: true, schema: {type: string, format: uuid}}]
+      responses: {"200": {description: Match suggestions}}
+  /api/v1/accounting/bank-transactions/{id}/match:
+    post:
+      tags: [Banking]
+      summary: Manually match a bank transaction
+      security: [{bearerAuth: []}]
+      parameters: [{name: id, in: path, required: true, schema: {type: string, format: uuid}}]
+      requestBody: {required: true, content: {application/json: {schema: {type: object}}}}
+      responses: {"201": {description: Transaction matched}}
+    delete:
+      tags: [Banking]
+      summary: Unmatch or atomically reverse a bank adjustment
+      security: [{bearerAuth: []}]
+      parameters: [{name: id, in: path, required: true, schema: {type: string, format: uuid}}]
+      requestBody: {required: true, content: {application/json: {schema: {type: object}}}}
+      responses: {"204": {description: Match removed}}
+  /api/v1/accounting/bank-transactions/{id}/adjustment:
+    post:
+      tags: [Accounting]
+      summary: Post and match a fee or interest adjustment
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: X-Step-Up-Token, in: header, required: false, schema: {type: string}}
+        - {name: X-Lock-Override-Reason, in: header, required: false, schema: {type: string, minLength: 8, maxLength: 500}}
+      requestBody: {required: true, content: {application/json: {schema: {type: object}}}}
+      responses: {"201": {description: Adjustment posted}, "428": {description: Scoped step-up required for locked date}}
+
 components:
   securitySchemes:
     bearerAuth:

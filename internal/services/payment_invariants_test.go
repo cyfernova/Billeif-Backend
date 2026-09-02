@@ -373,6 +373,7 @@ func newPaymentInvariantDB(t *testing.T) *gorm.DB {
 			customer_id TEXT,
 			version INTEGER NOT NULL DEFAULT 1,
 			project_id TEXT,
+			branch_id TEXT,
 			price_list_id TEXT,
 			render_profile_id TEXT,
 			invoice_no TEXT,

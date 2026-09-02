@@ -20,6 +20,12 @@ type InventoryService struct {
 	businessRepo interfaces.BusinessRepository
 	teamRepo     interfaces.TeamMemberRepository
 	log          *logger.Logger
+	accounting   *AccountingService
+}
+
+func (s *InventoryService) WithAccounting(accounting *AccountingService) *InventoryService {
+	s.accounting = accounting
+	return s
 }
 
 func NewInventoryService(db *gorm.DB, repo interfaces.InventoryRepository, productRepo interfaces.ProductRepository, businessRepo interfaces.BusinessRepository, teamRepo interfaces.TeamMemberRepository, log *logger.Logger) *InventoryService {
@@ -73,6 +79,10 @@ func (s *InventoryService) ApplyDocument(ctx context.Context, document *models.D
 }
 
 func (s *InventoryService) ApplyDocumentTx(ctx context.Context, tx *gorm.DB, document *models.Document) error {
+	return s.ApplyDocumentTxAuthorized(ctx, tx, document, nil)
+}
+
+func (s *InventoryService) ApplyDocumentTxAuthorized(ctx context.Context, tx *gorm.DB, document *models.Document, overrideID *string) error {
 	if document == nil {
 		return fmt.Errorf("document is required")
 	}
@@ -84,6 +94,9 @@ func (s *InventoryService) ApplyDocumentTx(ctx context.Context, tx *gorm.DB, doc
 	reservationDocumentID := sourceReservationDocumentID(document)
 	if !shouldPost && !shouldReserve {
 		return nil
+	}
+	if err := s.enforceInventoryLockTx(tx, document.BusinessID, document.IssueDate, overrideID, false); err != nil {
+		return err
 	}
 	for _, line := range document.Lines {
 		if line.ProductID == nil || line.Quantity <= 0 || strings.EqualFold(line.StockEffect, "none") {
@@ -139,6 +152,7 @@ func (s *InventoryService) ApplyDocumentTx(ctx context.Context, tx *gorm.DB, doc
 			TransactionType:  documentInventoryTransactionType(document.DocumentType, direction),
 			DocumentID:       &document.ID,
 			DocumentLineID:   &line.ID,
+			RecordedAt:       document.IssueDate,
 		}); err != nil {
 			return err
 		}

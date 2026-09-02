@@ -149,6 +149,9 @@ func newPaymentPostgresIntegrationDB(t *testing.T) *gorm.DB {
 		&models.Journal{},
 		&models.JournalLine{},
 		&models.LedgerEntry{},
+		&models.AccountingPeriodPolicy{},
+		&models.AccountingLockOverride{},
+		&models.AccountingAuditEvent{},
 	); err != nil {
 		t.Fatalf("create isolated payment schema: %v", err)
 	}

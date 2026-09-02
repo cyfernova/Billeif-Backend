@@ -86,6 +86,8 @@ type InventoryAdjustmentInput struct {
 	UnitCost         float64                `json:"unit_cost"`
 	BatchAllocations []BatchAllocationInput `json:"batch_allocations,omitempty"`
 	SerialIDs        []string               `json:"serial_ids,omitempty"`
+	Authorization    PostingAuthorization   `json:"-"`
+	LockOverrideID   *string                `json:"-"`
 }
 
 type InventoryTransferInput struct {
@@ -101,17 +103,21 @@ type InventoryTransferInput struct {
 	UnitCost         float64                `json:"unit_cost"`
 	BatchAllocations []BatchAllocationInput `json:"batch_allocations,omitempty"`
 	SerialIDs        []string               `json:"serial_ids,omitempty"`
+	Authorization    PostingAuthorization   `json:"-"`
+	LockOverrideID   *string                `json:"-"`
 }
 
 type InventoryResetInput struct {
-	UserID      string  `json:"user_id,omitempty"`
-	BusinessID  string  `json:"business_id,omitempty"`
-	ProjectID   string  `json:"project_id,omitempty" binding:"omitempty,uuid"`
-	ProductID   string  `json:"product_id" binding:"required,uuid"`
-	VariantID   string  `json:"variant_id,omitempty"`
-	WarehouseID string  `json:"warehouse_id,omitempty"`
-	TargetQty   float64 `json:"target_qty" binding:"required,gte=0"`
-	Reason      string  `json:"reason"`
+	UserID         string               `json:"user_id,omitempty"`
+	BusinessID     string               `json:"business_id,omitempty"`
+	ProjectID      string               `json:"project_id,omitempty" binding:"omitempty,uuid"`
+	ProductID      string               `json:"product_id" binding:"required,uuid"`
+	VariantID      string               `json:"variant_id,omitempty"`
+	WarehouseID    string               `json:"warehouse_id,omitempty"`
+	TargetQty      float64              `json:"target_qty" binding:"required,gte=0"`
+	Reason         string               `json:"reason"`
+	Authorization  PostingAuthorization `json:"-"`
+	LockOverrideID *string              `json:"-"`
 }
 
 type InventoryTimelineFilter struct {
@@ -178,6 +184,8 @@ type ExecuteAssemblyInput struct {
 	OutputBatches   []BatchAllocationInput                  `json:"output_batches,omitempty"`
 	OutputSerialIDs []string                                `json:"output_serial_ids,omitempty"`
 	ComponentMoves  []ExecuteAssemblyComponentMovementInput `json:"component_moves,omitempty"`
+	Authorization   PostingAuthorization                    `json:"-"`
+	LockOverrideID  *string                                 `json:"-"`
 }
 
 type InventoryTimelineEntry struct {
@@ -856,8 +864,16 @@ func (s *InventoryService) resolveVariantTx(tx *gorm.DB, businessID, productID, 
 }
 
 func (s *InventoryService) RecordAdjustment(ctx context.Context, input InventoryAdjustmentInput) ([]*models.InventoryBalance, error) {
+	overrideID, err := s.prepareInventoryOverride(ctx, input.BusinessID, input.UserID, input.Authorization)
+	if err != nil {
+		return nil, err
+	}
+	input.LockOverrideID = overrideID
 	var balances []*models.InventoryBalance
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := s.enforceInventoryLockTx(tx, input.BusinessID, time.Now(), input.LockOverrideID, true); err != nil {
+			return err
+		}
 		warehouseID, err := s.resolveWarehouseIDTx(tx, input.BusinessID, input.WarehouseID)
 		if err != nil {
 			return err
@@ -888,7 +904,15 @@ func (s *InventoryService) TransferStock(ctx context.Context, input InventoryTra
 	if math.IsNaN(input.Quantity) || math.IsInf(input.Quantity, 0) || input.Quantity <= 0 {
 		return fmt.Errorf("transfer quantity must be a positive finite number")
 	}
+	overrideID, err := s.prepareInventoryOverride(ctx, input.BusinessID, input.UserID, input.Authorization)
+	if err != nil {
+		return err
+	}
+	input.LockOverrideID = overrideID
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := s.enforceInventoryLockTx(tx, input.BusinessID, time.Now(), input.LockOverrideID, true); err != nil {
+			return err
+		}
 		fromWarehouseID, err := s.resolveWarehouseIDTx(tx, input.BusinessID, input.FromWarehouseID)
 		if err != nil {
 			return err
@@ -988,7 +1012,15 @@ func (s *InventoryService) TransferStock(ctx context.Context, input InventoryTra
 }
 
 func (s *InventoryService) ResetStock(ctx context.Context, input InventoryResetInput) error {
+	overrideID, err := s.prepareInventoryOverride(ctx, input.BusinessID, input.UserID, input.Authorization)
+	if err != nil {
+		return err
+	}
+	input.LockOverrideID = overrideID
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := s.enforceInventoryLockTx(tx, input.BusinessID, time.Now(), input.LockOverrideID, true); err != nil {
+			return err
+		}
 		warehouseID, err := s.resolveWarehouseIDTx(tx, input.BusinessID, input.WarehouseID)
 		if err != nil {
 			return err
@@ -1412,6 +1444,7 @@ type inventoryMutationInput struct {
 	TransactionType  string
 	DocumentID       *string
 	DocumentLineID   *string
+	RecordedAt       time.Time
 }
 
 type simpleBalanceMutation struct {
@@ -1430,6 +1463,7 @@ type simpleBalanceMutation struct {
 	SourceWarehouseID *string
 	DocumentID        *string
 	DocumentLineID    *string
+	RecordedAt        time.Time
 }
 
 func (s *InventoryService) applyInventoryMutationTx(tx *gorm.DB, input inventoryMutationInput) ([]*models.InventoryBalance, error) {
@@ -1458,6 +1492,7 @@ func (s *InventoryService) applyInventoryMutationTx(tx *gorm.DB, input inventory
 		Direction:       directionForDelta(input.Quantity),
 		DocumentID:      input.DocumentID,
 		DocumentLineID:  input.DocumentLineID,
+		RecordedAt:      input.RecordedAt,
 	})
 	if err != nil {
 		return nil, err
@@ -1509,6 +1544,7 @@ func (s *InventoryService) applyBatchMutationTx(tx *gorm.DB, input inventoryMuta
 			Batch:           batch,
 			DocumentID:      input.DocumentID,
 			DocumentLineID:  input.DocumentLineID,
+			RecordedAt:      input.RecordedAt,
 		})
 		if err != nil {
 			return nil, err
@@ -1566,6 +1602,7 @@ func (s *InventoryService) applySerialMutationTx(tx *gorm.DB, input inventoryMut
 			SerialNumber:    serial,
 			DocumentID:      input.DocumentID,
 			DocumentLineID:  input.DocumentLineID,
+			RecordedAt:      input.RecordedAt,
 		})
 		if err != nil {
 			return nil, err
@@ -1689,7 +1726,10 @@ func (s *InventoryService) applySimpleBalanceTx(tx *gorm.DB, input simpleBalance
 	}
 	balance.OnHand = clampZero(nextOnHand)
 	balance.StockValue = clampMoney(balance.StockValue + (input.Quantity * input.UnitCost))
-	now := time.Now()
+	now := input.RecordedAt
+	if now.IsZero() {
+		now = time.Now()
+	}
 	balance.LastRecordedAt = &now
 	if balance.ID == "" {
 		if err := tx.Create(&balance).Error; err != nil {
@@ -1737,6 +1777,54 @@ func (s *InventoryService) applySimpleBalanceTx(tx *gorm.DB, input simpleBalance
 		"direction":        input.Direction,
 		"quantity":         math.Abs(input.Quantity),
 	})
+}
+
+func (s *InventoryService) prepareInventoryOverride(ctx context.Context, businessID, subject string, auth PostingAuthorization) (*string, error) {
+	if s == nil || s.accounting == nil {
+		return nil, nil
+	}
+	auth.Subject = subject
+	if auth.Action == "" {
+		auth.Action = "inventory_lock_override"
+	}
+	return s.accounting.PrepareLockOverride(ctx, businessID, time.Now(), auth)
+}
+
+func (s *InventoryService) enforceInventoryLockTx(tx *gorm.DB, businessID string, recordedAt time.Time, overrideID *string, consume bool) error {
+	if s == nil || s.accounting == nil {
+		return nil
+	}
+	if recordedAt.IsZero() {
+		recordedAt = s.accounting.now().UTC()
+	}
+	var policy models.AccountingPeriodPolicy
+	err := tx.Clauses(clause.Locking{Strength: "SHARE"}).Where("business_id=?", businessID).First(&policy).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if policy.LockDate != nil && !accountingDate(recordedAt).After(accountingDate(*policy.LockDate)) {
+		if overrideID == nil || *overrideID == "" {
+			return ErrAccountingPeriodLocked
+		}
+		now := time.Now().UTC()
+		var override models.AccountingLockOverride
+		if err := tx.Where("id=? AND business_id=? AND posting_date=? AND applied_at IS NULL", *overrideID, businessID, accountingDate(recordedAt)).First(&override).Error; err != nil {
+			return ErrAccountingPeriodLocked
+		}
+		if consume {
+			result := tx.Model(&models.AccountingLockOverride{}).Where("id=? AND applied_at IS NULL", override.ID).Update("applied_at", now)
+			if result.Error != nil || result.RowsAffected != 1 {
+				return ErrAccountingPeriodLocked
+			}
+			if err := writeAccountingAuditTx(tx, businessID, override.Subject, "inventory_lock_override_applied", "inventory", override.Resource, "completed", override.Reason); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *InventoryService) resolveBatchTx(tx *gorm.DB, businessID, productID, variantID string, allocation BatchAllocationInput) (*models.ProductBatch, error) {

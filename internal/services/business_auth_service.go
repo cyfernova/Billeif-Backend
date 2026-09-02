@@ -240,6 +240,8 @@ func legacyRolePermissions(role string) []string {
 			PermissionReportsExport,
 			PermissionReportsShare,
 			PermissionReportsView,
+			PermissionAccountingManage,
+			PermissionBankingManage,
 			PermissionPOSOperate,
 			PermissionAgentsView,
 		}

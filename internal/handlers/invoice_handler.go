@@ -123,6 +123,8 @@ func invoiceCreateErrorStatus(err error) int {
 // @Param id path string true "Invoice ID"
 // @Param Idempotency-Key header string true "UUID idempotency key"
 // @Param If-Match header string true "Expected invoice version"
+// @Param X-Step-Up-Token header string false "Required for locked-period override"
+// @Param X-Lock-Override-Reason header string false "Required reason for locked-period override"
 // @Param input body services.IssueInvoiceInput true "Issue details"
 // @Success 202 {object} services.IssueInvoiceResult
 // @Failure 400 {object} map[string]string
@@ -150,9 +152,14 @@ func (h *InvoiceHandler) Issue(c *gin.Context) {
 	}
 	input.IdempotencyKey = idempotencyKey
 	input.ExpectedVersion = expectedVersion
+	input.Authorization = accountingPostingAuthorization(c, "invoice:"+c.Param("id"))
 	requestContextWithActor(c)
 	result, err := h.svc.IssueByBusiness(c.Request.Context(), businessID, c.Param("id"), input)
 	if err != nil {
+		if errors.Is(err, services.ErrAccountingPeriodLocked) {
+			writeAccountingStepUpRequired(c)
+			return
+		}
 		c.JSON(invoiceIssueErrorStatus(err), gin.H{"error": err.Error()})
 		return
 	}

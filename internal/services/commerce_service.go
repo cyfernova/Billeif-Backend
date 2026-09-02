@@ -1031,6 +1031,10 @@ func (s *CommerceService) ListStorefrontOrders(ctx context.Context, businessID, 
 }
 
 func (s *CommerceService) ApproveStoreOrder(ctx context.Context, businessID, storefrontID, orderID string) (*models.StoreOrder, error) {
+	return s.ApproveStoreOrderAuthorized(ctx, businessID, storefrontID, orderID, PostingAuthorization{})
+}
+
+func (s *CommerceService) ApproveStoreOrderAuthorized(ctx context.Context, businessID, storefrontID, orderID string, authorization PostingAuthorization) (*models.StoreOrder, error) {
 	storefront, err := s.GetStorefront(ctx, businessID, storefrontID)
 	if err != nil {
 		return nil, err
@@ -1048,7 +1052,7 @@ func (s *CommerceService) ApproveStoreOrder(ctx context.Context, businessID, sto
 			return fmt.Errorf("cancelled orders cannot be approved")
 		}
 		if order.SalesInvoiceID == nil || *order.SalesInvoiceID == "" {
-			invoiceID, err := s.createSalesInvoiceForOrder(ctx, &order)
+			invoiceID, err := s.createSalesInvoiceForOrder(ctx, &order, authorization)
 			if err != nil {
 				return err
 			}
@@ -2184,12 +2188,15 @@ func (s *CommerceService) resolveCoupon(ctx context.Context, storefront *models.
 	return &coupon, roundMoney(discount), nil
 }
 
-func (s *CommerceService) createSalesInvoiceForOrder(ctx context.Context, order *models.StoreOrder) (string, error) {
+func (s *CommerceService) createSalesInvoiceForOrder(ctx context.Context, order *models.StoreOrder, authorization PostingAuthorization) (string, error) {
 	business, err := s.businessRepo.GetByID(ctx, order.BusinessID)
 	if err != nil {
 		return "", err
 	}
 	idempotencyKey := storefrontInvoiceIdempotencyKey(order.ID)
+	if authorization.CommandIdentity == "" {
+		authorization.CommandIdentity = idempotencyKey
+	}
 	input, err := canonicalStorefrontInvoiceInput(order, business, idempotencyKey)
 	if err != nil {
 		return "", err
@@ -2208,6 +2215,7 @@ func (s *CommerceService) createSalesInvoiceForOrder(ctx context.Context, order 
 			ExpectedVersion: 1,
 			DocumentType:    invoiceDocumentTypeForTaxProfile(input.TaxProfile),
 			Series:          "WEB",
+			Authorization:   authorization,
 		},
 	)
 	if err != nil {
@@ -2253,6 +2261,7 @@ func canonicalStorefrontInvoiceInput(
 		IdempotencyKey: strings.TrimSpace(idempotencyKey),
 		Origin:         models.InvoiceOriginStorefront,
 		CustomerID:     strings.TrimSpace(*order.CustomerID),
+		BranchID:       strings.TrimSpace(derefString(order.BranchID)),
 		Currency:       defaultCurrency(firstNonEmpty(order.Currency, business.Currency)),
 		InvoiceDate:    order.OrderedAt,
 		DueDate:        order.OrderedAt,

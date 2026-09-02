@@ -31,6 +31,8 @@ func NewPaymentHandler(svc *services.PaymentService, log *logger.Logger) *Paymen
 // @Produce json
 // @Security BearerAuth
 // @Param Idempotency-Key header string true "UUID idempotency key"
+// @Param X-Step-Up-Token header string false "Required for locked-period override"
+// @Param X-Lock-Override-Reason header string false "Required reason for locked-period override"
 // @Param input body services.CreatePaymentInput true "Payment details"
 // @Success 201 {object} models.Payment
 // @Failure 400 {object} map[string]string
@@ -53,10 +55,15 @@ func (h *PaymentHandler) Create(c *gin.Context) {
 		return
 	}
 	input.IdempotencyKey = idempotencyKey
+	input.Authorization = accountingPostingAuthorization(c, "payment:"+input.InvoiceID+":"+idempotencyKey)
 
 	var payment *models.Payment
 	payment, err := h.svc.CreateByBusiness(c.Request.Context(), businessID, input)
 	if err != nil {
+		if errors.Is(err, services.ErrAccountingPeriodLocked) {
+			writeAccountingStepUpRequired(c)
+			return
+		}
 		log.Error("failed to create payment", "error", err, "invoice_id", input.InvoiceID)
 		c.JSON(paymentCreateErrorStatus(err), gin.H{"error": err.Error()})
 		return

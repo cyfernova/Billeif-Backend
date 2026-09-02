@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 
 	"invoice-backend/internal/services"
@@ -41,8 +42,12 @@ func (h *JournalHandler) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	journal, err := h.svc.CreateByBusiness(c.Request.Context(), businessID, input)
+	journal, err := h.svc.CreateAuthorized(c.Request.Context(), businessID, input, accountingPostingAuthorization(c, "journal:new"))
 	if err != nil {
+		if errors.Is(err, services.ErrAccountingPeriodLocked) {
+			writeAccountingStepUpRequired(c)
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -120,8 +125,12 @@ func (h *JournalHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	journal, err := h.svc.UpdateByBusiness(c.Request.Context(), businessID, c.Param("id"), input)
+	journal, err := h.svc.UpdateAuthorized(c.Request.Context(), businessID, c.Param("id"), input, accountingPostingAuthorization(c, "journal:"+c.Param("id")))
 	if err != nil {
+		if errors.Is(err, services.ErrAccountingPeriodLocked) {
+			writeAccountingStepUpRequired(c)
+			return
+		}
 		statusCode := http.StatusInternalServerError
 		if isNotFoundErr(err) {
 			statusCode = http.StatusNotFound
@@ -181,8 +190,12 @@ func (h *JournalHandler) Post(c *gin.Context) {
 	if !ok {
 		return
 	}
-	journal, err := h.svc.PostByBusiness(c.Request.Context(), businessID, c.Param("id"))
+	journal, err := h.svc.PostAuthorized(c.Request.Context(), businessID, c.Param("id"), accountingPostingAuthorization(c, "journal:"+c.Param("id")))
 	if err != nil {
+		if errors.Is(err, services.ErrAccountingPeriodLocked) {
+			writeAccountingStepUpRequired(c)
+			return
+		}
 		statusCode := http.StatusInternalServerError
 		if isNotFoundErr(err) {
 			statusCode = http.StatusNotFound

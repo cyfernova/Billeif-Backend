@@ -77,7 +77,7 @@ func (h *ReportHandler) Query(c *gin.Context) {
 			statusCode = http.StatusNotFound
 		} else if errors.Is(err, services.ErrReportScopeUnsupported) {
 			statusCode = http.StatusForbidden
-		} else if err.Error() == "at least one valid column is required" {
+		} else if errors.Is(err, services.ErrReportInvalidFilters) || err.Error() == "at least one valid column is required" {
 			statusCode = http.StatusBadRequest
 		}
 		c.JSON(statusCode, gin.H{"error": err.Error()})
@@ -131,7 +131,7 @@ func (h *ReportHandler) Export(c *gin.Context) {
 			statusCode = http.StatusNotFound
 		} else if errors.Is(err, services.ErrReportScopeUnsupported) {
 			statusCode = http.StatusForbidden
-		} else if err.Error() == "unsupported export format" || err.Error() == "at least one valid column is required" {
+		} else if errors.Is(err, services.ErrReportInvalidFilters) || err.Error() == "unsupported export format" || err.Error() == "at least one valid column is required" {
 			statusCode = http.StatusBadRequest
 		}
 		c.JSON(statusCode, gin.H{"error": err.Error()})
@@ -294,7 +294,7 @@ func (h *ReportHandler) CreateShare(c *gin.Context) {
 			statusCode = http.StatusNotFound
 		} else if errors.Is(err, services.ErrReportScopeUnsupported) {
 			statusCode = http.StatusForbidden
-		} else if err.Error() == "unsupported share mode" || err.Error() == "expires_at must be in the future" || err.Error() == "at least one valid column is required" {
+		} else if errors.Is(err, services.ErrReportInvalidFilters) || err.Error() == "unsupported share mode" || err.Error() == "expires_at must be in the future" || err.Error() == "at least one valid column is required" {
 			statusCode = http.StatusBadRequest
 		}
 		c.JSON(statusCode, gin.H{"error": err.Error()})
@@ -456,6 +456,10 @@ func (h *ReportHandler) applyReportScope(c *gin.Context, businessID, userID stri
 		filters.AllowedBranchIDs = append([]string(nil), branchIDs...)
 	} else {
 		branchIDs = nil
+	}
+	if filters.BranchID != "" && !allBranches && !containsString(branchIDs, filters.BranchID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "branch is outside report scope"})
+		return false
 	}
 
 	if middleware.GetRole(c) == "admin" && allBranches {

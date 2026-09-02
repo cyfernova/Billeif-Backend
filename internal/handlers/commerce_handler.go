@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -691,8 +692,12 @@ func (h *CommerceHandler) ApproveStorefrontOrder(c *gin.Context) {
 	if !ok {
 		return
 	}
-	order, err := h.svc.ApproveStoreOrder(c.Request.Context(), businessID, c.Param("id"), c.Param("order_id"))
+	order, err := h.svc.ApproveStoreOrderAuthorized(c.Request.Context(), businessID, c.Param("id"), c.Param("order_id"), accountingPostingAuthorization(c, "storefront-order:"+c.Param("order_id")))
 	if err != nil {
+		if errors.Is(err, services.ErrAccountingPeriodLocked) {
+			writeAccountingStepUpRequired(c)
+			return
+		}
 		status := http.StatusBadRequest
 		if isNotFoundErr(err) {
 			status = http.StatusNotFound

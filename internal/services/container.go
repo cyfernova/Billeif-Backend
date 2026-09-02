@@ -34,11 +34,15 @@ func applyCanonicalInvoiceIssueEffects(
 	if inventory == nil || journals == nil {
 		return fmt.Errorf("canonical invoice issue effects are not configured")
 	}
-	if err := inventory.ApplyDocumentTx(ctx, tx, document); err != nil {
+	overrideID := postingLockOverrideFromContext(ctx)
+	if err := inventory.ApplyDocumentTxAuthorized(ctx, tx, document, overrideID); err != nil {
 		return err
 	}
-	_, err := journals.CreateAutoJournalForDocumentTx(ctx, tx, document)
-	return err
+	journal, err := journals.CreateAutoJournalForDocumentTxAuthorized(ctx, tx, document, overrideID)
+	if err != nil || journal != nil || overrideID == nil {
+		return err
+	}
+	return inventory.enforceInventoryLockTx(tx, document.BusinessID, document.IssueDate, overrideID, true)
 }
 
 type Container struct {
@@ -99,6 +103,7 @@ type Container struct {
 	Security               *SecurityService
 	PendingUpload          *PendingUploadService
 	Privacy                *PrivacyService
+	Accounting             *AccountingService
 	CapabilityGlobalHealth *CapabilityGlobalHealthCache
 	AWS                    *awsclients.Config
 	capabilityObserver     *capabilityObserverState
@@ -265,7 +270,11 @@ func NewContainer(
 
 	webhookSvc := NewWebhookService(webhookRepo, log)
 	taxComplianceSvc := NewTaxComplianceService(cfg, db, businessRepo, customerRepo, vendorRepo, subscriptionRepo, aws, s3Svc, webhookSvc, log, resolver)
-	invoiceSvc := NewInvoiceService(db, cfg, invoiceRepo, businessRepo, productRepo, customerRepo, documentSvc, aws, s3Svc, emailSvc, log)
+	securitySvc := NewSecurityService(securityRepo, SecurityServiceOptions{})
+	accountingSvc := NewAccountingService(db, securitySvc, journalSvc).WithPendingStatementFiles(securityRepo, s3Svc)
+	journalSvc.WithAccounting(accountingSvc)
+	inventorySvc.WithAccounting(accountingSvc)
+	invoiceSvc := NewInvoiceService(db, cfg, invoiceRepo, businessRepo, productRepo, customerRepo, documentSvc, aws, s3Svc, emailSvc, log, WithInvoiceAccounting(accountingSvc))
 	if marker, ok := invoiceRepo.(outbox.PublishedMarker); ok {
 		invoiceSvc.WithImmediateOutboxPublisher(
 			outbox.NewRoutedImmediatePublisher(
@@ -298,7 +307,6 @@ func NewContainer(
 		GlobalHealth:   capabilityGlobalHealth,
 		BusinessHealth: capabilityBusinessHealth,
 	})
-	securitySvc := NewSecurityService(securityRepo, SecurityServiceOptions{})
 	pendingUploadSvc := NewPendingUploadService(securityRepo, s3Svc, FailClosedUploadScanner{}, PendingUploadOptions{Bucket: cfg.S3.BucketDrive})
 	privacySvc := NewPrivacyService(
 		securityRepo,
@@ -408,6 +416,7 @@ func NewContainer(
 		Security:               securitySvc,
 		PendingUpload:          pendingUploadSvc,
 		Privacy:                privacySvc,
+		Accounting:             accountingSvc,
 		CapabilityGlobalHealth: capabilityGlobalHealth,
 		AWS:                    aws,
 		capabilityObserver:     &capabilityObserverState{runner: capabilityObserver, log: log},

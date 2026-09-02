@@ -7,6 +7,9 @@ func TestLegacyRolePermissionsIncludePaymentBoundaries(t *testing.T) {
 	if !hasPermission(accountantPermissions, PermissionPaymentsManage) || !hasPermission(accountantPermissions, PermissionPaymentsView) {
 		t.Fatalf("expected accountant to receive payment manage/view permissions, got %#v", accountantPermissions)
 	}
+	if !hasPermission(accountantPermissions, PermissionAccountingManage) || !hasPermission(accountantPermissions, PermissionBankingManage) {
+		t.Fatalf("expected accountant to receive accounting and banking permissions, got %#v", accountantPermissions)
+	}
 
 	viewerPermissions := legacyRolePermissions("viewer")
 	if !hasPermission(viewerPermissions, PermissionPaymentsView) {
@@ -14,6 +17,9 @@ func TestLegacyRolePermissionsIncludePaymentBoundaries(t *testing.T) {
 	}
 	if hasPermission(viewerPermissions, PermissionPaymentsManage) {
 		t.Fatalf("viewer must not receive payment manage permission: %#v", viewerPermissions)
+	}
+	if hasPermission(viewerPermissions, PermissionAccountingManage) || hasPermission(viewerPermissions, PermissionBankingManage) {
+		t.Fatalf("viewer must not receive accounting or banking mutation permissions: %#v", viewerPermissions)
 	}
 }
 

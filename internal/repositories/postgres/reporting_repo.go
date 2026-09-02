@@ -50,6 +50,14 @@ func (r *reportingRepository) QueryReport(ctx context.Context, def reporting.Def
 	if def.Family == "gst_hsn_summary" {
 		return r.queryGSTHSNSummary(ctx, def, query)
 	}
+	if (def.Family == "trial_balance" || def.Family == "balance_sheet" || def.Family == "account_drilldown") && strings.TrimSpace(query.Filters.Currency) == "" {
+		return nil, fmt.Errorf("currency filter is required for accounting totals")
+	}
+	if def.Family == "trial_balance" || def.Family == "balance_sheet" || def.Family == "account_drilldown" {
+		if err := r.rejectUnclassifiedAccountingLines(ctx, query); err != nil {
+			return nil, err
+		}
+	}
 
 	var (
 		bundle reportBundle
@@ -77,6 +85,12 @@ func (r *reportingRepository) QueryReport(ctx context.Context, def reporting.Def
 		bundle, err = r.buildGeneralLedgerBundle(query)
 	case "journal_register":
 		bundle, err = r.buildJournalRegisterBundle(query)
+	case "trial_balance":
+		bundle, err = r.buildTrialBalanceBundle(query)
+	case "balance_sheet":
+		bundle, err = r.buildBalanceSheetBundle(query)
+	case "account_drilldown":
+		bundle, err = r.buildAccountDrilldownBundle(query)
 	case "payment_register":
 		bundle, err = r.buildPaymentRegisterBundle(query)
 	case "receivables":
@@ -107,6 +121,23 @@ func (r *reportingRepository) QueryReport(ctx context.Context, def reporting.Def
 	}
 
 	return r.executeBundle(ctx, bundle, query.Page, query.Limit)
+}
+
+func (r *reportingRepository) rejectUnclassifiedAccountingLines(ctx context.Context, query reporting.Query) error {
+	where, args := buildPostedAccountingFilters(query)
+	if strings.TrimSpace(query.Filters.AccountCode) != "" {
+		where += " AND UPPER(jl.account_code)=?"
+		args = append(args, strings.ToUpper(strings.TrimSpace(query.Filters.AccountCode)))
+	}
+	var count int64
+	err := r.db.WithContext(ctx).Raw(`SELECT COUNT(*) FROM journals j JOIN journal_lines jl ON jl.journal_id=j.id LEFT JOIN accounting_accounts aa ON aa.business_id=j.business_id AND aa.code=UPPER(jl.account_code) WHERE `+where+` AND (aa.id IS NULL OR aa.account_class='unclassified')`, args...).Scan(&count).Error
+	if err != nil {
+		return err
+	}
+	if count != 0 {
+		return fmt.Errorf("account classification is required before accounting reports can run")
+	}
+	return nil
 }
 
 func (r *reportingRepository) queryGSTHSNSummary(ctx context.Context, def reporting.Definition, query reporting.Query) (*reporting.Result, error) {
@@ -968,6 +999,144 @@ func (r *reportingRepository) buildJournalRegisterBundle(query reporting.Query) 
 		columns:   reporting.LookupOrPanic("journal_register").DefaultColumns,
 		orderBy:   "posting_date DESC, name DESC",
 	}, nil
+}
+
+func (r *reportingRepository) buildTrialBalanceBundle(query reporting.Query) (reportBundle, error) {
+	where, whereArgs := buildPostedAccountingFilters(query)
+	fromCondition, fromArgs := accountingOpeningCondition("j.posting_date", query.Filters.DateFrom)
+	periodCondition, periodArgs := accountingRangeCondition("j.posting_date", query.Filters.DateFrom, query.Filters.DateTo)
+	closingCondition, closingArgs := accountingRangeCondition("j.posting_date", nil, query.Filters.DateTo)
+	comparisonCondition, comparisonArgs := accountingRangeCondition("j.posting_date", query.Filters.CompareFrom, query.Filters.CompareTo)
+	base := fmt.Sprintf(`
+		WITH raw AS (
+		SELECT aa.account_class,
+		       aa.code AS account_code,
+		       aa.name AS account_name,
+		       aa.parent_code,
+		       jl.currency,
+		       COALESCE(SUM(CASE WHEN %s AND jl.entry_type='debit' THEN CAST(ROUND(jl.amount*100) AS BIGINT) ELSE 0 END),0) AS opening_debit_minor,
+		       COALESCE(SUM(CASE WHEN %s AND jl.entry_type='credit' THEN CAST(ROUND(jl.amount*100) AS BIGINT) ELSE 0 END),0) AS opening_credit_minor,
+		       COALESCE(SUM(CASE WHEN %s AND jl.entry_type='debit' THEN CAST(ROUND(jl.amount*100) AS BIGINT) ELSE 0 END),0) AS period_debit_minor,
+		       COALESCE(SUM(CASE WHEN %s AND jl.entry_type='credit' THEN CAST(ROUND(jl.amount*100) AS BIGINT) ELSE 0 END),0) AS period_credit_minor,
+		       COALESCE(SUM(CASE WHEN %s AND jl.entry_type='debit' THEN CAST(ROUND(jl.amount*100) AS BIGINT) ELSE 0 END),0) AS closing_debit_minor,
+		       COALESCE(SUM(CASE WHEN %s AND jl.entry_type='credit' THEN CAST(ROUND(jl.amount*100) AS BIGINT) ELSE 0 END),0) AS closing_credit_minor,
+		       COALESCE(SUM(CASE WHEN %s AND jl.entry_type='debit' THEN CAST(ROUND(jl.amount*100) AS BIGINT) ELSE 0 END),0) AS comparison_debit_minor,
+		       COALESCE(SUM(CASE WHEN %s AND jl.entry_type='credit' THEN CAST(ROUND(jl.amount*100) AS BIGINT) ELSE 0 END),0) AS comparison_credit_minor
+		FROM journals j JOIN journal_lines jl ON jl.journal_id=j.id
+		JOIN accounting_accounts aa ON aa.business_id=j.business_id AND aa.code=UPPER(jl.account_code)
+		WHERE %s
+		GROUP BY aa.account_class,aa.code,aa.name,aa.parent_code,jl.currency
+		)
+		SELECT account_class,account_code,account_name,parent_code,currency,
+		CASE WHEN opening_debit_minor>opening_credit_minor THEN opening_debit_minor-opening_credit_minor ELSE 0 END AS opening_debit_minor,
+		CASE WHEN opening_credit_minor>opening_debit_minor THEN opening_credit_minor-opening_debit_minor ELSE 0 END AS opening_credit_minor,
+		period_debit_minor,period_credit_minor,
+		CASE WHEN closing_debit_minor>closing_credit_minor THEN closing_debit_minor-closing_credit_minor ELSE 0 END AS closing_debit_minor,
+		CASE WHEN closing_credit_minor>closing_debit_minor THEN closing_credit_minor-closing_debit_minor ELSE 0 END AS closing_credit_minor,
+		CASE WHEN comparison_debit_minor>comparison_credit_minor THEN comparison_debit_minor-comparison_credit_minor ELSE 0 END AS comparison_debit_minor,
+		CASE WHEN comparison_credit_minor>comparison_debit_minor THEN comparison_credit_minor-comparison_debit_minor ELSE 0 END AS comparison_credit_minor FROM raw
+	`, fromCondition, fromCondition, periodCondition, periodCondition, closingCondition, closingCondition, comparisonCondition, comparisonCondition, where)
+	args := append([]interface{}{}, fromArgs...)
+	args = append(args, fromArgs...)
+	args = append(args, periodArgs...)
+	args = append(args, periodArgs...)
+	args = append(args, closingArgs...)
+	args = append(args, closingArgs...)
+	args = append(args, comparisonArgs...)
+	args = append(args, comparisonArgs...)
+	args = append(args, whereArgs...)
+	totalSQL := fmt.Sprintf(`WITH rows AS (%s) SELECT COUNT(*) AS row_count, COALESCE(SUM(opening_debit_minor),0) AS opening_debit_minor, COALESCE(SUM(opening_credit_minor),0) AS opening_credit_minor, COALESCE(SUM(period_debit_minor),0) AS period_debit_minor, COALESCE(SUM(period_credit_minor),0) AS period_credit_minor, COALESCE(SUM(closing_debit_minor),0) AS closing_debit_minor, COALESCE(SUM(closing_credit_minor),0) AS closing_credit_minor, COALESCE(SUM(comparison_debit_minor),0) AS comparison_debit_minor, COALESCE(SUM(comparison_credit_minor),0) AS comparison_credit_minor FROM rows`, base)
+	return reportBundle{rowSQL: base, rowArgs: args, totalSQL: totalSQL, totalArgs: args, columns: reporting.LookupOrPanic("trial_balance").DefaultColumns, orderBy: "account_class ASC, account_code ASC, currency ASC"}, nil
+}
+
+func (r *reportingRepository) buildBalanceSheetBundle(query reporting.Query) (reportBundle, error) {
+	where, whereArgs := buildPostedAccountingFilters(query)
+	fromCondition, fromArgs := accountingOpeningCondition("j.posting_date", query.Filters.DateFrom)
+	periodCondition, periodArgs := accountingRangeCondition("j.posting_date", query.Filters.DateFrom, query.Filters.DateTo)
+	closingCondition, closingArgs := accountingRangeCondition("j.posting_date", nil, query.Filters.DateTo)
+	comparisonCondition, comparisonArgs := accountingRangeCondition("j.posting_date", query.Filters.CompareFrom, query.Filters.CompareTo)
+	classSQL := `CASE WHEN aa.account_class IN ('revenue','expense') THEN 'equity' ELSE aa.account_class END`
+	signSQL := `CASE WHEN aa.account_class='asset' THEN CASE WHEN jl.entry_type='debit' THEN CAST(ROUND(jl.amount*100) AS BIGINT) ELSE -CAST(ROUND(jl.amount*100) AS BIGINT) END ELSE CASE WHEN jl.entry_type='credit' THEN CAST(ROUND(jl.amount*100) AS BIGINT) ELSE -CAST(ROUND(jl.amount*100) AS BIGINT) END END`
+	base := fmt.Sprintf(`
+		SELECT %s AS account_class, aa.code AS account_code, aa.name AS account_name, aa.parent_code, jl.currency,
+		       COALESCE(SUM(CASE WHEN %s THEN %s ELSE 0 END),0) AS opening_minor,
+		       COALESCE(SUM(CASE WHEN %s THEN %s ELSE 0 END),0) AS period_minor,
+		       COALESCE(SUM(CASE WHEN %s THEN %s ELSE 0 END),0) AS closing_minor,
+		       COALESCE(SUM(CASE WHEN %s THEN %s ELSE 0 END),0) AS comparison_closing_minor
+		FROM journals j JOIN journal_lines jl ON jl.journal_id=j.id
+		JOIN accounting_accounts aa ON aa.business_id=j.business_id AND aa.code=UPPER(jl.account_code)
+		WHERE %s
+		GROUP BY account_class,aa.code,aa.name,aa.parent_code,jl.currency
+	`, classSQL, fromCondition, signSQL, periodCondition, signSQL, closingCondition, signSQL, comparisonCondition, signSQL, where)
+	args := append([]interface{}{}, fromArgs...)
+	args = append(args, periodArgs...)
+	args = append(args, closingArgs...)
+	args = append(args, comparisonArgs...)
+	args = append(args, whereArgs...)
+	totalSQL := fmt.Sprintf(`WITH rows AS (%s) SELECT COUNT(*) AS row_count, COALESCE(SUM(CASE WHEN account_class='asset' THEN closing_minor ELSE 0 END),0) AS assets_minor, COALESCE(SUM(CASE WHEN account_class='liability' THEN closing_minor ELSE 0 END),0) AS liabilities_minor, COALESCE(SUM(CASE WHEN account_class='equity' THEN closing_minor ELSE 0 END),0) AS equity_minor FROM rows`, base)
+	return reportBundle{rowSQL: base, rowArgs: args, totalSQL: totalSQL, totalArgs: args, columns: reporting.LookupOrPanic("balance_sheet").DefaultColumns, orderBy: "account_class ASC, account_code ASC, currency ASC"}, nil
+}
+
+func (r *reportingRepository) buildAccountDrilldownBundle(query reporting.Query) (reportBundle, error) {
+	where, args := buildPostedAccountingFilters(query)
+	if strings.TrimSpace(query.Filters.AccountCode) == "" {
+		return reportBundle{}, fmt.Errorf("account_code filter is required for account drilldown")
+	} else {
+		where += " AND UPPER(jl.account_code)=?"
+		args = append(args, strings.TrimSpace(query.Filters.AccountCode))
+	}
+	base := fmt.Sprintf(`SELECT j.posting_date,j.id AS journal_id,j.reference,jl.account_code,jl.account_name,jl.currency,CASE WHEN jl.entry_type='debit' THEN CAST(ROUND(jl.amount*100) AS BIGINT) ELSE 0 END AS debit_minor,CASE WHEN jl.entry_type='credit' THEN CAST(ROUND(jl.amount*100) AS BIGINT) ELSE 0 END AS credit_minor FROM journals j JOIN journal_lines jl ON jl.journal_id=j.id WHERE %s`, where)
+	totalSQL := fmt.Sprintf(`WITH rows AS (%s) SELECT COUNT(*) AS row_count,COALESCE(SUM(debit_minor),0) AS debit_minor,COALESCE(SUM(credit_minor),0) AS credit_minor FROM rows`, base)
+	return reportBundle{rowSQL: base, rowArgs: args, totalSQL: totalSQL, totalArgs: args, columns: reporting.LookupOrPanic("account_drilldown").DefaultColumns, orderBy: "posting_date DESC,journal_id DESC"}, nil
+}
+
+func buildPostedAccountingFilters(query reporting.Query) (string, []interface{}) {
+	clauses := []string{"j.business_id=?", "j.deleted_at IS NULL", "j.status IN ('posted','reversed')"}
+	args := []interface{}{query.BusinessID}
+	if query.Filters.DateTo != nil {
+		clauses = append(clauses, "j.posting_date<=?")
+		args = append(args, *query.Filters.DateTo)
+	}
+	if query.Filters.Currency != "" {
+		clauses = append(clauses, "jl.currency=?")
+		args = append(args, strings.ToUpper(strings.TrimSpace(query.Filters.Currency)))
+	}
+	if query.Filters.BranchID != "" {
+		clauses = append(clauses, "j.branch_id=?")
+		args = append(args, query.Filters.BranchID)
+	} else if query.Filters.BranchScopeRestricted {
+		if len(query.Filters.AllowedBranchIDs) == 0 {
+			clauses = append(clauses, "1=0")
+		} else {
+			clauses = append(clauses, "j.branch_id IN ?")
+			args = append(args, query.Filters.AllowedBranchIDs)
+		}
+	}
+	return strings.Join(clauses, " AND "), args
+}
+
+func accountingRangeCondition(column string, from, to *time.Time) (string, []interface{}) {
+	if from == nil && to == nil {
+		return "FALSE", nil
+	}
+	clauses := []string{}
+	args := []interface{}{}
+	if from != nil {
+		clauses = append(clauses, column+">=?")
+		args = append(args, *from)
+	}
+	if to != nil {
+		clauses = append(clauses, column+"<=?")
+		args = append(args, *to)
+	}
+	return strings.Join(clauses, " AND "), args
+}
+
+func accountingOpeningCondition(column string, from *time.Time) (string, []interface{}) {
+	if from == nil {
+		return "FALSE", nil
+	}
+	return column + " < ?", []interface{}{*from}
 }
 
 func (r *reportingRepository) buildPaymentRegisterBundle(query reporting.Query) (reportBundle, error) {

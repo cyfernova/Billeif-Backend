@@ -387,6 +387,7 @@ func (r *invoiceRepository) UpdateDraftMetadataVersioned(
 			"due_date":           invoice.DueDate,
 			"notes":              invoice.Notes,
 			"project_id":         invoice.ProjectID,
+			"branch_id":          invoice.BranchID,
 			"price_list_id":      invoice.PriceListID,
 			"render_profile_id":  invoice.RenderProfileID,
 			"custom_fields":      invoice.CustomFields,

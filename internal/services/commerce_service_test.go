@@ -263,9 +263,10 @@ func TestCanonicalStorefrontInvoiceInputUsesStableOrderIdentity(t *testing.T) {
 	customerID := "22222222-2222-4222-8222-222222222222"
 	productID := "33333333-3333-4333-8333-333333333333"
 	warehouseID := "44444444-4444-4444-8444-444444444444"
+	branchID := "66666666-6666-4666-8666-666666666666"
 	order := &models.StoreOrder{
 		ID: orderID, BusinessID: "55555555-5555-4555-8555-555555555555",
-		CustomerID: &customerID, Currency: "INR", Notes: "Store order", OrderedAt: time.Now().UTC(),
+		CustomerID: &customerID, BranchID: &branchID, Currency: "INR", Notes: "Store order", OrderedAt: time.Now().UTC(),
 		Lines: []*models.StoreOrderLine{{
 			ProductID: &productID, WarehouseID: &warehouseID, Title: "Tea", Quantity: 2,
 			UnitPrice: 125, TaxRate: 18,
@@ -279,6 +280,7 @@ func TestCanonicalStorefrontInvoiceInputUsesStableOrderIdentity(t *testing.T) {
 	require.Equal(t, models.InvoiceOriginStorefront, input.Origin)
 	require.Equal(t, key, input.IdempotencyKey)
 	require.Equal(t, customerID, input.CustomerID)
+	require.Equal(t, branchID, input.BranchID)
 	require.Len(t, input.Items, 1)
 	require.Equal(t, productID, input.Items[0].ProductID)
 	require.Equal(t, warehouseID, input.Items[0].WarehouseID)
@@ -312,7 +314,7 @@ func TestStorefrontApprovalUsesCanonicalCreateAndIssueCommands(t *testing.T) {
 		Lines: []*models.StoreOrderLine{{ProductID: &productID, Title: "Tea", Quantity: 1, UnitPrice: 100}},
 	}
 
-	invoiceID, err := service.createSalesInvoiceForOrder(context.Background(), order)
+	invoiceID, err := service.createSalesInvoiceForOrder(context.Background(), order, PostingAuthorization{})
 	require.NoError(t, err)
 	require.Equal(t, issuer.invoiceID, invoiceID)
 	require.Equal(t, models.InvoiceOriginStorefront, creator.input.Origin)

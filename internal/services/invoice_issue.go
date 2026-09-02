@@ -14,10 +14,11 @@ import (
 )
 
 type IssueInvoiceInput struct {
-	IdempotencyKey  string `json:"-"`
-	ExpectedVersion int    `json:"-"`
-	DocumentType    string `json:"document_type" binding:"required"`
-	Series          string `json:"series" binding:"required"`
+	IdempotencyKey  string               `json:"-"`
+	ExpectedVersion int                  `json:"-"`
+	DocumentType    string               `json:"document_type" binding:"required"`
+	Series          string               `json:"series" binding:"required"`
+	Authorization   PostingAuthorization `json:"-"`
 }
 
 type IssueInvoiceResult struct {
@@ -78,6 +79,21 @@ func (s *InvoiceService) IssueByBusiness(
 	})
 	if err != nil {
 		return nil, err
+	}
+	_, replayed, replayErr := lookupCompletedAPICommand(ctx, s.db, businessID, "invoice.issue", input.IdempotencyKey, requestHash, "invoice_issue")
+	if replayErr != nil {
+		return nil, fmt.Errorf("failed to issue invoice: %w", replayErr)
+	}
+	if s.accounting != nil && !replayed {
+		invoice, lookupErr := s.repo.GetByID(ctx, invoiceID, businessID)
+		if lookupErr != nil {
+			return nil, fmt.Errorf("failed to issue invoice: %w", lookupErr)
+		}
+		overrideID, overrideErr := s.accounting.PrepareLockOverride(ctx, businessID, invoice.InvoiceDate, input.Authorization)
+		if overrideErr != nil {
+			return nil, overrideErr
+		}
+		ctx = withPostingLockOverride(ctx, overrideID)
 	}
 	result, err := issuer.IssueDraftAtomic(ctx, interfaces.AtomicInvoiceIssue{
 		BusinessID:      businessID,

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -250,6 +251,7 @@ func (h *InventoryHandler) CreateAdjustment(c *gin.Context) {
 	}
 	input.BusinessID = businessID
 	input.UserID = userID
+	input.Authorization = accountingPostingAuthorization(c, "inventory-adjustment:"+input.ProductID+":"+input.WarehouseID)
 	if input.WarehouseID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "warehouse_id is required"})
 		return
@@ -259,6 +261,10 @@ func (h *InventoryHandler) CreateAdjustment(c *gin.Context) {
 	}
 	balances, err := h.svc.RecordAdjustment(c.Request.Context(), input)
 	if err != nil {
+		if errors.Is(err, services.ErrAccountingPeriodLocked) {
+			writeAccountingStepUpRequired(c)
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -293,10 +299,15 @@ func (h *InventoryHandler) CreateTransfer(c *gin.Context) {
 	}
 	input.BusinessID = businessID
 	input.UserID = userID
+	input.Authorization = accountingPostingAuthorization(c, "inventory-transfer:"+input.ProductID+":"+input.FromWarehouseID+":"+input.ToWarehouseID)
 	if !h.hasWarehousePermission(c, businessID, input.FromWarehouseID, "move_stock") || !h.hasWarehousePermission(c, businessID, input.ToWarehouseID, "move_stock") {
 		return
 	}
 	if err := h.svc.TransferStock(c.Request.Context(), input); err != nil {
+		if errors.Is(err, services.ErrAccountingPeriodLocked) {
+			writeAccountingStepUpRequired(c)
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -394,6 +405,7 @@ func (h *InventoryHandler) ResetStock(c *gin.Context) {
 	}
 	input.BusinessID = businessID
 	input.UserID = userID
+	input.Authorization = accountingPostingAuthorization(c, "inventory-reset:"+input.ProductID+":"+input.WarehouseID)
 	if input.WarehouseID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "warehouse_id is required"})
 		return
@@ -402,6 +414,10 @@ func (h *InventoryHandler) ResetStock(c *gin.Context) {
 		return
 	}
 	if err := h.svc.ResetStock(c.Request.Context(), input); err != nil {
+		if errors.Is(err, services.ErrAccountingPeriodLocked) {
+			writeAccountingStepUpRequired(c)
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -449,6 +465,10 @@ func (h *InventoryHandler) Timeline(c *gin.Context) {
 	}
 	rows, err := h.svc.GetTimeline(c.Request.Context(), filter)
 	if err != nil {
+		if errors.Is(err, services.ErrAccountingPeriodLocked) {
+			writeAccountingStepUpRequired(c)
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -677,6 +697,10 @@ func (h *InventoryHandler) executeAssembly(c *gin.Context, reverse bool) {
 	if !ok {
 		return
 	}
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
 	var input services.ExecuteAssemblyInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -685,6 +709,9 @@ func (h *InventoryHandler) executeAssembly(c *gin.Context, reverse bool) {
 	if !h.hasWarehousePermission(c, businessID, input.WarehouseID, "move_stock") {
 		return
 	}
+	input.BusinessID = businessID
+	input.UserID = userID
+	input.Authorization = accountingPostingAuthorization(c, "inventory-assembly:"+c.Param("id")+":"+input.WarehouseID)
 	var err error
 	if reverse {
 		err = h.svc.DisassembleAssembly(c.Request.Context(), businessID, c.Param("id"), input)

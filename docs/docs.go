@@ -356,6 +356,584 @@ const docTemplate = `{
                 ]
             }
         },
+        "/accounting/accounts": {
+            "get": {
+                "tags": [
+                    "Accounting"
+                ],
+                "summary": "List accounting accounts",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/models.AccountingAccount"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/accounting/accounts/{code}": {
+            "put": {
+                "tags": [
+                    "Accounting"
+                ],
+                "summary": "Upsert accounting account",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Account code",
+                        "name": "code",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Account metadata",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/services.AccountingAccountInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.AccountingAccount"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/accounting/audit": {
+            "get": {
+                "tags": [
+                    "Accounting"
+                ],
+                "summary": "List accounting audit",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/models.AccountingAuditEvent"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/accounting/bank-accounts": {
+            "get": {
+                "tags": [
+                    "Banking"
+                ],
+                "summary": "List bank accounts",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/models.BankAccount"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "post": {
+                "tags": [
+                    "Banking"
+                ],
+                "summary": "Create bank account",
+                "parameters": [
+                    {
+                        "description": "Bank account",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.bankAccountRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/models.BankAccount"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/accounting/bank-statements": {
+            "post": {
+                "tags": [
+                    "Banking"
+                ],
+                "summary": "Import bank statement",
+                "parameters": [
+                    {
+                        "description": "Statement",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/services.BankStatementInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/models.BankStatement"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/accounting/bank-statements/{id}/reconcile": {
+            "post": {
+                "tags": [
+                    "Banking"
+                ],
+                "summary": "Reconcile bank statement",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bank statement ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Reconciliation date",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.reconcileStatementRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.BankStatement"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/accounting/bank-statements/{id}/transactions": {
+            "get": {
+                "tags": [
+                    "Banking"
+                ],
+                "summary": "List bank statement transactions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bank statement ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Only unreconciled",
+                        "name": "unreconciled",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/services.BankTransactionState"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/accounting/bank-transactions/{id}/adjustment": {
+            "post": {
+                "tags": [
+                    "Banking"
+                ],
+                "summary": "Create bank adjustment",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bank transaction ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Required for locked-period override",
+                        "name": "X-Step-Up-Token",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Required for locked-period override",
+                        "name": "X-Lock-Override-Reason",
+                        "in": "header"
+                    },
+                    {
+                        "description": "Adjustment",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/services.BankAdjustmentInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/models.Journal"
+                        }
+                    },
+                    "428": {
+                        "description": "Precondition Required",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/accounting/bank-transactions/{id}/match": {
+            "post": {
+                "tags": [
+                    "Banking"
+                ],
+                "summary": "Match bank transaction",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bank transaction ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Match",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.bankMatchRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/models.BankMatch"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "delete": {
+                "tags": [
+                    "Banking"
+                ],
+                "summary": "Unmatch bank transaction",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bank transaction ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Reason",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.bankReasonRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/accounting/bank-transactions/{id}/suggestions": {
+            "get": {
+                "tags": [
+                    "Banking"
+                ],
+                "summary": "Suggest bank matches",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bank transaction ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/services.BankMatchSuggestion"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/accounting/opening-balances": {
+            "post": {
+                "tags": [
+                    "Accounting"
+                ],
+                "summary": "Post opening balances",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Required for locked-period override",
+                        "name": "X-Step-Up-Token",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Required for locked-period override",
+                        "name": "X-Lock-Override-Reason",
+                        "in": "header"
+                    },
+                    {
+                        "description": "Opening balances",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/services.OpeningBalanceInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/models.Journal"
+                        }
+                    },
+                    "428": {
+                        "description": "Precondition Required",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/accounting/policy": {
+            "get": {
+                "tags": [
+                    "Accounting"
+                ],
+                "summary": "Get accounting period policy",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.AccountingPeriodPolicy"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            },
+            "put": {
+                "tags": [
+                    "Accounting"
+                ],
+                "summary": "Set accounting period policy",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Command identity",
+                        "name": "Idempotency-Key",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Scoped step-up token",
+                        "name": "X-Step-Up-Token",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Policy change reason",
+                        "name": "X-Lock-Override-Reason",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Policy",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/services.AccountingPolicyInput"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.AccountingPeriodPolicy"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
+        "/accounting/reconciliation-diagnostics": {
+            "get": {
+                "tags": [
+                    "Accounting"
+                ],
+                "summary": "Accounting reconciliation diagnostics",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Through date (RFC3339)",
+                        "name": "through",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Three-letter reconciliation currency",
+                        "name": "currency",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/services.ReconciliationDiagnostics"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        },
         "/activity-logs": {
             "get": {
                 "description": "Returns activity logs for the business",
@@ -7170,6 +7748,18 @@ const docTemplate = `{
                         "in": "header"
                     },
                     {
+                        "type": "string",
+                        "description": "Required for locked-period override",
+                        "name": "X-Step-Up-Token",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Required reason for locked-period override",
+                        "name": "X-Lock-Override-Reason",
+                        "in": "header"
+                    },
+                    {
                         "description": "Document details",
                         "name": "input",
                         "in": "body",
@@ -8720,6 +9310,18 @@ const docTemplate = `{
                         "name": "If-Match",
                         "in": "header",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Required for locked-period override",
+                        "name": "X-Step-Up-Token",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Required reason for locked-period override",
+                        "name": "X-Lock-Override-Reason",
+                        "in": "header"
                     },
                     {
                         "description": "Issue details",
@@ -11044,6 +11646,18 @@ const docTemplate = `{
                         "name": "Idempotency-Key",
                         "in": "header",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Required for locked-period override",
+                        "name": "X-Step-Up-Token",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Required reason for locked-period override",
+                        "name": "X-Lock-Override-Reason",
+                        "in": "header"
                     },
                     {
                         "description": "Payment details",
@@ -19721,6 +20335,7 @@ const docTemplate = `{
                 "command_identity",
                 "mfa_code",
                 "mfa_session",
+                "mfa_username",
                 "resource"
             ],
             "properties": {
@@ -19737,6 +20352,9 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "mfa_session": {
+                    "type": "string"
+                },
+                "mfa_username": {
                     "type": "string"
                 },
                 "resource": {
@@ -20139,6 +20757,150 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.bankAccountRequest": {
+            "type": "object",
+            "required": [
+                "currency",
+                "ledger_account",
+                "masked_account",
+                "name"
+            ],
+            "properties": {
+                "currency": {
+                    "type": "string"
+                },
+                "ledger_account": {
+                    "type": "string"
+                },
+                "masked_account": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "opening_minor": {
+                    "type": "integer"
+                }
+            }
+        },
+        "handlers.bankMatchRequest": {
+            "type": "object",
+            "required": [
+                "ledger_entry_id",
+                "reason"
+            ],
+            "properties": {
+                "ledger_entry_id": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.bankReasonRequest": {
+            "type": "object",
+            "required": [
+                "reason"
+            ],
+            "properties": {
+                "reason": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.reconcileStatementRequest": {
+            "type": "object",
+            "required": [
+                "reconciliation_date"
+            ],
+            "properties": {
+                "reconciliation_date": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.AccountingAccount": {
+            "type": "object",
+            "properties": {
+                "account_class": {
+                    "type": "string"
+                },
+                "business_id": {
+                    "type": "string"
+                },
+                "code": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "parent_code": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.AccountingAuditEvent": {
+            "type": "object",
+            "properties": {
+                "business_id": {
+                    "type": "string"
+                },
+                "event_type": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "occurred_at": {
+                    "type": "string"
+                },
+                "outcome": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "resource_id": {
+                    "type": "string"
+                },
+                "resource_type": {
+                    "type": "string"
+                },
+                "subject": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.AccountingPeriodPolicy": {
+            "type": "object",
+            "properties": {
+                "business_id": {
+                    "type": "string"
+                },
+                "lock_date": {
+                    "type": "string"
+                },
+                "reversal_policy": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "updated_by": {
+                    "type": "string"
+                }
+            }
+        },
         "models.Agent": {
             "type": "object",
             "required": [
@@ -20333,6 +21095,123 @@ const docTemplate = `{
                 "AgentTypeBuyer",
                 "AgentTypeSeller"
             ]
+        },
+        "models.BankAccount": {
+            "type": "object",
+            "properties": {
+                "business_id": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "deactivated_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_active": {
+                    "type": "boolean"
+                },
+                "ledger_account": {
+                    "type": "string"
+                },
+                "masked_account": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "opening_minor": {
+                    "type": "integer"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.BankMatch": {
+            "type": "object",
+            "properties": {
+                "bank_transaction_id": {
+                    "type": "string"
+                },
+                "business_id": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "ledger_entry_id": {
+                    "type": "string"
+                },
+                "match_type": {
+                    "type": "string"
+                },
+                "matched_at": {
+                    "type": "string"
+                },
+                "matched_by": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "unmatched_at": {
+                    "type": "string"
+                },
+                "unmatched_by": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.BankStatement": {
+            "type": "object",
+            "properties": {
+                "bank_account_id": {
+                    "type": "string"
+                },
+                "business_id": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "idempotency_key": {
+                    "type": "string"
+                },
+                "imported_at": {
+                    "type": "string"
+                },
+                "imported_by": {
+                    "type": "string"
+                },
+                "period_from": {
+                    "type": "string"
+                },
+                "period_to": {
+                    "type": "string"
+                },
+                "reconciled_at": {
+                    "type": "string"
+                },
+                "reconciled_by": {
+                    "type": "string"
+                },
+                "request_hash": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "upload_id": {
+                    "type": "string"
+                }
+            }
         },
         "models.BargainingNegotiation": {
             "type": "object",
@@ -20844,6 +21723,9 @@ const docTemplate = `{
                     "type": "number",
                     "minimum": 0
                 },
+                "branch_id": {
+                    "type": "string"
+                },
                 "business_id": {
                     "type": "string"
                 },
@@ -21118,6 +22000,118 @@ const docTemplate = `{
                 "InvoiceOriginSubscription",
                 "InvoiceOriginConversion"
             ]
+        },
+        "models.Journal": {
+            "type": "object",
+            "required": [
+                "business_id"
+            ],
+            "properties": {
+                "branch_id": {
+                    "type": "string"
+                },
+                "business_id": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "lines": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.JournalLine"
+                    }
+                },
+                "lock_override_id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "posted_at": {
+                    "type": "string"
+                },
+                "posting_date": {
+                    "type": "string"
+                },
+                "project_id": {
+                    "type": "string"
+                },
+                "reference": {
+                    "type": "string"
+                },
+                "reversal_of_id": {
+                    "type": "string"
+                },
+                "reversed_at": {
+                    "type": "string"
+                },
+                "source_id": {
+                    "type": "string"
+                },
+                "source_type": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "models.JournalLine": {
+            "type": "object",
+            "required": [
+                "journal_id"
+            ],
+            "properties": {
+                "account_code": {
+                    "type": "string"
+                },
+                "account_name": {
+                    "type": "string"
+                },
+                "amount": {
+                    "type": "number"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "document_id": {
+                    "type": "string"
+                },
+                "document_line_id": {
+                    "type": "string"
+                },
+                "entry_type": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "journal_id": {
+                    "type": "string"
+                },
+                "metadata": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
         },
         "models.MarketplaceProduct": {
             "type": "object",
@@ -22375,7 +23369,22 @@ const docTemplate = `{
         "reporting.Filters": {
             "type": "object",
             "properties": {
+                "account_code": {
+                    "type": "string"
+                },
+                "branch_id": {
+                    "type": "string"
+                },
                 "category_id": {
+                    "type": "string"
+                },
+                "compare_from": {
+                    "type": "string"
+                },
+                "compare_to": {
+                    "type": "string"
+                },
+                "currency": {
                     "type": "string"
                 },
                 "date_from": {
@@ -22404,6 +23413,49 @@ const docTemplate = `{
                 },
                 "warehouse_id": {
                     "type": "string"
+                }
+            }
+        },
+        "services.AccountingAccountInput": {
+            "type": "object",
+            "required": [
+                "account_class",
+                "name"
+            ],
+            "properties": {
+                "account_class": {
+                    "type": "string",
+                    "enum": [
+                        "asset",
+                        "liability",
+                        "equity",
+                        "revenue",
+                        "expense"
+                    ]
+                },
+                "name": {
+                    "type": "string"
+                },
+                "parent_code": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.AccountingPolicyInput": {
+            "type": "object",
+            "required": [
+                "reversal_policy"
+            ],
+            "properties": {
+                "lock_date": {
+                    "type": "string"
+                },
+                "reversal_policy": {
+                    "type": "string",
+                    "enum": [
+                        "next_open_period",
+                        "blocked"
+                    ]
                 }
             }
         },
@@ -22505,6 +23557,123 @@ const docTemplate = `{
                     }
                 },
                 "next_token": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.BankAdjustmentInput": {
+            "type": "object",
+            "required": [
+                "idempotency_key",
+                "kind",
+                "reason"
+            ],
+            "properties": {
+                "idempotency_key": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": [
+                        "fee",
+                        "interest"
+                    ]
+                },
+                "reason": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.BankMatchSuggestion": {
+            "type": "object",
+            "properties": {
+                "amount_minor": {
+                    "type": "integer"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "entry_date": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "ledger_entry_id": {
+                    "type": "string"
+                },
+                "score": {
+                    "type": "integer"
+                },
+                "transaction_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.BankStatementInput": {
+            "type": "object",
+            "required": [
+                "bank_account_id",
+                "idempotency_key",
+                "period_from",
+                "period_to",
+                "upload_id"
+            ],
+            "properties": {
+                "bank_account_id": {
+                    "type": "string"
+                },
+                "idempotency_key": {
+                    "type": "string"
+                },
+                "period_from": {
+                    "type": "string"
+                },
+                "period_to": {
+                    "type": "string"
+                },
+                "upload_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "services.BankTransactionState": {
+            "type": "object",
+            "properties": {
+                "amount_minor": {
+                    "type": "integer"
+                },
+                "business_id": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "external_id": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "match_id": {
+                    "type": "string"
+                },
+                "matched": {
+                    "type": "boolean"
+                },
+                "reference": {
+                    "type": "string"
+                },
+                "statement_id": {
+                    "type": "string"
+                },
+                "transaction_at": {
                     "type": "string"
                 }
             }
@@ -23533,6 +24702,9 @@ const docTemplate = `{
                         "additionalProperties": true
                     }
                 },
+                "branch_id": {
+                    "type": "string"
+                },
                 "business_id": {
                     "type": "string"
                 },
@@ -23663,6 +24835,9 @@ const docTemplate = `{
                 "name"
             ],
             "properties": {
+                "branch_id": {
+                    "type": "string"
+                },
                 "business_id": {
                     "type": "string"
                 },
@@ -23702,6 +24877,16 @@ const docTemplate = `{
                 "entry_type"
             ],
             "properties": {
+                "account_class": {
+                    "type": "string",
+                    "enum": [
+                        "asset",
+                        "liability",
+                        "equity",
+                        "revenue",
+                        "expense"
+                    ]
+                },
                 "account_code": {
                     "type": "string"
                 },
@@ -23730,6 +24915,9 @@ const docTemplate = `{
                 "metadata": {
                     "type": "object",
                     "additionalProperties": true
+                },
+                "parent_code": {
+                    "type": "string"
                 }
             }
         },
@@ -24521,6 +25709,33 @@ const docTemplate = `{
                 }
             }
         },
+        "services.InventoryOpeningInput": {
+            "type": "object",
+            "required": [
+                "currency",
+                "product_id",
+                "warehouse_id"
+            ],
+            "properties": {
+                "currency": {
+                    "type": "string"
+                },
+                "product_id": {
+                    "type": "string"
+                },
+                "quantity_micros": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "unit_cost_minor": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "warehouse_id": {
+                    "type": "string"
+                }
+            }
+        },
         "services.InventoryTransferInput": {
             "type": "object",
             "required": [
@@ -24790,6 +26005,83 @@ const docTemplate = `{
                 },
                 "inApp": {
                     "type": "boolean"
+                }
+            }
+        },
+        "services.OpeningBalanceInput": {
+            "type": "object",
+            "required": [
+                "as_of_date",
+                "idempotency_key",
+                "lines"
+            ],
+            "properties": {
+                "as_of_date": {
+                    "type": "string"
+                },
+                "branch_id": {
+                    "type": "string"
+                },
+                "idempotency_key": {
+                    "type": "string"
+                },
+                "inventory": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/services.InventoryOpeningInput"
+                    }
+                },
+                "lines": {
+                    "type": "array",
+                    "minItems": 2,
+                    "items": {
+                        "$ref": "#/definitions/services.OpeningBalanceLineInput"
+                    }
+                }
+            }
+        },
+        "services.OpeningBalanceLineInput": {
+            "type": "object",
+            "required": [
+                "account_class",
+                "account_code",
+                "account_name",
+                "amount_minor",
+                "currency",
+                "entry_type"
+            ],
+            "properties": {
+                "account_class": {
+                    "type": "string",
+                    "enum": [
+                        "asset",
+                        "liability",
+                        "equity",
+                        "revenue",
+                        "expense"
+                    ]
+                },
+                "account_code": {
+                    "type": "string"
+                },
+                "account_name": {
+                    "type": "string"
+                },
+                "amount_minor": {
+                    "type": "integer"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "entry_type": {
+                    "type": "string",
+                    "enum": [
+                        "debit",
+                        "credit"
+                    ]
+                },
+                "parent_code": {
+                    "type": "string"
                 }
             }
         },
@@ -25461,6 +26753,26 @@ const docTemplate = `{
             "properties": {
                 "status": {
                     "type": "string"
+                }
+            }
+        },
+        "services.ReconciliationDiagnostics": {
+            "type": "object",
+            "properties": {
+                "currency": {
+                    "type": "string"
+                },
+                "inventory_gl_difference_minor": {
+                    "type": "integer"
+                },
+                "journal_ledger_differences": {
+                    "type": "integer"
+                },
+                "read_only": {
+                    "type": "boolean"
+                },
+                "tax_gl_difference_minor": {
+                    "type": "integer"
                 }
             }
         },

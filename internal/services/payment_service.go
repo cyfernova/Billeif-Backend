@@ -34,16 +34,17 @@ func NewPaymentService(db *gorm.DB, repo interfaces.PaymentRepository, invoiceRe
 }
 
 type CreatePaymentInput struct {
-	InvoiceID      string            `json:"invoice_id" binding:"required,uuid"`
-	IdempotencyKey string            `json:"-"`
-	ProjectID      string            `json:"project_id,omitempty" binding:"omitempty,uuid"`
-	Amount         float64           `json:"amount" binding:"required,gt=0"`
-	PaymentType    string            `json:"payment_type"`
-	PaymentMethod  string            `json:"payment_method" binding:"required"`
-	PaymentDate    string            `json:"payment_date"`
-	Reference      string            `json:"reference"`
-	Notes          string            `json:"notes"`
-	Withholding    *WithholdingInput `json:"withholding,omitempty"`
+	InvoiceID      string               `json:"invoice_id" binding:"required,uuid"`
+	IdempotencyKey string               `json:"-"`
+	ProjectID      string               `json:"project_id,omitempty" binding:"omitempty,uuid"`
+	Amount         float64              `json:"amount" binding:"required,gt=0"`
+	PaymentType    string               `json:"payment_type"`
+	PaymentMethod  string               `json:"payment_method" binding:"required"`
+	PaymentDate    string               `json:"payment_date"`
+	Reference      string               `json:"reference"`
+	Notes          string               `json:"notes"`
+	Withholding    *WithholdingInput    `json:"withholding,omitempty"`
+	Authorization  PostingAuthorization `json:"-"`
 }
 
 func (s *PaymentService) Create(ctx context.Context, businessID string, input CreatePaymentInput) (*models.Payment, error) {
@@ -92,6 +93,18 @@ func (s *PaymentService) Create(ctx context.Context, businessID string, input Cr
 	requestHash, err := idempotency.CanonicalHash(input)
 	if err != nil {
 		return nil, err
+	}
+	if replayID, replayed, replayErr := lookupCompletedAPICommand(ctx, s.db, businessID, paymentCreateCommand, input.IdempotencyKey, requestHash, "payment"); replayErr != nil {
+		return nil, replayErr
+	} else if replayed {
+		return s.repo.GetByID(ctx, replayID, businessID)
+	}
+	var preparedOverrideID *string
+	if s.journals != nil && s.journals.accounting != nil {
+		preparedOverrideID, err = s.journals.accounting.PrepareLockOverride(ctx, businessID, paymentDate, input.Authorization)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	var (
@@ -197,6 +210,7 @@ func (s *PaymentService) Create(ctx context.Context, businessID string, input Cr
 		if journalErr != nil {
 			return journalErr
 		}
+		journal.LockOverrideID = preparedOverrideID
 		if err := createJournalTx(tx, journal); err != nil {
 			return err
 		}
@@ -333,6 +347,10 @@ func (s *PaymentService) ReverseByBusiness(ctx context.Context, businessID, id s
 		if original.Status != models.JournalStatusPosted {
 			return fmt.Errorf("payment journal is not posted")
 		}
+		reversalDate, err := reversalPostingDateTx(tx, businessID, original.PostingDate, time.Now().UTC())
+		if err != nil {
+			return err
+		}
 
 		paymentMinor, err := paymentMinorUnits(payment.Amount, false)
 		if err != nil {
@@ -403,8 +421,9 @@ func (s *PaymentService) ReverseByBusiness(ctx context.Context, businessID, id s
 			Name:         "Reversal: " + original.Name,
 			Reference:    original.Reference,
 			ProjectID:    original.ProjectID,
+			BranchID:     original.BranchID,
 			Status:       models.JournalStatusPosted,
-			PostingDate:  now,
+			PostingDate:  reversalDate,
 			Notes:        reason,
 			SourceType:   "payment_reversal",
 			SourceID:     &payment.ID,
@@ -548,6 +567,61 @@ func claimPaymentCreateTx(tx *gorm.DB, businessID, key, requestHash string) (str
 		return "", &idempotency.InProgressError{}
 	}
 	return *existing.ResultID, nil
+}
+
+func lookupCompletedAPICommand(ctx context.Context, db *gorm.DB, businessID, command, key, requestHash, resultType string) (string, bool, error) {
+	if db == nil {
+		return "", false, nil
+	}
+	var existing models.APIIdempotencyKey
+	err := db.WithContext(ctx).Where("business_id = ? AND command = ? AND idempotency_key = ?", businessID, command, key).First(&existing).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if existing.RequestHash != requestHash {
+		return "", false, &idempotency.ConflictError{}
+	}
+	if existing.Status != models.IdempotencyStatusCompleted || existing.ResultType == nil || *existing.ResultType != resultType || existing.ResultID == nil {
+		return "", false, &idempotency.InProgressError{}
+	}
+	return *existing.ResultID, true, nil
+}
+
+func claimAPICommandTx(tx *gorm.DB, businessID, command, key, requestHash, resultType string) (string, error) {
+	claim := &models.APIIdempotencyKey{BusinessID: businessID, Command: command, IdempotencyKey: key, RequestHash: requestHash, Status: models.IdempotencyStatusInProgress}
+	result := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "business_id"}, {Name: "command"}, {Name: "idempotency_key"}}, DoNothing: true}).Create(claim)
+	if result.Error != nil {
+		return "", result.Error
+	}
+	if result.RowsAffected == 1 {
+		return "", nil
+	}
+	var existing models.APIIdempotencyKey
+	if err := tx.Where("business_id=? AND command=? AND idempotency_key=?", businessID, command, key).First(&existing).Error; err != nil {
+		return "", err
+	}
+	if existing.RequestHash != requestHash {
+		return "", &idempotency.ConflictError{}
+	}
+	if existing.Status != models.IdempotencyStatusCompleted || existing.ResultType == nil || *existing.ResultType != resultType || existing.ResultID == nil {
+		return "", &idempotency.InProgressError{}
+	}
+	return *existing.ResultID, nil
+}
+
+func completeAPICommandTx(tx *gorm.DB, businessID, command, key, requestHash, resultType, resultID string) error {
+	now := time.Now().UTC()
+	result := tx.Model(&models.APIIdempotencyKey{}).Where("business_id=? AND command=? AND idempotency_key=? AND request_hash=? AND status=?", businessID, command, key, requestHash, models.IdempotencyStatusInProgress).Updates(map[string]interface{}{"status": models.IdempotencyStatusCompleted, "result_type": resultType, "result_id": resultID, "completed_at": now, "updated_at": now})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return fmt.Errorf("idempotency claim was not completed")
+	}
+	return nil
 }
 
 func completePaymentCreateClaimTx(tx *gorm.DB, businessID, key, requestHash, paymentID string) error {
@@ -762,6 +836,15 @@ func (s *PaymentService) buildPaymentJournal(ctx context.Context, payment *model
 	}
 
 	documentID := invoice.ID
+	branchID := invoice.BranchID
+	if branchID == nil && s.db != nil && s.db.Migrator().HasTable(&models.Document{}) {
+		var document models.Document
+		if err := s.db.WithContext(ctx).Select("branch_id").Where("id=? AND business_id=? AND deleted_at IS NULL", invoice.ID, invoice.BusinessID).First(&document).Error; err == nil {
+			branchID = document.BranchID
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+	}
 	metadata := map[string]interface{}{
 		"payment_id":     payment.ID,
 		"payment_method": payment.PaymentMethod,
@@ -813,6 +896,7 @@ func (s *PaymentService) buildPaymentJournal(ctx context.Context, payment *model
 		Name:        fmt.Sprintf("Payment %s", models.StringValue(invoice.InvoiceNo)),
 		Reference:   coalesceString(payment.Reference, payment.ID),
 		ProjectID:   normalizeProjectID(derefString(payment.ProjectID)),
+		BranchID:    branchID,
 		PostingDate: payment.PaymentDate,
 		Status:      models.JournalStatusPosted,
 		Notes:       payment.Notes,

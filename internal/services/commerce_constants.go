@@ -48,6 +48,8 @@ const (
 	PermissionReportsExport         = "reports.export"
 	PermissionReportsShare          = "reports.share"
 	PermissionReportsView           = "reports.view"
+	PermissionAccountingManage      = "accounting.manage"
+	PermissionBankingManage         = "banking.manage"
 	PermissionTaxIntegrationsManage = "tax.integrations.manage"
 	PermissionPOSOperate            = "pos.operate"
 	PermissionAgentsManage          = "agents.manage"

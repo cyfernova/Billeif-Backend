@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"invoice-backend/internal/models"
@@ -16,24 +17,32 @@ import (
 )
 
 type JournalService struct {
-	db   *gorm.DB
-	repo interfaces.JournalRepository
-	log  *logger.Logger
+	db         *gorm.DB
+	repo       interfaces.JournalRepository
+	log        *logger.Logger
+	accounting *AccountingService
 }
 
 func NewJournalService(db *gorm.DB, repo interfaces.JournalRepository, log *logger.Logger) *JournalService {
 	return &JournalService{db: db, repo: repo, log: log}
 }
 
+func (s *JournalService) WithAccounting(accounting *AccountingService) *JournalService {
+	s.accounting = accounting
+	return s
+}
+
 type CreateJournalLineInput struct {
-	AccountCode string                 `json:"account_code" binding:"required"`
-	AccountName string                 `json:"account_name" binding:"required"`
-	EntryType   string                 `json:"entry_type" binding:"required,oneof=debit credit"`
-	Amount      float64                `json:"amount" binding:"required,gt=0"`
-	Currency    string                 `json:"currency"`
-	Description string                 `json:"description"`
-	DocumentID  *string                `json:"document_id,omitempty"`
-	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	AccountCode  string                 `json:"account_code" binding:"required"`
+	AccountName  string                 `json:"account_name" binding:"required"`
+	EntryType    string                 `json:"entry_type" binding:"required,oneof=debit credit"`
+	Amount       float64                `json:"amount" binding:"required,gt=0"`
+	Currency     string                 `json:"currency"`
+	Description  string                 `json:"description"`
+	DocumentID   *string                `json:"document_id,omitempty"`
+	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+	AccountClass string                 `json:"account_class,omitempty" binding:"omitempty,oneof=asset liability equity revenue expense"`
+	ParentCode   *string                `json:"parent_code,omitempty"`
 }
 
 type CreateJournalInput struct {
@@ -41,6 +50,7 @@ type CreateJournalInput struct {
 	Name        string                   `json:"name" binding:"required"`
 	Reference   string                   `json:"reference"`
 	ProjectID   string                   `json:"project_id,omitempty" binding:"omitempty,uuid"`
+	BranchID    *string                  `json:"branch_id,omitempty" binding:"omitempty,uuid"`
 	PostingDate time.Time                `json:"posting_date"`
 	Notes       string                   `json:"notes"`
 	Status      string                   `json:"status"`
@@ -48,6 +58,10 @@ type CreateJournalInput struct {
 }
 
 func (s *JournalService) CreateByBusiness(ctx context.Context, businessID string, input CreateJournalInput) (*models.Journal, error) {
+	return s.CreateAuthorized(ctx, businessID, input, PostingAuthorization{})
+}
+
+func (s *JournalService) CreateAuthorized(ctx context.Context, businessID string, input CreateJournalInput, authorization PostingAuthorization) (*models.Journal, error) {
 	journal, err := s.buildJournal(ctx, businessID, input)
 	if err != nil {
 		return nil, err
@@ -55,6 +69,13 @@ func (s *JournalService) CreateByBusiness(ctx context.Context, businessID string
 	if journal.Status == models.JournalStatusPosted {
 		now := time.Now()
 		journal.PostedAt = &now
+		if s.accounting != nil {
+			overrideID, overrideErr := s.accounting.PrepareLockOverride(ctx, businessID, journal.PostingDate, authorization)
+			if overrideErr != nil {
+				return nil, overrideErr
+			}
+			journal.LockOverrideID = overrideID
+		}
 	}
 	if err := s.requireDatabase(); err != nil {
 		return nil, err
@@ -74,13 +95,19 @@ func (s *JournalService) CreateByBusiness(ctx context.Context, businessID string
 }
 
 func (s *JournalService) buildJournal(ctx context.Context, businessID string, input CreateJournalInput) (*models.Journal, error) {
-	_ = ctx
+	if input.BranchID != nil {
+		var count int64
+		if s.db == nil || s.db.WithContext(ctx).Model(&models.Branch{}).Where("id=? AND business_id=? AND deleted_at IS NULL", *input.BranchID, businessID).Count(&count).Error != nil || count != 1 {
+			return nil, fmt.Errorf("branch does not belong to business")
+		}
+	}
 	totals := make(map[string]struct{ debit, credit int64 })
 	journal := &models.Journal{
 		BusinessID:  businessID,
 		Name:        input.Name,
 		Reference:   input.Reference,
 		ProjectID:   projectIDPointer(input.ProjectID),
+		BranchID:    input.BranchID,
 		Status:      input.Status,
 		PostingDate: input.PostingDate,
 		Notes:       input.Notes,
@@ -110,6 +137,16 @@ func (s *JournalService) buildJournal(ctx context.Context, businessID string, in
 			total.credit += minor
 		}
 		totals[currency] = total
+		metadata := make(map[string]interface{}, len(line.Metadata)+2)
+		for key, value := range line.Metadata {
+			metadata[key] = value
+		}
+		if line.AccountClass != "" {
+			metadata["account_class"] = strings.ToLower(strings.TrimSpace(line.AccountClass))
+		}
+		if line.ParentCode != nil && strings.TrimSpace(*line.ParentCode) != "" {
+			metadata["parent_code"] = strings.ToUpper(strings.TrimSpace(*line.ParentCode))
+		}
 		journal.Lines = append(journal.Lines, &models.JournalLine{
 			AccountCode: line.AccountCode,
 			AccountName: line.AccountName,
@@ -118,7 +155,7 @@ func (s *JournalService) buildJournal(ctx context.Context, businessID string, in
 			Currency:    currency,
 			Description: line.Description,
 			DocumentID:  line.DocumentID,
-			Metadata:    mustMarshalMap(line.Metadata),
+			Metadata:    mustMarshalMap(metadata),
 		})
 	}
 	for _, total := range totals {
@@ -138,12 +175,23 @@ func (s *JournalService) List(ctx context.Context, businessID string, page, limi
 }
 
 func (s *JournalService) UpdateByBusiness(ctx context.Context, businessID, id string, input CreateJournalInput) (*models.Journal, error) {
+	return s.UpdateAuthorized(ctx, businessID, id, input, PostingAuthorization{})
+}
+
+func (s *JournalService) UpdateAuthorized(ctx context.Context, businessID, id string, input CreateJournalInput, authorization PostingAuthorization) (*models.Journal, error) {
 	rebuilt, err := s.buildJournal(ctx, businessID, input)
 	if err != nil {
 		return nil, err
 	}
 	if err := s.requireDatabase(); err != nil {
 		return nil, err
+	}
+	var preparedOverrideID *string
+	if rebuilt.Status == models.JournalStatusPosted && s.accounting != nil {
+		preparedOverrideID, err = s.accounting.PrepareLockOverride(ctx, businessID, rebuilt.PostingDate, authorization)
+		if err != nil {
+			return nil, err
+		}
 	}
 	var existing models.Journal
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -163,7 +211,9 @@ func (s *JournalService) UpdateByBusiness(ctx context.Context, businessID, id st
 		if existing.Status == models.JournalStatusPosted {
 			now := time.Now()
 			existing.PostedAt = &now
+			existing.LockOverrideID = preparedOverrideID
 		}
+		existing.BranchID = rebuilt.BranchID
 		if err := replaceDraftJournalTx(tx, &existing); err != nil {
 			return err
 		}
@@ -194,8 +244,26 @@ func (s *JournalService) DeleteByBusiness(ctx context.Context, businessID, id st
 }
 
 func (s *JournalService) PostByBusiness(ctx context.Context, businessID, id string) (*models.Journal, error) {
+	return s.PostAuthorized(ctx, businessID, id, PostingAuthorization{})
+}
+
+func (s *JournalService) PostAuthorized(ctx context.Context, businessID, id string, authorization PostingAuthorization) (*models.Journal, error) {
 	if err := s.requireDatabase(); err != nil {
 		return nil, err
+	}
+	var preparedOverrideID *string
+	if s.accounting != nil {
+		current, currentErr := s.repo.GetByID(ctx, id, businessID)
+		if currentErr != nil {
+			return nil, currentErr
+		}
+		if current.Status != models.JournalStatusDraft {
+			return nil, fmt.Errorf("journal already posted")
+		}
+		preparedOverrideID, currentErr = s.accounting.PrepareLockOverride(ctx, businessID, current.PostingDate, authorization)
+		if currentErr != nil {
+			return nil, currentErr
+		}
 	}
 	var journal models.Journal
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -208,9 +276,10 @@ func (s *JournalService) PostByBusiness(ctx context.Context, businessID, id stri
 		now := time.Now()
 		journal.Status = models.JournalStatusPosted
 		journal.PostedAt = &now
+		journal.LockOverrideID = preparedOverrideID
 		if err := tx.Model(&models.Journal{}).
 			Where("id = ? AND business_id = ? AND status = ?", id, businessID, models.JournalStatusDraft).
-			Updates(map[string]interface{}{"status": journal.Status, "posted_at": journal.PostedAt}).Error; err != nil {
+			Updates(map[string]interface{}{"status": journal.Status, "posted_at": journal.PostedAt, "lock_override_id": journal.LockOverrideID}).Error; err != nil {
 			return err
 		}
 		return projectJournalLedgerTx(tx, &journal)
@@ -236,12 +305,19 @@ func (s *JournalService) ReverseByBusiness(ctx context.Context, businessID, id s
 		if journal.SourceType == "payment" || journal.SourceType == "payment_reversal" {
 			return fmt.Errorf("payment journals must be reversed through the payment workflow")
 		}
-		now := time.Now()
+		if journal.SourceType == "bank_adjustment" {
+			return fmt.Errorf("bank adjustment journals must be reversed through the bank reconciliation workflow")
+		}
+		now, dateErr := reversalPostingDateTx(tx, businessID, journal.PostingDate, time.Now())
+		if dateErr != nil {
+			return dateErr
+		}
 		reversal = &models.Journal{
 			BusinessID:   businessID,
 			Name:         "Reversal: " + journal.Name,
 			Reference:    journal.Reference,
 			ProjectID:    journal.ProjectID,
+			BranchID:     journal.BranchID,
 			Status:       models.JournalStatusPosted,
 			PostingDate:  now,
 			Notes:        "Auto reversal",
@@ -297,6 +373,10 @@ func (s *JournalService) CreateAutoJournalForDocument(ctx context.Context, docum
 }
 
 func (s *JournalService) CreateAutoJournalForDocumentTx(ctx context.Context, tx *gorm.DB, document *models.Document) (*models.Journal, error) {
+	return s.CreateAutoJournalForDocumentTxAuthorized(ctx, tx, document, nil)
+}
+
+func (s *JournalService) CreateAutoJournalForDocumentTxAuthorized(ctx context.Context, tx *gorm.DB, document *models.Document, overrideID *string) (*models.Journal, error) {
 	if tx == nil {
 		return nil, fmt.Errorf("journal transaction is required")
 	}
@@ -311,6 +391,7 @@ func (s *JournalService) CreateAutoJournalForDocumentTx(ctx context.Context, tx 
 		Name:        fmt.Sprintf("%s %s", document.DocumentType, document.SerialNumber),
 		Reference:   document.SerialNumber,
 		ProjectID:   normalizeProjectID(derefString(document.ProjectID)),
+		BranchID:    document.BranchID,
 		PostingDate: document.IssueDate,
 		Status:      models.JournalStatusPosted,
 		Lines:       lines,
@@ -320,6 +401,7 @@ func (s *JournalService) CreateAutoJournalForDocumentTx(ctx context.Context, tx 
 	}
 	journal.SourceType = "document"
 	journal.SourceID = &document.ID
+	journal.LockOverrideID = overrideID
 	postedAt := time.Now().UTC()
 	journal.PostedAt = &postedAt
 	if err := createJournalTx(tx.WithContext(ctx), journal); err != nil {
@@ -407,6 +489,7 @@ func replaceDraftJournalTx(tx *gorm.DB, journal *models.Journal) error {
 		Where("id = ? AND business_id = ?", journal.ID, journal.BusinessID).
 		Updates(map[string]interface{}{
 			"name": journal.Name, "reference": journal.Reference, "project_id": journal.ProjectID,
+			"branch_id": journal.BranchID, "lock_override_id": journal.LockOverrideID,
 			"status": journal.Status, "posting_date": journal.PostingDate, "notes": journal.Notes,
 			"posted_at": journal.PostedAt,
 		}).Error; err != nil {
@@ -436,7 +519,47 @@ func loadJournalForUpdateTx(tx *gorm.DB, businessID, id string, journal *models.
 }
 
 func projectJournalLedgerTx(tx *gorm.DB, journal *models.Journal) error {
+	if err := enforceJournalLockTx(tx, journal); err != nil {
+		return err
+	}
+	if journal.BranchID != nil {
+		var count int64
+		if err := tx.Model(&models.Branch{}).Where("id=? AND business_id=? AND deleted_at IS NULL", *journal.BranchID, journal.BusinessID).Count(&count).Error; err != nil || count != 1 {
+			return fmt.Errorf("branch does not belong to business")
+		}
+	}
+	trackAccounts := tx.Migrator().HasTable(&models.AccountingAccount{})
 	for _, line := range journal.Lines {
+		if trackAccounts {
+			var account models.AccountingAccount
+			err := tx.Where("business_id=? AND code=?", journal.BusinessID, line.AccountCode).First(&account).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				metadata := unmarshalJSONMap(line.Metadata)
+				accountClass, _ := metadata["account_class"].(string)
+				if accountClass == "" {
+					accountClass = accountingAccountClass(line.AccountCode)
+				}
+				if !validAccountingAccountClass(accountClass) {
+					return fmt.Errorf("account_class is required for new account %s", line.AccountCode)
+				}
+				var parentCode *string
+				if value, _ := metadata["parent_code"].(string); strings.TrimSpace(value) != "" {
+					value = strings.ToUpper(strings.TrimSpace(value))
+					parentCode = &value
+				}
+				if err := validateAccountingParentTx(tx, journal.BusinessID, line.AccountCode, accountClass, parentCode); err != nil {
+					return err
+				}
+				account = models.AccountingAccount{BusinessID: journal.BusinessID, Code: line.AccountCode, Name: line.AccountName, AccountClass: accountClass, ParentCode: parentCode}
+				if err := tx.Create(&account).Error; err != nil {
+					return err
+				}
+			} else if err != nil {
+				return err
+			} else if !validAccountingAccountClass(account.AccountClass) {
+				return fmt.Errorf("account_class is required for account %s", line.AccountCode)
+			}
+		}
 		entry := &models.LedgerEntry{
 			BusinessID:    journal.BusinessID,
 			TransactionID: journal.ID,
@@ -447,6 +570,7 @@ func projectJournalLedgerTx(tx *gorm.DB, journal *models.Journal) error {
 			Amount:        line.Amount,
 			Currency:      line.Currency,
 			ProjectID:     journal.ProjectID,
+			BranchID:      journal.BranchID,
 		}
 		if line.DocumentID != nil {
 			entry.InvoiceID = line.DocumentID
@@ -456,4 +580,21 @@ func projectJournalLedgerTx(tx *gorm.DB, journal *models.Journal) error {
 		}
 	}
 	return nil
+}
+
+func accountingAccountClass(code string) string {
+	switch {
+	case code == "CASH" || code == "BANK" || code == "AR" || code == "INV" || code == "IN_GST" || code == "TDS_RECEIVABLE" || code == "GST_TDS_RECEIVABLE" || strings.HasPrefix(code, "ASSET"):
+		return "asset"
+	case code == "AP" || code == "OUT_GST" || strings.HasPrefix(code, "LIAB"):
+		return "liability"
+	case code == "REV" || code == "REVENUE" || code == "INTEREST_INCOME" || strings.HasPrefix(code, "REV"):
+		return "revenue"
+	case code == "EQUITY" || code == "OPENING_EQUITY" || strings.HasPrefix(code, "EQUITY"):
+		return "equity"
+	case code == "BANK_FEE":
+		return "expense"
+	default:
+		return ""
+	}
 }

@@ -1,6 +1,6 @@
 # Billeif Phase 2 Frontend Handoff
 
-Status: in progress; CAP-001 and SUB-001 through SUB-003 are locally complete
+Status: in progress; CAP-001, SUB-001 through SUB-003, and ACC-001/002 are locally complete
 
 This document describes only Phase 2-relevant HTTP behavior that is implemented
 in the backend at the audited revision. It is not a future API design. `partial`
@@ -22,7 +22,8 @@ route registration or current generated OpenAPI alone.
   use one consistent carrier and never trust a client-side business identifier
   as authorization. Evidence: `internal/middleware/business_auth.go`.
 - Permissions shown are enforced by `internal/app/runtime.go`. Branch scope is
-  enforced separately where noted. There is no Phase 2 step-up token yet.
+  enforced separately where noted. Accounting locked-period overrides use a
+  one-time scoped step-up token plus a command identity and reason.
 - UUID examples are illustrative. Timestamps are JSON RFC 3339 timestamps.
 - Except where an exact stable shape is stated, current failures are
   `{ "error": "..." }`; message text is not a stable machine contract. Branch
@@ -47,8 +48,8 @@ route registration or current generated OpenAPI alone.
 | OPS-007 | Aggregate business operation list/detail/timeline and safe render retry | `complete` locally; workers/providers `externally unverified` | Use as the business-safe cross-domain status surface. Only exact failed versioned invoice renders advertise and accept customer retry. |
 | OPS-008 | Platform operator operation detail/timeline/recovery | Detail/timeline `complete` locally; high-risk recovery `blocked` by fail-closed step-up | Operator UI must require the separately configured operator group. Show high-risk actions as unavailable with `step_up_required`; never substitute owner/admin. |
 | SEC-001 | One-use WebSocket ticket | `complete` locally, deployed WebSocket `externally unverified` | Usable where the deployed WebSocket is separately verified. |
-| ACC-001 | Journal create/read/list/update/delete/post/reverse | `partial` accounting surface | Internal accounting UI only; no fiscal lock or stable error-code contract. |
-| ACC-002 | General-ledger list and balance | `partial` read surface | Internal accounting UI only; not a Trial Balance or Balance Sheet. |
+| ACC-001 | Fiscal policy, chart of accounts, journal/opening posting and banking reconciliation | `complete` locally | Use authoritative account classes/hierarchy and locked-period override contract; bank statement upload/storage is externally unverified. |
+| ACC-002 | Trial Balance, Balance Sheet, account drilldown and read-only reconciliation diagnostics | `complete` locally | Use required currency and posted-ledger minor-unit results; exports/shares reuse REPORT-001. |
 | AUTH-001 | Indian phone OTP auth | `partial`, Cognito/SMS `externally unverified` | Do not ship as hardened account-linking/session-management UX yet. |
 | ASSET-001 | Business-logo and drive presigns | `partial` and `unsafe` as completed-asset workflows; S3 `externally unverified` | Drive intake now enforces CAP-001 plus the authoritative tenant storage quota; do not mark an asset complete after PUT because completion verification does not exist. |
 | IMP-001 | Current bulk import intake/read | intake `blocked`; legacy reads `partial` | Keep imports disabled. Customer and queued import intake now return CAP-001 `unsupported` until Task 7 supplies a safe processor. |
@@ -78,8 +79,8 @@ omitted column to imply support.
 | OPS-007 | Bearer + effective business + all branches | Reads need no additional permission; safe render retry requires `documents.manage` in the service | Runtime invoice queue, invoice bucket, SQS and S3 clients are re-evaluated before accepting retry | None for exact failed render retry | Body UUID `idempotency_key` is scoped to actor/business/action; changed reuse and a second command for the same operation revision return `unsafe_replay` |
 | OPS-008 | Bearer + separately configured verified JWT group; original `business_id` is mandatory | Business owner/admin roles are ignored | No provider capability is exercised while step-up is blocked | High-risk reconcile/webhook/DLQ/resolve commands require Task 5 one-time scoped step-up and currently return `step_up_required` | Every operator decision is durably audited with tenant, actor, operation, action, reason, command identity, correlation and safe result code |
 | SEC-001 | Bearer + effective business + authenticated user | No additional permission | None | None implemented | Ticket is one-use; issue has no command key |
-| ACC-001 | Bearer + effective business + all branches | Reads `reports.view`; writes `documents.manage` | None | None implemented | No command/version key; never retry writes after an ambiguous response |
-| ACC-002 | Bearer + effective business + all branches | `reports.view` | None | None implemented | Read-only |
+| ACC-001 | Bearer + effective business + all branches | Reads `reports.view`; fiscal/account writes `accounting.manage`; bank writes `banking.manage`; posting document/payment routes also retain their domain permission | None | Locked-date postings require `X-Step-Up-Token`, `X-Lock-Override-Reason`, and a scoped `Idempotency-Key`; `428` code `accounting_period_locked` otherwise | Opening and statement imports bind payload hashes to tenant command keys; an override is one-time and scoped to resource/date/subject |
+| ACC-002 | Bearer + effective business + branch authorization | `reports.view`; export `reports.export`; share `reports.share` | Existing report capability checks apply to export/share | None; read-only | Query/read safe; every export/share creates its existing report record |
 | AUTH-001 | Public except logout, which requires bearer + effective business through the protected group | No business scope during public flow | None | None implemented | No command key; provider OTP/session controls apply |
 | ASSET-001 | Logo: bearer + owned business; drive: bearer + effective business | Logo owner check; drive `drive.manage` | Logo none; drive `drive_storage_mb`, measured from tenant drive assets in MB | None implemented | No command key and no completion idempotency |
 | IMP-001 | Bearer + effective business + authenticated user | Intake is rejected by CAP-001 before legacy per-type permission checks | Product support is `unsupported` until Task 7 | None implemented | No intake mutation occurs |
@@ -103,8 +104,8 @@ omitted column to imply support.
 | OPS-007 | List `limit` 1-100, default 50; filter-bound opaque cursor; timeline limit 1-100, default 50; no file | `queued`, `in_progress`, `succeeded`, `failed`, `reconciliation_required`, `unknown`; source failures are reported in `unavailable_types` | No client event is promised; use bounded polling and retain the same cursor filters | Expand-first paired `000056_operation_recovery`; deploy migration before application | Service/repository/handler recovery, tenant, sanitization, pagination and race tests plus generated Swagger and both OpenAPI files |
 | OPS-008 | Detail and timeline are single-resource reads; timeline limit 1-100; no file | Detail remains sanitized. High-risk commands are audited rejections until Task 5; no provider call, message, or DLQ redrive occurs | No operator event is promised; refetch timeline after each definitive response | `PLATFORM_OPERATOR_GROUP` has no default and fails closed; no Cognito mutation was performed | `internal/middleware/operator_auth_test.go`, operator service/handler tests, migration audit tests, and mocked Terraform alarm tests |
 | SEC-001 | No pagination/file | Never reuse; issue another after expiry/failure | Successful connect owns later channel behavior; no issuance event | `migrations/000050_websocket_tickets.up.sql`; deployed WebSocket unverified | `internal/services/websocket_ticket_service_test.go`, `internal/repositories/postgres/websocket_ticket_repo_test.go`, `internal/handlers/websocket_ticket_handler_test.go`, `tests/unit/websocket_handler_test.go`; at most 60-second TTL |
-| ACC-001 | List uses page/limit, default 1/10, maximum 100; no file | Draft/posted/reversed; mutations unsafe to retry after timeout | No event; refetch journal and ledger after success | `migrations/000008_ledger_entries.up.sql`, `migrations/000025_add_document_platform.up.sql`, `migrations/000029_add_projects_and_reporting.up.sql` | `internal/services/journal_invariants_test.go`, `tests/unit/journal_handler_test.go`; no fiscal lock or versioning |
-| ACC-002 | List uses page/limit, default 1/10, maximum 100; no file | Synchronous reads; retry safe | No event; invalidate after journal/payment posting or reversal | `migrations/000008_ledger_entries.up.sql`, `migrations/000025_add_document_platform.up.sql`, `migrations/000029_add_projects_and_reporting.up.sql` | `tests/unit/ledger_service_test.go`; float response and no statement hierarchy |
+| ACC-001 | Account/bank/audit lists are bounded unpaginated responses; bank import parses at most 10,000 CSV rows from verified pending upload metadata | Journal states remain draft/posted/reversed; reversal follows configured blocked/next-open policy; statement pending/reconciled | No event; invalidate policy/accounts/journal/ledger/bank state after confirmed mutation | Expand-first paired `000058_accounting_completeness`; deploy migration before application | Journal lock/override/reversal/branch tests, accounting migration tests, payment invariants, route-permission tests; S3 upload path externally unverified |
+| ACC-002 | Report query uses standard page/limit and CSV export/share behavior; `currency` is required for accounting statements/diagnostics | Posted-ledger read-only projection; safe to repeat; diagnostics never repair | No event; invalidate after any posting/reversal/opening/bank adjustment | `000058` backfills branch and authoritative account metadata before enabling reports | PostgreSQL reporting query tests, service reconciliation checks, generated Swagger and both OpenAPI files |
 | AUTH-001 | No pagination/file | OTP/session retry follows current rate/cooldown behavior; errors are not stable | No auth event contract; invalidate local session/profile after verify/refresh/logout | `migrations/000023_add_phone_auth_fields.up.sql`; Cognito/SMS rollout unverified | `internal/services/auth_phone_test.go`, `tests/unit/auth_service_test.go`, `tests/integration/auth_test.go`; enumeration, linking, device/session, MFA and audit gaps |
 | ASSET-001 | PUT bytes to opaque signed URL; no download/completion contract here | Request a new URL after expiry; PUT success is not completion proof | No asset-ready event; do not invalidate/show final asset as complete | `migrations/000032_add_storefront_enterprise_features.up.sql`, `migrations/000033_add_more_screen_parity.up.sql`, `infrastructure/terraform/s3.tf`; S3 externally unverified | `internal/services/s3_service_test.go`, `tests/unit/business_service_test.go`, `internal/services/commerce_service_test.go`, `tests/unit/commerce_handler_test.go`; missing checksum/HEAD/scan/reference transaction |
 | IMP-001 | Job list uses page/limit; upload is multipart; job payloads are JSON strings | Queued rows have no processor/restart contract | No import event; do not depend on progress invalidation | `migrations/000030_add_swipe_billing_ops.up.sql`; keep UI disabled | `tests/unit/billing_ops_handler_test.go`; no durable validation/commit worker found in `internal/workers`, `cmd`, or `infrastructure/terraform` |
@@ -918,109 +919,97 @@ Evidence: `internal/handlers/auth_handler.go`, `internal/services/auth_service.g
 `tests/integration/auth_test.go`, and
 `migrations/000023_add_phone_auth_fields.up.sql`.
 
-## ACC-001: Current journal lifecycle
+## ACC-001: Fiscal controls, posting and bank reconciliation
 
-All routes require bearer auth, effective business scope, and all-branches
-scope. Reads require `reports.view`; mutations require `documents.manage`.
+All routes require bearer auth, effective business, and all-branches scope.
+Reads use `reports.view`. Fiscal/account mutations use `accounting.manage`; bank
+setup, import, matching and close use `banking.manage`. A journal write uses
+`accounting.manage`. Document and payment origination retains its domain write
+permission and additionally requires `accounting.manage` when it can post.
 
-| Method and path | Request body | Success | Endpoint-specific failures |
-| --- | --- | --- | --- |
-| `GET /journals?page=1&limit=10` | none | `200 {"data":[],"total":0,"page":1,"limit":10}` | `500 {"error":"..."}` unstable |
-| `GET /journals/{id}` | none | `200` journal | `404 {"error":"journal not found"}` |
-| `POST /journals` | create input below | `201` journal | bind `400`; service errors, including some validation errors, are unstable `500` text |
-| `PUT /journals/{id}` | full create input below | `200` journal | `400` only for `only draft journals can be updated` or `journal is not balanced`; `404`; other `500` text |
-| `DELETE /journals/{id}` | none | `204` no body | `400` only for `only draft journals can be deleted`; `404`; other `500` text |
-| `POST /journals/{id}/post` | none | `200` journal | `400 {"error":"journal already posted"}`; `404`; other `500` text |
-| `POST /journals/{id}/reverse` | none | `201` compensating journal | `400` only for `only posted journals can be reversed`; `404`; other errors, including payment-workflow routing, are unstable `500` text |
+| Method and path | Input | Success |
+| --- | --- | --- |
+| `GET/PUT /accounting/policy` | PUT: `lock_date`, `reversal_policy` (`next_open_period` or `blocked`) | `200` policy |
+| `GET /accounting/accounts` | none | `200` authoritative account array |
+| `PUT /accounting/accounts/{code}` | `name`, `account_class`, optional `parent_code` | `200` account; cycles and cross-class parents are rejected |
+| `POST /accounting/opening-balances` | body command below | `201` source-linked posted journal |
+| `GET /accounting/audit` | none | `200` latest bounded audit array |
+| `GET/POST /accounting/bank-accounts` | POST: `name`, `currency`, `masked_account`, `ledger_account`, `opening_minor` | `200` array / `201` account |
+| `POST /accounting/bank-statements` | tenant/uploader-bound clean pending `upload_id`, account, command key and period | `201` pending statement |
+| `GET /accounting/bank-statements/{id}/transactions?unreconciled=true` | none | `200` transaction and active-match states |
+| `GET /accounting/bank-transactions/{id}/suggestions` | none | `200` bounded exact/fuzzy candidates; no mutation |
+| `POST/DELETE /accounting/bank-transactions/{id}/match` | ledger ID/reason or unmatch reason | `201` match / `204` |
+| `POST /accounting/bank-transactions/{id}/adjustment` | `kind` (`fee` or `interest`), reason, idempotency key | `201` posted journal and match atomically |
+| `POST /accounting/bank-statements/{id}/reconcile` | `reconciliation_date` | `200` only when every transaction is matched |
 
-The exact create/update body has required `name` and `lines` with at least two
-entries; optional `business_id` is overwritten by effective scope. Optional
-top-level fields are `reference`, `project_id`, `posting_date`, `notes`, and
-`status`. Each line requires `account_code`, `account_name`, `entry_type`
-(`debit` or `credit`), and positive `amount`; optional fields are `currency`,
-`description`, `document_id`, and `metadata`.
+The bank CSV is read server-side only after the pending upload is tenant-bound,
+uploader-bound, scan-clean, `bank_statement`, and `text/csv`. Required headings
+are `external_id,transaction_at,amount_minor,currency`; optional headings are
+`reference,description`. Dates use `YYYY-MM-DD`; maximum 10,000 rows. Currency,
+period, account, direction, amount, active statement and tenant scope are
+revalidated transactionally.
 
-```json
-{
-  "name": "Opening adjustment",
-  "reference": "JV-42",
-  "posting_date": "2026-09-01T12:00:00Z",
-  "notes": "approved adjustment",
-  "status": "draft",
-  "lines": [
-    {"account_code":"1100","account_name":"Cash","entry_type":"debit","amount":100,"currency":"INR"},
-    {"account_code":"3100","account_name":"Equity","entry_type":"credit","amount":100,"currency":"INR"}
-  ]
-}
-```
-
-The exact response fields are `id`, `business_id`, `name`, optional `reference`,
-optional `project_id`, `status`, `posting_date`, optional `notes`, optional
-`source_type`, optional `source_id`, optional `reversal_of_id`, optional
-`posted_at`, optional `reversed_at`, `created_at`, `updated_at`, and optional
-`lines`. Each line has `id`, `journal_id`, `account_code`, `account_name`,
-`entry_type`, `amount`, `currency`, optional `description`, optional
-`document_id`, optional `document_line_id`, optional `metadata` as a
-JSON-encoded string, `created_at`, and `updated_at`.
+Opening body example:
 
 ```json
-{
-  "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-  "business_id": "22222222-2222-4222-8222-222222222222",
-  "name": "Opening adjustment",
-  "reference": "JV-42",
-  "status": "draft",
-  "posting_date": "2026-09-01T12:00:00Z",
-  "created_at": "2026-09-01T12:00:00Z",
-  "updated_at": "2026-09-01T12:00:00Z",
-  "lines": [
-    {"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","journal_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","account_code":"1100","account_name":"Cash","entry_type":"debit","amount":100,"currency":"INR","created_at":"2026-09-01T12:00:00Z","updated_at":"2026-09-01T12:00:00Z"}
-  ]
-}
+{"idempotency_key":"open-2026","as_of_date":"2026-04-01T00:00:00Z","lines":[{"account_code":"CASH","account_name":"Cash","account_class":"asset","entry_type":"debit","amount_minor":10000,"currency":"INR"},{"account_code":"OPENING_EQUITY","account_name":"Opening equity","account_class":"equity","entry_type":"credit","amount_minor":10000,"currency":"INR"}],"inventory":[]}
 ```
 
-States are `draft`, `posted`, and `reversed`. Balancing is enforced per
-currency after rounding to cents; posted journals are immutable. Reversal
-creates a posted compensating journal and marks the original reversed. Payment
-journals must use the payment-reversal workflow. There is no request idempotency,
-optimistic version, fiscal lock, step-up, or stable error code. After an
-ambiguous mutation response, refetch and do not retry blindly.
+Posted journals, canonical invoice issue, issued document conversion/origination,
+payment posting, bank adjustment, and inventory adjustment/transfer/reset/
+assembly all enforce the fiscal lock. When posting date is locked, send a UUID
+`Idempotency-Key`, one-use `X-Step-Up-Token`, and 8-500 character
+`X-Lock-Override-Reason`. Missing or invalid authorization returns exact
+`428 {"error":"scoped step-up and override reason are required","code":"accounting_period_locked"}`.
+An override is bound to business, subject, action, resource, command identity,
+posting date and reason, then consumed in the same transaction as the financial
+effect. Reversals either fail under `blocked` or post on the first day after the
+lock under `next_open_period`. Issued documents cannot use draft cancellation;
+they must use the financial reversal workflow.
 
-Evidence: `internal/app/runtime.go`, `internal/handlers/journal_handler.go`,
-`internal/services/journal_service.go`, `internal/models/journal.go`,
-`internal/services/journal_invariants_test.go`,
-`tests/unit/journal_handler_test.go`,
-`migrations/000025_add_document_platform.up.sql`.
+Opening balance and bank statement keys replay only the exact tenant-bound
+request hash; changed reuse fails. Bank adjustment unmatch atomically reverses
+its journal. No bank or reconciliation endpoint auto-repairs data. Bank file
+storage and deployed scanning remain externally unverified.
 
-## ACC-002: Current general ledger reads
+Evidence: `internal/services/accounting_service.go`, journal/payment/document/
+inventory services, `internal/services/journal_invariants_test.go`,
+`internal/services/payment_invariants_test.go`,
+`migrations/000058_accounting_completeness.up.sql`, and route security tests.
 
-`GET /ledger?page=1&limit=10` and `GET /ledger/balance` require bearer auth,
-effective business, all branches, and `reports.view`. Pagination defaults to
-page 1/limit 10 and caps at 100. The list returns `data`, `total`, `page`, and
-`limit`; balance returns `200 {"balance":100}`. Both map service failures to
-unstable `500 {"error":"..."}`.
+## ACC-002: Accounting statements and diagnostics
 
-Each list entry has `id`, `business_id`, optional `invoice_id`, optional
-`payment_id`, optional `project_id`, `transaction_id`, `entry_date`,
-`entry_type`, optional `category`, `description`, `amount`, `currency`,
-`balance`, and `created_at`.
+Use the standard report endpoint with keys `trial_balance`, `balance_sheet`, and
+`account_drilldown`:
 
-```json
-{
-  "data": [{"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","business_id":"22222222-2222-4222-8222-222222222222","transaction_id":"JV-42","entry_date":"2026-09-01T12:00:00Z","entry_type":"debit","description":"Opening adjustment","amount":100,"currency":"INR","balance":100,"created_at":"2026-09-01T12:00:00Z"}],
-  "total": 1,
-  "page": 1,
-  "limit": 10
-}
+```http
+POST /reports/trial_balance/query
+Content-Type: application/json
+
+{"page":1,"limit":50,"filters":{"date_from":"2026-04-01T00:00:00Z","date_to":"2027-03-31T23:59:59Z","currency":"INR","branch_id":"optional-uuid","compare_to":"2026-03-31T23:59:59Z"}}
 ```
 
-These floating-point projections are not a Trial Balance, Balance Sheet,
-opening-balance workflow, fiscal-lock contract, or bank reconciliation. Reads
-are safe to retry; no event contract exists. Evidence:
-`internal/app/runtime.go`, `internal/handlers/ledger_handler.go`,
-`internal/services/ledger_service.go`, `internal/models/ledger.go`,
-`tests/unit/ledger_service_test.go`, `migrations/000008_ledger_entries.up.sql`,
-and `migrations/000029_add_projects_and_reporting.up.sql`.
+Trial Balance rows provide account code/name/class/parent plus opening, period,
+closing and comparison debit/credit minor-unit totals. Balance Sheet returns
+asset, liability and equity hierarchy rows plus `assets_minor`,
+`liabilities_minor`, and `equity_minor` totals. Account drilldown requires
+`filters.account_code`. Only posted journals contribute. Currency is required;
+branch scope is permission-filtered. Standard `/export` and `/share` variants
+provide the existing CSV/export-record and share contracts.
+
+`GET /accounting/reconciliation-diagnostics?currency=INR&through=<RFC3339>`
+returns `journal_ledger_differences`, `inventory_gl_difference_minor`,
+`tax_gl_difference_minor`, `currency`, and constant `read_only:true`. Missing or
+invalid currency returns `400`. The endpoint compares canonical journal/ledger
+tuples, opening inventory plus stock movement against inventory GL, and signed
+document tax against tax GL. It never mutates or repairs.
+
+Results are synchronous and retry-safe. Invalidate after journal/document/
+payment/inventory/opening/bank adjustment or reversal. Evidence:
+`internal/repositories/postgres/reporting_repo.go`, `internal/reporting/registry.go`,
+`internal/services/accounting_service.go`,
+`internal/repositories/postgres/accounting_reporting_test.go`, and migration
+`000058`.
 
 ## OPS-004: Document GST compliance commands and status
 
@@ -1711,7 +1700,7 @@ and `tests/unit/report_handler_test.go`.
 | Customer-safe aggregate GST/provider truth and recovery | `missing` around OPS-004/005/006 | Keep provider-backed success UI disabled: absent provider configuration selects a simulator that can fabricate IRN/ack/e-way bill values. A local succeeded state is not government-system evidence. Evidence: `internal/services/gst_provider.go`. |
 | Staging verification evidence | `missing` and `externally unverified` | Do not label a provider operational from local tests. |
 | Step-up, TOTP, durable devices/sessions and privacy workflows | `missing` | Do not expose placeholder controls. |
-| Trial Balance, Balance Sheet, fiscal lock/opening balance and bank reconciliation | `missing` around ACC-001/002 | Current journals and ledger reads do not prove these Phase 2 contracts. |
+| Trial Balance, Balance Sheet, fiscal lock/opening balance and bank reconciliation | ACC-001/002 `complete` locally; bank object/scanner deployment externally unverified | Enable from the ACC contracts after migration `000058`; do not label uploaded bank files operational until storage/scanning is verified. |
 | Durable two-phase customer/vendor/product import | `missing`; unsafe intake now fail-closed by CAP-001 | Keep imports disabled until Task 7 replaces the unsupported capability state. |
 | Verified upload completion, editable cart, race-safe coupons and typed XLSX | `missing` around partial surfaces | Do not simulate completion client-side. |
 | AI risk/approval/budget/kill-switch governance | `missing` around unsafe AI-001 descriptive capabilities and read-only voice tools | Do not enable governed high-risk agent actions. |

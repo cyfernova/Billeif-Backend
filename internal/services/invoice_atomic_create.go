@@ -60,6 +60,7 @@ func (c *invoiceSalesDocumentCreator) CreateSalesInvoiceDocument(ctx context.Con
 		IdempotencyKey:       input.IdempotencyKey,
 		CustomerID:           input.PartyID,
 		ProjectID:            input.ProjectID,
+		BranchID:             input.BranchID,
 		PriceListID:          input.PriceListID,
 		RenderProfileID:      input.RenderProfileID,
 		InvoiceDate:          input.IssueDate,
@@ -146,8 +147,7 @@ func (c *invoiceSalesDocumentCreator) createInvoiceDocument(ctx context.Context,
 }
 
 func validateSalesInvoiceDelegationInput(businessID string, input CreateDocumentInput) error {
-	unsupported := input.BranchID != "" ||
-		(input.BusinessID != "" && input.BusinessID != businessID) ||
+	unsupported := (input.BusinessID != "" && input.BusinessID != businessID) ||
 		(input.PartyType != "" && input.PartyType != models.DocumentPartyTypeCustomer) ||
 		(input.Status != "" && input.Status != models.DocumentStatusDraft) ||
 		(input.DraftState != "" && input.DraftState != models.DocumentDraftStateDraft) ||

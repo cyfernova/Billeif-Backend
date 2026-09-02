@@ -23,6 +23,9 @@ var catalog = []Definition{
 	{Key: "vendor_ledger", Name: "Vendor Ledger", Category: "accounting", Description: "Vendor-facing payable ledger.", Family: "vendor_ledger", DefaultColumns: ledgerColumns("party_name", "Vendor")},
 	{Key: "general_ledger", Name: "General Ledger", Category: "accounting", Description: "Posted ledger entries.", Family: "general_ledger", DefaultColumns: generalLedgerColumns()},
 	{Key: "journal_register", Name: "Journal Register", Category: "accounting", Description: "Journals and balancing totals.", Family: "journal_register", DefaultColumns: journalColumns()},
+	{Key: "trial_balance", Name: "Trial Balance", Category: "accounting", Description: "Posted account opening, period and closing totals in minor units.", Family: "trial_balance", DefaultColumns: trialBalanceColumns()},
+	{Key: "balance_sheet", Name: "Balance Sheet", Category: "accounting", Description: "Posted asset, liability and equity balances in minor units.", Family: "balance_sheet", DefaultColumns: balanceSheetColumns()},
+	{Key: "account_drilldown", Name: "Account Drilldown", Category: "accounting", Description: "Posted journal lines for one account.", Family: "account_drilldown", DefaultColumns: accountDrilldownColumns()},
 	{Key: "payment_register", Name: "Payment Register", Category: "accounting", Description: "Recorded payments and receipts.", Family: "payment_register", DefaultColumns: paymentColumns()},
 	{Key: "receipts_register", Name: "Receipts Register", Category: "accounting", Description: "Incoming receipts.", Family: "payment_register", DefaultColumns: paymentColumns()},
 	{Key: "receivables", Name: "Receivables", Category: "accounting", Description: "Outstanding customer receivables.", Family: "receivables", DefaultColumns: balanceColumns("party_name", "Customer")},
@@ -169,6 +172,23 @@ func journalColumns() []Column {
 		{Key: "debit_total", Label: "Debit", Type: "number"},
 		{Key: "credit_total", Label: "Credit", Type: "number"},
 	}
+}
+
+func trialBalanceColumns() []Column {
+	return []Column{
+		{Key: "account_class", Label: "Class", Type: "string"}, {Key: "account_code", Label: "Account Code", Type: "string"}, {Key: "account_name", Label: "Account", Type: "string"}, {Key: "parent_code", Label: "Parent Account", Type: "string"}, {Key: "currency", Label: "Currency", Type: "string"},
+		{Key: "opening_debit_minor", Label: "Opening Debit (minor)", Type: "integer"}, {Key: "opening_credit_minor", Label: "Opening Credit (minor)", Type: "integer"}, {Key: "period_debit_minor", Label: "Period Debit (minor)", Type: "integer"}, {Key: "period_credit_minor", Label: "Period Credit (minor)", Type: "integer"}, {Key: "closing_debit_minor", Label: "Closing Debit (minor)", Type: "integer"}, {Key: "closing_credit_minor", Label: "Closing Credit (minor)", Type: "integer"}, {Key: "comparison_debit_minor", Label: "Comparison Debit (minor)", Type: "integer"}, {Key: "comparison_credit_minor", Label: "Comparison Credit (minor)", Type: "integer"},
+	}
+}
+
+func balanceSheetColumns() []Column {
+	return []Column{
+		{Key: "account_class", Label: "Class", Type: "string"}, {Key: "account_code", Label: "Account Code", Type: "string"}, {Key: "account_name", Label: "Account", Type: "string"}, {Key: "parent_code", Label: "Parent Account", Type: "string"}, {Key: "currency", Label: "Currency", Type: "string"}, {Key: "opening_minor", Label: "Opening (minor)", Type: "integer"}, {Key: "period_minor", Label: "Period (minor)", Type: "integer"}, {Key: "closing_minor", Label: "Closing (minor)", Type: "integer"}, {Key: "comparison_closing_minor", Label: "Comparison Closing (minor)", Type: "integer"},
+	}
+}
+
+func accountDrilldownColumns() []Column {
+	return []Column{{Key: "posting_date", Label: "Posting Date", Type: "date"}, {Key: "journal_id", Label: "Journal", Type: "string"}, {Key: "reference", Label: "Reference", Type: "string"}, {Key: "account_code", Label: "Account Code", Type: "string"}, {Key: "account_name", Label: "Account", Type: "string"}, {Key: "currency", Label: "Currency", Type: "string"}, {Key: "debit_minor", Label: "Debit (minor)", Type: "integer"}, {Key: "credit_minor", Label: "Credit (minor)", Type: "integer"}}
 }
 
 func paymentColumns() []Column {

@@ -81,6 +81,8 @@ func (h *DocumentHandler) Get(c *gin.Context) {
 // @Produce json
 // @Security BearerAuth
 // @Param Idempotency-Key header string false "Required UUID for sales invoice documents"
+// @Param X-Step-Up-Token header string false "Required for locked-period override"
+// @Param X-Lock-Override-Reason header string false "Required reason for locked-period override"
 // @Param input body services.CreateDocumentInput true "Document details"
 // @Success 201 {object} interface{}
 // @Failure 400 {object} map[string]string
@@ -106,9 +108,14 @@ func (h *DocumentHandler) Create(c *gin.Context) {
 		return
 	}
 	input.IdempotencyKey = idempotencyKey
+	input.Authorization = accountingPostingAuthorization(c, "document:new:"+h.documentType)
 	requestContextWithActor(c)
 	document, err := h.svc.CreateByType(c.Request.Context(), businessID, h.documentType, input)
 	if err != nil {
+		if errors.Is(err, services.ErrAccountingPeriodLocked) {
+			writeAccountingStepUpRequired(c)
+			return
+		}
 		c.JSON(invoiceCreateErrorStatus(err), gin.H{"error": err.Error()})
 		return
 	}
@@ -141,8 +148,13 @@ func (h *DocumentHandler) Update(c *gin.Context) {
 		return
 	}
 	requestContextWithActor(c)
+	input.Authorization = accountingPostingAuthorization(c, "document:"+c.Param("id"))
 	document, err := h.svc.UpdateByType(c.Request.Context(), businessID, c.Param("id"), h.documentType, input)
 	if err != nil {
+		if errors.Is(err, services.ErrAccountingPeriodLocked) {
+			writeAccountingStepUpRequired(c)
+			return
+		}
 		c.JSON(documentUpdateErrorStatus(err), gin.H{"error": err.Error()})
 		return
 	}
@@ -281,8 +293,13 @@ func (h *DocumentUtilityHandler) Convert(c *gin.Context) {
 		return
 	}
 	requestContextWithActor(c)
+	input.Authorization = accountingPostingAuthorization(c, "document-conversion:"+c.Param("id"))
 	document, err := h.svc.ConvertByBusiness(c.Request.Context(), businessID, c.Param("id"), input)
 	if err != nil {
+		if errors.Is(err, services.ErrAccountingPeriodLocked) {
+			writeAccountingStepUpRequired(c)
+			return
+		}
 		statusCode := http.StatusInternalServerError
 		if isNotFoundErr(err) {
 			statusCode = http.StatusNotFound

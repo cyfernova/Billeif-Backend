@@ -82,6 +82,7 @@ type POSSessionCart struct {
 }
 
 type CheckoutPOSCartInput struct {
+	Authorization       PostingAuthorization   `json:"-"`
 	PartyID             string                 `json:"party_id,omitempty"`
 	PartyType           string                 `json:"party_type,omitempty"`
 	Status              string                 `json:"status,omitempty"`
@@ -410,6 +411,13 @@ func (s *POSService) Checkout(ctx context.Context, businessID, userID, sessionID
 	if err != nil {
 		return nil, err
 	}
+	if session.WarehouseID != nil {
+		var warehouse models.Warehouse
+		if err := s.db.WithContext(ctx).Select("branch_id").Where("id=? AND business_id=? AND deleted_at IS NULL", *session.WarehouseID, businessID).First(&warehouse).Error; err != nil {
+			return nil, fmt.Errorf("warehouse branch: %w", err)
+		}
+		createInput.BranchID = posStringValue(warehouse.BranchID)
+	}
 	document, err := s.documents.createPOSSalesInvoice(ctx, businessID, createInput)
 	if err != nil {
 		return nil, err
@@ -424,6 +432,7 @@ func (s *POSService) Checkout(ctx context.Context, businessID, userID, sessionID
 			ExpectedVersion: 1,
 			DocumentType:    invoiceDocumentTypeForTaxProfile(createInput.TaxProfile),
 			Series:          "POS",
+			Authorization:   input.Authorization,
 		},
 	)
 	if err != nil {
