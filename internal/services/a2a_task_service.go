@@ -451,6 +451,8 @@ func (s *A2ATaskService) executeTask(ctx context.Context, task *a2a.Task, req *a
 func rejectUngovernedA2ATask(req *a2a.SendMessageRequest) error {
 	taskType := a2aTaskType(req)
 	switch taskType {
+	case "":
+		return nil
 	case "merchant.process_cart", taskTypeProcurementQuoteRequest,
 		taskTypeProcurementNegotiationCounter, taskTypeProcurementNegotiationAccept,
 		taskTypeProcurementNegotiationReject, "payment.process", "bargaining.notification":

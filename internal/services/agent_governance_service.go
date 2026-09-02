@@ -309,14 +309,28 @@ func (service *AgentGovernanceService) ExecuteTool(ctx context.Context, request 
 		return nil, ErrAgentToolDenied
 	}
 	now := service.now().UTC()
-	if !request.DeadlineAt.After(now) {
-		return nil, interfaces.ErrAgentGovernanceRunExpired
-	}
 	modelConfig := safeJSONObject(request.ModelConfig)
 	templateVersion := safeCode(request.PromptTemplateVersion)
 	requestHash := hashGovernanceFields(request.BusinessID, request.AgentID, request.UserID, request.ToolKey,
 		request.ArgumentsHash, request.ResourceType, request.ResourceID, request.IdempotencyKey,
 		request.ProviderKey, request.ModelKey, modelConfig, templateVersion)
+	replayed, found, err := service.repository.FindToolExecutionReplay(ctx, interfaces.FindAgentToolExecutionReplayQuery{
+		RunID: request.RunID, BusinessID: request.BusinessID, AgentID: request.AgentID, UserID: request.UserID,
+		RunIdempotencyKey: request.IdempotencyKey + ":run", ToolKey: request.ToolKey,
+		ToolIdempotencyKey: request.IdempotencyKey, RequestHash: requestHash, ArgumentsHash: request.ArgumentsHash,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%w: lookup replay", ErrAgentToolDenied)
+	}
+	if found {
+		if replayed == nil {
+			return nil, ErrAgentToolReplayUnavailable
+		}
+		return replayedAgentToolResult(replayed)
+	}
+	if !request.DeadlineAt.After(now) {
+		return nil, interfaces.ErrAgentGovernanceRunExpired
+	}
 	_, err = service.repository.StartRun(ctx, interfaces.StartAgentRunCommand{
 		ID: request.RunID, BusinessID: request.BusinessID, AgentID: request.AgentID, UserID: request.UserID,
 		IdempotencyKey: request.IdempotencyKey + ":run", RequestHash: requestHash,

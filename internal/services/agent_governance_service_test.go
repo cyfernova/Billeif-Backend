@@ -170,6 +170,61 @@ func TestAgentGovernanceReplayConvergesWithoutInvokingTransport(t *testing.T) {
 	}
 }
 
+func TestAgentGovernanceTerminalReplayConvergesAfterAdmissionCloses(t *testing.T) {
+	tests := []struct {
+		name       string
+		deadlineAt time.Time
+	}{
+		{name: "deadline expired", deadlineAt: time.Date(2026, 9, 2, 11, 59, 59, 0, time.UTC)},
+		{name: "durable gate disabled", deadlineAt: time.Date(2099, 9, 2, 12, 0, 20, 0, time.UTC)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repository := &governanceRepositoryFake{
+				findExecution: &interfaces.AgentToolExecutionResult{
+					Status: "succeeded", ResultType: "invoice", ResultID: "inv-safe-1",
+				},
+				startRunErr: interfaces.ErrAgentGovernanceGateDisabled,
+			}
+			service := NewAgentGovernanceService(AgentGovernanceServiceConfig{
+				ExecutionEnabled: true, Repository: repository, Permissions: allowGovernancePermission{},
+				Now: func() time.Time { return time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC) },
+			})
+			request := validGovernedToolRequest(t)
+			request.DeadlineAt = test.deadlineAt
+			invocations := 0
+			output, err := service.ExecuteTool(context.Background(), request, func(context.Context, string, json.RawMessage) (GovernedToolInvocationResult, error) {
+				invocations++
+				return GovernedToolInvocationResult{}, nil
+			})
+			if err != nil || string(output) != `{"result_id":"inv-safe-1","result_type":"invoice"}` || invocations != 0 || repository.startRunCalls != 0 {
+				t.Fatalf("ExecuteTool() = (%s, %v, invocations=%d, startRunCalls=%d), want safe durable replay", output, err, invocations, repository.startRunCalls)
+			}
+		})
+	}
+}
+
+func TestAgentGovernanceReplayLookupIsScopedAndMismatchFailsClosed(t *testing.T) {
+	repository := &governanceRepositoryFake{findExecutionErr: interfaces.ErrAgentGovernanceConflict}
+	service := NewAgentGovernanceService(AgentGovernanceServiceConfig{
+		ExecutionEnabled: true, Repository: repository, Permissions: allowGovernancePermission{},
+		Now: func() time.Time { return time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC) },
+	})
+	request := validGovernedToolRequest(t)
+	invocations := 0
+	_, err := service.ExecuteTool(context.Background(), request, func(context.Context, string, json.RawMessage) (GovernedToolInvocationResult, error) {
+		invocations++
+		return GovernedToolInvocationResult{}, nil
+	})
+	query := repository.findQuery
+	if !errors.Is(err, ErrAgentToolDenied) || invocations != 0 || repository.startRunCalls != 0 ||
+		query.RunID != request.RunID || query.BusinessID != request.BusinessID || query.AgentID != request.AgentID ||
+		query.UserID != request.UserID || query.ToolKey != request.ToolKey || query.RunIdempotencyKey != request.IdempotencyKey+":run" ||
+		query.ToolIdempotencyKey != request.IdempotencyKey || query.RequestHash == "" || query.ArgumentsHash != request.ArgumentsHash {
+		t.Fatalf("ExecuteTool() = (%v, invocations=%d, startRunCalls=%d, query=%#v), want scoped fail-closed lookup", err, invocations, repository.startRunCalls, query)
+	}
+}
+
 func TestAgentGovernancePersistsAuthoritativeUsageAndCost(t *testing.T) {
 	repository := &governanceRepositoryFake{}
 	service := NewAgentGovernanceService(AgentGovernanceServiceConfig{
@@ -348,6 +403,11 @@ type governanceRepositoryFake struct {
 	interfaces.AgentGovernanceRepository
 	completeToolErr      error
 	authorizeReplayed    bool
+	findExecution        *interfaces.AgentToolExecutionResult
+	findExecutionErr     error
+	findQuery            interfaces.FindAgentToolExecutionReplayQuery
+	startRunErr          error
+	startRunCalls        int
 	completeTool         interfaces.CompleteAgentToolCommand
 	completeRun          interfaces.CompleteAgentRunCommand
 	executionCheckErrors []error
@@ -374,8 +434,14 @@ func validGovernedToolRequest(t *testing.T) GovernedToolRequest {
 	}
 }
 
-func (*governanceRepositoryFake) StartRun(context.Context, interfaces.StartAgentRunCommand) (*interfaces.AgentRunResult, error) {
-	return &interfaces.AgentRunResult{ID: "11111111-1111-4111-8111-111111111111", Status: "running"}, nil
+func (f *governanceRepositoryFake) StartRun(context.Context, interfaces.StartAgentRunCommand) (*interfaces.AgentRunResult, error) {
+	f.startRunCalls++
+	return &interfaces.AgentRunResult{ID: "11111111-1111-4111-8111-111111111111", Status: "running"}, f.startRunErr
+}
+
+func (f *governanceRepositoryFake) FindToolExecutionReplay(_ context.Context, query interfaces.FindAgentToolExecutionReplayQuery) (*interfaces.AgentToolExecutionResult, bool, error) {
+	f.findQuery = query
+	return f.findExecution, f.findExecution != nil, f.findExecutionErr
 }
 
 func (f *governanceRepositoryFake) AuthorizeToolExecution(context.Context, interfaces.AuthorizeAgentToolCommand) (*interfaces.AgentToolExecutionResult, error) {

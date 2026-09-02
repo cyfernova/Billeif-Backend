@@ -413,6 +413,42 @@ func (r *AgentGovernanceRepository) ReadToolExecution(ctx context.Context, query
 	return toolResult(execution, true), nil
 }
 
+func (r *AgentGovernanceRepository) FindToolExecutionReplay(ctx context.Context, query interfaces.FindAgentToolExecutionReplayQuery) (*interfaces.AgentToolExecutionResult, bool, error) {
+	if r == nil || r.db == nil || query.RunID == "" || query.RunIdempotencyKey == "" || query.ToolKey == "" || query.ToolIdempotencyKey == "" ||
+		!validGovernanceScope(query.BusinessID, query.AgentID, query.UserID) || !validHash(query.RequestHash) || !validHash(query.ArgumentsHash) {
+		return nil, false, interfaces.ErrAgentGovernanceInvalidScope
+	}
+	var run models.AIAgentRun
+	err := r.db.WithContext(ctx).Where(
+		"business_id = ? AND agent_id = ? AND user_id = ? AND idempotency_key = ?",
+		query.BusinessID, query.AgentID, query.UserID, query.RunIdempotencyKey,
+	).First(&run).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("find agent replay run: %w", err)
+	}
+	if run.ID != query.RunID || run.RequestHash != query.RequestHash {
+		return nil, false, interfaces.ErrAgentGovernanceConflict
+	}
+	var execution models.AIToolExecution
+	err = r.db.WithContext(ctx).Where(
+		"run_id = ? AND business_id = ? AND agent_id = ? AND user_id = ? AND idempotency_key = ?",
+		query.RunID, query.BusinessID, query.AgentID, query.UserID, query.ToolIdempotencyKey,
+	).First(&execution).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("find agent tool replay: %w", err)
+	}
+	if execution.ToolKey != query.ToolKey || execution.RequestHash != query.RequestHash || execution.ArgumentsHash != query.ArgumentsHash {
+		return nil, false, interfaces.ErrAgentGovernanceConflict
+	}
+	return toolResult(execution, true), true, nil
+}
+
 func (r *AgentGovernanceRepository) CompleteRun(ctx context.Context, c interfaces.CompleteAgentRunCommand) (*interfaces.AgentRunResult, error) {
 	if r == nil || r.db == nil || !validGovernanceScope(c.BusinessID, c.AgentID, c.UserID) || c.RunID == "" || !validHash(c.RequestHash) {
 		return nil, interfaces.ErrAgentGovernanceInvalidScope

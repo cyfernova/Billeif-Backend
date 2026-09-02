@@ -95,6 +95,13 @@ type ReadAgentToolExecutionQuery struct {
 	ExecutionID, RunID, BusinessID, AgentID, UserID string
 }
 
+type FindAgentToolExecutionReplayQuery struct {
+	RunID, BusinessID, AgentID, UserID string
+	RunIdempotencyKey, ToolKey         string
+	ToolIdempotencyKey                 string
+	RequestHash, ArgumentsHash         string
+}
+
 type CompleteAgentToolCommand struct {
 	ExecutionID, RunID, BusinessID, AgentID, UserID string
 	RequestHash, Status, EffectDisposition          string
@@ -156,6 +163,7 @@ type AgentGovernanceRepository interface {
 	StartRun(context.Context, StartAgentRunCommand) (*AgentRunResult, error)
 	ReserveRunCapacity(context.Context, ReserveAgentRunCapacityCommand) (*AgentSpendReservationResult, error)
 	AuthorizeToolExecution(context.Context, AuthorizeAgentToolCommand) (*AgentToolExecutionResult, error)
+	FindToolExecutionReplay(context.Context, FindAgentToolExecutionReplayQuery) (*AgentToolExecutionResult, bool, error)
 	ReadToolExecution(context.Context, ReadAgentToolExecutionQuery) (*AgentToolExecutionResult, error)
 	CompleteToolExecution(context.Context, CompleteAgentToolCommand) (*AgentToolExecutionResult, error)
 	CompleteRun(context.Context, CompleteAgentRunCommand) (*AgentRunResult, error)
