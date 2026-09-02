@@ -118,30 +118,27 @@ relevant tests were inspected.
    Task 0 performed no apply, application-provider call, charge, message, or
    staging probe.
 
-### Task 0 baseline classification and impact ledger
+### Current milestone completion ledger
 
-This table is the historical pre-implementation snapshot recorded by Task 0.
-It is intentionally not the current release status; use each task's `Status`
-line and the frontend handoff for post-implementation truth.
-
-| Task | Baseline classification | Evidence | Expected smallest owners and impact |
+| Task | Current classification | Completion evidence | Remaining boundary |
 | --- | --- | --- | --- |
-| 0 | `complete` for inventory; external state `externally unverified` | This plan; `docs/integration/BILLEIF_PHASE_2_FRONTEND_HANDOFF.md`; evidence paths below | Documentation only. No migration, provider call, runtime, OpenAPI, Terraform, or test change. |
-| 1 | `complete` locally with governed mutation preflights, fixed global Razorpay/LLM observation, and durable business-scoped GST health; provider health `externally unverified`; internal diagnostics `blocked` | CAP-001 evaluation, fixed global cache/observer, durable GST repository/recorder, migration 000054, and guards at report, payment/storefront, GST command, drive upload, voice, business LLM, bulk-import, and saved-payment service boundaries; focused behavior/race and migration-bundle tests are beside each owner | Expand-first migration 000054 precedes the application. Customer output and typed mutation errors are secret-safe; unknown/stale fails closed. The observer performs exactly the configured static global probes and no tenant census, discovery, rotation, or whole-table count. Explicit GST validation and real GST outcomes update one sanitized credential-revision-bound row per business/provider key; capability GET performs no provider I/O. Observer shutdown cancels and joins before dependencies close. S3/voice/WhatsApp/email remain unknown without a safe producer. Internal diagnostics require a future operator principal distinct from business owner/admin. |
-| 2 | `partial`, with an `unsafe` truth gap; Razorpay `externally unverified` | `internal/models/subscription.go`, `internal/models/payment_attempt.go`, `internal/services/subscription_service.go`, `internal/services/razorpay_payment_service.go`, `migrations/000041_add_razorpay_payment_attempts.up.sql`, `internal/services/razorpay_payment_service_test.go`, `internal/handlers/payment_handler_idempotency_test.go`, `infrastructure/terraform/tests/razorpay.tftest.hcl` | Subscription/payment models, repositories, services, handlers, webhook inbox/reconciliation worker, paired migrations, provider fixtures, OpenAPI and race/replay tests. Expand-first state conversion must not activate entitlements from stale or ambiguous events. |
-| 3 | `partial`; deployed queues/providers `externally unverified` | Render/delivery status in `internal/services/invoice_service.go` and `internal/services/invoice_delivery.go`; outbox/workers; `infrastructure/terraform/monitoring.tf` and `sns_sqs.tf` | Aggregate read service/repositories, customer and operator handlers, recovery commands, audit, metrics/alarms, permissions/step-up, OpenAPI, state/retry tests. Recovery must remain tenant-bound and idempotent. |
-| 4 | `complete` locally; every deployed dependency remains `externally unverified` | `cmd/verify`, `internal/verify`, `Makefile`; focused refusal, environment/account binding, redaction, classification, retry/concurrency, cleanup, schema and probe tests | No schema/product-state change. Read mode uses bounded control-plane/API reads; visible sandbox journeys require write mode plus explicit acknowledgement. AWS checks require the default profile, an expected account match and a non-root principal. No live verification was run in this campaign. |
-| 5 | `partial`, with `unsafe` upload/session/privacy gaps; AWS/Cognito restore state `externally unverified` | `internal/middleware/business_auth.go`, `internal/services/websocket_ticket_service.go`, `infrastructure/terraform/s3.tf`, `internal/services/report_service.go`, `internal/services/auth_service.go`, `internal/services/auth_upload_test.go`, `internal/services/auth_phone_test.go`, `.github/workflows/deploy.yml` | Step-up/session/MFA/privacy/upload/recovery owners across middleware, services, handlers, repositories, `cmd`, Terraform/CI and paired migrations. Security and data-retention impact is high; no live Cognito or paid scanner action. |
-| 6 | `partial`; banking, lock date, Trial Balance and Balance Sheet `missing` | `internal/services/journal_service.go`, `internal/services/payment_service.go`, `internal/reporting`, `internal/services/journal_invariants_test.go`, `internal/services/payment_invariants_test.go`, `internal/services/payment_postgres_integration_test.go`, `tests/unit/journal_handler_test.go`, `tests/unit/ledger_service_test.go` | Journal/payment/inventory/reporting services and repositories, new accounting/bank models, paired migrations, permissions/step-up, OpenAPI, concurrency/invariant/export tests. Posted records remain immutable and balanced by currency. |
-| 7 | `unsafe` and `partial` | `internal/handlers/billing_ops_handler.go`, `internal/services/billing_ops_service.go`, `internal/models/swipe_ops.go`, `tests/unit/billing_ops_handler_test.go`, `migrations/000030_add_swipe_billing_ops.up.sql`; no bulk-import worker found in `internal/workers`, `cmd`, or `infrastructure/terraform` | Narrow to customer/vendor/product validation and commit handlers/services/repository, S3 metadata, worker/queue/alarm, paired migrations if state is insufficient, OpenAPI and restart/idempotency/tenant/formula tests. Existing queued jobs require a compatibility and cleanup decision. |
-| 8 | `partial`, with `unsafe` asset/cart/coupon behavior; phone/S3/provider paths `externally unverified` | `internal/services/auth_phone_test.go`, `internal/services/s3_service_test.go`, `internal/services/commerce_service_test.go`, `internal/services/shopping_agent_service_test.go`, `internal/services/shopping_agent_signature_test.go`, `internal/services/report_service_test.go`, `tests/unit/commerce_handler_test.go`, `tests/unit/report_handler_test.go` | Existing owning services/handlers/models plus paired migrations for upload/cart/coupon state, report export implementation, permissions/entitlements, OpenAPI and concurrency/security tests. Saved methods remain unavailable. |
-| 9 | `partial`; capability management `unsafe`; AI providers `externally unverified` | `internal/models/agent.go`, `internal/handlers/agent_handler.go`, `internal/services/agent_service.go`, `tests/unit/agent_handler_test.go`, `tests/integration/agent_test.go`, `internal/voice/tools/authorization_test.go` | Agent/voice runtime authorization, governance models/repositories, audit/budget/approval/kill-switch services, paired migrations, provider-safe tests and AI contracts. Default deny unclassified tools; never persist secrets or unnecessary prompts. |
-| 10 | `pending`; GST filing is `deferred` | Existing OpenAPI and this initial handoff were evidence inputs, not final release proof | OpenAPI regeneration, exact handoff completion, full validation, final diff and the required non-filing GST reconciliation follow-up plan. No frontend files or deployment actions. |
+| 0 | `complete` | Evidence inventory, priorities, ownership and contract baseline | External state was not mutated. |
+| 1 | `complete` locally | CAP-001, guarded mutation seams and migration 000054 | Provider health and internal diagnostics remain externally blocked/unverified. |
+| 2 | `complete` locally | SUB-001/002/003, migration 000055 and lifecycle/replay/race tests | Razorpay deployment remains externally unverified. |
+| 3 | `complete` locally | OPS-001 through OPS-008, migration 000056, metrics and recovery tests | High-risk provider effects remain intentionally blocked. |
+| 4 | `complete` locally | `cmd/verify`, `internal/verify` and bounded verifier tests | No production or visible-write verification ran. |
+| 5 | `complete` locally | Security/privacy services, routes, migration 000057 and recovery runbook | Cognito, S3 and restore drills remain externally unverified. |
+| 6 | `complete` locally | ACC-001/002, migration 000058 and accounting/bank tests | Bank storage and scanner deployment remain externally unverified. |
+| 7 | `complete` locally | IMP-001, migration 000059, worker/queue/alarm and replay tests | S3/SQS deployment remains externally unverified. |
+| 8 | `complete` locally | AUTH/ASSET/CART/COUPON/REPORT contracts and migration 000060 | Provider paths remain externally unverified; saved methods stay deferred. |
+| 9 | `complete` locally | AI-001 governance seam, migration 000061 and adversarial/race tests | Model execution and high-risk effects remain unavailable. |
+| 10 | `complete` locally | Regenerated Swagger, final handoff, release checks and GST follow-up plan | Deployment/provider/PostgreSQL integration evidence remains external. |
 
-### Task 0 pre-implementation contract and invariant evidence
+### Historical discovery and intermediate implementation evidence
 
-This is retained historical evidence from the starting snapshot. Later task
-sections and the frontend handoff supersede its classifications.
+This retained working evidence records earlier milestone states. It is not the
+current release classification; later task sections and the frontend handoff
+supersede it.
 
 | Area | Classification | Concrete evidence and limitation |
 | --- | --- | --- |
@@ -181,7 +178,7 @@ sections and the frontend handoff supersede its classifications.
 | PostgreSQL and Redis/Valkey | Local adapters have test evidence in `internal/app/database_runtime_test.go`, `internal/app/database_pool_test.go`, `internal/migrator/postgres_test.go`, `internal/migrator/postgres_integration_test.go`, `internal/ratelimit/redis_limiter_test.go`, and `internal/ratelimit/redis_limiter_integration_test.go` | `externally unverified` for staging/production. Task 4 owns bounded environment checks. |
 | AWS control plane | Controller evidence records AWS CLI `2.36.7` and a successful read-only STS identity check for profile `default` in `ap-south-1` | Further live inspection was intentionally not run because the credentials resolved to the account root principal. No account identifier is recorded here; aside from that identity check, no resource mutation or application-provider call occurred. Task 4 requires a least-privilege non-production identity. |
 
-### Task 0 absence-search boundaries
+### Historical absence-search boundaries
 
 Negative findings are based on the owning surfaces below, not route-registration
 absence alone:
@@ -233,7 +230,7 @@ Add customer and separately authorized internal diagnostics endpoints, cache
 tenant-isolation and degradation tests, config-state/service/handler/permission
 tests, OpenAPI, and CAP handoff contracts. Customer output must be secret-safe.
 
-Task 0 baseline note (historical): no equivalent runtime model was found. Existing plan
+Historical planning note (superseded): no equivalent runtime model was found. Existing plan
 entitlements must be an input, not a replacement. Expected owners are
 `internal/config`, capability models/repositories/services/handlers,
 `internal/app/runtime.go`, permissions, OpenAPI, and planned capability service,
@@ -371,7 +368,7 @@ or activating entitlement; serialize races; reconcile missing/ambiguous events
 with bounded provider fetches. Test every named race, replay, invalid signature,
 timeout, grace, failure, mismatch, and reconciliation scenario. Add SUB contracts.
 
-Task 0 baseline note (historical): the paid flow was a one-time checkout that set one month
+Historical planning note (superseded): the paid flow was a one-time checkout that set one month
 of access, not a renewable subscription. The webhook record is too small for the
 specified inbox and reconciliation semantics. Expected owners are subscription,
 payment-attempt and webhook models/repositories/services/handlers, a
@@ -393,7 +390,7 @@ timeline operations bound to original tenant/resource. Add step-up where needed,
 metrics/alarms for queue age, failures, DLQ growth, reconciliation, latency,
 webhooks, schedules, render and delivery, plus OPS contracts and tests.
 
-Task 0 baseline note (historical): individual render, delivery, GST, recurring and notification
+Historical planning note (superseded): individual render, delivery, GST, recurring and notification
 states exist, plus queues/DLQs and some alarms; the aggregate projection and safe
 recovery commands do not. Expected owners span a new aggregate service over
 existing repositories, customer/operator handlers, audit, permissions/step-up,
@@ -414,7 +411,7 @@ WhatsApp/GST sandboxes, Claude/Gemini/Sarvam/AgentCore and controlled invoice,
 report, upload, recurring, WebSocket and checkout journeys. Unit-test refusal,
 redaction, classification, cleanup, schema; document non-production commands.
 
-Task 0 baseline note (historical): no command with these refusal, redaction and classification
+Historical planning note (superseded): no command with these refusal, redaction and classification
 properties was found. Expected owners are a focused `cmd` package and tests plus
 non-production documentation; reuse safe adapters rather than adding product
 state. Every provider and deployed resource is externally unverified until this
@@ -486,7 +483,7 @@ purge/provider/S3 cleanup, backup/restore runbook/scripts/RPO/RTO and safe drill
 classification, and focused CI secret/dependency/static/migration/Terraform/
 OpenAPI/logging/tenant checks. No paid scanner or live Cognito changes.
 
-Task 0 baseline note (historical): tenant middleware, permissions, secret resolution, private S3,
+Historical planning note (superseded): tenant middleware, permissions, secret resolution, private S3,
 single-use WebSocket tickets and CSV formula neutralization are useful foundations.
 Step-up, TOTP, durable session/device state, verified uploads, privacy workflows
 and restore drills are absent. Expected owners span auth/middleware, upload and
@@ -510,7 +507,7 @@ statement import/transaction, exact and bounded fuzzy suggestions, manual match/
 unmatch, fee/interest adjustment, reconciliation date, unreconciled/audit state.
 Include paired migrations, concurrency/invariant/permission tests and ACC contracts.
 
-Task 0 baseline note (historical): journal and payment posting/reversal invariants existed, but fiscal
+Historical planning note (superseded): journal and payment posting/reversal invariants existed, but fiscal
 lock, Trial Balance, Balance Sheet, opening balances and banking/reconciliation
 were not found. Expected owners are journal/payment/inventory/reporting services,
 new accounting/bank repositories and models, paired migrations, permissions and
@@ -532,7 +529,7 @@ partial invalid mutation, unscoped object keys, and formula injection. Reuse the
 existing bulk-job/SQS architecture; add migrations, worker/service/handler tests,
 alarms and IMP contracts.
 
-Task 0 baseline note (historical): the import intake was unsafe to expose as a finished
+Historical planning note (superseded): the import intake was unsafe to expose as a finished
 workflow: it buffers the entire multipart file and creates queued rows without a
 worker. Expected owners are the existing bulk-job model/service/handler plus S3
 metadata, a dedicated worker/queue/alarm and repository transitions. Use paired
@@ -555,7 +552,7 @@ typed money/dates/timezone, formula safety, MIME/disposition, auth/entitlement/
 audit and native/web compatibility. Keep saved methods unavailable. Add AUTH,
 ASSET, CART, COUPON and REPORT contracts and concurrency/security tests.
 
-Task 0 baseline note (historical): phone flows, presigns, AP2 cart mandates, coupons and JSON/CSV
+Historical planning note (superseded): phone flows, presigns, AP2 cart mandates, coupons and JSON/CSV
 exports exist only partially. The upload completion gap, non-editable cart,
 non-serialized coupon usage and JSON-wrapped CSV are the main correctness risks.
 Expected owners stay within current auth/commerce/shopping/report handlers,
@@ -579,7 +576,7 @@ prompts. Add adversarial tenant, prompt-injection, approval replay/change, budge
 timeout-after-effect, false-success, bargaining, kill-switch and credential tests.
 Disable capabilities governance cannot cover and document AI contracts.
 
-Task 0 baseline note (historical): agent capability CRUD was descriptive configuration, not
+Historical planning note (superseded): agent capability CRUD was descriptive configuration, not
 the specified runtime authorization model. Voice tools are a useful read-only
 bounded subset. Expected owners include agent and voice runtime services,
 approval/budget/audit models and repositories, paired migrations, kill-switch
@@ -600,7 +597,7 @@ idempotency, provider unknown-outcome and Terraform format/validate/test reviews
 Create the non-filing GST reconciliation follow-up plan. Run full verification,
 inspect the final diff, and ensure no frontend or secret files changed.
 
-Task 0 baseline note (historical): `docs/integration/BILLEIF_PHASE_2_FRONTEND_HANDOFF.md` was the
+Historical planning note (superseded): `docs/integration/BILLEIF_PHASE_2_FRONTEND_HANDOFF.md` was the
 initial evidence-backed handoff, not the final release contract. Task 10 must
 update it after behavior changes, regenerate OpenAPI, run the complete required
 validation, record external gaps truthfully, and produce the non-filing GST
