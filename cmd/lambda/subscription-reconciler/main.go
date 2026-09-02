@@ -16,6 +16,7 @@ import (
 	postgresrepo "invoice-backend/internal/repositories/postgres"
 	"invoice-backend/internal/services"
 	"invoice-backend/pkg/logger"
+	"invoice-backend/pkg/operationsmetrics"
 
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-lambda-go/lambdacontext"
@@ -33,8 +34,16 @@ type subscriptionMaintenanceRunner interface {
 	RunMaintenance(context.Context, int) (services.SubscriptionMaintenanceResult, error)
 }
 
+// reconciliationBacklogCounter reports the aggregate number of operations that
+// currently require reconciliation. It is telemetry-only infrastructure and
+// carries no tenant, provider, or payload detail.
+type reconciliationBacklogCounter interface {
+	CountReconciliationBacklog(context.Context) (int64, error)
+}
+
 type lambdaHandler struct {
 	runner       subscriptionMaintenanceRunner
+	backlog      reconciliationBacklogCounter
 	limit        int
 	runTimeout   time.Duration
 	metricWriter io.Writer
@@ -72,7 +81,35 @@ func (h lambdaHandler) Handle(ctx context.Context) (services.SubscriptionMainten
 		}}},
 		"Environment": strings.TrimSpace(h.environment), "Reconciled": result.Reconciled, "Suspended": result.Suspended, "Failed": result.Failed,
 	})
-	return result, errors.Join(runErr, metricErr)
+	return result, errors.Join(runErr, metricErr, h.emitReconciliationBacklog(now().UTC()))
+}
+
+// emitReconciliationBacklog emits the periodic aggregate backlog gauge. A nil
+// counter or an empty environment disables emission without failing the run.
+func (h lambdaHandler) emitReconciliationBacklog(now time.Time) error {
+	if h.backlog == nil || operationsmetrics.NewRuntimeEmitter(h.environment) == nil {
+		return nil
+	}
+	count, err := h.backlog.CountReconciliationBacklog(context.Background())
+	if err != nil {
+		return fmt.Errorf("count reconciliation backlog: %w", err)
+	}
+	if count < 0 {
+		return nil
+	}
+	metric := map[string]any{
+		"_aws": map[string]any{
+			"Timestamp": now.UnixMilli(),
+			"CloudWatchMetrics": []any{map[string]any{
+				"Namespace": operationsmetrics.Namespace, "Dimensions": [][]string{{"Environment", "Category"}},
+				"Metrics": []any{map[string]any{"Name": "ReconciliationBacklog", "Unit": "Count"}},
+			}},
+		},
+		"Environment":           strings.TrimSpace(h.environment),
+		"Category":              "reconciliation",
+		"ReconciliationBacklog": count,
+	}
+	return json.NewEncoder(h.metricWriter).Encode(metric)
 }
 
 func newSubscriptionMaintenanceHandler(ctx context.Context) (*lambdaHandler, error) {
@@ -105,7 +142,10 @@ func newSubscriptionMaintenanceHandler(ctx context.Context) (*lambdaHandler, err
 	}
 	provider := services.NewRazorpayPaymentService(cfg, db, log, resolver)
 	runner := services.NewSubscriptionLifecycleService(postgresrepo.NewSubscriptionLifecycleRepository(db), provider, services.SubscriptionLifecycleConfig{Resolve: provider.SubscriptionProviderSettings}, log)
-	return &lambdaHandler{runner: runner, limit: subscriptionMaintenanceLimit, runTimeout: subscriptionMaintenanceRunTimeout, metricWriter: os.Stdout, environment: cfg.Environment, now: time.Now}, nil
+	return &lambdaHandler{
+		runner: runner, backlog: postgresrepo.NewOperationRepository(db), limit: subscriptionMaintenanceLimit,
+		runTimeout: subscriptionMaintenanceRunTimeout, metricWriter: os.Stdout, environment: cfg.Environment, now: time.Now,
+	}, nil
 }
 
 var initOnce sync.Once

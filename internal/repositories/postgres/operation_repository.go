@@ -677,6 +677,27 @@ func (r *OperationRepository) listImportOperations(
 	return records, nil
 }
 
+// CountReconciliationBacklog reports the aggregate number of operations that
+// require reconciliation across all tenants. It is an infrastructure-only
+// telemetry count for periodic backlog emission: it carries no tenant,
+// provider, or payload detail and is never exposed through business reads.
+func (r *OperationRepository) CountReconciliationBacklog(ctx context.Context) (int64, error) {
+	if r == nil || r.db == nil {
+		return 0, errors.New("operation backlog query is unavailable")
+	}
+	var webhookBacklog int64
+	if err := r.db.WithContext(ctx).Model(&models.RazorpayWebhookEvent{}).
+		Where("processing_status = ?", "reconciliation_required").Count(&webhookBacklog).Error; err != nil {
+		return 0, fmt.Errorf("count razorpay reconciliation backlog: %w", err)
+	}
+	var gstBacklog int64
+	if err := r.db.WithContext(ctx).Model(&models.GSTSubmissionJob{}).
+		Where("status = ? AND deleted_at IS NULL", models.GSTJobStatusNeedsAttention).Count(&gstBacklog).Error; err != nil {
+		return 0, fmt.Errorf("count gst reconciliation backlog: %w", err)
+	}
+	return webhookBacklog + gstBacklog, nil
+}
+
 func (r *OperationRepository) getOperationDirect(
 	ctx context.Context, businessID, operationType, operationID string,
 ) (*interfaces.OperationRecord, error) {

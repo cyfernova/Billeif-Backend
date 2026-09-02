@@ -19,6 +19,7 @@ import (
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/awsclients"
 	"invoice-backend/pkg/logger"
+	"invoice-backend/pkg/operationsmetrics"
 
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/google/uuid"
@@ -162,6 +163,18 @@ func NewTaxComplianceService(
 
 func (s *TaxComplianceService) AttachDocumentService(documents *DocumentService) {
 	s.documents = documents
+}
+
+// WithOperationsMetrics forwards the low-cardinality operational metric
+// emitter to the configured GST provider so provider calls emit real latency
+// samples. A nil emitter disables emission.
+func (s *TaxComplianceService) WithOperationsMetrics(emitter *operationsmetrics.Emitter) *TaxComplianceService {
+	if s != nil {
+		if sink, ok := s.provider.(operationsMetricSink); ok {
+			sink.WithOperationsMetrics(emitter)
+		}
+	}
+	return s
 }
 
 func (s *TaxComplianceService) FetchGSTIN(ctx context.Context, gstin string) (*GSTINLookupResult, error) {

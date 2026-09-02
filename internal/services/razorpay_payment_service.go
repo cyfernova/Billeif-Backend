@@ -10,6 +10,7 @@ import (
 	"invoice-backend/internal/config"
 	"invoice-backend/internal/models"
 	"invoice-backend/pkg/logger"
+	"invoice-backend/pkg/operationsmetrics"
 	"invoice-backend/pkg/razorpay"
 
 	"github.com/google/uuid"
@@ -24,11 +25,31 @@ type RazorpayPaymentService struct {
 	resolver ProviderConfigResolver
 	guard    CapabilityGuard
 	log      *logger.Logger
+	metrics  *operationsmetrics.Emitter
 }
 
 func (s *RazorpayPaymentService) WithCapabilityGuard(guard CapabilityGuard) *RazorpayPaymentService {
 	s.guard = guard
 	return s
+}
+
+// WithOperationsMetrics attaches the low-cardinality operational metric
+// emitter used at webhook processing outcomes. A nil emitter disables emission.
+func (s *RazorpayPaymentService) WithOperationsMetrics(emitter *operationsmetrics.Emitter) *RazorpayPaymentService {
+	s.metrics = emitter
+	return s
+}
+
+// emitWebhookFailure records one verified-webhook processing failure without
+// exposing payloads, signatures, provider identifiers, or raw errors.
+func (s *RazorpayPaymentService) emitWebhookFailure() {
+	if s == nil || s.metrics == nil {
+		return
+	}
+	_ = s.metrics.Emit(operationsmetrics.Sample{
+		Category: operationsmetrics.CategoryWebhook,
+		Values:   map[operationsmetrics.Metric]float64{operationsmetrics.MetricWebhookFailures: 1},
+	})
 }
 
 func NewRazorpayPaymentService(cfg *config.Config, db *gorm.DB, log *logger.Logger, resolvers ...ProviderConfigResolver) *RazorpayPaymentService {
@@ -506,6 +527,7 @@ func (s *RazorpayPaymentService) HandleWebhook(ctx context.Context, signature, e
 			PayloadHash: payloadHash, SignatureVerified: false, ReceivedAt: receivedAt,
 			ProcessingStatus: "rejected", SanitizedErrorCode: "invalid_signature", CreatedAt: receivedAt,
 		}).Error
+		s.emitWebhookFailure()
 		return false, fmt.Errorf("invalid webhook signature")
 	}
 
@@ -516,6 +538,7 @@ func (s *RazorpayPaymentService) HandleWebhook(ctx context.Context, signature, e
 			PayloadHash: payloadHash, SignatureVerified: true, ReceivedAt: receivedAt,
 			ProcessingStatus: "rejected", SanitizedErrorCode: "invalid_payload", CreatedAt: receivedAt,
 		}).Error
+		s.emitWebhookFailure()
 		return false, fmt.Errorf("invalid webhook payload")
 	}
 	providerMode := "legacy_unknown"
@@ -574,6 +597,11 @@ func (s *RazorpayPaymentService) HandleWebhook(ctx context.Context, signature, e
 	})
 	if err != nil {
 		return false, err
+	}
+	// The reconciliation decision is only counted once the transaction that
+	// durably recorded it has committed.
+	if domainErr != nil {
+		s.emitWebhookFailure()
 	}
 	if duplicate {
 		s.log.Info("duplicate Razorpay webhook ignored", "event_type", event.Event)

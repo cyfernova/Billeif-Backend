@@ -16,6 +16,7 @@ import (
 	postgresrepo "invoice-backend/internal/repositories/postgres"
 	"invoice-backend/internal/services"
 	"invoice-backend/pkg/logger"
+	"invoice-backend/pkg/operationsmetrics"
 
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-lambda-go/lambdacontext"
@@ -56,7 +57,39 @@ func (h lambdaHandler) Handle(ctx context.Context) (services.InvoiceSubscription
 		now = time.Now
 	}
 	metricErr := emitRecurringInvoiceMetrics(h.metricWriter, h.environment, result, now().UTC())
+	metricErr = errors.Join(metricErr, emitRecurringScheduleFailures(h.metricWriter, h.environment, result.Failed, now().UTC()))
 	return result, errors.Join(dispatchErr, metricErr)
+}
+
+// emitRecurringScheduleFailures emits the bounded operational count of failed
+// recurring schedule dispatches under the shared operations namespace.
+func emitRecurringScheduleFailures(
+	writer io.Writer,
+	environment string,
+	failed int,
+	now time.Time,
+) error {
+	metric := map[string]any{
+		"_aws": map[string]any{
+			"Timestamp": now.UnixMilli(),
+			"CloudWatchMetrics": []any{
+				map[string]any{
+					"Namespace":  operationsmetrics.Namespace,
+					"Dimensions": [][]string{{"Environment", "Category"}},
+					"Metrics": []any{
+						map[string]any{"Name": "RecurringScheduleFailures", "Unit": "Count"},
+					},
+				},
+			},
+		},
+		"Environment":               strings.TrimSpace(environment),
+		"Category":                  "schedule",
+		"RecurringScheduleFailures": failed,
+	}
+	if err := json.NewEncoder(writer).Encode(metric); err != nil {
+		return fmt.Errorf("emit recurring schedule failure metric: %w", err)
+	}
+	return nil
 }
 
 func emitRecurringInvoiceMetrics(

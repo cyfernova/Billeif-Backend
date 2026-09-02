@@ -17,6 +17,7 @@ import (
 
 	"invoice-backend/internal/config"
 	"invoice-backend/pkg/logger"
+	"invoice-backend/pkg/operationsmetrics"
 )
 
 var ErrGSTCredentialValidationNotConfigured = errors.New("GST credential validation is not configured")
@@ -157,10 +158,26 @@ func NewLazyConfiguredGSTProvider(cfg *config.Config, resolver ProviderConfigRes
 	return &lazyConfiguredGSTProvider{cfg: cfg, resolver: resolver, log: log}
 }
 
+// operationsMetricSink is implemented by GST providers that can carry the
+// low-cardinality operational metric emitter.
+type operationsMetricSink interface {
+	WithOperationsMetrics(emitter *operationsmetrics.Emitter)
+}
+
+// WithOperationsMetrics forwards the operational metric emitter to every
+// provider resolved from later configuration lookups.
+func (p *lazyConfiguredGSTProvider) WithOperationsMetrics(emitter *operationsmetrics.Emitter) {
+	if p == nil {
+		return
+	}
+	p.operationsMetrics = emitter
+}
+
 type lazyConfiguredGSTProvider struct {
-	cfg      *config.Config
-	resolver ProviderConfigResolver
-	log      *logger.Logger
+	cfg               *config.Config
+	resolver          ProviderConfigResolver
+	log               *logger.Logger
+	operationsMetrics *operationsmetrics.Emitter
 }
 
 func (p *lazyConfiguredGSTProvider) provider(ctx context.Context) (GSTProvider, error) {
@@ -168,7 +185,11 @@ func (p *lazyConfiguredGSTProvider) provider(ctx context.Context) (GSTProvider, 
 	if err != nil {
 		return nil, err
 	}
-	return NewConfiguredGSTProvider(resolved, p.log), nil
+	created := NewConfiguredGSTProvider(resolved, p.log)
+	if sink, ok := created.(operationsMetricSink); ok && p.operationsMetrics != nil {
+		sink.WithOperationsMetrics(p.operationsMetrics)
+	}
+	return created, nil
 }
 
 func (p *lazyConfiguredGSTProvider) ValidateCredentials(ctx context.Context, account *GSTIntegrationAccountCredentials) error {
@@ -229,9 +250,18 @@ func (p *lazyConfiguredGSTProvider) FetchDistance(ctx context.Context, req GSTDi
 }
 
 type configuredGSTProvider struct {
-	cfg        *config.Config
-	httpClient *http.Client
-	log        *logger.Logger
+	cfg               *config.Config
+	httpClient        *http.Client
+	log               *logger.Logger
+	operationsMetrics *operationsmetrics.Emitter
+}
+
+// WithOperationsMetrics attaches the low-cardinality operational metric
+// emitter used for provider latency. A nil emitter disables emission.
+func (p *configuredGSTProvider) WithOperationsMetrics(emitter *operationsmetrics.Emitter) {
+	if p != nil {
+		p.operationsMetrics = emitter
+	}
 }
 
 func (p *configuredGSTProvider) ValidateCredentials(ctx context.Context, account *GSTIntegrationAccountCredentials) error {
@@ -373,7 +403,9 @@ func (p *configuredGSTProvider) doJSON(ctx context.Context, method, path string,
 		}
 	}
 
+	requestStart := time.Now()
 	resp, err := p.httpClient.Do(req)
+	p.emitProviderLatency(time.Since(requestStart))
 	if err != nil {
 		return nil, err
 	}
@@ -391,6 +423,20 @@ func (p *configuredGSTProvider) doJSON(ctx context.Context, method, path string,
 		return nil, fmt.Errorf("decode GST provider response: %w", err)
 	}
 	return payload, nil
+}
+
+func (p *configuredGSTProvider) emitProviderLatency(elapsed time.Duration) {
+	if p == nil || p.operationsMetrics == nil {
+		return
+	}
+	milliseconds := float64(elapsed) / float64(time.Millisecond)
+	if milliseconds < 0 {
+		return
+	}
+	_ = p.operationsMetrics.Emit(operationsmetrics.Sample{
+		Category: operationsmetrics.CategoryProvider,
+		Values:   map[operationsmetrics.Metric]float64{operationsmetrics.MetricProviderLatencyMilliseconds: milliseconds},
+	})
 }
 
 type simulatedGSTProvider struct {

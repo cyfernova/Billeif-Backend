@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,4 +36,49 @@ func TestHandlerRunsBoundedMaintenanceAndEmitsMetrics(t *testing.T) {
 	require.True(t, runner.hasDeadline)
 	require.EqualValues(t, 2, result.Reconciled)
 	require.Contains(t, metrics.String(), "Billeif/SubscriptionLifecycle")
+}
+
+type recordingBacklogCounter struct {
+	count int64
+	err   error
+}
+
+func (r *recordingBacklogCounter) CountReconciliationBacklog(context.Context) (int64, error) {
+	return r.count, r.err
+}
+
+func TestHandlerEmitsReconciliationBacklogMetric(t *testing.T) {
+	runner := &recordingRunner{}
+	var metrics bytes.Buffer
+	h := lambdaHandler{
+		runner: runner, limit: 50, runTimeout: 10 * time.Second,
+		metricWriter: &metrics, environment: "test",
+		backlog: &recordingBacklogCounter{count: 7},
+	}
+	ctx := lambdacontext.NewContext(context.Background(), &lambdacontext.LambdaContext{AwsRequestID: "request-backlog"})
+	if _, err := h.Handle(ctx); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	var found bool
+	for _, line := range strings.Split(metrics.String(), "\n") {
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(line), &payload); err != nil {
+			continue
+		}
+		if payload["Category"] == "reconciliation" {
+			require.EqualValues(t, 7, payload["ReconciliationBacklog"])
+			require.Equal(t, "test", payload["Environment"])
+			found = true
+		}
+	}
+	require.True(t, found, "expected one reconciliation backlog sample, got %s", metrics.String())
+}
+
+func TestHandlerNilBacklogCounterKeepsMaintenanceBehavior(t *testing.T) {
+	runner := &recordingRunner{}
+	var metrics bytes.Buffer
+	h := lambdaHandler{runner: runner, limit: 50, runTimeout: 10 * time.Second, metricWriter: &metrics, environment: "test"}
+	_, err := h.Handle(lambdacontext.NewContext(context.Background(), &lambdacontext.LambdaContext{AwsRequestID: "request-nil"}))
+	require.NoError(t, err)
+	require.NotContains(t, metrics.String(), "Billeif/Operations")
 }

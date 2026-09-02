@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"math"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,7 +19,6 @@ var ErrInvalidSample = errors.New("invalid operational metric sample")
 type Category string
 
 const (
-	CategoryQueue          Category = "queue"
 	CategoryRecovery       Category = "recovery"
 	CategoryReconciliation Category = "reconciliation"
 	CategoryProvider       Category = "provider"
@@ -32,7 +33,6 @@ type Metric string
 const (
 	MetricQueueAgeSeconds             Metric = "QueueAgeSeconds"
 	MetricRepeatedFailures            Metric = "RepeatedFailures"
-	MetricDLQGrowth                   Metric = "DLQGrowth"
 	MetricReconciliationBacklog       Metric = "ReconciliationBacklog"
 	MetricProviderLatencyMilliseconds Metric = "ProviderLatencyMilliseconds"
 	MetricWebhookFailures             Metric = "WebhookFailures"
@@ -41,13 +41,16 @@ const (
 	MetricDeliveryFailureRate         Metric = "DeliveryFailureRate"
 )
 
+// Queue depth and dead-letter depth are observable only by AWS/SQS native
+// metrics; consumers cannot truthfully emit them. They stay covered by the
+// existing worker_queue_age and worker_dlq_messages alarms.
 var validCategories = map[Category]struct{}{
-	CategoryQueue: {}, CategoryRecovery: {}, CategoryReconciliation: {}, CategoryProvider: {},
+	CategoryRecovery: {}, CategoryReconciliation: {}, CategoryProvider: {},
 	CategoryWebhook: {}, CategorySchedule: {}, CategoryRender: {}, CategoryDelivery: {},
 }
 
 var metricUnits = map[Metric]string{
-	MetricQueueAgeSeconds: "Seconds", MetricRepeatedFailures: "Count", MetricDLQGrowth: "Count",
+	MetricQueueAgeSeconds: "Seconds", MetricRepeatedFailures: "Count",
 	MetricReconciliationBacklog: "Count", MetricProviderLatencyMilliseconds: "Milliseconds",
 	MetricWebhookFailures: "Count", MetricRecurringScheduleFailures: "Count",
 	MetricRenderFailureRate: "Percent", MetricDeliveryFailureRate: "Percent",
@@ -56,6 +59,15 @@ var metricUnits = map[Metric]string{
 type Sample struct {
 	Category Category
 	Values   map[Metric]float64
+}
+
+// RecordOutcome is the bounded per-record outcome of one queued work item.
+// Attributes are SQS message attributes, never payloads or message bodies.
+type RecordOutcome struct {
+	Category   Category
+	RateMetric Metric
+	Failed     bool
+	Attributes map[string]string
 }
 
 type Emitter struct {
@@ -71,6 +83,17 @@ func NewEmitter(writer io.Writer, environment string, now func() time.Time) (*Em
 		return nil, ErrInvalidSample
 	}
 	return &Emitter{writer: writer, environment: environment, now: now}, nil
+}
+
+// NewRuntimeEmitter constructs the process-wide operational emitter writing
+// EMF to stdout. It returns nil, disabling emission, when the environment is
+// not a safe bounded dimension: telemetry must never fail a runtime.
+func NewRuntimeEmitter(environment string) *Emitter {
+	emitter, err := NewEmitter(os.Stdout, environment, time.Now)
+	if err != nil {
+		return nil
+	}
+	return emitter
 }
 
 func (e *Emitter) Emit(sample Sample) error {
@@ -105,6 +128,86 @@ func (e *Emitter) Emit(sample Sample) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return json.NewEncoder(e.writer).Encode(payload)
+}
+
+// EmitRecordOutcome emits one truthful per-record sample for a queued work
+// record: the pipeline failure rate and, when the SQS attributes carry a
+// SentTimestamp, the observed queue age. A failed record that SQS has already
+// redelivered at least once additionally emits one RepeatedFailures sample.
+// Records never fabricate queue age or dead-letter values.
+func (e *Emitter) EmitRecordOutcome(outcome RecordOutcome) error {
+	if e == nil || e.writer == nil || e.now == nil {
+		return ErrInvalidSample
+	}
+	switch {
+	case outcome.Category == CategoryRender && outcome.RateMetric == MetricRenderFailureRate:
+	case outcome.Category == CategoryDelivery && outcome.RateMetric == MetricDeliveryFailureRate:
+	default:
+		return ErrInvalidSample
+	}
+	values := map[Metric]float64{outcome.RateMetric: 0}
+	if outcome.Failed {
+		values[outcome.RateMetric] = 100
+	}
+	if age, ok := SQSQueueAgeSeconds(outcome.Attributes, e.now()); ok {
+		values[MetricQueueAgeSeconds] = age
+	}
+	if err := e.Emit(Sample{Category: outcome.Category, Values: values}); err != nil {
+		return err
+	}
+	if !outcome.Failed {
+		return nil
+	}
+	if count, ok := SQSReceiveCount(outcome.Attributes); !ok || count < 2 {
+		return nil
+	}
+	return e.Emit(Sample{Category: CategoryRecovery, Values: map[Metric]float64{MetricRepeatedFailures: 1}})
+}
+
+// SQS attribute keys used to derive bounded operational metric values.
+const (
+	SQSSentTimestampAttribute = "SentTimestamp"
+	SQSReceiveCountAttribute  = "ApproximateReceiveCount"
+)
+
+// SQSQueueAgeSeconds derives the observed age of one SQS message in seconds
+// from its SentTimestamp attribute. It reports ok=false for missing, invalid,
+// zero, or future timestamps instead of inventing a value.
+func SQSQueueAgeSeconds(attributes map[string]string, now time.Time) (float64, bool) {
+	if len(attributes) == 0 || now.IsZero() {
+		return 0, false
+	}
+	sentMilliseconds, err := strconv.ParseInt(strings.TrimSpace(attributes[SQSSentTimestampAttribute]), 10, 64)
+	if err != nil || sentMilliseconds <= 0 {
+		return 0, false
+	}
+	age := now.Sub(time.UnixMilli(sentMilliseconds)).Seconds()
+	if age < 0 || math.IsNaN(age) || math.IsInf(age, 0) {
+		return 0, false
+	}
+	return age, true
+}
+
+// SQSReceiveCount returns the approximate receive count of one SQS message,
+// or ok=false when the attribute is missing or invalid.
+func SQSReceiveCount(attributes map[string]string) (int, bool) {
+	if len(attributes) == 0 {
+		return 0, false
+	}
+	count, err := strconv.Atoi(strings.TrimSpace(attributes[SQSReceiveCountAttribute]))
+	if err != nil || count < 1 {
+		return 0, false
+	}
+	return count, true
+}
+
+// QueueAgeSeconds derives the observed age of one SQS message using this
+// emitter's clock. It reports ok=false for missing or invalid attributes.
+func (e *Emitter) QueueAgeSeconds(attributes map[string]string) (float64, bool) {
+	if e == nil || e.now == nil {
+		return 0, false
+	}
+	return SQSQueueAgeSeconds(attributes, e.now())
 }
 
 func safeDimension(value string) bool {

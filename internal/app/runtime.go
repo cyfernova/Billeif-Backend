@@ -26,6 +26,7 @@ import (
 	"invoice-backend/internal/workers"
 	"invoice-backend/pkg/awsclients"
 	"invoice-backend/pkg/logger"
+	"invoice-backend/pkg/operationsmetrics"
 	pkgsentry "invoice-backend/pkg/sentry"
 
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
@@ -73,6 +74,7 @@ type Runtime struct {
 	Worker      *workers.Worker
 	RateLimiter rateLimitBackend
 	Secrets     *config.RuntimeResolver
+	Metrics     *operationsmetrics.Emitter
 }
 
 type rateLimitBackend interface {
@@ -165,6 +167,9 @@ func Initialize(ctx context.Context, opts InitializeOptions) (*Runtime, error) {
 
 	repos := initRepositories(db)
 	svcs := initServices(cfg, db, repos, awsClients, resolver, log)
+	operationsMetrics := initOperationsMetricsEmitter(cfg)
+	svcs.RazorpayPayment = svcs.RazorpayPayment.WithOperationsMetrics(operationsMetrics)
+	svcs.TaxCompliance = svcs.TaxCompliance.WithOperationsMetrics(operationsMetrics)
 	migratedRenderProfilePasswords, err := backfillLegacyRenderProfilePasswords(ctx, opts.Profile, svcs.Document)
 	if err != nil {
 		if sqlDB, dbErr := db.DB(); dbErr == nil {
@@ -194,6 +199,7 @@ func Initialize(ctx context.Context, opts InitializeOptions) (*Runtime, error) {
 		Router:      router,
 		RateLimiter: rateLimiter,
 		Secrets:     resolver,
+		Metrics:     operationsMetrics,
 	}
 
 	if opts.EnableWorker {
@@ -403,6 +409,17 @@ type Repositories struct {
 	CapabilityProviderHealth interfaces.CapabilityProviderHealthRepository
 	Operation                interfaces.OperationRepository
 	AP2                      interfaces.AP2Repository
+}
+
+// initOperationsMetricsEmitter constructs the process-wide low-cardinality
+// operational metric emitter. It returns nil, disabling emission, when the
+// environment is not a safe bounded dimension: telemetry must never fail a
+// runtime and must never fabricate samples.
+func initOperationsMetricsEmitter(cfg *config.Config) *operationsmetrics.Emitter {
+	if cfg == nil {
+		return nil
+	}
+	return operationsmetrics.NewRuntimeEmitter(cfg.Environment)
 }
 
 func initRepositories(db *gorm.DB) *Repositories {

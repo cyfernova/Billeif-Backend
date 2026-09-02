@@ -8,6 +8,8 @@ import (
 	"invoice-backend/internal/app"
 	"invoice-backend/internal/config"
 	"invoice-backend/internal/workers"
+	"invoice-backend/pkg/logger"
+	"invoice-backend/pkg/operationsmetrics"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
@@ -41,9 +43,28 @@ func handleSQSEvent(ctx context.Context, event events.SQSEvent) (events.SQSEvent
 			gstRT.Log.Error("failed to process gst queue record", "message_id", record.MessageId, "error", err)
 			failures = append(failures, events.SQSBatchItemFailure{ItemIdentifier: record.MessageId})
 		}
+		emitGSTRecordMetrics(gstRT.Metrics, record, gstRT.Log)
 	}
 
 	return events.SQSEventResponse{BatchItemFailures: failures}, nil
+}
+
+// emitGSTRecordMetrics reports the observed queue age of one processed GST
+// record. Provider call latency is emitted inside the GST provider itself.
+func emitGSTRecordMetrics(metrics *operationsmetrics.Emitter, record events.SQSMessage, log *logger.Logger) {
+	if metrics == nil {
+		return
+	}
+	age, ok := metrics.QueueAgeSeconds(record.Attributes)
+	if !ok {
+		return
+	}
+	if err := metrics.Emit(operationsmetrics.Sample{
+		Category: operationsmetrics.CategoryProvider,
+		Values:   map[operationsmetrics.Metric]float64{operationsmetrics.MetricQueueAgeSeconds: age},
+	}); err != nil {
+		log.Warn("emit gst queue age metric", "error", err)
+	}
 }
 
 func main() {

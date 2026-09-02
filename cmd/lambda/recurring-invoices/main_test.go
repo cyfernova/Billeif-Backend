@@ -53,7 +53,8 @@ func TestHandlerDispatchesWithRequestIdentityAndEmitsCounts(t *testing.T) {
 		t.Fatalf("result/runner = %#v/%#v", result, runner)
 	}
 	var metric map[string]any
-	if err := json.Unmarshal(metricOutput.Bytes(), &metric); err != nil {
+	metricLine := firstEMFLine(t, metricOutput.String())
+	if err := json.Unmarshal([]byte(metricLine), &metric); err != nil {
 		t.Fatalf("decode recurring invoice metric: %v\n%s", err, metricOutput.String())
 	}
 	if metric["Environment"] != "test" || metric["Due"] != float64(2) ||
@@ -131,4 +132,60 @@ func TestConfigureDatabasePoolBoundsRecurringInvoiceConnections(t *testing.T) {
 		pool.maxIdleTime != 2*time.Minute || pool.maxLifetime != 10*time.Minute {
 		t.Fatalf("database pool settings = %#v", pool)
 	}
+}
+
+func TestHandlerEmitsRecurringScheduleFailuresMetric(t *testing.T) {
+	runner := &recordingRecurringInvoiceRunner{result: services.InvoiceSubscriptionDispatchResult{
+		Due: 3, Completed: 1, Failed: 2,
+	}}
+	var metricOutput bytes.Buffer
+	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
+	handler := lambdaHandler{
+		runner: runner, limit: 50, metricWriter: &metricOutput, environment: "test",
+		now: func() time.Time { return now },
+	}
+
+	if _, err := handler.Handle(lambdacontext.NewContext(context.Background(), &lambdacontext.LambdaContext{AwsRequestID: "recurring-request-2"})); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	samples := decodeRecurringEMFSamples(t, metricOutput.String())
+	scheduleFailures := 0
+	for _, sample := range samples {
+		if sample["Category"] == "schedule" {
+			scheduleFailures++
+			if sample["RecurringScheduleFailures"] != float64(2) {
+				t.Fatalf("recurring schedule failure sample = %#v", sample)
+			}
+		}
+	}
+	if scheduleFailures != 1 {
+		t.Fatalf("expected exactly one Billeif/Operations schedule failure sample, got %s", metricOutput.String())
+	}
+}
+
+func decodeRecurringEMFSamples(t *testing.T, output string) []map[string]any {
+	t.Helper()
+	samples := make([]map[string]any, 0)
+	for _, line := range strings.Split(output, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(line), &payload); err != nil {
+			t.Fatalf("decode EMF: %v\n%s", err, output)
+		}
+		samples = append(samples, payload)
+	}
+	return samples
+}
+
+func firstEMFLine(t *testing.T, output string) string {
+	t.Helper()
+	for _, line := range strings.Split(output, "\n") {
+		if strings.TrimSpace(line) != "" {
+			return line
+		}
+	}
+	t.Fatalf("no EMF line in output: %q", output)
+	return ""
 }

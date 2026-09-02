@@ -102,3 +102,10 @@ type OperationRepository interface {
 	RetryRender(context.Context, RenderRecoveryCommand) (*OperationRecoveryResult, error)
 	RecordRecoveryDecision(context.Context, OperationRecoveryDecision) (*OperationRecoveryResult, error)
 }
+
+// OperationBacklogCounter is the telemetry-only aggregate surface used by the
+// periodic reconciliation backlog emission. The PostgreSQL operation repository
+// implements both interfaces; business reads never depend on it.
+type OperationBacklogCounter interface {
+	CountReconciliationBacklog(context.Context) (int64, error)
+}

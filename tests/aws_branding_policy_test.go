@@ -647,7 +647,6 @@ func TestTerraformBrandingHasOnlyApprovedInterfaceAndNameDeltas(t *testing.T) {
 		"aws_cloudwatch_metric_alarm.nat_system_status",
 		"aws_cloudwatch_metric_alarm.outbox_oldest_pending_age",
 		"aws_cloudwatch_metric_alarm.operations_delivery_failure_rate",
-		"aws_cloudwatch_metric_alarm.operations_dlq_growth",
 		"aws_cloudwatch_metric_alarm.operations_provider_latency",
 		"aws_cloudwatch_metric_alarm.operations_reconciliation_backlog",
 		"aws_cloudwatch_metric_alarm.operations_recurring_schedule_failures",

@@ -2,7 +2,6 @@ locals {
   operations_metric_namespace = "Billeif/Operations"
   operations_alarm_dimensions = {
     recovery       = { Environment = var.environment, Category = "recovery" }
-    queue          = { Environment = var.environment, Category = "queue" }
     reconciliation = { Environment = var.environment, Category = "reconciliation" }
     provider       = { Environment = var.environment, Category = "provider" }
     webhook        = { Environment = var.environment, Category = "webhook" }
@@ -11,6 +10,11 @@ locals {
     delivery       = { Environment = var.environment, Category = "delivery" }
   }
 }
+
+# Dead-letter queue growth is observable only through AWS/SQS native metrics:
+# consumers cannot see redrive events, so no fabricated application metric
+# exists for it. The worker_dlq_messages alarms on
+# ApproximateNumberOfMessagesVisible provide the truthful DLQ growth coverage.
 
 resource "aws_cloudwatch_metric_alarm" "operations_repeated_failures" {
   alarm_name          = "${local.resource_prefix}-operations-repeated-failures"
@@ -27,23 +31,6 @@ resource "aws_cloudwatch_metric_alarm" "operations_repeated_failures" {
   alarm_actions       = [aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]
   dimensions          = local.operations_alarm_dimensions.recovery
-}
-
-resource "aws_cloudwatch_metric_alarm" "operations_dlq_growth" {
-  alarm_name          = "${local.resource_prefix}-operations-dlq-growth"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 3
-  datapoints_to_alarm = 2
-  metric_name         = "DLQGrowth"
-  namespace           = local.operations_metric_namespace
-  period              = 300
-  statistic           = "Sum"
-  threshold           = 0
-  treat_missing_data  = "notBreaching"
-  alarm_description   = "Billeif dead-letter queues are receiving new failures"
-  alarm_actions       = [aws_sns_topic.alerts.arn]
-  ok_actions          = [aws_sns_topic.alerts.arn]
-  dimensions          = local.operations_alarm_dimensions.queue
 }
 
 resource "aws_cloudwatch_metric_alarm" "operations_reconciliation_backlog" {

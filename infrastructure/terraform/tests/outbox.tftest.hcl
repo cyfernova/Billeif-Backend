@@ -10,7 +10,7 @@ mock_provider "aws" {
 
   mock_resource "aws_lambda_invocation" {
     defaults = {
-      result = "{\"status\":\"applied\",\"version\":56,\"latest_version\":56,\"dirty\":false,\"manifest_checksum\":\"7885c669dbdd056c1ac3f43620d739682f69860f274afbf52d65633b1dae4794\"}"
+      result = "{\"status\":\"applied\",\"version\":56,\"latest_version\":56,\"dirty\":false,\"manifest_checksum\":\"7b89918bd0f37f7350ef47a331bbd69020f3d6a8086984502d434c23ca49bc52\"}"
     }
   }
 
@@ -844,7 +844,6 @@ run "aggregate_operations_alarms_are_low_cardinality_and_fail_safe" {
     condition = alltrue([
       for alarm in [
         aws_cloudwatch_metric_alarm.operations_repeated_failures,
-        aws_cloudwatch_metric_alarm.operations_dlq_growth,
         aws_cloudwatch_metric_alarm.operations_reconciliation_backlog,
         aws_cloudwatch_metric_alarm.operations_webhook_failures,
         aws_cloudwatch_metric_alarm.operations_recurring_schedule_failures,
@@ -882,8 +881,10 @@ run "aggregate_operations_alarms_are_low_cardinality_and_fail_safe" {
   assert {
     condition = (
       length(aws_cloudwatch_metric_alarm.worker_queue_age) == 5 &&
-      alltrue([for alarm in aws_cloudwatch_metric_alarm.worker_queue_age : alarm.metric_name == "ApproximateAgeOfOldestMessage" && alarm.statistic == "Maximum" && alarm.evaluation_periods == 3 && alarm.datapoints_to_alarm == 2])
+      alltrue([for alarm in aws_cloudwatch_metric_alarm.worker_queue_age : alarm.metric_name == "ApproximateAgeOfOldestMessage" && alarm.statistic == "Maximum" && alarm.evaluation_periods == 3 && alarm.datapoints_to_alarm == 2]) &&
+      length(aws_cloudwatch_metric_alarm.worker_dlq_messages) == 5 &&
+      alltrue([for alarm in aws_cloudwatch_metric_alarm.worker_dlq_messages : alarm.metric_name == "ApproximateNumberOfMessagesVisible" && alarm.evaluation_periods == 3 && alarm.datapoints_to_alarm == 2 && alarm.treat_missing_data == "notBreaching"])
     )
-    error_message = "Queue age must remain covered by bounded native SQS maximum-age alarms using two-of-three evaluation."
+    error_message = "Queue age and dead-letter growth must remain covered by bounded native SQS alarms using two-of-three evaluation; no fabricated application metric may replace them."
   }
 }

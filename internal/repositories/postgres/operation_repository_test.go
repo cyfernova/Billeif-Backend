@@ -383,8 +383,8 @@ func operationFixtureSchemas() []string {
 		`CREATE TABLE document_render_jobs (id TEXT PRIMARY KEY, business_id TEXT, document_id TEXT, invoice_id TEXT, kind TEXT, status TEXT, attempts INTEGER, error_message TEXT, object_key TEXT, requested_at DATETIME, created_at DATETIME, updated_at DATETIME, completed_at DATETIME, deleted_at DATETIME)`,
 		`CREATE TABLE email_deliveries (id TEXT PRIMARY KEY, business_id TEXT, email_account_id TEXT, invoice_id TEXT, render_job_id TEXT, status TEXT, provider_message_id TEXT, error_message TEXT, attempts INTEGER, sent_at DATETIME, delivered_at DATETIME, failed_at DATETIME, created_at DATETIME, updated_at DATETIME, deleted_at DATETIME)`,
 		`CREATE TABLE outbox_events (id TEXT PRIMARY KEY, business_id TEXT, aggregate_type TEXT, aggregate_id TEXT, event_type TEXT, payload TEXT, publish_attempts INTEGER, available_at DATETIME, lease_expires_at DATETIME, published_at DATETIME, created_at DATETIME)`,
-		`CREATE TABLE razorpay_webhook_events (id TEXT PRIMARY KEY, razorpay_event_id TEXT, provider_mode TEXT, event_type TEXT, payload_hash TEXT, signature_verified BOOLEAN, received_at DATETIME, processing_status TEXT, attempt_count INTEGER, sanitized_error_code TEXT, processed_at DATETIME, business_id TEXT, subscription_id TEXT, created_at DATETIME)`,
-		`CREATE TABLE gst_submission_jobs (id TEXT PRIMARY KEY, business_id TEXT, document_id TEXT, operation TEXT, status TEXT, idempotency_key TEXT, queue_message_id TEXT, attempt_count INTEGER, next_attempt_at DATETIME, last_attempt_at DATETIME, succeeded_at DATETIME, last_error TEXT, error_class TEXT, created_at DATETIME, updated_at DATETIME, deleted_at DATETIME)`,
+		`CREATE TABLE razorpay_webhook_events (id TEXT PRIMARY KEY, razorpay_event_id TEXT, provider_mode TEXT, event_type TEXT, payload_hash TEXT, signature_verified BOOLEAN, received_at DATETIME, provider_occurred_at DATETIME, processing_status TEXT, attempt_count INTEGER, sanitized_error_code TEXT, processed_at DATETIME, business_id TEXT, subscription_id TEXT, replay_count INTEGER, last_replayed_at DATETIME, created_at DATETIME)`,
+		`CREATE TABLE gst_submission_jobs (id TEXT PRIMARY KEY, business_id TEXT, document_id TEXT, operation TEXT, status TEXT, idempotency_key TEXT, queue_message_id TEXT, attempt_count INTEGER, next_attempt_at DATETIME, last_attempt_at DATETIME, succeeded_at DATETIME, last_error TEXT, error_class TEXT, created_at DATETIME, updated_at DATETIME, deleted_at DATETIME, request_payload TEXT, result_payload TEXT, source TEXT)`,
 		`CREATE TABLE invoice_subscription_runs (id TEXT PRIMARY KEY, subscription_id TEXT, business_id TEXT, scheduled_for DATETIME, status TEXT, idempotency_key TEXT, attempt_count INTEGER, created_at DATETIME, updated_at DATETIME, completed_at DATETIME, deleted_at DATETIME)`,
 		`CREATE TABLE notification_deliveries (id TEXT PRIMARY KEY, business_id TEXT, channel TEXT, event_key TEXT, status TEXT, request_payload TEXT, response_payload TEXT, external_message_id TEXT, attempt_count INTEGER, last_attempt_at DATETIME, delivered_at DATETIME, created_at DATETIME, updated_at DATETIME, deleted_at DATETIME)`,
 		`CREATE TABLE notifications (id TEXT PRIMARY KEY, business_id TEXT, user_id TEXT, source_event_key TEXT, type TEXT, title TEXT, body TEXT, resource_type TEXT, resource_id TEXT, created_at DATETIME, updated_at DATETIME)`,
@@ -415,4 +415,52 @@ func createOperationFixture(database *gorm.DB, value any) error {
 		fields = []string{"id", "business_id", "created_by", "job_type", "status", "file_key", "processed_rows", "request_payload", "created_at", "updated_at", "completed_at", "deleted_at"}
 	}
 	return database.Select(fields).Create(value).Error
+}
+
+func TestOperationRepositoryCountsReconciliationBacklogAcrossAllTenants(t *testing.T) {
+	database, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	for _, statement := range operationFixtureSchemas() {
+		if err := database.Exec(statement).Error; err != nil {
+			t.Fatalf("create operation fixture schema: %v", err)
+		}
+	}
+	now := time.Date(2026, time.September, 2, 9, 0, 0, 0, time.UTC)
+	rows := []models.RazorpayWebhookEvent{
+		{ID: uuid.NewString(), RazorpayEventID: "evt_recon_1", ProviderMode: "test", EventType: "subscription.charged",
+			PayloadHash: strings.Repeat("a", 64), SignatureVerified: true, ReceivedAt: now, ProcessingStatus: "reconciliation_required",
+			BusinessID: uuid.NewString(), CreatedAt: now},
+		{ID: uuid.NewString(), RazorpayEventID: "evt_recon_2", ProviderMode: "test", EventType: "payment.captured",
+			PayloadHash: strings.Repeat("b", 64), SignatureVerified: true, ReceivedAt: now, ProcessingStatus: "reconciliation_required",
+			BusinessID: uuid.NewString(), CreatedAt: now},
+		{ID: uuid.NewString(), RazorpayEventID: "evt_done", ProviderMode: "test", EventType: "payment.captured",
+			PayloadHash: strings.Repeat("c", 64), SignatureVerified: true, ReceivedAt: now, ProcessingStatus: "processed",
+			BusinessID: uuid.NewString(), CreatedAt: now},
+	}
+	for i := range rows {
+		if err := database.Create(&rows[i]).Error; err != nil {
+			t.Fatalf("create razorpay webhook event: %v", err)
+		}
+	}
+	jobs := []models.GSTSubmissionJob{
+		{ID: uuid.NewString(), BusinessID: uuid.NewString(), DocumentID: uuid.NewString(),
+			Operation: models.GSTOperationGenerateEInvoice, Status: models.GSTJobStatusNeedsAttention, CreatedAt: now, UpdatedAt: now},
+		{ID: uuid.NewString(), BusinessID: uuid.NewString(), DocumentID: uuid.NewString(),
+			Operation: models.GSTOperationGenerateEInvoice, Status: models.GSTJobStatusSucceeded, CreatedAt: now, UpdatedAt: now},
+	}
+	for i := range jobs {
+		if err := database.Create(&jobs[i]).Error; err != nil {
+			t.Fatalf("create gst submission job: %v", err)
+		}
+	}
+
+	count, err := NewOperationRepository(database).CountReconciliationBacklog(context.Background())
+	if err != nil {
+		t.Fatalf("CountReconciliationBacklog: %v", err)
+	}
+	if count != 3 {
+		t.Fatalf("reconciliation backlog = %d, want 3", count)
+	}
 }
