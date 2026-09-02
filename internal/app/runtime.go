@@ -781,7 +781,6 @@ func setupRouter(
 				customers.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersCreate), userWriteRL, h.Customer.Create)
 				customers.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersUpdate), userWriteRL, h.Customer.Update)
 				customers.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersDelete), userWriteRL, h.Customer.Delete)
-				customers.POST("/import", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersCreate), bulkRL, h.Customer.Import)
 				customers.GET("/export", h.Customer.Export)
 			}
 
@@ -990,9 +989,10 @@ func setupRouter(
 			{
 				imports.POST("/customers", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersCreate), bulkRL, h.BillingOps.CreateCustomerImportJob)
 				imports.POST("/vendors", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVendorsCreate), bulkRL, h.BillingOps.CreateVendorImportJob)
-				imports.POST("/products", bulkRL, h.BillingOps.CreateProductImportJob)
-				imports.POST("/invoices", bulkRL, h.BillingOps.CreateInvoiceImportJob)
-				imports.POST("/documents", bulkRL, h.BillingOps.CreateDocumentImportJob)
+				imports.POST("/products", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), bulkRL, h.BillingOps.CreateProductImportJob)
+				imports.POST("/:id/commit", userWriteRL, h.BillingOps.CommitImport)
+				imports.DELETE("/:id", userWriteRL, h.BillingOps.CancelImport)
+				imports.GET("/:id/artifacts/:artifactID/download", h.BillingOps.DownloadImportArtifact)
 			}
 
 			invoiceSubscriptions := protected.Group("/invoice-subscriptions")

@@ -512,7 +512,7 @@ rounding policy must preserve existing posted data.
 
 ## Task 7: Durable bulk import
 
-Status: pending
+Status: complete locally; deployment externally unverified
 
 Implement two-phase durable CSV import for customers, vendors, and products only.
 Validation/preview uses tenant-bound upload metadata, streaming parser, encoding/

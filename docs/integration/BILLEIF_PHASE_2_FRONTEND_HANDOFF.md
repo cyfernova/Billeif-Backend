@@ -52,7 +52,7 @@ route registration or current generated OpenAPI alone.
 | ACC-002 | Trial Balance, Balance Sheet, account drilldown and read-only reconciliation diagnostics | `complete` locally | Use required currency and posted-ledger minor-unit results; exports/shares reuse REPORT-001. |
 | AUTH-001 | Indian phone OTP auth | `partial`, Cognito/SMS `externally unverified` | Do not ship as hardened account-linking/session-management UX yet. |
 | ASSET-001 | Business-logo and drive presigns | `partial` and `unsafe` as completed-asset workflows; S3 `externally unverified` | Drive intake now enforces CAP-001 plus the authoritative tenant storage quota; do not mark an asset complete after PUT because completion verification does not exist. |
-| IMP-001 | Current bulk import intake/read | intake `blocked`; legacy reads `partial` | Keep imports disabled. Customer and queued import intake now return CAP-001 `unsupported` until Task 7 supplies a safe processor. |
+| IMP-001 | Durable customer/vendor/product import | `complete` locally; S3/SQS deployment `externally unverified` | Enable after migration `000059` and worker deployment verification. |
 | CART-001 | AP2 signed cart mandate | `partial` and `unsafe` as the requested editable cart | Existing clients only; no update/remove/clear contract. |
 | COUPON-001 | Storefront coupon list/create/update | `partial` and concurrency `unsafe` | Management UI may inspect it, but usage caps are not race-safe. |
 | REPORT-001 | Report JSON/CSV export envelope | `partial` | Existing synchronous JSON/CSV only; runtime export capability and plan/permission checks are enforced, but this is not an XLSX or file-download contract. |
@@ -83,7 +83,7 @@ omitted column to imply support.
 | ACC-002 | Bearer + effective business + branch authorization | `reports.view`; export `reports.export`; share `reports.share` | Existing report capability checks apply to export/share | None; read-only | Query/read safe; every export/share creates its existing report record |
 | AUTH-001 | Public except logout, which requires bearer + effective business through the protected group | No business scope during public flow | None | None implemented | No command key; provider OTP/session controls apply |
 | ASSET-001 | Logo: bearer + owned business; drive: bearer + effective business | Logo owner check; drive `drive.manage` | Logo none; drive `drive_storage_mb`, measured from tenant drive assets in MB | None implemented | No command key and no completion idempotency |
-| IMP-001 | Bearer + effective business + authenticated user | Intake is rejected by CAP-001 before legacy per-type permission checks | Product support is `unsupported` until Task 7 | None implemented | No intake mutation occurs |
+| IMP-001 | Bearer + effective business + authenticated user; jobs are uploader-bound for validation/commit/cancel | Customer `customers.create`; vendor `vendors.create`; product `products.manage` | CAP-001 `bulk_imports` plus business setup and the matching permission | None | Validation replays by tenant/uploader/upload; commit requires a UUID `Idempotency-Key`; identical retry republishes safely |
 | CART-001 | Bearer + effective business; user and owned shopping-agent checks | No additional permission | None | None implemented | No command key; signatures cover a created mandate but add creates a new mandate |
 | COUPON-001 | Management: bearer + effective business; validation: public slug route with rate limits | View `storefront.view`; writes `storefront.manage`; validation public | None enforced on coupon routes | None implemented | No command/version key |
 | REPORT-001 | Bearer + effective business + branch/warehouse scope | `reports.export` | `export_documents` through CAP-001 | None implemented | No command key; every accepted request creates a report run |
@@ -108,7 +108,7 @@ omitted column to imply support.
 | ACC-002 | Report query uses standard page/limit and CSV export/share behavior; `currency` is required for accounting statements/diagnostics | Posted-ledger read-only projection; safe to repeat; diagnostics never repair | No event; invalidate after any posting/reversal/opening/bank adjustment | `000058` backfills branch and authoritative account metadata before enabling reports | PostgreSQL reporting query tests, service reconciliation checks, generated Swagger and both OpenAPI files |
 | AUTH-001 | No pagination/file | OTP/session retry follows current rate/cooldown behavior; errors are not stable | No auth event contract; invalidate local session/profile after verify/refresh/logout | `migrations/000023_add_phone_auth_fields.up.sql`; Cognito/SMS rollout unverified | `internal/services/auth_phone_test.go`, `tests/unit/auth_service_test.go`, `tests/integration/auth_test.go`; enumeration, linking, device/session, MFA and audit gaps |
 | ASSET-001 | PUT bytes to opaque signed URL; no download/completion contract here | Request a new URL after expiry; PUT success is not completion proof | No asset-ready event; do not invalidate/show final asset as complete | `migrations/000032_add_storefront_enterprise_features.up.sql`, `migrations/000033_add_more_screen_parity.up.sql`, `infrastructure/terraform/s3.tf`; S3 externally unverified | `internal/services/s3_service_test.go`, `tests/unit/business_service_test.go`, `internal/services/commerce_service_test.go`, `tests/unit/commerce_handler_test.go`; missing checksum/HEAD/scan/reference transaction |
-| IMP-001 | Job list uses page/limit; upload is multipart; job payloads are JSON strings | Queued rows have no processor/restart contract | No import event; do not depend on progress invalidation | `migrations/000030_add_swipe_billing_ops.up.sql`; keep UI disabled | `tests/unit/billing_ops_handler_test.go`; no durable validation/commit worker found in `internal/workers`, `cmd`, or `infrastructure/terraform` |
+| IMP-001 | Upload uses the verified pending-upload flow; validate body is JSON; list page/limit; result is an authorized job artifact | `validating`, `validated`, `commit_queued`, `committing`, `completed`, `failed`, `canceled`, `expired`; retry same commands after ambiguity | Completion creates an idempotent in-app notification; poll job detail with bounded backoff | Expand-first paired `000059`; deploy application and bulk-import worker before enabling | Service restart/idempotency/formula/tenant tests, route-permission tests, migration tests, worker partial-batch tests, mocked Terraform topology |
 | CART-001 | Cart list uses page/limit; no file | Mandate states `pending`/`signed`/`rejected`/`expired`; do not retry checkout after ambiguous side effect | No versioned cart event; invalidate/refetch created mandate only | `migrations/000013_add_ap2_agent_marketplace.up.sql`, `migrations/000049_verify_cart_mandate_signatures.up.sql`; keep out of new editable-cart UI | `internal/services/shopping_agent_service_test.go`, `internal/services/shopping_agent_signature_test.go`, `tests/unit/shopping_handler_test.go`; no mutation concurrency or authoritative pricing/stock |
 | COUPON-001 | List is an array without pagination; no file | Active/date rules exist; retrying writes can duplicate without a client key | No versioned coupon event; invalidate storefront coupon list after writes | `migrations/000032_add_storefront_enterprise_features.up.sql`; avoid claiming hard caps | `internal/services/commerce_service_test.go`, `internal/services/commerce_checkout_postgres_integration_test.go`, `internal/services/storefront_tenant_scope_test.go`; redemption/update concurrency is unsafe |
 | REPORT-001 | Input page/limit; response embeds JSON or CSV string, not a file response | Synchronous `completed`/`failed` run model; repeat creates another run | No export event; invalidate report-run/history views after success | `migrations/000029_add_projects_and_reporting.up.sql`; XLSX rollout missing | `internal/services/report_service_test.go`, `tests/unit/report_handler_test.go`; no XLSX, typed cells, disposition or export idempotency |
@@ -230,9 +230,9 @@ uses this same tenant-scoped reader and rejects an upload that would exceed the
 byte limit before creating a drive asset or calling S3.
 
 Web voice is always `unsupported_platform`; saved payment methods are always
-`unsupported`; bulk imports are always `unsupported` with
-`bulk_import_processor_unavailable` because the current intake has no safe
-processor. The legacy simulated GST provider never satisfies configuration.
+`unsupported`. Bulk imports are available only when business setup, entitlement,
+quota, permission, and deployed worker dependencies pass CAP-001. The legacy
+simulated GST provider never satisfies configuration.
 Customer JSON cannot contain provider credentials, provider account IDs, secret
 identifiers, raw provider errors, or infrastructure topology.
 
@@ -1402,18 +1402,47 @@ Evidence: `internal/handlers/business_handler.go`,
 `tests/unit/commerce_handler_test.go`, `tests/integration/s3_test.go`, and
 `infrastructure/terraform/s3.tf`.
 
-## IMP-001: Current bulk import intake is not production-ready
+## IMP-001: Durable two-phase bulk import
 
-The registered multipart routes are `POST /imports/customers`, `/vendors`,
-`/products`, `/invoices`, and `/documents`. Customer/vendor have explicit create
-permissions; the other three do not have the complete Phase 2 permission model.
-Each accepts `multipart/form-data` with a required file field named `file`. The
-current handler reads the full uploaded file into memory, optionally stores it
-in S3, parses CSV rows synchronously, and creates a queued `BulkJob`. No worker
-that commits those rows was found, so a successful intake can remain queued
-forever. Invoice/document import is outside Task 7's intended scope.
+Supported intake routes are `POST /imports/customers`, `/imports/vendors`, and
+`/imports/products`. Each accepts JSON with an opaque clean pending-upload UUID,
+optional `delimiter` (`comma`, `semicolon`, or `tab`), and optional source-header
+to canonical-field `mapping`:
 
-Successful intake is `202` with the job object, not `201`:
+```json
+{"upload_id":"44444444-aaaa-4aaa-8aaa-444444444444","delimiter":"comma","mapping":{"customer_name":"name"}}
+```
+
+Validation returns `201` and never creates customers, vendors, or products. It
+persists normalized row previews and stable row errors, rejects invalid UTF-8,
+checksum/size mismatch, malformed or oversized CSV, formula-prefixed values,
+invalid mappings and domain values, and tenant or uploader mismatch. A job with
+any invalid row cannot commit.
+
+Commit is `POST /imports/{job_id}/commit` with a UUID `Idempotency-Key`; success
+is `202`. Cancellation is `DELETE /imports/{job_id}` and returns `200`. Reuse the
+same upload and validation payload or commit key after an ambiguous response.
+Changing a replayed validation payload or commit key returns `409` code
+`bulk_import_conflict`. Other stable codes are `bulk_import_invalid` (`400`),
+`bulk_import_forbidden` (`403`), `bulk_import_not_found` (`404`), and
+`bulk_import_retryable` (`503`).
+
+Poll `GET /bulk-jobs/{id}` until terminal. Result artifacts never expose object
+keys; completion writes a bounded CSV result artifact and an idempotent in-app
+notification. Job list/detail reads are uploader-bound. Due queue commands,
+expired worker leases, and 30-day artifact/job cleanup are recovered by the
+five-minute maintenance schedule; completion-delivery retries keep notifications
+idempotent. Invoice and document imports remain unsupported.
+
+### Replaced legacy intake
+
+Before migration `000059`, the routes used multipart upload, buffered the file,
+and created queued rows without a consumer. Those routes and the generic legacy
+import service path are disabled. Existing queued imports are marked failed with
+`legacy_import_requires_revalidation`; clients must create a verified pending
+upload and start a new validation.
+
+Successful legacy intake was `202` with the job object, not `201`:
 
 ```http
 Content-Type: multipart/form-data; boundary=...
@@ -1449,12 +1478,10 @@ Asha,asha@example.test
 }
 ```
 
-> ⛔ **UNSAFE - DO NOT DISPLAY, LOG, OR PERSIST:** `file_key` is an exact
-> current response field on a job and its artifacts. It exposes internal storage
-> topology. Task 7 must replace it with an opaque upload/artifact identifier and
-> authorized download contract; frontend code must discard `file_key` now.
+> **Legacy warning:** `file_key` exposed internal storage topology. It is hidden
+> from current job and artifact JSON. Frontend code must never model this field.
 
-Intake failures are `400 {"error":"file is required"}` for a missing part,
+Legacy intake failures were `400 {"error":"file is required"}` for a missing part,
 unstable `400` file-open/read text, `403` unstable permission text where the
 service checks customer/vendor permissions, and otherwise unstable `500` text.
 There is no file-size limit, encoding/content validation, command key, or safe
@@ -1467,34 +1494,31 @@ Defaults are page 1/limit 10 and the maximum limit is 100. Success example:
 {"data":[{"id":"44444444-aaaa-4aaa-8aaa-444444444444","business_id":"22222222-2222-4222-8222-222222222222","created_by":"user-id","job_type":"import_customers","status":"queued","total_rows":1,"processed_rows":0,"succeeded_rows":0,"failed_rows":0,"created_at":"2026-09-01T12:00:00Z","updated_at":"2026-09-01T12:00:00Z"}],"total":1,"page":1,"limit":20}
 ```
 
-`GET /bulk-jobs/{id}` returns a business-scoped job with optional rows and
+`GET /bulk-jobs/{id}` returns a business-and-uploader-scoped job with optional rows and
 artifacts. Job fields are `id`, `business_id`, `created_by`, `job_type`, optional
-`action`, `status`, optional `file_name`, optional `file_key`, optional
+`action`, `status`, optional `file_name`, optional
 `content_type`, `total_rows`, `processed_rows`, `succeeded_rows`, `failed_rows`,
 optional `request_payload`, optional `result_payload`, optional `last_error`,
 optional `queued_at`, `started_at`, `completed_at`, `created_at`, `updated_at`,
 optional `rows`, and optional `artifacts`. JSON payload fields are encoded
-strings; internal file keys are exposed.
+strings; internal file keys are not serialized.
 
 A row has `id`, `bulk_job_id`, `row_number`, `status`, optional `entity_id`,
 optional `entity_type`, optional JSON-encoded `input` and `result`, optional
 `error`, `created_at`, and `updated_at`. An artifact has `id`, `bulk_job_id`,
-`artifact_type`, `file_name`, `file_key`, optional JSON-encoded `metadata`,
+`artifact_type`, `file_name`, `status`, optional `expires_at`,
 `created_at`, and `updated_at`. GET-list errors are unstable `500`; GET-one is
 `404 {"error":"bulk job not found"}` for any lookup error. Reads are safe to
 retry. Model-declared job states are `pending`, `queued`, `processing`,
 `completed`, and `failed`, but this intake only establishes `queued` and has no
 progress/restart event or invalidation contract.
 
-Do not enable imports in a production frontend until Task 7 replaces this with
-preview/validation, explicit UUID commit, worker progress, restart-safe row
-idempotency, artifacts, cancellation, retention, stable errors and notifications.
-Evidence: `internal/app/runtime.go`, `internal/handlers/billing_ops_handler.go`,
-`internal/services/billing_ops_service.go`, `internal/models/swipe_ops.go`,
-`tests/unit/billing_ops_handler_test.go`,
-`migrations/000030_add_swipe_billing_ops.up.sql`. The processor absence claim
-comes from inspecting `internal/workers`, every entry point under `cmd`, and
-`infrastructure/terraform`; no bulk-import consumer or import queue was found.
+This legacy request/response material is historical only. New clients must use
+the two-phase JSON contract above. Evidence: `internal/app/runtime.go`,
+`internal/handlers/billing_ops_handler.go`,
+`internal/services/bulk_import_service.go`, `internal/models/swipe_ops.go`,
+`migrations/000059_durable_bulk_imports.up.sql`, the bulk-import worker tests,
+and `infrastructure/terraform/bulk_import.tf`.
 
 ## CART-001: Existing AP2 cart mandate
 
@@ -1701,7 +1725,7 @@ and `tests/unit/report_handler_test.go`.
 | Staging verification evidence | `missing` and `externally unverified` | Do not label a provider operational from local tests. |
 | Step-up, TOTP, durable devices/sessions and privacy workflows | `missing` | Do not expose placeholder controls. |
 | Trial Balance, Balance Sheet, fiscal lock/opening balance and bank reconciliation | ACC-001/002 `complete` locally; bank object/scanner deployment externally unverified | Enable from the ACC contracts after migration `000058`; do not label uploaded bank files operational until storage/scanning is verified. |
-| Durable two-phase customer/vendor/product import | `missing`; unsafe intake now fail-closed by CAP-001 | Keep imports disabled until Task 7 replaces the unsupported capability state. |
+| Durable two-phase customer/vendor/product import | IMP-001 `complete` locally; S3/SQS deployment externally unverified | Enable after migration `000059`, worker deployment, queue alarm, upload, artifact, and notification smoke verification. |
 | Verified upload completion, editable cart, race-safe coupons and typed XLSX | `missing` around partial surfaces | Do not simulate completion client-side. |
 | AI risk/approval/budget/kill-switch governance | `missing` around unsafe AI-001 descriptive capabilities and read-only voice tools | Do not enable governed high-risk agent actions. |
 | Saved payment methods | `deferred`; every current mutation is fail-closed by CAP-001 | Keep unavailable; read-only legacy views do not authorize creation or token use. |

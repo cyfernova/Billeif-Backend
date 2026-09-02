@@ -215,7 +215,7 @@ var capabilityDefinitions = []capabilityDefinition{
 	{Key: CapabilityAI, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.AI }, Permission: PermissionAgentsView, Platforms: allCapabilityPlatforms(), Setup: businessExistsSetup, SetupAction: "contact_support", HealthKey: CapabilityAI, HealthScope: CapabilityHealthScopeGlobal},
 	{Key: CapabilityStorefrontPayments, Supported: true, Configuration: func(c config.CapabilityConfiguration) bool { return c.Razorpay }, Feature: FeatureOnlineStore, Permission: PermissionStorefrontManage, Platforms: allCapabilityPlatforms(), Setup: func(s CapabilityBusinessSetup) bool { return s.StorefrontPayments }, SetupAction: "enable_storefront_payments", HealthKey: CapabilityRazorpay, HealthScope: CapabilityHealthScopeGlobal},
 	{Key: CapabilityReportExports, Supported: true, Feature: FeatureExportDocuments, Permission: PermissionReportsExport, Platforms: allCapabilityPlatforms(), Setup: businessExistsSetup, SetupAction: "complete_business_setup", HealthScope: CapabilityHealthScopeUnobserved},
-	{Key: CapabilityBulkImports, Supported: false, UnsupportedReason: ReasonBulkProcessorUnavailable, Platforms: allCapabilityPlatforms(), HealthScope: CapabilityHealthScopeUnobserved},
+	{Key: CapabilityBulkImports, Supported: true, Platforms: allCapabilityPlatforms(), Setup: businessExistsSetup, SetupAction: "complete_business_setup", HealthScope: CapabilityHealthScopeUnobserved},
 	{Key: CapabilitySavedPayments, Supported: false, UnsupportedReason: ReasonSavedPaymentsUnsupported, Permission: PermissionPaymentsManage, Platforms: allCapabilityPlatforms(), HealthScope: CapabilityHealthScopeUnobserved},
 }
 

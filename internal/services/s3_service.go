@@ -145,6 +145,14 @@ func (s *S3Service) ReadPendingObject(ctx context.Context, bucket, key string) (
 	return s.Download(ctx, bucket, key)
 }
 
+func (s *S3Service) OpenPendingObject(ctx context.Context, bucket, key string) (io.ReadCloser, error) {
+	result, err := s.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)})
+	if err != nil {
+		return nil, err
+	}
+	return result.Body, nil
+}
+
 func (s *S3Service) Upload(ctx context.Context, bucket, key string, data []byte, contentType string) error {
 	log := logger.FromContext(ctx).With("service", "s3", "operation", "upload", "bucket", bucket, "key", key)
 	start := time.Now()

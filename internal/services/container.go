@@ -59,6 +59,7 @@ type Container struct {
 	Shipping               *ShippingService
 	Invoice                *InvoiceService
 	BillingOps             *BillingOpsService
+	BulkImport             *BulkImportService
 	Payment                *PaymentService
 	RazorpayPayment        *RazorpayPaymentService
 	Ledger                 *LedgerService
@@ -288,6 +289,14 @@ func NewContainer(
 	documentSvc.salesInvoices = newInvoiceSalesDocumentCreator(invoiceSvc)
 	documentSvc.salesInvoiceIssuer = newInvoiceSalesDocumentIssuer(invoiceSvc)
 	billingOpsSvc := NewBillingOpsService(cfg, db, customerRepo, vendorRepo, productRepo, invoiceSvc, documentSvc, s3Svc, businessAuthSvc, log)
+	var bulkImportQueue BulkImportQueueSender
+	if aws != nil {
+		bulkImportQueue = NewSQSBulkImportQueueSender(cfg.SQS.BulkImportQueue, aws.SQS)
+	}
+	bulkImportSvc := NewBulkImportService(db, securityRepo, s3Svc, bulkImportQueue, BulkImportOptions{
+		Permissions: businessAuthSvc, Capability: capabilitySvc,
+		ArtifactStore: s3Svc, ArtifactBucket: cfg.S3.BucketInvoices, Notifications: notificationSvc,
+	})
 	documentSvc.AttachTaxComplianceService(taxComplianceSvc)
 	taxComplianceSvc.AttachDocumentService(documentSvc)
 	posSvc := NewPOSService(db, documentSvc, barcodeSvc, inventorySvc, taxComplianceSvc.entitlements, log)
@@ -372,6 +381,7 @@ func NewContainer(
 		Shipping:               shippingSvc,
 		Invoice:                invoiceSvc,
 		BillingOps:             billingOpsSvc,
+		BulkImport:             bulkImportSvc,
 		Payment:                NewPaymentService(db, paymentRepo, invoiceRepo, documentSvc, journalSvc, log),
 		RazorpayPayment:        razorpayPaymentSvc,
 		Ledger:                 NewLedgerService(ledgerRepo, log),

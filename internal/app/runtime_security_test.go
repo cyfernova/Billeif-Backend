@@ -120,12 +120,12 @@ func TestPartyAndRenderProfileMutationRoutesRequireExactPermissions(t *testing.T
 		`customers.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersCreate), userWriteRL, h.Customer.Create)`,
 		`customers.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersUpdate), userWriteRL, h.Customer.Update)`,
 		`customers.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersDelete), userWriteRL, h.Customer.Delete)`,
-		`customers.POST("/import", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersCreate), bulkRL, h.Customer.Import)`,
 		`vendors.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVendorsCreate), userWriteRL, h.Vendor.Create)`,
 		`vendors.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVendorsUpdate), userWriteRL, h.Vendor.Update)`,
 		`vendors.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVendorsDelete), userWriteRL, h.Vendor.Delete)`,
 		`imports.POST("/customers", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionCustomersCreate), bulkRL, h.BillingOps.CreateCustomerImportJob)`,
 		`imports.POST("/vendors", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionVendorsCreate), bulkRL, h.BillingOps.CreateVendorImportJob)`,
+		`imports.POST("/products", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProductsManage), bulkRL, h.BillingOps.CreateProductImportJob)`,
 		`renderProfiles.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRenderProfilesCreate), userWriteRL, h.RenderProfile.Create)`,
 		`renderProfiles.POST("/:id/default", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRenderProfilesUpdate), userWriteRL, h.RenderProfile.SetDefault)`,
 		`renderProfiles.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionRenderProfilesUpdate), userWriteRL, h.RenderProfile.Update)`,
@@ -134,6 +134,11 @@ func TestPartyAndRenderProfileMutationRoutesRequireExactPermissions(t *testing.T
 	for _, fragment := range requiredFragments {
 		if !strings.Contains(routes, fragment) {
 			t.Fatalf("mutation route is missing exact permission gate: %s", fragment)
+		}
+	}
+	for _, forbidden := range []string{`customers.POST("/import"`, `imports.POST("/invoices"`, `imports.POST("/documents"`} {
+		if strings.Contains(routes, forbidden) {
+			t.Fatalf("unsafe or out-of-scope import route remains registered: %s", forbidden)
 		}
 	}
 }

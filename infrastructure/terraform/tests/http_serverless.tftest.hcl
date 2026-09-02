@@ -10,7 +10,7 @@ mock_provider "aws" {
 
   mock_resource "aws_lambda_invocation" {
     defaults = {
-      result = "{\"status\":\"applied\",\"version\":58,\"latest_version\":58,\"dirty\":false,\"manifest_checksum\":\"4ca9bc012eecbb5fab892a1bd6bf9873f7639c15b64c6736da8f1b40254bb4a1\"}"
+      result = "{\"status\":\"applied\",\"version\":58,\"latest_version\":58,\"dirty\":false,\"manifest_checksum\":\"eb9f3899fde99bec91964c8188e6e827427d41c43e842b2f0e2a69f11fd1953d\"}"
     }
   }
 
@@ -322,7 +322,7 @@ run "http_execution_role_is_dedicated_and_least_privilege" {
 
   assert {
     condition = (
-      length(data.aws_iam_policy_document.lambda_http_app.statement) == 16 &&
+      length(data.aws_iam_policy_document.lambda_http_app.statement) == 17 &&
       toset(flatten([
         for statement in data.aws_iam_policy_document.lambda_http_app.statement : statement.actions
         ])) == toset([

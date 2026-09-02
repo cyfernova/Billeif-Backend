@@ -716,6 +716,13 @@ data "aws_iam_policy_document" "lambda_http_app" {
   }
 
   statement {
+    sid       = "HTTPBulkImportResultReads"
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.invoices_pdf.arn}/bulk-import-results/*"]
+  }
+
+  statement {
     sid     = "HTTPInvoiceAssetWrites"
     effect  = "Allow"
     actions = ["s3:PutObject"]
@@ -763,6 +770,7 @@ data "aws_iam_policy_document" "lambda_http_app" {
       aws_sqs_queue.gst_processing.arn,
       aws_sqs_queue.bargaining_negotiation.arn,
       aws_sqs_queue.email_delivery.arn,
+      aws_sqs_queue.bulk_import.arn,
     ]
   }
 

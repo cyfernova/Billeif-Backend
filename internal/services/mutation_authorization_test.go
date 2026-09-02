@@ -273,6 +273,18 @@ func TestBulkImportIntakeRejectsUnsupportedCapabilityBeforeAnyEffect(t *testing.
 	})
 }
 
+func TestLegacyBulkImportIntakeRemainsDisabledAfterCapabilityEnablement(t *testing.T) {
+	service := NewBillingOpsService(nil, nil, nil, nil, nil, nil, nil, nil, &recordingPermissionChecker{allow: true}, logger.New()).WithCapabilityGuard(&recordingCapabilityGuard{})
+
+	_, err := service.CreateBulkJob(mutationActorContext(), CreateBulkJobInput{
+		BusinessID: "business-1", JobType: models.BulkJobTypeImportCustomers, FileContent: []byte("unsafe"),
+	})
+
+	if !errors.Is(err, ErrLegacyBulkImportDisabled) {
+		t.Fatalf("legacy import error = %v, want ErrLegacyBulkImportDisabled", err)
+	}
+}
+
 func TestMutationAuthorizationFailsClosedWithoutCheckerOrServerActor(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -220,6 +220,7 @@ type SQSConfig struct {
 	EmailDeliveryQueue string `mapstructure:"EMAIL_DELIVERY_QUEUE"`
 	GSTQueue           string `mapstructure:"GST_QUEUE"`
 	BargainingQueue    string `mapstructure:"BARGAINING_QUEUE"`
+	BulkImportQueue    string `mapstructure:"BULK_IMPORT_QUEUE"`
 }
 
 type SESConfig struct {
@@ -391,6 +392,7 @@ func LoadForProfile(profile Profile) (*Config, error) {
 	_ = viper.BindEnv("SQS.EMAIL_DELIVERY_QUEUE", "SQS_EMAIL_DELIVERY_QUEUE")
 	_ = viper.BindEnv("SQS.GST_QUEUE", "SQS_GST_QUEUE")
 	_ = viper.BindEnv("SQS.BARGAINING_QUEUE", "SQS_BARGAINING_QUEUE")
+	_ = viper.BindEnv("SQS.BULK_IMPORT_QUEUE", "SQS_BULK_IMPORT_QUEUE")
 	_ = viper.BindEnv("SES.SENDER_EMAIL", "SES_SENDER_EMAIL")
 	_ = viper.BindEnv("SES.CONFIGURATION_SET", "SES_CONFIGURATION_SET")
 	_ = viper.BindEnv("SES.SENDING_ACCOUNT_ID", "SES_SENDING_ACCOUNT_ID")
@@ -573,6 +575,7 @@ func applyFlatEnvFileFallbacks(cfg *Config) {
 	setIfEmpty(&cfg.SQS.EmailDeliveryQueue, "SQS_EMAIL_DELIVERY_QUEUE")
 	setIfEmpty(&cfg.SQS.GSTQueue, "SQS_GST_QUEUE")
 	setIfEmpty(&cfg.SQS.BargainingQueue, "SQS_BARGAINING_QUEUE")
+	setIfEmpty(&cfg.SQS.BulkImportQueue, "SQS_BULK_IMPORT_QUEUE")
 	setIfEmpty(&cfg.SES.SenderEmail, "SES_SENDER_EMAIL")
 	setIfEmpty(&cfg.SES.ConfigurationSet, "SES_CONFIGURATION_SET")
 	setIfEmpty(&cfg.SES.SendingAccountID, "SES_SENDING_ACCOUNT_ID")

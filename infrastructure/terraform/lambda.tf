@@ -21,6 +21,7 @@ locals {
     subscription_reconciler = "${var.lambda_artifact_dir}/subscription-reconciler.zip"
     sqs_email_delivery      = "${var.lambda_artifact_dir}/sqs-email-delivery.zip"
     sqs_ses_feedback        = "${var.lambda_artifact_dir}/sqs-ses-feedback.zip"
+    bulk_import             = "${var.lambda_artifact_dir}/bulk-import.zip"
   }
 
   lambda_artifact_hashes = {
@@ -400,6 +401,7 @@ resource "aws_lambda_function" "api_http" {
     variables = merge(local.common_lambda_env, local.http_secret_env, local.http_cursor_secret_env, local.operator_http_env, local.voice_http_lambda_env, local.rate_limit_http_env, {
       WEBSOCKET_API_ENDPOINT = local.websocket_api_invoke_url
       SERVER_BASE_URL        = local.http_api_invoke_url
+      SQS_BULK_IMPORT_QUEUE  = aws_sqs_queue.bulk_import.url
     })
   }
 

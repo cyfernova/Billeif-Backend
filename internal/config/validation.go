@@ -24,6 +24,7 @@ const (
 	ProfileSubscriptionReconciler Profile = "subscription-reconciler"
 	ProfileEmailDelivery          Profile = "sqs-email-delivery"
 	ProfileSESFeedback            Profile = "sqs-ses-feedback"
+	ProfileBulkImport             Profile = "bulk-import"
 )
 
 func ValidateForProfile(cfg *Config, profile Profile) error {
@@ -60,6 +61,14 @@ func ValidateForProfile(cfg *Config, profile Profile) error {
 			return err
 		}
 		return validateProfileDatabase(cfg)
+	case ProfileBulkImport:
+		if err := validateProfileBase(cfg); err != nil {
+			return err
+		}
+		if err := validateProfileDatabase(cfg); err != nil {
+			return err
+		}
+		return validateProfileDependencies(cfg, profile)
 	case ProfileSubscriptionReconciler:
 		if err := validateProfileBase(cfg); err != nil {
 			return err
@@ -195,6 +204,16 @@ func validateProfileDependencies(cfg *Config, profile Profile) error {
 		}
 		if strings.TrimSpace(cfg.SES.ConfigurationSet) == "" {
 			return fmt.Errorf("SES_CONFIGURATION_SET is required")
+		}
+	case ProfileBulkImport:
+		if strings.TrimSpace(cfg.S3.BucketDrive) == "" {
+			return fmt.Errorf("S3_BUCKET_DRIVE is required")
+		}
+		if strings.TrimSpace(cfg.S3.BucketInvoices) == "" {
+			return fmt.Errorf("S3_BUCKET_INVOICES is required")
+		}
+		if strings.TrimSpace(cfg.SQS.BulkImportQueue) == "" {
+			return fmt.Errorf("SQS_BULK_IMPORT_QUEUE is required")
 		}
 	}
 	return nil

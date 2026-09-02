@@ -885,6 +885,8 @@ type CreateBulkJobInput struct {
 	RequestPayload map[string]interface{} `json:"request_payload,omitempty"`
 }
 
+var ErrLegacyBulkImportDisabled = errors.New("legacy bulk import intake is disabled")
+
 func (s *BillingOpsService) CreateBulkJob(ctx context.Context, input CreateBulkJobInput) (*models.BulkJob, error) {
 	if bulkJobIsImport(input.JobType) {
 		if err := requireCapability(ctx, s.capability, CapabilityRequest{
@@ -903,6 +905,9 @@ func (s *BillingOpsService) CreateBulkJob(ctx context.Context, input CreateBulkJ
 		if err := requireMutationPermission(ctx, s.permissions, input.BusinessID, PermissionVendorsCreate); err != nil {
 			return nil, err
 		}
+	}
+	if bulkJobIsImport(input.JobType) {
+		return nil, ErrLegacyBulkImportDisabled
 	}
 	if s.db == nil {
 		return nil, fmt.Errorf("database is not configured")
@@ -984,7 +989,7 @@ func bulkJobIsImport(jobType string) bool {
 	}
 }
 
-func (s *BillingOpsService) ListBulkJobs(ctx context.Context, businessID string, page, limit int) ([]*models.BulkJob, int64, error) {
+func (s *BillingOpsService) ListBulkJobs(ctx context.Context, businessID, uploaderID string, page, limit int) ([]*models.BulkJob, int64, error) {
 	if s.db == nil {
 		return nil, 0, fmt.Errorf("database is not configured")
 	}
@@ -995,7 +1000,7 @@ func (s *BillingOpsService) ListBulkJobs(ctx context.Context, businessID string,
 		limit = 20
 	}
 	query := s.db.WithContext(ctx).Model(&models.BulkJob{}).
-		Where("business_id = ? AND deleted_at IS NULL", businessID)
+		Where("business_id = ? AND created_by = ? AND deleted_at IS NULL", businessID, uploaderID)
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -1015,7 +1020,7 @@ func (s *BillingOpsService) ListBulkJobs(ctx context.Context, businessID string,
 	return result, total, nil
 }
 
-func (s *BillingOpsService) GetBulkJob(ctx context.Context, businessID, id string) (*models.BulkJob, error) {
+func (s *BillingOpsService) GetBulkJob(ctx context.Context, businessID, uploaderID, id string) (*models.BulkJob, error) {
 	if s.db == nil {
 		return nil, fmt.Errorf("database is not configured")
 	}
@@ -1023,7 +1028,7 @@ func (s *BillingOpsService) GetBulkJob(ctx context.Context, businessID, id strin
 	if err := s.db.WithContext(ctx).
 		Preload("Rows").
 		Preload("Artifacts").
-		Where("id = ? AND business_id = ? AND deleted_at IS NULL", id, businessID).
+		Where("id = ? AND business_id = ? AND created_by = ? AND deleted_at IS NULL", id, businessID, uploaderID).
 		First(&job).Error; err != nil {
 		return nil, err
 	}

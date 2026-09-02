@@ -274,6 +274,7 @@ resource "aws_ec2_instance_state" "nat_stopped" {
     aws_lambda_permission.allow_websocket_lambda,
     aws_lambda_permission.cognito_phone_custom_sms,
     aws_scheduler_schedule.outbox_dispatcher,
+    aws_scheduler_schedule.bulk_import_maintenance,
     aws_scheduler_schedule.recurring_invoices,
     aws_scheduler_schedule.subscription_reconciler
   ]

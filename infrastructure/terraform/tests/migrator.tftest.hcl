@@ -10,7 +10,7 @@ mock_provider "aws" {
 
   mock_resource "aws_lambda_invocation" {
     defaults = {
-      result = "{\"status\":\"applied\",\"version\":58,\"latest_version\":58,\"dirty\":false,\"manifest_checksum\":\"4ca9bc012eecbb5fab892a1bd6bf9873f7639c15b64c6736da8f1b40254bb4a1\"}"
+      result = "{\"status\":\"applied\",\"version\":58,\"latest_version\":58,\"dirty\":false,\"manifest_checksum\":\"eb9f3899fde99bec91964c8188e6e827427d41c43e842b2f0e2a69f11fd1953d\"}"
     }
   }
 
@@ -176,6 +176,7 @@ run "foundation_migrates_while_application_is_fail_closed" {
       aws_lambda_function.sqs_invoice.reserved_concurrent_executions == 0 &&
       aws_lambda_function.sqs_gst.reserved_concurrent_executions == 0 &&
       aws_lambda_function.sqs_bargaining.reserved_concurrent_executions == 0 &&
+      aws_lambda_function.bulk_import.reserved_concurrent_executions == 0 &&
       aws_lambda_function.ws_handler.reserved_concurrent_executions == 0 &&
       aws_lambda_function.custom_sms_sender.reserved_concurrent_executions == 0 &&
       aws_lambda_function.outbox_dispatcher.reserved_concurrent_executions == 0 &&
@@ -189,6 +190,7 @@ run "foundation_migrates_while_application_is_fail_closed" {
       length(aws_lambda_event_source_mapping.invoice_queue) == 0 &&
       length(aws_lambda_event_source_mapping.gst_queue) == 0 &&
       length(aws_lambda_event_source_mapping.bargaining_queue) == 0 &&
+      length(aws_lambda_event_source_mapping.bulk_import_queue) == 0 &&
       length(aws_lambda_permission.allow_http_api_http) == 0 &&
       length(aws_lambda_permission.allow_rest_a2a_stream) == 0 &&
       length(aws_lambda_permission.allow_websocket_lambda) == 0 &&
@@ -399,6 +401,7 @@ run "reviewed_enablement_activates_stable_application_resources_after_migration"
       aws_lambda_function.sqs_invoice.reserved_concurrent_executions == 2 &&
       aws_lambda_function.sqs_gst.reserved_concurrent_executions == 2 &&
       aws_lambda_function.sqs_bargaining.reserved_concurrent_executions == 5 &&
+      aws_lambda_function.bulk_import.reserved_concurrent_executions == 2 &&
       aws_lambda_function.ws_handler.reserved_concurrent_executions == 5 &&
       aws_lambda_function.outbox_dispatcher.reserved_concurrent_executions == 1 &&
       aws_scheduler_schedule.outbox_dispatcher.state == "ENABLED"
@@ -411,6 +414,7 @@ run "reviewed_enablement_activates_stable_application_resources_after_migration"
       length(aws_lambda_event_source_mapping.invoice_queue) == 1 &&
       length(aws_lambda_event_source_mapping.gst_queue) == 1 &&
       length(aws_lambda_event_source_mapping.bargaining_queue) == 1 &&
+      length(aws_lambda_event_source_mapping.bulk_import_queue) == 1 &&
       length(aws_lambda_permission.allow_http_api_http) == 1 &&
       length(aws_lambda_permission.allow_rest_a2a_stream) == 1 &&
       length(aws_lambda_permission.allow_websocket_lambda) == 1 &&
@@ -426,6 +430,7 @@ run "reviewed_enablement_activates_stable_application_resources_after_migration"
       aws_lambda_function.sqs_invoice.tags.MigrationChecksum == local.application_migration_checksum,
       aws_lambda_function.sqs_gst.tags.MigrationChecksum == local.application_migration_checksum,
       aws_lambda_function.sqs_bargaining.tags.MigrationChecksum == local.application_migration_checksum,
+      aws_lambda_function.bulk_import.tags.MigrationChecksum == local.application_migration_checksum,
       aws_lambda_function.ws_handler.tags.MigrationChecksum == local.application_migration_checksum,
       aws_lambda_function.custom_sms_sender.tags.MigrationChecksum == local.application_migration_checksum,
     ])

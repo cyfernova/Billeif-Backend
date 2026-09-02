@@ -74,6 +74,15 @@ func TestProductionValidationProfilesRequireOnlyEntrypointConfiguration(t *testi
 				cfg.SES.ConfigurationSet = "Billeif-production-ses-events"
 			},
 		},
+		{
+			name:    "bulk import",
+			profile: ProfileBulkImport,
+			mutate: func(cfg *Config) {
+				cfg.S3.BucketDrive = "private-pending-uploads"
+				cfg.S3.BucketInvoices = "private-pending-uploads"
+				cfg.SQS.BulkImportQueue = "https://sqs.ap-south-1.amazonaws.com/123/billeif-bulk-import"
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -136,6 +145,24 @@ func TestProductionValidationProfilesRejectMissingConcreteEntrypointDependencies
 			profile: ProfileGST,
 			mutate:  func(cfg *Config) { cfg.Secrets.CredentialEncryption = "" },
 			want:    "CREDENTIAL_ENCRYPTION_SECRET_ARN",
+		},
+		{
+			name:    "bulk import pending upload bucket",
+			profile: ProfileBulkImport,
+			mutate:  func(cfg *Config) { cfg.S3.BucketDrive = "" },
+			want:    "S3_BUCKET_DRIVE",
+		},
+		{
+			name:    "bulk import result bucket",
+			profile: ProfileBulkImport,
+			mutate:  func(cfg *Config) { cfg.S3.BucketInvoices = "" },
+			want:    "S3_BUCKET_INVOICES",
+		},
+		{
+			name:    "bulk import queue",
+			profile: ProfileBulkImport,
+			mutate:  func(cfg *Config) { cfg.SQS.BulkImportQueue = "" },
+			want:    "SQS_BULK_IMPORT_QUEUE",
 		},
 		{
 			name:    "bargaining continuation queue",
@@ -272,6 +299,7 @@ func TestLoadForProfileAcceptsScopedProductionWorkerAndWebSocketEnvironments(t *
 		{ProfileOutbox, nil},
 		{ProfileRecurringInvoices, nil},
 		{ProfileEmailDelivery, nil},
+		{ProfileBulkImport, nil},
 	}
 
 	for _, tc := range tests {
@@ -309,6 +337,10 @@ func TestLoadForProfileAcceptsScopedProductionWorkerAndWebSocketEnvironments(t *
 				t.Setenv("S3_BUCKET_INVOICES", "invoice-pdfs")
 				t.Setenv("SES_SENDER_EMAIL", "billing@example.com")
 				t.Setenv("SES_CONFIGURATION_SET", "Billeif-production-ses-events")
+			case ProfileBulkImport:
+				t.Setenv("S3_BUCKET_DRIVE", "private-pending-uploads")
+				t.Setenv("S3_BUCKET_INVOICES", "private-pending-uploads")
+				t.Setenv("SQS_BULK_IMPORT_QUEUE", "https://sqs.ap-south-1.amazonaws.com/123/billeif-bulk-import")
 			}
 
 			if _, err := LoadForProfile(tc.profile); err != nil {
@@ -336,6 +368,7 @@ func completeProductionWorkerProfileConfig(profile Profile) *Config {
 			BargainingQueue:    "https://sqs.ap-south-1.amazonaws.com/123/bargaining",
 			InvoiceQueue:       "https://sqs.ap-south-1.amazonaws.com/123/billeif-invoice",
 			EmailDeliveryQueue: "https://sqs.ap-south-1.amazonaws.com/123/billeif-email-delivery",
+			BulkImportQueue:    "https://sqs.ap-south-1.amazonaws.com/123/billeif-bulk-import",
 		},
 		SES: SESConfig{SenderEmail: "billing@example.com", ConfigurationSet: "Billeif-production-ses-events"},
 		LLM: LLMConfig{
@@ -344,6 +377,7 @@ func completeProductionWorkerProfileConfig(profile Profile) *Config {
 		},
 		SSM: SSMConfig{DatabaseHostParam: "/app/database/host"},
 	}
+	cfg.S3.BucketDrive = "private-pending-uploads"
 	if profile == ProfileInvoice {
 		cfg.Secrets.GSTProvider = ""
 		cfg.Secrets.LLM = ""

@@ -120,7 +120,7 @@ func New(
 		RenderProfile:   NewRenderProfileHandler(svcs.Document, log),
 		Shipment:        NewShipmentHandler(svcs.Shipping, svcs.Document, log),
 		Invoice:         NewInvoiceHandler(svcs.Invoice, svcs.TaxCompliance, log, cursor),
-		BillingOps:      NewBillingOpsHandler(svcs.BillingOps, log),
+		BillingOps:      NewBillingOpsHandler(svcs.BillingOps, log, svcs.BulkImport),
 		Payment:         NewPaymentHandler(svcs.Payment, log),
 		RazorpayPayment: NewRazorpayPaymentHandler(svcs.RazorpayPayment, log, svcs.SubscriptionLifecycle),
 		Ledger:          NewLedgerHandler(svcs.Ledger, log),
