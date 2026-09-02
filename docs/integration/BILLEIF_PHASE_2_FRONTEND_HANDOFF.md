@@ -1,6 +1,6 @@
 # Billeif Phase 2 Frontend Handoff
 
-Status: in progress; CAP-001, SUB-001 through SUB-003, and ACC-001/002 are locally complete
+Status: complete for the audited local backend; deployed providers and environment checks remain externally unverified
 
 This document describes only Phase 2-relevant HTTP behavior that is implemented
 in the backend at the audited revision. It is not a future API design. `partial`
@@ -1302,6 +1302,21 @@ budget, breaker, or audit state denies execution. Both agent and business spend
 ceilings are explicit UTC-day windows in integer micros; provider and model are
 immutable for a run, so an open circuit cannot trigger a costlier fallback.
 
+| Property | Internal contract |
+| --- | --- |
+| Exposure | Internal service/repository seam only; no HTTP method/path, frontend request, or frontend response exists |
+| State | `initializing`, `running`, `completed`, `failed`, `cancelled`, `timed_out`, `blocked`, or `reconciliation_required` |
+| Retry | A scoped idempotency replay never invokes the tool twice; terminal success converges through a bounded safe result reference, while in-progress, cancelled, timed-out, failed, unknown, or missing-reference replays fail closed |
+| Limits | Per-run tokens, daily per-agent spend, per-business spend, steps, tool calls, duration, retries, cancellation, global/business/agent gates, and provider circuit/probe admission |
+| Stable internal errors | governance unavailable/invalid scope/conflict; invalid arguments; tool denied/in progress/replay unavailable/replay cancelled/replay timed out/reconciliation required/execution failed; approval required/invalid; gate disabled/run cancelled/run expired; step/tool/token/retry/spend limit; unsafe transition; circuit open/probe busy |
+| Frontend rule | Show AI and voice as unavailable through CAP-001. Do not invent approval, budget, audit, cancellation, or retry endpoints from this internal vocabulary |
+
+The exact risk classes are `read-only`, `internal draft`, `reversible write`,
+`external communication`, `financial commitment`, `tax or compliance`,
+`credential or security`, and `irreversible or legally significant`. Missing or
+different classifications deny execution. The last five classes require exact
+one-use approval; no high-risk effect adapter is registered.
+
 The code-owned catalog classifies the four existing voice reads as `read-only`.
 Only `list_invoices` and `get_invoice` are eligible for production advertising;
 customer reads remain disabled. The voice runtime requires a governed-executor
@@ -1822,14 +1837,14 @@ and `internal/app/runtime_security_test.go`.
 | Requested area | Current classification | Frontend instruction |
 | --- | --- | --- |
 | Internal capability diagnostics | `blocked` | Use customer-safe CAP-001 only. Provider internals require a future operator principal distinct from business owner/admin. |
-| Renewable subscription lifecycle, billing history, cancellation/grace/proration and reconciliation | `missing` around a `partial` one-month flow | Do not show auto-renewal or authoritative next charge. |
+| Renewable subscription lifecycle, billing history, cancellation/grace/proration and reconciliation | SUB-001/002/003 are `complete` locally; Razorpay remains `externally unverified` | Use the documented renewable lifecycle, but never infer provider payment or renewal from checkout success. |
 | Aggregate operation status, operator detail and safe recovery actions | OPS-007 business projection and exact failed-render retry are `complete` locally; OPS-008 high-risk actions remain step-up-blocked | Use the aggregate projection and exact retry contract. Keep webhook/reconcile/DLQ/resolve disabled with `step_up_required`; never substitute admin/owner for operator. |
 | Customer-safe aggregate GST/provider truth and recovery | `missing` around OPS-004/005/006 | Keep provider-backed success UI disabled: absent provider configuration selects a simulator that can fabricate IRN/ack/e-way bill values. A local succeeded state is not government-system evidence. Evidence: `internal/services/gst_provider.go`. |
 | Staging verification evidence | `missing` and `externally unverified` | Do not label a provider operational from local tests. |
 | Step-up, TOTP, durable devices/sessions and privacy workflows | `missing` | Do not expose placeholder controls. |
 | Trial Balance, Balance Sheet, fiscal lock/opening balance and bank reconciliation | ACC-001/002 `complete` locally; bank object/scanner deployment externally unverified | Enable from the ACC contracts after migration `000058`; do not label uploaded bank files operational until storage/scanning is verified. |
 | Durable two-phase customer/vendor/product import | IMP-001 `complete` locally; S3/SQS deployment externally unverified | Enable after migration `000059`, worker deployment, queue alarm, upload, artifact, and notification smoke verification. |
-| Verified upload completion, editable cart, race-safe coupons and typed XLSX | `missing` around partial surfaces | Do not simulate completion client-side. |
+| Verified upload completion, editable cart, race-safe coupons and typed XLSX | ASSET-001 logo, CART-001, COUPON-001, and REPORT-001 are `complete` locally; drive completion remains `partial`; S3 is `externally unverified` | Use the completed contracts after their migrations. Keep drive completion unavailable and never simulate upload completion client-side. |
 | Governed high-risk AI effect adapters and public operator controls | Core runtime governance exists; no high-risk adapter or public approval/kill-switch API is registered | Keep `AI_AGENT_EXECUTION_ENABLED=false`; do not enable high-risk agent actions. |
 | Saved payment methods | `deferred`; every current mutation is fail-closed by CAP-001 | Keep unavailable; read-only legacy views do not authorize creation or token use. |
 | Official GST return filing | `deferred` | Do not expose filing. Existing simulated provider output is not filing evidence. |
@@ -1842,8 +1857,13 @@ and `internal/app/runtime_security_test.go`.
 - No live deployment, Terraform apply, provider account mutation, Razorpay charge,
   OTP, object upload, queue message, outbound email/WhatsApp, GST submission, or
   AI call was made. All such behavior is externally unverified.
-- The controller-recorded baseline at `5b58a56` is `make test` passing on
-  2026-09-01, including race and coverage. Task 0 did not rerun it.
-- Task 10 must regenerate OpenAPI and replace these limitations only after the
-  corresponding behavior, migrations, permissions, tests, rollout gates and
-  provider verification are complete.
+- Swagger was regenerated from `internal/app/runtime.go` during Task 10; the
+  tracked generated files were already current and produced no diff. The two
+  manually curated OpenAPI contracts remain covered by route/contract tests.
+- Local Task 10 validation includes formatting, lint, the full Go race/coverage
+  suite, migration bundle checks, route/security/idempotency/unknown-outcome
+  tests, and Terraform format, validate, and mocked tests. Live PostgreSQL AI
+  governance cases skip without `MIGRATION_TEST_DATABASE_URL`.
+- The non-filing GST reconciliation follow-up is
+  `docs/plans/GST_RECONCILIATION_NON_FILING_FOLLOW_UP.md`. It does not authorize
+  filing, provider mutation, or exposure of current unsafe GST projections.
