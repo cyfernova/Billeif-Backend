@@ -186,7 +186,7 @@ func Initialize(ctx context.Context, opts InitializeOptions) (*Runtime, error) {
 		)
 	}
 	h := handlers.New(svcs, &handlers.Repositories{AP2: repos.AP2}, cfg, log, invoiceCursor)
-	router := setupRouter(cfg, svcs, h, log, rateLimiter, clientIdentities)
+	router := setupRouter(cfg, svcs, h, log, rateLimiter, clientIdentities, opts.Profile)
 
 	rt := &Runtime{
 		Config:      cfg,
@@ -525,7 +525,11 @@ func setupRouter(
 	log *logger.Logger,
 	rateLimiter ratelimit.Limiter,
 	clientIdentities *middleware.ClientIdentityResolver,
+	profile config.Profile,
 ) *gin.Engine {
+	if profile != "" && profile != config.ProfileHTTP && profile != config.ProfileA2A {
+		return nil
+	}
 	router := gin.New()
 	trustedProxies := []string(nil)
 	if trustedProxyCIDR := strings.TrimSpace(cfg.Redis.TrustedProxyCIDR); trustedProxyCIDR != "" {

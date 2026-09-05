@@ -139,5 +139,22 @@ func setupTestRouter(t *testing.T) *gin.Engine {
 		logger.New(),
 		ratelimit.DisabledLimiter{},
 		identities,
+		config.ProfileHTTP,
 	)
+}
+
+func TestQueueWorkerProfilesDoNotBuildHTTPRouter(t *testing.T) {
+	for _, profile := range []config.Profile{config.ProfileBulkImport, config.ProfileInvoice, config.ProfileGST, config.ProfileBargaining} {
+		t.Run(string(profile), func(t *testing.T) {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					t.Fatalf("worker router initialization panicked: %v", recovered)
+				}
+			}()
+			router := setupRouter(&config.Config{}, nil, nil, logger.New(), ratelimit.DisabledLimiter{}, nil, profile)
+			if router != nil {
+				t.Fatal("queue worker must not construct an HTTP router")
+			}
+		})
+	}
 }
