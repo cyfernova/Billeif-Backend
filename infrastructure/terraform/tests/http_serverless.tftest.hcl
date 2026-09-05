@@ -322,7 +322,7 @@ run "http_execution_role_is_dedicated_and_least_privilege" {
 
   assert {
     condition = (
-      length(data.aws_iam_policy_document.lambda_http_app.statement) == 18 &&
+      length(data.aws_iam_policy_document.lambda_http_app.statement) == 19 &&
       toset(flatten([
         for statement in data.aws_iam_policy_document.lambda_http_app.statement : statement.actions
         ])) == toset([
@@ -393,6 +393,12 @@ run "http_execution_role_is_dedicated_and_least_privilege" {
         if statement.sid == "HTTPFinalInvoiceReads" &&
         toset(statement.actions) == toset(["s3:GetObject"]) &&
         toset(statement.resources) == toset(["${aws_s3_bucket.invoices_pdf.arn}/invoices/*/*/v*/final.pdf"])
+      ]) == 1 &&
+      length([
+        for statement in data.aws_iam_policy_document.lambda_http_app.statement : statement
+        if statement.sid == "HTTPDocumentPDFReads" &&
+        toset(statement.actions) == toset(["s3:GetObject"]) &&
+        toset(statement.resources) == toset(["${aws_s3_bucket.invoices_pdf.arn}/documents/*/*/*.pdf"])
       ]) == 1 &&
       length([
         for statement in data.aws_iam_policy_document.lambda_http_app.statement : statement
