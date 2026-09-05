@@ -288,7 +288,7 @@ func NewContainer(
 	accountingSvc := NewAccountingService(db, securitySvc, journalSvc).WithPendingStatementFiles(securityRepo, s3Svc)
 	journalSvc.WithAccounting(accountingSvc)
 	inventorySvc.WithAccounting(accountingSvc)
-	invoiceSvc := NewInvoiceService(db, cfg, invoiceRepo, businessRepo, productRepo, customerRepo, documentSvc, aws, s3Svc, emailSvc, log, WithInvoiceAccounting(accountingSvc))
+	invoiceSvc := NewInvoiceService(db, cfg, invoiceRepo, businessRepo, productRepo, customerRepo, documentSvc, aws, s3Svc, emailSvc, log, WithInvoiceAccounting(accountingSvc), WithInvoiceActorRepository(userRepo))
 	if marker, ok := invoiceRepo.(outbox.PublishedMarker); ok {
 		invoiceSvc.WithImmediateOutboxPublisher(
 			outbox.NewRoutedImmediatePublisher(

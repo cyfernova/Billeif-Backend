@@ -56,15 +56,13 @@ func (s *InvoiceService) IssueByBusiness(
 	if err != nil {
 		return nil, &idempotency.InvalidPayloadError{}
 	}
-	actor := actorFromContext(ctx)
-	actorUUID, err := uuid.Parse(strings.TrimSpace(actor.UserID))
+	actor, err := s.invoiceActor(ctx, "issue")
 	if err != nil {
-		return nil, fmt.Errorf("invoice issue actor is required")
+		return nil, err
 	}
 	input.IdempotencyKey = idempotencyUUID.String()
 	businessID = businessUUID.String()
 	invoiceID = invoiceUUID.String()
-	actor.UserID = actorUUID.String()
 	issuer, ok := s.repo.(interfaces.CanonicalInvoiceIssuer)
 	if !ok {
 		return nil, fmt.Errorf("canonical invoice issuer is not configured")
