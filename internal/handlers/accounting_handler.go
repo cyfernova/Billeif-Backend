@@ -25,7 +25,11 @@ func NewAccountingHandler(service *services.AccountingService) *AccountingHandle
 // @Success 200 {object} models.AccountingPeriodPolicy
 // @Router /accounting/policy [get]
 func (h *AccountingHandler) GetPolicy(c *gin.Context) {
-	policy, err := h.service.GetPolicy(c.Request.Context(), middleware.GetBusinessID(c))
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	policy, err := h.service.GetPolicy(c.Request.Context(), businessID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "accounting policy unavailable"})
 		return
@@ -44,13 +48,17 @@ func (h *AccountingHandler) GetPolicy(c *gin.Context) {
 // @Success 200 {object} models.AccountingPeriodPolicy
 // @Router /accounting/policy [put]
 func (h *AccountingHandler) SetPolicy(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	var input services.AccountingPolicyInput
 	if c.ShouldBindJSON(&input) != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid accounting policy"})
 		return
 	}
 	auth := accountingPostingAuthorization(c, "")
-	policy, err := h.service.SetPolicy(c.Request.Context(), middleware.GetBusinessID(c), middleware.GetUserID(c), input, auth)
+	policy, err := h.service.SetPolicy(c.Request.Context(), businessID, middleware.GetUserID(c), input, auth)
 	if errors.Is(err, services.ErrAccountingPeriodLocked) {
 		writeAccountingStepUpRequired(c)
 		return
@@ -69,7 +77,11 @@ func (h *AccountingHandler) SetPolicy(c *gin.Context) {
 // @Success 200 {array} models.AccountingAccount
 // @Router /accounting/accounts [get]
 func (h *AccountingHandler) ListAccounts(c *gin.Context) {
-	rows, err := h.service.ListAccounts(c.Request.Context(), middleware.GetBusinessID(c))
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	rows, err := h.service.ListAccounts(c.Request.Context(), businessID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "accounting accounts unavailable"})
 		return
@@ -86,12 +98,16 @@ func (h *AccountingHandler) ListAccounts(c *gin.Context) {
 // @Success 200 {object} models.AccountingAccount
 // @Router /accounting/accounts/{code} [put]
 func (h *AccountingHandler) UpsertAccount(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	var input services.AccountingAccountInput
 	if c.ShouldBindJSON(&input) != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid accounting account"})
 		return
 	}
-	account, err := h.service.UpsertAccount(c.Request.Context(), middleware.GetBusinessID(c), middleware.GetUserID(c), c.Param("code"), input)
+	account, err := h.service.UpsertAccount(c.Request.Context(), businessID, middleware.GetUserID(c), c.Param("code"), input)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -110,13 +126,17 @@ func (h *AccountingHandler) UpsertAccount(c *gin.Context) {
 // @Failure 428 {object} map[string]string
 // @Router /accounting/opening-balances [post]
 func (h *AccountingHandler) PostOpeningBalance(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	var input services.OpeningBalanceInput
 	if c.ShouldBindJSON(&input) != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid opening balance"})
 		return
 	}
 	input.Authorization = accountingPostingAuthorization(c, "opening:"+input.IdempotencyKey)
-	journal, err := h.service.PostOpeningBalance(c.Request.Context(), middleware.GetBusinessID(c), middleware.GetUserID(c), input)
+	journal, err := h.service.PostOpeningBalance(c.Request.Context(), businessID, middleware.GetUserID(c), input)
 	if errors.Is(err, services.ErrAccountingPeriodLocked) {
 		writeAccountingStepUpRequired(c)
 		return
@@ -137,6 +157,10 @@ func (h *AccountingHandler) PostOpeningBalance(c *gin.Context) {
 // @Success 200 {object} services.ReconciliationDiagnostics
 // @Router /accounting/reconciliation-diagnostics [get]
 func (h *AccountingHandler) Diagnostics(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	through := time.Now().UTC()
 	if raw := strings.TrimSpace(c.Query("through")); raw != "" {
 		parsed, err := time.Parse(time.RFC3339, raw)
@@ -147,7 +171,7 @@ func (h *AccountingHandler) Diagnostics(c *gin.Context) {
 		through = parsed
 	}
 	currency := strings.ToUpper(strings.TrimSpace(c.Query("currency")))
-	result, err := h.service.Diagnostics(c.Request.Context(), middleware.GetBusinessID(c), currency, through)
+	result, err := h.service.Diagnostics(c.Request.Context(), businessID, currency, through)
 	if err != nil {
 		if currency == "" || len(currency) != 3 {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "valid currency is required"})
@@ -175,12 +199,16 @@ type bankAccountRequest struct {
 // @Success 201 {object} models.BankAccount
 // @Router /accounting/bank-accounts [post]
 func (h *AccountingHandler) CreateBankAccount(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	var input bankAccountRequest
 	if c.ShouldBindJSON(&input) != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid bank account"})
 		return
 	}
-	account, err := h.service.CreateBankAccount(c.Request.Context(), middleware.GetBusinessID(c), middleware.GetUserID(c), services.BankAccountInput{Name: input.Name, Currency: input.Currency, MaskedAccount: input.MaskedAccount, LedgerAccount: input.LedgerAccount, OpeningMinor: input.OpeningMinor})
+	account, err := h.service.CreateBankAccount(c.Request.Context(), businessID, middleware.GetUserID(c), services.BankAccountInput{Name: input.Name, Currency: input.Currency, MaskedAccount: input.MaskedAccount, LedgerAccount: input.LedgerAccount, OpeningMinor: input.OpeningMinor})
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "bank account could not be created"})
 		return
@@ -195,7 +223,11 @@ func (h *AccountingHandler) CreateBankAccount(c *gin.Context) {
 // @Success 200 {array} models.BankAccount
 // @Router /accounting/bank-accounts [get]
 func (h *AccountingHandler) ListBankAccounts(c *gin.Context) {
-	rows, err := h.service.ListBankAccounts(c.Request.Context(), middleware.GetBusinessID(c))
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	rows, err := h.service.ListBankAccounts(c.Request.Context(), businessID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "bank accounts unavailable"})
 		return
@@ -211,12 +243,16 @@ func (h *AccountingHandler) ListBankAccounts(c *gin.Context) {
 // @Success 201 {object} models.BankStatement
 // @Router /accounting/bank-statements [post]
 func (h *AccountingHandler) ImportBankStatement(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	var input services.BankStatementInput
 	if c.ShouldBindJSON(&input) != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid bank statement"})
 		return
 	}
-	statement, err := h.service.ImportBankStatement(c.Request.Context(), middleware.GetBusinessID(c), middleware.GetUserID(c), input)
+	statement, err := h.service.ImportBankStatement(c.Request.Context(), businessID, middleware.GetUserID(c), input)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "bank statement could not be imported"})
 		return
@@ -233,7 +269,11 @@ func (h *AccountingHandler) ImportBankStatement(c *gin.Context) {
 // @Success 200 {array} services.BankTransactionState
 // @Router /accounting/bank-statements/{id}/transactions [get]
 func (h *AccountingHandler) ListBankTransactions(c *gin.Context) {
-	rows, err := h.service.ListBankTransactions(c.Request.Context(), middleware.GetBusinessID(c), c.Param("id"), c.Query("unreconciled") == "true")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	rows, err := h.service.ListBankTransactions(c.Request.Context(), businessID, c.Param("id"), c.Query("unreconciled") == "true")
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "bank statement not found"})
 		return
@@ -248,7 +288,11 @@ func (h *AccountingHandler) ListBankTransactions(c *gin.Context) {
 // @Success 200 {array} models.AccountingAuditEvent
 // @Router /accounting/audit [get]
 func (h *AccountingHandler) ListAudit(c *gin.Context) {
-	rows, err := h.service.ListAccountingAudit(c.Request.Context(), middleware.GetBusinessID(c), 100)
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	rows, err := h.service.ListAccountingAudit(c.Request.Context(), businessID, 100)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "accounting audit unavailable"})
 		return
@@ -264,7 +308,11 @@ func (h *AccountingHandler) ListAudit(c *gin.Context) {
 // @Success 200 {array} services.BankMatchSuggestion
 // @Router /accounting/bank-transactions/{id}/suggestions [get]
 func (h *AccountingHandler) SuggestBankMatches(c *gin.Context) {
-	rows, err := h.service.SuggestBankMatches(c.Request.Context(), middleware.GetBusinessID(c), c.Param("id"))
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	rows, err := h.service.SuggestBankMatches(c.Request.Context(), businessID, c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "bank transaction not found"})
 		return
@@ -292,12 +340,16 @@ type reconcileStatementRequest struct {
 // @Success 201 {object} models.BankMatch
 // @Router /accounting/bank-transactions/{id}/match [post]
 func (h *AccountingHandler) MatchBankTransaction(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	var input bankMatchRequest
 	if c.ShouldBindJSON(&input) != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid bank match"})
 		return
 	}
-	row, err := h.service.MatchBankTransaction(c.Request.Context(), middleware.GetBusinessID(c), middleware.GetUserID(c), c.Param("id"), input.LedgerEntryID, input.Reason)
+	row, err := h.service.MatchBankTransaction(c.Request.Context(), businessID, middleware.GetUserID(c), c.Param("id"), input.LedgerEntryID, input.Reason)
 	if err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "bank transaction could not be matched"})
 		return
@@ -314,12 +366,16 @@ func (h *AccountingHandler) MatchBankTransaction(c *gin.Context) {
 // @Success 204
 // @Router /accounting/bank-transactions/{id}/match [delete]
 func (h *AccountingHandler) UnmatchBankTransaction(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	var input bankReasonRequest
 	if c.ShouldBindJSON(&input) != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid unmatch"})
 		return
 	}
-	if err := h.service.UnmatchBankTransaction(c.Request.Context(), middleware.GetBusinessID(c), middleware.GetUserID(c), c.Param("id"), input.Reason); err != nil {
+	if err := h.service.UnmatchBankTransaction(c.Request.Context(), businessID, middleware.GetUserID(c), c.Param("id"), input.Reason); err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "bank transaction could not be unmatched"})
 		return
 	}
@@ -338,13 +394,17 @@ func (h *AccountingHandler) UnmatchBankTransaction(c *gin.Context) {
 // @Failure 428 {object} map[string]string
 // @Router /accounting/bank-transactions/{id}/adjustment [post]
 func (h *AccountingHandler) CreateBankAdjustment(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	var input services.BankAdjustmentInput
 	if c.ShouldBindJSON(&input) != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid bank adjustment"})
 		return
 	}
 	input.Authorization = accountingPostingAuthorization(c, "bank-adjustment:"+c.Param("id"))
-	journal, err := h.service.CreateBankAdjustment(c.Request.Context(), middleware.GetBusinessID(c), middleware.GetUserID(c), c.Param("id"), input)
+	journal, err := h.service.CreateBankAdjustment(c.Request.Context(), businessID, middleware.GetUserID(c), c.Param("id"), input)
 	if errors.Is(err, services.ErrAccountingPeriodLocked) {
 		writeAccountingStepUpRequired(c)
 		return
@@ -365,12 +425,16 @@ func (h *AccountingHandler) CreateBankAdjustment(c *gin.Context) {
 // @Success 200 {object} models.BankStatement
 // @Router /accounting/bank-statements/{id}/reconcile [post]
 func (h *AccountingHandler) ReconcileStatement(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	var input reconcileStatementRequest
 	if c.ShouldBindJSON(&input) != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid reconciliation date"})
 		return
 	}
-	row, err := h.service.ReconcileStatement(c.Request.Context(), middleware.GetBusinessID(c), middleware.GetUserID(c), c.Param("id"), input.ReconciliationDate)
+	row, err := h.service.ReconcileStatement(c.Request.Context(), businessID, middleware.GetUserID(c), c.Param("id"), input.ReconciliationDate)
 	if err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "bank statement could not be reconciled"})
 		return

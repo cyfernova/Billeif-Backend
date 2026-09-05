@@ -822,9 +822,9 @@ func setupRouter(
 			projects := protected.Group("/projects")
 			{
 				projects.GET("", h.Project.List)
-				projects.POST("", middleware.RequireRole("admin", "accountant"), h.Project.Create)
-				projects.PUT("/:id", middleware.RequireRole("admin", "accountant"), h.Project.Update)
-				projects.DELETE("/:id", middleware.RequireRole("admin", "accountant"), h.Project.Delete)
+				projects.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProjectsManage), h.Project.Create)
+				projects.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProjectsManage), h.Project.Update)
+				projects.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProjectsManage), h.Project.Delete)
 			}
 
 			reports := protected.Group("/reports")

@@ -25,6 +25,7 @@ func TestLegacyRolePermissionsIncludePaymentBoundaries(t *testing.T) {
 
 func TestLegacyRolesSeparatePartyAndRenderProfileMutations(t *testing.T) {
 	mutationPermissions := []string{
+		"projects.manage",
 		"customers.create",
 		"customers.update",
 		"customers.delete",
