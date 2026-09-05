@@ -137,8 +137,8 @@ type Document struct {
 	OriginSubscriptionID  *string        `gorm:"index" json:"origin_subscription_id,omitempty" validate:"omitempty,uuid"`
 	OriginRunID           *string        `gorm:"index" json:"origin_run_id,omitempty" validate:"omitempty,uuid"`
 	ProfitSnapshotEnabled bool           `gorm:"default:false" json:"profit_snapshot_enabled"`
-	GenerateEInvoice      bool           `gorm:"default:false" json:"generate_einvoice"`
-	GenerateEWayBill      bool           `gorm:"default:false" json:"generate_ewaybill"`
+	GenerateEInvoice      bool           `gorm:"column:generate_einvoice;default:false" json:"generate_einvoice"`
+	GenerateEWayBill      bool           `gorm:"column:generate_ewaybill;default:false" json:"generate_ewaybill"`
 	ReverseCharge         bool           `gorm:"default:false" json:"reverse_charge"`
 	ReverseChargeReason   string         `gorm:"type:text" json:"reverse_charge_reason,omitempty"`
 	DispatchFrom          string         `gorm:"type:jsonb;default:'{}'" json:"dispatch_from,omitempty"`
@@ -147,8 +147,8 @@ type Document struct {
 	Transporter           string         `gorm:"type:jsonb;default:'{}'" json:"transporter,omitempty"`
 	Vehicle               string         `gorm:"type:jsonb;default:'{}'" json:"vehicle,omitempty"`
 	MultiVehiclePlan      string         `gorm:"type:jsonb;default:'{}'" json:"multi_vehicle_plan,omitempty"`
-	CurrentEInvoiceID     *string        `gorm:"index" json:"current_einvoice_id,omitempty" validate:"omitempty,uuid"`
-	CurrentEWayBillID     *string        `gorm:"index" json:"current_ewaybill_id,omitempty" validate:"omitempty,uuid"`
+	CurrentEInvoiceID     *string        `gorm:"column:current_einvoice_id;index" json:"current_einvoice_id,omitempty" validate:"omitempty,uuid"`
+	CurrentEWayBillID     *string        `gorm:"column:current_ewaybill_id;index" json:"current_ewaybill_id,omitempty" validate:"omitempty,uuid"`
 	SignedAt              *time.Time     `gorm:"index" json:"signed_at,omitempty"`
 	SignedByProfileID     *string        `gorm:"index" json:"signed_by_profile_id,omitempty" validate:"omitempty,uuid"`
 	SignMetadata          string         `gorm:"type:jsonb;default:'{}'" json:"sign_metadata,omitempty"`
