@@ -189,7 +189,7 @@ type DocumentLine struct {
 	ProductID         *string   `gorm:"index" json:"product_id,omitempty" validate:"omitempty,uuid"`
 	VariantID         *string   `gorm:"index" json:"variant_id,omitempty" validate:"omitempty,uuid"`
 	Description       string    `gorm:"not null;size:500" json:"description"`
-	HSNSACCode        string    `gorm:"size:40" json:"hsn_sac_code,omitempty"`
+	HSNSACCode        string    `gorm:"column:hsn_sac_code;size:40" json:"hsn_sac_code,omitempty"`
 	UQCCode           string    `gorm:"size:20;default:'OTH'" json:"uqc_code,omitempty"`
 	Unit              string    `gorm:"size:40" json:"unit,omitempty"`
 	WarehouseID       *string   `gorm:"index" json:"warehouse_id,omitempty" validate:"omitempty,uuid"`

@@ -30,3 +30,13 @@ func TestDocumentGSTColumnsMatchMigration(t *testing.T) {
 		}
 	}
 }
+
+func TestDocumentLineHSNColumnMatchesMigration(t *testing.T) {
+	parsed, err := schema.Parse(&DocumentLine{}, &sync.Map{}, schema.NamingStrategy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parsed.LookUpField("HSNSACCode").DBName; got != "hsn_sac_code" {
+		t.Errorf("HSNSACCode column = %s, want hsn_sac_code", got)
+	}
+}
