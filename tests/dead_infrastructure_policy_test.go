@@ -310,6 +310,11 @@ func mockedPlanResourceAddresses() (map[string][]string, error) {
 		Address string `json:"address"`
 	}
 	type terraformTestEvent struct {
+		Diagnostic struct {
+			Severity string `json:"severity"`
+			Summary  string `json:"summary"`
+			Detail   string `json:"detail"`
+		} `json:"diagnostic"`
 		Type     string `json:"type"`
 		TestRun  string `json:"@testrun"`
 		TestPlan struct {
@@ -322,6 +327,7 @@ func mockedPlanResourceAddresses() (map[string][]string, error) {
 		"reviewed_enablement_activates_stable_application_resources_after_migration": true,
 	}
 	plans := make(map[string][]string, len(wantedRuns))
+	var diagnostics []string
 	decoder := json.NewDecoder(stdout)
 	for {
 		var event terraformTestEvent
@@ -333,6 +339,9 @@ func mockedPlanResourceAddresses() (map[string][]string, error) {
 			_ = command.Wait()
 			return nil, fmt.Errorf("decode mocked terraform test output: %w", err)
 		}
+		if event.Type == "diagnostic" && event.Diagnostic.Severity == "error" {
+			diagnostics = append(diagnostics, event.Diagnostic.Summary+": "+event.Diagnostic.Detail)
+		}
 		if event.Type != "test_plan" || !wantedRuns[event.TestRun] {
 			continue
 		}
@@ -343,7 +352,7 @@ func mockedPlanResourceAddresses() (map[string][]string, error) {
 	}
 
 	if err := command.Wait(); err != nil {
-		return nil, fmt.Errorf("mocked terraform test failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+		return nil, fmt.Errorf("mocked terraform test failed: %w: %s %s", err, strings.TrimSpace(stderr.String()), strings.Join(diagnostics, "; "))
 	}
 	return plans, nil
 }

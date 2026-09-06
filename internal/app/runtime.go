@@ -456,7 +456,7 @@ func initRepositories(db *gorm.DB) *Repositories {
 func initServices(cfg *config.Config, db *gorm.DB, repos *Repositories, aws *awsclients.Config, resolver services.ProviderConfigResolver, log *logger.Logger) *services.Container {
 	return services.NewContainer(cfg, resolver, db, repos.User, repos.Business, repos.Customer, repos.Vendor,
 		repos.Product, repos.Document, repos.Journal, repos.Inventory, repos.Shipping, repos.Invoice, repos.Payment, repos.Ledger, repos.Reporting, repos.Team,
-		repos.Webhook, repos.Subscription, repos.SubscriptionLifecycle, repos.WebSocketTicket, repos.Notification, repos.CapabilityProviderHealth, repos.Operation, repos.Security, repos.AgentGovernance, repos.AP2, aws, log)
+		repos.Webhook, repos.Subscription, repos.SubscriptionLifecycle, repos.WebSocketTicket, repos.Notification, repos.CapabilityProviderHealth, repos.Operation, repos.Security, repos.AgentGovernance, repos.AP2, aws, log, postgresrepo.NewAgentConfigRepository(db))
 }
 
 type renderProfilePasswordBackfiller interface {

@@ -201,6 +201,7 @@ func NewContainer(
 	ap2Repo interfaces.AP2Repository,
 	aws *awsclients.Config,
 	log *logger.Logger,
+	agentConfigRepo interfaces.AgentConfigRepository,
 ) *Container {
 	s3Svc := NewS3Service(cfg, aws, log)
 	businessAuthSvc := NewBusinessAuthService(db, businessRepo, teamRepo, log)
@@ -246,7 +247,7 @@ func NewContainer(
 	workflowSvc := NewWorkflowService(db, log, emailSvc, a2aPushSvc)
 	bargainingSvc := NewBargainingService(ap2Repo, a2aClient, agentSvc, menteeSvc, llmSvc, log)
 	merchantAgentSvc := NewMerchantAgentService(ap2Repo, ap2Signer, log)
-	agentConfigSvc := NewAgentConfigService(".well-known", log)
+	agentConfigSvc := NewAgentConfigService(".well-known", log).WithRepository(agentConfigRepo)
 	sellerNegotiationSvc := NewSellerNegotiationService(ap2Repo, agentConfigSvc, log)
 	a2aBargainingSvc := NewA2ABargainingService(a2aClient, bargainingSvc, menteeSvc, ap2Repo, aws.SQS, cfg, log).WithGovernance(NewA2AGovernanceAdapter(agentGovernanceSvc, userRepo, llmSvc, cfg))
 	websocketConnectionSvc := NewWebSocketConnectionService(cfg, aws, log)
