@@ -1040,6 +1040,114 @@ const docTemplate = `{
                 }
             }
         },
+        "/agent-governance": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent Governance"
+                ],
+                "summary": "Get agent execution controls and recent runs",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/services.GovernanceOverview"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Agent Governance"
+                ],
+                "summary": "Pause or resume governed execution for the current business",
+                "parameters": [
+                    {
+                        "description": "Business execution control",
+                        "name": "input",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.UpdateGovernanceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "boolean"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/agents": {
             "get": {
                 "security": [
@@ -21887,6 +21995,17 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.UpdateGovernanceRequest": {
+            "type": "object",
+            "required": [
+                "execution_enabled"
+            ],
+            "properties": {
+                "execution_enabled": {
+                    "type": "boolean"
+                }
+            }
+        },
         "handlers.UpdateProductRequest": {
             "type": "object",
             "properties": {
@@ -27286,6 +27405,82 @@ const docTemplate = `{
                 },
                 "period_start": {
                     "type": "string"
+                }
+            }
+        },
+        "services.GovernanceOverview": {
+            "type": "object",
+            "properties": {
+                "agent_daily_limit_micros": {
+                    "type": "integer"
+                },
+                "business_daily_limit_micros": {
+                    "type": "integer"
+                },
+                "business_enabled": {
+                    "type": "boolean"
+                },
+                "can_manage": {
+                    "type": "boolean"
+                },
+                "execution_ready": {
+                    "type": "boolean"
+                },
+                "max_duration_seconds": {
+                    "type": "integer"
+                },
+                "max_steps": {
+                    "type": "integer"
+                },
+                "max_tool_calls": {
+                    "type": "integer"
+                },
+                "platform_enabled": {
+                    "type": "boolean"
+                },
+                "runs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/services.GovernanceRunSummary"
+                    }
+                },
+                "spend_currency": {
+                    "type": "string"
+                },
+                "token_budget": {
+                    "type": "integer"
+                }
+            }
+        },
+        "services.GovernanceRunSummary": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string"
+                },
+                "cancellation_requested": {
+                    "type": "boolean"
+                },
+                "cost_micros": {
+                    "type": "integer"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "max_steps": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "steps_used": {
+                    "type": "integer"
                 }
             }
         },

@@ -1393,6 +1393,10 @@ func setupRouter(
 		}
 
 		// A2A Bargaining endpoints
+		governanceHandler := handlers.NewAgentGovernanceHandler(svcs.GovernanceManagement)
+		protected.GET("/agent-governance", governanceHandler.Overview)
+		protected.PUT("/agent-governance", governanceHandler.Update)
+
 		a2aBargaining := protected.Group("/a2a-bargaining")
 		{
 			a2aBargaining.POST("/start", h.A2ABargaining.StartNegotiation)

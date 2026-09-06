@@ -103,6 +103,7 @@ type Container struct {
 	Operation              *OperationService
 	Security               *SecurityService
 	AgentGovernance        *AgentGovernanceService
+	GovernanceManagement   *GovernanceManagementService
 	PendingUpload          *PendingUploadService
 	Privacy                *PrivacyService
 	Accounting             *AccountingService
@@ -208,6 +209,8 @@ func NewContainer(
 		Repository:       agentGovernanceRepo,
 		Permissions:      businessAuthSvc,
 	})
+	governanceManagementRepo, _ := agentGovernanceRepo.(GovernanceManagementRepository)
+	governanceManagementSvc := NewGovernanceManagementService(governanceManagementRepo, businessAuthSvc, userRepo, cfg.AIGovernance)
 	emailSvc := NewEmailService(cfg, aws, s3Svc, log).WithDB(db)
 	ap2Signer, _ := ap2.NewSignatureService()
 	ap2MandateSigner := ap2.NewMandateSigner(ap2Signer)
@@ -443,6 +446,7 @@ func NewContainer(
 		Operation:              operationSvc,
 		Security:               securitySvc,
 		AgentGovernance:        agentGovernanceSvc,
+		GovernanceManagement:   governanceManagementSvc,
 		PendingUpload:          pendingUploadSvc,
 		Privacy:                privacySvc,
 		Accounting:             accountingSvc,
