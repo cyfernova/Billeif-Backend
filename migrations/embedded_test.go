@@ -10,11 +10,11 @@ func TestEmbeddedBundleContainsEveryRootNumberedMigration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Verify(Embedded) error = %v", err)
 	}
-	if len(manifest.Entries) != 122 {
-		t.Fatalf("embedded entry count = %d, want 122", len(manifest.Entries))
+	if len(manifest.Entries) != 124 {
+		t.Fatalf("embedded entry count = %d, want 124", len(manifest.Entries))
 	}
-	if manifest.LatestVersion != 61 {
-		t.Fatalf("embedded latest version = %d, want 61", manifest.LatestVersion)
+	if manifest.LatestVersion != 62 {
+		t.Fatalf("embedded latest version = %d, want 62", manifest.LatestVersion)
 	}
 
 	up, err := fs.Glob(Embedded, "*.up.sql")
@@ -25,7 +25,7 @@ func TestEmbeddedBundleContainsEveryRootNumberedMigration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("glob embedded down migrations: %v", err)
 	}
-	if len(up) != 61 || len(down) != 61 {
-		t.Fatalf("embedded migration pairs = %d up/%d down, want 61/61", len(up), len(down))
+	if len(up) != 62 || len(down) != 62 {
+		t.Fatalf("embedded migration pairs = %d up/%d down, want 62/62", len(up), len(down))
 	}
 }

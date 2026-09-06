@@ -248,7 +248,7 @@ func NewContainer(
 	merchantAgentSvc := NewMerchantAgentService(ap2Repo, ap2Signer, log)
 	agentConfigSvc := NewAgentConfigService(".well-known", log)
 	sellerNegotiationSvc := NewSellerNegotiationService(ap2Repo, agentConfigSvc, log)
-	a2aBargainingSvc := NewA2ABargainingService(a2aClient, bargainingSvc, menteeSvc, ap2Repo, aws.SQS, cfg, log)
+	a2aBargainingSvc := NewA2ABargainingService(a2aClient, bargainingSvc, menteeSvc, ap2Repo, aws.SQS, cfg, log).WithGovernance(NewA2AGovernanceAdapter(agentGovernanceSvc, userRepo, llmSvc, cfg))
 	websocketConnectionSvc := NewWebSocketConnectionService(cfg, aws, log)
 	websocketTicketSvc := NewWebSocketTicketService(websocketTicketRepo, WebSocketTicketServiceOptions{})
 	notificationSvc := NewNotificationService(notificationRepo, NotificationServiceOptions{})

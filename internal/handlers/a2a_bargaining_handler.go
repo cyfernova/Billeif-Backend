@@ -232,6 +232,9 @@ func (h *A2ABargainingHandler) StartAutonomousNegotiation(c *gin.Context) {
 	// Enqueue first round to SQS worker
 	if err := h.a2aBargaining.EnqueueNegotiationRound(c.Request.Context(), session.NegotiationID, session.DBNegotiationID, 0); err != nil {
 		log.Error("failed to enqueue negotiation round", "error", err, "session_id", session.NegotiationID)
+		_ = h.a2aBargaining.StopNegotiation(c.Request.Context(), scope, session.NegotiationID)
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Couldn't queue agent negotiation. Please try again."})
+		return
 	}
 
 	c.JSON(http.StatusAccepted, gin.H{

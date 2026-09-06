@@ -296,8 +296,9 @@ func llmModelProbeURL(apiURL, _ string) (string, error) {
 }
 
 type LLMChatOptions struct {
-	MaxTokens int
-	System    string
+	DisableThinking bool
+	MaxTokens       int
+	System          string
 }
 
 type LLMChatResult struct {
@@ -386,6 +387,7 @@ type OpenAIChatMessage struct {
 }
 
 type OpenAIChatRequest struct {
+	Thinking  map[string]string   `json:"thinking,omitempty"`
 	Model     string              `json:"model"`
 	Messages  []OpenAIChatMessage `json:"messages"`
 	MaxTokens int                 `json:"max_tokens,omitempty"`
@@ -550,6 +552,9 @@ func (s *LLMService) ChatWithOptions(ctx context.Context, messages []ChatMessage
 		Messages:  openAIMessages,
 		MaxTokens: maxTokens,
 		Stream:    false,
+	}
+	if options.DisableThinking {
+		reqBody.Thinking = map[string]string{"type": "disabled"}
 	}
 
 	jsonBody, err := json.Marshal(reqBody)

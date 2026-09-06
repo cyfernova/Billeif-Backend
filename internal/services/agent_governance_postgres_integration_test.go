@@ -48,7 +48,13 @@ func TestAgentGovernancePostgresConcurrentReplayAndBudgetSettlement(t *testing.T
 		output, err := service.ExecuteTool(context.Background(), request, invoke)
 		results <- result{output: output, err: err}
 	}()
-	<-started
+	select {
+	case <-started:
+	case result := <-results:
+		t.Fatalf("execution failed before invoking provider: %v", result.err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("provider invocation did not start")
+	}
 	go func() {
 		output, err := service.ExecuteTool(context.Background(), request, invoke)
 		results <- result{output: output, err: err}
@@ -213,8 +219,8 @@ func TestAgentGovernancePostgresApprovalScopeReplayAndKillSwitch(t *testing.T) {
 	if _, err := repository.AuthorizeToolExecution(context.Background(), command); !errors.Is(err, interfaces.ErrAgentGovernanceApprovalInvalid) {
 		t.Fatalf("changed approval arguments error = %v", err)
 	}
-	var consumedAt *time.Time
-	if err := database.Table("ai_tool_approvals").Select("consumed_at").Where("id = ?", approvalID).Scan(&consumedAt).Error; err != nil || consumedAt != nil {
+	var consumedAt struct{ ConsumedAt *time.Time }
+	if err := database.Table("ai_tool_approvals").Select("consumed_at").Where("id = ?", approvalID).Scan(&consumedAt).Error; err != nil || consumedAt.ConsumedAt != nil {
 		t.Fatalf("changed approval consumed_at = %v, error = %v", consumedAt, err)
 	}
 	var resourceID string

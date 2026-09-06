@@ -59,3 +59,4 @@
 000059_durable_bulk_imports
 000060_cart_coupon_controls
 000061_ai_agent_governance
+000062_governed_bargaining

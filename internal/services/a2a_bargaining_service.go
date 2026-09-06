@@ -62,6 +62,12 @@ type A2ABargainingService struct {
 	sessionsLock                sync.RWMutex
 	sessionLocks                map[string]*sync.Mutex
 	ungovernedExecutionDisabled bool
+	governance                  *A2AGovernanceAdapter
+}
+
+func (s *A2ABargainingService) WithGovernance(adapter *A2AGovernanceAdapter) *A2ABargainingService {
+	s.governance = adapter
+	return s
 }
 
 func (s *A2ABargainingService) DisableUngovernedExecution() *A2ABargainingService {
@@ -219,8 +225,21 @@ func (s *A2ABargainingService) StartAutonomousNegotiation(
 	scope A2ANegotiationScope,
 	req *AutonomousNegotiationRequest,
 ) (*A2ASession, error) {
-	if s.ungovernedExecutionDisabled {
+	if s.ungovernedExecutionDisabled && !s.governance.Ready(ctx, scope.BusinessID) {
 		return nil, ErrA2AGovernanceRequired
+	}
+	if s.governance != nil {
+		if req == nil || req.CallbackURL != "" || s.cfg == nil {
+			return nil, ErrAgentToolDenied
+		}
+		copyRequest := *req
+		if copyRequest.MaxRounds == 0 {
+			copyRequest.MaxRounds = 5
+		}
+		if copyRequest.MaxRounds < 1 || copyRequest.MaxRounds > s.cfg.AIGovernance.MaxSteps {
+			return nil, ErrAgentToolDenied
+		}
+		req = &copyRequest
 	}
 	return s.startNegotiation(ctx, scope, req)
 }
@@ -527,7 +546,7 @@ func (s *A2ABargainingService) RunAutonomousNegotiationRound(
 	negotiationID string,
 	expectedRound int,
 ) error {
-	if s.ungovernedExecutionDisabled {
+	if s.ungovernedExecutionDisabled && s.governance == nil {
 		return ErrA2AGovernanceRequired
 	}
 	if sessionID == "" || negotiationID == "" || expectedRound <= 0 {
@@ -667,7 +686,12 @@ func (s *A2ABargainingService) RunAutonomousNegotiationRound(
 		return s.expireAutonomousNegotiation(ctx, session, sessionID, negotiationID)
 	}
 
-	decision, err := s.bargaining.GetLLMBargainingDecision(ctx, systemBargainingActorScope(), activeAgentID, activeAgentType, latestNeg.ID)
+	var decision *LLMBargainingResponse
+	if s.governance != nil {
+		decision, err = s.governance.Decide(ctx, latestNeg, activeAgentID, activeAgentType, nextRound)
+	} else {
+		decision, err = s.bargaining.GetLLMBargainingDecision(ctx, systemBargainingActorScope(), activeAgentID, activeAgentType, latestNeg.ID)
+	}
 	if err != nil {
 		s.log.Error("LLM decision failed", "error", err, "session_id", sessionID, "round", nextRound, "agent_id", activeAgentID)
 		return fmt.Errorf("LLM decision failed: %w", err)
