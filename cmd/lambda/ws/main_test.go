@@ -33,6 +33,7 @@ type stubWebSocketConnectionRegistry struct {
 	userID       string
 	businessID   string
 	calls        int
+	heartbeats   []string
 	err          error
 }
 
@@ -46,6 +47,42 @@ func (s *stubWebSocketConnectionRegistry) RegisterConnectionWithBusiness(_ conte
 
 func (s *stubWebSocketConnectionRegistry) UnregisterConnection(_ context.Context, _ string) error {
 	return nil
+}
+
+func (s *stubWebSocketConnectionRegistry) SendHeartbeat(_ context.Context, connectionID string) error {
+	s.heartbeats = append(s.heartbeats, connectionID)
+	return s.err
+}
+
+func TestWebSocketHeartbeatRepliesOnlyToGatewayConnection(t *testing.T) {
+	for _, body := range []string{`{"action":"ping","connection_id":"other-tenant"}`, `{"type":"ping"}`} {
+		connections := &stubWebSocketConnectionRegistry{}
+		response := handleWebSocketMessage(context.Background(), events.APIGatewayWebsocketProxyRequest{
+			Body: body, RequestContext: events.APIGatewayWebsocketProxyRequestContext{ConnectionID: "authenticated-connection"},
+		}, connections, logger.New())
+		if response.StatusCode != 200 || len(connections.heartbeats) != 1 || connections.heartbeats[0] != "authenticated-connection" {
+			t.Fatalf("response = %#v, heartbeats = %v", response, connections.heartbeats)
+		}
+	}
+}
+
+func TestWebSocketHeartbeatRejectsInvalidMessagesAndReportsDeliveryFailure(t *testing.T) {
+	for _, fixture := range []struct {
+		body, connectionID string
+		deliveryError      error
+		status, calls      int
+	}{
+		{body: "not json", connectionID: "connection", status: 400},
+		{body: `{"action":"ping"}`, status: 400},
+		{body: `{"action":"unknown"}`, connectionID: "connection", status: 200},
+		{body: `{"action":"ping"}`, connectionID: "connection", deliveryError: errors.New("delivery unavailable"), status: 500, calls: 1},
+	} {
+		connections := &stubWebSocketConnectionRegistry{err: fixture.deliveryError}
+		response := handleWebSocketMessage(context.Background(), events.APIGatewayWebsocketProxyRequest{Body: fixture.body, RequestContext: events.APIGatewayWebsocketProxyRequestContext{ConnectionID: fixture.connectionID}}, connections, logger.New())
+		if response.StatusCode != fixture.status || len(connections.heartbeats) != fixture.calls {
+			t.Fatalf("fixture=%+v, response=%+v, heartbeats=%v", fixture, response, connections.heartbeats)
+		}
+	}
 }
 
 func TestExtractWebSocketTicketAcceptsOnlyTicketParameter(t *testing.T) {
