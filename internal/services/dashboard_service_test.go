@@ -51,6 +51,24 @@ func TestDashboardCollectionsUseBusinessCalendarDay(t *testing.T) {
 	}
 }
 
+func TestDashboardConvertedPurchasesRequirePostedAccountingRecognition(t *testing.T) {
+	db := newDashboardTestDB(t)
+	execDashboardSQL(t, db, `INSERT INTO documents (id,business_id,document_type,party_type,status,balance_due) VALUES
+		('draft-converted','biz-1','purchase_invoice','vendor','fully_converted',1250),
+		('issued-converted','biz-1','purchase_invoice','vendor','fully_converted',200),
+		('partial-issued','biz-1','purchase_invoice','vendor','partially_converted',50),
+		('wrong-business','biz-1','purchase_invoice','vendor','fully_converted',800),
+		('unposted','biz-1','purchase_invoice','vendor','fully_converted',900)`)
+	execDashboardSQL(t, db, `INSERT INTO journals (id,business_id,source_type,source_id,status) VALUES
+		('j1','biz-1','document','issued-converted','posted'),
+		('j2','biz-1','document','partial-issued','posted'),
+		('j3','biz-2','document','wrong-business','posted'),
+		('j4','biz-1','document','unposted','draft')`)
+	result, err := NewDashboardService(db, logger.New()).financeSummary(context.Background(), "biz-1")
+	require.NoError(t, err)
+	require.Equal(t, float64(250), result.TotalPayable)
+}
+
 func TestDashboardServiceSummaryScopesByBusiness(t *testing.T) {
 	db := newDashboardTestDB(t)
 	svc := NewDashboardService(db, logger.New())
@@ -126,6 +144,7 @@ func newDashboardTestDB(t *testing.T) *gorm.DB {
 	}
 
 	statements := []string{
+		`CREATE TABLE journals (id TEXT PRIMARY KEY,business_id TEXT,source_type TEXT,source_id TEXT,status TEXT,deleted_at DATETIME)`,
 		`CREATE TABLE customers (id TEXT PRIMARY KEY, business_id TEXT, name TEXT, deleted_at DATETIME)`,
 		`CREATE TABLE vendors (id TEXT PRIMARY KEY, business_id TEXT, name TEXT, deleted_at DATETIME)`,
 		`CREATE TABLE invoices (id TEXT PRIMARY KEY, business_id TEXT, customer_id TEXT, invoice_no TEXT, status TEXT, total REAL, paid_amount REAL, balance_due REAL, invoice_date DATETIME, due_date DATETIME, created_at DATETIME, deleted_at DATETIME)`,

@@ -190,7 +190,11 @@ func (s *DashboardService) financeSummary(ctx context.Context, businessID string
 		ctx,
 		"documents",
 		"balance_due",
-		"business_id = ? AND deleted_at IS NULL AND party_type = ? AND document_type IN ? AND status NOT IN ? AND balance_due > 0",
+		`business_id = ? AND deleted_at IS NULL AND party_type = ? AND document_type IN ? AND status NOT IN ? AND balance_due > 0
+		AND (status NOT IN ('partially_converted','fully_converted') OR EXISTS (
+			SELECT 1 FROM journals j WHERE j.business_id = documents.business_id AND j.source_id = documents.id
+			AND j.source_type = 'document' AND j.status IN ('posted','reversed') AND j.deleted_at IS NULL
+		))`,
 		businessID,
 		models.DocumentPartyTypeVendor,
 		[]string{models.DocumentTypePurchaseInvoice, models.DocumentTypeExpense},
