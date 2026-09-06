@@ -530,9 +530,11 @@ func (s *LLMService) ChatWithOptions(ctx context.Context, messages []ChatMessage
 	}
 	providerCfg, err := s.providerConfig(ctx, config.SecretLLM)
 	if err != nil {
+		log.Error("LLM provider configuration unavailable")
 		return "", fmt.Errorf("resolve LLM credentials: %w", err)
 	}
 	if strings.TrimSpace(providerCfg.APIKey) == "" {
+		log.Error("LLM provider key is not configured")
 		return "", fmt.Errorf("LLM_API_KEY is not configured")
 	}
 

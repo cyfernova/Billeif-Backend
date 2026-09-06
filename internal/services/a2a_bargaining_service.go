@@ -699,6 +699,17 @@ func (s *A2ABargainingService) RunAutonomousNegotiationRound(
 	}
 	if err != nil {
 		s.log.Error("LLM decision failed", "error", err, "session_id", sessionID, "round", nextRound, "agent_id", activeAgentID)
+		if s.governance != nil {
+			// A governed attempt is durable and cannot be repeated after failure.
+			// Persist a terminal status so polling never implies work is ongoing.
+			persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			if statusErr := s.ap2Repo.UpdateNegotiationStatus(persistCtx, negotiationID, "failed"); statusErr != nil {
+				return fmt.Errorf("persist failed agent negotiation: %w", statusErr)
+			}
+			session.setStatusIfActive("failed")
+			return nil
+		}
 		return fmt.Errorf("LLM decision failed: %w", err)
 	}
 	latestProgress, err = s.GetAutonomousNegotiationProgress(ctx, sessionID, negotiationID)

@@ -560,6 +560,41 @@ func TestA2ABargainingEnqueueChecksExactDurableStateBeforeSQS(t *testing.T) {
 	}
 }
 
+func (r *a2aNegotiationRepoFake) GetBargainingRounds(context.Context, string) ([]*models.BargainingRound, error) {
+	return nil, nil
+}
+
+func (r *a2aNegotiationRepoFake) UpdateNegotiationStatus(_ context.Context, id, status string) error {
+	r.negotiations[id].Status = status
+	return nil
+}
+
+func TestGovernedRoundFailurePersistsTerminalState(t *testing.T) {
+	repo := validA2ANegotiationRepo()
+	sessionID := "failed-governed-session"
+	repo.negotiations[a2aTestNegotiationID] = &models.BargainingNegotiation{
+		ID: a2aTestNegotiationID, SessionID: &sessionID,
+		BuyerAgentID: a2aTestBuyerAgentID, SellerAgentID: a2aTestSellerAgentID,
+		UserID: a2aTestUserID, BusinessID: a2aTestBusinessID,
+		InitialAmount: 100, CurrentAmount: 100, MaxRounds: 5, Status: "initiated",
+	}
+	service := newA2ANegotiationServiceForTest(t, repo)
+	service.governance = &A2AGovernanceAdapter{}
+	service.sessions[sessionID] = &A2ASession{
+		NegotiationID: sessionID, DBNegotiationID: a2aTestNegotiationID,
+		BuyerAgentID: a2aTestBuyerAgentID, SellerAgentID: a2aTestSellerAgentID,
+		CurrentAmount: 100, MaxRounds: 5, Status: "initiated",
+	}
+	for i := 0; i < 2; i++ {
+		if err := service.RunAutonomousNegotiationRound(context.Background(), sessionID, a2aTestNegotiationID, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := repo.negotiations[a2aTestNegotiationID]; got.Status != "failed" || got.Rounds != 0 || got.CurrentAmount != 100 {
+		t.Fatalf("failed attempt changed offers or remained active: %#v", got)
+	}
+}
+
 func TestRunAutonomousNegotiationRoundNoOpsStoppedStateBeforeLLM(t *testing.T) {
 	repo := validA2ANegotiationRepo()
 	sessionID := "a2a_session_stopped_worker"
