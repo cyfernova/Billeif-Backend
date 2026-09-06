@@ -497,7 +497,7 @@ func (s *AccountingService) Diagnostics(ctx context.Context, businessID, currenc
 	}
 	result := &ReconciliationDiagnostics{ReadOnly: true, Currency: currency}
 	journalSQL := `WITH journal_facts AS (
-		SELECT j.id AS journal_id,jl.account_code,jl.entry_type,jl.currency,CAST(ROUND(jl.amount*100) AS BIGINT) amount_minor,COUNT(*) fact_count
+		SELECT CAST(j.id AS TEXT) AS journal_id,jl.account_code,jl.entry_type,jl.currency,CAST(ROUND(jl.amount*100) AS BIGINT) amount_minor,COUNT(*) fact_count
 		FROM journals j JOIN journal_lines jl ON jl.journal_id=j.id
 		WHERE j.business_id=? AND j.status IN ('posted','reversed') AND j.deleted_at IS NULL AND j.posting_date<=? AND jl.currency=?
 		GROUP BY j.id,jl.account_code,jl.entry_type,jl.currency,CAST(ROUND(jl.amount*100) AS BIGINT)
