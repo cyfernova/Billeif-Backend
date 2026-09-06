@@ -34,6 +34,7 @@ var (
 )
 
 type ShoppingAgentService struct {
+	users               ReportUserRepository
 	ap2Repo             interfaces.AP2Repository
 	agentSvc            *AgentService
 	intentSvc           *IntentProcessingService
@@ -49,6 +50,11 @@ type ShoppingAgentService struct {
 type versionedCartRepository interface {
 	GetCartMandateForScope(ctx context.Context, id, userID, businessID string) (*models.CartMandate, error)
 	UpdateCartMandateVersioned(ctx context.Context, mandate *models.CartMandate, expectedVersion int64) error
+}
+
+func (s *ShoppingAgentService) WithUserRepository(users ReportUserRepository) *ShoppingAgentService {
+	s.users = users
+	return s
 }
 
 func NewShoppingAgentService(
@@ -206,6 +212,9 @@ func (s *ShoppingAgentService) CompleteCheckout(ctx context.Context, req *Checko
 	if err != nil {
 		return nil, ErrCartMandateNotFound
 	}
+	resolvedRequest := *req
+	resolvedRequest.UserID = cartMandate.UserID
+	req = &resolvedRequest
 
 	// CRITICAL: Verify mandate is not expired
 	if err := s.verifyMandateExpiration(cartMandate); err != nil {
@@ -265,6 +274,10 @@ func (s *ShoppingAgentService) CompleteCheckout(ctx context.Context, req *Checko
 }
 
 func (s *ShoppingAgentService) GetCartMandate(ctx context.Context, cartMandateID, userID string) (*models.CartMandate, error) {
+	userID, err := resolveDatabaseUserID(ctx, s.users, userID)
+	if err != nil {
+		return nil, err
+	}
 	cartMandate, err := s.ap2Repo.GetCartMandateByID(ctx, cartMandateID, userID)
 	if err != nil {
 		return nil, ErrCartMandateNotFound
@@ -287,6 +300,10 @@ func (s *ShoppingAgentService) GetCartMandateForScope(ctx context.Context, cartM
 }
 
 func (s *ShoppingAgentService) GetUserCarts(ctx context.Context, userID, businessID string, page, limit int) ([]*models.CartMandate, int64, error) {
+	userID, err := resolveDatabaseUserID(ctx, s.users, userID)
+	if err != nil {
+		return nil, 0, err
+	}
 	if repo, ok := s.ap2Repo.(interface {
 		GetCartMandatesForScope(context.Context, string, string, int, int) ([]*models.CartMandate, int64, error)
 	}); ok {
@@ -296,6 +313,10 @@ func (s *ShoppingAgentService) GetUserCarts(ctx context.Context, userID, busines
 }
 
 func (s *ShoppingAgentService) GetUserOrders(ctx context.Context, userID string, page, limit int) ([]*models.MarketplaceOrder, int64, error) {
+	userID, err := resolveDatabaseUserID(ctx, s.users, userID)
+	if err != nil {
+		return nil, 0, err
+	}
 	return s.ap2Repo.GetOrdersByUser(ctx, userID, page, limit)
 }
 
@@ -304,6 +325,10 @@ func (s *ShoppingAgentService) GetOrderDetails(ctx context.Context, orderID stri
 }
 
 func (s *ShoppingAgentService) CreateOrderFromCart(ctx context.Context, cartMandateID, userID string) (*models.MarketplaceOrder, error) {
+	userID, err := resolveDatabaseUserID(ctx, s.users, userID)
+	if err != nil {
+		return nil, err
+	}
 	cartMandate, err := s.ap2Repo.GetCartMandateByID(ctx, cartMandateID, userID)
 	if err != nil {
 		return nil, ErrCartMandateNotFound
@@ -340,6 +365,10 @@ func (s *ShoppingAgentService) GetProductDetails(ctx context.Context, productID 
 }
 
 func (s *ShoppingAgentService) TrackOrder(ctx context.Context, orderID, userID string) (*models.MarketplaceOrder, error) {
+	userID, err := resolveDatabaseUserID(ctx, s.users, userID)
+	if err != nil {
+		return nil, err
+	}
 	return s.ap2Repo.GetOrderByIDForUser(ctx, orderID, userID)
 }
 
@@ -348,6 +377,10 @@ func (s *ShoppingAgentService) CreateIntentMandate(ctx context.Context, req *Sho
 }
 
 func (s *ShoppingAgentService) createIntentMandate(ctx context.Context, req *ShoppingIntentRequest) (*models.IntentMandate, error) {
+	userID, err := resolveDatabaseUserID(ctx, s.users, req.UserID)
+	if err != nil {
+		return nil, err
+	}
 	constraints := ap2.MandateConstraints{
 		Currency:    "INR",
 		MaxAmount:   req.MaxAmount,
@@ -355,7 +388,7 @@ func (s *ShoppingAgentService) createIntentMandate(ctx context.Context, req *Sho
 	}
 
 	intentReq := &ap2.IntentMandateRequest{
-		UserID:                req.UserID,
+		UserID:                userID,
 		AgentID:               req.ShoppingAgentID,
 		NaturalLanguageIntent: req.Query,
 		Constraints:           constraints,
@@ -389,9 +422,13 @@ func (s *ShoppingAgentService) GetShoppingAgentCapabilities(ctx context.Context,
 }
 
 func (s *ShoppingAgentService) CreateCartMandate(ctx context.Context, req *CreateCartMandateRequest) (*models.CartMandate, error) {
+	userID, err := resolveDatabaseUserID(ctx, s.users, req.UserID)
+	if err != nil {
+		return nil, err
+	}
 	cartReq := &ap2.CartMandateRequest{
 		IntentMandateID:    req.IntentMandateID,
-		UserID:             req.UserID,
+		UserID:             userID,
 		AgentID:            req.ShoppingAgentID,
 		MerchantID:         req.MerchantID,
 		Items:              req.Items,
@@ -553,6 +590,10 @@ func (s *ShoppingAgentService) mutateCart(
 }
 
 func (s *ShoppingAgentService) getCartForScope(ctx context.Context, cartID, userID, businessID string) (*models.CartMandate, error) {
+	userID, err := resolveDatabaseUserID(ctx, s.users, userID)
+	if err != nil {
+		return nil, err
+	}
 	if repo, ok := s.ap2Repo.(versionedCartRepository); ok {
 		return repo.GetCartMandateForScope(ctx, cartID, userID, businessID)
 	}

@@ -25,22 +25,26 @@ func (s *ReportService) WithUserRepository(users ReportUserRepository) *ReportSe
 // Report foreign keys use users.id. Keep the verified subject unchanged for
 // authorization, capability checks, and report scope evaluation.
 func (s *ReportService) reportUserID(ctx context.Context, subject string) (string, error) {
-	if s.users == nil {
+	return resolveDatabaseUserID(ctx, s.users, subject)
+}
+
+func resolveDatabaseUserID(ctx context.Context, users ReportUserRepository, subject string) (string, error) {
+	if users == nil {
 		return subject, nil
 	}
 	subject = strings.TrimSpace(subject)
 	if subject == "" {
 		return "", fmt.Errorf("report user is required")
 	}
-	user, err := s.users.GetByCognitoID(ctx, subject)
+	user, err := users.GetByCognitoID(ctx, subject)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		if raw, ok := rawCognitoSubject(subject); ok {
-			user, err = s.users.GetByCognitoID(ctx, raw)
+			user, err = users.GetByCognitoID(ctx, raw)
 		}
 	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		if _, parseErr := uuid.Parse(subject); parseErr == nil {
-			user, err = s.users.GetByID(ctx, subject)
+			user, err = users.GetByID(ctx, subject)
 		}
 	}
 	if err != nil {

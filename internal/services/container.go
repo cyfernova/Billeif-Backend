@@ -381,7 +381,7 @@ func NewContainer(
 		"workflow_enabled", workflowSvc != nil,
 	)
 
-	shoppingAgentSvc := NewShoppingAgentService(ap2Repo, agentSvc, intentProcessingSvc, ap2Signer, ap2MandateSvc, a2aClient, cfg.Server.A2AMessageEndpoint(), log)
+	shoppingAgentSvc := NewShoppingAgentService(ap2Repo, agentSvc, intentProcessingSvc, ap2Signer, ap2MandateSvc, a2aClient, cfg.Server.A2AMessageEndpoint(), log).WithUserRepository(userRepo)
 	procurementSvc := NewProcurementService(ap2Repo, agentSvc, intentProcessingSvc, shoppingAgentSvc, merchantAgentSvc, bargainingSvc, agentConfigSvc, ap2Signer, log)
 	a2aTaskSvc.ConfigureDomainServices(ap2Repo, merchantAgentSvc, sellerNegotiationSvc, ap2Signer)
 
