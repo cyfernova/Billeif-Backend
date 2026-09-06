@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"time"
@@ -20,10 +21,96 @@ type A2AGovernanceAdapter struct {
 		SaveBargainingProposal(context.Context, string, string, string, int, json.RawMessage) error
 		ReadBargainingProposal(context.Context, string, string, string, int) (json.RawMessage, error)
 	}
-	executor *AgentGovernanceService
-	users    ReportUserRepository
-	llm      *LLMService
-	config   *config.Config
+	executor    *AgentGovernanceService
+	users       ReportUserRepository
+	llm         *LLMService
+	config      *config.Config
+	preferences interface {
+		GetAgentConfig(context.Context, string) (*models.WellKnownAgentConfig, error)
+	}
+}
+
+func (a *A2AGovernanceAdapter) WithPreferences(preferences interface {
+	GetAgentConfig(context.Context, string) (*models.WellKnownAgentConfig, error)
+}) *A2AGovernanceAdapter {
+	a.preferences = preferences
+	return a
+}
+
+type bargainingPreferenceLimits struct {
+	Minimum        float64  `json:"minimum"`
+	Maximum        float64  `json:"maximum"`
+	Budget         *float64 `json:"budget,omitempty"`
+	SellerMinimum  *float64 `json:"seller_minimum,omitempty"`
+	MaxRounds      int      `json:"max_rounds"`
+	TargetDiscount float64  `json:"target_discount"`
+	MaxMarkup      float64  `json:"max_markup"`
+}
+
+func resolveBargainingPreferenceLimits(n *models.BargainingNegotiation, role string, saved *models.WellKnownAgentConfig) (bargainingPreferenceLimits, error) {
+	limits := bargainingPreferenceLimits{Minimum: n.InitialAmount * 0.3, Maximum: n.CurrentAmount, MaxRounds: n.MaxRounds}
+	if role == "seller" {
+		limits.Minimum, limits.Maximum = n.CurrentAmount, n.InitialAmount
+	}
+	if saved == nil {
+		return limits, nil
+	}
+	if saved.Config == nil || string(saved.Config.Type) != role {
+		return limits, fmt.Errorf("agent bargaining preference role mismatch")
+	}
+	if role == "buyer" && saved.Config.BuyerConfig != nil {
+		b := saved.Config.BuyerConfig
+		limits.MaxRounds = min(limits.MaxRounds, b.MaxRounds)
+		limits.TargetDiscount, limits.Budget = b.TargetDiscount, b.BudgetLimit
+		if b.BudgetLimit != nil {
+			limits.Maximum = math.Min(limits.Maximum, *b.BudgetLimit)
+		}
+	} else if role == "seller" && saved.Config.SellerConfig != nil {
+		s := saved.Config.SellerConfig
+		limits.MaxRounds = min(limits.MaxRounds, s.MaxRounds)
+		limits.SellerMinimum, limits.MaxMarkup = &s.MinAcceptablePrice, s.MaxMarkupPercent
+		limits.Minimum = math.Max(limits.Minimum, s.MinAcceptablePrice)
+	} else {
+		return limits, fmt.Errorf("agent bargaining preferences are incomplete")
+	}
+	if limits.Minimum > limits.Maximum || limits.MaxRounds < 1 {
+		return limits, fmt.Errorf("no offer fits the agent's bargaining preferences")
+	}
+	return limits, nil
+}
+
+func (l bargainingPreferenceLimits) allows(d *LLMBargainingResponse) bool {
+	if d.Action == "reject" {
+		return true
+	}
+	if l.Budget != nil && d.ProposedAmount > *l.Budget {
+		return false
+	}
+	if l.SellerMinimum != nil && d.ProposedAmount < *l.SellerMinimum {
+		return false
+	}
+	return d.Action != "counteroffer" || (d.ProposedAmount >= l.Minimum && d.ProposedAmount <= l.Maximum)
+}
+
+func (a *A2AGovernanceAdapter) negotiationRoundLimit(ctx context.Context, buyerID, sellerID string, initial float64, requested int) (int, error) {
+	if a.preferences == nil {
+		return requested, nil
+	}
+	for _, participant := range []struct{ id, role string }{{buyerID, "buyer"}, {sellerID, "seller"}} {
+		saved, err := a.preferences.GetAgentConfig(ctx, participant.id)
+		if errors.Is(err, ErrAgentConfigNotFound) {
+			continue
+		}
+		if err != nil {
+			return 0, fmt.Errorf("read bargaining preferences: %w", err)
+		}
+		limits, err := resolveBargainingPreferenceLimits(&models.BargainingNegotiation{InitialAmount: initial, CurrentAmount: initial, MaxRounds: requested}, participant.role, saved)
+		if err != nil {
+			return 0, err
+		}
+		requested = min(requested, limits.MaxRounds)
+	}
+	return requested, nil
 }
 
 func NewA2AGovernanceAdapter(executor *AgentGovernanceService, users ReportUserRepository, llm *LLMService, cfg *config.Config) *A2AGovernanceAdapter {
@@ -49,7 +136,21 @@ func (a *A2AGovernanceAdapter) Decide(ctx context.Context, negotiation *models.B
 	if err != nil {
 		return nil, err
 	}
-	arguments, err := json.Marshal(map[string]any{"negotiation_id": negotiation.ID, "agent_id": agentID, "round": round, "role": role, "initial_amount": negotiation.InitialAmount, "current_amount": negotiation.CurrentAmount})
+	var saved *models.WellKnownAgentConfig
+	if a.preferences != nil {
+		saved, err = a.preferences.GetAgentConfig(ctx, agentID)
+		if err != nil && !errors.Is(err, ErrAgentConfigNotFound) {
+			return nil, fmt.Errorf("read bargaining preferences: %w", err)
+		}
+	}
+	limits, err := resolveBargainingPreferenceLimits(negotiation, role, saved)
+	if err != nil {
+		return nil, err
+	}
+	if round > limits.MaxRounds {
+		return nil, fmt.Errorf("agent bargaining round limit reached")
+	}
+	arguments, err := json.Marshal(map[string]any{"negotiation_id": negotiation.ID, "agent_id": agentID, "round": round, "role": role, "initial_amount": negotiation.InitialAmount, "current_amount": negotiation.CurrentAmount, "preferences": limits})
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +165,7 @@ func (a *A2AGovernanceAdapter) Decide(ctx context.Context, negotiation *models.B
 		RunID: runID, BusinessID: negotiation.BusinessID, AgentID: agentID, UserID: actorID, AuthorizationUserID: negotiation.UserID,
 		ToolKey: "bargaining_proposal", Risk: RiskInternalDraft, CanonicalArguments: canonical, ArgumentsHash: hash,
 		ResourceType: "negotiation", ResourceID: negotiation.ID, IdempotencyKey: runID,
-		ProviderKey: "deepseek", ModelKey: a.config.LLM.Model, ModelConfig: `{"max_tokens":512,"thinking":"disabled"}`, PromptTemplateVersion: "bargaining-v1",
+		ProviderKey: "deepseek", ModelKey: a.config.LLM.Model, ModelConfig: `{"max_tokens":512,"thinking":"disabled"}`, PromptTemplateVersion: "bargaining-v2",
 		TokenBudget: 10000, ExpectedCostMicros: 20000, BusinessSpendCeilingMicros: policy.BusinessDailyLimitMicros, AgentDailySpendLimitMicros: policy.AgentDailyLimitMicros, SpendCurrency: "USD",
 		MaxSteps: 1, MaxToolCalls: 1, MaxRetries: 0, DeadlineAt: deadline,
 		ProviderFailureThreshold: policy.ProviderFailureThreshold, ProviderCooldown: policy.ProviderCooldown, ProviderProbeLease: time.Minute,
@@ -72,11 +173,14 @@ func (a *A2AGovernanceAdapter) Decide(ctx context.Context, negotiation *models.B
 	var decision *LLMBargainingResponse
 	_, err = a.executor.ExecuteTool(ctx, request, func(callCtx context.Context, _ string, _ json.RawMessage) (GovernedToolInvocationResult, error) {
 		prompt := fmt.Sprintf("You are the %s agent negotiating an internal non-binding price proposal in INR. Starting price %.2f; current offer %.2f; round %d of %d. Buyer aims to lower price; seller aims to retain value. Return only JSON with action (counteroffer, accept, reject), proposed_amount (positive number no higher than starting price), reason (short plain sentence). Accept must use the current offer. Never purchase, pay, call tools, or contact anyone.", role, negotiation.InitialAmount, negotiation.CurrentAmount, round, negotiation.MaxRounds)
-		minimum, maximum := negotiation.InitialAmount*0.3, negotiation.CurrentAmount
-		if role == "seller" {
-			minimum, maximum = negotiation.CurrentAmount, negotiation.InitialAmount
+		prompt += fmt.Sprintf(" Your counteroffer must be between %.2f and %.2f inclusive. Your round limit is %d. Reject if no acceptable agreement is possible.", limits.Minimum, limits.Maximum, limits.MaxRounds)
+		if saved != nil {
+			if role == "buyer" {
+				prompt += fmt.Sprintf(" Your target discount is %.2f percent.", limits.TargetDiscount)
+			} else {
+				prompt += fmt.Sprintf(" Your maximum markup preference is %.2f percent.", limits.MaxMarkup)
+			}
 		}
-		prompt += fmt.Sprintf(" Your counteroffer must be between %.2f and %.2f inclusive.", minimum, maximum)
 		response, callErr := a.llm.ChatWithOptions(callCtx, []ChatMessage{{Role: "user", Content: prompt}}, LLMChatOptions{MaxTokens: 512, DisableThinking: true})
 		// Reserve a conservative maximum of $0.02 per attempt, including uncertain failures.
 		result := GovernedToolInvocationResult{Chargeable: true, CostMicros: 20000, InputTokens: int64(len(prompt)), OutputTokens: 512, ResultType: "negotiation", ResultID: negotiation.ID}
@@ -89,6 +193,9 @@ func (a *A2AGovernanceAdapter) Decide(ctx context.Context, negotiation *models.B
 		}
 		if decision.Action == "counteroffer" && !isValidCounterOfferInternal(negotiation, role, decision.ProposedAmount) {
 			return result, ErrInvalidAmount
+		}
+		if !limits.allows(decision) {
+			return result, fmt.Errorf("agent proposal exceeds saved bargaining preferences")
 		}
 		result.Output, callErr = json.Marshal(decision)
 		if callErr == nil {
@@ -106,7 +213,14 @@ func (a *A2AGovernanceAdapter) Decide(ctx context.Context, negotiation *models.B
 		if readErr != nil {
 			return nil, readErr
 		}
-		return parseGovernedBargainingDecision(string(raw), negotiation.InitialAmount, negotiation.CurrentAmount)
+		replayed, parseErr := parseGovernedBargainingDecision(string(raw), negotiation.InitialAmount, negotiation.CurrentAmount)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		if !limits.allows(replayed) {
+			return nil, fmt.Errorf("saved proposal exceeds current bargaining preferences")
+		}
+		return replayed, nil
 	}
 	return decision, nil
 }

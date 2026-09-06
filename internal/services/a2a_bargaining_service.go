@@ -288,6 +288,12 @@ func (s *A2ABargainingService) startNegotiation(
 	if maxRounds == 0 {
 		maxRounds = 5
 	}
+	if s.governance != nil {
+		maxRounds, err = s.governance.negotiationRoundLimit(ctx, req.BuyerAgentID, req.SellerAgentID, req.InitialAmount, maxRounds)
+		if err != nil {
+			return nil, err
+		}
+	}
 	negotiationID := generateA2ANegotiationID()
 	metadata := map[string]interface{}{}
 	if s.governance != nil {
