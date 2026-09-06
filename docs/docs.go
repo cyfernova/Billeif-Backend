@@ -21434,6 +21434,9 @@ const docTemplate = `{
                 "description": {
                     "type": "string"
                 },
+                "is_enabled": {
+                    "type": "boolean"
+                },
                 "name": {
                     "type": "string"
                 },

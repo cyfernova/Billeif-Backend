@@ -28,6 +28,7 @@ func NewWorkflowHandler(workflowService *services.WorkflowService, log *logger.L
 type CreateWorkflowRequest struct {
 	Name                 string                         `json:"name" binding:"required"`
 	Description          string                         `json:"description,omitempty"`
+	IsEnabled            *bool                          `json:"is_enabled,omitempty"`
 	AgentID              *string                        `json:"agentId,omitempty"`
 	Trigger              *services.WorkflowTrigger      `json:"trigger" binding:"required"`
 	Action               *services.WorkflowAction       `json:"action" binding:"required"`
@@ -75,6 +76,11 @@ func (h *WorkflowHandler) CreateWorkflow(c *gin.Context) {
 		return
 	}
 
+	enabled := req.IsEnabled == nil || *req.IsEnabled
+	status := services.WorkflowStatusActive
+	if !enabled {
+		status = services.WorkflowStatusPaused
+	}
 	// Create workflow model
 	workflow := &services.Workflow{
 		Name:        req.Name,
@@ -83,8 +89,8 @@ func (h *WorkflowHandler) CreateWorkflow(c *gin.Context) {
 		AgentID:     req.AgentID,
 		Trigger:     req.Trigger,
 		Action:      req.Action,
-		Status:      services.WorkflowStatusActive,
-		IsEnabled:   true,
+		Status:      status,
+		IsEnabled:   enabled,
 	}
 
 	if err := h.workflowService.CreateWorkflow(c.Request.Context(), workflow); err != nil {
