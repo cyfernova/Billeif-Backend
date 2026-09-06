@@ -227,7 +227,7 @@ func NewContainer(
 	documentSvc.pdfPresigner = s3Svc
 	barcodeSvc := NewBarcodeService(db, log)
 	projectSvc := NewProjectService(db, log)
-	reportSvc := NewReportService(cfg, reportingRepo, log).WithBusinessTimezoneProvider(businessRepo)
+	reportSvc := NewReportService(cfg, reportingRepo, log).WithBusinessTimezoneProvider(businessRepo).WithUserRepository(userRepo)
 	marketplaceSvc := NewMarketplaceService(ap2Repo, log)
 	productMatchingSvc := NewProductMatchingService(marketplaceSvc, log)
 	intentProcessingSvc, _ := NewIntentProcessingService(productMatchingSvc, marketplaceSvc, log)

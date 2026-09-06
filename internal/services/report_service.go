@@ -28,6 +28,7 @@ type ReportService struct {
 	cfg        *config.Config
 	repo       interfaces.ReportingRepository
 	capability CapabilityGuard
+	users      ReportUserRepository
 	businesses interface {
 		GetByID(context.Context, string) (*models.BusinessProfile, error)
 	}
@@ -253,6 +254,10 @@ func (s *ReportService) Export(ctx context.Context, businessID, userID, reportKe
 			"timezone":     timezone,
 		}
 	}
+	storageUserID, err := s.reportUserID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
 	run := &models.ReportRun{
 		BusinessID:     businessID,
 		ReportKey:      def.Key,
@@ -263,7 +268,7 @@ func (s *ReportService) Export(ctx context.Context, businessID, userID, reportKe
 		Status:         models.ReportRunStatusCompleted,
 		Payload:        mustMarshalJSON(payload, "{}"),
 		Summary:        mustMarshalJSON(reportSummary(result), "{}"),
-		GeneratedBy:    userID,
+		GeneratedBy:    storageUserID,
 	}
 	if err := s.repo.CreateReportRun(ctx, run); err != nil {
 		return nil, err
@@ -313,6 +318,10 @@ func (s *ReportService) Dashboard(ctx context.Context, businessID string, input 
 }
 
 func (s *ReportService) GetPreference(ctx context.Context, businessID, userID, reportKey string) (*ReportPreferenceResponse, error) {
+	userID, err := s.reportUserID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
 	def, ok := reporting.Lookup(reportKey)
 	if !ok {
 		return nil, fmt.Errorf("report not found")
@@ -337,6 +346,10 @@ func (s *ReportService) GetPreference(ctx context.Context, businessID, userID, r
 }
 
 func (s *ReportService) SavePreference(ctx context.Context, businessID, userID, reportKey string, input ReportPreferenceInput) (*ReportPreferenceResponse, error) {
+	userID, err := s.reportUserID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
 	def, ok := reporting.Lookup(reportKey)
 	if !ok {
 		return nil, fmt.Errorf("report not found")
@@ -372,7 +385,7 @@ func (s *ReportService) SavePreference(ctx context.Context, businessID, userID, 
 		config.ShareRequiresPasscode = *input.ShareRequiresPasscode
 	}
 	if len(config.Columns) == 0 {
-		config.Columns = normalizeColumns(nil, def.DefaultColumns)
+		config.Columns = defaultColumnKeys(def.DefaultColumns)
 	}
 	pref := &models.ReportPreference{
 		BusinessID: businessID,
@@ -404,7 +417,7 @@ type reportPreferenceConfig struct {
 
 func defaultReportPreferenceConfig(def reporting.Definition) reportPreferenceConfig {
 	return reportPreferenceConfig{
-		Columns:               normalizeColumns(nil, def.DefaultColumns),
+		Columns:               defaultColumnKeys(def.DefaultColumns),
 		DefaultExportFormat:   "json",
 		DefaultShareMode:      models.ReportShareModeSnapshot,
 		ShareRequiresPasscode: false,
@@ -460,6 +473,10 @@ func (s *ReportService) CreateShare(ctx context.Context, businessID, userID, rep
 		return nil, err
 	}
 
+	storageUserID, err := s.reportUserID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
 	share := &models.ReportShare{
 		BusinessID:       businessID,
 		ReportKey:        reportKey,
@@ -469,7 +486,7 @@ func (s *ReportService) CreateShare(ctx context.Context, businessID, userID, rep
 		VisibleColumns:   mustMarshalJSON(columns, "[]"),
 		RequiresPasscode: strings.TrimSpace(input.Passcode) != "",
 		ExpiresAt:        input.ExpiresAt,
-		CreatedBy:        userID,
+		CreatedBy:        storageUserID,
 	}
 	if share.Title == "" {
 		share.Title = def.Name
@@ -504,7 +521,7 @@ func (s *ReportService) CreateShare(ctx context.Context, businessID, userID, rep
 			Status:         models.ReportRunStatusCompleted,
 			Payload:        mustMarshalJSON(result, "{}"),
 			Summary:        mustMarshalJSON(reportSummary(result), "{}"),
-			GeneratedBy:    userID,
+			GeneratedBy:    storageUserID,
 		}
 		if err := s.repo.CreateReportRun(ctx, run); err != nil {
 			return nil, err
@@ -683,7 +700,11 @@ func (s *ReportService) resolveColumns(ctx context.Context, businessID, userID s
 		return columns, nil
 	}
 	if allowPreference && businessID != "" && userID != "" {
-		pref, err := s.repo.GetReportPreference(ctx, businessID, userID, def.Key)
+		storageUserID, err := s.reportUserID(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		pref, err := s.repo.GetReportPreference(ctx, businessID, storageUserID, def.Key)
 		if err == nil {
 			columns := normalizeColumns(unmarshalColumnsFromPreference(pref.Config), def.DefaultColumns)
 			if len(columns) > 0 {
@@ -906,9 +927,9 @@ func normalizeColumns(columns []string, available []reporting.Column) []string {
 }
 
 func unmarshalColumnsFromPreference(raw string) []string {
-	payload := map[string][]string{}
+	var payload reportPreferenceConfig
 	if err := json.Unmarshal([]byte(raw), &payload); err == nil {
-		return payload["columns"]
+		return payload.Columns
 	}
 	var columns []string
 	if err := json.Unmarshal([]byte(raw), &columns); err == nil {
