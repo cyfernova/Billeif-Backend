@@ -216,7 +216,7 @@ func NewContainer(
 	a2aSigner, _ := ap2.NewSignatureService()
 	a2aClient := a2a.NewA2AClient(a2aSigner, log)
 	inventorySvc := NewInventoryService(db, inventoryRepo, productRepo, businessRepo, teamRepo, log)
-	journalSvc := NewJournalService(db, journalRepo, log)
+	journalSvc := NewJournalService(db, journalRepo, log).WithBusinessTimezoneProvider(businessRepo)
 	if configurer, ok := invoiceRepo.(invoiceIssueStockEffectConfigurer); ok {
 		configurer.ConfigureInvoiceIssueStockEffect(func(ctx context.Context, tx *gorm.DB, document *models.Document) error {
 			return applyCanonicalInvoiceIssueEffects(ctx, tx, document, inventorySvc, journalSvc)
@@ -403,7 +403,7 @@ func NewContainer(
 		Payment:                NewPaymentService(db, paymentRepo, invoiceRepo, documentSvc, journalSvc, log),
 		RazorpayPayment:        razorpayPaymentSvc,
 		Ledger:                 NewLedgerService(ledgerRepo, log),
-		Dashboard:              NewDashboardService(db, log),
+		Dashboard:              NewDashboardService(db, log).WithBusinessTimezoneProvider(businessRepo),
 		Report:                 reportSvc,
 		TaxCompliance:          taxComplianceSvc,
 		Team:                   NewTeamService(teamRepo, log).WithDB(db),

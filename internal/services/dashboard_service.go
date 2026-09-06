@@ -109,12 +109,19 @@ type DashboardSummary struct {
 }
 
 type DashboardService struct {
-	db  *gorm.DB
-	log *logger.Logger
+	db         *gorm.DB
+	log        *logger.Logger
+	now        func() time.Time
+	businesses businessTimezoneProvider
 }
 
 func NewDashboardService(db *gorm.DB, log *logger.Logger) *DashboardService {
-	return &DashboardService{db: db, log: log.Named("dashboard")}
+	return &DashboardService{db: db, log: log.Named("dashboard"), now: time.Now}
+}
+
+func (s *DashboardService) WithBusinessTimezoneProvider(provider businessTimezoneProvider) *DashboardService {
+	s.businesses = provider
+	return s
 }
 
 func (s *DashboardService) Summary(ctx context.Context, businessID, userID string) (*DashboardSummary, error) {
@@ -143,7 +150,14 @@ func (s *DashboardService) Summary(ctx context.Context, businessID, userID strin
 }
 
 func (s *DashboardService) financeSummary(ctx context.Context, businessID string) (DashboardFinanceSummary, error) {
-	now := time.Now().UTC()
+	location, err := businessCalendarLocation(ctx, s.businesses, businessID)
+	if err != nil {
+		return DashboardFinanceSummary{}, err
+	}
+	now := s.now().In(location)
+	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location)
+	dayEnd := dayStart.AddDate(0, 0, 1)
+	// Invoice dates are calendar dates; payment timestamps are instants.
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	nextWeek := today.AddDate(0, 0, 7)
 
@@ -189,7 +203,7 @@ func (s *DashboardService) financeSummary(ctx context.Context, businessID string
 	if err != nil {
 		return DashboardFinanceSummary{}, err
 	}
-	todaysCollections, err := s.sum(ctx, "payments", "amount", "business_id = ? AND deleted_at IS NULL AND DATE(payment_date) = ?", businessID, today.Format("2006-01-02"))
+	todaysCollections, err := s.sum(ctx, "payments", "amount", "business_id = ? AND deleted_at IS NULL AND payment_date >= ? AND payment_date < ?", businessID, dayStart.UTC(), dayEnd.UTC())
 	if err != nil {
 		return DashboardFinanceSummary{}, err
 	}

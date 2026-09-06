@@ -346,6 +346,27 @@ func TestAccountingLockOverrideIsScopedAuditedAndOneTime(t *testing.T) {
 	require.GreaterOrEqual(t, auditCount, int64(2))
 }
 
+func TestJournalReversalUsesBusinessDateAndActualEventTimestamp(t *testing.T) {
+	db := newJournalInvariantDB(t)
+	businessID := uuid.NewString()
+	service := NewJournalService(db, postgres.NewJournalRepository(db), logger.New()).WithBusinessTimezoneProvider(businessTimezoneStub{profile: &models.BusinessProfile{Timezone: "Asia/Kolkata"}})
+	now := time.Date(2026, 9, 5, 19, 10, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+	input := balancedJournalInput(models.JournalStatusPosted)
+	input.PostingDate = time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC)
+	journal, err := service.CreateByBusiness(context.Background(), businessID, input)
+	require.NoError(t, err)
+	reversal, err := service.ReverseByBusiness(context.Background(), businessID, journal.ID)
+	require.NoError(t, err)
+	require.Equal(t, input.PostingDate, reversal.PostingDate)
+	require.NotNil(t, reversal.PostedAt)
+	require.Equal(t, now, *reversal.PostedAt)
+	stored, err := service.GetByBusiness(context.Background(), businessID, journal.ID)
+	require.NoError(t, err)
+	require.NotNil(t, stored.ReversedAt)
+	require.True(t, now.Equal(*stored.ReversedAt))
+}
+
 func TestLockedPeriodReversalMovesToExplicitNextOpenPeriod(t *testing.T) {
 	db := newJournalInvariantDB(t)
 	businessID := uuid.NewString()

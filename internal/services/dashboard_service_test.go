@@ -7,11 +7,49 @@ import (
 	"testing"
 	"time"
 
+	"invoice-backend/internal/models"
 	"invoice-backend/pkg/logger"
+
+	"github.com/stretchr/testify/require"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+func TestDashboardCollectionsUseBusinessCalendarDay(t *testing.T) {
+	for _, tc := range []struct{ name, timezone, now, start, end string }{
+		{"India after midnight", "Asia/Kolkata", "2026-09-05T19:10:00Z", "2026-09-05T18:30:00Z", "2026-09-06T18:30:00Z"},
+		{"US daylight saving start", "America/New_York", "2026-03-08T16:00:00Z", "2026-03-08T05:00:00Z", "2026-03-09T04:00:00Z"},
+		{"US daylight saving end", "America/New_York", "2026-11-01T16:00:00Z", "2026-11-01T04:00:00Z", "2026-11-02T05:00:00Z"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := newDashboardTestDB(t)
+			svc := NewDashboardService(db, logger.New()).WithBusinessTimezoneProvider(businessTimezoneStub{profile: &models.BusinessProfile{Timezone: tc.timezone}})
+			now, err := time.Parse(time.RFC3339, tc.now)
+			require.NoError(t, err)
+			start, err := time.Parse(time.RFC3339, tc.start)
+			require.NoError(t, err)
+			end, err := time.Parse(time.RFC3339, tc.end)
+			require.NoError(t, err)
+			svc.now = func() time.Time { return now }
+			for i, row := range []struct {
+				business string
+				amount   float64
+				at       time.Time
+				deleted  *time.Time
+			}{
+				{"biz-1", 10, start, nil}, {"biz-1", 20, end.Add(-time.Second), nil},
+				{"biz-1", 40, start.Add(-time.Second), nil}, {"biz-1", 80, end, nil},
+				{"biz-2", 160, now, nil}, {"biz-1", 320, now, &now},
+			} {
+				execDashboardSQL(t, db, `INSERT INTO payments (id,business_id,amount,payment_date,deleted_at) VALUES (?,?,?,?,?)`, fmt.Sprint(i), row.business, row.amount, row.at, row.deleted)
+			}
+			result, err := svc.financeSummary(context.Background(), "biz-1")
+			require.NoError(t, err)
+			require.Equal(t, float64(30), result.TodaysCollections)
+		})
+	}
+}
 
 func TestDashboardServiceSummaryScopesByBusiness(t *testing.T) {
 	db := newDashboardTestDB(t)
