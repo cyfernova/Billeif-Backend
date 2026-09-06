@@ -91,6 +91,7 @@ func (h *A2ABargainingHandler) defaultA2AMessageEndpoint() string {
 // @Failure 400 {object} map[string]string
 // @Failure 404 {object} map[string]string
 // @Failure 500 {object} map[string]string
+// @Failure 503 {object} map[string]string
 // @Router /a2a-bargaining/start [post]
 func (h *A2ABargainingHandler) StartNegotiation(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("a2a_bargaining_handler").With("operation", "start_negotiation")
@@ -182,6 +183,7 @@ func (h *A2ABargainingHandler) StartNegotiation(c *gin.Context) {
 // @Failure 400 {object} map[string]string
 // @Failure 404 {object} map[string]string
 // @Failure 500 {object} map[string]string
+// @Failure 503 {object} map[string]string
 // @Router /a2a-bargaining/autonomous/start [post]
 func (h *A2ABargainingHandler) StartAutonomousNegotiation(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("a2a_bargaining_handler").With("operation", "start_autonomous_negotiation")
@@ -364,6 +366,8 @@ func a2aNegotiationScope(c *gin.Context) (services.A2ANegotiationScope, bool) {
 
 func (h *A2ABargainingHandler) writeServiceError(c *gin.Context, err error, fallback string) {
 	switch {
+	case errors.Is(err, services.ErrA2AGovernanceRequired):
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Agent chat is unavailable until agent governance is configured", "code": "AGENT_GOVERNANCE_UNAVAILABLE"})
 	case errors.Is(err, services.ErrA2ANegotiationNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": "negotiation not found"})
 	case errors.Is(err, services.ErrA2ANegotiationTerminal):

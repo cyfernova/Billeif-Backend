@@ -113,6 +113,15 @@ const docTemplate = `{
                                 "type": "string"
                             }
                         }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
                     }
                 }
             }
@@ -291,6 +300,15 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
