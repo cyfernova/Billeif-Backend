@@ -289,6 +289,10 @@ func (s *A2ABargainingService) startNegotiation(
 		maxRounds = 5
 	}
 	negotiationID := generateA2ANegotiationID()
+	metadata := map[string]interface{}{}
+	if s.governance != nil {
+		metadata["governed_internal_negotiation"] = true
+	}
 	negotiation, err := s.bargaining.CreateNegotiation(ctx, &CreateNegotiationRequest{
 		BuyerAgentID:   req.BuyerAgentID,
 		SellerAgentID:  req.SellerAgentID,
@@ -298,6 +302,7 @@ func (s *A2ABargainingService) startNegotiation(
 		ReferencePrice: req.ReferencePrice,
 		MaxRounds:      maxRounds,
 		SessionID:      &negotiationID,
+		Metadata:       metadata,
 	})
 	if err != nil {
 		s.log.Error("failed to persist A2A negotiation", "error", err, "session_id", negotiationID)

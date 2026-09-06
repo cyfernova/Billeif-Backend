@@ -49,7 +49,7 @@ func (a *A2AGovernanceAdapter) Decide(ctx context.Context, negotiation *models.B
 	if err != nil {
 		return nil, err
 	}
-	arguments, err := json.Marshal(map[string]any{"negotiation_id": negotiation.ID, "agent_id": agentID, "round": round})
+	arguments, err := json.Marshal(map[string]any{"negotiation_id": negotiation.ID, "agent_id": agentID, "round": round, "role": role, "initial_amount": negotiation.InitialAmount, "current_amount": negotiation.CurrentAmount})
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +64,7 @@ func (a *A2AGovernanceAdapter) Decide(ctx context.Context, negotiation *models.B
 		RunID: runID, BusinessID: negotiation.BusinessID, AgentID: agentID, UserID: actorID, AuthorizationUserID: negotiation.UserID,
 		ToolKey: "bargaining_proposal", Risk: RiskInternalDraft, CanonicalArguments: canonical, ArgumentsHash: hash,
 		ResourceType: "negotiation", ResourceID: negotiation.ID, IdempotencyKey: runID,
-		ProviderKey: "deepseek", ModelKey: a.config.LLM.Model, ModelConfig: `{"max_tokens":512}`, PromptTemplateVersion: "bargaining-v1",
+		ProviderKey: "deepseek", ModelKey: a.config.LLM.Model, ModelConfig: `{"max_tokens":512,"thinking":"disabled"}`, PromptTemplateVersion: "bargaining-v1",
 		TokenBudget: 10000, ExpectedCostMicros: 20000, BusinessSpendCeilingMicros: policy.BusinessDailyLimitMicros, AgentDailySpendLimitMicros: policy.AgentDailyLimitMicros, SpendCurrency: "USD",
 		MaxSteps: 1, MaxToolCalls: 1, MaxRetries: 0, DeadlineAt: deadline,
 		ProviderFailureThreshold: policy.ProviderFailureThreshold, ProviderCooldown: policy.ProviderCooldown, ProviderProbeLease: time.Minute,
@@ -72,6 +72,11 @@ func (a *A2AGovernanceAdapter) Decide(ctx context.Context, negotiation *models.B
 	var decision *LLMBargainingResponse
 	_, err = a.executor.ExecuteTool(ctx, request, func(callCtx context.Context, _ string, _ json.RawMessage) (GovernedToolInvocationResult, error) {
 		prompt := fmt.Sprintf("You are the %s agent negotiating an internal non-binding price proposal in INR. Starting price %.2f; current offer %.2f; round %d of %d. Buyer aims to lower price; seller aims to retain value. Return only JSON with action (counteroffer, accept, reject), proposed_amount (positive number no higher than starting price), reason (short plain sentence). Accept must use the current offer. Never purchase, pay, call tools, or contact anyone.", role, negotiation.InitialAmount, negotiation.CurrentAmount, round, negotiation.MaxRounds)
+		minimum, maximum := negotiation.InitialAmount*0.3, negotiation.CurrentAmount
+		if role == "seller" {
+			minimum, maximum = negotiation.CurrentAmount, negotiation.InitialAmount
+		}
+		prompt += fmt.Sprintf(" Your counteroffer must be between %.2f and %.2f inclusive.", minimum, maximum)
 		response, callErr := a.llm.ChatWithOptions(callCtx, []ChatMessage{{Role: "user", Content: prompt}}, LLMChatOptions{MaxTokens: 512, DisableThinking: true})
 		// Reserve a conservative maximum of $0.02 per attempt, including uncertain failures.
 		result := GovernedToolInvocationResult{Chargeable: true, CostMicros: 20000, InputTokens: int64(len(prompt)), OutputTokens: 512, ResultType: "negotiation", ResultID: negotiation.ID}
@@ -81,6 +86,9 @@ func (a *A2AGovernanceAdapter) Decide(ctx context.Context, negotiation *models.B
 		decision, callErr = parseGovernedBargainingDecision(response, negotiation.InitialAmount, negotiation.CurrentAmount)
 		if callErr != nil {
 			return result, callErr
+		}
+		if decision.Action == "counteroffer" && !isValidCounterOfferInternal(negotiation, role, decision.ProposedAmount) {
+			return result, ErrInvalidAmount
 		}
 		result.Output, callErr = json.Marshal(decision)
 		if callErr == nil {

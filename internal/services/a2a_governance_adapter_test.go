@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"invoice-backend/internal/models"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -26,4 +27,11 @@ func TestGovernedBargainingUnconfiguredAdapterDeniesExecution(t *testing.T) {
 	require.False(t, adapter.Ready(context.Background(), "business"))
 	_, err := adapter.Decide(context.Background(), nil, "agent", "buyer", 1)
 	require.ErrorIs(t, err, ErrA2AGovernanceRequired)
+}
+
+func TestGovernedNegotiationsDoNotDispatchLegacyExternalNotifications(t *testing.T) {
+	svc := &BargainingService{}
+	require.True(t, svc.skipA2ANotifications(&models.BargainingNegotiation{Metadata: `{"governed_internal_negotiation":true}`}))
+	require.True(t, svc.skipA2ANotifications(&models.BargainingNegotiation{Metadata: `{"procurement_managed_a2a":true}`}))
+	require.False(t, svc.skipA2ANotifications(&models.BargainingNegotiation{Metadata: `{}`}))
 }
