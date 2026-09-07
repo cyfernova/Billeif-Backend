@@ -197,6 +197,8 @@ type StorefrontCoupon struct {
 	MaxDiscountAmount     float64        `gorm:"type:decimal(15,2);default:0" json:"max_discount_amount"`
 	UsageLimit            int64          `gorm:"not null;default:0" json:"usage_limit"`
 	UsageLimitPerCustomer int64          `gorm:"not null;default:0" json:"usage_limit_per_customer"`
+	RedemptionCount       int64          `gorm:"not null;default:0" json:"redemption_count"`
+	Version               int64          `gorm:"not null;default:1" json:"version"`
 	StartsAt              *time.Time     `json:"starts_at,omitempty"`
 	EndsAt                *time.Time     `json:"ends_at,omitempty"`
 	IsActive              bool           `gorm:"not null;default:true" json:"is_active"`

@@ -253,7 +253,14 @@ func (s *MerchantAgentService) RespondToCart(ctx context.Context, cartMandateID,
 		if err := ap2.VerifyCartMandateSignature(cartMandate, "merchant", merchantSignature, publicKey); err != nil {
 			return fmt.Errorf("failed to verify merchant signature: %w", err)
 		}
-		if err := s.ap2Repo.SignCartMandate(ctx, cartMandateID, merchantAgentID, merchantSignature, publicKey); err != nil {
+		if repo, ok := s.ap2Repo.(interface {
+			RespondToCartMandateVersioned(context.Context, string, string, string, string, string, int64) error
+		}); ok {
+			err = repo.RespondToCartMandateVersioned(ctx, cartMandateID, merchantAgentID, status, merchantSignature, publicKey, cartMandate.Version)
+		} else {
+			err = s.ap2Repo.SignCartMandate(ctx, cartMandateID, merchantAgentID, merchantSignature, publicKey)
+		}
+		if err != nil {
 			s.log.Error("failed to sign cart mandate", "error", err, "cart_mandate_id", cartMandateID)
 			return fmt.Errorf("failed to sign cart: %w", err)
 		}
@@ -261,8 +268,15 @@ func (s *MerchantAgentService) RespondToCart(ctx context.Context, cartMandateID,
 		if cartMandate.Status != "pending" {
 			return errors.New("cart mandate is not pending")
 		}
-		cartMandate.Status = "rejected"
-		if err := s.ap2Repo.UpdateCartMandate(ctx, cartMandate); err != nil {
+		if repo, ok := s.ap2Repo.(interface {
+			RespondToCartMandateVersioned(context.Context, string, string, string, string, string, int64) error
+		}); ok {
+			err = repo.RespondToCartMandateVersioned(ctx, cartMandateID, merchantAgentID, status, "", "", cartMandate.Version)
+		} else {
+			cartMandate.Status = "rejected"
+			err = s.ap2Repo.UpdateCartMandate(ctx, cartMandate)
+		}
+		if err != nil {
 			return fmt.Errorf("failed to reject cart: %w", err)
 		}
 	} else {

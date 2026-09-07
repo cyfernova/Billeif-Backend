@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -231,9 +232,14 @@ func (h *POSHandler) Checkout(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	input.Authorization = accountingPostingAuthorization(c, "pos-checkout:"+c.Param("id"))
 	requestContextWithActor(c)
 	document, err := h.svc.Checkout(c.Request.Context(), businessID, userID, c.Param("id"), idempotencyKey, input)
 	if err != nil {
+		if errors.Is(err, services.ErrAccountingPeriodLocked) {
+			writeAccountingStepUpRequired(c)
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

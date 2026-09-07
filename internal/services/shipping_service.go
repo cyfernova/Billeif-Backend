@@ -100,30 +100,11 @@ func (s *ShippingService) CreateOrUpdateShipmentForDocument(ctx context.Context,
 		return nil, fmt.Errorf("document is required")
 	}
 
-	extraFields := unmarshalJSONMap(document.ExtraFields)
-	if input.PackageCount == 0 {
-		input.PackageCount = intValue(extraFields["package_count"], 1)
-	}
-	if input.WeightKG == 0 {
-		input.WeightKG = floatValue(extraFields["weight_kg"])
-	}
-	if input.PackageDimensions == nil {
-		input.PackageDimensions = nestedMap(extraFields, "package_dimensions")
-	}
-	if input.AddressSnapshot == nil {
-		input.AddressSnapshot = nestedMap(extraFields, "address_snapshot")
-	}
-	if input.ProviderPayload == nil {
-		input.ProviderPayload = nestedMap(extraFields, "provider_payload")
-	}
-
-	providerName := coalesceString(input.Provider, stringValue(extraFields["provider"]), defaultShippingProvider(s.cfg))
-	if providerName == "" {
-		providerName = "manual"
-	}
-
 	shipment, err := s.repo.GetShipmentByDocument(ctx, document.BusinessID, document.ID)
 	if err != nil {
+		if err.Error() != "shipment not found" {
+			return nil, err
+		}
 		shipment = &models.Shipment{
 			BusinessID: document.BusinessID,
 			DocumentID: document.ID,
@@ -131,7 +112,33 @@ func (s *ShippingService) CreateOrUpdateShipmentForDocument(ctx context.Context,
 		}
 	}
 
-	shipment.Provider = providerName
+	extraFields := unmarshalJSONMap(document.ExtraFields)
+	if input.PackageCount == 0 {
+		input.PackageCount = intValueWithFallback(shipment.PackageCount, intValue(extraFields["package_count"], 1), 1)
+	}
+	if input.WeightKG == 0 {
+		input.WeightKG = floatValueWithFallback(shipment.WeightKG, floatValue(extraFields["weight_kg"]))
+	}
+	if input.PackageDimensions == nil {
+		input.PackageDimensions = unmarshalJSONMap(shipment.PackageDimensions)
+		if len(input.PackageDimensions) == 0 {
+			input.PackageDimensions = nestedMap(extraFields, "package_dimensions")
+		}
+	}
+	if input.AddressSnapshot == nil {
+		input.AddressSnapshot = unmarshalJSONMap(shipment.AddressSnapshot)
+		if len(input.AddressSnapshot) == 0 {
+			input.AddressSnapshot = nestedMap(extraFields, "address_snapshot")
+		}
+	}
+	if input.ProviderPayload == nil {
+		input.ProviderPayload = unmarshalJSONMap(shipment.ProviderPayload)
+		if len(input.ProviderPayload) == 0 {
+			input.ProviderPayload = nestedMap(extraFields, "provider_payload")
+		}
+	}
+
+	shipment.Provider = coalesceString(input.Provider, shipment.Provider, stringValue(extraFields["provider"]), defaultShippingProvider(s.cfg), "manual")
 	shipment.Courier = coalesceString(input.Courier, shipment.Courier)
 	shipment.PackageCount = intValueWithFallback(input.PackageCount, shipment.PackageCount, 1)
 	shipment.WeightKG = floatValueWithFallback(input.WeightKG, shipment.WeightKG)

@@ -58,6 +58,7 @@ func Build(invoice *models.Invoice) *models.Document {
 		SourceLinkage:         marshalMap(sourceLinkage),
 		RenderProfileID:       invoice.RenderProfileID,
 		ProjectID:             invoice.ProjectID,
+		BranchID:              invoice.BranchID,
 		PriceListID:           invoice.PriceListID,
 		OriginSubscriptionID:  invoice.OriginSubscriptionID,
 		OriginRunID:           invoice.OriginRunID,

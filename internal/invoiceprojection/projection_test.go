@@ -16,6 +16,7 @@ func TestBuildCreatesCompleteCanonicalLegalAndPricingProjection(t *testing.T) {
 	document := Build(invoice)
 
 	if document.ID != invoice.ID || document.BusinessID != invoice.BusinessID ||
+		document.BranchID == nil || *document.BranchID != *invoice.BranchID ||
 		document.PartyID == nil || *document.PartyID != *invoice.CustomerID ||
 		document.DocumentType != models.DocumentTypeSalesInvoice ||
 		document.Status != models.DocumentStatusDraft ||
@@ -211,11 +212,13 @@ func richProjectionInvoice() *models.Invoice {
 	customerID := uuid.NewString()
 	invoiceID := uuid.NewString()
 	itemID := uuid.NewString()
+	branchID := uuid.NewString()
 	invoiceDate := time.Date(2026, time.April, 1, 0, 30, 0, 0, time.UTC)
 	return &models.Invoice{
 		ID:          invoiceID,
 		BusinessID:  uuid.NewString(),
 		CustomerID:  &customerID,
+		BranchID:    &branchID,
 		Version:     1,
 		Status:      models.InvoiceStatusDraft,
 		Origin:      models.InvoiceOriginManual,

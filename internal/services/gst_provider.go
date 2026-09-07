@@ -7,7 +7,9 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,7 +17,10 @@ import (
 
 	"invoice-backend/internal/config"
 	"invoice-backend/pkg/logger"
+	"invoice-backend/pkg/operationsmetrics"
 )
+
+var ErrGSTCredentialValidationNotConfigured = errors.New("GST credential validation is not configured")
 
 type GSTProvider interface {
 	ValidateCredentials(ctx context.Context, account *GSTIntegrationAccountCredentials) error
@@ -39,10 +44,11 @@ type GSTIntegrationAccountCredentials struct {
 }
 
 type GSTEInvoiceRequest struct {
-	BusinessID string
-	DocumentID string
-	SerialNo   string
-	Payload    map[string]interface{}
+	BusinessID  string
+	DocumentID  string
+	SerialNo    string
+	Payload     map[string]interface{}
+	Credentials *GSTIntegrationAccountCredentials `json:"-"`
 }
 
 type GSTEInvoiceResult struct {
@@ -56,11 +62,12 @@ type GSTEInvoiceResult struct {
 }
 
 type GSTCancelEInvoiceRequest struct {
-	BusinessID string
-	DocumentID string
-	IRN        string
-	Reason     string
-	Payload    map[string]interface{}
+	BusinessID  string
+	DocumentID  string
+	IRN         string
+	Reason      string
+	Payload     map[string]interface{}
+	Credentials *GSTIntegrationAccountCredentials `json:"-"`
 }
 
 type GSTCancelEInvoiceResult struct {
@@ -69,10 +76,11 @@ type GSTCancelEInvoiceResult struct {
 }
 
 type GSTEWayBillRequest struct {
-	BusinessID string
-	DocumentID string
-	SerialNo   string
-	Payload    map[string]interface{}
+	BusinessID  string
+	DocumentID  string
+	SerialNo    string
+	Payload     map[string]interface{}
+	Credentials *GSTIntegrationAccountCredentials `json:"-"`
 }
 
 type GSTEWayBillResult struct {
@@ -85,17 +93,19 @@ type GSTEWayBillResult struct {
 }
 
 type GSTEWayPartBRequest struct {
-	BusinessID string
-	DocumentID string
-	EWayBillNo string
-	Payload    map[string]interface{}
+	BusinessID  string
+	DocumentID  string
+	EWayBillNo  string
+	Payload     map[string]interface{}
+	Credentials *GSTIntegrationAccountCredentials `json:"-"`
 }
 
 type GSTMultiVehicleRequest struct {
-	BusinessID string
-	DocumentID string
-	EWayBillNo string
-	Payload    map[string]interface{}
+	BusinessID  string
+	DocumentID  string
+	EWayBillNo  string
+	Payload     map[string]interface{}
+	Credentials *GSTIntegrationAccountCredentials `json:"-"`
 }
 
 type GSTMultiVehicleResult struct {
@@ -104,9 +114,10 @@ type GSTMultiVehicleResult struct {
 }
 
 type GSTEWayBillPDFRequest struct {
-	BusinessID string
-	DocumentID string
-	EWayBillNo string
+	BusinessID  string
+	DocumentID  string
+	EWayBillNo  string
+	Credentials *GSTIntegrationAccountCredentials `json:"-"`
 }
 
 type GSTEWayBillPDFResult struct {
@@ -147,10 +158,26 @@ func NewLazyConfiguredGSTProvider(cfg *config.Config, resolver ProviderConfigRes
 	return &lazyConfiguredGSTProvider{cfg: cfg, resolver: resolver, log: log}
 }
 
+// operationsMetricSink is implemented by GST providers that can carry the
+// low-cardinality operational metric emitter.
+type operationsMetricSink interface {
+	WithOperationsMetrics(emitter *operationsmetrics.Emitter)
+}
+
+// WithOperationsMetrics forwards the operational metric emitter to every
+// provider resolved from later configuration lookups.
+func (p *lazyConfiguredGSTProvider) WithOperationsMetrics(emitter *operationsmetrics.Emitter) {
+	if p == nil {
+		return
+	}
+	p.operationsMetrics = emitter
+}
+
 type lazyConfiguredGSTProvider struct {
-	cfg      *config.Config
-	resolver ProviderConfigResolver
-	log      *logger.Logger
+	cfg               *config.Config
+	resolver          ProviderConfigResolver
+	log               *logger.Logger
+	operationsMetrics *operationsmetrics.Emitter
 }
 
 func (p *lazyConfiguredGSTProvider) provider(ctx context.Context) (GSTProvider, error) {
@@ -158,7 +185,11 @@ func (p *lazyConfiguredGSTProvider) provider(ctx context.Context) (GSTProvider, 
 	if err != nil {
 		return nil, err
 	}
-	return NewConfiguredGSTProvider(resolved, p.log), nil
+	created := NewConfiguredGSTProvider(resolved, p.log)
+	if sink, ok := created.(operationsMetricSink); ok && p.operationsMetrics != nil {
+		sink.WithOperationsMetrics(p.operationsMetrics)
+	}
+	return created, nil
 }
 
 func (p *lazyConfiguredGSTProvider) ValidateCredentials(ctx context.Context, account *GSTIntegrationAccountCredentials) error {
@@ -219,21 +250,30 @@ func (p *lazyConfiguredGSTProvider) FetchDistance(ctx context.Context, req GSTDi
 }
 
 type configuredGSTProvider struct {
-	cfg        *config.Config
-	httpClient *http.Client
-	log        *logger.Logger
+	cfg               *config.Config
+	httpClient        *http.Client
+	log               *logger.Logger
+	operationsMetrics *operationsmetrics.Emitter
+}
+
+// WithOperationsMetrics attaches the low-cardinality operational metric
+// emitter used for provider latency. A nil emitter disables emission.
+func (p *configuredGSTProvider) WithOperationsMetrics(emitter *operationsmetrics.Emitter) {
+	if p != nil {
+		p.operationsMetrics = emitter
+	}
 }
 
 func (p *configuredGSTProvider) ValidateCredentials(ctx context.Context, account *GSTIntegrationAccountCredentials) error {
 	if strings.TrimSpace(p.cfg.GST.ValidatePath) == "" {
-		return nil
+		return ErrGSTCredentialValidationNotConfigured
 	}
 	_, err := p.doJSON(ctx, http.MethodPost, p.cfg.GST.ValidatePath, account, account)
 	return err
 }
 
 func (p *configuredGSTProvider) GenerateEInvoice(ctx context.Context, req GSTEInvoiceRequest) (*GSTEInvoiceResult, error) {
-	payload, err := p.doJSON(ctx, http.MethodPost, p.cfg.GST.EInvoicePath, req.Payload, nil)
+	payload, err := p.doJSON(ctx, http.MethodPost, p.cfg.GST.EInvoicePath, req.Payload, req.Credentials)
 	if err != nil {
 		return nil, err
 	}
@@ -241,7 +281,7 @@ func (p *configuredGSTProvider) GenerateEInvoice(ctx context.Context, req GSTEIn
 }
 
 func (p *configuredGSTProvider) CancelEInvoice(ctx context.Context, req GSTCancelEInvoiceRequest) (*GSTCancelEInvoiceResult, error) {
-	payload, err := p.doJSON(ctx, http.MethodPost, p.cfg.GST.EInvoiceCancelPath, req.Payload, nil)
+	payload, err := p.doJSON(ctx, http.MethodPost, p.cfg.GST.EInvoiceCancelPath, req.Payload, req.Credentials)
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +292,7 @@ func (p *configuredGSTProvider) CancelEInvoice(ctx context.Context, req GSTCance
 }
 
 func (p *configuredGSTProvider) GenerateEWayBill(ctx context.Context, req GSTEWayBillRequest) (*GSTEWayBillResult, error) {
-	payload, err := p.doJSON(ctx, http.MethodPost, p.cfg.GST.EWayBillPath, req.Payload, nil)
+	payload, err := p.doJSON(ctx, http.MethodPost, p.cfg.GST.EWayBillPath, req.Payload, req.Credentials)
 	if err != nil {
 		return nil, err
 	}
@@ -260,7 +300,7 @@ func (p *configuredGSTProvider) GenerateEWayBill(ctx context.Context, req GSTEWa
 }
 
 func (p *configuredGSTProvider) UpdateEWayPartB(ctx context.Context, req GSTEWayPartBRequest) (*GSTEWayBillResult, error) {
-	payload, err := p.doJSON(ctx, http.MethodPost, p.cfg.GST.EWayBillPartBPath, req.Payload, nil)
+	payload, err := p.doJSON(ctx, http.MethodPost, p.cfg.GST.EWayBillPartBPath, req.Payload, req.Credentials)
 	if err != nil {
 		return nil, err
 	}
@@ -268,7 +308,7 @@ func (p *configuredGSTProvider) UpdateEWayPartB(ctx context.Context, req GSTEWay
 }
 
 func (p *configuredGSTProvider) InitiateMultiVehicle(ctx context.Context, req GSTMultiVehicleRequest) (*GSTMultiVehicleResult, error) {
-	payload, err := p.doJSON(ctx, http.MethodPost, p.cfg.GST.EWayBillMultiVehiclePath, req.Payload, nil)
+	payload, err := p.doJSON(ctx, http.MethodPost, p.cfg.GST.EWayBillMultiVehiclePath, req.Payload, req.Credentials)
 	if err != nil {
 		return nil, err
 	}
@@ -282,7 +322,7 @@ func (p *configuredGSTProvider) FetchEWayBillPDF(ctx context.Context, req GSTEWa
 	payload, err := p.doJSON(ctx, http.MethodPost, p.cfg.GST.EWayBillPDFPath, map[string]interface{}{
 		"eway_bill_number": req.EWayBillNo,
 		"document_id":      req.DocumentID,
-	}, nil)
+	}, req.Credentials)
 	if err != nil {
 		return nil, err
 	}
@@ -363,24 +403,42 @@ func (p *configuredGSTProvider) doJSON(ctx context.Context, method, path string,
 		}
 	}
 
+	// The latency metric covers the complete provider round trip: request,
+	// response headers, body read, and decode, including every error return.
+	requestStart := time.Now()
+	defer func() { p.emitProviderLatency(time.Since(requestStart)) }()
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	var payload map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return nil, err
+	limitedBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, fmt.Errorf("read GST provider response: %w", err)
 	}
 	if resp.StatusCode >= 400 {
-		message := coalesceString(
-			readStringCandidate(payload, "error", "message", "detail", "data.error"),
-			fmt.Sprintf("gst provider returned status %d", resp.StatusCode),
-		)
-		return nil, fmt.Errorf("%s", message)
+		return nil, &providerHTTPError{status: resp.StatusCode}
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(limitedBody, &payload); err != nil {
+		return nil, fmt.Errorf("decode GST provider response: %w", err)
 	}
 	return payload, nil
+}
+
+func (p *configuredGSTProvider) emitProviderLatency(elapsed time.Duration) {
+	if p == nil || p.operationsMetrics == nil {
+		return
+	}
+	milliseconds := float64(elapsed) / float64(time.Millisecond)
+	if milliseconds < 0 {
+		return
+	}
+	_ = p.operationsMetrics.Emit(operationsmetrics.Sample{
+		Category: operationsmetrics.CategoryProvider,
+		Values:   map[operationsmetrics.Metric]float64{operationsmetrics.MetricProviderLatencyMilliseconds: milliseconds},
+	})
 }
 
 type simulatedGSTProvider struct {
@@ -388,7 +446,7 @@ type simulatedGSTProvider struct {
 }
 
 func (p *simulatedGSTProvider) ValidateCredentials(ctx context.Context, account *GSTIntegrationAccountCredentials) error {
-	return nil
+	return ErrGSTCredentialValidationNotConfigured
 }
 
 func (p *simulatedGSTProvider) GenerateEInvoice(ctx context.Context, req GSTEInvoiceRequest) (*GSTEInvoiceResult, error) {

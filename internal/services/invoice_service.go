@@ -50,7 +50,14 @@ func WithInvoiceDeliveryRepository(repository interfaces.InvoiceDeliveryReposito
 	}
 }
 
+func WithInvoiceAccounting(accounting *AccountingService) InvoiceServiceOption {
+	return func(service *InvoiceService) {
+		service.accounting = accounting
+	}
+}
+
 type InvoiceService struct {
+	actorUsers   InvoiceActorRepository
 	db           *gorm.DB
 	cfg          *config.Config
 	repo         interfaces.CanonicalInvoiceRepository
@@ -61,6 +68,7 @@ type InvoiceService struct {
 	s3           *S3Service
 	email        InvoiceEmailSender
 	log          *logger.Logger
+	accounting   *AccountingService
 
 	invoiceRenders    interfaces.InvoiceRenderReadRepository
 	invoiceDeliveries interfaces.InvoiceDeliveryRepository
@@ -134,6 +142,7 @@ type CreateInvoiceInput struct {
 	BuyerSnapshot        models.PartySnapshot     `json:"-"`
 	Currency             string                   `json:"-"`
 	ProjectID            string                   `json:"project_id,omitempty" binding:"omitempty,uuid"`
+	BranchID             string                   `json:"branch_id,omitempty" binding:"omitempty,uuid"`
 	PriceListID          string                   `json:"price_list_id,omitempty"`
 	RenderProfileID      string                   `json:"render_profile_id,omitempty" binding:"omitempty,uuid"`
 	InvoiceDate          time.Time                `json:"invoice_date"`
@@ -157,6 +166,7 @@ type canonicalInvoiceCreatePayload struct {
 	BuyerSnapshot        models.PartySnapshot     `json:"buyer_snapshot"`
 	Currency             string                   `json:"currency"`
 	ProjectID            string                   `json:"project_id,omitempty"`
+	BranchID             string                   `json:"branch_id,omitempty"`
 	PriceListID          string                   `json:"price_list_id,omitempty"`
 	RenderProfileID      string                   `json:"render_profile_id,omitempty"`
 	InvoiceDate          time.Time                `json:"invoice_date"`
@@ -181,6 +191,7 @@ func canonicalInvoiceCreateRequest(input CreateInvoiceInput) canonicalInvoiceCre
 		BuyerSnapshot:        input.BuyerSnapshot,
 		Currency:             input.Currency,
 		ProjectID:            input.ProjectID,
+		BranchID:             input.BranchID,
 		PriceListID:          input.PriceListID,
 		RenderProfileID:      input.RenderProfileID,
 		InvoiceDate:          input.InvoiceDate,
@@ -215,6 +226,11 @@ func normalizedInvoiceCreateOrigin(input CreateInvoiceInput) (models.InvoiceOrig
 	case models.InvoiceOriginPOS:
 		if hasSubscriptionOrigin ||
 			(strings.TrimSpace(input.CustomerID) != "" && !input.BuyerSnapshot.IsEmpty()) {
+			return "", &idempotency.InvalidPayloadError{}
+		}
+		return input.Origin, nil
+	case models.InvoiceOriginStorefront:
+		if hasSubscriptionOrigin || strings.TrimSpace(input.CustomerID) == "" || !input.BuyerSnapshot.IsEmpty() {
 			return "", &idempotency.InvalidPayloadError{}
 		}
 		return input.Origin, nil
@@ -259,9 +275,9 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 	if err != nil {
 		return nil, err
 	}
-	actor := actorFromContext(ctx)
-	if _, err := uuid.Parse(actor.UserID); err != nil {
-		return nil, fmt.Errorf("invoice create actor is required")
+	actor, err := s.invoiceActor(ctx, "create")
+	if err != nil {
+		return nil, err
 	}
 	replay, err := s.repo.ReplayCompletedDraft(
 		ctx,
@@ -296,6 +312,18 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 	if input.RenderProfileID != "" && s.documents != nil {
 		if _, err := s.documents.GetRenderProfileByBusiness(ctx, input.BusinessID, input.RenderProfileID); err != nil {
 			return nil, fmt.Errorf("render profile not found: %w", err)
+		}
+	}
+	if input.BranchID != "" {
+		if s.db == nil {
+			return nil, fmt.Errorf("branch validation is unavailable")
+		}
+		var branchCount int64
+		if err := s.db.WithContext(ctx).Model(&models.Branch{}).Where("id=? AND business_id=? AND deleted_at IS NULL", input.BranchID, input.BusinessID).Count(&branchCount).Error; err != nil {
+			return nil, err
+		}
+		if branchCount != 1 {
+			return nil, fmt.Errorf("branch not found")
 		}
 	}
 	priceListID, err := resolvePriceListID(
@@ -440,6 +468,7 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 		BusinessID:        input.BusinessID,
 		CustomerID:        stringPointer(input.CustomerID),
 		ProjectID:         projectIDPointer(projectID),
+		BranchID:          stringPointer(input.BranchID),
 		PriceListID:       priceListID,
 		RenderProfileID:   stringPointer(input.RenderProfileID),
 		Status:            models.InvoiceStatusDraft,

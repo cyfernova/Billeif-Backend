@@ -10,6 +10,7 @@ import (
 	"invoice-backend/internal/config"
 	"invoice-backend/internal/models"
 	"invoice-backend/pkg/logger"
+	"invoice-backend/pkg/operationsmetrics"
 	"invoice-backend/pkg/razorpay"
 
 	"github.com/google/uuid"
@@ -22,7 +23,33 @@ type RazorpayPaymentService struct {
 	db       *gorm.DB
 	client   *razorpay.Client
 	resolver ProviderConfigResolver
+	guard    CapabilityGuard
 	log      *logger.Logger
+	metrics  *operationsmetrics.Emitter
+}
+
+func (s *RazorpayPaymentService) WithCapabilityGuard(guard CapabilityGuard) *RazorpayPaymentService {
+	s.guard = guard
+	return s
+}
+
+// WithOperationsMetrics attaches the low-cardinality operational metric
+// emitter used at webhook processing outcomes. A nil emitter disables emission.
+func (s *RazorpayPaymentService) WithOperationsMetrics(emitter *operationsmetrics.Emitter) *RazorpayPaymentService {
+	s.metrics = emitter
+	return s
+}
+
+// emitWebhookFailure records one verified-webhook processing failure without
+// exposing payloads, signatures, provider identifiers, or raw errors.
+func (s *RazorpayPaymentService) emitWebhookFailure() {
+	if s == nil || s.metrics == nil {
+		return
+	}
+	_ = s.metrics.Emit(operationsmetrics.Sample{
+		Category: operationsmetrics.CategoryWebhook,
+		Values:   map[operationsmetrics.Metric]float64{operationsmetrics.MetricWebhookFailures: 1},
+	})
 }
 
 func NewRazorpayPaymentService(cfg *config.Config, db *gorm.DB, log *logger.Logger, resolvers ...ProviderConfigResolver) *RazorpayPaymentService {
@@ -71,6 +98,71 @@ func (s *RazorpayPaymentService) clientFor(ctx context.Context) (*razorpay.Clien
 	return client, nil
 }
 
+func (s *RazorpayPaymentService) ProbeGlobalCapability(ctx context.Context) CapabilityProviderOutcome {
+	client, err := s.clientFor(ctx)
+	if err == nil {
+		err = client.Probe(ctx)
+	}
+	return CapabilityProviderOutcome{Err: err}
+}
+
+func (s *RazorpayPaymentService) CreateSubscription(ctx context.Context, params razorpay.SubscriptionCreateParams) (*razorpay.Subscription, error) {
+	client, err := s.clientFor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return client.CreateSubscription(ctx, params)
+}
+
+func (s *RazorpayPaymentService) FetchSubscription(ctx context.Context, id string) (*razorpay.Subscription, error) {
+	client, err := s.clientFor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return client.FetchSubscription(ctx, id)
+}
+
+func (s *RazorpayPaymentService) UpdateSubscription(ctx context.Context, id string, params razorpay.SubscriptionUpdateParams) (*razorpay.Subscription, error) {
+	client, err := s.clientFor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return client.UpdateSubscription(ctx, id, params)
+}
+
+func (s *RazorpayPaymentService) CancelSubscription(ctx context.Context, id string, params razorpay.SubscriptionCancelParams) (*razorpay.Subscription, error) {
+	client, err := s.clientFor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return client.CancelSubscription(ctx, id, params)
+}
+
+func (s *RazorpayPaymentService) SubscriptionProviderSettings(ctx context.Context) (SubscriptionProviderSettings, error) {
+	if s == nil || s.cfg == nil {
+		return SubscriptionProviderSettings{}, fmt.Errorf("razorpay subscription provider is not configured")
+	}
+	resolved := s.cfg
+	if s.resolver != nil {
+		var err error
+		resolved, err = s.resolver.ResolveProvider(ctx, s.cfg, config.SecretRazorpay)
+		if err != nil {
+			return SubscriptionProviderSettings{}, err
+		}
+	}
+	return SubscriptionProviderSettings{
+		ProviderMode: strings.ToLower(strings.TrimSpace(resolved.Razorpay.Mode)),
+		ProviderPlanIDs: map[string]string{
+			"pro_monthly":  strings.TrimSpace(resolved.Razorpay.PlanProID),
+			"rise_monthly": strings.TrimSpace(resolved.Razorpay.PlanRiseID),
+			"biz_monthly":  strings.TrimSpace(resolved.Razorpay.PlanBizID),
+		},
+		WebhookSecret: resolved.Razorpay.WebhookSecret,
+	}, nil
+}
+
+var _ SubscriptionProvider = (*RazorpayPaymentService)(nil)
+
 type RazorpayCreateOrderInput struct {
 	TargetType     string `json:"target_type" binding:"required,oneof=plan store_order"`
 	PlanID         string `json:"plan_id,omitempty"`
@@ -97,35 +189,20 @@ type RazorpayVerifyPaymentResponse struct {
 	Status string `json:"status"`
 }
 
-type planCatalogEntry struct {
-	PlanID       string
-	Plan         string
-	PlanCode     string
-	AmountPaise  int64
-	Currency     string
-	MaxInvoices  int64
-	MaxCustomers int64
-	MaxUsers     int64
-	MaxStorageMB int64
-}
-
-var razorpayPlanCatalog = map[string]planCatalogEntry{
-	"pro_monthly": {
-		PlanID: "pro_monthly", Plan: "starter", PlanCode: "pro", AmountPaise: 29900, Currency: "INR",
-		MaxInvoices: 100, MaxCustomers: 100, MaxUsers: 3, MaxStorageMB: 512,
-	},
-	"rise_monthly": {
-		PlanID: "rise_monthly", Plan: "professional", PlanCode: "rise", AmountPaise: 99900, Currency: "INR",
-		MaxInvoices: 1000, MaxCustomers: 1000, MaxUsers: 10, MaxStorageMB: 2048,
-	},
-	"biz_monthly": {
-		PlanID: "biz_monthly", Plan: "enterprise", PlanCode: "biz", AmountPaise: 299900, Currency: "INR",
-		MaxInvoices: 100000, MaxCustomers: 100000, MaxUsers: 50, MaxStorageMB: 10240,
-	},
-}
-
 func (s *RazorpayPaymentService) CreateOrder(ctx context.Context, businessID, userID string, input RazorpayCreateOrderInput) (*RazorpayCreateOrderResponse, error) {
-	if s == nil || s.db == nil {
+	if s == nil {
+		return nil, fmt.Errorf("payment service is not configured")
+	}
+	capability := CapabilityRazorpay
+	if strings.TrimSpace(input.TargetType) == "store_order" {
+		capability = CapabilityStorefrontPayments
+	}
+	if err := requireCapability(ctx, s.guard, CapabilityRequest{
+		BusinessID: businessID, UserID: userID, Platform: CapabilityPlatformWeb, Capability: capability,
+	}); err != nil {
+		return nil, err
+	}
+	if s.db == nil {
 		return nil, fmt.Errorf("payment service is not configured")
 	}
 	client, err := s.clientFor(ctx)
@@ -139,72 +216,35 @@ func (s *RazorpayPaymentService) CreateOrder(ctx context.Context, businessID, us
 	}
 
 	idempotencyKey := strings.TrimSpace(input.IdempotencyKey)
-	var attempt models.PaymentAttempt
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var existing models.PaymentAttempt
-		findErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("user_id = ? AND business_id = ? AND idempotency_key = ?", userID, businessID, idempotencyKey).
-			First(&existing).Error
-		switch {
-		case findErr == nil:
-			if existing.Status == models.PaymentAttemptStatusPaid {
-				return fmt.Errorf("payment attempt is already paid")
-			}
-			if existing.TargetType != target.TargetType || existing.TargetID != target.TargetID || existing.AmountPaise != amountPaise || existing.Currency != currency {
-				return fmt.Errorf("idempotency key was already used for a different payment target")
-			}
-			if existing.RazorpayOrderID == "" {
-				return fmt.Errorf("payment attempt is still being initialized")
-			}
-			attempt = existing
-			return nil
-		case !errors.Is(findErr, gorm.ErrRecordNotFound):
-			return findErr
-		}
-
-		attempt = models.PaymentAttempt{
-			ID:             uuid.NewString(),
-			UserID:         userID,
-			BusinessID:     businessID,
-			TargetType:     target.TargetType,
-			TargetID:       target.TargetID,
-			AmountPaise:    amountPaise,
-			Currency:       currency,
-			Status:         models.PaymentAttemptStatusCreated,
-			IdempotencyKey: idempotencyKey,
-		}
-		if err := tx.Create(&attempt).Error; err != nil {
-			return err
-		}
-
-		order, err := client.CreateOrder(ctx, razorpay.OrderParams{
-			Amount:   amountPaise,
-			Currency: currency,
-			Receipt:  truncateReceipt(attempt.ID),
-			Notes: map[string]string{
-				"payment_attempt_id": attempt.ID,
-				"business_id":        businessID,
-				"target_type":        target.TargetType,
-				"target_id":          target.TargetID,
-			},
-		})
-		if err != nil {
-			return err
-		}
-		if order.ID == "" {
-			return fmt.Errorf("razorpay did not return an order id")
-		}
-
-		attempt.RazorpayOrderID = order.ID
-		attempt.Status = models.PaymentAttemptStatusCreated
-		return tx.Save(&attempt).Error
-	})
+	if idempotencyKey == "" {
+		return nil, fmt.Errorf("idempotency_key is required")
+	}
+	attempt, existed, err := s.claimPaymentAttempt(ctx, businessID, userID, idempotencyKey, target, amountPaise, currency)
 	if err != nil {
-		s.log.Warn("failed to create Razorpay payment order", "business_id", businessID, "user_id", userID, "target_type", input.TargetType, "error", err)
+		s.log.Warn("failed to create Razorpay payment order", "business_id", businessID, "user_id", userID, "target_type", input.TargetType, "code", "payment_attempt_claim_failed")
 		return nil, err
 	}
+	if attempt.RazorpayOrderID == "" {
+		var order *razorpay.Order
+		if existed {
+			order, err = s.recoverRazorpayOrder(ctx, client, attempt)
+			if err == nil && order == nil {
+				err = fmt.Errorf("payment attempt is still being initialized")
+			}
+		} else {
+			order, err = s.createRazorpayOrder(ctx, client, attempt)
+		}
+		if err != nil {
+			s.log.Warn("failed to initialize Razorpay payment order", "payment_attempt_id", attempt.ID, "business_id", businessID, "code", "payment_provider_initialization_failed")
+			return nil, err
+		}
+		attempt, err = s.attachRazorpayOrder(ctx, attempt, order)
+		if err != nil {
+			return nil, err
+		}
+	}
 
-	s.log.Info("Razorpay payment order ready", "payment_attempt_id", attempt.ID, "business_id", businessID, "target_type", attempt.TargetType, "razorpay_order_id", attempt.RazorpayOrderID)
+	s.log.Info("Razorpay payment order ready", "payment_attempt_id", attempt.ID, "business_id", businessID, "target_type", attempt.TargetType)
 	return &RazorpayCreateOrderResponse{
 		PaymentAttemptID: attempt.ID,
 		RazorpayKeyID:    client.KeyID(),
@@ -212,6 +252,130 @@ func (s *RazorpayPaymentService) CreateOrder(ctx context.Context, businessID, us
 		Amount:           attempt.AmountPaise,
 		Currency:         attempt.Currency,
 	}, nil
+}
+
+func (s *RazorpayPaymentService) claimPaymentAttempt(
+	ctx context.Context,
+	businessID, userID, idempotencyKey string,
+	target resolvedPaymentTarget,
+	amountPaise int64,
+	currency string,
+) (*models.PaymentAttempt, bool, error) {
+	candidate := models.PaymentAttempt{
+		ID: uuid.NewString(), UserID: userID, BusinessID: businessID,
+		TargetType: target.TargetType, TargetID: target.TargetID,
+		AmountPaise: amountPaise, Currency: currency,
+		Status: models.PaymentAttemptStatusCreated, IdempotencyKey: idempotencyKey,
+	}
+	var attempt models.PaymentAttempt
+	existed := false
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Omit("RazorpayOrderID", "RazorpayPaymentID", "FailureReason", "PaidAt").Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "user_id"}, {Name: "business_id"}, {Name: "idempotency_key"}},
+			DoNothing: true,
+		}).Create(&candidate)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 1 {
+			attempt = candidate
+			return nil
+		}
+		existed = true
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("user_id = ? AND business_id = ? AND idempotency_key = ?", userID, businessID, idempotencyKey).
+			First(&attempt).Error; err != nil {
+			return err
+		}
+		if attempt.Status == models.PaymentAttemptStatusPaid {
+			return fmt.Errorf("payment attempt is already paid")
+		}
+		if attempt.TargetType != target.TargetType || attempt.TargetID != target.TargetID || attempt.AmountPaise != amountPaise || !strings.EqualFold(attempt.Currency, currency) {
+			return fmt.Errorf("idempotency key was already used for a different payment target")
+		}
+		return nil
+	})
+	return &attempt, existed, err
+}
+
+func (s *RazorpayPaymentService) createRazorpayOrder(ctx context.Context, client *razorpay.Client, attempt *models.PaymentAttempt) (*razorpay.Order, error) {
+	order, createErr := client.CreateOrder(ctx, razorpay.OrderParams{
+		Amount: attempt.AmountPaise, Currency: attempt.Currency, Receipt: truncateReceipt(attempt.ID),
+		Notes: map[string]string{
+			"payment_attempt_id": attempt.ID,
+			"business_id":        attempt.BusinessID,
+			"target_type":        attempt.TargetType,
+			"target_id":          attempt.TargetID,
+		},
+	})
+	if createErr == nil {
+		return validateRecoveredRazorpayOrder(attempt, order)
+	}
+	recovered, recoverErr := s.recoverRazorpayOrder(ctx, client, attempt)
+	if recoverErr != nil {
+		return nil, fmt.Errorf("create Razorpay order: %w; reconcile order: %v", createErr, recoverErr)
+	}
+	if recovered == nil {
+		return nil, createErr
+	}
+	return recovered, nil
+}
+
+func (s *RazorpayPaymentService) recoverRazorpayOrder(ctx context.Context, client *razorpay.Client, attempt *models.PaymentAttempt) (*razorpay.Order, error) {
+	receipt := truncateReceipt(attempt.ID)
+	orders, err := client.FetchOrdersByReceipt(ctx, receipt)
+	if err != nil {
+		return nil, err
+	}
+	var recovered *razorpay.Order
+	for index := range orders {
+		if orders[index].Receipt != receipt {
+			continue
+		}
+		if recovered != nil {
+			return nil, fmt.Errorf("multiple Razorpay orders found for unique receipt")
+		}
+		recovered = &orders[index]
+	}
+	if recovered == nil {
+		return nil, nil
+	}
+	return validateRecoveredRazorpayOrder(attempt, recovered)
+}
+
+func validateRecoveredRazorpayOrder(attempt *models.PaymentAttempt, order *razorpay.Order) (*razorpay.Order, error) {
+	if order == nil || strings.TrimSpace(order.ID) == "" {
+		return nil, fmt.Errorf("razorpay did not return an order id")
+	}
+	if order.Receipt != truncateReceipt(attempt.ID) || order.Amount != attempt.AmountPaise || !strings.EqualFold(order.Currency, attempt.Currency) {
+		return nil, fmt.Errorf("Razorpay order does not match payment attempt")
+	}
+	return order, nil
+}
+
+func (s *RazorpayPaymentService) attachRazorpayOrder(ctx context.Context, claimed *models.PaymentAttempt, order *razorpay.Order) (*models.PaymentAttempt, error) {
+	var attempt models.PaymentAttempt
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", claimed.ID).First(&attempt).Error; err != nil {
+			return err
+		}
+		if attempt.BusinessID != claimed.BusinessID || attempt.UserID != claimed.UserID {
+			return fmt.Errorf("payment attempt not found")
+		}
+		if attempt.RazorpayOrderID != "" {
+			if attempt.RazorpayOrderID != order.ID {
+				return fmt.Errorf("payment attempt already references a different Razorpay order")
+			}
+			return nil
+		}
+		if _, err := validateRecoveredRazorpayOrder(&attempt, order); err != nil {
+			return err
+		}
+		attempt.RazorpayOrderID = order.ID
+		attempt.Status = models.PaymentAttemptStatusCreated
+		return tx.Save(&attempt).Error
+	})
+	return &attempt, err
 }
 
 type resolvedPaymentTarget struct {
@@ -223,11 +387,11 @@ func (s *RazorpayPaymentService) resolvePaymentTarget(ctx context.Context, busin
 	switch strings.TrimSpace(input.TargetType) {
 	case models.PaymentAttemptTargetPlan:
 		planID := strings.TrimSpace(input.PlanID)
-		plan, ok := razorpayPlanCatalog[planID]
+		plan, ok := paidSubscriptionPlan(planID)
 		if !ok {
 			return resolvedPaymentTarget{}, 0, "", fmt.Errorf("unsupported plan_id")
 		}
-		return resolvedPaymentTarget{TargetType: models.PaymentAttemptTargetPlan, TargetID: plan.PlanID}, plan.AmountPaise, plan.Currency, nil
+		return resolvedPaymentTarget{TargetType: models.PaymentAttemptTargetPlan, TargetID: plan.ID}, plan.Amount, plan.Currency, nil
 	case models.PaymentAttemptTargetStoreOrder:
 		orderID := strings.TrimSpace(input.StoreOrderID)
 		if orderID == "" {
@@ -354,47 +518,101 @@ func (s *RazorpayPaymentService) HandleWebhook(ctx context.Context, signature, e
 	if eventID == "" {
 		return false, fmt.Errorf("missing x-razorpay-event-id")
 	}
+	receivedAt := time.Now().UTC()
+	payloadHash := sha256Hex(rawBody)
 	if !razorpay.VerifyRazorpayWebhook(rawBody, signature, client.WebhookSecret()) {
+		unverifiedID := "unverified:" + sha256Hex([]byte(eventID))
+		_ = s.db.WithContext(ctx).Create(&models.RazorpayWebhookEvent{
+			ID: uuid.NewString(), RazorpayEventID: unverifiedID, ProviderMode: "unverified", EventType: "unverified",
+			PayloadHash: payloadHash, SignatureVerified: false, ReceivedAt: receivedAt,
+			ProcessingStatus: "rejected", SanitizedErrorCode: "invalid_signature", CreatedAt: receivedAt,
+		}).Error
+		s.emitWebhookFailure()
 		return false, fmt.Errorf("invalid webhook signature")
 	}
 
 	event, err := razorpay.ParseWebhookEvent(rawBody)
 	if err != nil {
-		return false, err
+		_ = s.db.WithContext(ctx).Create(&models.RazorpayWebhookEvent{
+			ID: uuid.NewString(), RazorpayEventID: eventID, ProviderMode: "legacy_unknown", EventType: "invalid",
+			PayloadHash: payloadHash, SignatureVerified: true, ReceivedAt: receivedAt,
+			ProcessingStatus: "rejected", SanitizedErrorCode: "invalid_payload", CreatedAt: receivedAt,
+		}).Error
+		s.emitWebhookFailure()
+		return false, fmt.Errorf("invalid webhook payload")
+	}
+	providerMode := "legacy_unknown"
+	if settings, settingsErr := s.SubscriptionProviderSettings(ctx); settingsErr == nil && validProviderMode(settings.ProviderMode) {
+		providerMode = settings.ProviderMode
+	}
+	providerOccurredAt := receivedAt
+	if event.CreatedAtEpoch > 0 {
+		providerOccurredAt = time.Unix(event.CreatedAtEpoch, 0).UTC()
 	}
 
 	duplicate := false
+	var domainErr error
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var existing models.RazorpayWebhookEvent
-		findErr := tx.Where("razorpay_event_id = ?", eventID).First(&existing).Error
+		findErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("provider_mode = ? AND razorpay_event_id = ?", providerMode, eventID).First(&existing).Error
 		if findErr == nil {
 			duplicate = true
-			return nil
+			existing.ReplayCount++
+			existing.LastReplayedAt = &receivedAt
+			if existing.PayloadHash != payloadHash {
+				existing.ProcessingStatus = "reconciliation_required"
+				existing.SanitizedErrorCode = "replay_payload_mismatch"
+				domainErr = fmt.Errorf("webhook replay requires reconciliation")
+			}
+			return tx.Save(&existing).Error
 		}
 		if findErr != nil && !errors.Is(findErr, gorm.ErrRecordNotFound) {
 			return findErr
 		}
 
-		record := models.RazorpayWebhookEvent{ID: uuid.NewString(), RazorpayEventID: eventID, EventType: event.Event}
+		record := models.RazorpayWebhookEvent{
+			ID: uuid.NewString(), RazorpayEventID: eventID, ProviderMode: providerMode, EventType: event.Event,
+			PayloadHash: payloadHash, SignatureVerified: true, ReceivedAt: receivedAt, ProviderOccurredAt: &providerOccurredAt,
+			ProcessingStatus: "processing", AttemptCount: 1, CreatedAt: receivedAt,
+		}
 		if err := tx.Create(&record).Error; err != nil {
 			return err
 		}
-		if err := s.applyWebhookEventTx(ctx, tx, event); err != nil {
+		if err := tx.SavePoint("payment_webhook_effects").Error; err != nil {
 			return err
+		}
+		if applyErr := s.applyWebhookEventTx(ctx, tx, event); applyErr != nil {
+			if rollbackErr := tx.RollbackTo("payment_webhook_effects").Error; rollbackErr != nil {
+				return rollbackErr
+			}
+			record.ProcessingStatus = "reconciliation_required"
+			record.SanitizedErrorCode = "payment_event_apply_failed"
+			domainErr = fmt.Errorf("payment webhook requires reconciliation")
+			return tx.Save(&record).Error
 		}
 		now := time.Now().UTC()
 		record.ProcessedAt = &now
+		record.ProcessingStatus = "processed"
 		return tx.Save(&record).Error
 	})
 	if err != nil {
+		// A valid signed webhook whose durable processing failed is still one
+		// failed webhook: emit one bounded fail-open failure sample before the
+		// transport error surfaces.
+		s.emitWebhookFailure()
 		return false, err
 	}
-	if duplicate {
-		s.log.Info("duplicate Razorpay webhook ignored", "razorpay_event_id", eventID, "event_type", event.Event)
-		return true, nil
+	// The reconciliation decision is only counted once the transaction that
+	// durably recorded it has committed.
+	if domainErr != nil {
+		s.emitWebhookFailure()
 	}
-	s.log.Info("Razorpay webhook processed", "razorpay_event_id", eventID, "event_type", event.Event)
-	return false, nil
+	if duplicate {
+		s.log.Info("duplicate Razorpay webhook ignored", "event_type", event.Event)
+		return true, domainErr
+	}
+	s.log.Info("Razorpay webhook processed", "event_type", event.Event)
+	return false, domainErr
 }
 
 func (s *RazorpayPaymentService) applyWebhookEventTx(ctx context.Context, tx *gorm.DB, event *razorpay.WebhookEvent) error {
@@ -435,7 +653,7 @@ func (s *RazorpayPaymentService) applyWebhookEventTx(ctx context.Context, tx *go
 		}
 		attempt.Status = models.PaymentAttemptStatusFailed
 		attempt.RazorpayPaymentID = payment.ID
-		attempt.FailureReason = strings.TrimSpace(payment.ErrorDescription)
+		attempt.FailureReason = "provider_payment_failed"
 		return tx.Save(attempt).Error
 	case "order.paid":
 		if event.Payload.Order == nil {
@@ -520,7 +738,7 @@ func (s *RazorpayPaymentService) markAttemptPaidTx(ctx context.Context, tx *gorm
 }
 
 func (s *RazorpayPaymentService) applyPlanPaymentTx(ctx context.Context, tx *gorm.DB, attempt *models.PaymentAttempt, paidAt time.Time) error {
-	plan, ok := razorpayPlanCatalog[attempt.TargetID]
+	plan, ok := paidSubscriptionPlan(attempt.TargetID)
 	if !ok {
 		return fmt.Errorf("unknown paid plan")
 	}
@@ -531,14 +749,20 @@ func (s *RazorpayPaymentService) applyPlanPaymentTx(ctx context.Context, tx *gor
 		First(&subscription).Error
 	switch {
 	case err == nil:
-		subscription.Plan = plan.Plan
+		if subscription.BillingMode == models.SubscriptionBillingModeRenewable {
+			return ErrSubscriptionLifecycleConflict
+		}
+		subscription.Plan = plan.LegacyPlan
 		subscription.PlanCode = plan.PlanCode
 		subscription.CatalogVersion = CurrentSubscriptionCatalogVersion
 		subscription.Status = "active"
-		subscription.MaxInvoices = plan.MaxInvoices
-		subscription.MaxCustomers = plan.MaxCustomers
-		subscription.MaxUsers = plan.MaxUsers
-		subscription.MaxStorageMB = plan.MaxStorageMB
+		subscription.BillingMode = models.SubscriptionBillingModeLegacyOneTime
+		subscription.PeriodStart = &paidAt
+		subscription.PeriodEnd = &nextBilling
+		subscription.MaxInvoices = plan.Quotas[QuotaInvoices]
+		subscription.MaxCustomers = plan.Quotas[QuotaCustomers]
+		subscription.MaxUsers = plan.Quotas[QuotaUsers]
+		subscription.MaxStorageMB = plan.Quotas[QuotaStorageMB]
 		subscription.StartDate = paidAt
 		subscription.EndDate = &nextBilling
 		subscription.NextBillingDate = &nextBilling
@@ -547,15 +771,18 @@ func (s *RazorpayPaymentService) applyPlanPaymentTx(ctx context.Context, tx *gor
 		subscription = models.Subscription{
 			ID:              uuid.NewString(),
 			BusinessID:      attempt.BusinessID,
-			Plan:            plan.Plan,
+			Plan:            plan.LegacyPlan,
 			PlanCode:        plan.PlanCode,
 			CatalogVersion:  CurrentSubscriptionCatalogVersion,
 			Status:          "active",
-			MaxInvoices:     plan.MaxInvoices,
-			MaxCustomers:    plan.MaxCustomers,
-			MaxUsers:        plan.MaxUsers,
-			MaxStorageMB:    plan.MaxStorageMB,
+			BillingMode:     models.SubscriptionBillingModeLegacyOneTime,
+			MaxInvoices:     plan.Quotas[QuotaInvoices],
+			MaxCustomers:    plan.Quotas[QuotaCustomers],
+			MaxUsers:        plan.Quotas[QuotaUsers],
+			MaxStorageMB:    plan.Quotas[QuotaStorageMB],
 			StartDate:       paidAt,
+			PeriodStart:     &paidAt,
+			PeriodEnd:       &nextBilling,
 			EndDate:         &nextBilling,
 			NextBillingDate: &nextBilling,
 		}

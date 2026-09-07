@@ -295,7 +295,7 @@ resource "aws_dynamodb_table" "ws_connections" {
 
   ttl {
     attribute_name = "ttl"
-    enabled        = false
+    enabled        = true
   }
 
   point_in_time_recovery {

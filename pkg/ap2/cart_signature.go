@@ -37,7 +37,10 @@ func NewCartMandateClaims(mandate *models.CartMandate, signerRole string) (*Cart
 	if err := json.Unmarshal([]byte(mandate.Items), &items); err != nil {
 		return nil, fmt.Errorf("%w: decode items: %v", ErrInvalidCartMandate, err)
 	}
-	if len(items) == 0 || mandate.TotalAmount <= 0 || mandate.Currency == "" || mandate.ExpiresAt.IsZero() {
+	if mandate.TotalAmount < 0 || mandate.Currency == "" || mandate.ExpiresAt.IsZero() {
+		return nil, ErrInvalidCartMandate
+	}
+	if signerRole == "merchant" && (len(items) == 0 || mandate.TotalAmount <= 0) {
 		return nil, ErrInvalidCartMandate
 	}
 	if signerRole == "merchant" && (mandate.MerchantID == nil || *mandate.MerchantID == "") {

@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,13 +15,17 @@ import (
 	"time"
 
 	"invoice-backend/internal/config"
+	"invoice-backend/internal/idempotency"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/logger"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
+
+const storefrontCheckoutClaimTTL = 5 * time.Minute
 
 type CommerceService struct {
 	cfg              *config.Config
@@ -32,8 +37,16 @@ type CommerceService struct {
 	inventory        *InventoryService
 	documents        *DocumentService
 	s3               *S3Service
+	capability       CapabilityGuard
+	storageQuotas    DriveStorageQuotaReader
 	httpClient       *http.Client
 	log              *logger.Logger
+}
+
+func (s *CommerceService) WithCapabilityControls(guard CapabilityGuard, storageQuotas DriveStorageQuotaReader) *CommerceService {
+	s.capability = guard
+	s.storageQuotas = storageQuotas
+	return s
 }
 
 type UpsertFeatureEntitlementInput struct {
@@ -105,7 +118,13 @@ type UpsertStorefrontCouponInput struct {
 	EndsAt                *time.Time             `json:"ends_at,omitempty"`
 	IsActive              *bool                  `json:"is_active,omitempty"`
 	Metadata              map[string]interface{} `json:"metadata,omitempty"`
+	Version               *int64                 `json:"version,omitempty" binding:"omitempty,gte=1"`
 }
+
+var (
+	ErrCouponRedeemed        = errors.New("redeemed coupon cannot be deleted")
+	ErrCouponVersionConflict = errors.New("coupon version conflict")
+)
 
 type CheckoutCustomerInput struct {
 	Name       string                 `json:"name" binding:"required"`
@@ -385,7 +404,15 @@ func (s *CommerceService) ListFeatureEntitlements(ctx context.Context, businessI
 		Find(&entitlements).Error; err != nil {
 		return nil, err
 	}
-	if featureEntitlementsNeedSync(entitlements) {
+	if s.subscriptionRepo == nil {
+		return entitlements, nil
+	}
+	subscription, err := s.subscriptionRepo.GetByBusinessID(ctx, businessID)
+	if err != nil || subscription == nil {
+		subscription = &models.Subscription{BusinessID: businessID, Plan: "free", PlanCode: "free", Status: "active"}
+	}
+	seeds := defaultEntitlementSeedsForSubscription(subscription)
+	if featureEntitlementsNeedSync(entitlements, seeds) {
 		return s.SyncFeatureEntitlements(ctx, businessID)
 	}
 	return entitlements, nil
@@ -810,6 +837,9 @@ func (s *CommerceService) UpdateStorefrontSettings(ctx context.Context, business
 }
 
 func (s *CommerceService) ListStorefrontProducts(ctx context.Context, businessID, storefrontID string) ([]*StorefrontCatalogItem, error) {
+	if err := requireOwnedStorefrontTx(s.db.WithContext(ctx), businessID, storefrontID); err != nil {
+		return nil, err
+	}
 	var storefrontProducts []*models.StorefrontProduct
 	if err := s.db.WithContext(ctx).
 		Where("storefront_id = ? AND deleted_at IS NULL", storefrontID).
@@ -836,6 +866,9 @@ func (s *CommerceService) ReplaceStorefrontProducts(ctx context.Context, busines
 		return nil, err
 	}
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := requireOwnedStorefrontTx(tx, businessID, storefrontID); err != nil {
+			return err
+		}
 		for _, input := range inputs {
 			product, err := s.productRepo.GetByID(ctx, input.ProductID, businessID)
 			if err != nil {
@@ -890,7 +923,10 @@ func (s *CommerceService) ReplaceStorefrontProducts(ctx context.Context, busines
 	return s.ListStorefrontProducts(ctx, businessID, storefrontID)
 }
 
-func (s *CommerceService) ListStorefrontCoupons(ctx context.Context, storefrontID string) ([]*models.StorefrontCoupon, error) {
+func (s *CommerceService) ListStorefrontCoupons(ctx context.Context, businessID, storefrontID string) ([]*models.StorefrontCoupon, error) {
+	if err := requireOwnedStorefrontTx(s.db.WithContext(ctx), businessID, storefrontID); err != nil {
+		return nil, err
+	}
 	var coupons []*models.StorefrontCoupon
 	if err := s.db.WithContext(ctx).
 		Where("storefront_id = ? AND deleted_at IS NULL", storefrontID).
@@ -901,7 +937,10 @@ func (s *CommerceService) ListStorefrontCoupons(ctx context.Context, storefrontI
 	return coupons, nil
 }
 
-func (s *CommerceService) CreateStorefrontCoupon(ctx context.Context, storefrontID string, input UpsertStorefrontCouponInput) (*models.StorefrontCoupon, error) {
+func (s *CommerceService) CreateStorefrontCoupon(ctx context.Context, businessID, storefrontID string, input UpsertStorefrontCouponInput) (*models.StorefrontCoupon, error) {
+	if err := validateCouponInput(input); err != nil {
+		return nil, err
+	}
 	coupon := &models.StorefrontCoupon{
 		StorefrontID:          storefrontID,
 		Code:                  strings.ToUpper(strings.TrimSpace(input.Code)),
@@ -915,43 +954,140 @@ func (s *CommerceService) CreateStorefrontCoupon(ctx context.Context, storefront
 		EndsAt:                input.EndsAt,
 		IsActive:              boolValueOrDefault(input.IsActive, true),
 		Metadata:              mustMarshalMap(input.Metadata),
+		Version:               1,
 	}
-	if err := s.db.WithContext(ctx).Create(coupon).Error; err != nil {
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := requireOwnedStorefrontTx(tx, businessID, storefrontID); err != nil {
+			return err
+		}
+		return tx.Create(coupon).Error
+	}); err != nil {
 		return nil, err
 	}
 	return coupon, nil
 }
 
-func (s *CommerceService) UpdateStorefrontCoupon(ctx context.Context, storefrontID, couponID string, input UpsertStorefrontCouponInput) (*models.StorefrontCoupon, error) {
+func (s *CommerceService) UpdateStorefrontCoupon(ctx context.Context, businessID, storefrontID, couponID string, input UpsertStorefrontCouponInput) (*models.StorefrontCoupon, error) {
 	var coupon models.StorefrontCoupon
-	if err := s.db.WithContext(ctx).
-		Where("id = ? AND storefront_id = ? AND deleted_at IS NULL", couponID, storefrontID).
-		First(&coupon).Error; err != nil {
-		return nil, err
-	}
-	coupon.Code = strings.ToUpper(strings.TrimSpace(firstNonEmpty(input.Code, coupon.Code)))
-	if input.DiscountType != "" {
-		coupon.DiscountType = input.DiscountType
-	}
-	if input.DiscountValue > 0 {
-		coupon.DiscountValue = input.DiscountValue
-	}
-	coupon.MinimumOrderValue = input.MinimumOrderValue
-	coupon.MaxDiscountAmount = input.MaxDiscountAmount
-	coupon.UsageLimit = input.UsageLimit
-	coupon.UsageLimitPerCustomer = input.UsageLimitPerCustomer
-	coupon.StartsAt = input.StartsAt
-	coupon.EndsAt = input.EndsAt
-	if input.IsActive != nil {
-		coupon.IsActive = *input.IsActive
-	}
-	if input.Metadata != nil {
-		coupon.Metadata = mustMarshalMap(input.Metadata)
-	}
-	if err := s.db.WithContext(ctx).Save(&coupon).Error; err != nil {
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := requireOwnedStorefrontTx(tx, businessID, storefrontID); err != nil {
+			return err
+		}
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND storefront_id = ? AND deleted_at IS NULL", couponID, storefrontID).
+			First(&coupon).Error; err != nil {
+			return err
+		}
+		if input.Version != nil && coupon.Version != *input.Version {
+			return ErrCouponVersionConflict
+		}
+		candidate := input
+		candidate.Code = firstNonEmpty(input.Code, coupon.Code)
+		candidate.DiscountType = firstNonEmpty(input.DiscountType, coupon.DiscountType)
+		if candidate.DiscountValue <= 0 {
+			candidate.DiscountValue = coupon.DiscountValue
+		}
+		if err := validateCouponInput(candidate); err != nil {
+			return err
+		}
+		var totalRedemptions int64
+		if err := tx.Model(&models.StorefrontCouponRedemption{}).
+			Where("storefront_coupon_id = ? AND deleted_at IS NULL", coupon.ID).
+			Count(&totalRedemptions).Error; err != nil {
+			return err
+		}
+		if input.UsageLimit > 0 && input.UsageLimit < max(coupon.RedemptionCount, totalRedemptions) {
+			return fmt.Errorf("usage limit cannot be below existing redemptions")
+		}
+		if input.UsageLimitPerCustomer > 0 {
+			var maximumCustomerUsage struct{ Total int64 }
+			if err := tx.Model(&models.StorefrontCouponRedemption{}).
+				Select("COUNT(*) AS total").
+				Where("storefront_coupon_id = ? AND deleted_at IS NULL", coupon.ID).
+				Group("customer_id, LOWER(customer_email)").
+				Order("total DESC").Limit(1).
+				Scan(&maximumCustomerUsage).Error; err != nil {
+				return err
+			}
+			if input.UsageLimitPerCustomer < maximumCustomerUsage.Total {
+				return fmt.Errorf("customer usage limit cannot be below existing redemptions")
+			}
+		}
+		coupon.Code = strings.ToUpper(strings.TrimSpace(firstNonEmpty(input.Code, coupon.Code)))
+		if input.DiscountType != "" {
+			coupon.DiscountType = input.DiscountType
+		}
+		if input.DiscountValue > 0 {
+			coupon.DiscountValue = input.DiscountValue
+		}
+		coupon.MinimumOrderValue = input.MinimumOrderValue
+		coupon.MaxDiscountAmount = input.MaxDiscountAmount
+		coupon.UsageLimit = input.UsageLimit
+		coupon.UsageLimitPerCustomer = input.UsageLimitPerCustomer
+		coupon.StartsAt = input.StartsAt
+		coupon.EndsAt = input.EndsAt
+		if input.IsActive != nil {
+			coupon.IsActive = *input.IsActive
+		}
+		if input.Metadata != nil {
+			coupon.Metadata = mustMarshalMap(input.Metadata)
+		}
+		coupon.Version++
+		return tx.Save(&coupon).Error
+	}); err != nil {
 		return nil, err
 	}
 	return &coupon, nil
+}
+
+func validateCouponInput(input UpsertStorefrontCouponInput) error {
+	if strings.TrimSpace(input.Code) == "" {
+		return fmt.Errorf("coupon code is required")
+	}
+	if input.DiscountType != models.StoreCouponDiscountTypePercent && input.DiscountType != models.StoreCouponDiscountTypeFixed {
+		return fmt.Errorf("unsupported coupon type")
+	}
+	if input.DiscountValue <= 0 || (input.DiscountType == models.StoreCouponDiscountTypePercent && input.DiscountValue > 100) {
+		return fmt.Errorf("discount value is invalid")
+	}
+	if input.MinimumOrderValue < 0 || input.MaxDiscountAmount < 0 || input.UsageLimit < 0 || input.UsageLimitPerCustomer < 0 {
+		return fmt.Errorf("coupon limits must be non-negative")
+	}
+	if input.StartsAt != nil && input.EndsAt != nil && !input.StartsAt.Before(*input.EndsAt) {
+		return fmt.Errorf("coupon start must be before end")
+	}
+	return nil
+}
+
+func (s *CommerceService) DeleteStorefrontCoupon(ctx context.Context, businessID, storefrontID, couponID string) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := requireOwnedStorefrontTx(tx, businessID, storefrontID); err != nil {
+			return err
+		}
+		var coupon models.StorefrontCoupon
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND storefront_id = ? AND deleted_at IS NULL", couponID, storefrontID).
+			First(&coupon).Error; err != nil {
+			return err
+		}
+		var redemptions int64
+		if err := tx.Model(&models.StorefrontCouponRedemption{}).
+			Where("storefront_coupon_id = ? AND deleted_at IS NULL", coupon.ID).
+			Count(&redemptions).Error; err != nil {
+			return err
+		}
+		if coupon.RedemptionCount > 0 || redemptions > 0 {
+			return ErrCouponRedeemed
+		}
+		return tx.Delete(&coupon).Error
+	})
+}
+
+func requireOwnedStorefrontTx(tx *gorm.DB, businessID, storefrontID string) error {
+	var storefront models.Storefront
+	return tx.Select("id").
+		Where("id = ? AND business_id = ? AND deleted_at IS NULL", storefrontID, businessID).
+		First(&storefront).Error
 }
 
 func (s *CommerceService) ListStorefrontOrders(ctx context.Context, businessID, storefrontID, status string, page, limit int) ([]*models.StoreOrder, int64, error) {
@@ -985,52 +1121,111 @@ func (s *CommerceService) ListStorefrontOrders(ctx context.Context, businessID, 
 }
 
 func (s *CommerceService) ApproveStoreOrder(ctx context.Context, businessID, storefrontID, orderID string) (*models.StoreOrder, error) {
-	order, storefront, err := s.getStoreOrderForBusiness(ctx, businessID, storefrontID, orderID)
+	return s.ApproveStoreOrderAuthorized(ctx, businessID, storefrontID, orderID, PostingAuthorization{})
+}
+
+func (s *CommerceService) ApproveStoreOrderAuthorized(ctx context.Context, businessID, storefrontID, orderID string, authorization PostingAuthorization) (*models.StoreOrder, error) {
+	storefront, err := s.GetStorefront(ctx, businessID, storefrontID)
 	if err != nil {
 		return nil, err
 	}
-	if order.Status == models.StoreOrderStatusCancelled {
-		return nil, fmt.Errorf("cancelled orders cannot be approved")
-	}
-	if order.SalesInvoiceID == nil || *order.SalesInvoiceID == "" {
-		invoiceID, err := s.createSalesInvoiceForOrder(ctx, order)
-		if err != nil {
-			return nil, err
+	var order models.StoreOrder
+	transitioned := false
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Preload("Lines", "deleted_at IS NULL").
+			Where("id = ? AND business_id = ? AND storefront_id = ? AND deleted_at IS NULL", orderID, businessID, storefrontID).
+			First(&order).Error; err != nil {
+			return err
 		}
-		order.SalesInvoiceID = stringPointer(invoiceID)
-	}
-	order.Status = models.StoreOrderStatusConfirmed
-	if order.PaymentStatus == models.StoreOrderPaymentStatusPaid {
-		order.Status = models.StoreOrderStatusPaid
-	}
-	if err := s.db.WithContext(ctx).Save(order).Error; err != nil {
+		if order.Status == models.StoreOrderStatusCancelled {
+			return fmt.Errorf("cancelled orders cannot be approved")
+		}
+		if order.SalesInvoiceID == nil || *order.SalesInvoiceID == "" {
+			invoiceID, err := s.createSalesInvoiceForOrder(ctx, &order, authorization)
+			if err != nil {
+				return err
+			}
+			order.SalesInvoiceID = stringPointer(invoiceID)
+		}
+		nextStatus := models.StoreOrderStatusConfirmed
+		if order.PaymentStatus == models.StoreOrderPaymentStatusPaid {
+			nextStatus = models.StoreOrderStatusPaid
+		}
+		transitioned = order.Status != nextStatus
+		order.Status = nextStatus
+		if err := tx.Save(&order).Error; err != nil {
+			return err
+		}
+		if !transitioned {
+			return nil
+		}
+		return tx.Create(&models.StoreOrderEvent{
+			StoreOrderID: order.ID,
+			EventType:    "store_order.approved",
+			Status:       order.Status,
+			Payload:      mustMarshalMap(map[string]interface{}{"storefront_id": storefront.ID}),
+		}).Error
+	}); err != nil {
 		return nil, err
 	}
-	_ = s.recordStoreOrderEvent(ctx, order.ID, "store_order.approved", order.Status, map[string]interface{}{
-		"storefront_id": storefront.ID,
-	})
-	s.queueStoreOrderNotification(ctx, order, "store_order.paid")
-	return order, nil
+	if transitioned {
+		s.queueStoreOrderNotification(ctx, &order, "store_order.approved")
+	}
+	return &order, nil
 }
 
 func (s *CommerceService) CancelStoreOrder(ctx context.Context, businessID, storefrontID, orderID, reason string) (*models.StoreOrder, error) {
-	order, _, err := s.getStoreOrderForBusiness(ctx, businessID, storefrontID, orderID)
-	if err != nil {
+	if _, err := s.GetStorefront(ctx, businessID, storefrontID); err != nil {
 		return nil, err
 	}
-	now := time.Now().UTC()
-	order.Status = models.StoreOrderStatusCancelled
-	order.CancelledAt = &now
-	order.CancellationReason = reason
-	if err := s.db.WithContext(ctx).Save(order).Error; err != nil {
+	var order models.StoreOrder
+	transitioned := false
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Preload("Lines", "deleted_at IS NULL").
+			Where("id = ? AND business_id = ? AND storefront_id = ? AND deleted_at IS NULL", orderID, businessID, storefrontID).
+			First(&order).Error; err != nil {
+			return err
+		}
+		if order.SalesInvoiceID != nil && strings.TrimSpace(*order.SalesInvoiceID) != "" {
+			return fmt.Errorf("issued storefront orders require a compensating credit note before cancellation")
+		}
+		if order.Status == models.StoreOrderStatusCancelled {
+			return nil
+		}
+		now := time.Now().UTC()
+		order.Status = models.StoreOrderStatusCancelled
+		order.CancelledAt = &now
+		order.CancellationReason = reason
+		if order.SalesOrderID != nil && strings.TrimSpace(*order.SalesOrderID) != "" {
+			if s.inventory == nil {
+				return fmt.Errorf("inventory service is not configured")
+			}
+			if err := s.inventory.ReleaseReservationsTx(ctx, tx, businessID, *order.SalesOrderID); err != nil {
+				return err
+			}
+		}
+		if err := tx.Save(&order).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(&models.StoreOrderEvent{
+			StoreOrderID: order.ID,
+			EventType:    "store_order.cancelled",
+			Status:       order.Status,
+			Payload:      mustMarshalMap(map[string]interface{}{"reason": reason}),
+		}).Error; err != nil {
+			return err
+		}
+		transitioned = true
+		return nil
+	}); err != nil {
 		return nil, err
 	}
-	if order.SalesOrderID != nil && *order.SalesOrderID != "" && (order.SalesInvoiceID == nil || *order.SalesInvoiceID == "") {
-		_ = s.inventory.ReleaseReservations(ctx, *order.SalesOrderID)
+	if transitioned {
+		s.queueStoreOrderNotification(ctx, &order, "store_order.cancelled")
 	}
-	_ = s.recordStoreOrderEvent(ctx, order.ID, "store_order.cancelled", order.Status, map[string]interface{}{"reason": reason})
-	s.queueStoreOrderNotification(ctx, order, "store_order.cancelled")
-	return order, nil
+	return &order, nil
 }
 
 func (s *CommerceService) GetCatalog(ctx context.Context, slug string) (*PublicStorefrontCatalogResponse, error) {
@@ -1084,6 +1279,101 @@ func (s *CommerceService) ValidateCoupon(ctx context.Context, slug string, input
 	}, nil
 }
 
+func storefrontCheckoutCommand(storefrontID string) string {
+	return "storefront.checkout:" + storefrontID
+}
+
+func (s *CommerceService) claimStorefrontCheckout(
+	ctx context.Context,
+	businessID, storefrontID, idempotencyKey, requestHash string,
+) (bool, string, error) {
+	claim := &models.APIIdempotencyKey{
+		BusinessID:     businessID,
+		Command:        storefrontCheckoutCommand(storefrontID),
+		IdempotencyKey: idempotencyKey,
+		RequestHash:    requestHash,
+		Status:         models.IdempotencyStatusInProgress,
+	}
+	result := s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "business_id"}, {Name: "command"}, {Name: "idempotency_key"}},
+		DoNothing: true,
+	}).Create(claim)
+	if result.Error != nil {
+		return false, "", result.Error
+	}
+	if result.RowsAffected == 1 {
+		return true, "", nil
+	}
+
+	var existing models.APIIdempotencyKey
+	if err := s.db.WithContext(ctx).
+		Where("business_id = ? AND command = ? AND idempotency_key = ?", businessID, claim.Command, idempotencyKey).
+		First(&existing).Error; err != nil {
+		return false, "", err
+	}
+	if existing.RequestHash != requestHash {
+		return false, "", fmt.Errorf("idempotency key already used for a different checkout request")
+	}
+	if existing.Status == models.IdempotencyStatusCompleted {
+		if existing.ResultType == nil || *existing.ResultType != "store_order" || existing.ResultID == nil || *existing.ResultID == "" {
+			return false, "", fmt.Errorf("completed checkout claim has no order")
+		}
+		return false, *existing.ResultID, nil
+	}
+	if existing.Status != models.IdempotencyStatusInProgress {
+		return false, "", fmt.Errorf("checkout claim has invalid status")
+	}
+
+	now := time.Now().UTC()
+	reclaimed := s.db.WithContext(ctx).Model(&models.APIIdempotencyKey{}).
+		Where("id = ? AND request_hash = ? AND status = ? AND updated_at < ?", existing.ID, requestHash, models.IdempotencyStatusInProgress, now.Add(-storefrontCheckoutClaimTTL)).
+		Updates(map[string]interface{}{"updated_at": now})
+	if reclaimed.Error != nil {
+		return false, "", reclaimed.Error
+	}
+	if reclaimed.RowsAffected == 1 {
+		return true, "", nil
+	}
+	return false, "", fmt.Errorf("checkout is still processing; retry with the same idempotency key")
+}
+
+func completeStorefrontCheckoutClaim(
+	tx *gorm.DB,
+	businessID, storefrontID, idempotencyKey, requestHash, orderID string,
+) error {
+	now := time.Now().UTC()
+	resultType := "store_order"
+	result := tx.Model(&models.APIIdempotencyKey{}).
+		Where("business_id = ? AND command = ? AND idempotency_key = ? AND request_hash = ? AND status = ?",
+			businessID, storefrontCheckoutCommand(storefrontID), idempotencyKey, requestHash, models.IdempotencyStatusInProgress).
+		Updates(map[string]interface{}{
+			"status":       models.IdempotencyStatusCompleted,
+			"result_type":  &resultType,
+			"result_id":    &orderID,
+			"completed_at": &now,
+			"updated_at":   now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return fmt.Errorf("checkout claim could not be completed")
+	}
+	return nil
+}
+
+func (s *CommerceService) abandonStorefrontCheckoutClaim(
+	ctx context.Context,
+	businessID, storefrontID, idempotencyKey, requestHash string,
+) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	_ = s.db.WithContext(cleanupCtx).
+		Where("business_id = ? AND command = ? AND idempotency_key = ? AND request_hash = ? AND status = ?",
+			businessID, storefrontCheckoutCommand(storefrontID), idempotencyKey, requestHash, models.IdempotencyStatusInProgress).
+		Delete(&models.APIIdempotencyKey{}).Error
+}
+
 func (s *CommerceService) Checkout(ctx context.Context, slug, idempotencyKey string, input StorefrontCheckoutInput) (*CheckoutResult, error) {
 	storefront, err := s.findStorefrontBySlug(ctx, slug)
 	if err != nil {
@@ -1092,22 +1382,48 @@ func (s *CommerceService) Checkout(ctx context.Context, slug, idempotencyKey str
 	if err := ensurePublishedStorefront(storefront); err != nil {
 		return nil, err
 	}
-	if idempotencyKey != "" {
-		var existing models.StoreOrder
-		err := s.db.WithContext(ctx).
-			Preload("Lines", "deleted_at IS NULL").
-			Where("storefront_id = ? AND idempotency_key = ? AND deleted_at IS NULL", storefront.ID, idempotencyKey).
-			First(&existing).Error
-		if err == nil {
-			if !checkoutInputMatchesOrder(&existing, input) {
-				return nil, fmt.Errorf("idempotency key already used for a different checkout request")
-			}
-			return &CheckoutResult{Order: &existing, GatewayOrderID: existing.GatewayOrderID}, nil
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	if idempotencyKey == "" {
+		return nil, fmt.Errorf("idempotency key is required")
+	}
+	var existing models.StoreOrder
+	err = s.db.WithContext(ctx).
+		Preload("Lines", "deleted_at IS NULL").
+		Where("storefront_id = ? AND idempotency_key = ? AND deleted_at IS NULL", storefront.ID, idempotencyKey).
+		First(&existing).Error
+	if err == nil {
+		if !checkoutInputMatchesOrder(&existing, input) {
+			return nil, fmt.Errorf("idempotency key already used for a different checkout request")
 		}
-		if err != nil && err != gorm.ErrRecordNotFound {
+		return &CheckoutResult{Order: &existing, GatewayOrderID: existing.GatewayOrderID}, nil
+	}
+	if err != nil && err != gorm.ErrRecordNotFound {
+		return nil, err
+	}
+
+	requestHash := checkoutInputFingerprint(input)
+	claimed, replayOrderID, err := s.claimStorefrontCheckout(ctx, storefront.BusinessID, storefront.ID, idempotencyKey, requestHash)
+	if err != nil {
+		return nil, err
+	}
+	if replayOrderID != "" {
+		if err := s.db.WithContext(ctx).
+			Preload("Lines", "deleted_at IS NULL").
+			Where("id = ? AND business_id = ? AND storefront_id = ? AND deleted_at IS NULL", replayOrderID, storefront.BusinessID, storefront.ID).
+			First(&existing).Error; err != nil {
 			return nil, err
 		}
+		if !checkoutInputMatchesOrder(&existing, input) {
+			return nil, fmt.Errorf("idempotency key already used for a different checkout request")
+		}
+		return &CheckoutResult{Order: &existing, GatewayOrderID: existing.GatewayOrderID}, nil
 	}
+	claimCompleted := false
+	defer func() {
+		if claimed && !claimCompleted {
+			s.abandonStorefrontCheckoutClaim(ctx, storefront.BusinessID, storefront.ID, idempotencyKey, requestHash)
+		}
+	}()
 	paymentMethod := normalizePublicPaymentMethod(input.PaymentMethod)
 	if paymentMethod == "" {
 		return nil, fmt.Errorf("unsupported payment method")
@@ -1132,6 +1448,7 @@ func (s *CommerceService) Checkout(ctx context.Context, slug, idempotencyKey str
 	}
 
 	order := &models.StoreOrder{
+		ID:              uuid.NewString(),
 		BusinessID:      storefront.BusinessID,
 		StorefrontID:    storefront.ID,
 		BranchID:        stringPointer(input.BranchID),
@@ -1207,12 +1524,38 @@ func (s *CommerceService) Checkout(ctx context.Context, slug, idempotencyKey str
 		return nil, fmt.Errorf("minimum order value is %.2f", storefront.MinimumOrderValue)
 	}
 	order.Snapshot = mustMarshalMap(map[string]interface{}{
-		"checkout_fingerprint": checkoutInputFingerprint(input),
+		"checkout_fingerprint": requestHash,
 		"customer":             input.Customer,
 		"items":                input.Items,
 	})
+	salesOrder, err := s.buildStoreOrderDocument(ctx, order, lines, models.DocumentTypeSalesOrder)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(salesOrder.ID) == "" {
+		salesOrder.ID = uuid.NewString()
+	}
+	order.SalesOrderID = stringPointer(salesOrder.ID)
 
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if couponCode != "" {
+			coupon, discount, err := s.resolveCouponTx(tx, storefront, couponCode, customer.ID, customer.Email, order.Subtotal, true)
+			if err != nil {
+				return err
+			}
+			if order.CouponID == nil || *order.CouponID != coupon.ID || roundMoney(discount) != order.DiscountTotal {
+				return fmt.Errorf("coupon changed during checkout; retry")
+			}
+		}
+		if err := tx.Create(salesOrder).Error; err != nil {
+			return err
+		}
+		if err := s.inventory.ApplyDocumentTx(ctx, tx, salesOrder); err != nil {
+			return err
+		}
+		if err := createStoreOrderDocumentRevisionTx(tx, salesOrder, order.ID, order.PaymentStatus); err != nil {
+			return err
+		}
 		if err := tx.Create(order).Error; err != nil {
 			return err
 		}
@@ -1233,24 +1576,28 @@ func (s *CommerceService) Checkout(ctx context.Context, slug, idempotencyKey str
 			if err := tx.Create(redemption).Error; err != nil {
 				return err
 			}
+			if result := tx.Model(&models.StorefrontCoupon{}).
+				Where("id = ? AND deleted_at IS NULL", *order.CouponID).
+				UpdateColumn("redemption_count", gorm.Expr("redemption_count + 1")); result.Error != nil || result.RowsAffected != 1 {
+				if result.Error != nil {
+					return result.Error
+				}
+				return fmt.Errorf("coupon is no longer available")
+			}
 		}
-		return tx.Create(&models.StoreOrderEvent{
+		if err := tx.Create(&models.StoreOrderEvent{
 			StoreOrderID: order.ID,
 			EventType:    "store_order.created",
 			Status:       order.Status,
 			Payload:      mustMarshalMap(map[string]interface{}{"payment_method": order.PaymentMethod}),
-		}).Error
+		}).Error; err != nil {
+			return err
+		}
+		return completeStorefrontCheckoutClaim(tx, storefront.BusinessID, storefront.ID, idempotencyKey, requestHash, order.ID)
 	}); err != nil {
 		return nil, err
 	}
-
-	salesOrderID, err := s.createSalesOrderForOrder(ctx, order)
-	if err != nil {
-		s.log.Error("failed to create sales order for storefront checkout", "order_id", order.ID, "error", err)
-	} else {
-		order.SalesOrderID = stringPointer(salesOrderID)
-		_ = s.db.WithContext(ctx).Model(order).Update("sales_order_id", salesOrderID).Error
-	}
+	claimCompleted = true
 
 	s.queueStoreOrderNotification(ctx, order, "store_order.created")
 	return &CheckoutResult{
@@ -1310,19 +1657,38 @@ func (s *CommerceService) ListDriveAssets(ctx context.Context, businessID string
 }
 
 func (s *CommerceService) CreateDriveUpload(ctx context.Context, businessID, userID string, input CreateDriveAssetInput) (*DriveUploadSession, error) {
-	if err := s.ensureFeatureEnabled(ctx, businessID, FeatureDriveStorageMB); err != nil {
+	if err := requireCapability(ctx, s.capability, CapabilityRequest{
+		BusinessID: businessID, UserID: userID,
+		Platform: CapabilityPlatformWeb, Capability: CapabilityS3Uploads,
+	}); err != nil {
 		return nil, err
 	}
 	contentType, err := validateDriveAssetUpload(input)
 	if err != nil {
 		return nil, err
 	}
-	usage, limit, err := s.driveUsageAndLimit(ctx, businessID)
+	if s.storageQuotas == nil {
+		return nil, &CapabilityUnavailableError{
+			Code: "capability_unavailable", Capability: CapabilityS3Uploads,
+			State: CapabilityStateUnknown, ReasonCode: "capability_evaluation_failed",
+		}
+	}
+	storage, err := s.storageQuotas.InspectDriveStorage(ctx, businessID)
 	if err != nil {
 		return nil, err
 	}
-	if limit > 0 && usage+input.SizeBytes > limit {
-		return nil, fmt.Errorf("drive storage quota exceeded")
+	if !storage.Access.Entitled {
+		return nil, &CapabilityUnavailableError{
+			Code: "capability_unavailable", Capability: CapabilityS3Uploads,
+			State: CapabilityStateUpgradeRequired, ReasonCode: ReasonEntitlementRequired,
+			SetupAction: "upgrade_subscription",
+		}
+	}
+	if storage.Access.Quota.Limited && storage.UsedBytes+input.SizeBytes > storage.LimitBytes {
+		return nil, &QuotaExceededError{
+			Code: "quota_exceeded", Feature: FeatureDriveStorageMB,
+			Limit: storage.Access.Quota.Limit, Used: storage.Access.Quota.Used,
+		}
 	}
 	asset := &models.DriveAsset{
 		BusinessID:  businessID,
@@ -1862,9 +2228,16 @@ func (s *CommerceService) buildStoreOrderLines(ctx context.Context, storefront *
 }
 
 func (s *CommerceService) resolveCoupon(ctx context.Context, storefront *models.Storefront, code, customerID, customerEmail string, subtotal float64) (*models.StorefrontCoupon, float64, error) {
+	return s.resolveCouponTx(s.db.WithContext(ctx), storefront, code, customerID, customerEmail, subtotal, false)
+}
+
+func (s *CommerceService) resolveCouponTx(db *gorm.DB, storefront *models.Storefront, code, customerID, customerEmail string, subtotal float64, lock bool) (*models.StorefrontCoupon, float64, error) {
 	var coupon models.StorefrontCoupon
-	if err := s.db.WithContext(ctx).
-		Where("storefront_id = ? AND code = ? AND deleted_at IS NULL", storefront.ID, code).
+	query := db.Where("storefront_id = ? AND code = ? AND deleted_at IS NULL", storefront.ID, code)
+	if lock {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	if err := query.
 		First(&coupon).Error; err != nil {
 		return nil, 0, fmt.Errorf("coupon not found")
 	}
@@ -1883,7 +2256,7 @@ func (s *CommerceService) resolveCoupon(ctx context.Context, storefront *models.
 	}
 	if coupon.UsageLimit > 0 {
 		var total int64
-		if err := s.db.WithContext(ctx).
+		if err := db.
 			Model(&models.StorefrontCouponRedemption{}).
 			Where("storefront_coupon_id = ? AND deleted_at IS NULL", coupon.ID).
 			Count(&total).Error; err != nil {
@@ -1894,7 +2267,7 @@ func (s *CommerceService) resolveCoupon(ctx context.Context, storefront *models.
 		}
 	}
 	if coupon.UsageLimitPerCustomer > 0 {
-		query := s.db.WithContext(ctx).
+		query := db.
 			Model(&models.StorefrontCouponRedemption{}).
 			Where("storefront_coupon_id = ? AND deleted_at IS NULL", coupon.ID)
 		if customerID != "" {
@@ -1929,32 +2302,106 @@ func (s *CommerceService) resolveCoupon(ctx context.Context, storefront *models.
 	return &coupon, roundMoney(discount), nil
 }
 
-func (s *CommerceService) createSalesOrderForOrder(ctx context.Context, order *models.StoreOrder) (string, error) {
-	document, err := s.createStoreOrderDocument(ctx, order, models.DocumentTypeSalesOrder)
+func (s *CommerceService) createSalesInvoiceForOrder(ctx context.Context, order *models.StoreOrder, authorization PostingAuthorization) (string, error) {
+	business, err := s.businessRepo.GetByID(ctx, order.BusinessID)
 	if err != nil {
 		return "", err
 	}
-	return document.ID, nil
-}
-
-func (s *CommerceService) createSalesInvoiceForOrder(ctx context.Context, order *models.StoreOrder) (string, error) {
-	document, err := s.createStoreOrderDocument(ctx, order, models.DocumentTypeSalesInvoice)
+	idempotencyKey := storefrontInvoiceIdempotencyKey(order.ID)
+	if authorization.CommandIdentity == "" {
+		authorization.CommandIdentity = idempotencyKey
+	}
+	input, err := canonicalStorefrontInvoiceInput(order, business, idempotencyKey)
 	if err != nil {
 		return "", err
 	}
-	return document.ID, nil
+	document, err := s.documents.createStorefrontSalesInvoice(ctx, order.BusinessID, input)
+	if err != nil {
+		return "", err
+	}
+	issueResult, err := s.documents.IssueSalesDocumentByBusiness(
+		ctx,
+		order.BusinessID,
+		models.DocumentTypeSalesInvoice,
+		document.ID,
+		IssueInvoiceInput{
+			IdempotencyKey:  idempotencyKey,
+			ExpectedVersion: 1,
+			DocumentType:    invoiceDocumentTypeForTaxProfile(input.TaxProfile),
+			Series:          "WEB",
+			Authorization:   authorization,
+		},
+	)
+	if err != nil {
+		return "", err
+	}
+	return issueResult.Invoice.ID, nil
 }
 
-func (s *CommerceService) createStoreOrderDocument(ctx context.Context, order *models.StoreOrder, documentType string) (*models.Document, error) {
+func storefrontInvoiceIdempotencyKey(orderID string) string {
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte("storefront-invoice:"+strings.TrimSpace(orderID))).String()
+}
+
+func canonicalStorefrontInvoiceInput(
+	order *models.StoreOrder,
+	business *models.BusinessProfile,
+	idempotencyKey string,
+) (CreateInvoiceInput, error) {
+	if order == nil || business == nil || strings.TrimSpace(order.ID) == "" ||
+		order.CustomerID == nil || strings.TrimSpace(*order.CustomerID) == "" || len(order.Lines) == 0 {
+		return CreateInvoiceInput{}, &idempotency.InvalidPayloadError{}
+	}
+	if _, err := uuid.Parse(strings.TrimSpace(idempotencyKey)); err != nil {
+		return CreateInvoiceInput{}, &idempotency.InvalidKeyError{}
+	}
+	items := make([]CreateInvoiceItemInput, 0, len(order.Lines))
+	for _, line := range order.Lines {
+		if line == nil || line.ProductID == nil || strings.TrimSpace(*line.ProductID) == "" || line.Quantity <= 0 {
+			return CreateInvoiceInput{}, &idempotency.InvalidPayloadError{}
+		}
+		items = append(items, CreateInvoiceItemInput{
+			ProductID:   strings.TrimSpace(*line.ProductID),
+			VariantID:   strings.TrimSpace(derefString(line.VariantID)),
+			WarehouseID: strings.TrimSpace(derefString(line.WarehouseID)),
+			Description: line.Title,
+			Quantity:    line.Quantity,
+			UnitPrice:   line.UnitPrice,
+			Discount:    line.DiscountAmount,
+			TaxRate:     line.TaxRate,
+		})
+	}
+	gstTreatment := firstNonEmpty(business.DefaultGSTTreatment, models.DocumentGSTTreatmentRegular)
+	return CreateInvoiceInput{
+		IdempotencyKey: strings.TrimSpace(idempotencyKey),
+		Origin:         models.InvoiceOriginStorefront,
+		CustomerID:     strings.TrimSpace(*order.CustomerID),
+		BranchID:       strings.TrimSpace(derefString(order.BranchID)),
+		Currency:       defaultCurrency(firstNonEmpty(order.Currency, business.Currency)),
+		InvoiceDate:    order.OrderedAt,
+		DueDate:        order.OrderedAt,
+		Notes:          order.Notes,
+		TaxProfile: TaxProfileInput{
+			GSTTreatment: gstTreatment,
+			BillOfSupply: gstTreatment == models.DocumentGSTTreatmentComposition || gstTreatment == models.DocumentGSTTreatmentExempt,
+			SupplyType:   "sale",
+			SourceLinkage: map[string]interface{}{
+				"source":                  "storefront",
+				"store_order_id":          order.ID,
+				"sales_order_document_id": derefString(order.SalesOrderID),
+			},
+		},
+		Items: items,
+	}, nil
+}
+
+func (s *CommerceService) buildStoreOrderDocument(
+	ctx context.Context,
+	order *models.StoreOrder,
+	lines []*models.StoreOrderLine,
+	documentType string,
+) (*models.Document, error) {
 	if order.CustomerID == nil || *order.CustomerID == "" {
 		return nil, fmt.Errorf("customer is required for document generation")
-	}
-	var lines []*models.StoreOrderLine
-	if err := s.db.WithContext(ctx).
-		Where("store_order_id = ? AND deleted_at IS NULL", order.ID).
-		Order("created_at ASC").
-		Find(&lines).Error; err != nil {
-		return nil, err
 	}
 	documentLines := make([]CreateDocumentLineInput, 0, len(lines))
 	for _, line := range lines {
@@ -1983,43 +2430,29 @@ func (s *CommerceService) createStoreOrderDocument(ctx context.Context, order *m
 		Direction:    models.DocumentDirectionOutward,
 		Lines:        documentLines,
 	}
-	document, err := s.documents.buildDocument(ctx, order.BusinessID, documentType, input)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.db.WithContext(ctx).Create(document).Error; err != nil {
-		return nil, err
-	}
-	if err := s.documents.syncDocumentWithholdings(ctx, document, nil); err != nil {
-		return nil, err
-	}
-	if err := s.documents.applyPostCreateSideEffects(ctx, document); err != nil {
-		return nil, err
-	}
-	s.documents.recordRevision(ctx, document, "created", map[string]interface{}{
-		"origin":         "storefront",
-		"store_order_id": order.ID,
-		"payment_status": order.PaymentStatus,
-	})
-	_ = recordActivityLog(ctx, s.db, order.BusinessID, "document", document.ID, "created", "storefront order", document, nil, map[string]interface{}{
-		"store_order_id": order.ID,
-	})
-	return document, nil
+	return s.documents.buildDocument(ctx, order.BusinessID, documentType, input)
 }
 
-func (s *CommerceService) getStoreOrderForBusiness(ctx context.Context, businessID, storefrontID, orderID string) (*models.StoreOrder, *models.Storefront, error) {
-	storefront, err := s.GetStorefront(ctx, businessID, storefrontID)
+func createStoreOrderDocumentRevisionTx(
+	tx *gorm.DB,
+	document *models.Document,
+	storeOrderID, paymentStatus string,
+) error {
+	snapshot, err := json.Marshal(document)
 	if err != nil {
-		return nil, nil, err
+		return err
 	}
-	var order models.StoreOrder
-	if err := s.db.WithContext(ctx).
-		Preload("Lines", "deleted_at IS NULL").
-		Where("id = ? AND business_id = ? AND storefront_id = ? AND deleted_at IS NULL", orderID, businessID, storefrontID).
-		First(&order).Error; err != nil {
-		return nil, nil, err
-	}
-	return &order, storefront, nil
+	return tx.Create(&models.DocumentRevision{
+		DocumentID: document.ID,
+		BusinessID: document.BusinessID,
+		Action:     "created",
+		Snapshot:   string(snapshot),
+		Metadata: mustMarshalMap(map[string]interface{}{
+			"origin":         "storefront",
+			"store_order_id": storeOrderID,
+			"payment_status": paymentStatus,
+		}),
+	}).Error
 }
 
 func (s *CommerceService) validateBranchID(ctx context.Context, businessID, branchID string) error {
@@ -2064,39 +2497,6 @@ func (s *CommerceService) ensureFeatureEnabled(ctx context.Context, businessID, 
 		}
 	}
 	return fmt.Errorf("%s is not enabled on the current plan", featureKey)
-}
-
-func (s *CommerceService) driveUsageAndLimit(ctx context.Context, businessID string) (usageBytes int64, limitBytes int64, err error) {
-	if err := s.db.WithContext(ctx).
-		Model(&models.DriveAsset{}).
-		Select("COALESCE(SUM(size_bytes), 0)").
-		Where("business_id = ? AND deleted_at IS NULL", businessID).
-		Scan(&usageBytes).Error; err != nil {
-		return 0, 0, err
-	}
-	entitlements, err := s.ListFeatureEntitlements(ctx, businessID)
-	if err != nil {
-		return usageBytes, 0, err
-	}
-	for _, entitlement := range entitlements {
-		if entitlement.FeatureKey == FeatureDriveStorageMB && entitlement.Enabled && entitlement.LimitValue != nil && *entitlement.LimitValue > 0 {
-			limitBytes = *entitlement.LimitValue * 1024 * 1024
-			return usageBytes, limitBytes, nil
-		}
-	}
-	return usageBytes, 0, nil
-}
-
-func (s *CommerceService) recordStoreOrderEvent(ctx context.Context, orderID, eventType, status string, payload map[string]interface{}) error {
-	if orderID == "" {
-		return nil
-	}
-	return s.db.WithContext(ctx).Create(&models.StoreOrderEvent{
-		StoreOrderID: orderID,
-		EventType:    eventType,
-		Status:       status,
-		Payload:      mustMarshalMap(payload),
-	}).Error
 }
 
 func (s *CommerceService) queueStoreOrderNotification(ctx context.Context, order *models.StoreOrder, eventKey string) {
@@ -2202,27 +2602,37 @@ type entitlementSeed struct {
 	Metadata   map[string]interface{}
 }
 
-func defaultEntitlementSeedsForSubscription(_ *models.Subscription) []entitlementSeed {
-	unlimited := int64(-1)
+func defaultEntitlementSeedsForSubscription(subscription *models.Subscription) []entitlementSeed {
+	return defaultEntitlementSeedsForPlan(subscriptionPlanForSubscription(subscription, time.Now().UTC()))
+}
 
+func defaultEntitlementSeedsForPlan(plan SubscriptionPlan) []entitlementSeed {
+	users := plan.Quotas[QuotaUsers]
+	storageMB := plan.Quotas[QuotaStorageMB]
 	return []entitlementSeed{
-		{FeatureKey: FeatureOnlineStore, Enabled: true},
-		{FeatureKey: FeatureMultiCurrency, Enabled: true},
-		{FeatureKey: FeatureExportDocuments, Enabled: true},
-		{FeatureKey: FeatureSEZDocuments, Enabled: true},
-		{FeatureKey: FeatureDeemedExportDocuments, Enabled: true},
-		{FeatureKey: FeatureMultiUser, Enabled: true, LimitValue: &unlimited},
-		{FeatureKey: FeatureCustomRoles, Enabled: true},
-		{FeatureKey: FeatureMultiBusiness, Enabled: true},
-		{FeatureKey: FeatureBranches, Enabled: true, LimitValue: &unlimited},
-		{FeatureKey: FeaturePrioritySupport, Enabled: true},
-		{FeatureKey: FeatureDriveStorageMB, Enabled: true, LimitValue: &unlimited},
-		{FeatureKey: FeatureWhatsAppNotifications, Enabled: true},
+		{FeatureKey: FeatureOnlineStore, Enabled: plan.Features[FeatureOnlineStore]},
+		{FeatureKey: FeatureMultiCurrency, Enabled: plan.Features[FeatureMultiCurrency]},
+		{FeatureKey: FeatureExportDocuments, Enabled: plan.Features[FeatureExportDocuments]},
+		{FeatureKey: FeatureSEZDocuments, Enabled: plan.Features[FeatureSEZDocuments]},
+		{FeatureKey: FeatureDeemedExportDocuments, Enabled: plan.Features[FeatureDeemedExportDocuments]},
+		{FeatureKey: FeatureMultiUser, Enabled: plan.Features[FeatureMultiUser], LimitValue: enabledLimit(plan.Features[FeatureMultiUser], users)},
+		{FeatureKey: FeatureCustomRoles, Enabled: plan.Features[FeatureCustomRoles]},
+		{FeatureKey: FeatureMultiBusiness, Enabled: plan.Features[FeatureMultiBusiness]},
+		{FeatureKey: FeatureBranches, Enabled: plan.Features[FeatureBranches]},
+		{FeatureKey: FeaturePrioritySupport, Enabled: plan.Features[FeaturePrioritySupport]},
+		{FeatureKey: FeatureDriveStorageMB, Enabled: plan.Features[FeatureDriveStorageMB], LimitValue: enabledLimit(plan.Features[FeatureDriveStorageMB], storageMB)},
+		{FeatureKey: FeatureWhatsAppNotifications, Enabled: plan.Features[FeatureWhatsAppNotifications]},
 	}
 }
 
-func featureEntitlementsNeedSync(entitlements []*models.FeatureEntitlement) bool {
-	required := defaultEntitlementSeedsForSubscription(nil)
+func enabledLimit(enabled bool, limit int64) *int64 {
+	if !enabled {
+		return nil
+	}
+	return &limit
+}
+
+func featureEntitlementsNeedSync(entitlements []*models.FeatureEntitlement, required []entitlementSeed) bool {
 	if len(entitlements) < len(required) {
 		return true
 	}
@@ -2236,10 +2646,13 @@ func featureEntitlementsNeedSync(entitlements []*models.FeatureEntitlement) bool
 
 	for _, seed := range required {
 		entitlement, ok := byFeatureKey[seed.FeatureKey]
-		if !ok || !entitlement.Enabled {
+		if !ok || entitlement.Enabled != seed.Enabled {
 			return true
 		}
-		if seed.LimitValue != nil && (entitlement.LimitValue == nil || *entitlement.LimitValue != *seed.LimitValue) {
+		if (seed.LimitValue == nil) != (entitlement.LimitValue == nil) {
+			return true
+		}
+		if seed.LimitValue != nil && *entitlement.LimitValue != *seed.LimitValue {
 			return true
 		}
 	}

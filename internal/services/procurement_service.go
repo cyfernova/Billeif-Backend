@@ -37,15 +37,23 @@ const (
 )
 
 type ProcurementService struct {
-	ap2Repo     interfaces.AP2Repository
-	agentSvc    *AgentService
-	intentSvc   *IntentProcessingService
-	shoppingSvc *ShoppingAgentService
-	merchantSvc *MerchantAgentService
-	bargaining  *BargainingService
-	agentConfig *AgentConfigService
-	signer      *ap2.SignatureService
-	log         *logger.Logger
+	ap2Repo                     interfaces.AP2Repository
+	agentSvc                    *AgentService
+	intentSvc                   *IntentProcessingService
+	shoppingSvc                 *ShoppingAgentService
+	merchantSvc                 *MerchantAgentService
+	bargaining                  *BargainingService
+	agentConfig                 *AgentConfigService
+	signer                      *ap2.SignatureService
+	log                         *logger.Logger
+	ungovernedExecutionDisabled bool
+}
+
+func (s *ProcurementService) DisableUngovernedExecution() *ProcurementService {
+	if s != nil {
+		s.ungovernedExecutionDisabled = true
+	}
+	return s
 }
 
 type CreateProcurementRunRequest struct {
@@ -104,19 +112,23 @@ func NewProcurementService(
 	log *logger.Logger,
 ) *ProcurementService {
 	return &ProcurementService{
-		ap2Repo:     ap2Repo,
-		agentSvc:    agentSvc,
-		intentSvc:   intentSvc,
-		shoppingSvc: shoppingSvc,
-		merchantSvc: merchantSvc,
-		bargaining:  bargaining,
-		agentConfig: agentConfig,
-		signer:      signer,
-		log:         log,
+		ap2Repo:                     ap2Repo,
+		agentSvc:                    agentSvc,
+		intentSvc:                   intentSvc,
+		shoppingSvc:                 shoppingSvc,
+		merchantSvc:                 merchantSvc,
+		bargaining:                  bargaining,
+		agentConfig:                 agentConfig,
+		signer:                      signer,
+		log:                         log,
+		ungovernedExecutionDisabled: true,
 	}
 }
 
 func (s *ProcurementService) StartProcurement(ctx context.Context, req *CreateProcurementRunRequest) (*models.ProcurementRun, error) {
+	if s.ungovernedExecutionDisabled {
+		return nil, ErrA2AGovernanceRequired
+	}
 	ctx, cancel := withUpperBoundTimeout(ctx, procurementRunTotalTimeout)
 	defer cancel()
 
@@ -751,8 +763,13 @@ func (s *ProcurementService) completePurchase(ctx context.Context, run *models.P
 
 	merchantID := winner.candidate.MerchantAgentID
 	unitPrice := *winner.candidate.FinalAmount / float64(req.Quantity)
+	shoppingAgent, err := s.ap2Repo.GetAgentByID(ctx, req.ShoppingAgentID)
+	if err != nil {
+		return fmt.Errorf("load shopping agent scope: %w", err)
+	}
 	cartMandate, err := s.shoppingSvc.CreateCartMandate(ctx, &CreateCartMandateRequest{
 		UserID:          req.UserID,
+		BusinessID:      shoppingAgent.BusinessID,
 		ShoppingAgentID: req.ShoppingAgentID,
 		MerchantID:      &merchantID,
 		IntentMandateID: run.IntentMandateID,
@@ -787,6 +804,7 @@ func (s *ProcurementService) completePurchase(ctx context.Context, run *models.P
 
 	paymentMandate, err := s.shoppingSvc.CompleteCheckout(ctx, &CheckoutRequest{
 		UserID:        req.UserID,
+		BusinessID:    shoppingAgent.BusinessID,
 		CartMandateID: cartMandate.ID,
 	})
 	if err != nil {

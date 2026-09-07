@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -31,6 +32,15 @@ type Client struct {
 	httpClient    *http.Client
 	log           *logger.Logger
 }
+
+// HTTPError preserves provider status for internal health classification while
+// deliberately excluding response bodies and credential detail.
+type HTTPError struct {
+	statusCode int
+}
+
+func (e *HTTPError) Error() string       { return "razorpay provider request failed" }
+func (e *HTTPError) HTTPStatusCode() int { return e.statusCode }
 
 func NewClient(cfg Config, log *logger.Logger) *Client {
 	baseURL := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
@@ -100,6 +110,12 @@ type Order struct {
 	CreatedAtEpoch int64             `json:"created_at"`
 }
 
+type OrderCollection struct {
+	Entity string  `json:"entity"`
+	Count  int     `json:"count"`
+	Items  []Order `json:"items"`
+}
+
 type Payment struct {
 	ID               string `json:"id"`
 	Entity           string `json:"entity"`
@@ -108,12 +124,54 @@ type Payment struct {
 	Status           string `json:"status"`
 	Method           string `json:"method"`
 	OrderID          string `json:"order_id"`
+	InvoiceID        string `json:"invoice_id"`
 	Email            string `json:"email"`
 	Contact          string `json:"contact"`
 	Captured         bool   `json:"captured"`
 	ErrorCode        string `json:"error_code"`
 	ErrorDescription string `json:"error_description"`
 	CreatedAtEpoch   int64  `json:"created_at"`
+}
+
+type SubscriptionCreateParams struct {
+	PlanID         string            `json:"plan_id"`
+	TotalCount     int64             `json:"total_count"`
+	Quantity       int64             `json:"quantity"`
+	CustomerNotify bool              `json:"customer_notify"`
+	Notes          map[string]string `json:"notes"`
+}
+
+type SubscriptionUpdateParams struct {
+	PlanID           string `json:"plan_id"`
+	ScheduleChangeAt string `json:"schedule_change_at"`
+	CustomerNotify   bool   `json:"customer_notify"`
+}
+
+type SubscriptionCancelParams struct {
+	CancelAtCycleEnd bool `json:"cancel_at_cycle_end"`
+}
+
+type Subscription struct {
+	ID                  string            `json:"id"`
+	Entity              string            `json:"entity"`
+	PlanID              string            `json:"plan_id"`
+	CustomerID          string            `json:"customer_id"`
+	Status              string            `json:"status"`
+	CurrentStart        int64             `json:"current_start"`
+	CurrentEnd          int64             `json:"current_end"`
+	EndedAt             int64             `json:"ended_at"`
+	ChargeAt            int64             `json:"charge_at"`
+	StartAt             int64             `json:"start_at"`
+	EndAt               int64             `json:"end_at"`
+	TotalCount          int64             `json:"total_count"`
+	PaidCount           int64             `json:"paid_count"`
+	RemainingCount      int64             `json:"remaining_count"`
+	CreatedAt           int64             `json:"created_at"`
+	ShortURL            string            `json:"short_url"`
+	HasScheduledChanges bool              `json:"has_scheduled_changes"`
+	ScheduleChangeAt    string            `json:"schedule_change_at"`
+	ChangeScheduledAt   int64             `json:"change_scheduled_at"`
+	Notes               map[string]string `json:"notes"`
 }
 
 func (c *Client) CreateOrder(ctx context.Context, params OrderParams) (*Order, error) {
@@ -132,12 +190,67 @@ func (c *Client) FetchOrder(ctx context.Context, orderID string) (*Order, error)
 	return &order, nil
 }
 
+func (c *Client) FetchOrdersByReceipt(ctx context.Context, receipt string) ([]Order, error) {
+	receipt = strings.TrimSpace(receipt)
+	if receipt == "" {
+		return nil, fmt.Errorf("Razorpay order receipt is required")
+	}
+	query := url.Values{}
+	query.Set("receipt", receipt)
+	query.Set("count", "100")
+	var collection OrderCollection
+	if err := c.request(ctx, http.MethodGet, "/orders?"+query.Encode(), nil, &collection); err != nil {
+		return nil, err
+	}
+	return collection.Items, nil
+}
+
+// Probe performs a bounded read-only authenticated request. It establishes
+// provider reachability without creating an order or exposing provider data.
+func (c *Client) Probe(ctx context.Context) error {
+	var collection OrderCollection
+	return c.request(ctx, http.MethodGet, "/orders?count=1", nil, &collection)
+}
+
 func (c *Client) FetchPayment(ctx context.Context, paymentID string) (*Payment, error) {
 	var payment Payment
 	if err := c.request(ctx, http.MethodGet, "/payments/"+paymentID, nil, &payment); err != nil {
 		return nil, err
 	}
 	return &payment, nil
+}
+
+func (c *Client) CreateSubscription(ctx context.Context, params SubscriptionCreateParams) (*Subscription, error) {
+	var subscription Subscription
+	if err := c.request(ctx, http.MethodPost, "/subscriptions", params, &subscription); err != nil {
+		return nil, err
+	}
+	return &subscription, nil
+}
+
+func (c *Client) FetchSubscription(ctx context.Context, subscriptionID string) (*Subscription, error) {
+	var subscription Subscription
+	if err := c.request(ctx, http.MethodGet, "/subscriptions/"+url.PathEscape(subscriptionID), nil, &subscription); err != nil {
+		return nil, err
+	}
+	return &subscription, nil
+}
+
+func (c *Client) UpdateSubscription(ctx context.Context, subscriptionID string, params SubscriptionUpdateParams) (*Subscription, error) {
+	var subscription Subscription
+	if err := c.request(ctx, http.MethodPatch, "/subscriptions/"+url.PathEscape(subscriptionID), params, &subscription); err != nil {
+		return nil, err
+	}
+	return &subscription, nil
+}
+
+func (c *Client) CancelSubscription(ctx context.Context, subscriptionID string, params SubscriptionCancelParams) (*Subscription, error) {
+	var subscription Subscription
+	path := "/subscriptions/" + url.PathEscape(subscriptionID) + "/cancel"
+	if err := c.request(ctx, http.MethodPost, path, params, &subscription); err != nil {
+		return nil, err
+	}
+	return &subscription, nil
 }
 
 func (c *Client) request(ctx context.Context, method, path string, payload interface{}, out interface{}) error {
@@ -167,15 +280,15 @@ func (c *Client) request(ctx context.Context, method, path string, payload inter
 	start := time.Now()
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		c.log.Error("Razorpay API request failed", "method", method, "path", path, "duration_ms", time.Since(start).Milliseconds(), "error", err)
-		return fmt.Errorf("razorpay request failed: %w", err)
+		c.log.Error("Razorpay API request failed", "method", method, "endpoint", razorpayEndpointClass(path), "duration_ms", time.Since(start).Milliseconds(), "code", "provider_transport_error")
+		return fmt.Errorf("razorpay request failed")
 	}
 	defer resp.Body.Close()
 
 	limitedBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		c.log.Warn("Razorpay API returned error", "method", method, "path", path, "status_code", resp.StatusCode, "duration_ms", time.Since(start).Milliseconds())
-		return fmt.Errorf("razorpay API returned status %d", resp.StatusCode)
+		c.log.Warn("Razorpay API returned error", "method", method, "endpoint", razorpayEndpointClass(path), "status_code", resp.StatusCode, "duration_ms", time.Since(start).Milliseconds())
+		return &HTTPError{statusCode: resp.StatusCode}
 	}
 
 	if out != nil {
@@ -184,6 +297,18 @@ func (c *Client) request(ctx context.Context, method, path string, payload inter
 		}
 	}
 
-	c.log.Debug("Razorpay API request completed", "method", method, "path", path, "status_code", resp.StatusCode, "duration_ms", time.Since(start).Milliseconds())
+	c.log.Debug("Razorpay API request completed", "method", method, "endpoint", razorpayEndpointClass(path), "status_code", resp.StatusCode, "duration_ms", time.Since(start).Milliseconds())
 	return nil
+}
+
+func razorpayEndpointClass(path string) string {
+	path = strings.SplitN(path, "?", 2)[0]
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) >= 2 && parts[0] == "subscriptions" {
+		parts[1] = ":subscription"
+	}
+	if len(parts) >= 2 && (parts[0] == "payments" || parts[0] == "orders") {
+		parts[1] = ":resource"
+	}
+	return "/" + strings.Join(parts, "/")
 }

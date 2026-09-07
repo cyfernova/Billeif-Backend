@@ -31,6 +31,8 @@ func NewProductService(db *gorm.DB, repo interfaces.ProductRepository, s3 *S3Ser
 }
 
 type CreateProductInput struct {
+	UserID            string                 `json:"-"`
+	Authorization     PostingAuthorization   `json:"-"`
 	BusinessID        string                 `json:"business_id,omitempty"`
 	CategoryID        string                 `json:"category_id"`
 	Name              string                 `json:"name" binding:"required,min=2"`
@@ -143,9 +145,23 @@ func (s *ProductService) Create(ctx context.Context, input CreateProductInput) (
 		return product, nil
 	}
 
+	recordsOpeningStock := input.StockLevel > 0 || productVariantsHaveOpeningStock(input.Variants)
+	var overrideID *string
+	if recordsOpeningStock && s.inventory != nil {
+		var err error
+		overrideID, err = s.inventory.prepareInventoryOverride(ctx, input.BusinessID, input.UserID, input.Authorization)
+		if err != nil {
+			return nil, err
+		}
+	}
 	log.Info("about to begin transaction", "product_business_id", product.BusinessID, "input_business_id", input.BusinessID)
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		log.Info("inside transaction", "product_business_id", product.BusinessID)
+		if recordsOpeningStock && s.inventory != nil {
+			if err := s.inventory.enforceInventoryLockTx(tx, input.BusinessID, time.Now(), overrideID, true); err != nil {
+				return err
+			}
+		}
 		if err := tx.Create(product).Error; err != nil {
 			return err
 		}
@@ -236,6 +252,8 @@ func (s *ProductService) ListWithFilters(ctx context.Context, businessID string,
 }
 
 type UpdateProductInput struct {
+	UserID            string                 `json:"-"`
+	Authorization     PostingAuthorization   `json:"-"`
 	CategoryID        string                 `json:"category_id"`
 	Name              string                 `json:"name"`
 	SKU               string                 `json:"sku"`
@@ -317,7 +335,20 @@ func (s *ProductService) UpdateByBusiness(ctx context.Context, businessID, id st
 	}
 
 	if s.db != nil {
+		recordsOpeningStock := productVariantsHaveOpeningStock(input.Variants)
+		var overrideID *string
+		if recordsOpeningStock && s.inventory != nil {
+			overrideID, err = s.inventory.prepareInventoryOverride(ctx, businessID, input.UserID, input.Authorization)
+			if err != nil {
+				return nil, err
+			}
+		}
 		if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if recordsOpeningStock && s.inventory != nil {
+				if err := s.inventory.enforceInventoryLockTx(tx, businessID, time.Now(), overrideID, true); err != nil {
+					return err
+				}
+			}
 			if err := tx.Save(product).Error; err != nil {
 				return err
 			}
@@ -366,6 +397,8 @@ func (s *ProductService) DeleteByBusiness(ctx context.Context, businessID, id st
 }
 
 type StockAdjustmentInput struct {
+	UserID           string                 `json:"-"`
+	Authorization    PostingAuthorization   `json:"-"`
 	VariantID        string                 `json:"variant_id,omitempty"`
 	WarehouseID      string                 `json:"warehouse_id,omitempty"`
 	Quantity         int64                  `json:"quantity" binding:"required"`
@@ -384,6 +417,7 @@ func (s *ProductService) AdjustStockByBusiness(ctx context.Context, businessID, 
 	}
 	if s.inventory != nil {
 		_, err = s.inventory.RecordAdjustment(ctx, InventoryAdjustmentInput{
+			UserID:           input.UserID,
 			BusinessID:       businessID,
 			ProductID:        productID,
 			VariantID:        input.VariantID,
@@ -393,6 +427,7 @@ func (s *ProductService) AdjustStockByBusiness(ctx context.Context, businessID, 
 			UnitCost:         input.UnitCost,
 			BatchAllocations: input.BatchAllocations,
 			SerialIDs:        input.SerialIDs,
+			Authorization:    input.Authorization,
 		})
 		if err != nil {
 			log.Error("failed to adjust stock", "error", err)
@@ -409,8 +444,17 @@ func (s *ProductService) AdjustStockByBusiness(ctx context.Context, businessID, 
 	return product, nil
 }
 
-func (s *ProductService) GetImageUploadURL(ctx context.Context, productID, contentType string, sizeBytes int64) (*PresignedUpload, error) {
-	log := logger.FromContext(ctx).With("service", "product", "operation", "get_image_upload_url", "product_id", productID)
+func productVariantsHaveOpeningStock(variants []ProductVariantInput) bool {
+	for _, variant := range variants {
+		if variant.StockLevel > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *ProductService) getImageUploadURL(ctx context.Context, businessID, productID, contentType string, sizeBytes int64) (*PresignedUpload, error) {
+	log := logger.FromContext(ctx).With("service", "product", "operation", "get_image_upload_url", "business_id", businessID, "product_id", productID)
 	if s.s3 == nil || s.s3.cfg == nil || strings.TrimSpace(s.s3.cfg.S3.BucketProducts) == "" {
 		return nil, fmt.Errorf("product image storage is not configured")
 	}
@@ -421,7 +465,7 @@ func (s *ProductService) GetImageUploadURL(ctx context.Context, productID, conte
 	if err := validateUploadSize("product image", sizeBytes, MaxProductImageUploadBytes); err != nil {
 		return nil, err
 	}
-	key := fmt.Sprintf("products/%s/image", productID)
+	key := fmt.Sprintf("products/%s/%s/image", businessID, productID)
 	upload, err := s.s3.GeneratePresignedUpload(ctx, s.s3.cfg.S3.BucketProducts, key, contentType, sizeBytes, 3600)
 	if err != nil {
 		log.Error("failed to generate image upload URL", "error", err)
@@ -435,7 +479,7 @@ func (s *ProductService) GetImageUploadURLByBusiness(ctx context.Context, busine
 	if _, err := s.GetByBusiness(ctx, businessID, productID); err != nil {
 		return nil, err
 	}
-	return s.GetImageUploadURL(ctx, productID, contentType, sizeBytes)
+	return s.getImageUploadURL(ctx, businessID, productID, contentType, sizeBytes)
 }
 
 func (s *ProductService) UpdateImageURL(ctx context.Context, businessID, productID, imageURL string) error {
@@ -988,7 +1032,7 @@ func (s *ProductServiceTestable) GetImageUploadURLByBusiness(ctx context.Context
 	if err := validateUploadSize("product image", sizeBytes, MaxProductImageUploadBytes); err != nil {
 		return nil, err
 	}
-	key := fmt.Sprintf("products/%s/image", productID)
+	key := fmt.Sprintf("products/%s/%s/image", businessID, productID)
 	return s.s3.GeneratePresignedUpload(ctx, "product-images", key, contentType, sizeBytes, 3600)
 }
 

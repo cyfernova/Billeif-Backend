@@ -51,10 +51,11 @@ func NewVoiceSessionHandler(svc VoiceSessionService, log *logger.Logger) *VoiceS
 // @Param input body session.CreateInput true "Voice session request"
 // @Success 201 {object} session.CreateResponse
 // @Failure 400 {object} map[string]string
-// @Failure 403 {object} map[string]string
+// @Failure 403 {object} CapabilityMutationError
 // @Failure 409 {object} map[string]string
-// @Failure 429 {object} map[string]string
-// @Failure 503 {object} map[string]string
+// @Failure 422 {object} CapabilityMutationError
+// @Failure 429 {object} CapabilityMutationError
+// @Failure 503 {object} CapabilityMutationError
 // @Router /voice/sessions [post]
 func (h *VoiceSessionHandler) Create(c *gin.Context) {
 	var input session.CreateInput
@@ -166,6 +167,9 @@ func validatedVoiceScope(c *gin.Context) (session.Scope, bool) {
 }
 
 func (h *VoiceSessionHandler) writeError(c *gin.Context, err error) {
+	if writeSubscriptionControlError(c, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, session.ErrInvalidRequest):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

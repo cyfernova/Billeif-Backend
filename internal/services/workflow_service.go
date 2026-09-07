@@ -65,7 +65,7 @@ type Workflow struct {
 	Trigger              *WorkflowTrigger `gorm:"-" json:"trigger"`
 	Action               *WorkflowAction  `gorm:"-" json:"action"`
 	Status               WorkflowStatus   `gorm:"type:varchar(20);default:'active'" json:"status"`
-	IsEnabled            bool             `gorm:"default:true" json:"is_enabled"`
+	IsEnabled            bool             `gorm:"not null" json:"is_enabled"`
 	LastRun              *time.Time       `json:"last_run,omitempty"`
 	NextRun              *time.Time       `json:"next_run,omitempty"`
 	RunCount             int              `gorm:"default:0" json:"run_count"`
