@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.1
 	github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue v1.20.42
 	github.com/aws/aws-sdk-go-v2/service/apigatewaymanagementapi v1.29.18
-	github.com/aws/aws-sdk-go-v2/service/bedrockagentcore v1.27.0
+	github.com/aws/aws-sdk-go-v2/service/bedrockagentcore v1.46.0
 	github.com/aws/aws-sdk-go-v2/service/bedrockagentcorecontrol v1.27.0
 	github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider v1.60.4
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.57.6
@@ -77,7 +77,7 @@ require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/KyleBanks/depth v1.2.1 // indirect
-	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.11 // indirect
+	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.20 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.19.1 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.5.1 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.8.1 // indirect
