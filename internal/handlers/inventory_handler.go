@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
 	"invoice-backend/internal/middleware"
+	"invoice-backend/internal/models"
 	"invoice-backend/internal/services"
 	"invoice-backend/pkg/logger"
 
@@ -249,6 +251,7 @@ func (h *InventoryHandler) CreateAdjustment(c *gin.Context) {
 	}
 	input.BusinessID = businessID
 	input.UserID = userID
+	input.Authorization = accountingPostingAuthorization(c, "inventory-adjustment:"+input.ProductID+":"+input.WarehouseID)
 	if input.WarehouseID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "warehouse_id is required"})
 		return
@@ -258,6 +261,10 @@ func (h *InventoryHandler) CreateAdjustment(c *gin.Context) {
 	}
 	balances, err := h.svc.RecordAdjustment(c.Request.Context(), input)
 	if err != nil {
+		if errors.Is(err, services.ErrAccountingPeriodLocked) {
+			writeAccountingStepUpRequired(c)
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -292,10 +299,15 @@ func (h *InventoryHandler) CreateTransfer(c *gin.Context) {
 	}
 	input.BusinessID = businessID
 	input.UserID = userID
+	input.Authorization = accountingPostingAuthorization(c, "inventory-transfer:"+input.ProductID+":"+input.FromWarehouseID+":"+input.ToWarehouseID)
 	if !h.hasWarehousePermission(c, businessID, input.FromWarehouseID, "move_stock") || !h.hasWarehousePermission(c, businessID, input.ToWarehouseID, "move_stock") {
 		return
 	}
 	if err := h.svc.TransferStock(c.Request.Context(), input); err != nil {
+		if errors.Is(err, services.ErrAccountingPeriodLocked) {
+			writeAccountingStepUpRequired(c)
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -322,23 +334,7 @@ func (h *InventoryHandler) ListTransfers(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	transfers := make([]gin.H, 0, len(rows))
-	for _, row := range rows {
-		if row.TransactionType != "transfer" || row.Direction != "out" {
-			continue
-		}
-		transfers = append(transfers, gin.H{
-			"id":                row.ID,
-			"product_id":        row.ProductID,
-			"product_name":      row.ProductName,
-			"from_warehouse_id": row.WarehouseID,
-			"from_warehouse":    row.WarehouseName,
-			"quantity":          row.Quantity,
-			"status":            "completed",
-			"created_at":        row.RecordedAt,
-			"completed_at":      row.RecordedAt,
-		})
-	}
+	transfers := completedTransferRecords(rows)
 	start := (page - 1) * limit
 	if start > len(transfers) {
 		start = len(transfers)
@@ -356,8 +352,41 @@ func (h *InventoryHandler) ListTransfers(c *gin.Context) {
 	})
 }
 
-func (h *InventoryHandler) CompleteTransfer(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"id": c.Param("id"), "status": "completed"})
+type inventoryTransferRecord struct {
+	ID              string    `json:"id"`
+	ProductID       string    `json:"product_id"`
+	ProductName     string    `json:"product_name"`
+	FromWarehouseID string    `json:"from_warehouse_id"`
+	FromWarehouse   string    `json:"from_warehouse"`
+	ToWarehouseID   string    `json:"to_warehouse_id"`
+	ToWarehouse     string    `json:"to_warehouse"`
+	Quantity        float64   `json:"quantity"`
+	Status          string    `json:"status"`
+	CreatedAt       time.Time `json:"created_at"`
+	CompletedAt     time.Time `json:"completed_at"`
+}
+
+func completedTransferRecords(rows []services.InventoryTimelineEntry) []inventoryTransferRecord {
+	transfers := make([]inventoryTransferRecord, 0, len(rows))
+	for _, row := range rows {
+		if row.TransactionType != models.InventoryTransactionTypeTransfer || row.Direction != models.StockMoveDirectionIn {
+			continue
+		}
+		transfers = append(transfers, inventoryTransferRecord{
+			ID: row.ID, ProductID: row.ProductID, ProductName: row.ProductName,
+			FromWarehouseID: inventoryStringValue(row.SourceWarehouseID), FromWarehouse: row.SourceWarehouseName,
+			ToWarehouseID: inventoryStringValue(row.WarehouseID), ToWarehouse: row.WarehouseName,
+			Quantity: row.Quantity, Status: "completed", CreatedAt: row.RecordedAt, CompletedAt: row.RecordedAt,
+		})
+	}
+	return transfers
+}
+
+func inventoryStringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func (h *InventoryHandler) ResetStock(c *gin.Context) {
@@ -376,6 +405,7 @@ func (h *InventoryHandler) ResetStock(c *gin.Context) {
 	}
 	input.BusinessID = businessID
 	input.UserID = userID
+	input.Authorization = accountingPostingAuthorization(c, "inventory-reset:"+input.ProductID+":"+input.WarehouseID)
 	if input.WarehouseID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "warehouse_id is required"})
 		return
@@ -384,6 +414,10 @@ func (h *InventoryHandler) ResetStock(c *gin.Context) {
 		return
 	}
 	if err := h.svc.ResetStock(c.Request.Context(), input); err != nil {
+		if errors.Is(err, services.ErrAccountingPeriodLocked) {
+			writeAccountingStepUpRequired(c)
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -431,6 +465,10 @@ func (h *InventoryHandler) Timeline(c *gin.Context) {
 	}
 	rows, err := h.svc.GetTimeline(c.Request.Context(), filter)
 	if err != nil {
+		if errors.Is(err, services.ErrAccountingPeriodLocked) {
+			writeAccountingStepUpRequired(c)
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -659,6 +697,10 @@ func (h *InventoryHandler) executeAssembly(c *gin.Context, reverse bool) {
 	if !ok {
 		return
 	}
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
 	var input services.ExecuteAssemblyInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -667,6 +709,9 @@ func (h *InventoryHandler) executeAssembly(c *gin.Context, reverse bool) {
 	if !h.hasWarehousePermission(c, businessID, input.WarehouseID, "move_stock") {
 		return
 	}
+	input.BusinessID = businessID
+	input.UserID = userID
+	input.Authorization = accountingPostingAuthorization(c, "inventory-assembly:"+c.Param("id")+":"+input.WarehouseID)
 	var err error
 	if reverse {
 		err = h.svc.DisassembleAssembly(c.Request.Context(), businessID, c.Param("id"), input)

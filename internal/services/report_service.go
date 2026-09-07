@@ -19,17 +19,29 @@ import (
 	"invoice-backend/internal/reporting"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/logger"
+	"invoice-backend/pkg/spreadsheet"
 
 	"golang.org/x/crypto/bcrypt"
 )
 
 type ReportService struct {
-	cfg  *config.Config
-	repo interfaces.ReportingRepository
-	log  *logger.Logger
+	cfg        *config.Config
+	repo       interfaces.ReportingRepository
+	capability CapabilityGuard
+	users      ReportUserRepository
+	businesses interface {
+		GetByID(context.Context, string) (*models.BusinessProfile, error)
+	}
+	log *logger.Logger
 }
 
-var ErrReportScopeUnsupported = errors.New("report cannot be safely limited to the caller's branch or warehouse scope")
+var (
+	ErrReportScopeUnsupported = errors.New("report cannot be safely limited to the caller's branch or warehouse scope")
+	ErrReportInvalidFilters   = errors.New("invalid report filters")
+	ErrReportExportTooLarge   = errors.New("report export exceeds safe bounds")
+)
+
+const ReportXLSXContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 type ReportQueryInput struct {
 	Page    int               `json:"page,omitempty"`
@@ -86,6 +98,7 @@ type ReportExportResponse struct {
 	Filename    string            `json:"filename"`
 	ContentType string            `json:"content_type"`
 	Data        string            `json:"data"`
+	Binary      []byte            `json:"-"`
 }
 
 type ReportShareHistoryItem struct {
@@ -132,6 +145,18 @@ func NewReportService(cfg *config.Config, repo interfaces.ReportingRepository, l
 	return &ReportService{cfg: cfg, repo: repo, log: log}
 }
 
+func (s *ReportService) WithCapabilityGuard(guard CapabilityGuard) *ReportService {
+	s.capability = guard
+	return s
+}
+
+func (s *ReportService) WithBusinessTimezoneProvider(provider interface {
+	GetByID(context.Context, string) (*models.BusinessProfile, error)
+}) *ReportService {
+	s.businesses = provider
+	return s
+}
+
 func (s *ReportService) Catalog() []reporting.Definition {
 	return reporting.Catalog()
 }
@@ -158,6 +183,11 @@ func (s *ReportService) Query(ctx context.Context, businessID, userID, reportKey
 }
 
 func (s *ReportService) Export(ctx context.Context, businessID, userID, reportKey string, input ReportExportInput) (*ReportExportResponse, error) {
+	if err := requireCapability(ctx, s.capability, CapabilityRequest{
+		BusinessID: businessID, UserID: userID, Platform: CapabilityPlatformWeb, Capability: CapabilityReportExports,
+	}); err != nil {
+		return nil, err
+	}
 	def, ok := reporting.Lookup(reportKey)
 	if !ok {
 		return nil, fmt.Errorf("report not found")
@@ -187,6 +217,8 @@ func (s *ReportService) Export(ctx context.Context, businessID, userID, reportKe
 	filename := fmt.Sprintf("%s-%s.%s", def.Key, time.Now().UTC().Format("20060102-150405"), format)
 	contentType := "application/json"
 	data := ""
+	var binary []byte
+	timezone := ""
 
 	switch format {
 	case "csv":
@@ -194,6 +226,13 @@ func (s *ReportService) Export(ctx context.Context, businessID, userID, reportKe
 		data, err = encodeCSV(result)
 	case "json":
 		data, err = encodeJSON(result)
+	case "xlsx":
+		contentType = ReportXLSXContentType
+		var location *time.Location
+		location, timezone, err = s.reportLocation(ctx, businessID)
+		if err == nil {
+			binary, err = encodeXLSX(result, location)
+		}
 	default:
 		return nil, fmt.Errorf("unsupported export format")
 	}
@@ -201,6 +240,24 @@ func (s *ReportService) Export(ctx context.Context, businessID, userID, reportKe
 		return nil, err
 	}
 
+	payload := map[string]interface{}{
+		"filename":     filename,
+		"content_type": contentType,
+		"data":         data,
+	}
+	if format == "xlsx" {
+		payload = map[string]interface{}{
+			"filename":     filename,
+			"content_type": contentType,
+			"delivery":     "attachment",
+			"byte_size":    len(binary),
+			"timezone":     timezone,
+		}
+	}
+	storageUserID, err := s.reportUserID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
 	run := &models.ReportRun{
 		BusinessID:     businessID,
 		ReportKey:      def.Key,
@@ -209,13 +266,9 @@ func (s *ReportService) Export(ctx context.Context, businessID, userID, reportKe
 		VisibleColumns: mustMarshalJSON(columns, "[]"),
 		ExportFormat:   format,
 		Status:         models.ReportRunStatusCompleted,
-		Payload: mustMarshalJSON(map[string]interface{}{
-			"filename":     filename,
-			"content_type": contentType,
-			"data":         data,
-		}, "{}"),
-		Summary:     mustMarshalJSON(reportSummary(result), "{}"),
-		GeneratedBy: userID,
+		Payload:        mustMarshalJSON(payload, "{}"),
+		Summary:        mustMarshalJSON(reportSummary(result), "{}"),
+		GeneratedBy:    storageUserID,
 	}
 	if err := s.repo.CreateReportRun(ctx, run); err != nil {
 		return nil, err
@@ -226,7 +279,30 @@ func (s *ReportService) Export(ctx context.Context, businessID, userID, reportKe
 		Filename:    filename,
 		ContentType: contentType,
 		Data:        data,
+		Binary:      binary,
 	}, nil
+}
+
+func (s *ReportService) reportLocation(ctx context.Context, businessID string) (*time.Location, string, error) {
+	if s.businesses == nil {
+		return nil, "", fmt.Errorf("business timezone unavailable")
+	}
+	business, err := s.businesses.GetByID(ctx, businessID)
+	if err != nil {
+		return nil, "", fmt.Errorf("load business timezone: %w", err)
+	}
+	if business == nil {
+		return nil, "", fmt.Errorf("business timezone unavailable")
+	}
+	timezone := strings.TrimSpace(business.Timezone)
+	if timezone == "" {
+		return nil, "", fmt.Errorf("business timezone unavailable")
+	}
+	location, err := time.LoadLocation(timezone)
+	if err != nil {
+		return nil, "", fmt.Errorf("invalid business timezone")
+	}
+	return location, timezone, nil
 }
 
 func (s *ReportService) Dashboard(ctx context.Context, businessID string, input ReportQueryInput) (map[string]interface{}, error) {
@@ -242,6 +318,10 @@ func (s *ReportService) Dashboard(ctx context.Context, businessID string, input 
 }
 
 func (s *ReportService) GetPreference(ctx context.Context, businessID, userID, reportKey string) (*ReportPreferenceResponse, error) {
+	userID, err := s.reportUserID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
 	def, ok := reporting.Lookup(reportKey)
 	if !ok {
 		return nil, fmt.Errorf("report not found")
@@ -260,12 +340,16 @@ func (s *ReportService) GetPreference(ctx context.Context, businessID, userID, r
 		DefaultShareMode:       config.DefaultShareMode,
 		ShareRequiresPasscode:  config.ShareRequiresPasscode,
 		AvailableColumns:       def.DefaultColumns,
-		AvailableExportFormats: []string{"json", "csv"},
+		AvailableExportFormats: []string{"json", "csv", "xlsx"},
 		AvailableShareModes:    []string{models.ReportShareModeSnapshot, models.ReportShareModeLive},
 	}, nil
 }
 
 func (s *ReportService) SavePreference(ctx context.Context, businessID, userID, reportKey string, input ReportPreferenceInput) (*ReportPreferenceResponse, error) {
+	userID, err := s.reportUserID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
 	def, ok := reporting.Lookup(reportKey)
 	if !ok {
 		return nil, fmt.Errorf("report not found")
@@ -285,7 +369,7 @@ func (s *ReportService) SavePreference(ctx context.Context, businessID, userID, 
 	}
 	if input.DefaultExportFormat != "" {
 		format := strings.ToLower(strings.TrimSpace(input.DefaultExportFormat))
-		if format != "json" && format != "csv" {
+		if format != "json" && format != "csv" && format != "xlsx" {
 			return nil, fmt.Errorf("unsupported export format")
 		}
 		config.DefaultExportFormat = format
@@ -301,7 +385,7 @@ func (s *ReportService) SavePreference(ctx context.Context, businessID, userID, 
 		config.ShareRequiresPasscode = *input.ShareRequiresPasscode
 	}
 	if len(config.Columns) == 0 {
-		config.Columns = normalizeColumns(nil, def.DefaultColumns)
+		config.Columns = defaultColumnKeys(def.DefaultColumns)
 	}
 	pref := &models.ReportPreference{
 		BusinessID: businessID,
@@ -319,7 +403,7 @@ func (s *ReportService) SavePreference(ctx context.Context, businessID, userID, 
 		DefaultShareMode:       config.DefaultShareMode,
 		ShareRequiresPasscode:  config.ShareRequiresPasscode,
 		AvailableColumns:       def.DefaultColumns,
-		AvailableExportFormats: []string{"json", "csv"},
+		AvailableExportFormats: []string{"json", "csv", "xlsx"},
 		AvailableShareModes:    []string{models.ReportShareModeSnapshot, models.ReportShareModeLive},
 	}, nil
 }
@@ -333,7 +417,7 @@ type reportPreferenceConfig struct {
 
 func defaultReportPreferenceConfig(def reporting.Definition) reportPreferenceConfig {
 	return reportPreferenceConfig{
-		Columns:               normalizeColumns(nil, def.DefaultColumns),
+		Columns:               defaultColumnKeys(def.DefaultColumns),
 		DefaultExportFormat:   "json",
 		DefaultShareMode:      models.ReportShareModeSnapshot,
 		ShareRequiresPasscode: false,
@@ -389,6 +473,10 @@ func (s *ReportService) CreateShare(ctx context.Context, businessID, userID, rep
 		return nil, err
 	}
 
+	storageUserID, err := s.reportUserID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
 	share := &models.ReportShare{
 		BusinessID:       businessID,
 		ReportKey:        reportKey,
@@ -398,7 +486,7 @@ func (s *ReportService) CreateShare(ctx context.Context, businessID, userID, rep
 		VisibleColumns:   mustMarshalJSON(columns, "[]"),
 		RequiresPasscode: strings.TrimSpace(input.Passcode) != "",
 		ExpiresAt:        input.ExpiresAt,
-		CreatedBy:        userID,
+		CreatedBy:        storageUserID,
 	}
 	if share.Title == "" {
 		share.Title = def.Name
@@ -433,7 +521,7 @@ func (s *ReportService) CreateShare(ctx context.Context, businessID, userID, rep
 			Status:         models.ReportRunStatusCompleted,
 			Payload:        mustMarshalJSON(result, "{}"),
 			Summary:        mustMarshalJSON(reportSummary(result), "{}"),
-			GeneratedBy:    userID,
+			GeneratedBy:    storageUserID,
 		}
 		if err := s.repo.CreateReportRun(ctx, run); err != nil {
 			return nil, err
@@ -461,10 +549,20 @@ func (s *ReportService) CreateShare(ctx context.Context, businessID, userID, rep
 }
 
 func validateReportScope(def reporting.Definition, filters reporting.Filters) error {
+	if (def.Family == "trial_balance" || def.Family == "balance_sheet" || def.Family == "account_drilldown") && strings.TrimSpace(filters.Currency) == "" {
+		return fmt.Errorf("%w: currency is required", ErrReportInvalidFilters)
+	}
+	if def.Family == "account_drilldown" && strings.TrimSpace(filters.AccountCode) == "" {
+		return fmt.Errorf("%w: account_code is required", ErrReportInvalidFilters)
+	}
 	if !filters.BranchScopeRestricted && !filters.WarehouseScopeRestricted {
 		return nil
 	}
 	switch def.Family {
+	case "trial_balance", "balance_sheet", "account_drilldown":
+		// Accounting reports contain no warehouse dimension. Branch restrictions
+		// are enforced by buildPostedAccountingFilters through AllowedBranchIDs.
+		return nil
 	case "document_register", "daily_documents", "line_summary", "line_profit", "gst_hsn_summary",
 		"profit_and_loss", "receivables", "payables", "aging_receivables", "aging_payables":
 		return nil
@@ -602,7 +700,11 @@ func (s *ReportService) resolveColumns(ctx context.Context, businessID, userID s
 		return columns, nil
 	}
 	if allowPreference && businessID != "" && userID != "" {
-		pref, err := s.repo.GetReportPreference(ctx, businessID, userID, def.Key)
+		storageUserID, err := s.reportUserID(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		pref, err := s.repo.GetReportPreference(ctx, businessID, storageUserID, def.Key)
 		if err == nil {
 			columns := normalizeColumns(unmarshalColumnsFromPreference(pref.Config), def.DefaultColumns)
 			if len(columns) > 0 {
@@ -747,20 +849,31 @@ func encodeCSV(result *reporting.Result) (string, error) {
 	return buffer.String(), writer.Error()
 }
 
+func encodeXLSX(result *reporting.Result, location *time.Location) ([]byte, error) {
+	if result == nil || len(result.Columns) == 0 || len(result.Columns) > spreadsheet.MaxXLSXColumns || len(result.Rows) > spreadsheet.MaxXLSXRows {
+		return nil, ErrReportExportTooLarge
+	}
+	columns := make([]spreadsheet.Column, 0, len(result.Columns))
+	for _, column := range result.Columns {
+		columns = append(columns, spreadsheet.Column{Label: column.Label, Type: column.Type})
+	}
+	rows := make([][]any, 0, len(result.Rows))
+	for _, row := range result.Rows {
+		values := make([]any, 0, len(result.Columns))
+		for _, column := range result.Columns {
+			values = append(values, row[column.Key])
+		}
+		rows = append(rows, values)
+	}
+	data, err := spreadsheet.XLSX(columns, rows, location)
+	if errors.Is(err, spreadsheet.ErrXLSXBoundsExceeded) {
+		return nil, ErrReportExportTooLarge
+	}
+	return data, err
+}
+
 func sanitizeSpreadsheetCell(value string) string {
-	if value == "" {
-		return value
-	}
-	trimmedLeft := strings.TrimLeft(value, " \r\n")
-	if trimmedLeft == "" {
-		return value
-	}
-	switch trimmedLeft[0] {
-	case '=', '+', '-', '@', '\t':
-		return "'" + value
-	default:
-		return value
-	}
+	return spreadsheet.SafeCell(value).(string)
 }
 
 func encodeJSON(value interface{}) (string, error) {
@@ -814,9 +927,9 @@ func normalizeColumns(columns []string, available []reporting.Column) []string {
 }
 
 func unmarshalColumnsFromPreference(raw string) []string {
-	payload := map[string][]string{}
+	var payload reportPreferenceConfig
 	if err := json.Unmarshal([]byte(raw), &payload); err == nil {
-		return payload["columns"]
+		return payload.Columns
 	}
 	var columns []string
 	if err := json.Unmarshal([]byte(raw), &columns); err == nil {

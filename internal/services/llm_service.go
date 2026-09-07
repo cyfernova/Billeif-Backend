@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -19,8 +21,14 @@ type LLMService struct {
 	config   config.LLMConfig
 	appCfg   *config.Config
 	resolver ProviderConfigResolver
+	guard    CapabilityGuard
 	log      *logger.Logger
 	client   *http.Client
+}
+
+func (s *LLMService) WithCapabilityGuard(guard CapabilityGuard) *LLMService {
+	s.guard = guard
+	return s
 }
 
 func NewLLMServiceWithResolver(cfg *config.Config, resolver ProviderConfigResolver, log *logger.Logger) *LLMService {
@@ -44,9 +52,253 @@ func (s *LLMService) providerConfig(ctx context.Context, kind config.SecretKind)
 	return resolved.LLM, nil
 }
 
+func (s *LLMService) ProbeGlobalCapability(ctx context.Context) CapabilityProviderOutcome {
+	providerCfg, err := s.providerConfig(ctx, config.SecretLLM)
+	if err != nil {
+		return CapabilityProviderOutcome{Err: err}
+	}
+	endpoint, err := llmModelProbeURL(providerCfg.APIURL, providerCfg.Model)
+	if err != nil {
+		return CapabilityProviderOutcome{Err: err}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return CapabilityProviderOutcome{Err: err}
+	}
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(providerCfg.APIKey))
+	req.Header.Set("Accept", "application/json")
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return CapabilityProviderOutcome{Err: err}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
+		return CapabilityProviderOutcome{Err: ErrCapabilityProbeUnsupported}
+	}
+	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+			return CapabilityProviderOutcome{Err: ErrCapabilityProbeUnsupported}
+		}
+		return CapabilityProviderOutcome{Err: &providerHTTPError{status: resp.StatusCode}}
+	}
+	if !llmModelListHeadersProveTerminalJSON(resp.Header) {
+		return CapabilityProviderOutcome{Err: ErrCapabilityProbeUnsupported}
+	}
+	present, complete := inspectLLMModelList(resp.Body, strings.TrimSpace(providerCfg.Model))
+	if !complete {
+		return CapabilityProviderOutcome{Err: ErrCapabilityProbeUnsupported}
+	}
+	if present {
+		return CapabilityProviderOutcome{}
+	}
+	return CapabilityProviderOutcome{Err: errors.New("configured LLM model is unavailable")}
+}
+
+func llmModelListHeadersProveTerminalJSON(header http.Header) bool {
+	contentType := strings.ToLower(strings.TrimSpace(header.Get("Content-Type")))
+	if contentType != "application/json" && !strings.HasPrefix(contentType, "application/json;") {
+		return false
+	}
+	for name := range header {
+		normalized := strings.ToLower(strings.TrimSpace(name))
+		switch normalized {
+		case "content-type", "content-length", "date", "server", "connection", "keep-alive",
+			"vary", "etag", "last-modified", "cache-control", "expires", "pragma",
+			"strict-transport-security", "alt-svc", "x-content-type-options", "x-frame-options",
+			"x-request-id", "request-id", "cf-ray", "cf-cache-status", "nel", "report-to",
+			"openai-processing-ms", "openai-version":
+			continue
+		}
+		if strings.HasPrefix(normalized, "x-ratelimit-") || strings.HasPrefix(normalized, "ratelimit-") {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+const (
+	maxLLMModelListBytes   = 1 << 20
+	maxLLMModelListEntries = 10_000
+	maxLLMModelJSONDepth   = 64
+)
+
+// inspectLLMModelList streams a complete OpenAI-compatible list response. It
+// deliberately returns complete=false for every body that cannot prove the
+// full list, including oversized responses and entry-cap exhaustion.
+func inspectLLMModelList(body io.Reader, configuredModel string) (present bool, complete bool) {
+	if body == nil || configuredModel == "" {
+		return false, false
+	}
+	limited := &io.LimitedReader{R: body, N: maxLLMModelListBytes + 1}
+	decoder := json.NewDecoder(limited)
+	opening, err := decoder.Token()
+	if err != nil || opening != json.Delim('{') {
+		return false, false
+	}
+	var markerSeen, dataSeen bool
+	markerValid := false
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		key, ok := keyToken.(string)
+		if err != nil || !ok {
+			return false, false
+		}
+		switch key {
+		case "object":
+			if markerSeen {
+				return false, false
+			}
+			markerSeen = true
+			value, err := decoder.Token()
+			marker, ok := value.(string)
+			if err != nil || !ok {
+				return false, false
+			}
+			markerValid = marker == "list"
+		case "data":
+			if dataSeen {
+				return false, false
+			}
+			dataSeen = true
+			var dataComplete bool
+			present, dataComplete = inspectLLMModelEntries(decoder, configuredModel)
+			if !dataComplete {
+				return false, false
+			}
+		default:
+			// The OpenAI-compatible complete-list envelope is exactly object +
+			// data. Unknown top-level fields may be pagination markers, so they
+			// make absence unprovable even if their value looks harmless.
+			return false, false
+		}
+	}
+	closing, err := decoder.Token()
+	if err != nil || closing != json.Delim('}') || !markerSeen || !markerValid || !dataSeen {
+		return false, false
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return false, false
+	}
+	if limited.N == 0 {
+		return false, false
+	}
+	return present, true
+}
+
+func inspectLLMModelEntries(decoder *json.Decoder, configuredModel string) (present bool, complete bool) {
+	opening, err := decoder.Token()
+	if err != nil || opening != json.Delim('[') {
+		return false, false
+	}
+	entries := 0
+	for decoder.More() {
+		entries++
+		if entries > maxLLMModelListEntries {
+			return false, false
+		}
+		itemOpening, err := decoder.Token()
+		if err != nil || itemOpening != json.Delim('{') {
+			return false, false
+		}
+		idSeen := false
+		modelID := ""
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			key, ok := keyToken.(string)
+			if err != nil || !ok {
+				return false, false
+			}
+			if key != "id" {
+				if !skipLLMJSONValue(decoder) {
+					return false, false
+				}
+				continue
+			}
+			if idSeen {
+				return false, false
+			}
+			idSeen = true
+			value, err := decoder.Token()
+			id, ok := value.(string)
+			if err != nil || !ok || strings.TrimSpace(id) == "" {
+				return false, false
+			}
+			modelID = strings.TrimSpace(id)
+		}
+		itemClosing, err := decoder.Token()
+		if err != nil || itemClosing != json.Delim('}') || !idSeen {
+			return false, false
+		}
+		present = present || modelID == configuredModel
+	}
+	closing, err := decoder.Token()
+	if err != nil || closing != json.Delim(']') {
+		return false, false
+	}
+	return present, true
+}
+
+func skipLLMJSONValue(decoder *json.Decoder) bool {
+	token, err := decoder.Token()
+	if err != nil {
+		return false
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok || (delimiter != json.Delim('{') && delimiter != json.Delim('[')) {
+		return true
+	}
+	depth := 1
+	for depth > 0 {
+		token, err = decoder.Token()
+		if err != nil {
+			return false
+		}
+		delimiter, ok = token.(json.Delim)
+		if !ok {
+			continue
+		}
+		switch delimiter {
+		case json.Delim('{'), json.Delim('['):
+			depth++
+			if depth > maxLLMModelJSONDepth {
+				return false
+			}
+		case json.Delim('}'), json.Delim(']'):
+			depth--
+		}
+	}
+	return true
+}
+
+func llmModelProbeURL(apiURL, _ string) (string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(apiURL))
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil ||
+		parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Port() != "" && parsed.Port() != "443") {
+		return "", ErrCapabilityProbeUnsupported
+	}
+	host := strings.ToLower(parsed.Hostname())
+	path := strings.TrimRight(parsed.Path, "/")
+	switch {
+	case host == "api.deepseek.com" && path == "/chat/completions":
+		parsed.Path = "/models"
+	case host == "api.deepseek.com" && path == "/v1/chat/completions":
+		parsed.Path = "/v1/models"
+	case host == "api.openai.com" && path == "/v1/chat/completions":
+		parsed.Path = "/v1/models"
+	default:
+		return "", ErrCapabilityProbeUnsupported
+	}
+	parsed.RawPath = ""
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String(), nil
+}
+
 type LLMChatOptions struct {
-	MaxTokens int
-	System    string
+	DisableThinking bool
+	MaxTokens       int
+	System          string
 }
 
 type LLMChatResult struct {
@@ -135,6 +387,7 @@ type OpenAIChatMessage struct {
 }
 
 type OpenAIChatRequest struct {
+	Thinking  map[string]string   `json:"thinking,omitempty"`
 	Model     string              `json:"model"`
 	Messages  []OpenAIChatMessage `json:"messages"`
 	MaxTokens int                 `json:"max_tokens,omitempty"`
@@ -256,6 +509,17 @@ func (s *LLMService) ChatWithWebSearch(ctx context.Context, messages []ChatMessa
 	return &LLMChatResult{Response: response, WebSearch: webSearch}, nil
 }
 
+func (s *LLMService) ChatWithWebSearchForBusiness(ctx context.Context, businessID, userID string, messages []ChatMessage) (*LLMChatResult, error) {
+	if err := requireCapability(ctx, s.guard, CapabilityRequest{
+		BusinessID: businessID, UserID: userID,
+		Platform: CapabilityPlatformWeb, Capability: CapabilityAI,
+	}); err != nil {
+		return nil, err
+	}
+	result, err := s.ChatWithWebSearch(ctx, messages)
+	return result, err
+}
+
 // ChatWithOptions sends a chat request to the LLM with call-site-specific generation limits.
 func (s *LLMService) ChatWithOptions(ctx context.Context, messages []ChatMessage, options LLMChatOptions) (string, error) {
 	log := logger.FromContext(ctx).With("service", "llm", "operation", "chat", "message_count", len(messages))
@@ -266,9 +530,11 @@ func (s *LLMService) ChatWithOptions(ctx context.Context, messages []ChatMessage
 	}
 	providerCfg, err := s.providerConfig(ctx, config.SecretLLM)
 	if err != nil {
+		log.Error("LLM provider configuration unavailable")
 		return "", fmt.Errorf("resolve LLM credentials: %w", err)
 	}
 	if strings.TrimSpace(providerCfg.APIKey) == "" {
+		log.Error("LLM provider key is not configured")
 		return "", fmt.Errorf("LLM_API_KEY is not configured")
 	}
 
@@ -288,6 +554,9 @@ func (s *LLMService) ChatWithOptions(ctx context.Context, messages []ChatMessage
 		Messages:  openAIMessages,
 		MaxTokens: maxTokens,
 		Stream:    false,
+	}
+	if options.DisableThinking {
+		reqBody.Thinking = map[string]string{"type": "disabled"}
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -327,7 +596,7 @@ func (s *LLMService) ChatWithOptions(ctx context.Context, messages []ChatMessage
 			"response_size", len(bodyBytes),
 			"response_body", string(bodyBytes),
 		)
-		return "", fmt.Errorf("API returned error: %s - %s", resp.Status, string(bodyBytes))
+		return "", &providerHTTPError{status: resp.StatusCode}
 	}
 
 	var chatResp OpenAIChatResponse
@@ -418,7 +687,7 @@ func (s *LLMService) searchExa(ctx context.Context, query string) ([]LLMSearchRe
 		return nil, fmt.Errorf("read Exa search response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("Exa search returned %s: %s", resp.Status, string(bodyBytes))
+		return nil, &providerHTTPError{status: resp.StatusCode}
 	}
 
 	var searchResp exaSearchResponse
@@ -691,4 +960,16 @@ For each assistant idea, provide:
 
 	log.Info("agent intent processed", "response_length", len(response))
 	return response, nil
+}
+
+// ProcessAgentIntentForBusiness applies the runtime AI capability preflight before provider execution.
+func (s *LLMService) ProcessAgentIntentForBusiness(ctx context.Context, businessID, userID, intent, contextInfo string) (string, error) {
+	if err := requireCapability(ctx, s.guard, CapabilityRequest{
+		BusinessID: businessID, UserID: userID,
+		Platform: CapabilityPlatformWeb, Capability: CapabilityAI,
+	}); err != nil {
+		return "", err
+	}
+	response, err := s.ProcessAgentIntent(ctx, intent, contextInfo)
+	return response, err
 }

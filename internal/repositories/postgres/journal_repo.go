@@ -52,7 +52,7 @@ func (r *journalRepository) ListByBusinessID(ctx context.Context, businessID str
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
-	if err := query.Order("posting_date DESC, created_at DESC").Offset(offset).Limit(limit).Find(&journals).Error; err != nil {
+	if err := query.Preload("Lines").Order("posting_date DESC, created_at DESC").Offset(offset).Limit(limit).Find(&journals).Error; err != nil {
 		return nil, 0, err
 	}
 	result := make([]*models.Journal, len(journals))

@@ -518,7 +518,8 @@ func (s *BargainingService) skipA2ANotifications(negotiation *models.BargainingN
 	}
 
 	value, ok := metadata["procurement_managed_a2a"].(bool)
-	return ok && value
+	governed, _ := metadata["governed_internal_negotiation"].(bool)
+	return (ok && value) || governed
 }
 
 func isTerminalNegotiationStatus(status string) bool {

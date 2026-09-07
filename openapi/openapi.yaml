@@ -14,6 +14,10 @@ servers:
     description: API v1 base path
 
 tags:
+  - name: Operations
+    description: Tenant-scoped sanitized aggregate operational visibility and proven safe recovery
+  - name: Operator Operations
+    description: Separately authorized operator detail and fail-closed high-risk recovery
   - name: A2A
     description: Latest A2A HTTP+JSON protocol surface
   - name: Auth
@@ -42,6 +46,180 @@ tags:
     description: Admin operations
 
 paths:
+  /api/v1/operations:
+    get:
+      tags: [Operations]
+      summary: List business operations
+      description: Stable bounded aggregate across render, delivery, outbox, Razorpay, GST, recurring, email, WhatsApp, notifications, imports, and voice. Unsupported sources are listed in unavailable_types. Unknown and reconciliation_required remain distinct; provider references, queue IDs, payloads, raw errors, account IDs, secrets, and topology are omitted.
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: type, in: query, schema: {type: array, items: {$ref: '#/components/schemas/OperationType'}}}
+        - {name: status, in: query, schema: {type: array, items: {$ref: '#/components/schemas/OperationStatus'}}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 50}}
+        - {name: cursor, in: query, schema: {type: string, maxLength: 2048}}
+      responses:
+        '200': {description: Sanitized tenant operation page, content: {application/json: {schema: {$ref: '#/components/schemas/OperationListResponse'}}}}
+        '400': {description: invalid_operation_query, content: {application/json: {schema: {$ref: '#/components/schemas/OperationError'}}}}
+        '403': {description: Business or all-branches scope required, content: {application/json: {schema: {$ref: '#/components/schemas/OperationError'}}}}
+  /api/v1/operations/{operation_id}:
+    get:
+      tags: [Operations]
+      summary: Get a business operation
+      security: [{bearerAuth: []}]
+      parameters: [{$ref: '#/components/parameters/OperationID'}]
+      responses:
+        '200': {description: Sanitized operation, content: {application/json: {schema: {$ref: '#/components/schemas/OperationSummary'}}}}
+        '404': {description: operation_not_found, content: {application/json: {schema: {$ref: '#/components/schemas/OperationError'}}}}
+  /api/v1/operations/{operation_id}/timeline:
+    get:
+      tags: [Operations]
+      summary: Get sanitized business operation timeline
+      security: [{bearerAuth: []}]
+      parameters:
+        - {$ref: '#/components/parameters/OperationID'}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 50}}
+      responses:
+        '200': {description: Sanitized lifecycle and recovery events, content: {application/json: {schema: {$ref: '#/components/schemas/OperationTimeline'}}}}
+        '400': {description: invalid_operation_query, content: {application/json: {schema: {$ref: '#/components/schemas/OperationError'}}}}
+        '404': {description: operation_not_found, content: {application/json: {schema: {$ref: '#/components/schemas/OperationError'}}}}
+  /api/v1/operations/{operation_id}/recovery:
+    post:
+      tags: [Operations]
+      summary: Retry an exact failed versioned invoice render
+      description: The only business recovery currently proven safe is retry of a failed invoice_render. It requires documents.manage, live render capabilities, original tenant/resource/revision binding, UUID idempotency and correlation identities, and atomic audit plus outbox dispatch.
+      security: [{bearerAuth: []}]
+      parameters: [{$ref: '#/components/parameters/OperationID'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/OperationRecoveryRequest'}}}}
+      responses:
+        '202': {description: Accepted or idempotently replayed command, content: {application/json: {schema: {$ref: '#/components/schemas/OperationRecoveryResponse'}}}}
+        '400': {description: invalid_recovery_request, content: {application/json: {schema: {$ref: '#/components/schemas/OperationError'}}}}
+        '403': {description: operation_access_denied, content: {application/json: {schema: {$ref: '#/components/schemas/OperationError'}}}}
+        '404': {description: operation_not_found, content: {application/json: {schema: {$ref: '#/components/schemas/OperationError'}}}}
+        '409': {description: unsafe_replay, content: {application/json: {schema: {$ref: '#/components/schemas/OperationError'}}}}
+        '422': {description: unsupported_recovery, content: {application/json: {schema: {$ref: '#/components/schemas/OperationError'}}}}
+  /api/v1/operator/operations/{operation_id}:
+    get:
+      tags: [Operator Operations]
+      summary: Get separately authorized operator detail
+      description: Requires the configured verified platform operator JWT group. Business owner/admin roles never grant access and missing group configuration fails closed. Detail remains sanitized.
+      security: [{bearerAuth: []}]
+      parameters: [{$ref: '#/components/parameters/OperationID'}, {$ref: '#/components/parameters/OperationBusinessID'}]
+      responses:
+        '200': {description: Sanitized operator detail, content: {application/json: {schema: {$ref: '#/components/schemas/OperationOperatorDetail'}}}}
+        '403': {description: operator_not_configured or operator_access_denied, content: {application/json: {schema: {$ref: '#/components/schemas/OperationError'}}}}
+        '404': {description: operation_not_found, content: {application/json: {schema: {$ref: '#/components/schemas/OperationError'}}}}
+  /api/v1/operator/operations/{operation_id}/timeline:
+    get:
+      tags: [Operator Operations]
+      summary: Get separately authorized sanitized timeline
+      security: [{bearerAuth: []}]
+      parameters:
+        - {$ref: '#/components/parameters/OperationID'}
+        - {$ref: '#/components/parameters/OperationBusinessID'}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 50}}
+      responses:
+        '200': {description: Sanitized timeline, content: {application/json: {schema: {$ref: '#/components/schemas/OperationTimeline'}}}}
+        '403': {description: Operator access denied, content: {application/json: {schema: {$ref: '#/components/schemas/OperationError'}}}}
+        '404': {description: operation_not_found, content: {application/json: {schema: {$ref: '#/components/schemas/OperationError'}}}}
+  /api/v1/operator/operations/{operation_id}/recovery:
+    post:
+      tags: [Operator Operations]
+      summary: Request operator recovery
+      description: High-risk webhook, reconciliation, DLQ and resolution actions are durably audited but fail closed with step_up_required until Task 5 supplies a valid one-time scoped token. No provider action or redrive occurs in this phase.
+      security: [{bearerAuth: []}]
+      parameters:
+        - {$ref: '#/components/parameters/OperationID'}
+        - {$ref: '#/components/parameters/OperationBusinessID'}
+        - {name: X-Step-Up-Token, in: header, required: false, schema: {type: string}}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/OperationRecoveryRequest'}}}}
+      responses:
+        '202': {description: Accepted command after a future valid step-up boundary, content: {application/json: {schema: {$ref: '#/components/schemas/OperationRecoveryResponse'}}}}
+        '403': {description: Operator access denied, content: {application/json: {schema: {$ref: '#/components/schemas/OperationError'}}}}
+        '404': {description: operation_not_found, content: {application/json: {schema: {$ref: '#/components/schemas/OperationError'}}}}
+        '409': {description: unsafe_replay, content: {application/json: {schema: {$ref: '#/components/schemas/OperationError'}}}}
+        '422': {description: unsupported_recovery, content: {application/json: {schema: {$ref: '#/components/schemas/OperationError'}}}}
+        '428': {description: step_up_required, content: {application/json: {schema: {$ref: '#/components/schemas/OperationError'}}}}
+        '503': {description: recovery_audit_unavailable, content: {application/json: {schema: {$ref: '#/components/schemas/OperationError'}}}}
+  /api/v1/subscriptions/checkout:
+    post:
+      tags: [Subscriptions]
+      summary: Start renewable subscription checkout
+      description: Creates a genuine Razorpay subscription without granting paid access before a signed verified charge. Successful idempotency replay returns the immutable original pending checkout response.
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/SubscriptionCheckoutRequest'}}}
+      responses:
+        '200': {description: Pending authorization, content: {application/json: {schema: {$ref: '#/components/schemas/SubscriptionCheckoutResponse'}}}}
+        '400': {$ref: '#/components/responses/SubscriptionBadRequest'}
+        '409': {$ref: '#/components/responses/SubscriptionConflict'}
+        '422': {$ref: '#/components/responses/SubscriptionProviderRejected'}
+        '500': {$ref: '#/components/responses/SubscriptionMutationInternal'}
+        '503': {$ref: '#/components/responses/SubscriptionReconciliation'}
+
+  /api/v1/subscriptions/plan-change:
+    post:
+      tags: [Subscriptions]
+      summary: Schedule a no-proration plan change
+      description: Effective only at the next verified billing boundary; over-quota downgrades retain existing data.
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/SubscriptionPlanChangeRequest'}}}
+      responses:
+        '200': {description: Change scheduled, content: {application/json: {schema: {$ref: '#/components/schemas/SubscriptionMutationResponse'}}}}
+        '400': {$ref: '#/components/responses/SubscriptionBadRequest'}
+        '409': {$ref: '#/components/responses/SubscriptionConflict'}
+        '422': {$ref: '#/components/responses/SubscriptionProviderRejected'}
+        '500': {$ref: '#/components/responses/SubscriptionMutationInternal'}
+        '503': {$ref: '#/components/responses/SubscriptionReconciliation'}
+
+  /api/v1/subscriptions/cancellation:
+    post:
+      tags: [Subscriptions]
+      summary: Schedule cancellation at paid period end
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/SubscriptionCancellationRequest'}}}
+      responses:
+        '200': {description: Cancellation scheduled, content: {application/json: {schema: {$ref: '#/components/schemas/SubscriptionMutationResponse'}}}}
+        '400': {$ref: '#/components/responses/SubscriptionBadRequest'}
+        '409': {$ref: '#/components/responses/SubscriptionConflict'}
+        '422': {$ref: '#/components/responses/SubscriptionProviderRejected'}
+        '500': {$ref: '#/components/responses/SubscriptionMutationInternal'}
+        '503': {$ref: '#/components/responses/SubscriptionReconciliation'}
+
+  /api/v1/subscriptions/billing-history:
+    get:
+      tags: [Subscriptions]
+      summary: List tenant billing history
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 50}}
+      responses:
+        '200':
+          description: Provider-verified records without provider identifiers
+          content: {application/json: {schema: {type: object, required: [records], properties: {records: {type: array, items: {$ref: '#/components/schemas/SubscriptionBillingRecord'}}}}}}
+        '400': {$ref: '#/components/responses/SubscriptionBadRequest'}
+        '500': {$ref: '#/components/responses/SubscriptionInternal'}
+        '503': {$ref: '#/components/responses/SubscriptionReconciliation'}
+
+  /api/v1/subscriptions/audit:
+    get:
+      tags: [Subscriptions]
+      summary: List sanitized tenant lifecycle audit
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 50}}
+      responses:
+        '200':
+          description: Sanitized lifecycle audit
+          content: {application/json: {schema: {type: object, required: [records], properties: {records: {type: array, items: {$ref: '#/components/schemas/SubscriptionAuditRecord'}}}}}}
+        '400': {$ref: '#/components/responses/SubscriptionBadRequest'}
+        '500': {$ref: '#/components/responses/SubscriptionInternal'}
+        '503': {$ref: '#/components/responses/SubscriptionReconciliation'}
+
   /.well-known/agent-card.json:
     get:
       tags: [A2A]
@@ -1130,6 +1308,129 @@ paths:
                     items:
                       $ref: '#/components/schemas/EmailPayload'
 
+  /api/v1/accounting/policy:
+    get:
+      tags: [Accounting]
+      summary: Get fiscal lock and reversal policy
+      security: [{bearerAuth: []}]
+      responses: {"200": {description: Accounting policy}}
+    put:
+      tags: [Accounting]
+      summary: Change fiscal lock and reversal policy with scoped step-up
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: Idempotency-Key, in: header, required: true, schema: {type: string}}
+        - {name: X-Step-Up-Token, in: header, required: true, schema: {type: string}}
+        - {name: X-Lock-Override-Reason, in: header, required: true, schema: {type: string}}
+      requestBody: {required: true, content: {application/json: {schema: {type: object}}}}
+      responses: {"200": {description: Updated policy}, "428": {description: Scoped step-up required}}
+  /api/v1/accounting/opening-balances:
+    post:
+      tags: [Accounting]
+      summary: Post idempotent journal and inventory opening facts
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: X-Step-Up-Token, in: header, required: false, schema: {type: string}}
+        - {name: X-Lock-Override-Reason, in: header, required: false, schema: {type: string, minLength: 8, maxLength: 500}}
+      requestBody: {required: true, content: {application/json: {schema: {type: object}}}}
+      responses: {"201": {description: Posted opening journal}, "428": {description: Scoped step-up required for locked date}}
+  /api/v1/accounting/accounts:
+    get:
+      tags: [Accounting]
+      summary: List authoritative chart of accounts
+      security: [{bearerAuth: []}]
+      responses: {"200": {description: Tenant account hierarchy}}
+  /api/v1/accounting/accounts/{code}:
+    put:
+      tags: [Accounting]
+      summary: Upsert authoritative account metadata
+      security: [{bearerAuth: []}]
+      parameters: [{name: code, in: path, required: true, schema: {type: string}}]
+      requestBody: {required: true, content: {application/json: {schema: {type: object}}}}
+      responses: {"200": {description: Account metadata}, "400": {description: Invalid class or hierarchy}}
+  /api/v1/accounting/reconciliation-diagnostics:
+    get:
+      tags: [Accounting]
+      summary: Read journal, inventory, and tax reconciliation diagnostics
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: through, in: query, required: false, schema: {type: string, format: date-time}}
+        - {name: currency, in: query, required: true, schema: {type: string, minLength: 3, maxLength: 3}}
+      responses: {"200": {description: Read-only reconciliation differences}, "400": {description: Valid currency required}}
+  /api/v1/accounting/audit:
+    get:
+      tags: [Accounting]
+      summary: List accounting audit events
+      security: [{bearerAuth: []}]
+      responses: {"200": {description: Tenant accounting audit events}}
+  /api/v1/accounting/bank-accounts:
+    get:
+      tags: [Banking]
+      summary: List bank accounts
+      security: [{bearerAuth: []}]
+      responses: {"200": {description: Bank accounts}}
+    post:
+      tags: [Banking]
+      summary: Create bank account mapped to a ledger account
+      security: [{bearerAuth: []}]
+      requestBody: {required: true, content: {application/json: {schema: {type: object}}}}
+      responses: {"201": {description: Bank account created}}
+  /api/v1/accounting/bank-statements:
+    post:
+      tags: [Banking]
+      summary: Import a verified clean pending-upload CSV statement
+      security: [{bearerAuth: []}]
+      requestBody: {required: true, content: {application/json: {schema: {type: object}}}}
+      responses: {"201": {description: Statement imported}}
+  /api/v1/accounting/bank-statements/{id}/transactions:
+    get:
+      tags: [Banking]
+      summary: List statement transactions and match state
+      security: [{bearerAuth: []}]
+      parameters: [{name: id, in: path, required: true, schema: {type: string, format: uuid}}]
+      responses: {"200": {description: Statement transactions}}
+  /api/v1/accounting/bank-statements/{id}/reconcile:
+    post:
+      tags: [Banking]
+      summary: Reconcile a fully matched statement
+      security: [{bearerAuth: []}]
+      parameters: [{name: id, in: path, required: true, schema: {type: string, format: uuid}}]
+      requestBody: {required: true, content: {application/json: {schema: {type: object}}}}
+      responses: {"200": {description: Statement reconciled}}
+  /api/v1/accounting/bank-transactions/{id}/suggestions:
+    get:
+      tags: [Banking]
+      summary: Suggest bounded account- and direction-safe ledger matches
+      security: [{bearerAuth: []}]
+      parameters: [{name: id, in: path, required: true, schema: {type: string, format: uuid}}]
+      responses: {"200": {description: Match suggestions}}
+  /api/v1/accounting/bank-transactions/{id}/match:
+    post:
+      tags: [Banking]
+      summary: Manually match a bank transaction
+      security: [{bearerAuth: []}]
+      parameters: [{name: id, in: path, required: true, schema: {type: string, format: uuid}}]
+      requestBody: {required: true, content: {application/json: {schema: {type: object}}}}
+      responses: {"201": {description: Transaction matched}}
+    delete:
+      tags: [Banking]
+      summary: Unmatch or atomically reverse a bank adjustment
+      security: [{bearerAuth: []}]
+      parameters: [{name: id, in: path, required: true, schema: {type: string, format: uuid}}]
+      requestBody: {required: true, content: {application/json: {schema: {type: object}}}}
+      responses: {"204": {description: Match removed}}
+  /api/v1/accounting/bank-transactions/{id}/adjustment:
+    post:
+      tags: [Accounting]
+      summary: Post and match a fee or interest adjustment
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: X-Step-Up-Token, in: header, required: false, schema: {type: string}}
+        - {name: X-Lock-Override-Reason, in: header, required: false, schema: {type: string, minLength: 8, maxLength: 500}}
+      requestBody: {required: true, content: {application/json: {schema: {type: object}}}}
+      responses: {"201": {description: Adjustment posted}, "428": {description: Scoped step-up required for locked date}}
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1138,6 +1439,18 @@ components:
       bearerFormat: JWT
 
   parameters:
+    OperationID:
+      name: operation_id
+      in: path
+      required: true
+      description: Composite operation identity in type:UUID form
+      schema: {type: string, pattern: '^[a-z_]+:[0-9a-fA-F-]{36}$'}
+    OperationBusinessID:
+      name: business_id
+      in: query
+      required: true
+      description: Original tenant owning the operation
+      schema: {type: string, format: uuid}
     ID:
       name: id
       in: path
@@ -1183,6 +1496,30 @@ components:
         maximum: 5242880
  
   responses:
+    SubscriptionBadRequest:
+      description: Invalid subscription request
+      content: {application/json: {schema: {$ref: '#/components/schemas/SubscriptionError'}}}
+    SubscriptionConflict:
+      description: Lifecycle or idempotency conflict
+      content: {application/json: {schema: {$ref: '#/components/schemas/SubscriptionError'}}}
+    SubscriptionProviderRejected:
+      description: Provider deterministically rejected the mutation
+      content: {application/json: {schema: {$ref: '#/components/schemas/SubscriptionError'}}}
+    SubscriptionInternal:
+      description: Subscription history could not be loaded
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/SubscriptionError'}
+          example: {error: {code: subscription_internal_error, message: subscription history could not be loaded}}
+    SubscriptionMutationInternal:
+      description: Subscription request could not be completed
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/SubscriptionError'}
+          example: {error: {code: subscription_mutation_internal_error, message: subscription request could not be completed}}
+    SubscriptionReconciliation:
+      description: Provider outcome requires reconciliation or the service is unavailable
+      content: {application/json: {schema: {$ref: '#/components/schemas/SubscriptionError'}}}
     BadRequest:
       description: Bad request
       content:
@@ -1203,6 +1540,177 @@ components:
             $ref: '#/components/schemas/Error'
 
   schemas:
+    OperationType:
+      type: string
+      enum: [invoice_render, invoice_delivery, outbox, razorpay_webhook, gst_einvoice, gst_ewaybill, recurring_invoice, email_delivery, whatsapp_delivery, notification, import, voice_reconciliation]
+    OperationStatus:
+      type: string
+      enum: [queued, in_progress, succeeded, failed, reconciliation_required, unknown]
+    OperationResource:
+      type: object
+      required: [type, id]
+      properties:
+        type: {type: string}
+        id: {type: string}
+    OperationSummary:
+      type: object
+      required: [operation_id, type, resource, status, attempts, retryable, reconciliation_required, dead_letter, created_at, updated_at]
+      properties:
+        operation_id: {type: string, description: "Composite type:UUID identity"}
+        type: {$ref: '#/components/schemas/OperationType'}
+        resource: {$ref: '#/components/schemas/OperationResource'}
+        status: {$ref: '#/components/schemas/OperationStatus'}
+        attempts: {type: integer, minimum: 0}
+        last_attempt_at: {type: string, format: date-time, nullable: true}
+        next_attempt_at: {type: string, format: date-time, nullable: true}
+        retryable: {type: boolean}
+        reconciliation_required: {type: boolean}
+        dead_letter: {type: boolean}
+        error_code: {type: string, maxLength: 80}
+        correlation_id: {type: string, format: uuid}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        completed_at: {type: string, format: date-time, nullable: true}
+    OperationListResponse:
+      type: object
+      required: [operations]
+      properties:
+        operations: {type: array, items: {$ref: '#/components/schemas/OperationSummary'}}
+        next_cursor: {type: string}
+        unavailable_types: {type: array, items: {$ref: '#/components/schemas/OperationType'}}
+    OperationTimelineEvent:
+      type: object
+      required: [status, occurred_at]
+      properties:
+        status: {$ref: '#/components/schemas/OperationStatus'}
+        code: {type: string, maxLength: 80}
+        occurred_at: {type: string, format: date-time}
+    OperationTimeline:
+      type: object
+      required: [operation_id, events]
+      properties:
+        operation_id: {type: string}
+        events: {type: array, items: {$ref: '#/components/schemas/OperationTimelineEvent'}}
+    OperationRecoveryAction:
+      type: object
+      required: [action, available]
+      properties:
+        action: {type: string, enum: [retry, reconcile, reprocess_webhook, redrive_dead_letter, resolve]}
+        available: {type: boolean}
+        requirement_code: {type: string, enum: [unsupported_recovery, step_up_required]}
+    OperationOperatorDetail:
+      allOf:
+        - {$ref: '#/components/schemas/OperationSummary'}
+        - type: object
+          required: [source_status, recovery_actions]
+          properties:
+            source_status: {type: string, maxLength: 80, description: Sanitized internal state label only}
+            recovery_actions: {type: array, items: {$ref: '#/components/schemas/OperationRecoveryAction'}}
+    OperationRecoveryRequest:
+      type: object
+      additionalProperties: false
+      required: [action, reason, idempotency_key, correlation_id]
+      properties:
+        action: {type: string, enum: [retry, reconcile, reprocess_webhook, redrive_dead_letter, resolve]}
+        reason: {type: string, minLength: 1, maxLength: 500}
+        idempotency_key: {type: string, format: uuid}
+        correlation_id: {type: string, format: uuid}
+    OperationRecoveryResponse:
+      type: object
+      required: [command_id, operation_id, action, result_code, correlation_id, replayed, accepted_at]
+      properties:
+        command_id: {type: string, format: uuid}
+        operation_id: {type: string}
+        action: {type: string}
+        result_code: {type: string, enum: [accepted]}
+        correlation_id: {type: string, format: uuid}
+        replayed: {type: boolean}
+        accepted_at: {type: string, format: date-time}
+    OperationError:
+      type: object
+      required: [code, error]
+      properties:
+        code: {type: string, enum: [invalid_operation_query, invalid_recovery_request, operation_not_found, operation_access_denied, operator_not_configured, operator_access_denied, unsafe_replay, unsupported_recovery, step_up_required, recovery_audit_unavailable, operation_unavailable]}
+        error: {type: string}
+    SubscriptionCheckoutRequest:
+      type: object
+      required: [plan_id, idempotency_key]
+      properties:
+        plan_id: {type: string, enum: [pro_monthly, rise_monthly, biz_monthly]}
+        idempotency_key: {type: string, minLength: 1, maxLength: 180}
+    SubscriptionPlanChangeRequest:
+      allOf: [{$ref: '#/components/schemas/SubscriptionCheckoutRequest'}]
+    SubscriptionCancellationRequest:
+      type: object
+      required: [idempotency_key]
+      properties:
+        idempotency_key: {type: string, minLength: 1, maxLength: 180}
+    SubscriptionCheckoutResponse:
+      type: object
+      required: [subscription_id, status, billing_mode, pending_plan_id]
+      properties:
+        subscription_id: {type: string, format: uuid}
+        status: {type: string, enum: [pending_payment]}
+        billing_mode: {type: string, enum: [renewable]}
+        pending_plan_id: {type: string, enum: [pro_monthly, rise_monthly, biz_monthly]}
+        authorization_url: {type: string, format: uri}
+    SubscriptionMutationResponse:
+      type: object
+      required: [subscription_id, status, plan_id, cancel_at_period_end, reconciliation_required]
+      properties:
+        subscription_id: {type: string, format: uuid}
+        status: {$ref: '#/components/schemas/SubscriptionLifecycleStatus'}
+        plan_id: {type: string, enum: [free, pro_monthly, rise_monthly, biz_monthly]}
+        pending_plan_id: {type: string, enum: [pro_monthly, rise_monthly, biz_monthly]}
+        effective_at: {type: string, format: date-time}
+        cancel_at_period_end: {type: boolean}
+        reconciliation_required: {type: boolean}
+    SubscriptionLifecycleStatus:
+      type: string
+      enum: [pending_payment, active, renewal_pending, past_due, grace_period, cancellation_scheduled, cancelled, expired, suspended, reconciliation_required]
+    SubscriptionBillingRecord:
+      type: object
+      required: [id, business_id, subscription_id, amount_minor, currency, status, receipt_reference, occurred_at, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        business_id: {type: string, format: uuid}
+        subscription_id: {type: string, format: uuid}
+        amount_minor: {type: integer, format: int64, minimum: 0}
+        currency: {type: string, enum: [INR]}
+        status: {type: string, enum: [paid, failed, provider_verified]}
+        receipt_reference: {type: string}
+        period_start: {type: string, format: date-time}
+        period_end: {type: string, format: date-time}
+        quota_period_start: {type: string, format: date-time}
+        quota_period_end: {type: string, format: date-time}
+        occurred_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
+    SubscriptionAuditRecord:
+      type: object
+      required: [id, business_id, action, code, occurred_at, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        business_id: {type: string, format: uuid}
+        subscription_id: {type: string, format: uuid}
+        actor_user_id: {type: string}
+        action: {type: string}
+        from_status: {type: string}
+        to_status: {type: string}
+        from_plan_id: {type: string}
+        to_plan_id: {type: string}
+        code: {type: string}
+        occurred_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
+    SubscriptionError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: {type: string, enum: [subscription_invalid_request, subscription_invalid_limit, subscription_conflict, subscription_provider_rejected, subscription_reconciliation_required, subscription_unavailable, subscription_internal_error, subscription_mutation_internal_error]}
+            message: {type: string}
     Error:
       type: object
       properties:

@@ -24,6 +24,7 @@ type salesInvoiceDocumentIssuer interface {
 type salesInvoiceDocumentCreator interface {
 	CreateSalesInvoiceDocument(ctx context.Context, businessID string, input CreateDocumentInput) (*models.Document, error)
 	createPOSSalesInvoiceDocument(ctx context.Context, businessID string, input CreateInvoiceInput) (*models.Document, error)
+	createStorefrontSalesInvoiceDocument(ctx context.Context, businessID string, input CreateInvoiceInput) (*models.Document, error)
 }
 
 type invoiceSalesDocumentIssuer struct {
@@ -59,6 +60,7 @@ func (c *invoiceSalesDocumentCreator) CreateSalesInvoiceDocument(ctx context.Con
 		IdempotencyKey:       input.IdempotencyKey,
 		CustomerID:           input.PartyID,
 		ProjectID:            input.ProjectID,
+		BranchID:             input.BranchID,
 		PriceListID:          input.PriceListID,
 		RenderProfileID:      input.RenderProfileID,
 		InvoiceDate:          input.IssueDate,
@@ -128,6 +130,14 @@ func (c *invoiceSalesDocumentCreator) createPOSSalesInvoiceDocument(ctx context.
 	return c.createInvoiceDocument(ctx, businessID, input)
 }
 
+func (c *invoiceSalesDocumentCreator) createStorefrontSalesInvoiceDocument(ctx context.Context, businessID string, input CreateInvoiceInput) (*models.Document, error) {
+	input.Origin = models.InvoiceOriginStorefront
+	if strings.TrimSpace(input.CustomerID) == "" || !input.BuyerSnapshot.IsEmpty() {
+		return nil, &idempotency.InvalidPayloadError{}
+	}
+	return c.createInvoiceDocument(ctx, businessID, input)
+}
+
 func (c *invoiceSalesDocumentCreator) createInvoiceDocument(ctx context.Context, businessID string, input CreateInvoiceInput) (*models.Document, error) {
 	invoice, err := c.invoices.CreateByBusiness(ctx, businessID, input)
 	if err != nil {
@@ -137,8 +147,7 @@ func (c *invoiceSalesDocumentCreator) createInvoiceDocument(ctx context.Context,
 }
 
 func validateSalesInvoiceDelegationInput(businessID string, input CreateDocumentInput) error {
-	unsupported := input.BranchID != "" ||
-		(input.BusinessID != "" && input.BusinessID != businessID) ||
+	unsupported := (input.BusinessID != "" && input.BusinessID != businessID) ||
 		(input.PartyType != "" && input.PartyType != models.DocumentPartyTypeCustomer) ||
 		(input.Status != "" && input.Status != models.DocumentStatusDraft) ||
 		(input.DraftState != "" && input.DraftState != models.DocumentDraftStateDraft) ||
@@ -201,5 +210,15 @@ func customerPartySnapshot(customer *models.Customer) models.PartySnapshot {
 }
 
 func invoiceDocumentProjection(invoice *models.Invoice) *models.Document {
-	return invoiceprojection.Build(invoice)
+	document := invoiceprojection.Build(invoice)
+	if invoice == nil || invoice.Status == models.InvoiceStatusDraft {
+		return document
+	}
+	document.Status = legacyInvoiceStatusToDocument(invoice.Status)
+	document.DraftState = models.DocumentDraftStateFinal
+	document.SerialNumber = models.StringValue(invoice.InvoiceNo)
+	if invoice.IssuedAt != nil {
+		document.IssueDate = *invoice.IssuedAt
+	}
+	return document
 }

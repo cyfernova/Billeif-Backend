@@ -3,7 +3,7 @@
 -include .env.local
 export
 
-.PHONY: help infra-backend-init infra-init infra-validate infra-apply infra-plan infra-destroy infra-output build-agentcore test-agentcore build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-email-delivery build-lambda-sqs-ses-feedback build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-outbox build-lambda-migrator build-lambda-voice-reconciler build-lambda-custom-sms-sender package-lambda package-lambda-email-delivery package-lambda-ses-feedback package-lambda-outbox package-lambda-migrator package-lambda-voice-reconciler migration-manifest migration-manifest-verify rds-tunnel run-local test test-integration migrate-up migrate-down migrate-rds-up migrate-rds-down migrate-create fmt lint clean deps test-coverage swagger
+.PHONY: help infra-backend-init infra-init infra-validate infra-apply infra-plan infra-destroy infra-output build-agentcore test-agentcore build-lambda build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-email-delivery build-lambda-sqs-ses-feedback build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-bulk-import build-lambda-ws build-lambda-outbox build-lambda-recurring-invoices build-lambda-subscription-reconciler build-lambda-migrator build-lambda-voice-reconciler build-lambda-custom-sms-sender package-lambda package-lambda-bulk-import package-lambda-email-delivery package-lambda-ses-feedback package-lambda-outbox package-lambda-recurring-invoices package-lambda-subscription-reconciler package-lambda-migrator package-lambda-voice-reconciler migration-manifest migration-manifest-verify rds-tunnel run-local verify-environment recovery-drill test test-integration migrate-up migrate-down migrate-rds-up migrate-rds-down migrate-create fmt lint clean deps test-coverage swagger
 
 LAMBDA_BUILD_DIR := .build/lambda
 AGENTCORE_BUILD_DIR := .build/agentcore
@@ -14,6 +14,10 @@ TF_BACKEND_REGION ?= ap-south-1
 TF_BACKEND_LOCK_TABLE ?= billeif-terraform-state-lock
 TF_BACKEND_KEY ?= billeif/dev/terraform.tfstate
 RDS_LOCAL_PORT ?= 15432
+VERIFY_MODE ?= read
+VERIFY_ALLOW_WRITES ?= false
+VERIFY_ONLY ?=
+VERIFY_EXCLUDE ?=
 TF_VAR_india_sms_sender_id ?= $(INDIA_SMS_SENDER_ID)
 TF_VAR_india_dlt_entity_id ?= $(INDIA_DLT_ENTITY_ID)
 TF_VAR_india_signup_template_id ?= $(INDIA_SIGNUP_TEMPLATE_ID)
@@ -45,6 +49,19 @@ help:
 	@echo ''
 	@echo 'Available targets:'
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+verify-environment: ## Run bounded JSON verification; requires matching VERIFY_ENVIRONMENT and VERIFY_TARGET_ENVIRONMENT
+	@test -n "$(VERIFY_ENVIRONMENT)" || (echo "VERIFY_ENVIRONMENT is required" >&2; exit 2)
+	@test -n "$(VERIFY_TARGET_ENVIRONMENT)" || (echo "VERIFY_TARGET_ENVIRONMENT is required" >&2; exit 2)
+	go run ./cmd/verify \
+		--environment "$(VERIFY_ENVIRONMENT)" \
+		--mode "$(VERIFY_MODE)" \
+		$(if $(filter true,$(VERIFY_ALLOW_WRITES)),--allow-writes) \
+		$(if $(VERIFY_ONLY),--only "$(VERIFY_ONLY)") \
+		$(if $(VERIFY_EXCLUDE),--exclude "$(VERIFY_EXCLUDE)")
+
+recovery-drill: ## Classify an isolated non-production recovery drill
+	go run ./cmd/recovery-drill $(RECOVERY_DRILL_ARGS)
 
 # Infrastructure targets
 infra-backend-init: ## Create S3 bucket and DynamoDB table for Terraform backend
@@ -91,7 +108,7 @@ build-agentcore: ## Build the AgentCore voice runtime for linux/arm64 without pu
 	mkdir -p $(AGENTCORE_BUILD_DIR)
 	docker buildx build --platform linux/arm64 --file deploy/agentcore/Dockerfile --target voice-runtime-artifact --output type=local,dest=$(AGENTCORE_BUILD_DIR) .
 
-build-lambda: build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-email-delivery build-lambda-sqs-ses-feedback build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-ws build-lambda-outbox build-lambda-migrator build-lambda-voice-reconciler ## Build all Lambda binaries
+build-lambda: build-lambda-http build-lambda-a2a-stream build-lambda-sqs-invoice build-lambda-sqs-email-delivery build-lambda-sqs-ses-feedback build-lambda-sqs-gst build-lambda-sqs-bargaining build-lambda-bulk-import build-lambda-ws build-lambda-outbox build-lambda-recurring-invoices build-lambda-subscription-reconciler build-lambda-migrator build-lambda-voice-reconciler ## Build all Lambda binaries
 
 build-lambda-http: ## Build HTTP API Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/http
@@ -121,6 +138,10 @@ build-lambda-sqs-bargaining: ## Build bargaining SQS Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/sqs-bargaining
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o $(LAMBDA_BUILD_DIR)/sqs-bargaining/bootstrap ./cmd/lambda/sqs-bargaining
 
+build-lambda-bulk-import: ## Build durable bulk import SQS Lambda bootstrap binary
+	mkdir -p $(LAMBDA_BUILD_DIR)/bulk-import
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o $(LAMBDA_BUILD_DIR)/bulk-import/bootstrap ./cmd/lambda/bulk-import
+
 build-lambda-ws: ## Build WebSocket Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/ws
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o $(LAMBDA_BUILD_DIR)/ws/bootstrap ./cmd/lambda/ws
@@ -128,6 +149,14 @@ build-lambda-ws: ## Build WebSocket Lambda bootstrap binary
 build-lambda-outbox: ## Build stripped ARM64 Billeif outbox dispatcher Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/outbox
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o $(LAMBDA_BUILD_DIR)/outbox/bootstrap ./cmd/lambda/outbox
+
+build-lambda-recurring-invoices: ## Build stripped ARM64 Billeif recurring invoice Lambda bootstrap binary
+	mkdir -p $(LAMBDA_BUILD_DIR)/recurring-invoices
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o $(LAMBDA_BUILD_DIR)/recurring-invoices/bootstrap ./cmd/lambda/recurring-invoices
+
+build-lambda-subscription-reconciler: ## Build stripped ARM64 subscription reconciler Lambda
+	mkdir -p $(LAMBDA_BUILD_DIR)/subscription-reconciler
+	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o $(LAMBDA_BUILD_DIR)/subscription-reconciler/bootstrap ./cmd/lambda/subscription-reconciler
 
 build-lambda-migrator: migration-manifest-verify ## Build stripped ARM64 database migration Lambda bootstrap binary
 	mkdir -p $(LAMBDA_BUILD_DIR)/migrator
@@ -143,7 +172,7 @@ build-lambda-custom-sms-sender: ## Build the Node.js custom SMS sender Lambda pa
 	cp -R infrastructure/lambda/custom-sms-sender/. $(LAMBDA_BUILD_DIR)/custom-sms-sender/
 	cd $(LAMBDA_BUILD_DIR)/custom-sms-sender && pnpm install --prod --frozen-lockfile
 
-package-lambda: build-lambda build-lambda-custom-sms-sender package-lambda-email-delivery package-lambda-ses-feedback package-lambda-outbox package-lambda-migrator package-lambda-voice-reconciler ## Package Lambda artifacts into zip files
+package-lambda: build-lambda build-lambda-custom-sms-sender package-lambda-bulk-import package-lambda-email-delivery package-lambda-ses-feedback package-lambda-outbox package-lambda-recurring-invoices package-lambda-subscription-reconciler package-lambda-migrator package-lambda-voice-reconciler ## Package Lambda artifacts into zip files
 	rm -f $(LAMBDA_BUILD_DIR)/http.zip
 	TZ=UTC touch -t 198001010000 $(LAMBDA_BUILD_DIR)/http/bootstrap
 	cd $(LAMBDA_BUILD_DIR)/http && TZ=UTC zip -q -X -j ../http.zip bootstrap
@@ -171,6 +200,21 @@ package-lambda-outbox: build-lambda-outbox ## Package the Billeif outbox Lambda 
 	rm -f $(LAMBDA_BUILD_DIR)/outbox.zip
 	TZ=UTC touch -t 198001010000 $(LAMBDA_BUILD_DIR)/outbox/bootstrap
 	cd $(LAMBDA_BUILD_DIR)/outbox && TZ=UTC zip -q -X -j ../outbox.zip bootstrap
+
+package-lambda-bulk-import: build-lambda-bulk-import ## Package the durable bulk import Lambda deterministically
+	rm -f $(LAMBDA_BUILD_DIR)/bulk-import.zip
+	TZ=UTC touch -t 198001010000 $(LAMBDA_BUILD_DIR)/bulk-import/bootstrap
+	cd $(LAMBDA_BUILD_DIR)/bulk-import && TZ=UTC zip -q -X -j ../bulk-import.zip bootstrap
+
+package-lambda-recurring-invoices: build-lambda-recurring-invoices ## Package the Billeif recurring invoice Lambda deterministically
+	rm -f $(LAMBDA_BUILD_DIR)/recurring-invoices.zip
+	TZ=UTC touch -t 198001010000 $(LAMBDA_BUILD_DIR)/recurring-invoices/bootstrap
+	cd $(LAMBDA_BUILD_DIR)/recurring-invoices && TZ=UTC zip -q -X -j ../recurring-invoices.zip bootstrap
+
+package-lambda-subscription-reconciler: build-lambda-subscription-reconciler ## Package subscription reconciler deterministically
+	rm -f $(LAMBDA_BUILD_DIR)/subscription-reconciler.zip
+	TZ=UTC touch -t 198001010000 $(LAMBDA_BUILD_DIR)/subscription-reconciler/bootstrap
+	cd $(LAMBDA_BUILD_DIR)/subscription-reconciler && TZ=UTC zip -q -X -j ../subscription-reconciler.zip bootstrap
 
 package-lambda-email-delivery: build-lambda-sqs-email-delivery ## Package the Billeif email delivery Lambda deterministically
 	rm -f $(LAMBDA_BUILD_DIR)/sqs-email-delivery.zip
@@ -318,4 +362,4 @@ test-coverage: ## Generate test coverage report
 	@echo "Coverage report generated: coverage.html"
 
 swagger: ## Generate Swagger documentation
-	swag init -g internal/app/runtime.go -o docs/
+	go run github.com/swaggo/swag/cmd/swag@v1.16.6 init -g internal/app/runtime.go -o docs/

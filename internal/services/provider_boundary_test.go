@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"sync"
 	"testing"
 
@@ -61,8 +62,8 @@ func TestProviderServicesResolveOnlyAtConcreteUseBoundaries(t *testing.T) {
 	if _, err := payments.clientFor(context.Background()); err != nil {
 		t.Fatalf("construct Razorpay client: %v", err)
 	}
-	if err := gstProvider.ValidateCredentials(context.Background(), &GSTIntegrationAccountCredentials{}); err != nil {
-		t.Fatalf("validate GST credentials: %v", err)
+	if err := gstProvider.ValidateCredentials(context.Background(), &GSTIntegrationAccountCredentials{}); !errors.Is(err, ErrGSTCredentialValidationNotConfigured) {
+		t.Fatalf("validate GST credentials error = %v, want unsupported validation", err)
 	}
 
 	want := []config.SecretKind{

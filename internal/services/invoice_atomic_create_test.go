@@ -781,6 +781,7 @@ func (f *canonicalInvoiceCreatorFake) CreateByBusiness(_ context.Context, busine
 		Origin:        origin,
 		Version:       1,
 		BuyerSnapshot: input.BuyerSnapshot,
+		BranchID:      stringPointer(input.BranchID),
 		InvoiceDate:   input.InvoiceDate,
 		DueDate:       input.DueDate,
 		Currency:      firstNonEmpty(input.Currency, "INR"),
@@ -803,10 +804,12 @@ func TestDocumentServiceSalesInvoiceDelegationCallsCanonicalCreatorOnceWithoutRe
 	businessID := uuid.NewString()
 	customerID := uuid.NewString()
 	idempotencyKey := uuid.NewString()
+	branchID := uuid.NewString()
 	dueDate := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
 
 	document, err := service.CreateByType(context.Background(), businessID, models.DocumentTypeSalesInvoice, CreateDocumentInput{
 		IdempotencyKey: idempotencyKey,
+		BranchID:       branchID,
 		PartyID:        customerID,
 		PartyType:      models.DocumentPartyTypeCustomer,
 		IssueDate:      time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
@@ -832,6 +835,8 @@ func TestDocumentServiceSalesInvoiceDelegationCallsCanonicalCreatorOnceWithoutRe
 	if creator.input.BusinessID != businessID ||
 		creator.input.CustomerID != customerID ||
 		creator.input.IdempotencyKey != idempotencyKey ||
+		creator.input.BranchID != branchID ||
+		document.BranchID == nil || *document.BranchID != branchID ||
 		len(creator.input.Items) != 1 ||
 		creator.input.Items[0].Description != "Canonical line" ||
 		creator.input.Items[0].Discount != 10 {
@@ -857,7 +862,6 @@ func TestDocumentServiceSalesInvoiceDelegationRejectsFieldsCanonicalInvoiceCanno
 		name   string
 		mutate func(*CreateDocumentInput)
 	}{
-		{name: "branch", mutate: func(input *CreateDocumentInput) { input.BranchID = uuid.NewString() }},
 		{name: "foreign currency", mutate: func(input *CreateDocumentInput) {
 			input.Currency = "USD"
 			input.ExchangeRate = 83

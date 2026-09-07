@@ -9,16 +9,19 @@ locals {
   websocket_management_api_endpoint = "https://${aws_apigatewayv2_api.websocket.id}.execute-api.${var.aws_region}.amazonaws.com/${var.environment}"
 
   lambda_artifacts = {
-    api_http           = "${var.lambda_artifact_dir}/http.zip"
-    a2a_stream         = "${var.lambda_artifact_dir}/a2a-stream.zip"
-    sqs_invoice        = "${var.lambda_artifact_dir}/sqs-invoice.zip"
-    sqs_gst            = "${var.lambda_artifact_dir}/sqs-gst.zip"
-    sqs_bargaining     = "${var.lambda_artifact_dir}/sqs-bargaining.zip"
-    ws_handler         = "${var.lambda_artifact_dir}/ws.zip"
-    custom_sms_sender  = "${var.lambda_artifact_dir}/custom-sms-sender.zip"
-    outbox             = "${var.lambda_artifact_dir}/outbox.zip"
-    sqs_email_delivery = "${var.lambda_artifact_dir}/sqs-email-delivery.zip"
-    sqs_ses_feedback   = "${var.lambda_artifact_dir}/sqs-ses-feedback.zip"
+    api_http                = "${var.lambda_artifact_dir}/http.zip"
+    a2a_stream              = "${var.lambda_artifact_dir}/a2a-stream.zip"
+    sqs_invoice             = "${var.lambda_artifact_dir}/sqs-invoice.zip"
+    sqs_gst                 = "${var.lambda_artifact_dir}/sqs-gst.zip"
+    sqs_bargaining          = "${var.lambda_artifact_dir}/sqs-bargaining.zip"
+    ws_handler              = "${var.lambda_artifact_dir}/ws.zip"
+    custom_sms_sender       = "${var.lambda_artifact_dir}/custom-sms-sender.zip"
+    outbox                  = "${var.lambda_artifact_dir}/outbox.zip"
+    recurring_invoices      = "${var.lambda_artifact_dir}/recurring-invoices.zip"
+    subscription_reconciler = "${var.lambda_artifact_dir}/subscription-reconciler.zip"
+    sqs_email_delivery      = "${var.lambda_artifact_dir}/sqs-email-delivery.zip"
+    sqs_ses_feedback        = "${var.lambda_artifact_dir}/sqs-ses-feedback.zip"
+    bulk_import             = "${var.lambda_artifact_dir}/bulk-import.zip"
   }
 
   lambda_artifact_hashes = {
@@ -61,6 +64,17 @@ locals {
     WEBSOCKET_CONNECTIONS_TABLE      = aws_dynamodb_table.ws_connections.name
     LLM_API_URL                      = var.llm_api_url
     LLM_MODEL                        = var.llm_model
+    AI_AGENT_EXECUTION_ENABLED       = tostring(var.environment == "dev")
+    AI_SPEND_CURRENCY                = "USD"
+    AI_BUSINESS_DAILY_LIMIT_MICROS   = "1000000"
+    AI_AGENT_DAILY_LIMIT_MICROS      = "250000"
+    AI_RUN_TOKEN_BUDGET              = "10000"
+    AI_MAX_STEPS                     = "5"
+    AI_MAX_TOOL_CALLS                = "1"
+    AI_MAX_RETRIES                   = "0"
+    AI_MAX_DURATION                  = "5m"
+    AI_PROVIDER_FAILURE_THRESHOLD    = "3"
+    AI_PROVIDER_COOLDOWN             = "1m"
     EXA_BASE_URL                     = var.exa_base_url
     EXA_TIMEOUT                      = tostring(var.exa_timeout)
     GST_LOOKUP_BASE_URL              = var.gst_lookup_base_url
@@ -108,6 +122,10 @@ locals {
     INVOICE_CURSOR_HMAC_SECRET_ARN = aws_secretsmanager_secret.billeif_invoice_cursor_hmac.arn
   }
 
+  operator_http_env = var.platform_operator_group != "" ? {
+    PLATFORM_OPERATOR_GROUP = var.platform_operator_group
+  } : {}
+
   worker_secret_env = {
     invoice = merge(local.database_runtime_env, {
       CREDENTIAL_ENCRYPTION_SECRET_ARN = aws_secretsmanager_secret.credential_encryption.arn
@@ -150,6 +168,11 @@ resource "aws_cloudwatch_log_group" "lambda_ws_handler" {
 
 resource "aws_cloudwatch_log_group" "lambda_outbox_dispatcher" {
   name              = "/aws/lambda/${local.resource_prefix}-outbox-dispatcher"
+  retention_in_days = var.log_retention_days
+}
+
+resource "aws_cloudwatch_log_group" "lambda_recurring_invoices" {
+  name              = "/aws/lambda/${local.resource_prefix}-recurring-invoices"
   retention_in_days = var.log_retention_days
 }
 
@@ -208,6 +231,53 @@ resource "aws_lambda_function" "outbox_dispatcher" {
     aws_nat_gateway.main,
     aws_cloudwatch_log_group.lambda_outbox_dispatcher,
     aws_iam_role_policy.outbox_dispatcher,
+    aws_ssm_parameter.db_host,
+  ]
+}
+
+resource "aws_lambda_function" "recurring_invoices" {
+  function_name    = "${local.resource_prefix}-recurring-invoices"
+  role             = aws_iam_role.recurring_invoices.arn
+  runtime          = "provided.al2023"
+  handler          = "bootstrap"
+  architectures    = ["arm64"]
+  filename         = local.lambda_artifacts.recurring_invoices
+  source_code_hash = local.lambda_artifact_hashes.recurring_invoices
+  memory_size      = 256
+  timeout          = 60
+
+  reserved_concurrent_executions = local.background_processing_enabled ? (var.enable_lambda_reserved_concurrency ? 1 : null) : 0
+
+  environment {
+    variables = {
+      ENVIRONMENT             = var.environment
+      LOG_LEVEL               = "info"
+      LOG_FORMAT              = "json"
+      DATABASE_HOST_SSM_PARAM = local.db_host_ssm_parameter_name
+      DATABASE_SECRET_ARN     = aws_db_instance.main.master_user_secret[0].secret_arn
+      DATABASE_PORT           = tostring(var.db_port)
+      DATABASE_NAME           = var.db_name
+      DATABASE_SSL_MODE       = "require"
+    }
+  }
+
+  vpc_config {
+    subnet_ids         = aws_subnet.private[*].id
+    security_group_ids = [aws_security_group.lambda.id]
+  }
+
+  lifecycle {
+    precondition {
+      condition     = fileexists(local.lambda_artifacts.recurring_invoices)
+      error_message = "Missing Billeif recurring invoice Lambda artifact ${local.lambda_artifacts.recurring_invoices}. Run make package-lambda-recurring-invoices from the repository root before running Terraform."
+    }
+  }
+
+  depends_on = [
+    aws_ssm_association.nat_activation_ready,
+    aws_nat_gateway.main,
+    aws_cloudwatch_log_group.lambda_recurring_invoices,
+    aws_iam_role_policy.recurring_invoices,
     aws_ssm_parameter.db_host,
   ]
 }
@@ -339,9 +409,10 @@ resource "aws_lambda_function" "api_http" {
   }
 
   environment {
-    variables = merge(local.common_lambda_env, local.http_secret_env, local.http_cursor_secret_env, local.voice_http_lambda_env, local.rate_limit_http_env, {
+    variables = merge(local.common_lambda_env, local.http_secret_env, local.http_cursor_secret_env, local.operator_http_env, local.voice_http_lambda_env, local.rate_limit_http_env, {
       WEBSOCKET_API_ENDPOINT = local.websocket_api_invoke_url
       SERVER_BASE_URL        = local.http_api_invoke_url
+      SQS_BULK_IMPORT_QUEUE  = aws_sqs_queue.bulk_import.url
     })
   }
 

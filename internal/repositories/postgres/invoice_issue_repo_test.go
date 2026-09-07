@@ -199,6 +199,14 @@ func TestInvoiceRepositoryIssueDraftAtomicPersistsOneLegalResult(t *testing.T) {
 	repository, mock, closeDatabase := newStrictIssueSQLMockRepository(t)
 	defer closeDatabase()
 	command, invoice, document := strictIssueFixture()
+	stockCalls := 0
+	repository.ConfigureInvoiceIssueStockEffect(func(_ context.Context, _ *gorm.DB, issued *models.Document) error {
+		stockCalls++
+		if issued.Status != models.DocumentStatusIssued || issued.SerialNumber != "INV/26-27/000001" {
+			t.Fatalf("stock effect received non-issued document: %#v", issued)
+		}
+		return nil
+	})
 
 	defaultProfileID := expectStrictIssueTransactionPrefix(t, mock, invoice, document)
 	for stage := 0; stage < issueStageCount; stage++ {
@@ -235,6 +243,34 @@ func TestInvoiceRepositoryIssueDraftAtomicPersistsOneLegalResult(t *testing.T) {
 	if result.OutboxEvent.EventType != "invoice.issued.v1" ||
 		result.OutboxEvent.AggregateID != command.InvoiceID {
 		t.Fatalf("issued outbox event = %#v", result.OutboxEvent)
+	}
+	if stockCalls != 1 {
+		t.Fatalf("stock effect calls = %d, want 1", stockCalls)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("SQL expectations: %v", err)
+	}
+}
+
+func TestInvoiceRepositoryIssueDraftAtomicRollsBackWhenStockEffectFails(t *testing.T) {
+	repository, mock, closeDatabase := newStrictIssueSQLMockRepository(t)
+	defer closeDatabase()
+	command, invoice, document := strictIssueFixture()
+	stockErr := errors.New("insufficient stock")
+	repository.ConfigureInvoiceIssueStockEffect(func(context.Context, *gorm.DB, *models.Document) error {
+		return stockErr
+	})
+
+	expectStrictIssueTransactionPrefix(t, mock, invoice, document)
+	for stage := 0; stage <= 2; stage++ {
+		expectSuccessfulIssueStage(mock, stage)
+	}
+	mock.ExpectRollback()
+
+	result, err := repository.IssueDraftAtomic(context.Background(), command)
+
+	if result != nil || !errors.Is(err, stockErr) {
+		t.Fatalf("result/error = %#v/%v, want stock rollback", result, err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("SQL expectations: %v", err)
@@ -316,6 +352,11 @@ func TestInvoiceRepositoryIssueDraftAtomicReplaysCompletedResultAndRejectsChange
 		repository, mock, closeDatabase := newStrictIssueSQLMockRepository(t)
 		defer closeDatabase()
 		command := issueRepositoryTestCommand()
+		stockCalls := 0
+		repository.ConfigureInvoiceIssueStockEffect(func(context.Context, *gorm.DB, *models.Document) error {
+			stockCalls++
+			return nil
+		})
 		resultType := "invoice_issue"
 		issuedVersion := command.ExpectedVersion + 1
 		itemID := uuid.NewString()
@@ -348,6 +389,9 @@ func TestInvoiceRepositoryIssueDraftAtomicReplaysCompletedResultAndRejectsChange
 			result.FinalRender == nil || result.FinalRender.SourceInvoiceVersion == nil ||
 			*result.FinalRender.SourceInvoiceVersion != issuedVersion {
 			t.Fatalf("replay result/error = %#v/%v", result, err)
+		}
+		if stockCalls != 0 {
+			t.Fatalf("replay stock effect calls = %d, want 0", stockCalls)
 		}
 		if err := mock.ExpectationsWereMet(); err != nil {
 			t.Fatalf("SQL expectations: %v", err)

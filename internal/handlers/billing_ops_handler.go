@@ -14,12 +14,17 @@ import (
 )
 
 type BillingOpsHandler struct {
-	svc *services.BillingOpsService
-	log *logger.Logger
+	svc         *services.BillingOpsService
+	bulkImports *services.BulkImportService
+	log         *logger.Logger
 }
 
-func NewBillingOpsHandler(svc *services.BillingOpsService, log *logger.Logger) *BillingOpsHandler {
-	return &BillingOpsHandler{svc: svc, log: log}
+func NewBillingOpsHandler(svc *services.BillingOpsService, log *logger.Logger, bulkImports ...*services.BulkImportService) *BillingOpsHandler {
+	h := &BillingOpsHandler{svc: svc, log: log}
+	if len(bulkImports) != 0 {
+		h.bulkImports = bulkImports[0]
+	}
+	return h
 }
 
 // ListPriceLists returns all price lists for a business
@@ -385,8 +390,12 @@ func (h *BillingOpsHandler) ListBulkJobs(c *gin.Context) {
 	if !ok {
 		return
 	}
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
 	page, limit := utils.ParsePagination(c)
-	rows, total, err := h.svc.ListBulkJobs(c.Request.Context(), businessID, page, limit)
+	rows, total, err := h.svc.ListBulkJobs(c.Request.Context(), businessID, userID, page, limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -399,7 +408,11 @@ func (h *BillingOpsHandler) GetBulkJob(c *gin.Context) {
 	if !ok {
 		return
 	}
-	job, err := h.svc.GetBulkJob(c.Request.Context(), businessID, c.Param("id"))
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
+	job, err := h.svc.GetBulkJob(c.Request.Context(), businessID, userID, c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "bulk job not found"})
 		return
@@ -407,7 +420,7 @@ func (h *BillingOpsHandler) GetBulkJob(c *gin.Context) {
 	c.JSON(http.StatusOK, job)
 }
 
-func (h *BillingOpsHandler) createImportJob(c *gin.Context, jobType string) {
+func (h *BillingOpsHandler) validateImport(c *gin.Context, jobType string) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
 		return
@@ -416,59 +429,182 @@ func (h *BillingOpsHandler) createImportJob(c *gin.Context, jobType string) {
 	if !ok {
 		return
 	}
-	file, err := c.FormFile("file")
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "file is required"})
+	if h.bulkImports == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "bulk import processor unavailable", "code": "bulk_import_unavailable"})
 		return
 	}
-	fh, err := file.Open()
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	defer fh.Close()
-	content, err := io.ReadAll(fh)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	var input services.ValidateBulkImportInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid bulk import request", "code": "bulk_import_invalid"})
 		return
 	}
 	requestContextWithActor(c)
-	job, err := h.svc.CreateBulkJob(c.Request.Context(), services.CreateBulkJobInput{
-		BusinessID:  businessID,
-		CreatedBy:   userID,
-		JobType:     jobType,
-		FileName:    file.Filename,
-		ContentType: file.Header.Get("Content-Type"),
-		FileContent: content,
-		RequestPayload: map[string]interface{}{
-			"source": "imports_api",
-		},
-	})
+	job, err := h.bulkImports.Validate(c.Request.Context(), businessID, userID, jobType, input)
 	if err != nil {
-		statusCode := http.StatusInternalServerError
-		if isPermissionDeniedErr(err) {
-			statusCode = http.StatusForbidden
-		}
-		c.JSON(statusCode, gin.H{"error": err.Error()})
+		writeBulkImportError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, job)
+}
+
+// CreateCustomerImportJob validates a customer CSV without mutating customers.
+// @Summary Validate customer import
+// @Tags Imports
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body services.ValidateBulkImportInput true "Verified pending upload and CSV mapping"
+// @Success 201 {object} models.BulkJob
+// @Failure 400 {object} map[string]interface{}
+// @Failure 403 {object} map[string]interface{}
+// @Failure 409 {object} map[string]interface{}
+// @Router /imports/customers [post]
+func (h *BillingOpsHandler) CreateCustomerImportJob(c *gin.Context) {
+	h.validateImport(c, models.BulkJobTypeImportCustomers)
+}
+
+// CreateVendorImportJob validates a vendor CSV without mutating vendors.
+// @Summary Validate vendor import
+// @Tags Imports
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body services.ValidateBulkImportInput true "Verified pending upload and CSV mapping"
+// @Success 201 {object} models.BulkJob
+// @Router /imports/vendors [post]
+func (h *BillingOpsHandler) CreateVendorImportJob(c *gin.Context) {
+	h.validateImport(c, models.BulkJobTypeImportVendors)
+}
+
+// CreateProductImportJob validates a product CSV without mutating products.
+// @Summary Validate product import
+// @Tags Imports
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param input body services.ValidateBulkImportInput true "Verified pending upload and CSV mapping"
+// @Success 201 {object} models.BulkJob
+// @Router /imports/products [post]
+func (h *BillingOpsHandler) CreateProductImportJob(c *gin.Context) {
+	h.validateImport(c, models.BulkJobTypeImportProducts)
+}
+
+// CommitImport queues a previously validated import.
+// @Summary Commit validated import
+// @Tags Imports
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Bulk job UUID"
+// @Param Idempotency-Key header string true "UUID command key"
+// @Success 202 {object} models.BulkJob
+// @Failure 404 {object} map[string]interface{}
+// @Failure 409 {object} map[string]interface{}
+// @Failure 503 {object} map[string]interface{}
+// @Router /imports/{id}/commit [post]
+func (h *BillingOpsHandler) CommitImport(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
+	if h.bulkImports == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "bulk import processor unavailable", "code": "bulk_import_unavailable"})
+		return
+	}
+	commandID := c.GetHeader("Idempotency-Key")
+	requestContextWithActor(c)
+	job, err := h.bulkImports.Commit(c.Request.Context(), businessID, userID, c.Param("id"), commandID)
+	if err != nil {
+		writeBulkImportError(c, err)
 		return
 	}
 	c.JSON(http.StatusAccepted, job)
 }
 
-func (h *BillingOpsHandler) CreateCustomerImportJob(c *gin.Context) {
-	h.createImportJob(c, models.BulkJobTypeImportCustomers)
+// CancelImport cancels a non-terminal import.
+// @Summary Cancel bulk import
+// @Tags Imports
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Bulk job UUID"
+// @Success 200 {object} models.BulkJob
+// @Failure 404 {object} map[string]interface{}
+// @Failure 409 {object} map[string]interface{}
+// @Router /imports/{id} [delete]
+func (h *BillingOpsHandler) CancelImport(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
+	if h.bulkImports == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "bulk import processor unavailable", "code": "bulk_import_unavailable"})
+		return
+	}
+	requestContextWithActor(c)
+	job, err := h.bulkImports.Cancel(c.Request.Context(), businessID, userID, c.Param("id"))
+	if err != nil {
+		writeBulkImportError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, job)
 }
-func (h *BillingOpsHandler) CreateVendorImportJob(c *gin.Context) {
-	h.createImportJob(c, models.BulkJobTypeImportVendors)
+
+// DownloadImportArtifact creates a short-lived uploader-scoped result URL.
+// @Summary Download bulk import result
+// @Tags Imports
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Bulk job UUID"
+// @Param artifactID path string true "Artifact UUID"
+// @Success 200 {object} services.BulkImportArtifactDownload
+// @Failure 404 {object} map[string]interface{}
+// @Failure 503 {object} map[string]interface{}
+// @Router /imports/{id}/artifacts/{artifactID}/download [get]
+func (h *BillingOpsHandler) DownloadImportArtifact(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
+	if h.bulkImports == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "bulk import processor unavailable", "code": "bulk_import_unavailable"})
+		return
+	}
+	requestContextWithActor(c)
+	download, err := h.bulkImports.GetArtifactDownload(c.Request.Context(), businessID, userID, c.Param("id"), c.Param("artifactID"))
+	if err != nil {
+		writeBulkImportError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, download)
 }
-func (h *BillingOpsHandler) CreateProductImportJob(c *gin.Context) {
-	h.createImportJob(c, models.BulkJobTypeImportProducts)
-}
-func (h *BillingOpsHandler) CreateInvoiceImportJob(c *gin.Context) {
-	h.createImportJob(c, models.BulkJobTypeImportInvoices)
-}
-func (h *BillingOpsHandler) CreateDocumentImportJob(c *gin.Context) {
-	h.createImportJob(c, models.BulkJobTypeImportDocuments)
+
+func writeBulkImportError(c *gin.Context, err error) {
+	var capabilityErr *services.CapabilityUnavailableError
+	switch {
+	case isPermissionDeniedErr(err):
+		c.JSON(http.StatusForbidden, gin.H{"error": "bulk import permission denied", "code": "bulk_import_forbidden"})
+	case errors.As(err, &capabilityErr):
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "bulk import capability unavailable", "code": capabilityErr.Code, "reason_code": capabilityErr.ReasonCode})
+	case errors.Is(err, services.ErrBulkImportNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": "bulk import not found", "code": "bulk_import_not_found"})
+	case errors.Is(err, services.ErrBulkImportConflict):
+		c.JSON(http.StatusConflict, gin.H{"error": "bulk import state conflict", "code": "bulk_import_conflict"})
+	case errors.Is(err, services.ErrBulkImportRetryable):
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "bulk import temporarily unavailable", "code": "bulk_import_retryable"})
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid bulk import", "code": "bulk_import_invalid"})
+	}
 }
 
 func (h *BillingOpsHandler) CreateInvoiceBulkAction(c *gin.Context) {
@@ -636,8 +772,12 @@ func (h *BillingOpsHandler) GenerateInvoiceSubscriptionNow(c *gin.Context) {
 	if !ok {
 		return
 	}
+	idempotencyKey, ok := requireIdempotencyKey(c)
+	if !ok {
+		return
+	}
 	requestContextWithActor(c)
-	run, err := h.svc.GenerateInvoiceSubscriptionNow(c.Request.Context(), businessID, c.Param("id"))
+	run, err := h.svc.GenerateInvoiceSubscriptionNow(c.Request.Context(), businessID, c.Param("id"), idempotencyKey)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

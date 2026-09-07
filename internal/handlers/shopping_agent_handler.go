@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 
 	"invoice-backend/internal/middleware"
@@ -39,6 +40,15 @@ type CreateCartRequest struct {
 
 type AddToCartRequest struct {
 	ProductID string `json:"product_id" binding:"required"`
+}
+
+type CartItemMutationRequest struct {
+	Version  int64 `json:"version" binding:"required,gte=1"`
+	Quantity int   `json:"quantity,omitempty" binding:"omitempty,gte=1,lte=10000"`
+}
+
+type CartVersionRequest struct {
+	Version int64 `json:"version" binding:"required,gte=1"`
 }
 
 type CheckoutRequest struct {
@@ -114,6 +124,14 @@ func (h *ShoppingAgentHandler) CreateCart(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
 		return
 	}
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	if agent.BusinessID != businessID {
+		c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+		return
+	}
 
 	var req CreateCartRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -127,6 +145,7 @@ func (h *ShoppingAgentHandler) CreateCart(c *gin.Context) {
 
 	shoppingReq := &services.ShoppingIntentRequest{
 		UserID:          userID,
+		BusinessID:      businessID,
 		ShoppingAgentID: shoppingAgentID,
 		Query:           req.Query,
 		ProductIDs:      req.ProductIDs,
@@ -172,6 +191,14 @@ func (h *ShoppingAgentHandler) AddToCart(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
 		return
 	}
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	if agent.BusinessID != businessID {
+		c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+		return
+	}
 
 	var req AddToCartRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -179,13 +206,149 @@ func (h *ShoppingAgentHandler) AddToCart(c *gin.Context) {
 		return
 	}
 
-	cartMandate, err := h.svc.AddToCart(c.Request.Context(), userID, shoppingAgentID, req.ProductID)
+	cartMandate, err := h.svc.AddToCart(c.Request.Context(), userID, businessID, shoppingAgentID, req.ProductID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	c.JSON(http.StatusCreated, cartMandate)
+}
+
+// AddCartItem adds an authoritative product snapshot to an editable cart.
+// @Summary Add item to editable cart
+// @Tags Shopping
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Cart ID"
+// @Param product_id path string true "Marketplace product ID"
+// @Param input body CartItemMutationRequest true "Expected version and quantity"
+// @Success 200 {object} models.CartMandate
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Router /agents/shopping/cart/{id}/items/{product_id} [post]
+func (h *ShoppingAgentHandler) AddCartItem(c *gin.Context) {
+	h.mutateCartItem(c, "add")
+}
+
+// UpdateCartItem replaces an item quantity and refreshes all price, availability and tax snapshots.
+// @Summary Update editable cart item
+// @Tags Shopping
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Cart ID"
+// @Param product_id path string true "Marketplace product ID"
+// @Param input body CartItemMutationRequest true "Expected version and quantity"
+// @Success 200 {object} models.CartMandate
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Router /agents/shopping/cart/{id}/items/{product_id} [patch]
+func (h *ShoppingAgentHandler) UpdateCartItem(c *gin.Context) {
+	h.mutateCartItem(c, "update")
+}
+
+func (h *ShoppingAgentHandler) mutateCartItem(c *gin.Context, operation string) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	var input CartItemMutationRequest
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	mutation := services.CartMutationInput{Version: input.Version, Quantity: input.Quantity}
+	var cart *models.CartMandate
+	var err error
+	if operation == "add" {
+		cart, err = h.svc.AddCartItem(c.Request.Context(), c.Param("id"), middleware.GetUserID(c), businessID, c.Param("product_id"), mutation)
+	} else {
+		cart, err = h.svc.UpdateCartItem(c.Request.Context(), c.Param("id"), middleware.GetUserID(c), businessID, c.Param("product_id"), mutation)
+	}
+	if err != nil {
+		writeCartMutationError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, cart)
+}
+
+// RemoveCartItem removes an item from an editable cart.
+// @Summary Remove editable cart item
+// @Tags Shopping
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Cart ID"
+// @Param product_id path string true "Marketplace product ID"
+// @Param input body CartVersionRequest true "Expected cart version"
+// @Success 200 {object} models.CartMandate
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Router /agents/shopping/cart/{id}/items/{product_id} [delete]
+func (h *ShoppingAgentHandler) RemoveCartItem(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	var input CartVersionRequest
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	cart, err := h.svc.RemoveCartItem(c.Request.Context(), c.Param("id"), middleware.GetUserID(c), businessID, c.Param("product_id"), input.Version)
+	if err != nil {
+		writeCartMutationError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, cart)
+}
+
+// ClearCart removes every item from an editable cart.
+// @Summary Clear editable cart
+// @Tags Shopping
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Cart ID"
+// @Param input body CartVersionRequest true "Expected cart version"
+// @Success 200 {object} models.CartMandate
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Router /agents/shopping/cart/{id}/items [delete]
+func (h *ShoppingAgentHandler) ClearCart(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	var input CartVersionRequest
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	cart, err := h.svc.ClearCart(c.Request.Context(), c.Param("id"), middleware.GetUserID(c), businessID, input.Version)
+	if err != nil {
+		writeCartMutationError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, cart)
+}
+
+func writeCartMutationError(c *gin.Context, err error) {
+	status := http.StatusBadRequest
+	switch {
+	case errors.Is(err, services.ErrCartMandateNotFound):
+		status = http.StatusNotFound
+	case errors.Is(err, services.ErrCartVersionConflict), errors.Is(err, services.ErrCartNotEditable),
+		errors.Is(err, services.ErrInsufficientStock), errors.Is(err, services.ErrMandateExpired):
+		status = http.StatusConflict
+	}
+	c.JSON(status, gin.H{"error": err.Error()})
 }
 
 // Checkout completes checkout for a shopping cart
@@ -202,6 +365,10 @@ func (h *ShoppingAgentHandler) AddToCart(c *gin.Context) {
 // @Router /agents/shopping/checkout [post]
 func (h *ShoppingAgentHandler) Checkout(c *gin.Context) {
 	userID := c.GetString("user_id")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 
 	var req CheckoutRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -211,6 +378,7 @@ func (h *ShoppingAgentHandler) Checkout(c *gin.Context) {
 
 	checkoutReq := &services.CheckoutRequest{
 		UserID:          userID,
+		BusinessID:      businessID,
 		CartMandateID:   req.CartMandateID,
 		PaymentMethodID: req.PaymentMethodID,
 	}
@@ -238,8 +406,12 @@ func (h *ShoppingAgentHandler) Checkout(c *gin.Context) {
 func (h *ShoppingAgentHandler) GetCart(c *gin.Context) {
 	cartID := c.Param("id")
 	userID := middleware.GetUserID(c)
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 
-	cartMandate, err := h.svc.GetCartMandate(c.Request.Context(), cartID, userID)
+	cartMandate, err := h.svc.GetCartMandateForScope(c.Request.Context(), cartID, userID, businessID)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "cart not found"})
 		return
@@ -259,9 +431,13 @@ func (h *ShoppingAgentHandler) GetCart(c *gin.Context) {
 // @Router /agents/shopping/carts [get]
 func (h *ShoppingAgentHandler) ListCarts(c *gin.Context) {
 	userID := c.GetString("user_id")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 	page, limit := utils.ParsePagination(c)
 
-	carts, total, err := h.svc.GetUserCarts(c.Request.Context(), userID, page, limit)
+	carts, total, err := h.svc.GetUserCarts(c.Request.Context(), userID, businessID, page, limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

@@ -19,7 +19,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 )
 
-const defaultWSConnectionsTable = "invoice-backend-ws-connections"
+const (
+	defaultWSConnectionsTable      = "invoice-backend-ws-connections"
+	maxWebSocketConnectionLifetime = 2 * time.Hour
+)
 
 type WebSocketConnection struct {
 	ConnectionID string    `dynamodbav:"connection_id"`
@@ -27,6 +30,7 @@ type WebSocketConnection struct {
 	BusinessID   string    `dynamodbav:"business_id,omitempty"`
 	ConnectedAt  time.Time `dynamodbav:"connected_at"`
 	LastSeenAt   time.Time `dynamodbav:"last_seen_at"`
+	TTL          int64     `dynamodbav:"ttl"`
 }
 
 type WebSocketConnectionService struct {
@@ -66,16 +70,9 @@ func (s *WebSocketConnectionService) RegisterConnection(ctx context.Context, con
 }
 
 func (s *WebSocketConnectionService) RegisterConnectionWithBusiness(ctx context.Context, connectionID, userID, businessID string) error {
-	if connectionID == "" || userID == "" {
-		return fmt.Errorf("connection ID and user ID are required")
-	}
-
-	rec := WebSocketConnection{
-		ConnectionID: connectionID,
-		UserID:       userID,
-		BusinessID:   strings.TrimSpace(businessID),
-		ConnectedAt:  time.Now().UTC(),
-		LastSeenAt:   time.Now().UTC(),
+	rec, err := newWebSocketConnection(connectionID, userID, businessID, time.Now().UTC())
+	if err != nil {
+		return err
 	}
 
 	item, err := attributevalue.MarshalMap(rec)
@@ -91,6 +88,24 @@ func (s *WebSocketConnectionService) RegisterConnectionWithBusiness(ctx context.
 		return fmt.Errorf("put websocket connection: %w", err)
 	}
 	return nil
+}
+
+func newWebSocketConnection(connectionID, userID, businessID string, now time.Time) (*WebSocketConnection, error) {
+	connectionID = strings.TrimSpace(connectionID)
+	userID = strings.TrimSpace(userID)
+	businessID = strings.TrimSpace(businessID)
+	if connectionID == "" || userID == "" || businessID == "" {
+		return nil, fmt.Errorf("connection ID, user ID, and business ID are required")
+	}
+	now = now.UTC()
+	return &WebSocketConnection{
+		ConnectionID: connectionID,
+		UserID:       userID,
+		BusinessID:   businessID,
+		ConnectedAt:  now,
+		LastSeenAt:   now,
+		TTL:          now.Add(maxWebSocketConnectionLifetime).Unix(),
+	}, nil
 }
 
 func (s *WebSocketConnectionService) GetConnection(ctx context.Context, connectionID string) (*WebSocketConnection, error) {
@@ -270,6 +285,16 @@ func (s *WebSocketConnectionService) BroadcastToAll(ctx context.Context, msg *we
 	}
 
 	return nil
+}
+
+func (s *WebSocketConnectionService) SendHeartbeat(ctx context.Context, connectionID string) error {
+	payload, err := json.Marshal(map[string]interface{}{
+		"type": "pong", "data": map[string]interface{}{}, "timestamp": time.Now().UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		return fmt.Errorf("marshal websocket heartbeat: %w", err)
+	}
+	return s.postToConnection(ctx, connectionID, payload)
 }
 
 func (s *WebSocketConnectionService) postToConnection(ctx context.Context, connectionID string, payload []byte) error {
