@@ -29,7 +29,7 @@ type AP2Repository interface {
 	GetCartMandateByMerchant(ctx context.Context, id, merchantID string) (*models.CartMandate, error)
 	GetCartMandatesByUser(ctx context.Context, userID string, page, limit int) ([]*models.CartMandate, int64, error)
 	UpdateCartMandate(ctx context.Context, mandate *models.CartMandate) error
-	SignCartMandate(ctx context.Context, id, signature string) error
+	SignCartMandate(ctx context.Context, id, merchantID, signature, publicKey string) error
 	GetPendingCartMandates(ctx context.Context, merchantID string) ([]*models.CartMandate, error)
 
 	// Payment Mandates

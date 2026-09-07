@@ -1,0 +1,49 @@
+name: Security and contract gates
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
+      - name: Static and dependency checks
+        run: |
+          go vet ./...
+          go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      - name: Migration integrity
+        run: make migration-manifest-verify
+      - name: Tenant and sensitive logging checks
+        run: |
+          go test ./internal/middleware ./internal/services ./internal/repositories/postgres ./internal/app
+      - name: Terraform format and validation
+        working-directory: infrastructure/terraform
+        run: |
+          terraform fmt -check -recursive
+          terraform init -backend=false
+          terraform validate
+      - name: OpenAPI drift
+        run: |
+          make swagger
+          git diff --exit-code -- docs openapi
+      - name: Tracked secret patterns
+        shell: bash
+        run: |
+          if git grep -nE '(AKIA[0-9A-Z]{16}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----)' -- ':!**/*_test.go' ':!docs/**'; then
+            echo 'tracked credential pattern found' >&2
+            exit 1
+          fi

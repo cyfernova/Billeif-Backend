@@ -185,6 +185,22 @@ resource "aws_iam_role_policy_attachment" "outbox_dispatcher_vpc_access" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
 }
 
+resource "aws_iam_role" "recurring_invoices" {
+  name                 = "${local.resource_prefix}-recurring-invoices-exec-role"
+  assume_role_policy   = data.aws_iam_policy_document.lambda_assume_role.json
+  permissions_boundary = local.workload_permissions_boundary_arn
+}
+
+resource "aws_iam_role_policy_attachment" "recurring_invoices_basic" {
+  role       = aws_iam_role.recurring_invoices.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy_attachment" "recurring_invoices_vpc_access" {
+  role       = aws_iam_role.recurring_invoices.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+}
+
 resource "aws_iam_role" "email_delivery" {
   name                 = "${local.resource_prefix}-email-delivery-exec-role"
   assume_role_policy   = data.aws_iam_policy_document.lambda_assume_role.json
@@ -421,6 +437,71 @@ resource "aws_iam_role_policy" "outbox_dispatcher" {
   policy = data.aws_iam_policy_document.outbox_dispatcher.json
 }
 
+data "aws_iam_policy_document" "recurring_invoices" {
+  statement {
+    sid       = "RecurringInvoiceParameters"
+    effect    = "Allow"
+    actions   = ["ssm:GetParameters"]
+    resources = [local.db_host_ssm_parameter_arn]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["true"]
+    }
+  }
+
+  statement {
+    sid    = "RecurringInvoiceSecret"
+    effect = "Allow"
+    actions = [
+      "secretsmanager:DescribeSecret",
+      "secretsmanager:GetSecretValue",
+    ]
+    resources = [aws_db_instance.main.master_user_secret[0].secret_arn]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["true"]
+    }
+  }
+
+  statement {
+    sid    = "RecurringInvoiceSecretKMS"
+    effect = "Allow"
+    actions = [
+      "kms:Decrypt",
+      "kms:DescribeKey",
+    ]
+    resources = [aws_kms_key.application_secrets.arn]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["true"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:ViaService"
+      values   = ["secretsmanager.${var.aws_region}.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "kms:EncryptionContext:SecretARN"
+      values   = [aws_db_instance.main.master_user_secret[0].secret_arn]
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "recurring_invoices" {
+  name   = "${local.resource_prefix}-recurring-invoices-policy"
+  role   = aws_iam_role.recurring_invoices.id
+  policy = data.aws_iam_policy_document.recurring_invoices.json
+}
+
 data "aws_iam_policy_document" "lambda_app" {
   statement {
     sid    = "S3Access"
@@ -616,7 +697,18 @@ data "aws_iam_policy_document" "lambda_http_app" {
     actions = ["s3:PutObject"]
     resources = [
       "${aws_s3_bucket.business_logos.arn}/logos/*",
+      "${aws_s3_bucket.business_logos.arn}/pending/*",
       "${aws_s3_bucket.business_logos.arn}/profile-pictures/*",
+    ]
+  }
+
+  statement {
+    sid     = "HTTPBusinessLogoLifecycle"
+    effect  = "Allow"
+    actions = ["s3:DeleteObject", "s3:GetObject"]
+    resources = [
+      "${aws_s3_bucket.business_logos.arn}/logos/*",
+      "${aws_s3_bucket.business_logos.arn}/pending/*",
     ]
   }
 
@@ -632,6 +724,20 @@ data "aws_iam_policy_document" "lambda_http_app" {
     effect    = "Allow"
     actions   = ["s3:GetObject"]
     resources = ["${aws_s3_bucket.invoices_pdf.arn}/invoices/*/*/v*/final.pdf"]
+  }
+
+  statement {
+    sid       = "HTTPDocumentPDFReads"
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.invoices_pdf.arn}/documents/*/*/*.pdf"]
+  }
+
+  statement {
+    sid       = "HTTPBulkImportResultReads"
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.invoices_pdf.arn}/bulk-import-results/*"]
   }
 
   statement {
@@ -682,6 +788,7 @@ data "aws_iam_policy_document" "lambda_http_app" {
       aws_sqs_queue.gst_processing.arn,
       aws_sqs_queue.bargaining_negotiation.arn,
       aws_sqs_queue.email_delivery.arn,
+      aws_sqs_queue.bulk_import.arn,
     ]
   }
 

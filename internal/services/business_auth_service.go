@@ -213,6 +213,7 @@ func legacyRolePermissions(role string) []string {
 	case "accountant":
 		return []string{
 			PermissionDocumentsManage,
+			PermissionProjectsManage,
 			PermissionDocumentsExport,
 			PermissionCustomersCreate,
 			PermissionCustomersUpdate,
@@ -240,6 +241,8 @@ func legacyRolePermissions(role string) []string {
 			PermissionReportsExport,
 			PermissionReportsShare,
 			PermissionReportsView,
+			PermissionAccountingManage,
+			PermissionBankingManage,
 			PermissionPOSOperate,
 			PermissionAgentsView,
 		}

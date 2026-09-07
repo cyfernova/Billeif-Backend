@@ -61,6 +61,9 @@ type CartItem struct {
 	Name        string  `json:"name"`
 	Quantity    int     `json:"quantity"`
 	UnitPrice   float64 `json:"unit_price"`
+	TaxRate     float64 `json:"tax_rate,omitempty"`
+	TaxAmount   float64 `json:"tax_amount,omitempty"`
+	LineTotal   float64 `json:"line_total,omitempty"`
 	Description *string `json:"description,omitempty"`
 }
 
@@ -119,7 +122,11 @@ func (ms *MandateService) CreateCartMandate(req *CartMandateRequest) (*models.Ca
 
 	var totalAmount float64
 	for _, item := range req.Items {
-		totalAmount += float64(item.Quantity) * item.UnitPrice
+		lineTotal := item.LineTotal
+		if lineTotal <= 0 {
+			lineTotal = float64(item.Quantity) * item.UnitPrice
+		}
+		totalAmount += lineTotal
 	}
 
 	cartMandate := &models.CartMandate{
@@ -128,6 +135,7 @@ func (ms *MandateService) CreateCartMandate(req *CartMandateRequest) (*models.Ca
 		AgentID:         req.AgentID,
 		MerchantID:      req.MerchantID,
 		Items:           string(itemsJSON),
+		SubtotalAmount:  totalAmount,
 		TotalAmount:     totalAmount,
 		Currency:        "INR",
 		Signature:       req.Signature,

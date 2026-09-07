@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"net/url"
+	"path"
 	"strings"
 	"time"
 
@@ -19,6 +22,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type DocumentService struct {
@@ -38,6 +42,7 @@ type DocumentService struct {
 	salesInvoiceIssuer salesInvoiceDocumentIssuer
 	sqs                *sqs.Client
 	permissions        PermissionChecker
+	pdfPresigner       InvoicePDFPresigner
 	log                *logger.Logger
 }
 
@@ -126,6 +131,7 @@ type CreateDocumentInput struct {
 	ReportTags           map[string]interface{}    `json:"report_tags,omitempty"`
 	Withholdings         []WithholdingInput        `json:"withholdings,omitempty"`
 	Lines                []CreateDocumentLineInput `json:"lines" binding:"required,min=1,dive"`
+	Authorization        PostingAuthorization      `json:"-"`
 }
 
 type ConvertDocumentLineQuantity struct {
@@ -138,6 +144,7 @@ type ConvertDocumentInput struct {
 	Status             string                        `json:"status"`
 	IssueDate          time.Time                     `json:"issue_date"`
 	LineQuantities     []ConvertDocumentLineQuantity `json:"line_quantities,omitempty"`
+	Authorization      PostingAuthorization          `json:"-"`
 }
 
 type MergeDocumentsInput struct {
@@ -241,15 +248,35 @@ func (s *DocumentService) CreateByType(ctx context.Context, businessID, document
 	if err != nil {
 		return nil, err
 	}
-	if err := s.repo.Create(ctx, document); err != nil {
-		return nil, err
-	}
-	if err := s.syncDocumentWithholdings(ctx, document, input.Withholdings); err != nil {
-		return nil, err
+	if document.Status == models.DocumentStatusDraft {
+		if err := s.repo.Create(ctx, document); err != nil {
+			return nil, err
+		}
+		if err := s.syncDocumentWithholdings(ctx, document, input.Withholdings); err != nil {
+			return nil, err
+		}
+	} else {
+		overrideID, overrideErr := s.prepareDocumentOverride(ctx, businessID, document.IssueDate, input.Authorization)
+		if overrideErr != nil {
+			return nil, overrideErr
+		}
+		if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := persistDocumentCreateTx(tx, document); err != nil {
+				return err
+			}
+			if err := syncDocumentWithholdingsTx(tx, document, input.Withholdings); err != nil {
+				return err
+			}
+			return s.applyDocumentAccountingEffectsTx(ctx, tx, document, overrideID)
+		}); err != nil {
+			return nil, err
+		}
 	}
 	if document.Status != models.DocumentStatusDraft {
-		if err := s.applyPostCreateSideEffects(ctx, document); err != nil {
-			return nil, err
+		if document.DocumentType == models.DocumentTypeShippingLabel {
+			if _, err := s.shipping.EnsureLabelForDocument(ctx, document); err != nil {
+				return nil, err
+			}
 		}
 		if s.taxCompliance != nil {
 			if err := s.taxCompliance.EnqueueDocumentCompliance(ctx, document, "document_create"); err != nil {
@@ -269,9 +296,19 @@ func (s *DocumentService) createPOSSalesInvoice(ctx context.Context, businessID 
 	return s.salesInvoices.createPOSSalesInvoiceDocument(ctx, businessID, input)
 }
 
+func (s *DocumentService) createStorefrontSalesInvoice(ctx context.Context, businessID string, input CreateInvoiceInput) (*models.Document, error) {
+	if s.salesInvoices == nil {
+		return nil, fmt.Errorf("canonical sales invoice creator is not configured")
+	}
+	return s.salesInvoices.createStorefrontSalesInvoiceDocument(ctx, businessID, input)
+}
+
 func (s *DocumentService) buildDocument(ctx context.Context, businessID, documentType string, input CreateDocumentInput) (*models.Document, error) {
 	if !isSupportedDocumentType(documentType) {
 		return nil, fmt.Errorf("unsupported document type: %s", documentType)
+	}
+	if status := coalesceString(input.Status, models.DocumentStatusDraft); status != models.DocumentStatusDraft && status != models.DocumentStatusIssued {
+		return nil, fmt.Errorf("document status must be draft or issued")
 	}
 	business, err := s.businessRepo.GetByID(ctx, businessID)
 	if err != nil {
@@ -659,15 +696,35 @@ func (s *DocumentService) UpdateByType(ctx context.Context, businessID, id, docu
 	existing.CessTotal = rebuilt.CessTotal
 	existing.Total = rebuilt.Total
 	existing.BalanceDue = rebuilt.Total - existing.PaidAmount
-	if err := s.repo.UpdateDraft(ctx, existing); err != nil {
-		return nil, err
-	}
-	if err := s.syncDocumentWithholdings(ctx, existing, input.Withholdings); err != nil {
-		return nil, err
+	if existing.Status == models.DocumentStatusDraft {
+		if err := s.repo.UpdateDraft(ctx, existing); err != nil {
+			return nil, err
+		}
+		if err := s.syncDocumentWithholdings(ctx, existing, input.Withholdings); err != nil {
+			return nil, err
+		}
+	} else {
+		overrideID, overrideErr := s.prepareDocumentOverride(ctx, businessID, existing.IssueDate, input.Authorization)
+		if overrideErr != nil {
+			return nil, overrideErr
+		}
+		if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := persistDocumentUpdateTx(tx, existing, true); err != nil {
+				return err
+			}
+			if err := syncDocumentWithholdingsTx(tx, existing, input.Withholdings); err != nil {
+				return err
+			}
+			return s.applyDocumentAccountingEffectsTx(ctx, tx, existing, overrideID)
+		}); err != nil {
+			return nil, err
+		}
 	}
 	if existing.Status != models.DocumentStatusDraft {
-		if err := s.applyPostCreateSideEffects(ctx, existing); err != nil {
-			return nil, err
+		if existing.DocumentType == models.DocumentTypeShippingLabel {
+			if _, err := s.shipping.EnsureLabelForDocument(ctx, existing); err != nil {
+				return nil, err
+			}
 		}
 		if s.taxCompliance != nil {
 			if err := s.taxCompliance.EnqueueDocumentCompliance(ctx, existing, "document_update"); err != nil {
@@ -709,16 +766,27 @@ func (s *DocumentService) CancelByType(ctx context.Context, businessID, id, docu
 	if document.DocumentType != documentType {
 		return nil, fmt.Errorf("document type mismatch")
 	}
+	if document.Status != models.DocumentStatusDraft {
+		return nil, fmt.Errorf("issued documents must be reversed through their financial workflow")
+	}
 	now := time.Now()
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var locked models.Document
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND business_id=? AND status=? AND deleted_at IS NULL", id, businessID, models.DocumentStatusDraft).First(&locked).Error; err != nil {
+			return fmt.Errorf("draft document not found")
+		}
+		result := tx.Model(&models.Document{}).Where("id=? AND business_id=? AND status=?", id, businessID, models.DocumentStatusDraft).Updates(map[string]interface{}{"status": models.DocumentStatusCancelled, "cancellation_reason": reason, "cancelled_at": now})
+		if result.Error != nil || result.RowsAffected != 1 {
+			return fmt.Errorf("document changed during cancellation")
+		}
+		return s.inventory.ReleaseReservationsTx(ctx, tx, businessID, document.ID)
+	})
+	if err != nil {
+		return nil, err
+	}
 	document.Status = models.DocumentStatusCancelled
 	document.CancellationReason = &reason
 	document.CancelledAt = &now
-	if err := s.repo.Update(ctx, document); err != nil {
-		return nil, err
-	}
-	if err := s.inventory.ReleaseReservations(ctx, document.ID); err != nil {
-		return nil, err
-	}
 	s.recordRevision(ctx, document, "cancelled", map[string]interface{}{"reason": reason})
 	_ = recordActivityLog(ctx, s.db, businessID, "document", document.ID, "cancelled", reason, document, nil, nil)
 	return document, nil
@@ -843,6 +911,13 @@ func (s *DocumentService) ConvertByBusiness(ctx context.Context, businessID, id 
 	if !isAllowedConversion(source.DocumentType, input.TargetDocumentType) {
 		return nil, fmt.Errorf("conversion from %s to %s is not allowed", source.DocumentType, input.TargetDocumentType)
 	}
+	if !isConvertibleSourceStatus(source.Status) {
+		return nil, fmt.Errorf("source document is not convertible in status %s", source.Status)
+	}
+	targetStatus := coalesceString(input.Status, models.DocumentStatusDraft)
+	if targetStatus != models.DocumentStatusDraft && targetStatus != models.DocumentStatusIssued {
+		return nil, fmt.Errorf("converted document status must be draft or issued")
+	}
 
 	qtyByLine := make(map[string]float64)
 	for _, requested := range input.LineQuantities {
@@ -875,6 +950,7 @@ func (s *DocumentService) ConvertByBusiness(ctx context.Context, businessID, id 
 		targetLineIndex   int
 		quantityUsed      float64
 		quantityRemaining float64
+		quantityBefore    float64
 	}
 	linkCandidates := make([]linkCandidate, 0, len(source.Lines))
 	allUsed := true
@@ -910,6 +986,7 @@ func (s *DocumentService) ConvertByBusiness(ctx context.Context, businessID, id 
 			sourceLineID:    line.ID,
 			targetLineIndex: len(converted.Lines) - 1,
 			quantityUsed:    requestedQty,
+			quantityBefore:  line.RemainingQuantity,
 		})
 		converted.Subtotal += cloned.LineSubtotal
 		converted.DiscountTotal += cloned.DiscountAmount
@@ -927,37 +1004,84 @@ func (s *DocumentService) ConvertByBusiness(ctx context.Context, businessID, id 
 		return nil, fmt.Errorf("no convertible line items found")
 	}
 	converted.BalanceDue = converted.Total
-	if err := s.repo.Create(ctx, converted); err != nil {
-		return nil, err
-	}
-
-	if allUsed {
-		source.Status = models.DocumentStatusFullyConverted
-	} else {
-		source.Status = models.DocumentStatusPartiallyConverted
-	}
-	if err := s.repo.Update(ctx, source); err != nil {
-		return nil, err
-	}
-	for _, candidate := range linkCandidates {
-		targetLine := converted.Lines[candidate.targetLineIndex]
-		sourceLineID := candidate.sourceLineID
-		targetLineID := targetLine.ID
-		if err := s.repo.CreateLink(ctx, &models.DocumentLink{
-			BusinessID:        businessID,
-			SourceDocumentID:  source.ID,
-			SourceLineID:      &sourceLineID,
-			TargetDocumentID:  converted.ID,
-			TargetLineID:      &targetLineID,
-			LinkType:          models.DocumentLinkTypeConvertedTo,
-			QuantityUsed:      candidate.quantityUsed,
-			QuantityRemaining: candidate.quantityRemaining,
-		}); err != nil {
-			return nil, err
+	var overrideID *string
+	if converted.Status != models.DocumentStatusDraft {
+		var overrideErr error
+		overrideID, overrideErr = s.prepareDocumentOverride(ctx, businessID, converted.IssueDate, input.Authorization)
+		if overrideErr != nil {
+			return nil, overrideErr
 		}
 	}
-	if converted.Status != models.DocumentStatusDraft {
-		if err := s.applyPostCreateSideEffects(ctx, converted); err != nil {
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var lockedSource models.Document
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Preload("Lines").Where("id=? AND business_id=? AND deleted_at IS NULL", source.ID, businessID).First(&lockedSource).Error; err != nil {
+			return err
+		}
+		if !isAllowedConversion(lockedSource.DocumentType, input.TargetDocumentType) || !isConvertibleSourceStatus(lockedSource.Status) {
+			return fmt.Errorf("source document is no longer convertible")
+		}
+		remainingByLine := make(map[string]float64, len(lockedSource.Lines))
+		for _, line := range lockedSource.Lines {
+			remainingByLine[line.ID] = line.RemainingQuantity
+		}
+		for _, candidate := range linkCandidates {
+			if math.Abs(remainingByLine[candidate.sourceLineID]-candidate.quantityBefore) > 0.000001 {
+				return fmt.Errorf("source document changed during conversion")
+			}
+			remainingByLine[candidate.sourceLineID] = candidate.quantityRemaining
+		}
+		allUsed = true
+		for _, remaining := range remainingByLine {
+			if remaining > 0.000001 {
+				allUsed = false
+				break
+			}
+		}
+		if allUsed {
+			source.Status = models.DocumentStatusFullyConverted
+		} else {
+			source.Status = models.DocumentStatusPartiallyConverted
+		}
+		if err := persistDocumentCreateTx(tx, converted); err != nil {
+			return err
+		}
+		result := tx.Model(&models.Document{}).
+			Where("id=? AND business_id=? AND deleted_at IS NULL", source.ID, businessID).
+			Update("status", source.Status)
+		if result.Error != nil || result.RowsAffected != 1 {
+			if result.Error != nil {
+				return result.Error
+			}
+			return fmt.Errorf("source document changed during conversion")
+		}
+		for _, candidate := range linkCandidates {
+			lineResult := tx.Model(&models.DocumentLine{}).
+				Where("id=? AND document_id=? AND remaining_quantity=?", candidate.sourceLineID, source.ID, candidate.quantityBefore).
+				Update("remaining_quantity", candidate.quantityRemaining)
+			if lineResult.Error != nil || lineResult.RowsAffected != 1 {
+				if lineResult.Error != nil {
+					return lineResult.Error
+				}
+				return fmt.Errorf("source document changed during conversion")
+			}
+		}
+		for _, candidate := range linkCandidates {
+			targetLine := converted.Lines[candidate.targetLineIndex]
+			sourceLineID := candidate.sourceLineID
+			targetLineID := targetLine.ID
+			if err := tx.Create(&models.DocumentLink{BusinessID: businessID, SourceDocumentID: source.ID, SourceLineID: &sourceLineID, TargetDocumentID: converted.ID, TargetLineID: &targetLineID, LinkType: models.DocumentLinkTypeConvertedTo, QuantityUsed: candidate.quantityUsed, QuantityRemaining: candidate.quantityRemaining}).Error; err != nil {
+				return err
+			}
+		}
+		if converted.Status != models.DocumentStatusDraft {
+			return s.applyDocumentAccountingEffectsTx(ctx, tx, converted, overrideID)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	if converted.Status != models.DocumentStatusDraft && converted.DocumentType == models.DocumentTypeShippingLabel {
+		if _, err := s.shipping.EnsureLabelForDocument(ctx, converted); err != nil {
 			return nil, err
 		}
 	}
@@ -1298,14 +1422,41 @@ func (s *DocumentService) GetPDFURLByBusiness(ctx context.Context, businessID, d
 	if err != nil {
 		return "", err
 	}
-	if document.PDFURL != "" {
-		return document.PDFURL, nil
+	storedURL := document.PDFURL
+	if storedURL == "" {
+		job, jobErr := s.repo.GetLatestRenderJob(ctx, documentID)
+		if jobErr != nil {
+			if errors.Is(jobErr, gorm.ErrRecordNotFound) {
+				return "", fmt.Errorf("PDF not yet generated")
+			}
+			return "", jobErr
+		}
+		if job == nil || job.OutputURL == "" {
+			return "", fmt.Errorf("PDF not yet generated")
+		}
+		storedURL = job.OutputURL
 	}
-	job, err := s.repo.GetLatestRenderJob(ctx, documentID)
-	if err != nil || job.OutputURL == "" {
-		return "", fmt.Errorf("PDF not yet generated")
+	if s.pdfPresigner == nil || s.cfg == nil || s.cfg.S3.BucketInvoices == "" {
+		return "", errors.New("document PDF presigner is not configured")
 	}
-	return job.OutputURL, nil
+	parsed, err := url.Parse(storedURL)
+	expectedHost := fmt.Sprintf("%s.s3.%s.amazonaws.com", s.cfg.S3.BucketInvoices, s.cfg.AWS.Region)
+	if err != nil || parsed.Scheme != "https" || parsed.Host != expectedHost || parsed.User != nil {
+		return "", errors.New("invalid document PDF storage location")
+	}
+	key := strings.TrimPrefix(parsed.Path, "/")
+	prefix := fmt.Sprintf("documents/%s/%s/", businessID, documentID)
+	if !strings.HasPrefix(key, prefix) || path.Clean(key) != key || !strings.HasSuffix(key, ".pdf") {
+		return "", errors.New("invalid document PDF object key")
+	}
+	downloadURL, err := s.pdfPresigner.GeneratePresignedDownloadURL(ctx, s.cfg.S3.BucketInvoices, key, 300)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(downloadURL) == "" {
+		return "", errors.New("document PDF presigner returned an empty URL")
+	}
+	return downloadURL, nil
 }
 
 func (s *DocumentService) UpdateRenderedPDF(ctx context.Context, documentID, jobID, pdfURL, filename string) error {
@@ -1716,19 +1867,59 @@ func (s *DocumentService) CompleteFinalRender(
 	)
 }
 
-func (s *DocumentService) applyPostCreateSideEffects(ctx context.Context, document *models.Document) error {
-	if err := s.inventory.ApplyDocument(ctx, document); err != nil {
+func (s *DocumentService) applyDocumentAccountingEffectsTx(ctx context.Context, tx *gorm.DB, document *models.Document, overrideID *string) error {
+	if err := s.inventory.ApplyDocumentTxAuthorized(ctx, tx, document, overrideID); err != nil {
 		return err
 	}
-	if _, err := s.journals.CreateAutoJournalForDocument(ctx, document); err != nil {
+	journal, err := s.journals.CreateAutoJournalForDocumentTxAuthorized(ctx, tx, document, overrideID)
+	if err != nil || journal != nil || overrideID == nil {
 		return err
 	}
-	if document.DocumentType == models.DocumentTypeShippingLabel {
-		if _, err := s.shipping.EnsureLabelForDocument(ctx, document); err != nil {
-			return err
-		}
+	return s.inventory.enforceInventoryLockTx(tx, document.BusinessID, document.IssueDate, overrideID, true)
+}
+
+func (s *DocumentService) prepareDocumentOverride(ctx context.Context, businessID string, postingDate time.Time, auth PostingAuthorization) (*string, error) {
+	if s == nil || s.journals == nil || s.journals.accounting == nil {
+		return nil, nil
 	}
-	return nil
+	return s.journals.accounting.PrepareLockOverride(ctx, businessID, postingDate, auth)
+}
+
+func persistDocumentCreateTx(tx *gorm.DB, document *models.Document) error {
+	if err := tx.Omit(clause.Associations).Create(document).Error; err != nil {
+		return err
+	}
+	for _, line := range document.Lines {
+		line.DocumentID = document.ID
+	}
+	if len(document.Lines) == 0 {
+		return nil
+	}
+	return tx.Create(&document.Lines).Error
+}
+
+func persistDocumentUpdateTx(tx *gorm.DB, document *models.Document, requireDraft bool) error {
+	query := tx.Model(&models.Document{}).Where("id=? AND business_id=? AND deleted_at IS NULL", document.ID, document.BusinessID)
+	if requireDraft {
+		query = query.Where("status=? AND draft_state=?", models.DocumentStatusDraft, models.DocumentDraftStateDraft)
+	}
+	result := query.Select("*").Omit("id", "business_id", "created_at", "deleted_at").Updates(document)
+	if result.Error != nil {
+		return result.Error
+	}
+	if requireDraft && result.RowsAffected != 1 {
+		return &models.DocumentDraftConflictError{}
+	}
+	if err := tx.Where("document_id=?", document.ID).Delete(&models.DocumentLine{}).Error; err != nil {
+		return err
+	}
+	for _, line := range document.Lines {
+		line.DocumentID = document.ID
+	}
+	if len(document.Lines) == 0 {
+		return nil
+	}
+	return tx.Create(&document.Lines).Error
 }
 
 func (s *DocumentService) validateParty(ctx context.Context, businessID, partyType, partyID string) error {
@@ -2010,33 +2201,37 @@ func (s *DocumentService) syncDocumentWithholdings(ctx context.Context, document
 		return nil
 	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("document_id = ?", document.ID).Delete(&models.DocumentWithholding{}).Error; err != nil {
-			return err
-		}
-		if len(inputs) == 0 {
-			return nil
-		}
-		records := make([]models.DocumentWithholding, 0, len(inputs))
-		for _, input := range inputs {
-			if input.SectionCode == "" || input.Amount == 0 {
-				continue
-			}
-			records = append(records, models.DocumentWithholding{
-				BusinessID:      document.BusinessID,
-				DocumentID:      document.ID,
-				SectionCode:     input.SectionCode,
-				WithholdingType: coalesceString(input.WithholdingType, models.WithholdingTypeTDS),
-				Rate:            input.Rate,
-				TaxableAmount:   input.TaxableAmount,
-				Amount:          input.Amount,
-				Metadata:        mustMarshalMap(input.Metadata),
-			})
-		}
-		if len(records) == 0 {
-			return nil
-		}
-		return tx.Create(&records).Error
+		return syncDocumentWithholdingsTx(tx, document, inputs)
 	})
+}
+
+func syncDocumentWithholdingsTx(tx *gorm.DB, document *models.Document, inputs []WithholdingInput) error {
+	if err := tx.Where("document_id = ?", document.ID).Delete(&models.DocumentWithholding{}).Error; err != nil {
+		return err
+	}
+	if len(inputs) == 0 {
+		return nil
+	}
+	records := make([]models.DocumentWithholding, 0, len(inputs))
+	for _, input := range inputs {
+		if input.SectionCode == "" || input.Amount == 0 {
+			continue
+		}
+		records = append(records, models.DocumentWithholding{
+			BusinessID:      document.BusinessID,
+			DocumentID:      document.ID,
+			SectionCode:     input.SectionCode,
+			WithholdingType: coalesceString(input.WithholdingType, models.WithholdingTypeTDS),
+			Rate:            input.Rate,
+			TaxableAmount:   input.TaxableAmount,
+			Amount:          input.Amount,
+			Metadata:        mustMarshalMap(input.Metadata),
+		})
+	}
+	if len(records) == 0 {
+		return nil
+	}
+	return tx.Create(&records).Error
 }
 
 func summarizeWithholdings(inputs []WithholdingInput) (total, tdsTotal, tcsTotal float64) {
@@ -2050,4 +2245,13 @@ func summarizeWithholdings(inputs []WithholdingInput) (total, tdsTotal, tcsTotal
 		}
 	}
 	return total, tdsTotal, tcsTotal
+}
+
+func isConvertibleSourceStatus(status string) bool {
+	switch status {
+	case models.DocumentStatusDraft, models.DocumentStatusIssued, models.DocumentStatusSent, models.DocumentStatusAccepted, models.DocumentStatusPartiallyConverted:
+		return true
+	default:
+		return false
+	}
 }

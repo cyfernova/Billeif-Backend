@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
@@ -12,13 +13,48 @@ import (
 )
 
 type BusinessService struct {
-	repo interfaces.BusinessRepository
-	s3   *S3Service
-	log  *logger.Logger
+	repo           interfaces.BusinessRepository
+	s3             *S3Service
+	log            *logger.Logger
+	logoRepository interfaces.BusinessLogoRepository
+	logoUploads    *PendingUploadService
+	logoObjects    PendingObjectStore
+	logoBucket     string
+	now            func() time.Time
 }
 
 func NewBusinessService(repo interfaces.BusinessRepository, s3 *S3Service, log *logger.Logger) *BusinessService {
-	return &BusinessService{repo: repo, s3: s3, log: log}
+	return &BusinessService{repo: repo, s3: s3, log: log, now: time.Now}
+}
+
+var ErrBusinessLogoInvalid = errors.New("invalid business logo upload")
+
+type BusinessLogoUploadInput struct {
+	ContentType    string `json:"content_type" binding:"required"`
+	SizeBytes      int64  `json:"size_bytes" binding:"required"`
+	ChecksumSHA256 string `json:"checksum_sha256" binding:"required"`
+}
+
+type BusinessLogoCompletionInput struct {
+	UploadID string `json:"upload_id" binding:"required,uuid"`
+}
+
+type BusinessLogoCompletion struct {
+	BusinessID     string `json:"business_id"`
+	UploadID       string `json:"upload_id"`
+	Status         string `json:"status"`
+	Replayed       bool   `json:"replayed"`
+	CleanupPending bool   `json:"cleanup_pending"`
+}
+
+func (s *BusinessService) WithLogoUploadWorkflow(repository interfaces.BusinessLogoRepository, uploads *PendingUploadService, objects PendingObjectStore, bucket string) *BusinessService {
+	if s != nil {
+		s.logoRepository = repository
+		s.logoUploads = uploads
+		s.logoObjects = objects
+		s.logoBucket = strings.TrimSpace(bucket)
+	}
+	return s
 }
 
 type CreateBusinessInput struct {
@@ -371,6 +407,101 @@ func (s *BusinessService) GetLogoUploadURLByOwner(ctx context.Context, userID, b
 		return nil, err
 	}
 	return s.GetLogoUploadURL(ctx, businessID, contentType, sizeBytes)
+}
+
+func (s *BusinessService) CreateLogoUpload(ctx context.Context, uploaderID, businessID string, input BusinessLogoUploadInput) (*PendingUploadCreated, error) {
+	if s == nil || s.logoUploads == nil || s.logoRepository == nil || s.logoObjects == nil || s.logoBucket == "" {
+		return nil, fmt.Errorf("business logo storage is not configured")
+	}
+	if _, err := s.GetByOwner(ctx, strings.TrimSpace(uploaderID), strings.TrimSpace(businessID)); err != nil {
+		return nil, err
+	}
+	contentType := strings.ToLower(strings.TrimSpace(input.ContentType))
+	if !allowedBusinessLogoContentType(contentType) || validateUploadSize("business logo", input.SizeBytes, MaxBusinessLogoUploadBytes) != nil {
+		return nil, ErrBusinessLogoInvalid
+	}
+	created, err := s.logoUploads.Create(ctx, PendingUploadCreateInput{
+		BusinessID: strings.TrimSpace(businessID), UploaderID: strings.TrimSpace(uploaderID), Kind: "business_logo",
+		ContentType: contentType, SizeBytes: input.SizeBytes, ChecksumSHA256: strings.TrimSpace(input.ChecksumSHA256),
+	})
+	if err != nil {
+		if errors.Is(err, ErrPendingUploadInvalid) {
+			return nil, ErrBusinessLogoInvalid
+		}
+		return nil, err
+	}
+	return created, nil
+}
+
+func (s *BusinessService) FinalizeLogoUpload(ctx context.Context, uploaderID, businessID, uploadID string) (*BusinessLogoCompletion, error) {
+	if s == nil || s.logoRepository == nil || s.logoObjects == nil || s.logoBucket == "" {
+		return nil, fmt.Errorf("business logo storage is not configured")
+	}
+	uploaderID, businessID, uploadID = strings.TrimSpace(uploaderID), strings.TrimSpace(businessID), strings.TrimSpace(uploadID)
+	if _, err := s.GetByOwner(ctx, uploaderID, businessID); err != nil {
+		return nil, err
+	}
+	upload, err := s.logoRepository.GetPendingUpload(ctx, uploadID, businessID, uploaderID)
+	if err != nil || upload == nil {
+		return nil, ErrPendingUploadNotFound
+	}
+	now := s.now().UTC()
+	expectedKey := fmt.Sprintf("pending/%s/%s/business_logo", businessID, uploadID)
+	attached := upload.ScanCode == models.PendingUploadScanBusinessLogo
+	if upload.Kind != "business_logo" || upload.Bucket != s.logoBucket || upload.ObjectKey != expectedKey ||
+		!allowedBusinessLogoContentType(upload.ContentType) || upload.SizeBytes <= 0 || upload.SizeBytes > MaxBusinessLogoUploadBytes ||
+		!validChecksumSHA256(upload.ChecksumSHA256) || (!attached && !upload.ExpiresAt.After(now)) ||
+		(upload.Status != models.PendingUploadStatusPending && upload.Status != models.PendingUploadStatusClean) {
+		return nil, ErrBusinessLogoInvalid
+	}
+	if !attached {
+		metadata, inspectErr := s.logoObjects.InspectPendingObject(ctx, upload.Bucket, upload.ObjectKey)
+		if inspectErr != nil || !pendingMetadataMatches(upload, metadata) {
+			return nil, ErrBusinessLogoInvalid
+		}
+	}
+	finalized, err := s.logoRepository.FinalizeBusinessLogo(ctx, interfaces.BusinessLogoFinalizeRequest{
+		BusinessID: businessID, UploaderID: uploaderID, UploadID: upload.ID, Bucket: upload.Bucket,
+		ObjectKey: upload.ObjectKey, ContentType: upload.ContentType, SizeBytes: upload.SizeBytes,
+		ChecksumSHA256: upload.ChecksumSHA256, CompletedAt: now,
+	})
+	if err != nil || finalized == nil || finalized.Business == nil {
+		if err != nil {
+			if errors.Is(err, interfaces.ErrBusinessLogoFinalizeConflict) {
+				return nil, ErrBusinessLogoInvalid
+			}
+			return nil, fmt.Errorf("finalize business logo: %w", err)
+		}
+		return nil, ErrBusinessLogoInvalid
+	}
+	completion := &BusinessLogoCompletion{
+		BusinessID: businessID, UploadID: upload.ID, Status: "ready", Replayed: finalized.Replayed,
+	}
+	if finalized.Business.LogoKey != upload.ObjectKey {
+		completion.Status = "superseded"
+	}
+	oldKey := strings.TrimSpace(finalized.PreviousObjectKey)
+	if oldKey != "" && oldKey != upload.ObjectKey {
+		if !validBusinessLogoObjectKey(businessID, oldKey) || s.logoObjects.DeletePendingObject(ctx, s.logoBucket, oldKey) != nil {
+			completion.CleanupPending = true
+		} else if cleanupErr := s.logoRepository.CompleteBusinessLogoCleanup(ctx, upload.ID, businessID, uploaderID, oldKey); cleanupErr != nil {
+			completion.CleanupPending = true
+		}
+	}
+	return completion, nil
+}
+
+func allowedBusinessLogoContentType(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "image/jpeg", "image/png", "image/webp":
+		return true
+	default:
+		return false
+	}
+}
+
+func validBusinessLogoObjectKey(businessID, key string) bool {
+	return strings.HasPrefix(key, "logos/"+businessID+"/") || strings.HasPrefix(key, "pending/"+businessID+"/")
 }
 
 func (s *BusinessService) UpdateLogoURL(ctx context.Context, businessID, logoURL string) error {

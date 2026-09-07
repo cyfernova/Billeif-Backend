@@ -25,9 +25,16 @@ var (
 	ErrMandateExpired        = errors.New("mandate has expired")
 	ErrCartTotalMismatch     = errors.New("cart total does not match line items")
 	ErrIntentMandateNotFound = errors.New("intent mandate not found")
+	ErrCartMandateUnsigned   = errors.New("cart mandate has not been signed by the merchant")
+	ErrCartSignatureInvalid  = errors.New("cart mandate signature is invalid")
+	ErrCartAlreadyProcessed  = errors.New("cart mandate has already been processed")
+	ErrCartVersionConflict   = errors.New("cart version conflict")
+	ErrCartNotEditable       = errors.New("cart is not editable")
+	ErrCartCurrencyMismatch  = errors.New("cart products use different currencies")
 )
 
 type ShoppingAgentService struct {
+	users               ReportUserRepository
 	ap2Repo             interfaces.AP2Repository
 	agentSvc            *AgentService
 	intentSvc           *IntentProcessingService
@@ -38,6 +45,16 @@ type ShoppingAgentService struct {
 	a2aMessageEndpoint  string
 	agentCardHTTPClient *http.Client
 	log                 *logger.Logger
+}
+
+type versionedCartRepository interface {
+	GetCartMandateForScope(ctx context.Context, id, userID, businessID string) (*models.CartMandate, error)
+	UpdateCartMandateVersioned(ctx context.Context, mandate *models.CartMandate, expectedVersion int64) error
+}
+
+func (s *ShoppingAgentService) WithUserRepository(users ReportUserRepository) *ShoppingAgentService {
+	s.users = users
+	return s
 }
 
 func NewShoppingAgentService(
@@ -70,6 +87,7 @@ func NewShoppingAgentService(
 
 type ShoppingIntentRequest struct {
 	UserID          string
+	BusinessID      string
 	ShoppingAgentID string
 	Query           string
 	ProductIDs      []string
@@ -85,6 +103,9 @@ func (s *ShoppingAgentService) ProcessShoppingIntent(ctx context.Context, req *S
 
 	if shoppingAgent.Type != "shopping" {
 		return nil, errors.New("agent is not a shopping agent")
+	}
+	if shoppingAgent.BusinessID != req.BusinessID {
+		return nil, ErrCartMandateNotFound
 	}
 
 	intentMandate, err := s.createIntentMandate(ctx, req)
@@ -107,14 +128,12 @@ func (s *ShoppingAgentService) ProcessShoppingIntent(ctx context.Context, req *S
 			continue
 		}
 
-		cartItems = append(cartItems, ap2.CartItem{
-			ProductID: product.ID,
-			Name:      product.Name,
-			Quantity:  1,
-			UnitPrice: product.Price,
-		})
-
-		totalAmount += product.Price
+		item, err := s.authoritativeCartItem(ctx, product, 1)
+		if err != nil {
+			return nil, err
+		}
+		cartItems = append(cartItems, item)
+		totalAmount += item.LineTotal
 	}
 
 	if req.MaxAmount != nil && totalAmount > *req.MaxAmount {
@@ -123,6 +142,7 @@ func (s *ShoppingAgentService) ProcessShoppingIntent(ctx context.Context, req *S
 
 	cartMandate, err := s.CreateCartMandate(ctx, &CreateCartMandateRequest{
 		UserID:          req.UserID,
+		BusinessID:      req.BusinessID,
 		ShoppingAgentID: req.ShoppingAgentID,
 		IntentMandateID: &intentMandate.ID,
 		Items:           cartItems,
@@ -135,7 +155,11 @@ func (s *ShoppingAgentService) ProcessShoppingIntent(ctx context.Context, req *S
 	return cartMandate, nil
 }
 
-func (s *ShoppingAgentService) AddToCart(ctx context.Context, userID, shoppingAgentID, productID string) (*models.CartMandate, error) {
+func (s *ShoppingAgentService) AddToCart(ctx context.Context, userID, businessID, shoppingAgentID, productID string) (*models.CartMandate, error) {
+	agent, err := s.ap2Repo.GetAgentByID(ctx, shoppingAgentID)
+	if err != nil || agent.Type != "shopping" || agent.BusinessID != businessID {
+		return nil, ErrCartMandateNotFound
+	}
 	product, err := s.ap2Repo.GetMarketplaceProductByID(ctx, productID)
 	if err != nil {
 		return nil, ErrInvalidProduct
@@ -145,17 +169,15 @@ func (s *ShoppingAgentService) AddToCart(ctx context.Context, userID, shoppingAg
 		return nil, ErrInsufficientStock
 	}
 
-	cartItems := []ap2.CartItem{
-		{
-			ProductID: product.ID,
-			Name:      product.Name,
-			Quantity:  1,
-			UnitPrice: product.Price,
-		},
+	item, err := s.authoritativeCartItem(ctx, product, 1)
+	if err != nil {
+		return nil, err
 	}
+	cartItems := []ap2.CartItem{item}
 
 	cartMandate, err := s.CreateCartMandate(ctx, &CreateCartMandateRequest{
 		UserID:          userID,
+		BusinessID:      businessID,
 		ShoppingAgentID: shoppingAgentID,
 		Items:           cartItems,
 	})
@@ -168,12 +190,14 @@ func (s *ShoppingAgentService) AddToCart(ctx context.Context, userID, shoppingAg
 
 type CheckoutRequest struct {
 	UserID          string
+	BusinessID      string
 	CartMandateID   string
 	PaymentMethodID *string
 }
 
 type CreateCartMandateRequest struct {
 	UserID          string
+	BusinessID      string
 	ShoppingAgentID string
 	MerchantID      *string
 	IntentMandateID *string
@@ -181,21 +205,40 @@ type CreateCartMandateRequest struct {
 }
 
 func (s *ShoppingAgentService) CompleteCheckout(ctx context.Context, req *CheckoutRequest) (*models.PaymentMandate, error) {
-	cartMandate, err := s.ap2Repo.GetCartMandateByID(ctx, req.CartMandateID, req.UserID)
+	if req == nil || strings.TrimSpace(req.BusinessID) == "" {
+		return nil, ErrCartMandateNotFound
+	}
+	cartMandate, err := s.getCartForScope(ctx, req.CartMandateID, req.UserID, req.BusinessID)
 	if err != nil {
 		return nil, ErrCartMandateNotFound
 	}
+	resolvedRequest := *req
+	resolvedRequest.UserID = cartMandate.UserID
+	req = &resolvedRequest
 
 	// CRITICAL: Verify mandate is not expired
 	if err := s.verifyMandateExpiration(cartMandate); err != nil {
 		return nil, err
 	}
 
-	// TODO: Verify cart mandate signature and validity
-	// if err := s.verifier.VerifyCartMandate(cartMandate, cartMandate.Signature, cartMandate.PublicKey); err != nil {
-	//	s.log.Warn("cart mandate verification failed", "mandate_id", cartMandate.ID, "error", err)
-	//	return nil, fmt.Errorf("cart mandate verification failed: %w", err)
-	// }
+	if cartMandate.Status != "signed" || cartMandate.MerchantSignature == nil || cartMandate.MerchantSignaturePublicKey == nil {
+		return nil, ErrCartMandateUnsigned
+	}
+	trustedKey := s.signer.GetPublicKey()
+	if cartMandate.SignaturePublicKey != trustedKey || *cartMandate.MerchantSignaturePublicKey != trustedKey {
+		return nil, fmt.Errorf("%w: untrusted signing key", ErrCartSignatureInvalid)
+	}
+	if err := ap2.VerifyCartMandateSignature(cartMandate, "buyer", cartMandate.Signature, cartMandate.SignaturePublicKey); err != nil {
+		s.log.Warn("buyer cart mandate verification failed", "mandate_id", cartMandate.ID, "error", err)
+		return nil, fmt.Errorf("%w: buyer signature", ErrCartSignatureInvalid)
+	}
+	if err := ap2.VerifyCartMandateSignature(cartMandate, "merchant", *cartMandate.MerchantSignature, *cartMandate.MerchantSignaturePublicKey); err != nil {
+		s.log.Warn("merchant cart mandate verification failed", "mandate_id", cartMandate.ID, "error", err)
+		return nil, fmt.Errorf("%w: merchant signature", ErrCartSignatureInvalid)
+	}
+	if len(cartMandate.PaymentMandates) != 0 {
+		return nil, ErrCartAlreadyProcessed
+	}
 
 	// CRITICAL: Verify cart total matches line items
 	if err := s.validateCartTotal(ctx, cartMandate); err != nil {
@@ -231,6 +274,10 @@ func (s *ShoppingAgentService) CompleteCheckout(ctx context.Context, req *Checko
 }
 
 func (s *ShoppingAgentService) GetCartMandate(ctx context.Context, cartMandateID, userID string) (*models.CartMandate, error) {
+	userID, err := resolveDatabaseUserID(ctx, s.users, userID)
+	if err != nil {
+		return nil, err
+	}
 	cartMandate, err := s.ap2Repo.GetCartMandateByID(ctx, cartMandateID, userID)
 	if err != nil {
 		return nil, ErrCartMandateNotFound
@@ -244,11 +291,32 @@ func (s *ShoppingAgentService) GetCartMandate(ctx context.Context, cartMandateID
 	return cartMandate, nil
 }
 
-func (s *ShoppingAgentService) GetUserCarts(ctx context.Context, userID string, page, limit int) ([]*models.CartMandate, int64, error) {
-	return s.ap2Repo.GetCartMandatesByUser(ctx, userID, page, limit)
+func (s *ShoppingAgentService) GetCartMandateForScope(ctx context.Context, cartMandateID, userID, businessID string) (*models.CartMandate, error) {
+	cart, err := s.getCartForScope(ctx, cartMandateID, userID, businessID)
+	if err != nil {
+		return nil, ErrCartMandateNotFound
+	}
+	return cart, nil
+}
+
+func (s *ShoppingAgentService) GetUserCarts(ctx context.Context, userID, businessID string, page, limit int) ([]*models.CartMandate, int64, error) {
+	userID, err := resolveDatabaseUserID(ctx, s.users, userID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if repo, ok := s.ap2Repo.(interface {
+		GetCartMandatesForScope(context.Context, string, string, int, int) ([]*models.CartMandate, int64, error)
+	}); ok {
+		return repo.GetCartMandatesForScope(ctx, userID, businessID, page, limit)
+	}
+	return nil, 0, fmt.Errorf("business-scoped cart repository unavailable")
 }
 
 func (s *ShoppingAgentService) GetUserOrders(ctx context.Context, userID string, page, limit int) ([]*models.MarketplaceOrder, int64, error) {
+	userID, err := resolveDatabaseUserID(ctx, s.users, userID)
+	if err != nil {
+		return nil, 0, err
+	}
 	return s.ap2Repo.GetOrdersByUser(ctx, userID, page, limit)
 }
 
@@ -257,6 +325,10 @@ func (s *ShoppingAgentService) GetOrderDetails(ctx context.Context, orderID stri
 }
 
 func (s *ShoppingAgentService) CreateOrderFromCart(ctx context.Context, cartMandateID, userID string) (*models.MarketplaceOrder, error) {
+	userID, err := resolveDatabaseUserID(ctx, s.users, userID)
+	if err != nil {
+		return nil, err
+	}
 	cartMandate, err := s.ap2Repo.GetCartMandateByID(ctx, cartMandateID, userID)
 	if err != nil {
 		return nil, ErrCartMandateNotFound
@@ -293,6 +365,10 @@ func (s *ShoppingAgentService) GetProductDetails(ctx context.Context, productID 
 }
 
 func (s *ShoppingAgentService) TrackOrder(ctx context.Context, orderID, userID string) (*models.MarketplaceOrder, error) {
+	userID, err := resolveDatabaseUserID(ctx, s.users, userID)
+	if err != nil {
+		return nil, err
+	}
 	return s.ap2Repo.GetOrderByIDForUser(ctx, orderID, userID)
 }
 
@@ -301,6 +377,10 @@ func (s *ShoppingAgentService) CreateIntentMandate(ctx context.Context, req *Sho
 }
 
 func (s *ShoppingAgentService) createIntentMandate(ctx context.Context, req *ShoppingIntentRequest) (*models.IntentMandate, error) {
+	userID, err := resolveDatabaseUserID(ctx, s.users, req.UserID)
+	if err != nil {
+		return nil, err
+	}
 	constraints := ap2.MandateConstraints{
 		Currency:    "INR",
 		MaxAmount:   req.MaxAmount,
@@ -308,7 +388,7 @@ func (s *ShoppingAgentService) createIntentMandate(ctx context.Context, req *Sho
 	}
 
 	intentReq := &ap2.IntentMandateRequest{
-		UserID:                req.UserID,
+		UserID:                userID,
 		AgentID:               req.ShoppingAgentID,
 		NaturalLanguageIntent: req.Query,
 		Constraints:           constraints,
@@ -342,26 +422,17 @@ func (s *ShoppingAgentService) GetShoppingAgentCapabilities(ctx context.Context,
 }
 
 func (s *ShoppingAgentService) CreateCartMandate(ctx context.Context, req *CreateCartMandateRequest) (*models.CartMandate, error) {
-	signaturePayload := map[string]interface{}{
-		"user_id":     req.UserID,
-		"agent_id":    req.ShoppingAgentID,
-		"merchant_id": req.MerchantID,
-		"intent_id":   req.IntentMandateID,
-		"items":       req.Items,
-		"created_at":  time.Now().UTC(),
-	}
-	signature, err := s.signer.SignData([]byte(fmt.Sprintf("%v", signaturePayload)))
+	userID, err := resolveDatabaseUserID(ctx, s.users, req.UserID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to sign cart mandate: %w", err)
+		return nil, err
 	}
-
 	cartReq := &ap2.CartMandateRequest{
 		IntentMandateID:    req.IntentMandateID,
-		UserID:             req.UserID,
+		UserID:             userID,
 		AgentID:            req.ShoppingAgentID,
 		MerchantID:         req.MerchantID,
 		Items:              req.Items,
-		Signature:          signature,
+		Signature:          "pending-signature",
 		ExpirationDuration: s.getDefaultExpiration(),
 	}
 
@@ -369,12 +440,211 @@ func (s *ShoppingAgentService) CreateCartMandate(ctx context.Context, req *Creat
 	if err != nil {
 		return nil, err
 	}
+	cartMandate.ID = uuid.NewString()
+	cartMandate.BusinessID = req.BusinessID
+	cartMandate.Version = 1
+	subtotal, tax, total := cartAmounts(req.Items)
+	cartMandate.SubtotalAmount = subtotal
+	cartMandate.TaxAmount = tax
+	cartMandate.TotalAmount = total
+	if len(req.Items) > 0 {
+		if product, productErr := s.ap2Repo.GetMarketplaceProductByID(ctx, req.Items[0].ProductID); productErr == nil && product.Currency != "" {
+			cartMandate.Currency = product.Currency
+		}
+	}
+	signature, publicKey, err := ap2.SignCartMandate(s.signer, cartMandate, "buyer")
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign cart mandate: %w", err)
+	}
+	cartMandate.Signature = signature
+	cartMandate.SignaturePublicKey = publicKey
 
 	if err := s.ap2Repo.CreateCartMandate(ctx, cartMandate); err != nil {
 		return nil, fmt.Errorf("failed to save cart mandate: %w", err)
 	}
 
 	return cartMandate, nil
+}
+
+type CartMutationInput struct {
+	Version  int64 `json:"version" binding:"required,gte=1"`
+	Quantity int   `json:"quantity,omitempty" binding:"omitempty,gte=1,lte=10000"`
+}
+
+func (s *ShoppingAgentService) AddCartItem(ctx context.Context, cartID, userID, businessID, productID string, input CartMutationInput) (*models.CartMandate, error) {
+	return s.mutateCart(ctx, cartID, userID, businessID, input.Version, func(items []ap2.CartItem) ([]ap2.CartItem, error) {
+		quantity := input.Quantity
+		if quantity == 0 {
+			quantity = 1
+		}
+		for i := range items {
+			if items[i].ProductID == productID {
+				items[i].Quantity += quantity
+				return items, nil
+			}
+		}
+		return append(items, ap2.CartItem{ProductID: productID, Quantity: quantity}), nil
+	})
+}
+
+func (s *ShoppingAgentService) UpdateCartItem(ctx context.Context, cartID, userID, businessID, productID string, input CartMutationInput) (*models.CartMandate, error) {
+	if input.Quantity <= 0 {
+		return nil, fmt.Errorf("quantity must be positive")
+	}
+	return s.mutateCart(ctx, cartID, userID, businessID, input.Version, func(items []ap2.CartItem) ([]ap2.CartItem, error) {
+		for i := range items {
+			if items[i].ProductID == productID {
+				items[i].Quantity = input.Quantity
+				return items, nil
+			}
+		}
+		return nil, ErrInvalidProduct
+	})
+}
+
+func (s *ShoppingAgentService) RemoveCartItem(ctx context.Context, cartID, userID, businessID, productID string, version int64) (*models.CartMandate, error) {
+	return s.mutateCart(ctx, cartID, userID, businessID, version, func(items []ap2.CartItem) ([]ap2.CartItem, error) {
+		for i := range items {
+			if items[i].ProductID == productID {
+				return append(items[:i], items[i+1:]...), nil
+			}
+		}
+		return nil, ErrInvalidProduct
+	})
+}
+
+func (s *ShoppingAgentService) ClearCart(ctx context.Context, cartID, userID, businessID string, version int64) (*models.CartMandate, error) {
+	return s.mutateCart(ctx, cartID, userID, businessID, version, func([]ap2.CartItem) ([]ap2.CartItem, error) {
+		return []ap2.CartItem{}, nil
+	})
+}
+
+func (s *ShoppingAgentService) mutateCart(
+	ctx context.Context,
+	cartID, userID, businessID string,
+	expectedVersion int64,
+	change func([]ap2.CartItem) ([]ap2.CartItem, error),
+) (*models.CartMandate, error) {
+	if expectedVersion < 1 {
+		return nil, ErrCartVersionConflict
+	}
+	cart, err := s.getCartForScope(ctx, cartID, userID, businessID)
+	if err != nil {
+		return nil, ErrCartMandateNotFound
+	}
+	if cart.Status != "pending" || len(cart.PaymentMandates) != 0 {
+		return nil, ErrCartNotEditable
+	}
+	if err := s.verifyMandateExpiration(cart); err != nil {
+		return nil, err
+	}
+	if cart.Version != expectedVersion {
+		return nil, ErrCartVersionConflict
+	}
+	var items []ap2.CartItem
+	if err := json.Unmarshal([]byte(cart.Items), &items); err != nil {
+		return nil, fmt.Errorf("decode cart items: %w", err)
+	}
+	items, err = change(items)
+	if err != nil {
+		return nil, err
+	}
+	currency := ""
+	for i := range items {
+		product, productErr := s.ap2Repo.GetMarketplaceProductByID(ctx, items[i].ProductID)
+		if productErr != nil {
+			return nil, ErrInvalidProduct
+		}
+		items[i], err = s.authoritativeCartItem(ctx, product, items[i].Quantity)
+		if err != nil {
+			return nil, err
+		}
+		if currency != "" && !strings.EqualFold(currency, product.Currency) {
+			return nil, ErrCartCurrencyMismatch
+		}
+		currency = product.Currency
+		cart.Currency = product.Currency
+	}
+	encoded, err := json.Marshal(items)
+	if err != nil {
+		return nil, fmt.Errorf("encode cart items: %w", err)
+	}
+	cart.Items = string(encoded)
+	cart.SubtotalAmount, cart.TaxAmount, cart.TotalAmount = cartAmounts(items)
+	cart.MerchantSignature = nil
+	cart.MerchantSignaturePublicKey = nil
+	signature, publicKey, err := ap2.SignCartMandate(s.signer, cart, "buyer")
+	if err != nil {
+		return nil, fmt.Errorf("sign updated cart: %w", err)
+	}
+	cart.Signature = signature
+	cart.SignaturePublicKey = publicKey
+	repo, ok := s.ap2Repo.(versionedCartRepository)
+	if !ok {
+		return nil, fmt.Errorf("versioned cart repository unavailable")
+	}
+	if err := repo.UpdateCartMandateVersioned(ctx, cart, expectedVersion); err != nil {
+		return nil, ErrCartVersionConflict
+	}
+	return cart, nil
+}
+
+func (s *ShoppingAgentService) getCartForScope(ctx context.Context, cartID, userID, businessID string) (*models.CartMandate, error) {
+	userID, err := resolveDatabaseUserID(ctx, s.users, userID)
+	if err != nil {
+		return nil, err
+	}
+	if repo, ok := s.ap2Repo.(versionedCartRepository); ok {
+		return repo.GetCartMandateForScope(ctx, cartID, userID, businessID)
+	}
+	cart, err := s.ap2Repo.GetCartMandateByID(ctx, cartID, userID)
+	if err != nil || cart.BusinessID != businessID {
+		return nil, ErrCartMandateNotFound
+	}
+	return cart, nil
+}
+
+func (s *ShoppingAgentService) authoritativeCartItem(ctx context.Context, product *models.MarketplaceProduct, quantity int) (ap2.CartItem, error) {
+	if product == nil || !product.IsAvailable || quantity <= 0 || product.InventoryCount-product.ReservedInventoryCount < quantity {
+		return ap2.CartItem{}, ErrInsufficientStock
+	}
+	taxRate := 0.0
+	if product.ProductID != nil && s.agentSvc != nil && s.agentSvc.productRepo != nil {
+		agent, err := s.ap2Repo.GetAgentByID(ctx, product.AgentID)
+		if err != nil {
+			return ap2.CartItem{}, ErrInvalidProduct
+		}
+		backing, err := s.agentSvc.productRepo.GetByID(ctx, *product.ProductID, agent.BusinessID)
+		if err != nil || !backing.IsActive {
+			return ap2.CartItem{}, ErrInvalidProduct
+		}
+		taxRate = floatValue(unmarshalJSONMap(backing.GSTMetadata)["tax_rate"])
+		if taxRate < 0 || taxRate > 100 {
+			return ap2.CartItem{}, fmt.Errorf("invalid authoritative product tax rate")
+		}
+	}
+	subtotal := roundMoney(float64(quantity) * product.Price)
+	taxAmount := roundMoney(subtotal * taxRate / 100)
+	return ap2.CartItem{
+		ProductID: product.ID,
+		Name:      product.Name,
+		Quantity:  quantity,
+		UnitPrice: roundMoney(product.Price),
+		TaxRate:   taxRate,
+		TaxAmount: taxAmount,
+		LineTotal: roundMoney(subtotal + taxAmount),
+	}, nil
+}
+
+func cartAmounts(items []ap2.CartItem) (float64, float64, float64) {
+	var subtotal, tax float64
+	for _, item := range items {
+		subtotal += roundMoney(float64(item.Quantity) * item.UnitPrice)
+		tax += item.TaxAmount
+	}
+	subtotal = roundMoney(subtotal)
+	tax = roundMoney(tax)
+	return subtotal, tax, roundMoney(subtotal + tax)
 }
 
 // SECURITY: Verify mandate is not expired
@@ -401,9 +671,11 @@ func (s *ShoppingAgentService) validateCartTotal(ctx context.Context, cartMandat
 			return fmt.Errorf("product not found: %s", item.ProductID)
 		}
 
-		// Use item's line price (from mandate, not product) for verification
-		// This ensures cart total matches: sum of (quantity * unit_price)
-		linePrice := float64(item.Quantity) * item.UnitPrice
+		// Verify the signed authoritative snapshot including its tax component.
+		linePrice := item.LineTotal
+		if linePrice <= 0 {
+			linePrice = float64(item.Quantity)*item.UnitPrice + item.TaxAmount
+		}
 		calculatedTotal += linePrice
 	}
 

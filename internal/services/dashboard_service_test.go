@@ -7,11 +7,67 @@ import (
 	"testing"
 	"time"
 
+	"invoice-backend/internal/models"
 	"invoice-backend/pkg/logger"
+
+	"github.com/stretchr/testify/require"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+func TestDashboardCollectionsUseBusinessCalendarDay(t *testing.T) {
+	for _, tc := range []struct{ name, timezone, now, start, end string }{
+		{"India after midnight", "Asia/Kolkata", "2026-09-05T19:10:00Z", "2026-09-05T18:30:00Z", "2026-09-06T18:30:00Z"},
+		{"US daylight saving start", "America/New_York", "2026-03-08T16:00:00Z", "2026-03-08T05:00:00Z", "2026-03-09T04:00:00Z"},
+		{"US daylight saving end", "America/New_York", "2026-11-01T16:00:00Z", "2026-11-01T04:00:00Z", "2026-11-02T05:00:00Z"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := newDashboardTestDB(t)
+			svc := NewDashboardService(db, logger.New()).WithBusinessTimezoneProvider(businessTimezoneStub{profile: &models.BusinessProfile{Timezone: tc.timezone}})
+			now, err := time.Parse(time.RFC3339, tc.now)
+			require.NoError(t, err)
+			start, err := time.Parse(time.RFC3339, tc.start)
+			require.NoError(t, err)
+			end, err := time.Parse(time.RFC3339, tc.end)
+			require.NoError(t, err)
+			svc.now = func() time.Time { return now }
+			for i, row := range []struct {
+				business string
+				amount   float64
+				at       time.Time
+				deleted  *time.Time
+			}{
+				{"biz-1", 10, start, nil}, {"biz-1", 20, end.Add(-time.Second), nil},
+				{"biz-1", 40, start.Add(-time.Second), nil}, {"biz-1", 80, end, nil},
+				{"biz-2", 160, now, nil}, {"biz-1", 320, now, &now},
+			} {
+				execDashboardSQL(t, db, `INSERT INTO payments (id,business_id,amount,payment_date,deleted_at) VALUES (?,?,?,?,?)`, fmt.Sprint(i), row.business, row.amount, row.at, row.deleted)
+			}
+			result, err := svc.financeSummary(context.Background(), "biz-1")
+			require.NoError(t, err)
+			require.Equal(t, float64(30), result.TodaysCollections)
+		})
+	}
+}
+
+func TestDashboardConvertedPurchasesRequirePostedAccountingRecognition(t *testing.T) {
+	db := newDashboardTestDB(t)
+	execDashboardSQL(t, db, `INSERT INTO documents (id,business_id,document_type,party_type,status,balance_due) VALUES
+		('draft-converted','biz-1','purchase_invoice','vendor','fully_converted',1250),
+		('issued-converted','biz-1','purchase_invoice','vendor','fully_converted',200),
+		('partial-issued','biz-1','purchase_invoice','vendor','partially_converted',50),
+		('wrong-business','biz-1','purchase_invoice','vendor','fully_converted',800),
+		('unposted','biz-1','purchase_invoice','vendor','fully_converted',900)`)
+	execDashboardSQL(t, db, `INSERT INTO journals (id,business_id,source_type,source_id,status) VALUES
+		('j1','biz-1','document','issued-converted','posted'),
+		('j2','biz-1','document','partial-issued','posted'),
+		('j3','biz-2','document','wrong-business','posted'),
+		('j4','biz-1','document','unposted','draft')`)
+	result, err := NewDashboardService(db, logger.New()).financeSummary(context.Background(), "biz-1")
+	require.NoError(t, err)
+	require.Equal(t, float64(250), result.TotalPayable)
+}
 
 func TestDashboardServiceSummaryScopesByBusiness(t *testing.T) {
 	db := newDashboardTestDB(t)
@@ -34,6 +90,10 @@ func TestDashboardServiceSummaryScopesByBusiness(t *testing.T) {
 	execDashboardSQL(t, db, `INSERT INTO payments (id, business_id, amount, payment_date, deleted_at) VALUES ('pay-1', 'biz-1', 50, ?, NULL), ('pay-2', 'biz-2', 900, ?, NULL)`, now, now)
 	execDashboardSQL(t, db, `INSERT INTO products (id, business_id, is_active, stock_level, low_stock_threshold, deleted_at) VALUES ('prod-1', 'biz-1', 1, 2, 5, NULL), ('prod-2', 'biz-2', 1, 20, 5, NULL)`)
 	execDashboardSQL(t, db, `INSERT INTO product_categories (id, business_id, name, is_active, sort_order, deleted_at) VALUES ('cat-1', 'biz-1', 'Hardware', 1, 1, NULL)`)
+	execDashboardSQL(t, db, `INSERT INTO projects (id, business_id, is_active, deleted_at) VALUES
+		('project-active', 'biz-1', 1, NULL),
+		('project-inactive', 'biz-1', 0, NULL),
+		('project-other-business', 'biz-2', 1, NULL)`)
 	execDashboardSQL(t, db, `INSERT INTO storefronts (id, business_id, deleted_at) VALUES ('store-1', 'biz-1', NULL), ('store-2', 'biz-2', NULL)`)
 	execDashboardSQL(t, db, `INSERT INTO store_orders (id, business_id, status, total, deleted_at) VALUES ('order-1', 'biz-1', 'pending', 125, NULL), ('order-2', 'biz-2', 'pending', 500, NULL)`)
 	execDashboardSQL(t, db, `INSERT INTO agents (id, business_id, is_active, deleted_at) VALUES ('agent-1', 'biz-1', 1, NULL), ('agent-2', 'biz-2', 1, NULL)`)
@@ -60,6 +120,9 @@ func TestDashboardServiceSummaryScopesByBusiness(t *testing.T) {
 	if summary.Finance.TotalPayable != 325 {
 		t.Fatalf("expected payables from purchase and expense documents, got %+v", summary.Finance)
 	}
+	if summary.Finance.ProjectCount != 2 || summary.Finance.ActiveProjectCount != 1 {
+		t.Fatalf("expected project counts to use the is_active schema, got %+v", summary.Finance)
+	}
 	if summary.Inventory.ProductCount != 1 || summary.Inventory.LowStockProducts != 1 || len(summary.Inventory.Categories) != 1 {
 		t.Fatalf("inventory summary was not scoped correctly: %+v", summary.Inventory)
 	}
@@ -81,6 +144,7 @@ func newDashboardTestDB(t *testing.T) *gorm.DB {
 	}
 
 	statements := []string{
+		`CREATE TABLE journals (id TEXT PRIMARY KEY,business_id TEXT,source_type TEXT,source_id TEXT,status TEXT,deleted_at DATETIME)`,
 		`CREATE TABLE customers (id TEXT PRIMARY KEY, business_id TEXT, name TEXT, deleted_at DATETIME)`,
 		`CREATE TABLE vendors (id TEXT PRIMARY KEY, business_id TEXT, name TEXT, deleted_at DATETIME)`,
 		`CREATE TABLE invoices (id TEXT PRIMARY KEY, business_id TEXT, customer_id TEXT, invoice_no TEXT, status TEXT, total REAL, paid_amount REAL, balance_due REAL, invoice_date DATETIME, due_date DATETIME, created_at DATETIME, deleted_at DATETIME)`,
@@ -88,6 +152,7 @@ func newDashboardTestDB(t *testing.T) *gorm.DB {
 		`CREATE TABLE payments (id TEXT PRIMARY KEY, business_id TEXT, amount REAL, payment_date DATETIME, deleted_at DATETIME)`,
 		`CREATE TABLE products (id TEXT PRIMARY KEY, business_id TEXT, is_active BOOLEAN, stock_level INTEGER, low_stock_threshold INTEGER, deleted_at DATETIME)`,
 		`CREATE TABLE product_categories (id TEXT PRIMARY KEY, business_id TEXT, name TEXT, is_active BOOLEAN, sort_order INTEGER, deleted_at DATETIME)`,
+		`CREATE TABLE projects (id TEXT PRIMARY KEY, business_id TEXT, is_active BOOLEAN, deleted_at DATETIME)`,
 		`CREATE TABLE storefronts (id TEXT PRIMARY KEY, business_id TEXT, deleted_at DATETIME)`,
 		`CREATE TABLE store_orders (id TEXT PRIMARY KEY, business_id TEXT, status TEXT, total REAL, deleted_at DATETIME)`,
 		`CREATE TABLE agents (id TEXT PRIMARY KEY, business_id TEXT, is_active BOOLEAN, deleted_at DATETIME)`,

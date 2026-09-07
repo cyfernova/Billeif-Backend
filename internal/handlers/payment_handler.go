@@ -1,9 +1,12 @@
 package handlers
 
 import (
-	"invoice-backend/internal/models"
+	"errors"
 	"net/http"
+	"strings"
 
+	"invoice-backend/internal/idempotency"
+	"invoice-backend/internal/models"
 	"invoice-backend/internal/services"
 	"invoice-backend/internal/utils"
 	"invoice-backend/pkg/logger"
@@ -27,6 +30,9 @@ func NewPaymentHandler(svc *services.PaymentService, log *logger.Logger) *Paymen
 // @Accept json
 // @Produce json
 // @Security BearerAuth
+// @Param Idempotency-Key header string true "UUID idempotency key"
+// @Param X-Step-Up-Token header string false "Required for locked-period override"
+// @Param X-Lock-Override-Reason header string false "Required reason for locked-period override"
 // @Param input body services.CreatePaymentInput true "Payment details"
 // @Success 201 {object} models.Payment
 // @Failure 400 {object} map[string]string
@@ -38,23 +44,73 @@ func (h *PaymentHandler) Create(c *gin.Context) {
 	if !ok {
 		return
 	}
+	idempotencyKey, ok := requireIdempotencyKey(c)
+	if !ok {
+		return
+	}
 	var input services.CreatePaymentInput
 	if err := c.ShouldBindJSON(&input); err != nil {
 		log.Warn("invalid create payment payload", "error", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	input.IdempotencyKey = idempotencyKey
+	input.Authorization = accountingPostingAuthorization(c, "payment:"+input.InvoiceID+":"+idempotencyKey)
 
 	var payment *models.Payment
 	payment, err := h.svc.CreateByBusiness(c.Request.Context(), businessID, input)
 	if err != nil {
+		if errors.Is(err, services.ErrAccountingPeriodLocked) {
+			writeAccountingStepUpRequired(c)
+			return
+		}
 		log.Error("failed to create payment", "error", err, "invoice_id", input.InvoiceID)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(paymentCreateErrorStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 	log.Info("payment created", "payment_id", payment.ID, "invoice_id", payment.InvoiceID)
 
 	c.JSON(http.StatusCreated, payment)
+}
+
+func paymentCreateErrorStatus(err error) int {
+	var invalidKey *idempotency.InvalidKeyError
+	var invalidPayload *idempotency.InvalidPayloadError
+	if errors.As(err, &invalidKey) || errors.As(err, &invalidPayload) {
+		return http.StatusBadRequest
+	}
+	var conflict *idempotency.ConflictError
+	var inProgress *idempotency.InProgressError
+	if errors.As(err, &conflict) || errors.As(err, &inProgress) {
+		return http.StatusConflict
+	}
+	message := strings.ToLower(err.Error())
+	if strings.Contains(message, "invoice not found") {
+		return http.StatusNotFound
+	}
+	if strings.Contains(message, "exceeds invoice balance") || strings.Contains(message, "invoice is not payable") {
+		return http.StatusConflict
+	}
+	if strings.Contains(message, "invalid payment") || strings.Contains(message, "withholding") {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
+}
+
+func paymentMutationErrorStatus(err error) int {
+	message := strings.ToLower(err.Error())
+	if strings.Contains(message, "not found") {
+		return http.StatusNotFound
+	}
+	if strings.Contains(message, "reason is required") {
+		return http.StatusBadRequest
+	}
+	if strings.Contains(message, "immutable") || strings.Contains(message, "already reversed") ||
+		strings.Contains(message, "cannot be reversed") || strings.Contains(message, "would violate") ||
+		strings.Contains(message, "journal is not posted") || strings.Contains(message, "must be reversed through") {
+		return http.StatusConflict
+	}
+	return http.StatusInternalServerError
 }
 
 // Get retrieves a payment record by ID
@@ -171,7 +227,7 @@ func (h *PaymentHandler) Update(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "payment not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(paymentMutationErrorStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 	log.Info("payment updated", "payment_id", payment.ID)
@@ -202,10 +258,47 @@ func (h *PaymentHandler) Delete(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "payment not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(paymentMutationErrorStatus(err), gin.H{"error": err.Error()})
 		return
 	}
 	log.Info("payment deleted", "payment_id", id)
 
 	c.JSON(http.StatusNoContent, nil)
+}
+
+// Reverse creates the compensating accounting entry for a posted payment.
+// @Summary Reverse payment
+// @Description Reverse a posted payment, restore the invoice balance, and create a compensating journal entry.
+// @Tags Payments
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Payment ID"
+// @Param input body services.ReversePaymentInput true "Payment reversal"
+// @Success 200 {object} models.Payment
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /payments/{id}/reverse [post]
+func (h *PaymentHandler) Reverse(c *gin.Context) {
+	log := logger.FromContext(c.Request.Context()).Named("payment_handler").With("operation", "reverse")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	var input services.ReversePaymentInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		log.Warn("invalid payment reversal payload", "error", err, "payment_id", c.Param("id"))
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	payment, err := h.svc.ReverseByBusiness(c.Request.Context(), businessID, c.Param("id"), input)
+	if err != nil {
+		log.Error("failed to reverse payment", "error", err, "payment_id", c.Param("id"))
+		c.JSON(paymentMutationErrorStatus(err), gin.H{"error": err.Error()})
+		return
+	}
+	log.Info("payment reversed", "payment_id", payment.ID)
+	c.JSON(http.StatusOK, payment)
 }

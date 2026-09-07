@@ -79,6 +79,36 @@ func TestLegacyInvoiceSendRouteIsNotRegistered(t *testing.T) {
 	}
 }
 
+func TestPaymentReversalRouteIsRegistered(t *testing.T) {
+	router := setupTestRouter(t)
+	for _, route := range router.Routes() {
+		if route.Method == http.MethodPost && route.Path == "/api/v1/payments/:id/reverse" {
+			return
+		}
+	}
+	t.Fatal("payment reversal route must be registered")
+}
+
+func TestCustomerCapabilityRouteIsRegisteredAsProtectedRead(t *testing.T) {
+	router := setupTestRouter(t)
+	for _, route := range router.Routes() {
+		if route.Method == http.MethodGet && route.Path == "/api/v1/capabilities" {
+			return
+		}
+	}
+	t.Fatal("customer capability route must be registered")
+}
+
+func TestCustomerCapabilityRouteRejectsUnauthenticatedRequests(t *testing.T) {
+	router := setupTestRouter(t)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/capabilities?platform=web", nil)
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusUnauthorized, response.Body.String())
+	}
+}
+
 func TestRouterDoesNotLetGinTrustCallerForwardingHeaders(t *testing.T) {
 	router := setupTestRouter(t)
 	router.GET("/__test/client-ip", func(c *gin.Context) {
@@ -109,5 +139,22 @@ func setupTestRouter(t *testing.T) *gin.Engine {
 		logger.New(),
 		ratelimit.DisabledLimiter{},
 		identities,
+		config.ProfileHTTP,
 	)
+}
+
+func TestQueueWorkerProfilesDoNotBuildHTTPRouter(t *testing.T) {
+	for _, profile := range []config.Profile{config.ProfileBulkImport, config.ProfileInvoice, config.ProfileGST, config.ProfileBargaining} {
+		t.Run(string(profile), func(t *testing.T) {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					t.Fatalf("worker router initialization panicked: %v", recovered)
+				}
+			}()
+			router := setupRouter(&config.Config{}, nil, nil, logger.New(), ratelimit.DisabledLimiter{}, nil, profile)
+			if router != nil {
+				t.Fatal("queue worker must not construct an HTTP router")
+			}
+		})
+	}
 }
