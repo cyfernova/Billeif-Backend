@@ -48,7 +48,11 @@ type AgentAssistRequest struct {
 // @Param input body APIRequest true "Chat messages"
 // @Success 200 {object} map[string]interface{}
 // @Failure 400 {object} map[string]string
+// @Failure 403 {object} CapabilityMutationError
+// @Failure 422 {object} CapabilityMutationError
+// @Failure 429 {object} CapabilityMutationError
 // @Failure 500 {object} map[string]string
+// @Failure 503 {object} CapabilityMutationError
 // @Router /llm/chat [post]
 func (h *LLMHandler) Chat(c *gin.Context) {
 	var req APIRequest
@@ -65,10 +69,13 @@ func (h *LLMHandler) Chat(c *gin.Context) {
 		return
 	}
 
-	response, err := h.llm.ChatWithWebSearch(c.Request.Context(), req.Messages)
+	response, err := h.llm.ChatWithWebSearchForBusiness(c.Request.Context(), businessID, userID, req.Messages)
 	if err != nil {
 		h.log.Error("failed to process chat request", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "raw_response": "check server logs for MINMAX RAW RESPONSE"})
+		if writeSubscriptionControlError(c, err) {
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to process chat request"})
 		return
 	}
 	if _, _, err := h.history.SaveExchange(c.Request.Context(), services.SaveLLMChatExchangeInput{
@@ -133,7 +140,11 @@ func (h *LLMHandler) ListChatMessages(c *gin.Context) {
 // @Param input body AgentAssistRequest true "Agent assist request"
 // @Success 200 {object} map[string]interface{}
 // @Failure 400 {object} map[string]string
+// @Failure 403 {object} CapabilityMutationError
+// @Failure 422 {object} CapabilityMutationError
+// @Failure 429 {object} CapabilityMutationError
 // @Failure 500 {object} map[string]string
+// @Failure 503 {object} CapabilityMutationError
 // @Router /llm/agent-assist [post]
 func (h *LLMHandler) AgentAssist(c *gin.Context) {
 	var req AgentAssistRequest
@@ -141,10 +152,21 @@ func (h *LLMHandler) AgentAssist(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
 
-	response, err := h.llm.ProcessAgentIntent(c.Request.Context(), req.Intent, req.Context)
+	response, err := h.llm.ProcessAgentIntentForBusiness(c.Request.Context(), businessID, userID, req.Intent, req.Context)
 	if err != nil {
 		h.log.Error("failed to process agent intent", "error", err)
+		if writeSubscriptionControlError(c, err) {
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to process agent intent"})
 		return
 	}

@@ -2,6 +2,8 @@ package unit
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -15,6 +17,18 @@ import (
 func setupTestDir(t *testing.T) string {
 	tmpDir := t.TempDir()
 	return tmpDir
+}
+
+func TestAgentConfigServiceUsesLambdaWritableStorage(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("AWS_LAMBDA_FUNCTION_NAME", "billeif-test-api-http")
+	t.Setenv("TMPDIR", tmpDir)
+
+	services.NewAgentConfigService(".well-known", logger.New())
+
+	if _, err := os.Stat(filepath.Join(tmpDir, ".well-known")); err != nil {
+		t.Fatalf("expected Lambda agent config directory under temporary storage: %v", err)
+	}
 }
 
 func TestAgentConfigService_CreateDefaultBuyerConfig(t *testing.T) {
@@ -595,12 +609,13 @@ func TestAgentConfigService_FilePersistenceFailure(t *testing.T) {
 		},
 	}
 
-	// Save should still work in memory even if file write fails
+	// A failed durable write must not report success or publish unsaved state.
 	result, err := svc.SaveAgentConfig(context.Background(), agent, config)
 
-	// The implementation returns the config even if file write fails
-	assert.NoError(t, err)
-	assert.NotNil(t, result)
+	assert.ErrorContains(t, err, "persist agent configuration")
+	assert.Nil(t, result)
+	_, err = svc.GetAgentConfig(context.Background(), agent.ID)
+	assert.ErrorIs(t, err, services.ErrAgentConfigNotFound)
 }
 
 func TestAgentConfigService_Metadata(t *testing.T) {

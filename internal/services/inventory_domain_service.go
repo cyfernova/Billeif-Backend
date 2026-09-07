@@ -13,6 +13,7 @@ import (
 	"invoice-backend/internal/models"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -49,6 +50,9 @@ type WarehousePermissionInput struct {
 }
 
 type CreateWarehouseInput struct {
+	Manager    string `json:"manager" binding:"max=120"`
+	Phone      string `json:"phone" binding:"max=40"`
+	IsActive   *bool  `json:"is_active,omitempty"`
 	BusinessID string `json:"business_id,omitempty"`
 	BranchID   string `json:"branch_id,omitempty" binding:"omitempty,uuid"`
 	Name       string `json:"name" binding:"required"`
@@ -62,15 +66,18 @@ type CreateWarehouseInput struct {
 }
 
 type UpdateWarehouseInput struct {
-	BranchID   string `json:"branch_id,omitempty" binding:"omitempty,uuid"`
-	Name       string `json:"name"`
-	Code       string `json:"code"`
-	Address    string `json:"address"`
-	City       string `json:"city"`
-	State      string `json:"state"`
-	Country    string `json:"country"`
-	PostalCode string `json:"postal_code"`
-	IsDefault  *bool  `json:"is_default,omitempty"`
+	Manager    *string `json:"manager,omitempty" binding:"omitempty,max=120"`
+	Phone      *string `json:"phone,omitempty" binding:"omitempty,max=40"`
+	IsActive   *bool   `json:"is_active,omitempty"`
+	BranchID   string  `json:"branch_id,omitempty" binding:"omitempty,uuid"`
+	Name       string  `json:"name"`
+	Code       string  `json:"code"`
+	Address    string  `json:"address"`
+	City       string  `json:"city"`
+	State      string  `json:"state"`
+	Country    string  `json:"country"`
+	PostalCode string  `json:"postal_code"`
+	IsDefault  *bool   `json:"is_default,omitempty"`
 }
 
 type InventoryAdjustmentInput struct {
@@ -85,6 +92,8 @@ type InventoryAdjustmentInput struct {
 	UnitCost         float64                `json:"unit_cost"`
 	BatchAllocations []BatchAllocationInput `json:"batch_allocations,omitempty"`
 	SerialIDs        []string               `json:"serial_ids,omitempty"`
+	Authorization    PostingAuthorization   `json:"-"`
+	LockOverrideID   *string                `json:"-"`
 }
 
 type InventoryTransferInput struct {
@@ -100,17 +109,21 @@ type InventoryTransferInput struct {
 	UnitCost         float64                `json:"unit_cost"`
 	BatchAllocations []BatchAllocationInput `json:"batch_allocations,omitempty"`
 	SerialIDs        []string               `json:"serial_ids,omitempty"`
+	Authorization    PostingAuthorization   `json:"-"`
+	LockOverrideID   *string                `json:"-"`
 }
 
 type InventoryResetInput struct {
-	UserID      string  `json:"user_id,omitempty"`
-	BusinessID  string  `json:"business_id,omitempty"`
-	ProjectID   string  `json:"project_id,omitempty" binding:"omitempty,uuid"`
-	ProductID   string  `json:"product_id" binding:"required,uuid"`
-	VariantID   string  `json:"variant_id,omitempty"`
-	WarehouseID string  `json:"warehouse_id,omitempty"`
-	TargetQty   float64 `json:"target_qty" binding:"required,gte=0"`
-	Reason      string  `json:"reason"`
+	UserID         string               `json:"user_id,omitempty"`
+	BusinessID     string               `json:"business_id,omitempty"`
+	ProjectID      string               `json:"project_id,omitempty" binding:"omitempty,uuid"`
+	ProductID      string               `json:"product_id" binding:"required,uuid"`
+	VariantID      string               `json:"variant_id,omitempty"`
+	WarehouseID    string               `json:"warehouse_id,omitempty"`
+	TargetQty      float64              `json:"target_qty" binding:"required,gte=0"`
+	Reason         string               `json:"reason"`
+	Authorization  PostingAuthorization `json:"-"`
+	LockOverrideID *string              `json:"-"`
 }
 
 type InventoryTimelineFilter struct {
@@ -177,23 +190,27 @@ type ExecuteAssemblyInput struct {
 	OutputBatches   []BatchAllocationInput                  `json:"output_batches,omitempty"`
 	OutputSerialIDs []string                                `json:"output_serial_ids,omitempty"`
 	ComponentMoves  []ExecuteAssemblyComponentMovementInput `json:"component_moves,omitempty"`
+	Authorization   PostingAuthorization                    `json:"-"`
+	LockOverrideID  *string                                 `json:"-"`
 }
 
 type InventoryTimelineEntry struct {
-	ID              string                 `json:"id"`
-	ProductID       string                 `json:"product_id"`
-	VariantID       *string                `json:"variant_id,omitempty"`
-	ProductName     string                 `json:"product_name,omitempty"`
-	VariantName     string                 `json:"variant_name,omitempty"`
-	WarehouseID     *string                `json:"warehouse_id,omitempty"`
-	WarehouseName   string                 `json:"warehouse_name,omitempty"`
-	Direction       string                 `json:"direction"`
-	TransactionType string                 `json:"transaction_type"`
-	Quantity        float64                `json:"quantity"`
-	UnitCost        float64                `json:"unit_cost"`
-	Reason          string                 `json:"reason,omitempty"`
-	RecordedAt      time.Time              `json:"recorded_at"`
-	Metadata        map[string]interface{} `json:"metadata,omitempty"`
+	ID                  string                 `json:"id"`
+	ProductID           string                 `json:"product_id"`
+	VariantID           *string                `json:"variant_id,omitempty"`
+	ProductName         string                 `json:"product_name,omitempty"`
+	VariantName         string                 `json:"variant_name,omitempty"`
+	WarehouseID         *string                `json:"warehouse_id,omitempty"`
+	WarehouseName       string                 `json:"warehouse_name,omitempty"`
+	SourceWarehouseID   *string                `json:"source_warehouse_id,omitempty"`
+	SourceWarehouseName string                 `json:"source_warehouse_name,omitempty"`
+	Direction           string                 `json:"direction"`
+	TransactionType     string                 `json:"transaction_type"`
+	Quantity            float64                `json:"quantity"`
+	UnitCost            float64                `json:"unit_cost"`
+	Reason              string                 `json:"reason,omitempty"`
+	RecordedAt          time.Time              `json:"recorded_at"`
+	Metadata            map[string]interface{} `json:"metadata,omitempty"`
 }
 
 type InventoryValuationRow struct {
@@ -464,6 +481,9 @@ func isMissingWarehouseSummaryTableErr(err error) bool {
 
 func (s *InventoryService) CreateWarehouse(ctx context.Context, input CreateWarehouseInput) (*models.Warehouse, error) {
 	warehouse := &models.Warehouse{
+		Manager:    strings.TrimSpace(input.Manager),
+		Phone:      strings.TrimSpace(input.Phone),
+		IsActive:   input.IsActive == nil || *input.IsActive,
 		BusinessID: input.BusinessID,
 		BranchID:   stringPointer(input.BranchID),
 		Name:       input.Name,
@@ -499,6 +519,15 @@ func (s *InventoryService) UpdateWarehouse(ctx context.Context, businessID, ware
 		return nil, err
 	}
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if input.Manager != nil {
+			warehouse.Manager = strings.TrimSpace(*input.Manager)
+		}
+		if input.Phone != nil {
+			warehouse.Phone = strings.TrimSpace(*input.Phone)
+		}
+		if input.IsActive != nil {
+			warehouse.IsActive = *input.IsActive
+		}
 		if input.Name != "" {
 			warehouse.Name = input.Name
 		}
@@ -853,8 +882,16 @@ func (s *InventoryService) resolveVariantTx(tx *gorm.DB, businessID, productID, 
 }
 
 func (s *InventoryService) RecordAdjustment(ctx context.Context, input InventoryAdjustmentInput) ([]*models.InventoryBalance, error) {
+	overrideID, err := s.prepareInventoryOverride(ctx, input.BusinessID, input.UserID, input.Authorization)
+	if err != nil {
+		return nil, err
+	}
+	input.LockOverrideID = overrideID
 	var balances []*models.InventoryBalance
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := s.enforceInventoryLockTx(tx, input.BusinessID, time.Now(), input.LockOverrideID, true); err != nil {
+			return err
+		}
 		warehouseID, err := s.resolveWarehouseIDTx(tx, input.BusinessID, input.WarehouseID)
 		if err != nil {
 			return err
@@ -882,10 +919,31 @@ func (s *InventoryService) RecordAdjustment(ctx context.Context, input Inventory
 }
 
 func (s *InventoryService) TransferStock(ctx context.Context, input InventoryTransferInput) error {
+	if math.IsNaN(input.Quantity) || math.IsInf(input.Quantity, 0) || input.Quantity <= 0 {
+		return fmt.Errorf("transfer quantity must be a positive finite number")
+	}
+	overrideID, err := s.prepareInventoryOverride(ctx, input.BusinessID, input.UserID, input.Authorization)
+	if err != nil {
+		return err
+	}
+	input.LockOverrideID = overrideID
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if input.FromWarehouseID == input.ToWarehouseID {
+		if err := s.enforceInventoryLockTx(tx, input.BusinessID, time.Now(), input.LockOverrideID, true); err != nil {
+			return err
+		}
+		fromWarehouseID, err := s.resolveWarehouseIDTx(tx, input.BusinessID, input.FromWarehouseID)
+		if err != nil {
+			return err
+		}
+		toWarehouseID, err := s.resolveWarehouseIDTx(tx, input.BusinessID, input.ToWarehouseID)
+		if err != nil {
+			return err
+		}
+		if fromWarehouseID == toWarehouseID {
 			return fmt.Errorf("source and destination warehouses must differ")
 		}
+		input.FromWarehouseID = fromWarehouseID
+		input.ToWarehouseID = toWarehouseID
 		product, variant, err := s.resolveVariantTx(tx, input.BusinessID, input.ProductID, input.VariantID)
 		if err != nil {
 			return err
@@ -894,8 +952,8 @@ func (s *InventoryService) TransferStock(ctx context.Context, input InventoryTra
 			return s.transferSerialsTx(tx, product, variant, input)
 		}
 		if variant.TrackBatches {
-			if len(input.BatchAllocations) == 0 {
-				return fmt.Errorf("batch allocations are required for batch-tracked variants")
+			if err := validateInventoryBatchAllocations(input.Quantity, input.BatchAllocations); err != nil {
+				return err
 			}
 			for _, allocation := range input.BatchAllocations {
 				batch, err := s.resolveBatchTx(tx, input.BusinessID, product.ID, variant.ID, allocation)
@@ -972,7 +1030,15 @@ func (s *InventoryService) TransferStock(ctx context.Context, input InventoryTra
 }
 
 func (s *InventoryService) ResetStock(ctx context.Context, input InventoryResetInput) error {
+	overrideID, err := s.prepareInventoryOverride(ctx, input.BusinessID, input.UserID, input.Authorization)
+	if err != nil {
+		return err
+	}
+	input.LockOverrideID = overrideID
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := s.enforceInventoryLockTx(tx, input.BusinessID, time.Now(), input.LockOverrideID, true); err != nil {
+			return err
+		}
 		warehouseID, err := s.resolveWarehouseIDTx(tx, input.BusinessID, input.WarehouseID)
 		if err != nil {
 			return err
@@ -1025,6 +1091,8 @@ func (s *InventoryService) GetTimeline(ctx context.Context, filter InventoryTime
 			COALESCE(pv.name, '') AS variant_name,
 			sm.warehouse_id,
 			COALESCE(w.name, '') AS warehouse_name,
+			sm.source_warehouse_id,
+			COALESCE(sw.name, '') AS source_warehouse_name,
 			sm.direction,
 			sm.transaction_type,
 			sm.quantity,
@@ -1032,9 +1100,10 @@ func (s *InventoryService) GetTimeline(ctx context.Context, filter InventoryTime
 			sm.reason,
 			sm.metadata,
 			sm.recorded_at`).
-		Joins("JOIN products p ON p.id = sm.product_id").
-		Joins("LEFT JOIN product_variants pv ON pv.id = sm.variant_id").
-		Joins("LEFT JOIN warehouses w ON w.id = sm.warehouse_id").
+		Joins("JOIN products p ON p.id = sm.product_id AND p.business_id = sm.business_id").
+		Joins("LEFT JOIN product_variants pv ON pv.id = sm.variant_id AND pv.business_id = sm.business_id").
+		Joins("LEFT JOIN warehouses w ON w.id = sm.warehouse_id AND w.business_id = sm.business_id").
+		Joins("LEFT JOIN warehouses sw ON sw.id = sm.source_warehouse_id AND sw.business_id = sm.business_id").
 		Where("sm.business_id = ? AND sm.deleted_at IS NULL", filter.BusinessID).
 		Order("sm.recorded_at DESC").
 		Limit(filter.Limit)
@@ -1062,20 +1131,22 @@ func (s *InventoryService) GetTimeline(ctx context.Context, filter InventoryTime
 		query = query.Where("sm.recorded_at <= ?", *filter.DateTo)
 	}
 	rows := []struct {
-		ID              string
-		ProductID       string
-		VariantID       *string
-		ProductName     string
-		VariantName     string
-		WarehouseID     *string
-		WarehouseName   string
-		Direction       string
-		TransactionType string
-		Quantity        float64
-		UnitCost        float64
-		Reason          string
-		Metadata        string
-		RecordedAt      time.Time
+		ID                  string
+		ProductID           string
+		VariantID           *string
+		ProductName         string
+		VariantName         string
+		WarehouseID         *string
+		WarehouseName       string
+		SourceWarehouseID   *string
+		SourceWarehouseName string
+		Direction           string
+		TransactionType     string
+		Quantity            float64
+		UnitCost            float64
+		Reason              string
+		Metadata            string
+		RecordedAt          time.Time
 	}{}
 	if err := query.Scan(&rows).Error; err != nil {
 		return nil, err
@@ -1083,20 +1154,22 @@ func (s *InventoryService) GetTimeline(ctx context.Context, filter InventoryTime
 	result := make([]InventoryTimelineEntry, 0, len(rows))
 	for _, row := range rows {
 		entry := InventoryTimelineEntry{
-			ID:              row.ID,
-			ProductID:       row.ProductID,
-			VariantID:       row.VariantID,
-			ProductName:     row.ProductName,
-			VariantName:     row.VariantName,
-			WarehouseID:     row.WarehouseID,
-			WarehouseName:   row.WarehouseName,
-			Direction:       row.Direction,
-			TransactionType: row.TransactionType,
-			Quantity:        row.Quantity,
-			UnitCost:        row.UnitCost,
-			Reason:          row.Reason,
-			Metadata:        unmarshalJSONMap(row.Metadata),
-			RecordedAt:      row.RecordedAt,
+			ID:                  row.ID,
+			ProductID:           row.ProductID,
+			VariantID:           row.VariantID,
+			ProductName:         row.ProductName,
+			VariantName:         row.VariantName,
+			WarehouseID:         row.WarehouseID,
+			WarehouseName:       row.WarehouseName,
+			SourceWarehouseID:   row.SourceWarehouseID,
+			SourceWarehouseName: row.SourceWarehouseName,
+			Direction:           row.Direction,
+			TransactionType:     row.TransactionType,
+			Quantity:            row.Quantity,
+			UnitCost:            row.UnitCost,
+			Reason:              row.Reason,
+			Metadata:            unmarshalJSONMap(row.Metadata),
+			RecordedAt:          row.RecordedAt,
 		}
 		result = append(result, entry)
 	}
@@ -1389,6 +1462,7 @@ type inventoryMutationInput struct {
 	TransactionType  string
 	DocumentID       *string
 	DocumentLineID   *string
+	RecordedAt       time.Time
 }
 
 type simpleBalanceMutation struct {
@@ -1407,6 +1481,7 @@ type simpleBalanceMutation struct {
 	SourceWarehouseID *string
 	DocumentID        *string
 	DocumentLineID    *string
+	RecordedAt        time.Time
 }
 
 func (s *InventoryService) applyInventoryMutationTx(tx *gorm.DB, input inventoryMutationInput) ([]*models.InventoryBalance, error) {
@@ -1435,6 +1510,7 @@ func (s *InventoryService) applyInventoryMutationTx(tx *gorm.DB, input inventory
 		Direction:       directionForDelta(input.Quantity),
 		DocumentID:      input.DocumentID,
 		DocumentLineID:  input.DocumentLineID,
+		RecordedAt:      input.RecordedAt,
 	})
 	if err != nil {
 		return nil, err
@@ -1459,13 +1535,11 @@ func (input inventoryMutationInput) effectiveUnitCost() float64 {
 }
 
 func (s *InventoryService) applyBatchMutationTx(tx *gorm.DB, input inventoryMutationInput) ([]*models.InventoryBalance, error) {
-	if len(input.BatchAllocations) == 0 {
-		return nil, fmt.Errorf("batch allocations are required for batch-tracked variants")
+	if err := validateInventoryBatchAllocations(input.Quantity, input.BatchAllocations); err != nil {
+		return nil, err
 	}
-	total := 0.0
 	balances := make([]*models.InventoryBalance, 0, len(input.BatchAllocations))
 	for _, allocation := range input.BatchAllocations {
-		total += allocation.Quantity
 		batch, err := s.resolveBatchTx(tx, input.BusinessID, input.Product.ID, input.Variant.ID, allocation)
 		if err != nil {
 			return nil, err
@@ -1488,14 +1562,12 @@ func (s *InventoryService) applyBatchMutationTx(tx *gorm.DB, input inventoryMuta
 			Batch:           batch,
 			DocumentID:      input.DocumentID,
 			DocumentLineID:  input.DocumentLineID,
+			RecordedAt:      input.RecordedAt,
 		})
 		if err != nil {
 			return nil, err
 		}
 		balances = append(balances, balance)
-	}
-	if math.Abs(total-math.Abs(input.Quantity)) > 0.0001 {
-		return nil, fmt.Errorf("batch allocations must sum to the requested quantity")
 	}
 	if err := s.refreshCachesTx(tx, input.Product.ID, input.Variant.ID, input.WarehouseID); err != nil {
 		return nil, err
@@ -1504,18 +1576,15 @@ func (s *InventoryService) applyBatchMutationTx(tx *gorm.DB, input inventoryMuta
 }
 
 func (s *InventoryService) applySerialMutationTx(tx *gorm.DB, input inventoryMutationInput) ([]*models.InventoryBalance, error) {
-	if len(input.SerialIDs) == 0 {
-		return nil, fmt.Errorf("serial IDs are required for serial-tracked variants")
+	serialIDs, err := normalizeInventorySerialIDs(input.Quantity, input.SerialIDs)
+	if err != nil {
+		return nil, err
 	}
-	if math.Abs(math.Abs(input.Quantity)-float64(len(input.SerialIDs))) > 0.0001 {
-		return nil, fmt.Errorf("serial ID count must match quantity")
-	}
-	balances := make([]*models.InventoryBalance, 0, len(input.SerialIDs))
-	for _, serialValue := range input.SerialIDs {
+	balances := make([]*models.InventoryBalance, 0, len(serialIDs))
+	for _, serialValue := range serialIDs {
 		var serial *models.ProductSerialNumber
-		var err error
 		if input.Quantity > 0 {
-			serial, err = s.createOrLoadSerialTx(tx, input.BusinessID, input.Product.ID, input.Variant.ID, input.WarehouseID, serialValue)
+			serial, err = createInventorySerialTx(tx, input.BusinessID, input.Product.ID, input.Variant.ID, input.WarehouseID, serialValue)
 			if err != nil {
 				return nil, err
 			}
@@ -1551,6 +1620,7 @@ func (s *InventoryService) applySerialMutationTx(tx *gorm.DB, input inventoryMut
 			SerialNumber:    serial,
 			DocumentID:      input.DocumentID,
 			DocumentLineID:  input.DocumentLineID,
+			RecordedAt:      input.RecordedAt,
 		})
 		if err != nil {
 			return nil, err
@@ -1564,13 +1634,11 @@ func (s *InventoryService) applySerialMutationTx(tx *gorm.DB, input inventoryMut
 }
 
 func (s *InventoryService) transferSerialsTx(tx *gorm.DB, product *models.Product, variant *models.ProductVariant, input InventoryTransferInput) error {
-	if len(input.SerialIDs) == 0 {
-		return fmt.Errorf("serial IDs are required for serial-tracked transfers")
+	serialIDs, err := normalizeInventorySerialIDs(input.Quantity, input.SerialIDs)
+	if err != nil {
+		return err
 	}
-	if math.Abs(input.Quantity-float64(len(input.SerialIDs))) > 0.0001 {
-		return fmt.Errorf("serial ID count must match transfer quantity")
-	}
-	for _, serialValue := range input.SerialIDs {
+	for _, serialValue := range serialIDs {
 		serial, err := s.requireAvailableSerialTx(tx, input.BusinessID, product.ID, variant.ID, input.FromWarehouseID, serialValue)
 		if err != nil {
 			return err
@@ -1625,8 +1693,22 @@ func (s *InventoryService) resolveWarehouseIDTx(tx *gorm.DB, businessID, warehou
 		}
 		return warehouse.ID, nil
 	}
-	warehouse, err := s.EnsureDefaultWarehouse(tx.Statement.Context, businessID)
-	if err != nil {
+	var warehouse models.Warehouse
+	err := tx.Where("business_id = ? AND is_default = TRUE AND deleted_at IS NULL", businessID).First(&warehouse).Error
+	if err == nil {
+		return warehouse.ID, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", err
+	}
+	warehouse = models.Warehouse{BusinessID: businessID, Name: "Main Warehouse", Code: "MAIN", IsDefault: true, IsActive: true}
+	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&warehouse).Error; err != nil {
+		return "", err
+	}
+	if warehouse.ID != "" {
+		return warehouse.ID, nil
+	}
+	if err := tx.Where("business_id = ? AND is_default = TRUE AND deleted_at IS NULL", businessID).First(&warehouse).Error; err != nil {
 		return "", err
 	}
 	return warehouse.ID, nil
@@ -1640,7 +1722,7 @@ func (s *InventoryService) applySimpleBalanceTx(tx *gorm.DB, input simpleBalance
 		batchID = &input.Batch.ID
 	}
 	var balance models.InventoryBalance
-	err := tx.Where("business_id = ? AND product_id = ? AND variant_id = ? AND warehouse_id = ? AND batch_key = ? AND deleted_at IS NULL",
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("business_id = ? AND product_id = ? AND variant_id = ? AND warehouse_id = ? AND batch_key = ? AND deleted_at IS NULL",
 		input.BusinessID, input.ProductID, input.VariantID, input.WarehouseID, batchKey).
 		First(&balance).Error
 	if err != nil {
@@ -1662,7 +1744,10 @@ func (s *InventoryService) applySimpleBalanceTx(tx *gorm.DB, input simpleBalance
 	}
 	balance.OnHand = clampZero(nextOnHand)
 	balance.StockValue = clampMoney(balance.StockValue + (input.Quantity * input.UnitCost))
-	now := time.Now()
+	now := input.RecordedAt
+	if now.IsZero() {
+		now = time.Now()
+	}
 	balance.LastRecordedAt = &now
 	if balance.ID == "" {
 		if err := tx.Create(&balance).Error; err != nil {
@@ -1712,6 +1797,54 @@ func (s *InventoryService) applySimpleBalanceTx(tx *gorm.DB, input simpleBalance
 	})
 }
 
+func (s *InventoryService) prepareInventoryOverride(ctx context.Context, businessID, subject string, auth PostingAuthorization) (*string, error) {
+	if s == nil || s.accounting == nil {
+		return nil, nil
+	}
+	auth.Subject = subject
+	if auth.Action == "" {
+		auth.Action = "inventory_lock_override"
+	}
+	return s.accounting.PrepareLockOverride(ctx, businessID, time.Now(), auth)
+}
+
+func (s *InventoryService) enforceInventoryLockTx(tx *gorm.DB, businessID string, recordedAt time.Time, overrideID *string, consume bool) error {
+	if s == nil || s.accounting == nil {
+		return nil
+	}
+	if recordedAt.IsZero() {
+		recordedAt = s.accounting.now().UTC()
+	}
+	var policy models.AccountingPeriodPolicy
+	err := tx.Clauses(clause.Locking{Strength: "SHARE"}).Where("business_id=?", businessID).First(&policy).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if policy.LockDate != nil && !accountingDate(recordedAt).After(accountingDate(*policy.LockDate)) {
+		if overrideID == nil || *overrideID == "" {
+			return ErrAccountingPeriodLocked
+		}
+		now := time.Now().UTC()
+		var override models.AccountingLockOverride
+		if err := tx.Where("id=? AND business_id=? AND posting_date=? AND applied_at IS NULL", *overrideID, businessID, accountingDate(recordedAt)).First(&override).Error; err != nil {
+			return ErrAccountingPeriodLocked
+		}
+		if consume {
+			result := tx.Model(&models.AccountingLockOverride{}).Where("id=? AND applied_at IS NULL", override.ID).Update("applied_at", now)
+			if result.Error != nil || result.RowsAffected != 1 {
+				return ErrAccountingPeriodLocked
+			}
+			if err := writeAccountingAuditTx(tx, businessID, override.Subject, "inventory_lock_override_applied", "inventory", override.Resource, "completed", override.Reason); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (s *InventoryService) resolveBatchTx(tx *gorm.DB, businessID, productID, variantID string, allocation BatchAllocationInput) (*models.ProductBatch, error) {
 	if allocation.BatchID != "" {
 		var batch models.ProductBatch
@@ -1747,21 +1880,23 @@ func (s *InventoryService) resolveBatchTx(tx *gorm.DB, businessID, productID, va
 	return &batch, nil
 }
 
-func (s *InventoryService) createOrLoadSerialTx(tx *gorm.DB, businessID, productID, variantID, warehouseID, serialValue string) (*models.ProductSerialNumber, error) {
+func createInventorySerialTx(tx *gorm.DB, businessID, productID, variantID, warehouseID, serialValue string) (*models.ProductSerialNumber, error) {
 	serialValue = strings.TrimSpace(serialValue)
 	if serialValue == "" {
 		return nil, fmt.Errorf("serial number is required")
 	}
 	var serial models.ProductSerialNumber
-	err := tx.Where("(serial_number = ? OR imei = ?) AND business_id = ? AND deleted_at IS NULL", serialValue, serialValue, businessID).First(&serial).Error
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("(serial_number = ? OR imei = ?) AND business_id = ? AND deleted_at IS NULL", serialValue, serialValue, businessID).
+		First(&serial).Error
 	if err == nil {
-		if serial.Status != models.SerialStatusAvailable {
-			return nil, fmt.Errorf("serial %s is not available for stock in", serialValue)
+		if serial.ProductID != productID || serial.VariantID != variantID {
+			return nil, fmt.Errorf("serial %s belongs to another product", serialValue)
 		}
-		if serial.WarehouseID != nil && *serial.WarehouseID != warehouseID {
-			return nil, fmt.Errorf("serial %s already belongs to another warehouse", serialValue)
+		if serial.Status == models.SerialStatusAvailable && serial.WarehouseID != nil {
+			return nil, fmt.Errorf("serial %s is already in stock", serialValue)
 		}
-		return &serial, nil
+		return nil, fmt.Errorf("serial %s is not available for stock in", serialValue)
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
@@ -1781,8 +1916,14 @@ func (s *InventoryService) createOrLoadSerialTx(tx *gorm.DB, businessID, product
 }
 
 func (s *InventoryService) requireAvailableSerialTx(tx *gorm.DB, businessID, productID, variantID, warehouseID, serialValue string) (*models.ProductSerialNumber, error) {
+	serialValue = strings.TrimSpace(serialValue)
+	if serialValue == "" {
+		return nil, fmt.Errorf("serial number is required")
+	}
 	var serial models.ProductSerialNumber
-	err := tx.Where("(serial_number = ? OR imei = ?) AND business_id = ? AND product_id = ? AND variant_id = ? AND deleted_at IS NULL", serialValue, serialValue, businessID, productID, variantID).First(&serial).Error
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("(serial_number = ? OR imei = ?) AND business_id = ? AND product_id = ? AND variant_id = ? AND deleted_at IS NULL", serialValue, serialValue, businessID, productID, variantID).
+		First(&serial).Error
 	if err != nil {
 		return nil, err
 	}
@@ -1793,6 +1934,49 @@ func (s *InventoryService) requireAvailableSerialTx(tx *gorm.DB, businessID, pro
 		return nil, fmt.Errorf("serial %s is not in the requested warehouse", serialValue)
 	}
 	return &serial, nil
+}
+
+func validateInventoryBatchAllocations(quantity float64, allocations []BatchAllocationInput) error {
+	if math.IsNaN(quantity) || math.IsInf(quantity, 0) || math.Abs(quantity) < 0.0001 {
+		return fmt.Errorf("inventory quantity must be a non-zero finite number")
+	}
+	if len(allocations) == 0 {
+		return fmt.Errorf("batch allocations are required for batch-tracked variants")
+	}
+	total := 0.0
+	for _, allocation := range allocations {
+		if math.IsNaN(allocation.Quantity) || math.IsInf(allocation.Quantity, 0) || allocation.Quantity <= 0 {
+			return fmt.Errorf("batch allocation quantities must be positive finite numbers")
+		}
+		total += allocation.Quantity
+	}
+	if math.Abs(total-math.Abs(quantity)) > 0.0001 {
+		return fmt.Errorf("batch allocations must sum to the requested quantity")
+	}
+	return nil
+}
+
+func normalizeInventorySerialIDs(quantity float64, serialIDs []string) ([]string, error) {
+	if math.IsNaN(quantity) || math.IsInf(quantity, 0) || math.Abs(quantity) < 0.0001 {
+		return nil, fmt.Errorf("inventory quantity must be a non-zero finite number")
+	}
+	if math.Abs(math.Abs(quantity)-float64(len(serialIDs))) > 0.0001 {
+		return nil, fmt.Errorf("serial ID count must match quantity")
+	}
+	normalized := make([]string, 0, len(serialIDs))
+	seen := make(map[string]struct{}, len(serialIDs))
+	for _, value := range serialIDs {
+		serialID := strings.TrimSpace(value)
+		if serialID == "" {
+			return nil, fmt.Errorf("serial number is required")
+		}
+		if _, exists := seen[serialID]; exists {
+			return nil, fmt.Errorf("duplicate serial ID %s", serialID)
+		}
+		seen[serialID] = struct{}{}
+		normalized = append(normalized, serialID)
+	}
+	return normalized, nil
 }
 
 func (s *InventoryService) currentOnHandTx(tx *gorm.DB, businessID, productID, variantID, warehouseID string) (float64, error) {
@@ -2071,11 +2255,15 @@ func (s *InventoryService) reserveInventoryTx(tx *gorm.DB, businessID, productID
 
 func (s *InventoryService) releaseInventoryTx(tx *gorm.DB, businessID, productID, variantID, warehouseID string, quantity float64, documentID string, documentLineID *string, reason string) error {
 	var balance models.InventoryBalance
-	if err := tx.Where("business_id = ? AND product_id = ? AND variant_id = ? AND warehouse_id = ? AND batch_key = '' AND deleted_at IS NULL",
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("business_id = ? AND product_id = ? AND variant_id = ? AND warehouse_id = ? AND batch_key = '' AND deleted_at IS NULL",
 		businessID, productID, variantID, warehouseID).First(&balance).Error; err != nil {
 		return err
 	}
-	balance.Reserved = clampZero(balance.Reserved - quantity)
+	releaseQuantity := math.Min(balance.Reserved, quantity)
+	if releaseQuantity <= 0 {
+		return nil
+	}
+	balance.Reserved = clampZero(balance.Reserved - releaseQuantity)
 	now := time.Now()
 	balance.LastRecordedAt = &now
 	if err := tx.Save(&balance).Error; err != nil {
@@ -2090,7 +2278,7 @@ func (s *InventoryService) releaseInventoryTx(tx *gorm.DB, businessID, productID
 		DocumentLineID:  documentLineID,
 		TransactionType: models.InventoryTransactionTypeRelease,
 		Direction:       models.StockMoveDirectionRelease,
-		Quantity:        quantity,
+		Quantity:        releaseQuantity,
 		Reason:          reason,
 		Metadata:        mustMarshalMap(map[string]interface{}{"source": "document_release"}),
 		RecordedAt:      now,

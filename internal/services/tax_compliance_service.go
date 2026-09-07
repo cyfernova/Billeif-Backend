@@ -19,6 +19,7 @@ import (
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/awsclients"
 	"invoice-backend/pkg/logger"
+	"invoice-backend/pkg/operationsmetrics"
 
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/google/uuid"
@@ -27,21 +28,41 @@ import (
 )
 
 type TaxComplianceService struct {
-	cfg              *config.Config
-	db               *gorm.DB
-	businessRepo     interfaces.BusinessRepository
-	customerRepo     interfaces.CustomerRepository
-	vendorRepo       interfaces.VendorRepository
-	subscriptionRepo interfaces.SubscriptionRepository
-	httpClient       *http.Client
-	sqs              *sqs.Client
-	s3               *S3Service
-	webhooks         *WebhookService
-	documents        *DocumentService
-	entitlements     *EntitlementService
-	provider         GSTProvider
-	resolver         ProviderConfigResolver
-	log              *logger.Logger
+	cfg                         *config.Config
+	db                          *gorm.DB
+	businessRepo                interfaces.BusinessRepository
+	customerRepo                interfaces.CustomerRepository
+	vendorRepo                  interfaces.VendorRepository
+	subscriptionRepo            interfaces.SubscriptionRepository
+	httpClient                  *http.Client
+	sqs                         *sqs.Client
+	s3                          *S3Service
+	webhooks                    *WebhookService
+	documents                   *DocumentService
+	entitlements                *EntitlementService
+	provider                    GSTProvider
+	resolver                    ProviderConfigResolver
+	capability                  CapabilityGuard
+	gstHealth                   GSTProviderHealthOutcomeRecorder
+	gstHealthPersistenceTimeout time.Duration
+	log                         *logger.Logger
+}
+
+func (s *TaxComplianceService) WithCapabilityGuard(guard CapabilityGuard) *TaxComplianceService {
+	s.capability = guard
+	return s
+}
+
+func (s *TaxComplianceService) WithGSTProviderHealthRecorder(recorder GSTProviderHealthOutcomeRecorder) *TaxComplianceService {
+	s.gstHealth = recorder
+	return s
+}
+
+func (s *TaxComplianceService) WithGSTHealthPersistenceTimeout(timeout time.Duration) *TaxComplianceService {
+	if timeout > 0 {
+		s.gstHealthPersistenceTimeout = timeout
+	}
+	return s
 }
 
 var gstinFormatPattern = regexp.MustCompile(`^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$`)
@@ -121,18 +142,19 @@ func NewTaxComplianceService(
 		resolver = resolvers[0]
 	}
 	svc := &TaxComplianceService{
-		cfg:              cfg,
-		db:               db,
-		businessRepo:     businessRepo,
-		customerRepo:     customerRepo,
-		vendorRepo:       vendorRepo,
-		subscriptionRepo: subscriptionRepo,
-		httpClient:       &http.Client{Timeout: timeout},
-		sqs:              sqsClient,
-		s3:               s3,
-		webhooks:         webhooks,
-		resolver:         resolver,
-		log:              log,
+		cfg:                         cfg,
+		db:                          db,
+		businessRepo:                businessRepo,
+		customerRepo:                customerRepo,
+		vendorRepo:                  vendorRepo,
+		subscriptionRepo:            subscriptionRepo,
+		httpClient:                  &http.Client{Timeout: timeout},
+		sqs:                         sqsClient,
+		s3:                          s3,
+		webhooks:                    webhooks,
+		resolver:                    resolver,
+		gstHealthPersistenceTimeout: 2 * time.Second,
+		log:                         log,
 	}
 	svc.entitlements = NewEntitlementService(cfg, db, subscriptionRepo, log)
 	svc.provider = NewLazyConfiguredGSTProvider(cfg, resolver, log)
@@ -141,6 +163,18 @@ func NewTaxComplianceService(
 
 func (s *TaxComplianceService) AttachDocumentService(documents *DocumentService) {
 	s.documents = documents
+}
+
+// WithOperationsMetrics forwards the low-cardinality operational metric
+// emitter to the configured GST provider so provider calls emit real latency
+// samples. A nil emitter disables emission.
+func (s *TaxComplianceService) WithOperationsMetrics(emitter *operationsmetrics.Emitter) *TaxComplianceService {
+	if s != nil {
+		if sink, ok := s.provider.(operationsMetricSink); ok {
+			sink.WithOperationsMetrics(emitter)
+		}
+	}
+	return s
 }
 
 func (s *TaxComplianceService) FetchGSTIN(ctx context.Context, gstin string) (*GSTINLookupResult, error) {

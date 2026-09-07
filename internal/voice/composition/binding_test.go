@@ -239,6 +239,50 @@ func TestBindingFactoryBranchSessionAdvertisesNoBusinessTools(t *testing.T) {
 	}
 }
 
+func TestBindingFactoryMissingRequiredGovernanceAdvertisesNoTools(t *testing.T) {
+	stream := newCompositionSTTStream()
+	chat := &compositionChat{}
+	output := newCompositionOutput()
+	factory, err := NewBindingFactory(FactoryConfig{
+		STT: &compositionSTTOpener{stream: stream}, Chat: chat,
+		LeaseRenewer:          &compositionLeaseRenewer{},
+		Tools:                 tools.Config{Origin: "https://api.example.com/staging", EnableCustomerTools: true},
+		Decoders:              DecoderFactoryFunc(func() (audio.Decoder, error) { return &compositionDecoder{}, nil }),
+		Outputs:               OutputFactoryFunc(func(voicesession.Session) (SessionOutput, error) { return output, nil }),
+		RequireToolGovernance: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := factory.Create(webrtc.STTBindingConfig{
+		Context: context.Background(), Session: validCompositionSession(), Activity: &countingCloser{},
+		Authorization: staticAuthorizationSource("Bearer validated-user-token"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer binding.Close()
+	if err := binding.HandleControl(context.Background(), protocol.ControlMessage{Type: protocol.EventSpeechStarted}); err != nil {
+		t.Fatal(err)
+	}
+	if err := binding.HandleOpus([]byte{0x01}); err != nil {
+		t.Fatal(err)
+	}
+	if err := binding.HandleControl(context.Background(), protocol.ControlMessage{Type: protocol.EventSpeechEnded}); err != nil {
+		t.Fatal(err)
+	}
+	<-stream.flushed
+	stream.finals <- sarvam.FinalTranscript{Text: "show invoices", DetectedLanguage: "en-IN"}
+	select {
+	case <-output.completed:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for governed turn")
+	}
+	if got := chat.lastRequest().Tools; len(got) != 0 {
+		t.Fatalf("missing-governance tool definitions = %#v, want none", got)
+	}
+}
+
 func TestBindingSessionCloseControlReleasesPersistentActivity(t *testing.T) {
 	activity := &countingCloser{}
 	factory, err := NewBindingFactory(FactoryConfig{

@@ -62,15 +62,13 @@ func (s *InvoiceService) PreviewByBusiness(
 	if err != nil {
 		return nil, &idempotency.InvalidPayloadError{}
 	}
-	actor := actorFromContext(ctx)
-	actorUUID, err := uuid.Parse(strings.TrimSpace(actor.UserID))
+	actor, err := s.invoiceActor(ctx, "preview")
 	if err != nil {
-		return nil, fmt.Errorf("invoice preview actor is required")
+		return nil, err
 	}
 	input.IdempotencyKey = idempotencyUUID.String()
 	businessID = businessUUID.String()
 	invoiceID = invoiceUUID.String()
-	actor.UserID = actorUUID.String()
 	previewer, ok := s.repo.(interfaces.CanonicalInvoicePreviewer)
 	if !ok {
 		return nil, fmt.Errorf("canonical invoice preview repository is not configured")

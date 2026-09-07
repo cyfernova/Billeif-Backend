@@ -10,7 +10,7 @@ locals {
     REDIS_TLS_ENABLED           = "true"
     REDIS_IAM_AUTH_ENABLED      = "true"
     REDIS_CLUSTER_MODE          = "true"
-    RATE_LIMIT_DECISION_TIMEOUT = "250ms"
+    RATE_LIMIT_DECISION_TIMEOUT = "2s"
   }
 }
 
@@ -20,9 +20,9 @@ resource "aws_security_group" "rate_limit_valkey" {
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    description     = "TLS Valkey from Billeif Lambda"
+    description     = "TLS Valkey serverless ports from Billeif Lambda"
     from_port       = 6379
-    to_port         = 6379
+    to_port         = 6380
     protocol        = "tcp"
     security_groups = [aws_security_group.lambda.id]
   }

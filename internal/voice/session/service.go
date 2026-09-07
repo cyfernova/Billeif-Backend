@@ -23,8 +23,9 @@ var (
 )
 
 type ServiceOptions struct {
-	Now     func() time.Time
-	NewULID func() string
+	Now         func() time.Time
+	NewULID     func() string
+	CreateGuard func(context.Context, Scope, CreateInput) error
 }
 
 type Service struct {
@@ -33,6 +34,7 @@ type Service struct {
 	config  Config
 	now     func() time.Time
 	newULID func() string
+	guard   func(context.Context, Scope, CreateInput) error
 }
 
 func NewService(store Store, stopper RuntimeStopper, cfg Config, options ServiceOptions) *Service {
@@ -51,7 +53,11 @@ func NewService(store Store, stopper RuntimeStopper, cfg Config, options Service
 			return id
 		}
 	}
-	return &Service{store: store, stopper: stopper, config: cfg, now: now, newULID: newULID}
+	guard := options.CreateGuard
+	if guard == nil {
+		guard = func(context.Context, Scope, CreateInput) error { return ErrCreateGuardUnavailable }
+	}
+	return &Service{store: store, stopper: stopper, config: cfg, now: now, newULID: newULID, guard: guard}
 }
 
 func normalizeConfig(cfg Config) Config {
@@ -93,6 +99,9 @@ func (s *Service) Create(ctx context.Context, scope Scope, input CreateInput) (*
 		return nil, ErrUnavailable
 	}
 	if err := validateScope(scope); err != nil {
+		return nil, err
+	}
+	if err := s.guard(ctx, scope, input); err != nil {
 		return nil, err
 	}
 	if !rolloutAllows(s.config, scope) {

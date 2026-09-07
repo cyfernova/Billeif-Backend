@@ -792,7 +792,7 @@ func TestProductService_GetImageUploadURLByBusiness_Success(t *testing.T) {
 	}
 
 	mockRepo.On("GetByID", ctx, productID, businessID).Return(existing, nil)
-	mockS3.On("GeneratePresignedUpload", ctx, "product-images", "products/product-456/image", contentType, int64(4096), int64(3600)).Return(expected, nil)
+	mockS3.On("GeneratePresignedUpload", ctx, "product-images", "products/business-123/product-456/image", contentType, int64(4096), int64(3600)).Return(expected, nil)
 
 	result, err := svc.GetImageUploadURLByBusiness(ctx, businessID, productID, contentType, 4096)
 
@@ -842,7 +842,7 @@ func TestProductService_GetImageUploadURLByBusiness_S3Error(t *testing.T) {
 	}
 
 	mockRepo.On("GetByID", ctx, productID, businessID).Return(existing, nil)
-	mockS3.On("GeneratePresignedUpload", ctx, "product-images", "products/product-456/image", "image/jpeg", int64(4096), int64(3600)).Return((*services.PresignedUpload)(nil), errors.New("S3 error"))
+	mockS3.On("GeneratePresignedUpload", ctx, "product-images", "products/business-123/product-456/image", "image/jpeg", int64(4096), int64(3600)).Return((*services.PresignedUpload)(nil), errors.New("S3 error"))
 
 	result, err := svc.GetImageUploadURLByBusiness(ctx, businessID, productID, "image/jpeg", 4096)
 

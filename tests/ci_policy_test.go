@@ -1,7 +1,9 @@
 package tests
 
 import (
+	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -9,6 +11,54 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+var (
+	fullCommitSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	imageDigest   = regexp.MustCompile(`@sha256:[0-9a-f]{64}$`)
+)
+
+func TestSwaggerGenerationUsesPinnedTool(t *testing.T) {
+	command := exec.Command("make", "--no-print-directory", "-n", "swagger")
+	command.Dir = ".."
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("inspect swagger command: %v: %s", err, output)
+	}
+	version := regexp.MustCompile(`(?m)^\s*github\.com/swaggo/swag (v\S+)`).FindStringSubmatch(readRepositoryFile(t, "go.mod"))
+	if len(version) != 2 {
+		t.Fatal("missing swag module version")
+	}
+	want := "go run github.com/swaggo/swag/cmd/swag@" + version[1] + " init -g internal/app/runtime.go -o docs/"
+	if strings.TrimSpace(string(output)) != want {
+		t.Fatalf("swagger generation must use the repository's pinned tool, got %q, want %q", output, want)
+	}
+}
+
+func TestSecurityWorkflowUsesRepositoryGoVersion(t *testing.T) {
+	contents := readRepositoryFile(t, ".github", "workflows", "security.yml")
+	var workflow yaml.Node
+	if err := yaml.Unmarshal([]byte(contents), &workflow); err != nil {
+		t.Fatal(err)
+	}
+	jobs := requiredMap(t, documentRoot(t, &workflow), "jobs")
+	steps := mappingValue(requiredMap(t, jobs, "security"), "steps")
+	if steps == nil || steps.Kind != yaml.SequenceNode {
+		t.Fatal("security workflow must have steps")
+	}
+	for _, step := range steps.Content {
+		uses := mappingValue(step, "uses")
+		if uses == nil || !strings.HasPrefix(uses.Value, "actions/setup-go@") {
+			continue
+		}
+		with := requiredMap(t, step, "with")
+		requireScalar(t, with, "go-version-file", "go.mod")
+		if mappingValue(with, "go-version") != nil {
+			t.Fatal("security workflow must not override the repository Go version")
+		}
+		return
+	}
+	t.Fatal("security workflow must configure Go")
+}
 
 func TestDeployWorkflowLaunchSafetyPolicy(t *testing.T) {
 	workflow := loadWorkflow(t)
@@ -31,12 +81,13 @@ func TestDeployWorkflowLaunchSafetyPolicy(t *testing.T) {
 	if env := mappingValue(root, "env"); env != nil && containsSecretTerraformVariable(env) {
 		t.Fatal("workflow/global environment must not expose secret Terraform variables")
 	}
-
+	//
 	jobs := requiredMap(t, root, "jobs")
 	verify := requiredMap(t, jobs, "verify")
 	if env := mappingValue(verify, "env"); env != nil && containsTerraformVariable(env) {
 		t.Fatal("verification job must not inherit deployment Terraform variables")
 	}
+	//
 
 	secretScan := requiredMap(t, jobs, "secret-scan")
 	requireSecretScan(t, secretScan)
@@ -57,6 +108,76 @@ func TestDeployWorkflowLaunchSafetyPolicy(t *testing.T) {
 	requireOIDCOnlyDeploy(t, deploy)
 	requireAmbientAWSCredentials(t, deploy)
 	requireDeployTerraformInputs(t, root, deploy)
+}
+
+func TestSupplyChainReferencesAreImmutable(t *testing.T) {
+	workflowRoot := filepath.Join("..", ".github", "workflows")
+	err := filepath.WalkDir(workflowRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || (filepath.Ext(path) != ".yml" && filepath.Ext(path) != ".yaml") {
+			return nil
+		}
+		contents, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		var document yaml.Node
+		if unmarshalErr := yaml.Unmarshal(contents, &document); unmarshalErr != nil {
+			return unmarshalErr
+		}
+		assertImmutableActionReferences(t, path, &document)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("inspect workflow action references: %v", err)
+	}
+
+	dockerfile := filepath.Join("..", "deploy", "agentcore", "Dockerfile")
+	contents, err := os.ReadFile(dockerfile)
+	if err != nil {
+		t.Fatalf("read production Dockerfile: %v", err)
+	}
+	for lineNumber, line := range strings.Split(string(contents), "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) == 0 || strings.ToUpper(fields[0]) != "FROM" {
+			continue
+		}
+		image := fields[1]
+		if strings.HasPrefix(image, "--platform=") {
+			if len(fields) < 3 {
+				t.Fatalf("%s:%d has malformed FROM instruction", dockerfile, lineNumber+1)
+			}
+			image = fields[2]
+		}
+		if image != "scratch" && !imageDigest.MatchString(image) {
+			t.Errorf("%s:%d production image %q must be pinned to an exact sha256 digest", dockerfile, lineNumber+1, image)
+		}
+	}
+}
+
+func assertImmutableActionReferences(t *testing.T, path string, node *yaml.Node) {
+	t.Helper()
+	if node == nil {
+		return
+	}
+	if node.Kind == yaml.MappingNode {
+		for index := 0; index < len(node.Content); index += 2 {
+			key, value := node.Content[index], node.Content[index+1]
+			if key.Value == "uses" && value.Kind == yaml.ScalarNode && !strings.HasPrefix(value.Value, "./") {
+				separator := strings.LastIndex(value.Value, "@")
+				if separator < 0 || !fullCommitSHA.MatchString(value.Value[separator+1:]) {
+					t.Errorf("%s:%d external action %q must be pinned to a full commit SHA", path, value.Line, value.Value)
+				}
+			}
+			assertImmutableActionReferences(t, path, value)
+		}
+		return
+	}
+	for _, child := range node.Content {
+		assertImmutableActionReferences(t, path, child)
+	}
 }
 
 func TestDeployWorkflowBackgroundProcessingDefaultsToDisabled(t *testing.T) {

@@ -12,7 +12,13 @@ import (
 type CustomerService struct {
 	repo        interfaces.CustomerRepository
 	permissions PermissionChecker
+	capability  CapabilityGuard
 	log         *logger.Logger
+}
+
+func (s *CustomerService) WithCapabilityGuard(guard CapabilityGuard) *CustomerService {
+	s.capability = guard
+	return s
 }
 
 func NewCustomerService(repo interfaces.CustomerRepository, permissions PermissionChecker, log *logger.Logger) *CustomerService {
@@ -192,6 +198,12 @@ func (s *CustomerService) DeleteByBusiness(ctx context.Context, businessID, id s
 }
 
 func (s *CustomerService) Import(ctx context.Context, businessID string, customers []CreateCustomerInput) (int, error) {
+	if err := requireCapability(ctx, s.capability, CapabilityRequest{
+		BusinessID: businessID, UserID: actorFromContext(ctx).UserID,
+		Platform: CapabilityPlatformWeb, Capability: CapabilityBulkImports,
+	}); err != nil {
+		return 0, err
+	}
 	if err := requireMutationPermission(ctx, s.permissions, businessID, PermissionCustomersCreate); err != nil {
 		return 0, err
 	}

@@ -24,8 +24,15 @@ func (allowCustomerPermissionChecker) UserHasPermission(context.Context, string,
 	return true
 }
 
+type allowCustomerCapabilityGuard struct{}
+
+func (allowCustomerCapabilityGuard) Require(context.Context, services.CapabilityRequest) error {
+	return nil
+}
+
 func newCustomerService(repo *MockCustomerRepo, log *logger.Logger) *services.CustomerService {
-	return services.NewCustomerService(repo, allowCustomerPermissionChecker{}, log)
+	return services.NewCustomerService(repo, allowCustomerPermissionChecker{}, log).
+		WithCapabilityGuard(allowCustomerCapabilityGuard{})
 }
 
 func authorizedCustomerContext() context.Context {
