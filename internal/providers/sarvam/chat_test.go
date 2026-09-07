@@ -402,6 +402,11 @@ func TestChatStreamReportsProgressOnceAndStreamsTextBeforeTerminal(t *testing.T)
 	case <-time.After(time.Second):
 		t.Fatal("first visible content delta did not report progress")
 	}
+	select {
+	case <-handler.eventRecorded:
+	case <-time.After(time.Second):
+		t.Fatal("first visible content delta was not recorded")
+	}
 	if events := handler.snapshot(); !reflect.DeepEqual(events, []ChatEvent{{TextDelta: "hello"}}) {
 		t.Fatalf("incremental content before terminal = %#v, want first accepted delta", events)
 	}
@@ -1212,11 +1217,26 @@ type recordingChatHandler struct {
 type progressRecordingChatHandler struct {
 	recordingChatHandler
 	progress      chan struct{}
+	eventRecorded chan struct{}
 	progressCalls atomic.Int32
 }
 
 func newProgressRecordingChatHandler() *progressRecordingChatHandler {
-	return &progressRecordingChatHandler{progress: make(chan struct{}, 1)}
+	return &progressRecordingChatHandler{
+		progress:      make(chan struct{}, 1),
+		eventRecorded: make(chan struct{}, 1),
+	}
+}
+
+func (handler *progressRecordingChatHandler) HandleChatEvent(ctx context.Context, event ChatEvent) error {
+	if err := handler.recordingChatHandler.HandleChatEvent(ctx, event); err != nil {
+		return err
+	}
+	select {
+	case handler.eventRecorded <- struct{}{}:
+	default:
+	}
+	return nil
 }
 
 func (handler *progressRecordingChatHandler) HandleChatProgress(context.Context) error {
