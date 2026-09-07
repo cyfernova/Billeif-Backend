@@ -185,6 +185,7 @@ resource "aws_cloudwatch_metric_alarm" "lambda_ws_errors" {
   period              = 300
   statistic           = "Sum"
   threshold           = 5
+  treat_missing_data  = "notBreaching"
   alarm_description   = "WebSocket Lambda error count is high"
   alarm_actions       = [aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]
@@ -203,12 +204,53 @@ resource "aws_cloudwatch_metric_alarm" "lambda_invoice_errors" {
   period              = 300
   statistic           = "Sum"
   threshold           = 3
+  treat_missing_data  = "notBreaching"
   alarm_description   = "Invoice worker Lambda error count is high"
   alarm_actions       = [aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]
 
   dimensions = {
     FunctionName = aws_lambda_function.sqs_invoice.function_name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "lambda_recurring_invoices_errors" {
+  alarm_name          = "${local.resource_prefix}-lambda-recurring-invoices-errors"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "Errors"
+  namespace           = "AWS/Lambda"
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif recurring invoice Lambda is returning errors"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    FunctionName = aws_lambda_function.recurring_invoices.function_name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "recurring_invoice_failed_runs" {
+  alarm_name          = "${local.resource_prefix}-recurring-invoice-failed-runs"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 2
+  metric_name         = "Failed"
+  namespace           = "Billeif/RecurringInvoices"
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_description   = "Billeif recurring invoice draft generation is failing"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    Environment = var.environment
   }
 }
 
@@ -221,6 +263,7 @@ resource "aws_cloudwatch_metric_alarm" "lambda_gst_errors" {
   period              = 300
   statistic           = "Sum"
   threshold           = 3
+  treat_missing_data  = "notBreaching"
   alarm_description   = "GST worker Lambda error count is high"
   alarm_actions       = [aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]

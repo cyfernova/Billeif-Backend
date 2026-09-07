@@ -19,10 +19,10 @@ const (
 
 func TestServiceRestrictedScopeRequiresAllowedBranch(t *testing.T) {
 	now := time.Date(2026, 8, 6, 7, 0, 0, 0, time.UTC)
-	svc := NewService(newMemoryStore(), &stopRecorder{}, testConfig(), ServiceOptions{
+	svc := NewService(newMemoryStore(), &stopRecorder{}, testConfig(), allowServiceOptions(ServiceOptions{
 		Now:     func() time.Time { return now },
 		NewULID: func() string { return "01K1ABCDE2FGHIJK3LMNOPQRST" },
-	})
+	}))
 	restricted := Scope{UserID: "user-1", BusinessID: "business-1", AllowedBranchIDs: []string{testBranchA}}
 
 	omitted := validCreateInput()
@@ -52,7 +52,7 @@ func TestServiceHidesSessionAfterBranchAccessIsRevoked(t *testing.T) {
 		Status: StatusActive, RuntimeState: RuntimeStateRunning,
 		LeaseExpiresAt: now.Add(time.Minute), ExpiresAt: now.Add(time.Hour),
 	}
-	svc := NewService(store, &stopRecorder{}, testConfig(), ServiceOptions{Now: func() time.Time { return now }})
+	svc := NewService(store, &stopRecorder{}, testConfig(), allowServiceOptions(ServiceOptions{Now: func() time.Time { return now }}))
 	revoked := Scope{UserID: "user-1", BusinessID: "business-1", AllowedBranchIDs: []string{testBranchB}}
 
 	if _, err := svc.Get(context.Background(), revoked, "voice_private"); !errors.Is(err, ErrNotFound) {
@@ -85,7 +85,7 @@ func TestServiceResumableRequiresSessionAndLeaseStrictlyAfterNow(t *testing.T) {
 				LeaseExpiresAt: tc.leaseEnd, ExpiresAt: tc.sessionEnd,
 			}
 			store.sessions[stored.ID] = stored
-			svc := NewService(store, &stopRecorder{}, testConfig(), ServiceOptions{Now: func() time.Time { return now }})
+			svc := NewService(store, &stopRecorder{}, testConfig(), allowServiceOptions(ServiceOptions{Now: func() time.Time { return now }}))
 			scope := Scope{UserID: "u", BusinessID: "b", AllBranches: true}
 
 			got, err := svc.Get(context.Background(), scope, stored.ID)

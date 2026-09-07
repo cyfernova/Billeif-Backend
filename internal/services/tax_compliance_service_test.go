@@ -35,6 +35,51 @@ func TestTaxComplianceService_FetchGSTINFallback(t *testing.T) {
 	require.True(t, result.IsValid)
 }
 
+func TestTaxComplianceCommandsRejectUnavailableCapabilitiesBeforeDatabaseOrQueue(t *testing.T) {
+	for _, fixture := range []struct {
+		name       string
+		capability CapabilityKey
+		invoke     func(*TaxComplianceService) error
+	}{
+		{name: "e-invoice", capability: CapabilityEInvoice, invoke: func(service *TaxComplianceService) error {
+			_, err := service.GenerateEInvoiceByDocument(mutationActorContext(), "biz-1", "doc-1", "key-1", GenerateEInvoiceInput{})
+			return err
+		}},
+		{name: "cancel e-invoice", capability: CapabilityEInvoice, invoke: func(service *TaxComplianceService) error {
+			_, err := service.CancelEInvoiceByDocument(mutationActorContext(), "biz-1", "doc-1", "key-1", CancelEInvoiceInput{})
+			return err
+		}},
+		{name: "e-way bill", capability: CapabilityEWayBill, invoke: func(service *TaxComplianceService) error {
+			_, err := service.GenerateEWayBillByDocument(mutationActorContext(), "biz-1", "doc-1", "key-1", GenerateEWayBillInput{})
+			return err
+		}},
+		{name: "update e-way bill part B", capability: CapabilityEWayBill, invoke: func(service *TaxComplianceService) error {
+			_, err := service.UpdateEWayPartBByDocument(mutationActorContext(), "biz-1", "doc-1", "key-1", UpdateEWayPartBInput{})
+			return err
+		}},
+		{name: "multi-vehicle", capability: CapabilityEWayBill, invoke: func(service *TaxComplianceService) error {
+			_, err := service.InitiateMultiVehicleByDocument(mutationActorContext(), "biz-1", "doc-1", "key-1", MultiVehicleInput{})
+			return err
+		}},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			guard := &recordingCapabilityGuard{err: &CapabilityUnavailableError{
+				Code: "capability_unavailable", Capability: fixture.capability,
+				State: CapabilityStateUnknown, ReasonCode: ReasonProviderHealthUnknown,
+			}}
+			service := NewTaxComplianceService(nil, nil, nil, nil, nil, nil, nil, nil, nil, logger.New()).WithCapabilityGuard(guard)
+
+			err := fixture.invoke(service)
+
+			var unavailable *CapabilityUnavailableError
+			require.ErrorAs(t, err, &unavailable)
+			require.Equal(t, fixture.capability, guard.request.Capability)
+			require.Equal(t, "biz-1", guard.request.BusinessID)
+			require.Equal(t, "viewer-1", guard.request.UserID)
+		})
+	}
+}
+
 func TestTaxComplianceService_FetchGSTINGSTINCheckSuccess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, http.MethodGet, r.Method)

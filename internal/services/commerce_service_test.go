@@ -15,17 +15,17 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
-func TestDefaultEntitlementSeedsForSubscriptionMakesFeaturesAvailable(t *testing.T) {
+func TestDefaultEntitlementSeedsForSubscriptionUsesCatalogLimits(t *testing.T) {
 	seeds := defaultEntitlementSeedsForSubscription(&models.Subscription{
-		Plan:         "starter",
-		PlanCode:     "pro",
-		MaxUsers:     2,
-		MaxStorageMB: 256,
+		Plan:     "starter",
+		PlanCode: "pro",
+		Status:   "active",
 	})
 
 	for _, featureKey := range []string{
@@ -47,16 +47,13 @@ func TestDefaultEntitlementSeedsForSubscriptionMakesFeaturesAvailable(t *testing
 		}
 	}
 
-	for _, featureKey := range []string{FeatureMultiUser, FeatureBranches, FeatureDriveStorageMB} {
-		limit := seedLimit(seeds, featureKey)
-		if limit == nil || *limit != -1 {
-			t.Fatalf("expected %s limit to be unlimited, got %v", featureKey, limit)
-		}
-	}
+	require.Equal(t, int64(3), *seedLimit(seeds, FeatureMultiUser))
+	require.Nil(t, seedLimit(seeds, FeatureBranches))
+	require.Equal(t, int64(512), *seedLimit(seeds, FeatureDriveStorageMB))
 }
 
 func TestFeatureEntitlementsNeedSyncDetectsDisabledRows(t *testing.T) {
-	seeds := defaultEntitlementSeedsForSubscription(nil)
+	seeds := defaultEntitlementSeedsForSubscription(&models.Subscription{Plan: "starter", PlanCode: "pro", Status: "active"})
 	entitlements := make([]*models.FeatureEntitlement, 0, len(seeds))
 	for _, seed := range seeds {
 		entitlements = append(entitlements, &models.FeatureEntitlement{
@@ -66,24 +63,38 @@ func TestFeatureEntitlementsNeedSyncDetectsDisabledRows(t *testing.T) {
 		})
 	}
 
-	if featureEntitlementsNeedSync(entitlements) {
+	if featureEntitlementsNeedSync(entitlements, seeds) {
 		t.Fatal("expected complete enabled entitlement set to be current")
 	}
 
 	entitlements[0].Enabled = false
-	if !featureEntitlementsNeedSync(entitlements) {
+	if !featureEntitlementsNeedSync(entitlements, seeds) {
 		t.Fatal("expected disabled entitlement to require sync")
 	}
 
 	entitlements[0].Enabled = true
 	for _, entitlement := range entitlements {
-		if entitlement.FeatureKey == FeatureBranches {
+		if entitlement.FeatureKey == FeatureMultiUser {
 			entitlement.LimitValue = int64Pointer(1)
 			break
 		}
 	}
-	if !featureEntitlementsNeedSync(entitlements) {
+	if !featureEntitlementsNeedSync(entitlements, seeds) {
 		t.Fatal("expected stale entitlement limit to require sync")
+	}
+
+	freeSeeds := defaultEntitlementSeedsForSubscription(&models.Subscription{Plan: "free", PlanCode: "free", Status: "active"})
+	freeEntitlements := make([]*models.FeatureEntitlement, 0, len(freeSeeds))
+	for _, seed := range freeSeeds {
+		freeEntitlements = append(freeEntitlements, &models.FeatureEntitlement{
+			FeatureKey: seed.FeatureKey,
+			Enabled:    seed.Enabled,
+			LimitValue: seed.LimitValue,
+		})
+	}
+	freeEntitlements[0].LimitValue = int64Pointer(1)
+	if !featureEntitlementsNeedSync(freeEntitlements, freeSeeds) {
+		t.Fatal("expected stale limit on disabled entitlement to require sync")
 	}
 }
 
@@ -200,6 +211,452 @@ func TestCheckoutInputMatchesOrderRejectsDifferentReplayBody(t *testing.T) {
 	}
 }
 
+func TestStorefrontCheckoutClaimAllowsOneWorkerAndReplaysCompletedOrder(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+strings.ReplaceAll(t.Name(), "/", "_")+"?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(`CREATE TABLE api_idempotency_keys (
+		id TEXT PRIMARY KEY,
+		business_id TEXT NOT NULL,
+		command TEXT NOT NULL,
+		idempotency_key TEXT NOT NULL,
+		request_hash TEXT NOT NULL,
+		status TEXT NOT NULL,
+		result_type TEXT,
+		result_id TEXT,
+		created_at DATETIME,
+		updated_at DATETIME,
+		completed_at DATETIME,
+		UNIQUE (business_id, command, idempotency_key)
+	)`).Error)
+	service := &CommerceService{db: db}
+	ctx := context.Background()
+	businessID := "business-1"
+	storefrontID := "storefront-1"
+	key := "checkout-key-1"
+	hash := strings.Repeat("a", 64)
+
+	claimed, replayID, err := service.claimStorefrontCheckout(ctx, businessID, storefrontID, key, hash)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.Empty(t, replayID)
+
+	claimed, replayID, err = service.claimStorefrontCheckout(ctx, businessID, storefrontID, key, hash)
+	require.ErrorContains(t, err, "still processing")
+	require.False(t, claimed)
+	require.Empty(t, replayID)
+
+	_, _, err = service.claimStorefrontCheckout(ctx, businessID, storefrontID, key, strings.Repeat("b", 64))
+	require.ErrorContains(t, err, "different checkout request")
+
+	orderID := "order-1"
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		return completeStorefrontCheckoutClaim(tx, businessID, storefrontID, key, hash, orderID)
+	}))
+	claimed, replayID, err = service.claimStorefrontCheckout(ctx, businessID, storefrontID, key, hash)
+	require.NoError(t, err)
+	require.False(t, claimed)
+	require.Equal(t, orderID, replayID)
+}
+
+func TestCanonicalStorefrontInvoiceInputUsesStableOrderIdentity(t *testing.T) {
+	orderID := "11111111-1111-4111-8111-111111111111"
+	customerID := "22222222-2222-4222-8222-222222222222"
+	productID := "33333333-3333-4333-8333-333333333333"
+	warehouseID := "44444444-4444-4444-8444-444444444444"
+	branchID := "66666666-6666-4666-8666-666666666666"
+	order := &models.StoreOrder{
+		ID: orderID, BusinessID: "55555555-5555-4555-8555-555555555555",
+		CustomerID: &customerID, BranchID: &branchID, Currency: "INR", Notes: "Store order", OrderedAt: time.Now().UTC(),
+		Lines: []*models.StoreOrderLine{{
+			ProductID: &productID, WarehouseID: &warehouseID, Title: "Tea", Quantity: 2,
+			UnitPrice: 125, TaxRate: 18,
+		}},
+	}
+	business := &models.BusinessProfile{DefaultGSTTreatment: models.DocumentGSTTreatmentRegular}
+	key := storefrontInvoiceIdempotencyKey(orderID)
+
+	input, err := canonicalStorefrontInvoiceInput(order, business, key)
+	require.NoError(t, err)
+	require.Equal(t, models.InvoiceOriginStorefront, input.Origin)
+	require.Equal(t, key, input.IdempotencyKey)
+	require.Equal(t, customerID, input.CustomerID)
+	require.Equal(t, branchID, input.BranchID)
+	require.Len(t, input.Items, 1)
+	require.Equal(t, productID, input.Items[0].ProductID)
+	require.Equal(t, warehouseID, input.Items[0].WarehouseID)
+	require.Equal(t, orderID, input.TaxProfile.SourceLinkage["store_order_id"])
+	require.Equal(t, "5d1a65e4-dfa9-58fa-98d4-18f2f60b4a1f", key)
+
+	origin, err := normalizedInvoiceCreateOrigin(input)
+	require.NoError(t, err)
+	require.Equal(t, models.InvoiceOriginStorefront, origin)
+}
+
+func TestStorefrontApprovalUsesCanonicalCreateAndIssueCommands(t *testing.T) {
+	businessID := uuid.NewString()
+	orderID := uuid.NewString()
+	customerID := uuid.NewString()
+	productID := uuid.NewString()
+	creator := &canonicalInvoiceCreatorFake{}
+	issuer := &posSalesDocumentIssuerFake{}
+	documents := &DocumentService{
+		salesInvoices:      newInvoiceSalesDocumentCreator(creator),
+		salesInvoiceIssuer: issuer,
+	}
+	service := &CommerceService{
+		businessRepo: atomicBusinessRepositoryFake{business: &models.BusinessProfile{
+			ID: businessID, Currency: "INR", DefaultGSTTreatment: models.DocumentGSTTreatmentExempt,
+		}},
+		documents: documents,
+	}
+	order := &models.StoreOrder{
+		ID: orderID, BusinessID: businessID, CustomerID: &customerID, Currency: "INR", OrderedAt: time.Now().UTC(),
+		Lines: []*models.StoreOrderLine{{ProductID: &productID, Title: "Tea", Quantity: 1, UnitPrice: 100}},
+	}
+
+	invoiceID, err := service.createSalesInvoiceForOrder(context.Background(), order, PostingAuthorization{})
+	require.NoError(t, err)
+	require.Equal(t, issuer.invoiceID, invoiceID)
+	require.Equal(t, models.InvoiceOriginStorefront, creator.input.Origin)
+	require.Equal(t, storefrontInvoiceIdempotencyKey(orderID), creator.input.IdempotencyKey)
+	require.Equal(t, creator.input.IdempotencyKey, issuer.input.IdempotencyKey)
+	require.Equal(t, "bill_of_supply", issuer.input.DocumentType)
+	require.Equal(t, "WEB", issuer.input.Series)
+}
+
+func TestCancelStoreOrderRejectsIssuedInvoiceWithoutCompensatingWorkflow(t *testing.T) {
+	db := newStoreOrderLifecycleTestDB(t)
+	businessID := uuid.NewString()
+	storefrontID := uuid.NewString()
+	orderID := uuid.NewString()
+	invoiceID := uuid.NewString()
+	require.NoError(t, db.Create(&models.Storefront{
+		ID: storefrontID, BusinessID: businessID, Name: "Store", Slug: "store", Status: models.StorefrontStatusPublished,
+	}).Error)
+	require.NoError(t, db.Create(&models.StoreOrder{
+		ID: orderID, BusinessID: businessID, StorefrontID: storefrontID, SalesInvoiceID: &invoiceID,
+		PublicToken: uuid.NewString(), OrderNumber: "WEB-1", Status: models.StoreOrderStatusConfirmed,
+		PaymentStatus: models.StoreOrderPaymentStatusCOD, Currency: "INR", OrderedAt: time.Now().UTC(),
+	}).Error)
+	service := &CommerceService{db: db}
+
+	_, err := service.CancelStoreOrder(context.Background(), businessID, storefrontID, orderID, "customer request")
+	require.ErrorContains(t, err, "issued storefront orders require a compensating credit note")
+
+	var persisted models.StoreOrder
+	require.NoError(t, db.First(&persisted, "id = ?", orderID).Error)
+	require.Equal(t, models.StoreOrderStatusConfirmed, persisted.Status)
+	require.Nil(t, persisted.CancelledAt)
+	require.Empty(t, persisted.CancellationReason)
+	var cancelledEvents int64
+	require.NoError(t, db.Model(&models.StoreOrderEvent{}).
+		Where("store_order_id = ? AND event_type = ?", orderID, "store_order.cancelled").
+		Count(&cancelledEvents).Error)
+	require.Zero(t, cancelledEvents)
+}
+
+func TestCancelStoreOrderIsIdempotentBeforeInvoice(t *testing.T) {
+	db := newStoreOrderLifecycleTestDB(t)
+	businessID := uuid.NewString()
+	storefrontID := uuid.NewString()
+	orderID := uuid.NewString()
+	require.NoError(t, db.Create(&models.Storefront{
+		ID: storefrontID, BusinessID: businessID, Name: "Store", Slug: "store", Status: models.StorefrontStatusPublished,
+	}).Error)
+	require.NoError(t, db.Create(&models.StoreOrder{
+		ID: orderID, BusinessID: businessID, StorefrontID: storefrontID, PublicToken: uuid.NewString(),
+		OrderNumber: "WEB-2", Status: models.StoreOrderStatusAwaitingApproval,
+		PaymentStatus: models.StoreOrderPaymentStatusCOD, Currency: "INR", OrderedAt: time.Now().UTC(),
+	}).Error)
+	service := &CommerceService{db: db}
+
+	first, err := service.CancelStoreOrder(context.Background(), businessID, storefrontID, orderID, "customer request")
+	require.NoError(t, err)
+	require.NotNil(t, first.CancelledAt)
+	firstCancelledAt := *first.CancelledAt
+	second, err := service.CancelStoreOrder(context.Background(), businessID, storefrontID, orderID, "changed retry reason")
+	require.NoError(t, err)
+	require.Equal(t, models.StoreOrderStatusCancelled, second.Status)
+	require.Equal(t, "customer request", second.CancellationReason)
+	require.NotNil(t, second.CancelledAt)
+	require.Equal(t, firstCancelledAt, *second.CancelledAt)
+
+	var cancelledEvents int64
+	require.NoError(t, db.Model(&models.StoreOrderEvent{}).
+		Where("store_order_id = ? AND event_type = ?", orderID, "store_order.cancelled").
+		Count(&cancelledEvents).Error)
+	require.Equal(t, int64(1), cancelledEvents)
+}
+
+func TestCancelStoreOrderRollsBackWhenEventCannotPersist(t *testing.T) {
+	db := newStoreOrderLifecycleTestDB(t)
+	businessID := uuid.NewString()
+	storefrontID := uuid.NewString()
+	orderID := uuid.NewString()
+	require.NoError(t, db.Create(&models.Storefront{
+		ID: storefrontID, BusinessID: businessID, Name: "Store", Slug: "store", Status: models.StorefrontStatusPublished,
+	}).Error)
+	require.NoError(t, db.Create(&models.StoreOrder{
+		ID: orderID, BusinessID: businessID, StorefrontID: storefrontID, PublicToken: uuid.NewString(),
+		OrderNumber: "WEB-3", Status: models.StoreOrderStatusAwaitingApproval,
+		PaymentStatus: models.StoreOrderPaymentStatusCOD, Currency: "INR", OrderedAt: time.Now().UTC(),
+	}).Error)
+	require.NoError(t, db.Exec(`CREATE TRIGGER reject_store_order_cancel_event
+		BEFORE INSERT ON store_order_events
+		BEGIN SELECT RAISE(FAIL, 'event write failed'); END`).Error)
+	service := &CommerceService{db: db}
+
+	_, err := service.CancelStoreOrder(context.Background(), businessID, storefrontID, orderID, "customer request")
+	require.ErrorContains(t, err, "event write failed")
+
+	var persisted models.StoreOrder
+	require.NoError(t, db.First(&persisted, "id = ?", orderID).Error)
+	require.Equal(t, models.StoreOrderStatusAwaitingApproval, persisted.Status)
+	require.Nil(t, persisted.CancelledAt)
+	require.Empty(t, persisted.CancellationReason)
+}
+
+func TestCancelStoreOrderRollsBackWhenReservationReleaseFails(t *testing.T) {
+	db := newStoreOrderLifecycleTestDB(t)
+	businessID := uuid.NewString()
+	storefrontID := uuid.NewString()
+	orderID := uuid.NewString()
+	salesOrderID := uuid.NewString()
+	require.NoError(t, db.Create(&models.Storefront{
+		ID: storefrontID, BusinessID: businessID, Name: "Store", Slug: "store", Status: models.StorefrontStatusPublished,
+	}).Error)
+	require.NoError(t, db.Create(&models.StoreOrder{
+		ID: orderID, BusinessID: businessID, StorefrontID: storefrontID, SalesOrderID: &salesOrderID,
+		PublicToken: uuid.NewString(), OrderNumber: "WEB-4", Status: models.StoreOrderStatusAwaitingApproval,
+		PaymentStatus: models.StoreOrderPaymentStatusCOD, Currency: "INR", OrderedAt: time.Now().UTC(),
+	}).Error)
+	service := &CommerceService{db: db, inventory: &InventoryService{db: db}}
+
+	_, err := service.CancelStoreOrder(context.Background(), businessID, storefrontID, orderID, "customer request")
+	require.ErrorContains(t, err, "inventory_reservations")
+
+	var persisted models.StoreOrder
+	require.NoError(t, db.First(&persisted, "id = ?", orderID).Error)
+	require.Equal(t, models.StoreOrderStatusAwaitingApproval, persisted.Status)
+	require.Nil(t, persisted.CancelledAt)
+	var cancelledEvents int64
+	require.NoError(t, db.Model(&models.StoreOrderEvent{}).
+		Where("store_order_id = ? AND event_type = ?", orderID, "store_order.cancelled").
+		Count(&cancelledEvents).Error)
+	require.Zero(t, cancelledEvents)
+}
+
+func TestCancelStoreOrderReleasesReservationExactlyOnce(t *testing.T) {
+	db := newStoreOrderLifecycleTestDB(t)
+	addInventoryLifecycleTables(t, db)
+	businessID := uuid.NewString()
+	storefrontID := uuid.NewString()
+	orderID := uuid.NewString()
+	salesOrderID := uuid.NewString()
+	productID := uuid.NewString()
+	variantID := uuid.NewString()
+	warehouseID := uuid.NewString()
+	reservationID := uuid.NewString()
+	require.NoError(t, db.Create(&models.Storefront{
+		ID: storefrontID, BusinessID: businessID, Name: "Store", Slug: "store", Status: models.StorefrontStatusPublished,
+	}).Error)
+	require.NoError(t, db.Create(&models.StoreOrder{
+		ID: orderID, BusinessID: businessID, StorefrontID: storefrontID, SalesOrderID: &salesOrderID,
+		PublicToken: uuid.NewString(), OrderNumber: "WEB-5", Status: models.StoreOrderStatusAwaitingApproval,
+		PaymentStatus: models.StoreOrderPaymentStatusCOD, Currency: "INR", OrderedAt: time.Now().UTC(),
+	}).Error)
+	require.NoError(t, db.Exec(
+		"INSERT INTO products (id, business_id, name, sku, price, currency, unit, stock_level, is_active) VALUES (?, ?, 'Tea', 'TEA', 100, 'INR', 'PCS', 100, 1)",
+		productID, businessID,
+	).Error)
+	require.NoError(t, db.Exec(
+		"INSERT INTO product_variants (id, business_id, product_id, name, sku, is_default, stock_level, reserved_level, is_active) VALUES (?, ?, ?, 'Default', 'TEA', 1, 100, 60, 1)",
+		variantID, businessID, productID,
+	).Error)
+	require.NoError(t, db.Exec(
+		"INSERT INTO inventory_balances (id, business_id, product_id, variant_id, warehouse_id, batch_key, on_hand, reserved, stock_value) VALUES (?, ?, ?, ?, ?, '', 100, 60, 0)",
+		uuid.NewString(), businessID, productID, variantID, warehouseID,
+	).Error)
+	require.NoError(t, db.Exec(
+		"INSERT INTO inventory_reservations (id, business_id, product_id, warehouse_id, document_id, quantity, status) VALUES (?, ?, ?, ?, ?, 60, 'active')",
+		reservationID, businessID, productID, warehouseID, salesOrderID,
+	).Error)
+	service := &CommerceService{db: db, inventory: &InventoryService{db: db}}
+
+	first, err := service.CancelStoreOrder(context.Background(), businessID, storefrontID, orderID, "customer request")
+	require.NoError(t, err)
+	require.Equal(t, models.StoreOrderStatusCancelled, first.Status)
+	second, err := service.CancelStoreOrder(context.Background(), businessID, storefrontID, orderID, "retry")
+	require.NoError(t, err)
+	require.Equal(t, models.StoreOrderStatusCancelled, second.Status)
+
+	var reservation models.InventoryReservation
+	require.NoError(t, db.First(&reservation, "id = ?", reservationID).Error)
+	require.Equal(t, "released", reservation.Status)
+	var balance models.InventoryBalance
+	require.NoError(t, db.First(&balance, "business_id = ? AND product_id = ? AND warehouse_id = ?", businessID, productID, warehouseID).Error)
+	require.Zero(t, balance.Reserved)
+	var releaseMoves int64
+	require.NoError(t, db.Model(&models.StockMove{}).
+		Where("document_id = ? AND direction = ?", salesOrderID, models.StockMoveDirectionRelease).
+		Count(&releaseMoves).Error)
+	require.Equal(t, int64(1), releaseMoves)
+	var cancelledEvents int64
+	require.NoError(t, db.Model(&models.StoreOrderEvent{}).
+		Where("store_order_id = ? AND event_type = ?", orderID, "store_order.cancelled").
+		Count(&cancelledEvents).Error)
+	require.Equal(t, int64(1), cancelledEvents)
+}
+
+func TestStorefrontInvoiceStockConsumesSourceReservation(t *testing.T) {
+	db := newStoreOrderLifecycleTestDB(t)
+	addInventoryLifecycleTables(t, db)
+	businessID := uuid.NewString()
+	salesOrderID := uuid.NewString()
+	invoiceID := uuid.NewString()
+	lineID := uuid.NewString()
+	productID := uuid.NewString()
+	variantID := uuid.NewString()
+	warehouseID := uuid.NewString()
+	reservationID := uuid.NewString()
+	require.NoError(t, db.Exec(
+		"INSERT INTO products (id, business_id, name, sku, price, currency, unit, stock_level, is_active) VALUES (?, ?, 'Tea', 'TEA', 100, 'INR', 'PCS', 100, 1)",
+		productID, businessID,
+	).Error)
+	require.NoError(t, db.Exec(
+		"INSERT INTO product_variants (id, business_id, product_id, name, sku, is_default, stock_level, reserved_level, is_active) VALUES (?, ?, ?, 'Default', 'TEA', 1, 100, 60, 1)",
+		variantID, businessID, productID,
+	).Error)
+	require.NoError(t, db.Exec(
+		"INSERT INTO warehouses (id, business_id, name, code, is_default) VALUES (?, ?, 'Main', 'MAIN', 1)",
+		warehouseID, businessID,
+	).Error)
+	require.NoError(t, db.Exec(
+		"INSERT INTO inventory_balances (id, business_id, product_id, variant_id, warehouse_id, batch_key, on_hand, reserved, stock_value) VALUES (?, ?, ?, ?, ?, '', 100, 60, 0)",
+		uuid.NewString(), businessID, productID, variantID, warehouseID,
+	).Error)
+	require.NoError(t, db.Exec(
+		"INSERT INTO inventory_reservations (id, business_id, product_id, warehouse_id, document_id, quantity, status) VALUES (?, ?, ?, ?, ?, 60, 'active')",
+		reservationID, businessID, productID, warehouseID, salesOrderID,
+	).Error)
+	service := &InventoryService{db: db}
+	document := &models.Document{
+		ID: invoiceID, BusinessID: businessID, DocumentType: models.DocumentTypeSalesInvoice,
+		Direction: models.DocumentDirectionOutward, SerialNumber: "WEB-1",
+		SourceLinkage: mustMarshalMap(map[string]interface{}{"sales_order_document_id": salesOrderID}),
+		Lines: []*models.DocumentLine{{
+			ID: lineID, DocumentID: invoiceID, ProductID: &productID, VariantID: &variantID,
+			WarehouseID: &warehouseID, Quantity: 60, StockEffect: "out",
+		}},
+	}
+
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		return service.ApplyDocumentTx(context.Background(), tx, document)
+	}))
+
+	var reservation models.InventoryReservation
+	require.NoError(t, db.First(&reservation, "id = ?", reservationID).Error)
+	require.Equal(t, "consumed", reservation.Status)
+	var balance models.InventoryBalance
+	require.NoError(t, db.First(&balance, "business_id = ? AND product_id = ? AND warehouse_id = ?", businessID, productID, warehouseID).Error)
+	require.Equal(t, float64(40), balance.OnHand)
+	require.Zero(t, balance.Reserved)
+	var releaseMoves int64
+	require.NoError(t, db.Model(&models.StockMove{}).
+		Where("document_id = ? AND direction = ?", salesOrderID, models.StockMoveDirectionRelease).
+		Count(&releaseMoves).Error)
+	require.Equal(t, int64(1), releaseMoves)
+}
+
+func newStoreOrderLifecycleTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(`CREATE TABLE storefronts (
+		id TEXT PRIMARY KEY, business_id TEXT NOT NULL, name TEXT NOT NULL, slug TEXT NOT NULL,
+		status TEXT NOT NULL, currency TEXT NOT NULL, allow_cod NUMERIC NOT NULL DEFAULT 1,
+		allow_online_payment NUMERIC NOT NULL DEFAULT 0, auto_invoice_on_paid NUMERIC NOT NULL DEFAULT 1,
+		minimum_order_value NUMERIC NOT NULL DEFAULT 0, settings TEXT DEFAULT '{}', blocked_users TEXT DEFAULT '[]',
+		created_at DATETIME, updated_at DATETIME, deleted_at DATETIME
+	)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE storefront_domains (
+		id TEXT PRIMARY KEY, storefront_id TEXT NOT NULL, domain TEXT, is_primary NUMERIC DEFAULT 0,
+		verified_at DATETIME, created_at DATETIME, updated_at DATETIME, deleted_at DATETIME
+	)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE store_orders (
+		id TEXT PRIMARY KEY, business_id TEXT NOT NULL, storefront_id TEXT NOT NULL, branch_id TEXT,
+		customer_id TEXT, coupon_id TEXT, sales_order_id TEXT, sales_invoice_id TEXT,
+		public_token TEXT NOT NULL, order_number TEXT NOT NULL, status TEXT NOT NULL, payment_status TEXT NOT NULL,
+		payment_method TEXT, currency TEXT NOT NULL, exchange_rate NUMERIC DEFAULT 1,
+		fx_provider TEXT, fx_base_currency TEXT, fx_quote_currency TEXT, fx_rate_timestamp DATETIME,
+		subtotal NUMERIC DEFAULT 0, discount_total NUMERIC DEFAULT 0, tax_total NUMERIC DEFAULT 0,
+		shipping_total NUMERIC DEFAULT 0, total NUMERIC DEFAULT 0, snapshot TEXT DEFAULT '{}',
+		billing_address TEXT DEFAULT '{}', shipping_address TEXT DEFAULT '{}', notes TEXT,
+		idempotency_key TEXT, external_order_id TEXT, external_payment_id TEXT, gateway_order_id TEXT,
+		gateway_payment_id TEXT, webhook_reference TEXT, ordered_at DATETIME, paid_at DATETIME,
+		cancelled_at DATETIME, cancellation_reason TEXT, created_at DATETIME, updated_at DATETIME, deleted_at DATETIME
+	)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE store_order_lines (
+		id TEXT PRIMARY KEY, store_order_id TEXT NOT NULL, deleted_at DATETIME
+	)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE store_order_events (
+		id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))), store_order_id TEXT NOT NULL,
+		event_type TEXT NOT NULL, status TEXT, payload TEXT DEFAULT '{}', created_at DATETIME,
+		updated_at DATETIME, deleted_at DATETIME
+	)`).Error)
+	return db
+}
+
+func addInventoryLifecycleTables(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	require.NoError(t, db.Exec(`CREATE TABLE products (
+		id TEXT PRIMARY KEY, business_id TEXT NOT NULL, name TEXT, sku TEXT, barcode TEXT, price NUMERIC,
+		cost_price NUMERIC DEFAULT 0, currency TEXT, unit TEXT, stock_level INTEGER DEFAULT 0,
+		min_stock INTEGER DEFAULT 0, low_stock_threshold INTEGER DEFAULT 0, is_active NUMERIC DEFAULT 1,
+		created_at DATETIME, updated_at DATETIME, deleted_at DATETIME
+	)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE product_variants (
+		id TEXT PRIMARY KEY, business_id TEXT NOT NULL, product_id TEXT NOT NULL, name TEXT, sku TEXT,
+		barcode TEXT, is_default NUMERIC DEFAULT 0, price NUMERIC DEFAULT 0, cost_price NUMERIC DEFAULT 0,
+		stock_level NUMERIC DEFAULT 0, reserved_level NUMERIC DEFAULT 0, low_stock_threshold NUMERIC DEFAULT 0,
+		is_active NUMERIC DEFAULT 1, created_at DATETIME, updated_at DATETIME, deleted_at DATETIME
+	)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE warehouses (
+		id TEXT PRIMARY KEY, business_id TEXT NOT NULL, branch_id TEXT, name TEXT NOT NULL, code TEXT NOT NULL,
+		is_default NUMERIC DEFAULT 0, created_at DATETIME, updated_at DATETIME, deleted_at DATETIME
+	)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE inventory_balances (
+		id TEXT PRIMARY KEY, business_id TEXT NOT NULL, product_id TEXT NOT NULL, variant_id TEXT NOT NULL,
+		warehouse_id TEXT NOT NULL, batch_id TEXT, batch_key TEXT NOT NULL DEFAULT '', on_hand NUMERIC DEFAULT 0,
+		reserved NUMERIC DEFAULT 0, stock_value NUMERIC DEFAULT 0, last_recorded_at DATETIME,
+		created_at DATETIME, updated_at DATETIME, deleted_at DATETIME
+	)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE inventory_reservations (
+		id TEXT PRIMARY KEY, business_id TEXT NOT NULL, product_id TEXT NOT NULL, warehouse_id TEXT,
+		document_id TEXT NOT NULL, document_line_id TEXT, quantity NUMERIC NOT NULL, status TEXT NOT NULL,
+		expires_at DATETIME, created_at DATETIME, updated_at DATETIME, deleted_at DATETIME
+	)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE stock_moves (
+		id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))), business_id TEXT NOT NULL, product_id TEXT NOT NULL,
+		variant_id TEXT, warehouse_id TEXT, source_warehouse_id TEXT, document_id TEXT, document_line_id TEXT,
+		project_id TEXT, batch_id TEXT, serial_number_id TEXT, transaction_type TEXT, direction TEXT NOT NULL,
+		quantity NUMERIC NOT NULL, unit_cost NUMERIC DEFAULT 0, reason TEXT, actor_id TEXT, actor_role TEXT,
+		metadata TEXT DEFAULT '{}', recorded_at DATETIME, created_at DATETIME, updated_at DATETIME, deleted_at DATETIME
+	)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE inventory_snapshots (
+		id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))), business_id TEXT NOT NULL, snapshot_date DATETIME,
+		product_id TEXT NOT NULL, variant_id TEXT NOT NULL, warehouse_id TEXT NOT NULL, on_hand NUMERIC DEFAULT 0,
+		reserved NUMERIC DEFAULT 0, stock_value NUMERIC DEFAULT 0, created_at DATETIME, updated_at DATETIME,
+		deleted_at DATETIME
+	)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE inventory_event_logs (
+		id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))), business_id TEXT NOT NULL, event_type TEXT NOT NULL,
+		entity_type TEXT, entity_id TEXT, payload TEXT DEFAULT '{}', created_at DATETIME, updated_at DATETIME,
+		deleted_at DATETIME
+	)`).Error)
+}
+
 func TestNormalizePublicPaymentMethodRejectsUnsupportedMethods(t *testing.T) {
 	if got := normalizePublicPaymentMethod(""); got != "cod" {
 		t.Fatalf("expected blank payment method to default to cod, got %q", got)
@@ -253,6 +710,12 @@ func TestCreateDriveUploadSignsDeclaredSizeAndAccountsForQuotaUsage(t *testing.T
 		db:  db,
 		s3:  &S3Service{client: client},
 	}
+	service.WithCapabilityControls(&recordingCapabilityGuard{}, &staticDriveStorageQuotaReader{result: DriveStorageQuota{
+		Access: FeatureAccess{Required: true, Entitled: true, Quota: CapabilityQuota{
+			Unit: "MB", Limited: true, Limit: 2048, Used: 0, Remaining: 2048, Available: true,
+		}},
+		LimitBytes: 2048 * 1024 * 1024,
+	}})
 
 	session, err := service.CreateDriveUpload(context.Background(), "business-123", "user-456", CreateDriveAssetInput{
 		Name:        "invoice.pdf",
@@ -275,6 +738,64 @@ func TestCreateDriveUploadSignsDeclaredSizeAndAccountsForQuotaUsage(t *testing.T
 		Where("business_id = ? AND deleted_at IS NULL", "business-123").
 		Scan(&usageBytes).Error)
 	require.Equal(t, int64(8192), usageBytes)
+}
+
+func TestCreateDriveUploadRejectsUnavailableCapabilityBeforeAssetOrPresign(t *testing.T) {
+	db := newDriveUploadTestDB(t)
+	guard := &recordingCapabilityGuard{err: &CapabilityUnavailableError{
+		Code: "capability_unavailable", Capability: CapabilityS3Uploads,
+		State: CapabilityStateQuotaExhausted, ReasonCode: ReasonQuotaExhausted,
+	}}
+	service := (&CommerceService{db: db}).WithCapabilityControls(guard, nil)
+
+	_, err := service.CreateDriveUpload(context.Background(), "business-123", "user-456", CreateDriveAssetInput{
+		Name: "invoice.pdf", ContentType: "application/pdf", SizeBytes: 8192,
+	})
+
+	var unavailable *CapabilityUnavailableError
+	require.ErrorAs(t, err, &unavailable)
+	require.Equal(t, CapabilityS3Uploads, guard.request.Capability)
+	var count int64
+	require.NoError(t, db.Model(&models.DriveAsset{}).Count(&count).Error)
+	require.Zero(t, count)
+}
+
+func TestCreateDriveUploadRejectsExactAuthoritativeStorageLimitBeforeAsset(t *testing.T) {
+	db := newDriveUploadTestDB(t)
+	limitMB := int64(2048)
+	storage := &staticDriveStorageQuotaReader{result: DriveStorageQuota{
+		Access: FeatureAccess{Required: true, Entitled: true, Quota: CapabilityQuota{
+			Unit: "MB", Limited: true, Limit: limitMB, Used: limitMB, Remaining: 0, Available: false,
+		}},
+		LimitBytes: limitMB * 1024 * 1024,
+		UsedBytes:  limitMB * 1024 * 1024,
+	}}
+	service := (&CommerceService{db: db}).WithCapabilityControls(&recordingCapabilityGuard{}, storage)
+
+	_, err := service.CreateDriveUpload(context.Background(), "business-123", "user-456", CreateDriveAssetInput{
+		Name: "invoice.pdf", ContentType: "application/pdf", SizeBytes: 8192,
+	})
+
+	var quotaErr *QuotaExceededError
+	require.ErrorAs(t, err, &quotaErr)
+	require.Equal(t, FeatureDriveStorageMB, quotaErr.Feature)
+	require.Equal(t, limitMB, quotaErr.Limit)
+	require.Equal(t, limitMB, quotaErr.Used)
+	require.Equal(t, []string{"business-123"}, storage.businessIDs)
+	var count int64
+	require.NoError(t, db.Model(&models.DriveAsset{}).Count(&count).Error)
+	require.Zero(t, count)
+}
+
+type staticDriveStorageQuotaReader struct {
+	result      DriveStorageQuota
+	err         error
+	businessIDs []string
+}
+
+func (r *staticDriveStorageQuotaReader) InspectDriveStorage(_ context.Context, businessID string) (DriveStorageQuota, error) {
+	r.businessIDs = append(r.businessIDs, businessID)
+	return r.result, r.err
 }
 
 func newDriveUploadTestDB(t *testing.T) *gorm.DB {
@@ -310,7 +831,7 @@ func newDriveUploadTestDB(t *testing.T) *gorm.DB {
 		deleted_at DATETIME
 	)`).Error)
 
-	for index, seed := range defaultEntitlementSeedsForSubscription(nil) {
+	for index, seed := range defaultEntitlementSeedsForSubscription(&models.Subscription{Plan: "starter", PlanCode: "pro", Status: "active"}) {
 		require.NoError(t, db.Exec(
 			"INSERT INTO feature_entitlements (id, business_id, feature_key, enabled, limit_value, metadata, created_at, updated_at) VALUES (?, ?, ?, ?, ?, '{}', ?, ?)",
 			fmt.Sprintf("entitlement-%d", index), "business-123", seed.FeatureKey, seed.Enabled, seed.LimitValue, time.Now().UTC(), time.Now().UTC(),

@@ -6,13 +6,19 @@ import (
 )
 
 type WebhookEvent struct {
-	Event   string         `json:"event"`
-	Payload WebhookPayload `json:"payload"`
+	Event          string         `json:"event"`
+	CreatedAtEpoch int64          `json:"created_at"`
+	Payload        WebhookPayload `json:"payload"`
 }
 
 type WebhookPayload struct {
-	Payment *WebhookPaymentEntity `json:"payment,omitempty"`
-	Order   *WebhookOrderEntity   `json:"order,omitempty"`
+	Payment      *WebhookPaymentEntity      `json:"payment,omitempty"`
+	Order        *WebhookOrderEntity        `json:"order,omitempty"`
+	Subscription *WebhookSubscriptionEntity `json:"subscription,omitempty"`
+}
+
+type WebhookSubscriptionEntity struct {
+	Entity Subscription `json:"entity"`
 }
 
 type WebhookPaymentEntity struct {

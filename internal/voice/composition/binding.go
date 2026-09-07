@@ -106,14 +106,31 @@ func (factory WindowFactoryFunc) NewWindow(value voicesession.Session) (turn.Con
 	return factory(value)
 }
 
+// ToolGovernanceFactory binds the authenticated session to the durable
+// governed-execution seam. A missing factory never falls back to direct tools.
+type ToolGovernanceFactory interface {
+	NewGovernedExecutor(voicesession.Session, turn.ToolExecutor) turn.ToolExecutor
+}
+
+type ToolGovernanceFactoryFunc func(voicesession.Session, turn.ToolExecutor) turn.ToolExecutor
+
+func (factory ToolGovernanceFactoryFunc) NewGovernedExecutor(session voicesession.Session, executor turn.ToolExecutor) turn.ToolExecutor {
+	if factory == nil {
+		return nil
+	}
+	return factory(session, executor)
+}
+
 type FactoryConfig struct {
-	STT          sarvam.STTOpener
-	Chat         sarvam.ChatStreamer
-	LeaseRenewer voicesession.LeaseRenewer
-	Tools        tools.Config
-	Decoders     DecoderFactory
-	Outputs      OutputFactory
-	Windows      WindowFactory
+	STT                   sarvam.STTOpener
+	Chat                  sarvam.ChatStreamer
+	LeaseRenewer          voicesession.LeaseRenewer
+	Tools                 tools.Config
+	Decoders              DecoderFactory
+	Outputs               OutputFactory
+	Windows               WindowFactory
+	ToolGovernance        ToolGovernanceFactory
+	RequireToolGovernance bool
 
 	LeaseDuration          time.Duration
 	LeaseHeartbeatInterval time.Duration
@@ -131,13 +148,15 @@ type FactoryConfig struct {
 // layer's per-peer factory. Its dependencies are process-lifetime clients;
 // every Create call constructs isolated codec, tools, turn, and output state.
 type BindingFactory struct {
-	stt          sarvam.STTOpener
-	chat         sarvam.ChatStreamer
-	leaseRenewer voicesession.LeaseRenewer
-	tools        tools.Config
-	decoders     DecoderFactory
-	outputs      OutputFactory
-	windows      WindowFactory
+	stt                   sarvam.STTOpener
+	chat                  sarvam.ChatStreamer
+	leaseRenewer          voicesession.LeaseRenewer
+	tools                 tools.Config
+	decoders              DecoderFactory
+	outputs               OutputFactory
+	windows               WindowFactory
+	toolGovernance        ToolGovernanceFactory
+	requireToolGovernance bool
 
 	leaseDuration          time.Duration
 	leaseHeartbeatInterval time.Duration
@@ -185,6 +204,7 @@ func NewBindingFactory(config FactoryConfig) (*BindingFactory, error) {
 	return &BindingFactory{
 		stt: config.STT, chat: config.Chat, leaseRenewer: config.LeaseRenewer, tools: config.Tools,
 		decoders: config.Decoders, outputs: config.Outputs, windows: windows,
+		toolGovernance: config.ToolGovernance, requireToolGovernance: config.RequireToolGovernance,
 		leaseDuration: leaseDuration, leaseHeartbeatInterval: heartbeatInterval,
 		leaseWriteTimeout: writeTimeout, leaseNow: config.LeaseNow,
 		maxTokens: config.MaxTokens, firstOutputTimeout: config.FirstOutputTimeout,
@@ -261,6 +281,13 @@ func (factory *BindingFactory) Create(config webrtc.STTBindingConfig) (_ webrtc.
 	if config.Session.BranchID != "" {
 		// Existing invoice/customer operations are business-wide. Until those
 		// public APIs expose branch-aware reads, do not advertise unusable tools.
+		executor = nil
+	} else if !nilInterface(factory.toolGovernance) {
+		executor = factory.toolGovernance.NewGovernedExecutor(cloneSession(config.Session), registry)
+		if nilInterface(executor) {
+			executor = nil
+		}
+	} else if factory.requireToolGovernance {
 		executor = nil
 	}
 	orchestrator, err := turn.NewOrchestrator(turn.OrchestratorConfig{

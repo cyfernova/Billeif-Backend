@@ -9,8 +9,18 @@ func TestAgentCoreProductionImageFailsClosedWithoutARM64Libopus(t *testing.T) {
 	t.Parallel()
 
 	dockerfile := readRepositoryFile(t, "deploy", "agentcore", "Dockerfile")
+	var goVersion string
+	for _, line := range strings.Split(readRepositoryFile(t, "go.mod"), "\n") {
+		if strings.HasPrefix(line, "go ") {
+			goVersion = strings.TrimSpace(strings.TrimPrefix(line, "go "))
+			break
+		}
+	}
+	if goVersion == "" {
+		t.Fatal("go.mod must declare the build toolchain version")
+	}
 	for _, required := range []string{
-		"FROM --platform=$TARGETPLATFORM golang:1.25-bookworm@sha256:",
+		"FROM --platform=$TARGETPLATFORM golang:" + goVersion + "-bookworm@sha256:",
 		" AS build",
 		"libopus-dev",
 		"pkg-config",
