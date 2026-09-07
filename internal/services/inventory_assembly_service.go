@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"time"
 
 	"invoice-backend/internal/models"
 
@@ -75,7 +76,15 @@ func (s *InventoryService) DisassembleAssembly(ctx context.Context, businessID, 
 }
 
 func (s *InventoryService) executeAssembly(ctx context.Context, businessID, recipeID string, input ExecuteAssemblyInput, reverse bool) error {
+	overrideID, err := s.prepareInventoryOverride(ctx, businessID, input.UserID, input.Authorization)
+	if err != nil {
+		return err
+	}
+	input.LockOverrideID = overrideID
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := s.enforceInventoryLockTx(tx, businessID, time.Now(), input.LockOverrideID, true); err != nil {
+			return err
+		}
 		var recipe models.AssemblyRecipe
 		if err := tx.Preload("Components").Where("id = ? AND business_id = ? AND deleted_at IS NULL", recipeID, businessID).First(&recipe).Error; err != nil {
 			return err

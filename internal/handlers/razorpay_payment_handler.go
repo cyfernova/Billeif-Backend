@@ -8,6 +8,7 @@ import (
 
 	"invoice-backend/internal/services"
 	"invoice-backend/pkg/logger"
+	"invoice-backend/pkg/razorpay"
 
 	"github.com/gin-gonic/gin"
 )
@@ -15,15 +16,20 @@ import (
 const razorpayWebhookMaxBytes int64 = 1 << 20
 
 type RazorpayPaymentHandler struct {
-	svc *services.RazorpayPaymentService
-	log *logger.Logger
+	svc       *services.RazorpayPaymentService
+	lifecycle *services.SubscriptionLifecycleService
+	log       *logger.Logger
 }
 
-func NewRazorpayPaymentHandler(svc *services.RazorpayPaymentService, log *logger.Logger) *RazorpayPaymentHandler {
+func NewRazorpayPaymentHandler(svc *services.RazorpayPaymentService, log *logger.Logger, lifecycle ...*services.SubscriptionLifecycleService) *RazorpayPaymentHandler {
 	if log == nil {
 		log = logger.Global()
 	}
-	return &RazorpayPaymentHandler{svc: svc, log: log.Named("razorpay_payments")}
+	h := &RazorpayPaymentHandler{svc: svc, log: log.Named("razorpay_payments")}
+	if len(lifecycle) > 0 {
+		h.lifecycle = lifecycle[0]
+	}
+	return h
 }
 
 // CreateOrder godoc
@@ -37,9 +43,11 @@ func NewRazorpayPaymentHandler(svc *services.RazorpayPaymentService, log *logger
 // @Success 200 {object} services.RazorpayCreateOrderResponse
 // @Failure 400 {object} map[string]string
 // @Failure 401 {object} map[string]string
-// @Failure 403 {object} map[string]string
+// @Failure 403 {object} CapabilityMutationError
 // @Failure 409 {object} map[string]string
-// @Failure 429 {object} map[string]string
+// @Failure 422 {object} CapabilityMutationError
+// @Failure 429 {object} CapabilityMutationError
+// @Failure 503 {object} CapabilityMutationError
 // @Router /payments/razorpay/order [post]
 func (h *RazorpayPaymentHandler) CreateOrder(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
@@ -56,11 +64,18 @@ func (h *RazorpayPaymentHandler) CreateOrder(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
+	if strings.TrimSpace(input.TargetType) == "plan" {
+		c.JSON(http.StatusConflict, gin.H{"error": "renewable plans require /subscriptions/checkout"})
+		return
+	}
 
 	resp, err := h.svc.CreateOrder(c.Request.Context(), businessID, userID, input)
 	if err != nil {
+		if writeSubscriptionControlError(c, err) {
+			return
+		}
 		status, message := paymentErrorResponse(err)
-		h.log.Warn("create Razorpay order failed", "business_id", businessID, "user_id", userID, "target_type", input.TargetType, "status", status, "error", err)
+		h.log.Warn("create Razorpay order failed", "business_id", businessID, "user_id", userID, "target_type", input.TargetType, "status", status, "code", "payment_order_failed")
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -101,7 +116,7 @@ func (h *RazorpayPaymentHandler) VerifyPayment(c *gin.Context) {
 	resp, err := h.svc.VerifyPayment(c.Request.Context(), businessID, userID, input)
 	if err != nil {
 		status, message := paymentErrorResponse(err)
-		h.log.Warn("verify Razorpay payment failed", "business_id", businessID, "user_id", userID, "payment_attempt_id", input.PaymentAttemptID, "status", status, "error", err)
+		h.log.Warn("verify Razorpay payment failed", "business_id", businessID, "user_id", userID, "payment_attempt_id", input.PaymentAttemptID, "status", status, "code", "payment_verification_failed")
 		c.JSON(status, gin.H{"error": message})
 		return
 	}
@@ -130,6 +145,26 @@ func (h *RazorpayPaymentHandler) Webhook(c *gin.Context) {
 		return
 	}
 
+	event, parseErr := razorpay.ParseWebhookEvent(rawBody)
+	if parseErr == nil && strings.HasPrefix(event.Event, "subscription.") && h.lifecycle != nil {
+		result, lifecycleErr := h.lifecycle.HandleWebhook(c.Request.Context(), c.GetHeader("X-Razorpay-Signature"), firstNonEmptyHeader(c, "x-razorpay-event-id", "X-Razorpay-Event-Id"), rawBody)
+		if lifecycleErr != nil {
+			status := http.StatusBadRequest
+			message := "webhook could not be processed"
+			if errors.Is(lifecycleErr, services.ErrInvalidSubscriptionWebhookSignature) {
+				status, message = http.StatusUnauthorized, "invalid webhook signature"
+			}
+			if errors.Is(lifecycleErr, services.ErrSubscriptionProviderUnknown) {
+				status, message = http.StatusAccepted, "subscription event requires reconciliation"
+			}
+			h.log.Warn("Razorpay subscription webhook rejected", "status", status, "code", "subscription_webhook_rejected")
+			c.JSON(status, gin.H{"error": message})
+			return
+		}
+		c.JSON(http.StatusOK, result)
+		return
+	}
+
 	duplicate, err := h.svc.HandleWebhook(
 		c.Request.Context(),
 		c.GetHeader("X-Razorpay-Signature"),
@@ -138,7 +173,7 @@ func (h *RazorpayPaymentHandler) Webhook(c *gin.Context) {
 	)
 	if err != nil {
 		status, message := webhookErrorResponse(err)
-		h.log.Warn("Razorpay webhook rejected", "status", status, "error", err)
+		h.log.Warn("Razorpay webhook rejected", "status", status, "code", "payment_webhook_rejected")
 		c.JSON(status, gin.H{"error": message})
 		return
 	}

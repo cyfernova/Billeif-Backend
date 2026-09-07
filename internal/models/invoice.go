@@ -72,6 +72,7 @@ type Invoice struct {
 	CustomerID           *string                `gorm:"index" json:"customer_id,omitempty" validate:"omitempty,uuid"`
 	Version              int                    `gorm:"not null;default:1" json:"version"`
 	ProjectID            *string                `gorm:"index" json:"project_id,omitempty" validate:"omitempty,uuid"`
+	BranchID             *string                `gorm:"index" json:"branch_id,omitempty" validate:"omitempty,uuid"`
 	PriceListID          *string                `gorm:"index" json:"price_list_id,omitempty" validate:"omitempty,uuid"`
 	RenderProfileID      *string                `gorm:"index" json:"render_profile_id,omitempty" validate:"omitempty,uuid"`
 	InvoiceNo            *string                `gorm:"uniqueIndex:idx_business_invoice,priority:2;size:50" json:"invoice_no,omitempty" validate:"omitempty,max=50"`

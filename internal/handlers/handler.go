@@ -57,6 +57,12 @@ type Handler struct {
 	AgentDiscovery  *AgentDiscoveryHandler
 	Intent          *IntentHandler
 	WebSocket       *WebSocketHandler
+	WebSocketTicket *WebSocketTicketHandler
+	Notification    *NotificationHandler
+	Capability      *CapabilityHandler
+	Operation       *OperationHandler
+	Security        *SecurityHandler
+	Accounting      *AccountingHandler
 	LLM             *LLMHandler
 	SarvamTTS       *SarvamTTSHandler
 	VoiceSession    *VoiceSessionHandler
@@ -114,16 +120,16 @@ func New(
 		RenderProfile:   NewRenderProfileHandler(svcs.Document, log),
 		Shipment:        NewShipmentHandler(svcs.Shipping, svcs.Document, log),
 		Invoice:         NewInvoiceHandler(svcs.Invoice, svcs.TaxCompliance, log, cursor),
-		BillingOps:      NewBillingOpsHandler(svcs.BillingOps, log),
+		BillingOps:      NewBillingOpsHandler(svcs.BillingOps, log, svcs.BulkImport),
 		Payment:         NewPaymentHandler(svcs.Payment, log),
-		RazorpayPayment: NewRazorpayPaymentHandler(svcs.RazorpayPayment, log),
+		RazorpayPayment: NewRazorpayPaymentHandler(svcs.RazorpayPayment, log, svcs.SubscriptionLifecycle),
 		Ledger:          NewLedgerHandler(svcs.Ledger, log),
 		Dashboard:       NewDashboardHandler(svcs.Dashboard, log),
 		Report:          NewReportHandler(svcs.Report, svcs.Inventory, log),
 		Tax:             NewTaxHandler(svcs.TaxCompliance, log),
 		Team:            NewTeamHandler(svcs.Team, log),
 		Webhook:         NewWebhookHandler(svcs.Webhook, log),
-		Subscription:    NewSubscriptionHandler(svcs.Subscription, log),
+		Subscription:    NewSubscriptionHandler(svcs.Subscription, log, svcs.SubscriptionLifecycle),
 		Commerce:        NewCommerceHandler(svcs.Commerce, log),
 		EmailConfig:     NewEmailConfigHandler(svcs.Email, log),
 		POS:             NewPOSHandler(svcs.POS, log),
@@ -135,7 +141,13 @@ func New(
 		Marketplace:     NewMarketplaceHandler(svcs.Marketplace, repos.AP2, log),
 		AgentDiscovery:  NewAgentDiscoveryHandler(svcs.AgentDiscovery, log),
 		Intent:          NewIntentHandler(svcs.IntentProcessing, log),
-		WebSocket:       NewWebSocketHandler(wsHub, svcs.WebSocketConnection, log),
+		WebSocket:       NewWebSocketHandler(wsHub, svcs.WebSocketConnection, svcs.WebSocketTicket, log),
+		WebSocketTicket: NewWebSocketTicketHandler(svcs.WebSocketTicket, log),
+		Notification:    NewNotificationHandler(svcs.Notification, log),
+		Capability:      NewCapabilityHandler(svcs.Capability, log),
+		Operation:       NewOperationHandler(svcs.Operation, log),
+		Security:        NewSecurityHandler(svcs.Security, svcs.Auth, svcs.PendingUpload, svcs.Privacy),
+		Accounting:      NewAccountingHandler(svcs.Accounting),
 		LLM:             NewLLMHandler(svcs.LLM, svcs.LLMChatHistory, log),
 		SarvamTTS:       NewSarvamTTSHandler(svcs.SarvamTTS, log),
 		VoiceSession:    NewVoiceSessionHandler(svcs.VoiceSession, log),

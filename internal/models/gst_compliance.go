@@ -64,6 +64,7 @@ type GSTIntegrationAccount struct {
 	PortalUsername       string         `gorm:"size:160" json:"portal_username,omitempty"`
 	EncryptedCredentials string         `gorm:"type:text" json:"-"`
 	CredentialHint       string         `gorm:"size:255" json:"credential_hint,omitempty"`
+	CredentialRevision   int64          `gorm:"not null;default:1" json:"-"`
 	Status               string         `gorm:"not null;size:30;default:'pending';index" json:"status"`
 	LastValidatedAt      *time.Time     `json:"last_validated_at,omitempty"`
 	LastError            string         `gorm:"type:text" json:"last_error,omitempty"`

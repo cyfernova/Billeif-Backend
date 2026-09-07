@@ -2,6 +2,22 @@
 useDefault = true
 
 [[allowlists]]
+description = "Exact synthetic cleanup-error canary asserted by verifier tests"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^internal/verify/runner_test\.go$''']
+regexTarget = "secret"
+regexes = ['''^abcdef123456$''']
+
+[[allowlists]]
+description = "Exact synthetic API-key canary asserted by verifier redaction tests"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^internal/verify/redact_test\.go$''']
+regexTarget = "secret"
+regexes = ['''^sk-live-abc123$''']
+
+[[allowlists]]
 description = "Synthetic API-key fixtures used by configuration, Terraform, and voice tests"
 paths = [
   '''^infrastructure/terraform/tests/http_serverless\.tftest\.hcl$''',

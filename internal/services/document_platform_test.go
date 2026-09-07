@@ -155,3 +155,24 @@ func TestBuildJournalLinesForDocument(t *testing.T) {
 		t.Fatalf("expected quotation to produce no journal lines, got %d", len(quotationLines))
 	}
 }
+
+func TestBuildJournalLinesForBillOfSupplyOmitsZeroTaxLine(t *testing.T) {
+	t.Parallel()
+	document := &models.Document{
+		ID: "doc-2", DocumentType: models.DocumentTypeBillOfSupply, SerialNumber: "BOS-2026-000001",
+		Currency: "INR", Subtotal: 100, Total: 100,
+	}
+
+	lines := buildJournalLinesForDocument(document)
+	if len(lines) != 2 {
+		t.Fatalf("expected receivable and revenue lines only, got %#v", lines)
+	}
+	for _, line := range lines {
+		if line.Amount != 100 {
+			t.Fatalf("expected persisted amount 100, got %#v", lines)
+		}
+		if line.AccountCode == "OUT_GST" {
+			t.Fatalf("zero-value tax line must not be emitted: %#v", lines)
+		}
+	}
+}

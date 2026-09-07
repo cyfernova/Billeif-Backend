@@ -129,6 +129,35 @@ func TestBarcodeService_RenderPNGCapsDimensions(t *testing.T) {
 	require.Equal(t, 1000, cfg.Height)
 }
 
+func TestInventoryService_WarehouseContactAndStatusPersist(t *testing.T) {
+	db := newInventoryParityTestDB(t)
+	svc := NewInventoryService(db, nil, nil, &inventoryParityBusinessRepo{}, nil, logger.New())
+	ctx := context.Background()
+	require.NoError(t, db.Create(&models.Warehouse{ID: "warehouse-contact", BusinessID: "business-1", Name: "Test", Code: "TEST", IsDefault: true, IsActive: true}).Error)
+	manager, phone, active := "QA Manager", "9000000000", false
+	_, err := svc.UpdateWarehouse(ctx, "business-1", "warehouse-contact", UpdateWarehouseInput{Manager: &manager, Phone: &phone, IsActive: &active})
+	require.NoError(t, err)
+	var saved models.Warehouse
+	require.NoError(t, db.First(&saved, "id = ?", "warehouse-contact").Error)
+	require.Equal(t, manager, saved.Manager)
+	require.Equal(t, phone, saved.Phone)
+	require.False(t, saved.IsActive)
+	require.True(t, saved.IsDefault)
+	_, err = svc.UpdateWarehouse(ctx, "business-1", "warehouse-contact", UpdateWarehouseInput{Name: "Renamed"})
+	require.NoError(t, err)
+	require.NoError(t, db.First(&saved, "id = ?", "warehouse-contact").Error)
+	require.Equal(t, manager, saved.Manager)
+	require.False(t, saved.IsActive)
+	empty := ""
+	_, err = svc.UpdateWarehouse(ctx, "business-1", "warehouse-contact", UpdateWarehouseInput{Manager: &empty, Phone: &empty})
+	require.NoError(t, err)
+	require.NoError(t, db.First(&saved, "id = ?", "warehouse-contact").Error)
+	require.Empty(t, saved.Manager)
+	require.Empty(t, saved.Phone)
+	_, err = svc.UpdateWarehouse(ctx, "other-business", "warehouse-contact", UpdateWarehouseInput{Name: "Wrong tenant"})
+	require.Error(t, err)
+}
+
 func TestInventoryService_DeleteWarehouseBlocksMainWarehouse(t *testing.T) {
 	t.Skip("Skipping: database schema/relation issue in SQLite test")
 	db := newInventoryParityTestDB(t)
@@ -331,6 +360,9 @@ func newInventoryParityTestDB(t *testing.T) *gorm.DB {
 			state TEXT,
 			country TEXT,
 			postal_code TEXT,
+			manager TEXT DEFAULT '',
+			phone TEXT DEFAULT '',
+			is_active NUMERIC DEFAULT 1,
 			is_default NUMERIC DEFAULT 0,
 			created_at DATETIME,
 			updated_at DATETIME,

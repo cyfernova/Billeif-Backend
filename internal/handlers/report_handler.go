@@ -77,7 +77,7 @@ func (h *ReportHandler) Query(c *gin.Context) {
 			statusCode = http.StatusNotFound
 		} else if errors.Is(err, services.ErrReportScopeUnsupported) {
 			statusCode = http.StatusForbidden
-		} else if err.Error() == "at least one valid column is required" {
+		} else if errors.Is(err, services.ErrReportInvalidFilters) || err.Error() == "at least one valid column is required" {
 			statusCode = http.StatusBadRequest
 		}
 		c.JSON(statusCode, gin.H{"error": err.Error()})
@@ -88,17 +88,22 @@ func (h *ReportHandler) Query(c *gin.Context) {
 
 // Export exports a report
 // @Summary Export report
-// @Description Exports a report in the specified format
+// @Description Exports JSON/CSV in the compatibility envelope; XLSX is a native attachment with Content-Disposition and X-Report-Run-ID headers
 // @Tags Reports
 // @Accept json
-// @Produce json
+// @Produce json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
 // @Security BearerAuth
 // @Param key path string true "Report key"
 // @Param input body services.ReportExportInput true "Export parameters"
-// @Success 201 {object} interface{}
+// @Success 201 {object} services.ReportExportResponse
 // @Failure 400 {object} map[string]string
+// @Failure 403 {object} CapabilityMutationError
 // @Failure 404 {object} map[string]string
+// @Failure 413 {object} map[string]string
+// @Failure 422 {object} CapabilityMutationError
+// @Failure 429 {object} CapabilityMutationError
 // @Failure 500 {object} map[string]string
+// @Failure 503 {object} CapabilityMutationError
 // @Router /reports/{key}/export [post]
 func (h *ReportHandler) Export(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
@@ -119,15 +124,33 @@ func (h *ReportHandler) Export(c *gin.Context) {
 	}
 	result, err := h.svc.Export(c.Request.Context(), businessID, userID, c.Param("key"), input)
 	if err != nil {
+		if writeSubscriptionControlError(c, err) {
+			return
+		}
 		statusCode := http.StatusInternalServerError
 		if isNotFoundErr(err) {
 			statusCode = http.StatusNotFound
 		} else if errors.Is(err, services.ErrReportScopeUnsupported) {
 			statusCode = http.StatusForbidden
-		} else if err.Error() == "unsupported export format" || err.Error() == "at least one valid column is required" {
+		} else if errors.Is(err, services.ErrReportExportTooLarge) {
+			statusCode = http.StatusRequestEntityTooLarge
+		} else if errors.Is(err, services.ErrReportInvalidFilters) || err.Error() == "unsupported export format" || err.Error() == "at least one valid column is required" {
 			statusCode = http.StatusBadRequest
 		}
 		c.JSON(statusCode, gin.H{"error": err.Error()})
+		return
+	}
+	writeReportExportResponse(c, result)
+}
+
+func writeReportExportResponse(c *gin.Context, result *services.ReportExportResponse) {
+	if result.ContentType == services.ReportXLSXContentType {
+		c.Header("Content-Disposition", `attachment; filename="`+result.Filename+`"`)
+		c.Header("Cache-Control", "no-store")
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("X-Report-Run-ID", result.Run.ID)
+		c.Header("Access-Control-Expose-Headers", "Content-Disposition, X-Report-Run-ID")
+		c.Data(http.StatusCreated, result.ContentType, result.Binary)
 		return
 	}
 	c.JSON(http.StatusCreated, result)
@@ -287,7 +310,7 @@ func (h *ReportHandler) CreateShare(c *gin.Context) {
 			statusCode = http.StatusNotFound
 		} else if errors.Is(err, services.ErrReportScopeUnsupported) {
 			statusCode = http.StatusForbidden
-		} else if err.Error() == "unsupported share mode" || err.Error() == "expires_at must be in the future" || err.Error() == "at least one valid column is required" {
+		} else if errors.Is(err, services.ErrReportInvalidFilters) || err.Error() == "unsupported share mode" || err.Error() == "expires_at must be in the future" || err.Error() == "at least one valid column is required" {
 			statusCode = http.StatusBadRequest
 		}
 		c.JSON(statusCode, gin.H{"error": err.Error()})
@@ -449,6 +472,10 @@ func (h *ReportHandler) applyReportScope(c *gin.Context, businessID, userID stri
 		filters.AllowedBranchIDs = append([]string(nil), branchIDs...)
 	} else {
 		branchIDs = nil
+	}
+	if filters.BranchID != "" && !allBranches && !containsString(branchIDs, filters.BranchID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "branch is outside report scope"})
+		return false
 	}
 
 	if middleware.GetRole(c) == "admin" && allBranches {

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -25,6 +26,18 @@ type CommerceHandler struct {
 
 func NewCommerceHandler(svc *services.CommerceService, log *logger.Logger) *CommerceHandler {
 	return &CommerceHandler{svc: svc, publicOrders: svc, log: log}
+}
+
+// ListSubscriptionCatalog godoc
+// @Summary List subscription plans
+// @Description Returns the authoritative subscription plan catalog used for checkout and entitlement enforcement.
+// @Tags Subscriptions
+// @Security BearerAuth
+// @Produce json
+// @Success 200 {object} services.SubscriptionCatalogResponse
+// @Router /subscriptions/catalog [get]
+func (h *CommerceHandler) ListSubscriptionCatalog(c *gin.Context) {
+	c.JSON(http.StatusOK, services.SubscriptionCatalog())
 }
 
 // ListEntitlements godoc
@@ -536,7 +549,7 @@ func (h *CommerceHandler) ListStorefrontCoupons(c *gin.Context) {
 		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
-	coupons, err := h.svc.ListStorefrontCoupons(c.Request.Context(), c.Param("id"))
+	coupons, err := h.svc.ListStorefrontCoupons(c.Request.Context(), businessID, c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -577,7 +590,7 @@ func (h *CommerceHandler) CreateStorefrontCoupon(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	coupon, err := h.svc.CreateStorefrontCoupon(c.Request.Context(), c.Param("id"), input)
+	coupon, err := h.svc.CreateStorefrontCoupon(c.Request.Context(), businessID, c.Param("id"), input)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -619,16 +632,51 @@ func (h *CommerceHandler) UpdateStorefrontCoupon(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	coupon, err := h.svc.UpdateStorefrontCoupon(c.Request.Context(), c.Param("id"), c.Param("coupon_id"), input)
+	coupon, err := h.svc.UpdateStorefrontCoupon(c.Request.Context(), businessID, c.Param("id"), c.Param("coupon_id"), input)
 	if err != nil {
 		status := http.StatusBadRequest
 		if isNotFoundErr(err) {
 			status = http.StatusNotFound
+		} else if errors.Is(err, services.ErrCouponVersionConflict) {
+			status = http.StatusConflict
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, coupon)
+}
+
+// DeleteStorefrontCoupon godoc
+// @Summary Delete an unredeemed storefront coupon
+// @Description Soft-deletes a coupon only when it has never been redeemed
+// @Tags Storefronts
+// @Security BearerAuth
+// @Param id path string true "Storefront ID"
+// @Param coupon_id path string true "Coupon ID"
+// @Success 204
+// @Failure 401 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Router /storefronts/{id}/coupons/{coupon_id} [delete]
+func (h *CommerceHandler) DeleteStorefrontCoupon(c *gin.Context) {
+	requestContextWithActor(c)
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	err := h.svc.DeleteStorefrontCoupon(c.Request.Context(), businessID, c.Param("id"), c.Param("coupon_id"))
+	if err != nil {
+		status := http.StatusBadRequest
+		switch {
+		case isNotFoundErr(err):
+			status = http.StatusNotFound
+		case errors.Is(err, services.ErrCouponRedeemed):
+			status = http.StatusConflict
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 // ListStorefrontOrders godoc
@@ -679,8 +727,12 @@ func (h *CommerceHandler) ApproveStorefrontOrder(c *gin.Context) {
 	if !ok {
 		return
 	}
-	order, err := h.svc.ApproveStoreOrder(c.Request.Context(), businessID, c.Param("id"), c.Param("order_id"))
+	order, err := h.svc.ApproveStoreOrderAuthorized(c.Request.Context(), businessID, c.Param("id"), c.Param("order_id"), accountingPostingAuthorization(c, "storefront-order:"+c.Param("order_id")))
 	if err != nil {
+		if errors.Is(err, services.ErrAccountingPeriodLocked) {
+			writeAccountingStepUpRequired(c)
+			return
+		}
 		status := http.StatusBadRequest
 		if isNotFoundErr(err) {
 			status = http.StatusNotFound
@@ -762,6 +814,10 @@ func (h *CommerceHandler) ListDriveAssets(c *gin.Context) {
 // @Success 201 {object} services.DriveUploadSession
 // @Failure 400 {object} map[string]string
 // @Failure 401 {object} map[string]string
+// @Failure 403 {object} CapabilityMutationError
+// @Failure 422 {object} CapabilityMutationError
+// @Failure 429 {object} CapabilityMutationError
+// @Failure 503 {object} CapabilityMutationError
 // @Router /drive/presign [post]
 func (h *CommerceHandler) CreateDriveUpload(c *gin.Context) {
 	requestContextWithActor(c)
@@ -781,6 +837,9 @@ func (h *CommerceHandler) CreateDriveUpload(c *gin.Context) {
 	input.BusinessID = businessID
 	session, err := h.svc.CreateDriveUpload(c.Request.Context(), businessID, userID, input)
 	if err != nil {
+		if writeSubscriptionControlError(c, err) {
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -982,7 +1041,7 @@ func (h *CommerceHandler) PublicCategories(c *gin.Context) {
 // @Success 200 {object} map[string]interface{}
 // @Failure 400 {object} map[string]string
 // @Failure 404 {object} map[string]string
-// @Router /public/store/coupons/validate/{slug} [post]
+// @Router /public/store/{slug}/coupons/validate [post]
 func (h *CommerceHandler) PublicValidateCoupon(c *gin.Context) {
 	var input services.ValidateCouponInput
 	if err := c.ShouldBindJSON(&input); err != nil {

@@ -12,16 +12,19 @@ import (
 type Profile string
 
 const (
-	ProfileHTTP          Profile = "http"
-	ProfileA2A           Profile = "a2a-stream"
-	ProfileInvoice       Profile = "sqs-invoice"
-	ProfileGST           Profile = "sqs-gst"
-	ProfileBargaining    Profile = "sqs-bargaining"
-	ProfileWebSocket     Profile = "websocket"
-	ProfileMigration     Profile = "migration"
-	ProfileOutbox        Profile = "outbox"
-	ProfileEmailDelivery Profile = "sqs-email-delivery"
-	ProfileSESFeedback   Profile = "sqs-ses-feedback"
+	ProfileHTTP                   Profile = "http"
+	ProfileA2A                    Profile = "a2a-stream"
+	ProfileInvoice                Profile = "sqs-invoice"
+	ProfileGST                    Profile = "sqs-gst"
+	ProfileBargaining             Profile = "sqs-bargaining"
+	ProfileWebSocket              Profile = "websocket"
+	ProfileMigration              Profile = "migration"
+	ProfileOutbox                 Profile = "outbox"
+	ProfileRecurringInvoices      Profile = "recurring-invoices"
+	ProfileSubscriptionReconciler Profile = "subscription-reconciler"
+	ProfileEmailDelivery          Profile = "sqs-email-delivery"
+	ProfileSESFeedback            Profile = "sqs-ses-feedback"
+	ProfileBulkImport             Profile = "bulk-import"
 )
 
 func ValidateForProfile(cfg *Config, profile Profile) error {
@@ -53,11 +56,27 @@ func ValidateForProfile(cfg *Config, profile Profile) error {
 			}
 		}
 		return nil
-	case ProfileMigration:
+	case ProfileMigration, ProfileRecurringInvoices:
 		if err := validateProfileBase(cfg); err != nil {
 			return err
 		}
 		return validateProfileDatabase(cfg)
+	case ProfileBulkImport:
+		if err := validateProfileBase(cfg); err != nil {
+			return err
+		}
+		if err := validateProfileDatabase(cfg); err != nil {
+			return err
+		}
+		return validateProfileDependencies(cfg, profile)
+	case ProfileSubscriptionReconciler:
+		if err := validateProfileBase(cfg); err != nil {
+			return err
+		}
+		if err := validateProfileDatabase(cfg); err != nil {
+			return err
+		}
+		return requireProviderIdentifier(cfg.Secrets.Razorpay, cfg.Razorpay.KeySecret, "RAZORPAY_SECRET_ARN")
 	case ProfileOutbox:
 		if err := validateProfileBase(cfg); err != nil {
 			return err
@@ -186,6 +205,16 @@ func validateProfileDependencies(cfg *Config, profile Profile) error {
 		if strings.TrimSpace(cfg.SES.ConfigurationSet) == "" {
 			return fmt.Errorf("SES_CONFIGURATION_SET is required")
 		}
+	case ProfileBulkImport:
+		if strings.TrimSpace(cfg.S3.BucketDrive) == "" {
+			return fmt.Errorf("S3_BUCKET_DRIVE is required")
+		}
+		if strings.TrimSpace(cfg.S3.BucketInvoices) == "" {
+			return fmt.Errorf("S3_BUCKET_INVOICES is required")
+		}
+		if strings.TrimSpace(cfg.SQS.BulkImportQueue) == "" {
+			return fmt.Errorf("SQS_BULK_IMPORT_QUEUE is required")
+		}
 	}
 	return nil
 }
@@ -311,6 +340,9 @@ func validate(cfg *Config) error {
 	if err := validateVoiceSessionConfig(cfg.VoiceSession); err != nil {
 		return err
 	}
+	if err := validateAIGovernanceConfig(cfg.AIGovernance); err != nil {
+		return err
+	}
 
 	if cfg.JWT.AccessTokenExpiry <= 0 {
 		return fmt.Errorf("JWT_ACCESS_TOKEN_EXPIRY must be positive")
@@ -408,6 +440,18 @@ func validate(cfg *Config) error {
 		}
 	}
 
+	return nil
+}
+
+func validateAIGovernanceConfig(cfg AIGovernanceConfig) error {
+	if !cfg.ExecutionEnabled {
+		return nil
+	}
+	if len(strings.TrimSpace(cfg.SpendCurrency)) != 3 || cfg.BusinessDailyLimitMicros <= 0 || cfg.AgentDailyLimitMicros <= 0 ||
+		cfg.RunTokenBudget <= 0 || cfg.MaxSteps <= 0 || cfg.MaxToolCalls <= 0 || cfg.MaxRetries < 0 ||
+		cfg.MaxDuration <= 0 || cfg.MaxDuration > 5*time.Minute || cfg.ProviderFailureThreshold <= 0 || cfg.ProviderCooldown <= 0 {
+		return fmt.Errorf("AI agent governance policy is incomplete")
+	}
 	return nil
 }
 

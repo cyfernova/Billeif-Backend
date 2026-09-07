@@ -36,6 +36,7 @@ type Config struct {
 	DeepSeek       DeepSeekConfig     `mapstructure:"DEEPSEEK"`
 	Sarvam         SarvamConfig       `mapstructure:"SARVAM"`
 	VoiceSession   VoiceSessionConfig `mapstructure:"VOICE_SESSION"`
+	AIGovernance   AIGovernanceConfig `mapstructure:"AI_GOVERNANCE"`
 	Credentials    CredentialsConfig  `mapstructure:"CREDENTIALS"`
 	MCP            MCPConfig          `mapstructure:"MCP"`
 }
@@ -62,6 +63,22 @@ type SarvamConfig struct {
 	APIKey  string `mapstructure:"API_KEY"`
 	BaseURL string `mapstructure:"BASE_URL"`
 	Timeout int    `mapstructure:"TIMEOUT"`
+}
+
+// AIGovernanceConfig is the independent hard gate and bounded execution policy.
+// Provider spend is represented in integer millionths of SpendCurrency.
+type AIGovernanceConfig struct {
+	ExecutionEnabled         bool          `mapstructure:"EXECUTION_ENABLED"`
+	SpendCurrency            string        `mapstructure:"SPEND_CURRENCY"`
+	BusinessDailyLimitMicros int64         `mapstructure:"BUSINESS_DAILY_LIMIT_MICROS"`
+	AgentDailyLimitMicros    int64         `mapstructure:"AGENT_DAILY_LIMIT_MICROS"`
+	RunTokenBudget           int64         `mapstructure:"RUN_TOKEN_BUDGET"`
+	MaxSteps                 int           `mapstructure:"MAX_STEPS"`
+	MaxToolCalls             int           `mapstructure:"MAX_TOOL_CALLS"`
+	MaxRetries               int           `mapstructure:"MAX_RETRIES"`
+	MaxDuration              time.Duration `mapstructure:"MAX_DURATION"`
+	ProviderFailureThreshold int           `mapstructure:"PROVIDER_FAILURE_THRESHOLD"`
+	ProviderCooldown         time.Duration `mapstructure:"PROVIDER_COOLDOWN"`
 }
 
 type VoiceSessionConfig struct {
@@ -166,6 +183,7 @@ type CognitoConfig struct {
 	ClientID        string             `mapstructure:"CLIENT_ID"`
 	Domain          string             `mapstructure:"DOMAIN"`
 	Region          string             `mapstructure:"REGION"`
+	OperatorGroup   string             `mapstructure:"OPERATOR_GROUP"`
 	JWKSRefreshRate time.Duration      `mapstructure:"JWKS_REFRESH_RATE"`
 	Phone           CognitoPhoneConfig `mapstructure:"PHONE"`
 }
@@ -194,6 +212,10 @@ type RazorpayConfig struct {
 	KeyID         string `mapstructure:"KEY_ID"`
 	KeySecret     string `mapstructure:"KEY_SECRET"`
 	WebhookSecret string `mapstructure:"WEBHOOK_SECRET"`
+	Mode          string `mapstructure:"MODE"`
+	PlanProID     string `mapstructure:"PLAN_PRO_ID"`
+	PlanRiseID    string `mapstructure:"PLAN_RISE_ID"`
+	PlanBizID     string `mapstructure:"PLAN_BIZ_ID"`
 	BaseURL       string `mapstructure:"BASE_URL"`
 	Timeout       int    `mapstructure:"TIMEOUT"`
 }
@@ -215,6 +237,7 @@ type SQSConfig struct {
 	EmailDeliveryQueue string `mapstructure:"EMAIL_DELIVERY_QUEUE"`
 	GSTQueue           string `mapstructure:"GST_QUEUE"`
 	BargainingQueue    string `mapstructure:"BARGAINING_QUEUE"`
+	BulkImportQueue    string `mapstructure:"BULK_IMPORT_QUEUE"`
 }
 
 type SESConfig struct {
@@ -358,6 +381,7 @@ func LoadForProfile(profile Profile) (*Config, error) {
 	_ = viper.BindEnv("COGNITO.CLIENT_ID", "COGNITO_CLIENT_ID")
 	_ = viper.BindEnv("COGNITO.DOMAIN", "COGNITO_DOMAIN")
 	_ = viper.BindEnv("COGNITO.REGION", "COGNITO_REGION")
+	_ = viper.BindEnv("COGNITO.OPERATOR_GROUP", "PLATFORM_OPERATOR_GROUP")
 	_ = viper.BindEnv("COGNITO.JWKS_REFRESH_RATE", "COGNITO_JWKS_REFRESH_RATE")
 	_ = viper.BindEnv("COGNITO.PHONE.USER_POOL_ID", "COGNITO_PHONE_USER_POOL_ID")
 	_ = viper.BindEnv("COGNITO.PHONE.CLIENT_ID", "COGNITO_PHONE_CLIENT_ID")
@@ -385,6 +409,7 @@ func LoadForProfile(profile Profile) (*Config, error) {
 	_ = viper.BindEnv("SQS.EMAIL_DELIVERY_QUEUE", "SQS_EMAIL_DELIVERY_QUEUE")
 	_ = viper.BindEnv("SQS.GST_QUEUE", "SQS_GST_QUEUE")
 	_ = viper.BindEnv("SQS.BARGAINING_QUEUE", "SQS_BARGAINING_QUEUE")
+	_ = viper.BindEnv("SQS.BULK_IMPORT_QUEUE", "SQS_BULK_IMPORT_QUEUE")
 	_ = viper.BindEnv("SES.SENDER_EMAIL", "SES_SENDER_EMAIL")
 	_ = viper.BindEnv("SES.CONFIGURATION_SET", "SES_CONFIGURATION_SET")
 	_ = viper.BindEnv("SES.SENDING_ACCOUNT_ID", "SES_SENDING_ACCOUNT_ID")
@@ -455,6 +480,17 @@ func LoadForProfile(profile Profile) (*Config, error) {
 	_ = viper.BindEnv("VOICE_SESSION.LEASE_INDEX_NAME", "VOICE_SESSION_LEASE_INDEX_NAME")
 	_ = viper.BindEnv("VOICE_SESSION.GLOBAL_CAPACITY_LIMIT", "VOICE_GLOBAL_CAPACITY_LIMIT")
 	_ = viper.BindEnv("VOICE_SESSION.PER_USER_CAPACITY_LIMIT", "VOICE_PER_USER_CAPACITY_LIMIT")
+	_ = viper.BindEnv("AI_GOVERNANCE.EXECUTION_ENABLED", "AI_AGENT_EXECUTION_ENABLED")
+	_ = viper.BindEnv("AI_GOVERNANCE.SPEND_CURRENCY", "AI_SPEND_CURRENCY")
+	_ = viper.BindEnv("AI_GOVERNANCE.BUSINESS_DAILY_LIMIT_MICROS", "AI_BUSINESS_DAILY_LIMIT_MICROS")
+	_ = viper.BindEnv("AI_GOVERNANCE.AGENT_DAILY_LIMIT_MICROS", "AI_AGENT_DAILY_LIMIT_MICROS")
+	_ = viper.BindEnv("AI_GOVERNANCE.RUN_TOKEN_BUDGET", "AI_RUN_TOKEN_BUDGET")
+	_ = viper.BindEnv("AI_GOVERNANCE.MAX_STEPS", "AI_MAX_STEPS")
+	_ = viper.BindEnv("AI_GOVERNANCE.MAX_TOOL_CALLS", "AI_MAX_TOOL_CALLS")
+	_ = viper.BindEnv("AI_GOVERNANCE.MAX_RETRIES", "AI_MAX_RETRIES")
+	_ = viper.BindEnv("AI_GOVERNANCE.MAX_DURATION", "AI_MAX_DURATION")
+	_ = viper.BindEnv("AI_GOVERNANCE.PROVIDER_FAILURE_THRESHOLD", "AI_PROVIDER_FAILURE_THRESHOLD")
+	_ = viper.BindEnv("AI_GOVERNANCE.PROVIDER_COOLDOWN", "AI_PROVIDER_COOLDOWN")
 	_ = viper.BindEnv("CREDENTIALS.ENCRYPTION_KEY", "CREDENTIAL_ENCRYPTION_KEY")
 	_ = viper.BindEnv("MCP.SERVER_URL", "MCP_SERVER_URL")
 	_ = viper.BindEnv("MCP.TIMEOUT", "MCP_TIMEOUT")
@@ -537,6 +573,7 @@ func applyFlatEnvFileFallbacks(cfg *Config) {
 	setIfEmpty(&cfg.Cognito.ClientID, "COGNITO_CLIENT_ID")
 	setIfEmpty(&cfg.Cognito.Domain, "COGNITO_DOMAIN")
 	setIfEmpty(&cfg.Cognito.Region, "COGNITO_REGION")
+	setIfEmpty(&cfg.Cognito.OperatorGroup, "PLATFORM_OPERATOR_GROUP")
 	setIfZeroDuration(&cfg.Cognito.JWKSRefreshRate, "COGNITO_JWKS_REFRESH_RATE")
 	setIfEmpty(&cfg.Cognito.Phone.UserPoolID, "COGNITO_PHONE_USER_POOL_ID")
 	setIfEmpty(&cfg.Cognito.Phone.ClientID, "COGNITO_PHONE_CLIENT_ID")
@@ -555,6 +592,10 @@ func applyFlatEnvFileFallbacks(cfg *Config) {
 	setIfEmpty(&cfg.Razorpay.KeyID, "RAZORPAY_KEY_ID")
 	setIfEmpty(&cfg.Razorpay.KeySecret, "RAZORPAY_KEY_SECRET")
 	setIfEmpty(&cfg.Razorpay.WebhookSecret, "RAZORPAY_WEBHOOK_SECRET")
+	setIfEmpty(&cfg.Razorpay.Mode, "RAZORPAY_MODE")
+	setIfEmpty(&cfg.Razorpay.PlanProID, "RAZORPAY_PLAN_PRO_ID")
+	setIfEmpty(&cfg.Razorpay.PlanRiseID, "RAZORPAY_PLAN_RISE_ID")
+	setIfEmpty(&cfg.Razorpay.PlanBizID, "RAZORPAY_PLAN_BIZ_ID")
 	setIfEmpty(&cfg.Razorpay.BaseURL, "RAZORPAY_BASE_URL")
 	setIfZeroInt(&cfg.Razorpay.Timeout, "RAZORPAY_TIMEOUT")
 
@@ -562,6 +603,7 @@ func applyFlatEnvFileFallbacks(cfg *Config) {
 	setIfEmpty(&cfg.SQS.EmailDeliveryQueue, "SQS_EMAIL_DELIVERY_QUEUE")
 	setIfEmpty(&cfg.SQS.GSTQueue, "SQS_GST_QUEUE")
 	setIfEmpty(&cfg.SQS.BargainingQueue, "SQS_BARGAINING_QUEUE")
+	setIfEmpty(&cfg.SQS.BulkImportQueue, "SQS_BULK_IMPORT_QUEUE")
 	setIfEmpty(&cfg.SES.SenderEmail, "SES_SENDER_EMAIL")
 	setIfEmpty(&cfg.SES.ConfigurationSet, "SES_CONFIGURATION_SET")
 	setIfEmpty(&cfg.SES.SendingAccountID, "SES_SENDING_ACCOUNT_ID")

@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
+	"invoice-backend/internal/models"
 	"invoice-backend/internal/services"
 	"invoice-backend/pkg/logger"
 	"invoice-backend/pkg/websocket"
@@ -18,14 +20,25 @@ import (
 type WebSocketHandler struct {
 	hub           *websocket.Hub
 	connectionSvc *services.WebSocketConnectionService
+	ticketSvc     websocketTicketConsumer
 	log           *logger.Logger
 }
 
+type websocketTicketConsumer interface {
+	Consume(ctx context.Context, ticketValue string) (*models.WebSocketTicket, error)
+}
+
 // NewWebSocketHandler creates a new WebSocket handler.
-func NewWebSocketHandler(hub *websocket.Hub, connectionSvc *services.WebSocketConnectionService, log *logger.Logger) *WebSocketHandler {
+func NewWebSocketHandler(
+	hub *websocket.Hub,
+	connectionSvc *services.WebSocketConnectionService,
+	ticketSvc *services.WebSocketTicketService,
+	log *logger.Logger,
+) *WebSocketHandler {
 	return &WebSocketHandler{
 		hub:           hub,
 		connectionSvc: connectionSvc,
+		ticketSvc:     ticketSvc,
 		log:           log,
 	}
 }
@@ -48,30 +61,27 @@ var upgrader = gorillaws.Upgrader{
 // @Failure 401 {object} map[string]string
 // @Router /ws [get]
 func (h *WebSocketHandler) HandleConnection(c *gin.Context) {
-	userID, exists := c.Get("user_id")
-	if !exists {
-		h.log.Warn("websocket connection without user_id")
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+	if h.ticketSvc == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "websocket tickets are unavailable"})
 		return
 	}
-
-	userIDStr := userID.(string)
-	if userIDStr == "" {
-		h.log.Warn("websocket connection with empty user_id")
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user_id"})
+	ticket, err := h.ticketSvc.Consume(c.Request.Context(), strings.TrimSpace(c.Query("ticket")))
+	if err != nil {
+		h.log.Warn("websocket connection ticket rejected", "error", err)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid websocket ticket"})
 		return
 	}
 
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		h.log.Error("websocket upgrade failed", "user_id", userIDStr, "error", err)
+		h.log.Error("websocket upgrade failed", "user_id", ticket.Subject, "business_id", ticket.BusinessID, "error", err)
 		return
 	}
 
-	client := websocket.NewClient(userIDStr, conn, h.hub, h.log)
+	client := websocket.NewClient(ticket.Subject, conn, h.hub, h.log)
 	h.hub.RegisterClient(client)
 
-	h.log.Info("websocket client connected", "user_id", userIDStr, "remote_addr", c.RemoteIP(), "total_clients", h.hub.GetClientCount())
+	h.log.Info("websocket client connected", "user_id", ticket.Subject, "business_id", ticket.BusinessID, "remote_addr", c.RemoteIP(), "total_clients", h.hub.GetClientCount())
 
 	go client.ReadPump()
 	go client.WritePump()
@@ -88,7 +98,7 @@ func (h *WebSocketHandler) HandleConnection(c *gin.Context) {
 	}
 
 	if err := client.SendMessage(welcomeMsg); err != nil {
-		h.log.Error("failed to send welcome message", "user_id", userIDStr, "error", err)
+		h.log.Error("failed to send welcome message", "user_id", ticket.Subject, "business_id", ticket.BusinessID, "error", err)
 	}
 }
 

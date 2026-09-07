@@ -64,10 +64,9 @@ func (s *InvoiceService) DeliverByBusiness(
 		return nil, &idempotency.InvalidKeyError{}
 	}
 	key := keyUUID.String()
-	actor := actorFromContext(ctx)
-	actorUUID, err := uuid.Parse(strings.TrimSpace(actor.UserID))
+	actor, err := s.invoiceActor(ctx, "delivery")
 	if err != nil {
-		return nil, errors.New("invoice delivery actor is required")
+		return nil, err
 	}
 	recipient, err := canonicalDeliveryRecipient(input.Recipient)
 	if err != nil {
@@ -77,7 +76,7 @@ func (s *InvoiceService) DeliverByBusiness(
 		BusinessID: businessUUID.String(),
 		InvoiceID:  invoiceUUID.String(),
 		Recipient:  recipient,
-		ActorID:    actorUUID.String(),
+		ActorID:    actor.UserID,
 	})
 	if err != nil {
 		return nil, err
@@ -88,7 +87,7 @@ func (s *InvoiceService) DeliverByBusiness(
 	result, err := s.invoiceDeliveries.CreateDeliveryAtomic(ctx, interfaces.AtomicInvoiceDelivery{
 		BusinessID: businessUUID.String(), InvoiceID: invoiceUUID.String(),
 		Command: invoiceDeliveryCommand, IdempotencyKey: key, RequestHash: requestHash,
-		Recipient: recipient, ActorID: actorUUID.String(), ActorRole: actor.Role,
+		Recipient: recipient, ActorID: actor.UserID, ActorRole: actor.Role,
 		RequestID: actor.RequestID, IPAddress: actor.IPAddress,
 	})
 	if err != nil {

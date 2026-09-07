@@ -24,6 +24,9 @@ type Warehouse struct {
 	State             string         `gorm:"size:100" json:"state,omitempty"`
 	Country           string         `gorm:"size:100" json:"country,omitempty"`
 	PostalCode        string         `gorm:"size:20" json:"postal_code,omitempty"`
+	Manager           string         `gorm:"size:120" json:"manager"`
+	Phone             string         `gorm:"size:40" json:"phone"`
+	IsActive          bool           `json:"is_active"`
 	IsDefault         bool           `gorm:"default:false" json:"is_default"`
 	CreatedAt         time.Time      `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt         time.Time      `gorm:"autoUpdateTime" json:"updated_at"`

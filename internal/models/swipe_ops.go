@@ -18,11 +18,17 @@ const (
 )
 
 const (
-	BulkJobStatusPending    = "pending"
-	BulkJobStatusQueued     = "queued"
-	BulkJobStatusProcessing = "processing"
-	BulkJobStatusCompleted  = "completed"
-	BulkJobStatusFailed     = "failed"
+	BulkJobStatusPending      = "pending"
+	BulkJobStatusQueued       = "queued"
+	BulkJobStatusProcessing   = "processing"
+	BulkJobStatusCompleted    = "completed"
+	BulkJobStatusFailed       = "failed"
+	BulkJobStatusValidating   = "validating"
+	BulkJobStatusValidated    = "validated"
+	BulkJobStatusCommitQueued = "commit_queued"
+	BulkJobStatusCommitting   = "committing"
+	BulkJobStatusCanceled     = "canceled"
+	BulkJobStatusExpired      = "expired"
 )
 
 const (
@@ -229,30 +235,41 @@ func (PartyGroupMember) TableName() string {
 }
 
 type BulkJob struct {
-	ID             string             `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
-	BusinessID     string             `gorm:"not null;index" json:"business_id" validate:"required,uuid"`
-	CreatedBy      string             `gorm:"not null;index" json:"created_by" validate:"required,uuid"`
-	JobType        string             `gorm:"not null;size:50;index" json:"job_type"`
-	Action         string             `gorm:"size:50;index" json:"action,omitempty"`
-	Status         string             `gorm:"not null;size:30;default:'pending';index" json:"status"`
-	FileName       string             `gorm:"size:255" json:"file_name,omitempty"`
-	FileKey        string             `gorm:"size:500" json:"file_key,omitempty"`
-	ContentType    string             `gorm:"size:120" json:"content_type,omitempty"`
-	TotalRows      int                `gorm:"default:0" json:"total_rows"`
-	ProcessedRows  int                `gorm:"default:0" json:"processed_rows"`
-	SucceededRows  int                `gorm:"default:0" json:"succeeded_rows"`
-	FailedRows     int                `gorm:"default:0" json:"failed_rows"`
-	RequestPayload string             `gorm:"type:jsonb;default:'{}'" json:"request_payload,omitempty"`
-	ResultPayload  string             `gorm:"type:jsonb;default:'{}'" json:"result_payload,omitempty"`
-	LastError      *string            `gorm:"type:text" json:"last_error,omitempty"`
-	QueuedAt       *time.Time         `json:"queued_at,omitempty"`
-	StartedAt      *time.Time         `json:"started_at,omitempty"`
-	CompletedAt    *time.Time         `json:"completed_at,omitempty"`
-	CreatedAt      time.Time          `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt      time.Time          `gorm:"autoUpdateTime" json:"updated_at"`
-	DeletedAt      gorm.DeletedAt     `gorm:"index" json:"-"`
-	Rows           []*BulkJobRow      `gorm:"foreignKey:BulkJobID" json:"rows,omitempty"`
-	Artifacts      []*BulkJobArtifact `gorm:"foreignKey:BulkJobID" json:"artifacts,omitempty"`
+	ID                string             `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
+	BusinessID        string             `gorm:"not null;index" json:"business_id" validate:"required,uuid"`
+	CreatedBy         string             `gorm:"not null;index" json:"created_by" validate:"required,uuid"`
+	JobType           string             `gorm:"not null;size:50;index" json:"job_type"`
+	Action            string             `gorm:"size:50;index" json:"action,omitempty"`
+	Status            string             `gorm:"not null;size:30;default:'pending';index" json:"status"`
+	FileName          string             `gorm:"size:255" json:"file_name,omitempty"`
+	FileKey           string             `gorm:"size:500" json:"-"`
+	ContentType       string             `gorm:"size:120" json:"content_type,omitempty"`
+	UploadID          *string            `gorm:"type:uuid;index" json:"upload_id,omitempty" validate:"omitempty,uuid"`
+	ValidationVersion int                `gorm:"not null;default:0" json:"validation_version"`
+	CommitCommandID   *string            `gorm:"type:uuid;index" json:"commit_command_id,omitempty" validate:"omitempty,uuid"`
+	CancelRequested   bool               `gorm:"not null;default:false" json:"cancel_requested"`
+	AttemptCount      int                `gorm:"not null;default:0" json:"attempt_count"`
+	NextRetryAt       *time.Time         `gorm:"index" json:"next_retry_at,omitempty"`
+	LeaseOwner        string             `gorm:"size:160" json:"-"`
+	LeaseExpiresAt    *time.Time         `gorm:"index" json:"-"`
+	RetainUntil       *time.Time         `gorm:"index" json:"retain_until,omitempty"`
+	ArtifactState     string             `gorm:"size:30;not null;default:'pending'" json:"artifact_state"`
+	NotificationState string             `gorm:"size:30;not null;default:'pending'" json:"notification_state"`
+	TotalRows         int                `gorm:"default:0" json:"total_rows"`
+	ProcessedRows     int                `gorm:"default:0" json:"processed_rows"`
+	SucceededRows     int                `gorm:"default:0" json:"succeeded_rows"`
+	FailedRows        int                `gorm:"default:0" json:"failed_rows"`
+	RequestPayload    string             `gorm:"type:jsonb;default:'{}'" json:"request_payload,omitempty"`
+	ResultPayload     string             `gorm:"type:jsonb;default:'{}'" json:"result_payload,omitempty"`
+	LastError         *string            `gorm:"type:text" json:"last_error,omitempty"`
+	QueuedAt          *time.Time         `json:"queued_at,omitempty"`
+	StartedAt         *time.Time         `json:"started_at,omitempty"`
+	CompletedAt       *time.Time         `json:"completed_at,omitempty"`
+	CreatedAt         time.Time          `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt         time.Time          `gorm:"autoUpdateTime" json:"updated_at"`
+	DeletedAt         gorm.DeletedAt     `gorm:"index" json:"-"`
+	Rows              []*BulkJobRow      `gorm:"foreignKey:BulkJobID" json:"rows,omitempty"`
+	Artifacts         []*BulkJobArtifact `gorm:"foreignKey:BulkJobID" json:"artifacts,omitempty"`
 }
 
 func (BulkJob) TableName() string {
@@ -260,18 +277,25 @@ func (BulkJob) TableName() string {
 }
 
 type BulkJobRow struct {
-	ID         string         `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
-	BulkJobID  string         `gorm:"not null;index" json:"bulk_job_id" validate:"required,uuid"`
-	RowNumber  int            `gorm:"not null" json:"row_number"`
-	Status     string         `gorm:"not null;size:30;default:'pending';index" json:"status"`
-	EntityID   *string        `gorm:"index" json:"entity_id,omitempty"`
-	EntityType string         `gorm:"size:40" json:"entity_type,omitempty"`
-	Input      string         `gorm:"type:jsonb;default:'{}'" json:"input,omitempty"`
-	Result     string         `gorm:"type:jsonb;default:'{}'" json:"result,omitempty"`
-	Error      string         `gorm:"type:text" json:"error,omitempty"`
-	CreatedAt  time.Time      `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt  time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
-	DeletedAt  gorm.DeletedAt `gorm:"index" json:"-"`
+	ID             string         `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
+	BulkJobID      string         `gorm:"not null;index" json:"bulk_job_id" validate:"required,uuid"`
+	RowNumber      int            `gorm:"not null" json:"row_number"`
+	Status         string         `gorm:"not null;size:30;default:'pending';index" json:"status"`
+	EntityID       *string        `gorm:"index" json:"entity_id,omitempty"`
+	EntityType     string         `gorm:"size:40" json:"entity_type,omitempty"`
+	ValidationKey  string         `gorm:"size:320;index" json:"-"`
+	InputHash      string         `gorm:"size:64" json:"-"`
+	ErrorCode      string         `gorm:"size:80" json:"error_code,omitempty"`
+	ErrorDetails   string         `gorm:"type:jsonb;default:'{}'" json:"error_details,omitempty"`
+	IdempotencyKey string         `gorm:"size:180;uniqueIndex" json:"-"`
+	AttemptCount   int            `gorm:"not null;default:0" json:"attempt_count"`
+	CommittedAt    *time.Time     `json:"committed_at,omitempty"`
+	Input          string         `gorm:"type:jsonb;default:'{}'" json:"input,omitempty"`
+	Result         string         `gorm:"type:jsonb;default:'{}'" json:"result,omitempty"`
+	Error          string         `gorm:"type:text" json:"error,omitempty"`
+	CreatedAt      time.Time      `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt      time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
+	DeletedAt      gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 func (BulkJobRow) TableName() string {
@@ -283,8 +307,10 @@ type BulkJobArtifact struct {
 	BulkJobID    string         `gorm:"not null;index" json:"bulk_job_id" validate:"required,uuid"`
 	ArtifactType string         `gorm:"not null;size:50" json:"artifact_type"`
 	FileName     string         `gorm:"not null;size:255" json:"file_name"`
-	FileKey      string         `gorm:"not null;size:500" json:"file_key"`
-	Metadata     string         `gorm:"type:jsonb;default:'{}'" json:"metadata,omitempty"`
+	FileKey      string         `gorm:"not null;size:500" json:"-"`
+	Status       string         `gorm:"not null;size:30;default:'pending'" json:"status"`
+	ExpiresAt    *time.Time     `gorm:"index" json:"expires_at,omitempty"`
+	Metadata     string         `gorm:"type:jsonb;default:'{}'" json:"-"`
 	CreatedAt    time.Time      `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt    time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
 	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
