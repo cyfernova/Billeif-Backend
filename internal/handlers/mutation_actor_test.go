@@ -56,6 +56,12 @@ type handlerActorRenderRepository struct {
 	interfaces.DocumentRepository
 }
 
+type handlerActorCapabilityGuard struct{}
+
+func (handlerActorCapabilityGuard) Require(context.Context, services.CapabilityRequest) error {
+	return nil
+}
+
 func (*handlerActorRenderRepository) CreateRenderProfile(_ context.Context, profile *models.RenderProfile) error {
 	profile.ID = "profile-1"
 	return nil
@@ -73,7 +79,9 @@ func (*handlerActorRenderRepository) DeleteRenderProfile(context.Context, string
 func mutationActorRouter(includeUser bool) *gin.Engine {
 	log := logger.New()
 	checker := handlerActorPermissionChecker{}
-	customer := NewCustomerHandler(services.NewCustomerService(&handlerActorCustomerRepository{}, checker, log), log)
+	customerService := services.NewCustomerService(&handlerActorCustomerRepository{}, checker, log).
+		WithCapabilityGuard(handlerActorCapabilityGuard{})
+	customer := NewCustomerHandler(customerService, log)
 	vendor := NewVendorHandler(services.NewVendorService(&handlerActorVendorRepository{}, checker, log), log)
 	documents := services.NewDocumentService(
 		nil, nil, nil, &handlerActorRenderRepository{}, nil, nil, nil, nil, nil, nil, nil,

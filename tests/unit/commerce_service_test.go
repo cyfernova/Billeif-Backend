@@ -27,16 +27,16 @@ func TestCommerceService_SyncFeatureEntitlements_IntegrationOnly(t *testing.T) {
 // EntitlementService_ResolveByBusiness tests the fallback path when subscription
 // repo is nil or returns an error - these DO work in unit test mode without CGO.
 
-func TestEntitlementService_ResolveByBusiness_NilSubscriptionRepo_ReturnsFreeDefaults(t *testing.T) {
+func TestEntitlementService_ResolveByBusiness_NilSubscriptionRepo_ReturnsRestrictedFreeDefaults(t *testing.T) {
 	svc := services.NewEntitlementService(nil, nil, nil, logger.New())
 
 	entitlements, err := svc.ResolveByBusiness(context.Background(), "any-business")
 
 	require.NoError(t, err)
 	require.NotNil(t, entitlements)
-	require.True(t, entitlements.EInvoiceEnabled)
-	require.True(t, entitlements.EWayBillEnabled)
-	require.True(t, entitlements.BulkGSTEnabled)
-	require.True(t, entitlements.GSTAPIEnabled)
-	require.True(t, entitlements.POSEnabled)
+	require.False(t, entitlements.EInvoiceEnabled)
+	require.False(t, entitlements.EWayBillEnabled)
+	require.False(t, entitlements.BulkGSTEnabled)
+	require.False(t, entitlements.GSTAPIEnabled)
+	require.False(t, entitlements.POSEnabled)
 }

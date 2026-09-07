@@ -22,6 +22,11 @@ type Definition struct {
 type Filters struct {
 	DateFrom                 *time.Time `json:"date_from,omitempty"`
 	DateTo                   *time.Time `json:"date_to,omitempty"`
+	CompareFrom              *time.Time `json:"compare_from,omitempty"`
+	CompareTo                *time.Time `json:"compare_to,omitempty"`
+	BranchID                 string     `json:"branch_id,omitempty"`
+	Currency                 string     `json:"currency,omitempty"`
+	AccountCode              string     `json:"account_code,omitempty"`
 	ProjectID                string     `json:"project_id,omitempty"`
 	WarehouseID              string     `json:"warehouse_id,omitempty"`
 	PartyID                  string     `json:"party_id,omitempty"`

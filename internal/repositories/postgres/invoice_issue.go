@@ -209,6 +209,11 @@ func (r *invoiceRepository) IssueDraftAtomic(
 		document.IssueDate = invoice.InvoiceDate
 		document.SourceLinkage = string(sourceJSON)
 		document.UpdatedAt = issuedAt
+		if r.issueStockEffect != nil {
+			if err := r.issueStockEffect(ctx, tx, &document); err != nil {
+				return issueStageError("inventory stock effect", err)
+			}
+		}
 
 		finalRender = &models.DocumentRenderJob{
 			ID:                   uuid.NewString(),

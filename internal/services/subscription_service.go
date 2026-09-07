@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
@@ -37,12 +38,18 @@ func (s *SubscriptionService) Create(ctx context.Context, input CreateSubscripti
 		return nil, fmt.Errorf("subscription already exists for this business")
 	}
 
+	plan := subscriptionPlanForCode("free")
 	subscription := &models.Subscription{
 		BusinessID:     input.BusinessID,
-		Plan:           input.Plan,
-		PlanCode:       normalizePlanCode(input.Plan, ""),
+		Plan:           plan.LegacyPlan,
+		PlanCode:       plan.PlanCode,
 		CatalogVersion: normalizeCatalogVersion(""),
 		Status:         "active",
+		MaxInvoices:    plan.Quotas[QuotaInvoices],
+		MaxCustomers:   plan.Quotas[QuotaCustomers],
+		MaxUsers:       plan.Quotas[QuotaUsers],
+		MaxStorageMB:   plan.Quotas[QuotaStorageMB],
+		StartDate:      time.Now().UTC(),
 	}
 
 	if err := s.repo.Create(ctx, subscription); err != nil {

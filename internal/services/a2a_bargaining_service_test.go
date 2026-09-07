@@ -202,7 +202,9 @@ func newA2ANegotiationServiceForTest(t *testing.T, repo *a2aNegotiationRepoFake)
 	log := logger.New()
 	agentService := NewAgentService(repo, nil, nil, log)
 	bargaining := NewBargainingService(repo, nil, agentService, nil, nil, log)
-	return NewA2ABargainingService(nil, bargaining, nil, repo, nil, nil, log)
+	service := NewA2ABargainingService(nil, bargaining, nil, repo, nil, nil, log)
+	service.ungovernedExecutionDisabled = false // legacy behavior fixture; production constructors remain fail closed
+	return service
 }
 
 func validA2ANegotiationRepo() *a2aNegotiationRepoFake {
@@ -555,6 +557,41 @@ func TestA2ABargainingEnqueueChecksExactDurableStateBeforeSQS(t *testing.T) {
 		1,
 	); !errors.Is(err, ErrA2ANegotiationNotFound) {
 		t.Fatalf("enqueue mismatched tuple error = %v", err)
+	}
+}
+
+func (r *a2aNegotiationRepoFake) GetBargainingRounds(context.Context, string) ([]*models.BargainingRound, error) {
+	return nil, nil
+}
+
+func (r *a2aNegotiationRepoFake) UpdateNegotiationStatus(_ context.Context, id, status string) error {
+	r.negotiations[id].Status = status
+	return nil
+}
+
+func TestGovernedRoundFailurePersistsTerminalState(t *testing.T) {
+	repo := validA2ANegotiationRepo()
+	sessionID := "failed-governed-session"
+	repo.negotiations[a2aTestNegotiationID] = &models.BargainingNegotiation{
+		ID: a2aTestNegotiationID, SessionID: &sessionID,
+		BuyerAgentID: a2aTestBuyerAgentID, SellerAgentID: a2aTestSellerAgentID,
+		UserID: a2aTestUserID, BusinessID: a2aTestBusinessID,
+		InitialAmount: 100, CurrentAmount: 100, MaxRounds: 5, Status: "initiated",
+	}
+	service := newA2ANegotiationServiceForTest(t, repo)
+	service.governance = &A2AGovernanceAdapter{}
+	service.sessions[sessionID] = &A2ASession{
+		NegotiationID: sessionID, DBNegotiationID: a2aTestNegotiationID,
+		BuyerAgentID: a2aTestBuyerAgentID, SellerAgentID: a2aTestSellerAgentID,
+		CurrentAmount: 100, MaxRounds: 5, Status: "initiated",
+	}
+	for i := 0; i < 2; i++ {
+		if err := service.RunAutonomousNegotiationRound(context.Background(), sessionID, a2aTestNegotiationID, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := repo.negotiations[a2aTestNegotiationID]; got.Status != "failed" || got.Rounds != 0 || got.CurrentAmount != 100 {
+		t.Fatalf("failed attempt changed offers or remained active: %#v", got)
 	}
 }
 

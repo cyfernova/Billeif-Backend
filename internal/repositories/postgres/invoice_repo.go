@@ -17,11 +17,18 @@ import (
 )
 
 type invoiceRepository struct {
-	db *gorm.DB
+	db               *gorm.DB
+	issueStockEffect func(context.Context, *gorm.DB, *models.Document) error
 }
 
 func NewInvoiceRepository(db *gorm.DB) interfaces.CanonicalInvoiceRepository {
 	return &invoiceRepository{db: db}
+}
+
+func (r *invoiceRepository) ConfigureInvoiceIssueStockEffect(
+	applier func(context.Context, *gorm.DB, *models.Document) error,
+) {
+	r.issueStockEffect = applier
 }
 
 type atomicInvoicePersistenceError struct {
@@ -380,6 +387,7 @@ func (r *invoiceRepository) UpdateDraftMetadataVersioned(
 			"due_date":           invoice.DueDate,
 			"notes":              invoice.Notes,
 			"project_id":         invoice.ProjectID,
+			"branch_id":          invoice.BranchID,
 			"price_list_id":      invoice.PriceListID,
 			"render_profile_id":  invoice.RenderProfileID,
 			"custom_fields":      invoice.CustomFields,

@@ -203,6 +203,54 @@ func TestEmbeddedBundleAgainstEmptyPostgres(t *testing.T) {
 	if err != nil || version != 47 || dirty {
 		t.Fatalf("final PostgreSQL migration state = version %d dirty %t error %v, want version 47 clean", version, dirty, err)
 	}
+
+	if err := postgresMigration.migrate.Steps(13); err != nil {
+		t.Fatalf("apply embedded migrations through cart and coupon controls: %v", err)
+	}
+	version, dirty, err = runner.Version()
+	if err != nil || version != 60 || dirty {
+		t.Fatalf("Task 8 migration state = version %d dirty %t error %v, want version 60 clean", version, dirty, err)
+	}
+	const (
+		cartUserID  = "a0000000-0000-4000-8000-000000000006"
+		cartAgentID = "a0000000-0000-4000-8000-000000000007"
+		cartID      = "a0000000-0000-4000-8000-000000000008"
+	)
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO users (id, email, cognito_id, name)
+		VALUES ($1, 'cart-migration@example.com', 'cart-migration-sub', 'Cart Migration User')`, cartUserID); err != nil {
+		t.Fatalf("seed Task 8 cart user: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO agents (id, owner_id, business_id, name, type)
+		VALUES ($1, $2, $3, 'Cart Migration Agent', 'shopping')`, cartAgentID, cartUserID, businessID); err != nil {
+		t.Fatalf("seed Task 8 cart agent: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `
+		INSERT INTO cart_mandates (
+			id, business_id, user_id, agent_id, items, subtotal_amount, tax_amount,
+			total_amount, currency, signature, status, version, expires_at
+		) VALUES ($1, $2, $3, $4, '[]', 0, 0, 0, 'INR', 'cleared-cart', 'pending', 2, NOW() + INTERVAL '1 hour')`,
+		cartID, businessID, cartUserID, cartAgentID); err != nil {
+		t.Fatalf("seed cleared Task 8 cart: %v", err)
+	}
+	if err := postgresMigration.migrate.Steps(-1); err != nil {
+		t.Fatalf("reverse Task 8 migration with a cleared cart: %v", err)
+	}
+	version, dirty, err = runner.Version()
+	if err != nil || version != 59 || dirty {
+		t.Fatalf("Task 8 rollback state = version %d dirty %t error %v, want version 59 clean", version, dirty, err)
+	}
+	var clearedTotal float64
+	if err := database.QueryRowContext(ctx, `SELECT total_amount FROM cart_mandates WHERE id = $1`, cartID).Scan(&clearedTotal); err != nil {
+		t.Fatalf("read cleared cart after Task 8 rollback: %v", err)
+	}
+	if clearedTotal != 0 {
+		t.Fatalf("cleared cart total after rollback = %v, want 0", clearedTotal)
+	}
+	if err := postgresMigration.migrate.Steps(1); err != nil {
+		t.Fatalf("reapply Task 8 migration after rollback validation: %v", err)
+	}
 }
 
 func credentialsFromTestDSN(t *testing.T, dsn string) config.DatabaseCredentials {
