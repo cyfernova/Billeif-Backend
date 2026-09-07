@@ -205,27 +205,47 @@ func TestStaticSubscriptionContractsDocumentDistinctInternalFailures(t *testing.
 }
 
 func TestOperationContractsArePublishedAndExplicitlyFailClosed(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	registerSwaggerRoutes(router, &config.Config{})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/swagger.json", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("swagger status = %d", rec.Code)
+	}
+
 	for _, fixture := range []struct {
 		path       string
 		pathPrefix string
+		raw        []byte
 	}{
 		{path: "../../docs/openapi.yaml"},
 		{path: "../../openapi/openapi.yaml", pathPrefix: "/api/v1"},
-		{path: "../../docs/swagger.yaml"},
+		{path: "/swagger.json", raw: rec.Body.Bytes()},
 	} {
-		raw, err := os.ReadFile(fixture.path)
-		if err != nil {
-			t.Fatalf("read %s: %v", fixture.path, err)
+		raw := fixture.raw
+		if raw == nil {
+			var err error
+			raw, err = os.ReadFile(fixture.path)
+			if err != nil {
+				t.Fatalf("read %s: %v", fixture.path, err)
+			}
+		}
+		var document struct {
+			Paths map[string]any `yaml:"paths"`
+		}
+		if err := yaml.Unmarshal(raw, &document); err != nil {
+			t.Fatalf("decode %s: %v", fixture.path, err)
 		}
 		contract := string(raw)
 		for _, path := range []string{
-			"/operations:", "/operations/{operation_id}:",
-			"/operations/{operation_id}/timeline:", "/operations/{operation_id}/recovery:",
-			"/operator/operations/{operation_id}:",
-			"/operator/operations/{operation_id}/timeline:",
-			"/operator/operations/{operation_id}/recovery:",
+			"/operations", "/operations/{operation_id}",
+			"/operations/{operation_id}/timeline", "/operations/{operation_id}/recovery",
+			"/operator/operations/{operation_id}",
+			"/operator/operations/{operation_id}/timeline",
+			"/operator/operations/{operation_id}/recovery",
 		} {
-			if !strings.Contains(contract, fixture.pathPrefix+path) {
+			if _, ok := document.Paths[fixture.pathPrefix+path]; !ok {
 				t.Fatalf("%s missing operation contract %s", fixture.path, fixture.pathPrefix+path)
 			}
 		}

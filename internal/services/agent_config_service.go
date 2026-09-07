@@ -10,19 +10,26 @@ import (
 	"time"
 
 	"invoice-backend/internal/models"
+	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/logger"
 )
 
 var (
-	ErrAgentConfigNotFound = fmt.Errorf("agent configuration not found")
+	ErrAgentConfigNotFound = interfaces.ErrAgentConfigNotFound
 	ErrInvalidConfig       = fmt.Errorf("invalid agent configuration")
 )
 
 type AgentConfigService struct {
+	repository   interfaces.AgentConfigRepository
 	wellKnownDir string
 	configs      map[string]*models.WellKnownAgentConfig
 	mu           sync.RWMutex
 	log          *logger.Logger
+}
+
+func (s *AgentConfigService) WithRepository(repository interfaces.AgentConfigRepository) *AgentConfigService {
+	s.repository = repository
+	return s
 }
 
 func NewAgentConfigService(wellKnownDir string, log *logger.Logger) *AgentConfigService {
@@ -123,11 +130,23 @@ func (s *AgentConfigService) SaveAgentConfig(ctx context.Context, agent *models.
 		},
 	}
 
+	if s.repository != nil {
+		if err := s.repository.Save(ctx, agent.BusinessID, wellKnownConfig); err != nil {
+			return nil, fmt.Errorf("persist agent configuration: %w", err)
+		}
+		return wellKnownConfig, nil
+	}
+	previous, existed := s.configs[agent.ID]
 	s.configs[agent.ID] = wellKnownConfig
 
 	if err := s.saveToFile(); err != nil {
 		s.log.Error("failed to save agent config to file", "error", err, "agent_id", agent.ID)
-		return wellKnownConfig, nil
+		if existed {
+			s.configs[agent.ID] = previous
+		} else {
+			delete(s.configs, agent.ID)
+		}
+		return nil, fmt.Errorf("persist agent configuration: %w", err)
 	}
 
 	s.log.Info("agent configuration saved", "agent_id", agent.ID, "type", config.Type)
@@ -147,6 +166,9 @@ func (s *AgentConfigService) CreateDefaultConfigForAgentType(agentType string) (
 }
 
 func (s *AgentConfigService) GetAgentConfig(ctx context.Context, agentID string) (*models.WellKnownAgentConfig, error) {
+	if s.repository != nil {
+		return s.repository.Get(ctx, agentID)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -159,6 +181,9 @@ func (s *AgentConfigService) GetAgentConfig(ctx context.Context, agentID string)
 }
 
 func (s *AgentConfigService) GetAllAgentConfigs(ctx context.Context) ([]*models.WellKnownAgentConfig, error) {
+	if s.repository != nil {
+		return s.repository.List(ctx)
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -171,6 +196,9 @@ func (s *AgentConfigService) GetAllAgentConfigs(ctx context.Context) ([]*models.
 }
 
 func (s *AgentConfigService) DeleteAgentConfig(ctx context.Context, agentID string) error {
+	if s.repository != nil {
+		return s.repository.Delete(ctx, agentID)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

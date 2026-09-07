@@ -296,8 +296,9 @@ func llmModelProbeURL(apiURL, _ string) (string, error) {
 }
 
 type LLMChatOptions struct {
-	MaxTokens int
-	System    string
+	DisableThinking bool
+	MaxTokens       int
+	System          string
 }
 
 type LLMChatResult struct {
@@ -386,6 +387,7 @@ type OpenAIChatMessage struct {
 }
 
 type OpenAIChatRequest struct {
+	Thinking  map[string]string   `json:"thinking,omitempty"`
 	Model     string              `json:"model"`
 	Messages  []OpenAIChatMessage `json:"messages"`
 	MaxTokens int                 `json:"max_tokens,omitempty"`
@@ -528,9 +530,11 @@ func (s *LLMService) ChatWithOptions(ctx context.Context, messages []ChatMessage
 	}
 	providerCfg, err := s.providerConfig(ctx, config.SecretLLM)
 	if err != nil {
+		log.Error("LLM provider configuration unavailable")
 		return "", fmt.Errorf("resolve LLM credentials: %w", err)
 	}
 	if strings.TrimSpace(providerCfg.APIKey) == "" {
+		log.Error("LLM provider key is not configured")
 		return "", fmt.Errorf("LLM_API_KEY is not configured")
 	}
 
@@ -550,6 +554,9 @@ func (s *LLMService) ChatWithOptions(ctx context.Context, messages []ChatMessage
 		Messages:  openAIMessages,
 		MaxTokens: maxTokens,
 		Stream:    false,
+	}
+	if options.DisableThinking {
+		reqBody.Thinking = map[string]string{"type": "disabled"}
 	}
 
 	jsonBody, err := json.Marshal(reqBody)

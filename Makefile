@@ -362,4 +362,4 @@ test-coverage: ## Generate test coverage report
 	@echo "Coverage report generated: coverage.html"
 
 swagger: ## Generate Swagger documentation
-	swag init -g internal/app/runtime.go -o docs/
+	go run github.com/swaggo/swag/cmd/swag@v1.16.6 init -g internal/app/runtime.go -o docs/

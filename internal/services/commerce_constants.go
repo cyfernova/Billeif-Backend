@@ -26,6 +26,7 @@ const (
 	PermissionTeamsManage           = "teams.manage"
 	PermissionTeamsView             = "teams.view"
 	PermissionDocumentsManage       = "documents.manage"
+	PermissionProjectsManage        = "projects.manage"
 	PermissionDocumentsExport       = "documents.export"
 	PermissionCustomersCreate       = "customers.create"
 	PermissionCustomersUpdate       = "customers.update"

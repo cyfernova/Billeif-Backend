@@ -64,6 +64,17 @@ locals {
     WEBSOCKET_CONNECTIONS_TABLE      = aws_dynamodb_table.ws_connections.name
     LLM_API_URL                      = var.llm_api_url
     LLM_MODEL                        = var.llm_model
+    AI_AGENT_EXECUTION_ENABLED       = tostring(var.environment == "dev")
+    AI_SPEND_CURRENCY                = "USD"
+    AI_BUSINESS_DAILY_LIMIT_MICROS   = "1000000"
+    AI_AGENT_DAILY_LIMIT_MICROS      = "250000"
+    AI_RUN_TOKEN_BUDGET              = "10000"
+    AI_MAX_STEPS                     = "5"
+    AI_MAX_TOOL_CALLS                = "1"
+    AI_MAX_RETRIES                   = "0"
+    AI_MAX_DURATION                  = "5m"
+    AI_PROVIDER_FAILURE_THRESHOLD    = "3"
+    AI_PROVIDER_COOLDOWN             = "1m"
     EXA_BASE_URL                     = var.exa_base_url
     EXA_TIMEOUT                      = tostring(var.exa_timeout)
     GST_LOOKUP_BASE_URL              = var.gst_lookup_base_url

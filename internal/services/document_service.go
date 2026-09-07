@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/url"
+	"path"
 	"strings"
 	"time"
 
@@ -40,6 +42,7 @@ type DocumentService struct {
 	salesInvoiceIssuer salesInvoiceDocumentIssuer
 	sqs                *sqs.Client
 	permissions        PermissionChecker
+	pdfPresigner       InvoicePDFPresigner
 	log                *logger.Logger
 }
 
@@ -1419,14 +1422,41 @@ func (s *DocumentService) GetPDFURLByBusiness(ctx context.Context, businessID, d
 	if err != nil {
 		return "", err
 	}
-	if document.PDFURL != "" {
-		return document.PDFURL, nil
+	storedURL := document.PDFURL
+	if storedURL == "" {
+		job, jobErr := s.repo.GetLatestRenderJob(ctx, documentID)
+		if jobErr != nil {
+			if errors.Is(jobErr, gorm.ErrRecordNotFound) {
+				return "", fmt.Errorf("PDF not yet generated")
+			}
+			return "", jobErr
+		}
+		if job == nil || job.OutputURL == "" {
+			return "", fmt.Errorf("PDF not yet generated")
+		}
+		storedURL = job.OutputURL
 	}
-	job, err := s.repo.GetLatestRenderJob(ctx, documentID)
-	if err != nil || job.OutputURL == "" {
-		return "", fmt.Errorf("PDF not yet generated")
+	if s.pdfPresigner == nil || s.cfg == nil || s.cfg.S3.BucketInvoices == "" {
+		return "", errors.New("document PDF presigner is not configured")
 	}
-	return job.OutputURL, nil
+	parsed, err := url.Parse(storedURL)
+	expectedHost := fmt.Sprintf("%s.s3.%s.amazonaws.com", s.cfg.S3.BucketInvoices, s.cfg.AWS.Region)
+	if err != nil || parsed.Scheme != "https" || parsed.Host != expectedHost || parsed.User != nil {
+		return "", errors.New("invalid document PDF storage location")
+	}
+	key := strings.TrimPrefix(parsed.Path, "/")
+	prefix := fmt.Sprintf("documents/%s/%s/", businessID, documentID)
+	if !strings.HasPrefix(key, prefix) || path.Clean(key) != key || !strings.HasSuffix(key, ".pdf") {
+		return "", errors.New("invalid document PDF object key")
+	}
+	downloadURL, err := s.pdfPresigner.GeneratePresignedDownloadURL(ctx, s.cfg.S3.BucketInvoices, key, 300)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(downloadURL) == "" {
+		return "", errors.New("document PDF presigner returned an empty URL")
+	}
+	return downloadURL, nil
 }
 
 func (s *DocumentService) UpdateRenderedPDF(ctx context.Context, documentID, jobID, pdfURL, filename string) error {

@@ -287,6 +287,16 @@ func (s *WebSocketConnectionService) BroadcastToAll(ctx context.Context, msg *we
 	return nil
 }
 
+func (s *WebSocketConnectionService) SendHeartbeat(ctx context.Context, connectionID string) error {
+	payload, err := json.Marshal(map[string]interface{}{
+		"type": "pong", "data": map[string]interface{}{}, "timestamp": time.Now().UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		return fmt.Errorf("marshal websocket heartbeat: %w", err)
+	}
+	return s.postToConnection(ctx, connectionID, payload)
+}
+
 func (s *WebSocketConnectionService) postToConnection(ctx context.Context, connectionID string, payload []byte) error {
 	if s.mgmt == nil {
 		return fmt.Errorf("websocket management endpoint is not configured")

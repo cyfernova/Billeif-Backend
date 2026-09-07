@@ -117,7 +117,7 @@ ALTER TABLE ledger_entries
 UPDATE ledger_entries le
 SET branch_id = j.branch_id
 FROM journals j
-WHERE le.transaction_id = j.id
+WHERE le.transaction_id = j.id::text
   AND le.business_id = j.business_id
   AND j.branch_id IS NOT NULL;
 CREATE INDEX idx_ledger_entries_branch_date

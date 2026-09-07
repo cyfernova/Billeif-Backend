@@ -103,6 +103,7 @@ type Container struct {
 	Operation              *OperationService
 	Security               *SecurityService
 	AgentGovernance        *AgentGovernanceService
+	GovernanceManagement   *GovernanceManagementService
 	PendingUpload          *PendingUploadService
 	Privacy                *PrivacyService
 	Accounting             *AccountingService
@@ -200,6 +201,7 @@ func NewContainer(
 	ap2Repo interfaces.AP2Repository,
 	aws *awsclients.Config,
 	log *logger.Logger,
+	agentConfigRepo interfaces.AgentConfigRepository,
 ) *Container {
 	s3Svc := NewS3Service(cfg, aws, log)
 	businessAuthSvc := NewBusinessAuthService(db, businessRepo, teamRepo, log)
@@ -208,6 +210,8 @@ func NewContainer(
 		Repository:       agentGovernanceRepo,
 		Permissions:      businessAuthSvc,
 	})
+	governanceManagementRepo, _ := agentGovernanceRepo.(GovernanceManagementRepository)
+	governanceManagementSvc := NewGovernanceManagementService(governanceManagementRepo, businessAuthSvc, userRepo, cfg.AIGovernance)
 	emailSvc := NewEmailService(cfg, aws, s3Svc, log).WithDB(db)
 	ap2Signer, _ := ap2.NewSignatureService()
 	ap2MandateSigner := ap2.NewMandateSigner(ap2Signer)
@@ -216,7 +220,7 @@ func NewContainer(
 	a2aSigner, _ := ap2.NewSignatureService()
 	a2aClient := a2a.NewA2AClient(a2aSigner, log)
 	inventorySvc := NewInventoryService(db, inventoryRepo, productRepo, businessRepo, teamRepo, log)
-	journalSvc := NewJournalService(db, journalRepo, log)
+	journalSvc := NewJournalService(db, journalRepo, log).WithBusinessTimezoneProvider(businessRepo)
 	if configurer, ok := invoiceRepo.(invoiceIssueStockEffectConfigurer); ok {
 		configurer.ConfigureInvoiceIssueStockEffect(func(ctx context.Context, tx *gorm.DB, document *models.Document) error {
 			return applyCanonicalInvoiceIssueEffects(ctx, tx, document, inventorySvc, journalSvc)
@@ -224,9 +228,10 @@ func NewContainer(
 	}
 	shippingSvc := NewShippingService(cfg, shippingRepo, customerRepo, vendorRepo, log)
 	documentSvc := NewDocumentService(db, cfg, resolver, documentRepo, businessRepo, customerRepo, vendorRepo, productRepo, inventorySvc, journalSvc, shippingSvc, aws, businessAuthSvc, log)
+	documentSvc.pdfPresigner = s3Svc
 	barcodeSvc := NewBarcodeService(db, log)
 	projectSvc := NewProjectService(db, log)
-	reportSvc := NewReportService(cfg, reportingRepo, log).WithBusinessTimezoneProvider(businessRepo)
+	reportSvc := NewReportService(cfg, reportingRepo, log).WithBusinessTimezoneProvider(businessRepo).WithUserRepository(userRepo)
 	marketplaceSvc := NewMarketplaceService(ap2Repo, log)
 	productMatchingSvc := NewProductMatchingService(marketplaceSvc, log)
 	intentProcessingSvc, _ := NewIntentProcessingService(productMatchingSvc, marketplaceSvc, log)
@@ -242,9 +247,9 @@ func NewContainer(
 	workflowSvc := NewWorkflowService(db, log, emailSvc, a2aPushSvc)
 	bargainingSvc := NewBargainingService(ap2Repo, a2aClient, agentSvc, menteeSvc, llmSvc, log)
 	merchantAgentSvc := NewMerchantAgentService(ap2Repo, ap2Signer, log)
-	agentConfigSvc := NewAgentConfigService(".well-known", log)
+	agentConfigSvc := NewAgentConfigService(".well-known", log).WithRepository(agentConfigRepo)
 	sellerNegotiationSvc := NewSellerNegotiationService(ap2Repo, agentConfigSvc, log)
-	a2aBargainingSvc := NewA2ABargainingService(a2aClient, bargainingSvc, menteeSvc, ap2Repo, aws.SQS, cfg, log)
+	a2aBargainingSvc := NewA2ABargainingService(a2aClient, bargainingSvc, menteeSvc, ap2Repo, aws.SQS, cfg, log).WithGovernance(NewA2AGovernanceAdapter(agentGovernanceSvc, userRepo, llmSvc, cfg).WithPreferences(agentConfigSvc))
 	websocketConnectionSvc := NewWebSocketConnectionService(cfg, aws, log)
 	websocketTicketSvc := NewWebSocketTicketService(websocketTicketRepo, WebSocketTicketServiceOptions{})
 	notificationSvc := NewNotificationService(notificationRepo, NotificationServiceOptions{})
@@ -288,7 +293,7 @@ func NewContainer(
 	accountingSvc := NewAccountingService(db, securitySvc, journalSvc).WithPendingStatementFiles(securityRepo, s3Svc)
 	journalSvc.WithAccounting(accountingSvc)
 	inventorySvc.WithAccounting(accountingSvc)
-	invoiceSvc := NewInvoiceService(db, cfg, invoiceRepo, businessRepo, productRepo, customerRepo, documentSvc, aws, s3Svc, emailSvc, log, WithInvoiceAccounting(accountingSvc))
+	invoiceSvc := NewInvoiceService(db, cfg, invoiceRepo, businessRepo, productRepo, customerRepo, documentSvc, aws, s3Svc, emailSvc, log, WithInvoiceAccounting(accountingSvc), WithInvoiceActorRepository(userRepo))
 	if marker, ok := invoiceRepo.(outbox.PublishedMarker); ok {
 		invoiceSvc.WithImmediateOutboxPublisher(
 			outbox.NewRoutedImmediatePublisher(
@@ -380,7 +385,7 @@ func NewContainer(
 		"workflow_enabled", workflowSvc != nil,
 	)
 
-	shoppingAgentSvc := NewShoppingAgentService(ap2Repo, agentSvc, intentProcessingSvc, ap2Signer, ap2MandateSvc, a2aClient, cfg.Server.A2AMessageEndpoint(), log)
+	shoppingAgentSvc := NewShoppingAgentService(ap2Repo, agentSvc, intentProcessingSvc, ap2Signer, ap2MandateSvc, a2aClient, cfg.Server.A2AMessageEndpoint(), log).WithUserRepository(userRepo)
 	procurementSvc := NewProcurementService(ap2Repo, agentSvc, intentProcessingSvc, shoppingAgentSvc, merchantAgentSvc, bargainingSvc, agentConfigSvc, ap2Signer, log)
 	a2aTaskSvc.ConfigureDomainServices(ap2Repo, merchantAgentSvc, sellerNegotiationSvc, ap2Signer)
 
@@ -402,7 +407,7 @@ func NewContainer(
 		Payment:                NewPaymentService(db, paymentRepo, invoiceRepo, documentSvc, journalSvc, log),
 		RazorpayPayment:        razorpayPaymentSvc,
 		Ledger:                 NewLedgerService(ledgerRepo, log),
-		Dashboard:              NewDashboardService(db, log),
+		Dashboard:              NewDashboardService(db, log).WithBusinessTimezoneProvider(businessRepo),
 		Report:                 reportSvc,
 		TaxCompliance:          taxComplianceSvc,
 		Team:                   NewTeamService(teamRepo, log).WithDB(db),
@@ -442,6 +447,7 @@ func NewContainer(
 		Operation:              operationSvc,
 		Security:               securitySvc,
 		AgentGovernance:        agentGovernanceSvc,
+		GovernanceManagement:   governanceManagementSvc,
 		PendingUpload:          pendingUploadSvc,
 		Privacy:                privacySvc,
 		Accounting:             accountingSvc,

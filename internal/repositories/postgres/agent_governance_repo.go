@@ -786,22 +786,24 @@ func reserveToolCapacityTx(tx *gorm.DB, run *models.AIAgentRun, command interfac
 }
 
 func lockBudgetPeriod(tx *gorm.DB, scope string, c interfaces.ReserveAgentRunCapacityCommand, agentID *string, limit int64) (models.AIBudgetPeriod, error) {
-	query := tx.Where("scope_kind = ? AND business_id = ? AND period_start = ? AND period_end = ? AND spend_currency = ?", scope, c.BusinessID, c.PeriodStart.UTC(), c.PeriodEnd.UTC(), strings.ToUpper(c.SpendCurrency))
-	if agentID == nil {
-		query = query.Where("agent_id IS NULL")
-	} else {
-		query = query.Where("agent_id = ?", *agentID)
+	query := func() *gorm.DB {
+		q := tx.Where("scope_kind = ? AND business_id = ? AND period_start = ? AND period_end = ? AND spend_currency = ?", scope, c.BusinessID, c.PeriodStart.UTC(), c.PeriodEnd.UTC(), strings.ToUpper(c.SpendCurrency))
+		if agentID == nil {
+			return q.Where("agent_id IS NULL")
+		}
+		return q.Where("agent_id = ?", *agentID)
 	}
 	var period models.AIBudgetPeriod
-	err := query.First(&period).Error
+	err := query().First(&period).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		period = models.AIBudgetPeriod{ID: uuid.NewString(), ScopeKind: scope, BusinessID: c.BusinessID, AgentID: agentID, PeriodStart: c.PeriodStart.UTC(), PeriodEnd: c.PeriodEnd.UTC(), SpendCurrency: strings.ToUpper(c.SpendCurrency), LimitMicros: limit, Version: 1, CreatedAt: c.Now.UTC(), UpdatedAt: c.Now.UTC()}
 		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&period).Error; err != nil {
 			return period, err
 		}
-		err = query.Clauses(clause.Locking{Strength: "UPDATE"}).First(&period).Error
+		period = models.AIBudgetPeriod{}
+		err = query().Clauses(clause.Locking{Strength: "UPDATE"}).First(&period).Error
 	} else if err == nil {
-		err = query.Clauses(clause.Locking{Strength: "UPDATE"}).First(&period).Error
+		err = query().Clauses(clause.Locking{Strength: "UPDATE"}).First(&period).Error
 	}
 	if err != nil {
 		return period, err

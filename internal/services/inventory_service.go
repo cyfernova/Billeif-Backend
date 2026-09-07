@@ -50,6 +50,7 @@ func (s *InventoryService) EnsureDefaultWarehouse(ctx context.Context, businessI
 		Name:       "Main Warehouse",
 		Code:       "MAIN",
 		IsDefault:  true,
+		IsActive:   true,
 	}
 	if createErr := s.repo.CreateWarehouse(ctx, warehouse); createErr != nil {
 		// Handle a concurrent create by retrying the lookup.

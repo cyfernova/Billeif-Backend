@@ -3,6 +3,7 @@ package tests
 import (
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -15,6 +16,49 @@ var (
 	fullCommitSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
 	imageDigest   = regexp.MustCompile(`@sha256:[0-9a-f]{64}$`)
 )
+
+func TestSwaggerGenerationUsesPinnedTool(t *testing.T) {
+	command := exec.Command("make", "--no-print-directory", "-n", "swagger")
+	command.Dir = ".."
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("inspect swagger command: %v: %s", err, output)
+	}
+	version := regexp.MustCompile(`(?m)^\s*github\.com/swaggo/swag (v\S+)`).FindStringSubmatch(readRepositoryFile(t, "go.mod"))
+	if len(version) != 2 {
+		t.Fatal("missing swag module version")
+	}
+	want := "go run github.com/swaggo/swag/cmd/swag@" + version[1] + " init -g internal/app/runtime.go -o docs/"
+	if strings.TrimSpace(string(output)) != want {
+		t.Fatalf("swagger generation must use the repository's pinned tool, got %q, want %q", output, want)
+	}
+}
+
+func TestSecurityWorkflowUsesRepositoryGoVersion(t *testing.T) {
+	contents := readRepositoryFile(t, ".github", "workflows", "security.yml")
+	var workflow yaml.Node
+	if err := yaml.Unmarshal([]byte(contents), &workflow); err != nil {
+		t.Fatal(err)
+	}
+	jobs := requiredMap(t, documentRoot(t, &workflow), "jobs")
+	steps := mappingValue(requiredMap(t, jobs, "security"), "steps")
+	if steps == nil || steps.Kind != yaml.SequenceNode {
+		t.Fatal("security workflow must have steps")
+	}
+	for _, step := range steps.Content {
+		uses := mappingValue(step, "uses")
+		if uses == nil || !strings.HasPrefix(uses.Value, "actions/setup-go@") {
+			continue
+		}
+		with := requiredMap(t, step, "with")
+		requireScalar(t, with, "go-version-file", "go.mod")
+		if mappingValue(with, "go-version") != nil {
+			t.Fatal("security workflow must not override the repository Go version")
+		}
+		return
+	}
+	t.Fatal("security workflow must configure Go")
+}
 
 func TestDeployWorkflowLaunchSafetyPolicy(t *testing.T) {
 	workflow := loadWorkflow(t)

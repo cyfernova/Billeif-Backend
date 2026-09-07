@@ -186,7 +186,7 @@ func Initialize(ctx context.Context, opts InitializeOptions) (*Runtime, error) {
 		)
 	}
 	h := handlers.New(svcs, &handlers.Repositories{AP2: repos.AP2}, cfg, log, invoiceCursor)
-	router := setupRouter(cfg, svcs, h, log, rateLimiter, clientIdentities)
+	router := setupRouter(cfg, svcs, h, log, rateLimiter, clientIdentities, opts.Profile)
 
 	rt := &Runtime{
 		Config:      cfg,
@@ -456,7 +456,7 @@ func initRepositories(db *gorm.DB) *Repositories {
 func initServices(cfg *config.Config, db *gorm.DB, repos *Repositories, aws *awsclients.Config, resolver services.ProviderConfigResolver, log *logger.Logger) *services.Container {
 	return services.NewContainer(cfg, resolver, db, repos.User, repos.Business, repos.Customer, repos.Vendor,
 		repos.Product, repos.Document, repos.Journal, repos.Inventory, repos.Shipping, repos.Invoice, repos.Payment, repos.Ledger, repos.Reporting, repos.Team,
-		repos.Webhook, repos.Subscription, repos.SubscriptionLifecycle, repos.WebSocketTicket, repos.Notification, repos.CapabilityProviderHealth, repos.Operation, repos.Security, repos.AgentGovernance, repos.AP2, aws, log)
+		repos.Webhook, repos.Subscription, repos.SubscriptionLifecycle, repos.WebSocketTicket, repos.Notification, repos.CapabilityProviderHealth, repos.Operation, repos.Security, repos.AgentGovernance, repos.AP2, aws, log, postgresrepo.NewAgentConfigRepository(db))
 }
 
 type renderProfilePasswordBackfiller interface {
@@ -525,7 +525,11 @@ func setupRouter(
 	log *logger.Logger,
 	rateLimiter ratelimit.Limiter,
 	clientIdentities *middleware.ClientIdentityResolver,
+	profile config.Profile,
 ) *gin.Engine {
+	if profile != "" && profile != config.ProfileHTTP && profile != config.ProfileA2A {
+		return nil
+	}
 	router := gin.New()
 	trustedProxies := []string(nil)
 	if trustedProxyCIDR := strings.TrimSpace(cfg.Redis.TrustedProxyCIDR); trustedProxyCIDR != "" {
@@ -818,9 +822,9 @@ func setupRouter(
 			projects := protected.Group("/projects")
 			{
 				projects.GET("", h.Project.List)
-				projects.POST("", middleware.RequireRole("admin", "accountant"), h.Project.Create)
-				projects.PUT("/:id", middleware.RequireRole("admin", "accountant"), h.Project.Update)
-				projects.DELETE("/:id", middleware.RequireRole("admin", "accountant"), h.Project.Delete)
+				projects.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProjectsManage), h.Project.Create)
+				projects.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProjectsManage), h.Project.Update)
+				projects.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProjectsManage), h.Project.Delete)
 			}
 
 			reports := protected.Group("/reports")
@@ -1389,6 +1393,10 @@ func setupRouter(
 		}
 
 		// A2A Bargaining endpoints
+		governanceHandler := handlers.NewAgentGovernanceHandler(svcs.GovernanceManagement)
+		protected.GET("/agent-governance", governanceHandler.Overview)
+		protected.PUT("/agent-governance", governanceHandler.Update)
+
 		a2aBargaining := protected.Group("/a2a-bargaining")
 		{
 			a2aBargaining.POST("/start", h.A2ABargaining.StartNegotiation)

@@ -81,10 +81,11 @@ type AgentToolPolicy struct {
 }
 
 var codeOwnedAgentToolCatalog = map[string]AgentToolPolicy{
-	"list_invoices":  {Key: "list_invoices", Permission: PermissionDocumentsExport, Risk: RiskReadOnly, Enabled: true},
-	"get_invoice":    {Key: "get_invoice", Permission: PermissionDocumentsExport, Risk: RiskReadOnly, Enabled: true},
-	"list_customers": {Key: "list_customers", Permission: "customers.view", Risk: RiskReadOnly, Enabled: false},
-	"get_customer":   {Key: "get_customer", Permission: "customers.view", Risk: RiskReadOnly, Enabled: false},
+	"list_invoices":       {Key: "list_invoices", Permission: PermissionDocumentsExport, Risk: RiskReadOnly, Enabled: true},
+	"get_invoice":         {Key: "get_invoice", Permission: PermissionDocumentsExport, Risk: RiskReadOnly, Enabled: true},
+	"list_customers":      {Key: "list_customers", Permission: "customers.view", Risk: RiskReadOnly, Enabled: false},
+	"get_customer":        {Key: "get_customer", Permission: "customers.view", Risk: RiskReadOnly, Enabled: false},
+	"bargaining_proposal": {Key: "bargaining_proposal", Permission: PermissionAgentsManage, Risk: RiskInternalDraft, Enabled: true},
 }
 
 func AgentToolCatalog() []AgentToolPolicy {
@@ -213,6 +214,7 @@ func decodeUniqueJSONValue(decoder *json.Decoder) (any, error) {
 }
 
 type GovernedToolRequest struct {
+	AuthorizationUserID                         string
 	RunID, BusinessID, AgentID, UserID, ToolKey string
 	CanonicalArguments                          json.RawMessage
 	ArgumentsHash                               string
@@ -300,12 +302,16 @@ func (service *AgentGovernanceService) ExecuteTool(ctx context.Context, request 
 		return nil, ErrAgentGovernanceInvalidArguments
 	}
 	request.CanonicalArguments, request.ArgumentsHash = canonicalArguments, argumentsHash
+	permissionActor := request.UserID
+	if request.AuthorizationUserID != "" {
+		permissionActor = request.AuthorizationUserID
+	}
 	if request.BusinessID == "" || request.UserID == "" || request.AgentID == "" || request.RunID == "" ||
 		request.ArgumentsHash == "" || request.IdempotencyKey == "" || request.DeadlineAt.IsZero() ||
 		request.ProviderKey == "" || request.ModelKey == "" || request.ExpectedCostMicros <= 0 ||
 		request.BusinessSpendCeilingMicros <= 0 || request.AgentDailySpendLimitMicros <= 0 ||
 		request.ProviderFailureThreshold <= 0 || request.ProviderCooldown <= 0 || request.ProviderProbeLease <= 0 ||
-		!service.permissions.UserHasPermission(ctx, request.UserID, request.BusinessID, policy.Permission) {
+		!service.permissions.UserHasPermission(ctx, permissionActor, request.BusinessID, policy.Permission) {
 		return nil, ErrAgentToolDenied
 	}
 	now := service.now().UTC()
@@ -361,7 +367,7 @@ func (service *AgentGovernanceService) ExecuteTool(ctx context.Context, request 
 		IdempotencyKey: request.IdempotencyKey, RequestHash: requestHash, Now: now, Capacity: &capacity,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%w: authorize tool", ErrAgentToolDenied)
+		return nil, fmt.Errorf("%w: authorize tool: %w", ErrAgentToolDenied, err)
 	}
 	if execution.Replayed {
 		durable, readErr := service.repository.ReadToolExecution(ctx, interfaces.ReadAgentToolExecutionQuery{

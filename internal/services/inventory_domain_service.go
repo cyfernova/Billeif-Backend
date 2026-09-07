@@ -50,6 +50,9 @@ type WarehousePermissionInput struct {
 }
 
 type CreateWarehouseInput struct {
+	Manager    string `json:"manager" binding:"max=120"`
+	Phone      string `json:"phone" binding:"max=40"`
+	IsActive   *bool  `json:"is_active,omitempty"`
 	BusinessID string `json:"business_id,omitempty"`
 	BranchID   string `json:"branch_id,omitempty" binding:"omitempty,uuid"`
 	Name       string `json:"name" binding:"required"`
@@ -63,15 +66,18 @@ type CreateWarehouseInput struct {
 }
 
 type UpdateWarehouseInput struct {
-	BranchID   string `json:"branch_id,omitempty" binding:"omitempty,uuid"`
-	Name       string `json:"name"`
-	Code       string `json:"code"`
-	Address    string `json:"address"`
-	City       string `json:"city"`
-	State      string `json:"state"`
-	Country    string `json:"country"`
-	PostalCode string `json:"postal_code"`
-	IsDefault  *bool  `json:"is_default,omitempty"`
+	Manager    *string `json:"manager,omitempty" binding:"omitempty,max=120"`
+	Phone      *string `json:"phone,omitempty" binding:"omitempty,max=40"`
+	IsActive   *bool   `json:"is_active,omitempty"`
+	BranchID   string  `json:"branch_id,omitempty" binding:"omitempty,uuid"`
+	Name       string  `json:"name"`
+	Code       string  `json:"code"`
+	Address    string  `json:"address"`
+	City       string  `json:"city"`
+	State      string  `json:"state"`
+	Country    string  `json:"country"`
+	PostalCode string  `json:"postal_code"`
+	IsDefault  *bool   `json:"is_default,omitempty"`
 }
 
 type InventoryAdjustmentInput struct {
@@ -475,6 +481,9 @@ func isMissingWarehouseSummaryTableErr(err error) bool {
 
 func (s *InventoryService) CreateWarehouse(ctx context.Context, input CreateWarehouseInput) (*models.Warehouse, error) {
 	warehouse := &models.Warehouse{
+		Manager:    strings.TrimSpace(input.Manager),
+		Phone:      strings.TrimSpace(input.Phone),
+		IsActive:   input.IsActive == nil || *input.IsActive,
 		BusinessID: input.BusinessID,
 		BranchID:   stringPointer(input.BranchID),
 		Name:       input.Name,
@@ -510,6 +519,15 @@ func (s *InventoryService) UpdateWarehouse(ctx context.Context, businessID, ware
 		return nil, err
 	}
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if input.Manager != nil {
+			warehouse.Manager = strings.TrimSpace(*input.Manager)
+		}
+		if input.Phone != nil {
+			warehouse.Phone = strings.TrimSpace(*input.Phone)
+		}
+		if input.IsActive != nil {
+			warehouse.IsActive = *input.IsActive
+		}
 		if input.Name != "" {
 			warehouse.Name = input.Name
 		}
@@ -1683,7 +1701,7 @@ func (s *InventoryService) resolveWarehouseIDTx(tx *gorm.DB, businessID, warehou
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return "", err
 	}
-	warehouse = models.Warehouse{BusinessID: businessID, Name: "Main Warehouse", Code: "MAIN", IsDefault: true}
+	warehouse = models.Warehouse{BusinessID: businessID, Name: "Main Warehouse", Code: "MAIN", IsDefault: true, IsActive: true}
 	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&warehouse).Error; err != nil {
 		return "", err
 	}

@@ -188,6 +188,22 @@ func TestTeamRoleMutationRoutesRequireRoleManagement(t *testing.T) {
 	}
 }
 
+func TestProjectMutationRoutesUseBusinessPermissions(t *testing.T) {
+	source, err := os.ReadFile("runtime.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, route := range []string{
+		`projects.POST("", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProjectsManage), h.Project.Create)`,
+		`projects.PUT("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProjectsManage), h.Project.Update)`,
+		`projects.DELETE("/:id", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionProjectsManage), h.Project.Delete)`,
+	} {
+		if !strings.Contains(string(source), route) {
+			t.Fatalf("project mutation must authorize validated business membership: %s", route)
+		}
+	}
+}
+
 func TestBranchMutationRoutesExposeBranchScopeParam(t *testing.T) {
 	source, err := os.ReadFile("runtime.go")
 	if err != nil {

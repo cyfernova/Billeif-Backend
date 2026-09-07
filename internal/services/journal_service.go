@@ -21,10 +21,17 @@ type JournalService struct {
 	repo       interfaces.JournalRepository
 	log        *logger.Logger
 	accounting *AccountingService
+	businesses businessTimezoneProvider
+	now        func() time.Time
 }
 
 func NewJournalService(db *gorm.DB, repo interfaces.JournalRepository, log *logger.Logger) *JournalService {
-	return &JournalService{db: db, repo: repo, log: log}
+	return &JournalService{db: db, repo: repo, log: log, now: time.Now}
+}
+
+func (s *JournalService) WithBusinessTimezoneProvider(provider businessTimezoneProvider) *JournalService {
+	s.businesses = provider
+	return s
 }
 
 func (s *JournalService) WithAccounting(accounting *AccountingService) *JournalService {
@@ -293,6 +300,13 @@ func (s *JournalService) ReverseByBusiness(ctx context.Context, businessID, id s
 	if err := s.requireDatabase(); err != nil {
 		return nil, err
 	}
+	location, err := businessCalendarLocation(ctx, s.businesses, businessID)
+	if err != nil {
+		return nil, err
+	}
+	now := s.now().UTC()
+	localNow := now.In(location)
+	requestedDate := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, time.UTC)
 	var reversal *models.Journal
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var journal models.Journal
@@ -308,7 +322,7 @@ func (s *JournalService) ReverseByBusiness(ctx context.Context, businessID, id s
 		if journal.SourceType == "bank_adjustment" {
 			return fmt.Errorf("bank adjustment journals must be reversed through the bank reconciliation workflow")
 		}
-		now, dateErr := reversalPostingDateTx(tx, businessID, journal.PostingDate, time.Now())
+		postingDate, dateErr := reversalPostingDateTx(tx, businessID, journal.PostingDate, requestedDate)
 		if dateErr != nil {
 			return dateErr
 		}
@@ -319,7 +333,7 @@ func (s *JournalService) ReverseByBusiness(ctx context.Context, businessID, id s
 			ProjectID:    journal.ProjectID,
 			BranchID:     journal.BranchID,
 			Status:       models.JournalStatusPosted,
-			PostingDate:  now,
+			PostingDate:  postingDate,
 			Notes:        "Auto reversal",
 			ReversalOfID: &journal.ID,
 			PostedAt:     &now,

@@ -116,6 +116,23 @@ func TestWorkflowServiceDuplicateWorkflowResetsRunState(t *testing.T) {
 	}
 }
 
+func TestWorkflowServiceCreatePreservesPausedDisabledState(t *testing.T) {
+	db := newWorkflowTestDB(t)
+	svc := NewWorkflowService(db, logger.New(), nil, nil)
+	schedule := "0 9 * * *"
+	workflow := &Workflow{Name: "Paused setup", UserID: "user-1", Status: WorkflowStatusPaused, IsEnabled: false, Trigger: &WorkflowTrigger{Type: TriggerTypeTime, Schedule: &schedule}, Action: &WorkflowAction{Type: WorkflowActionNotify, Message: "Sample"}}
+	if err := svc.CreateWorkflow(context.Background(), workflow); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := svc.GetWorkflow(context.Background(), workflow.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Status != WorkflowStatusPaused || saved.IsEnabled || saved.NextRun != nil {
+		t.Fatalf("paused setup was enabled or scheduled: %+v", saved)
+	}
+}
+
 func TestWorkflowServiceDuplicateWorkflowRejectsWrongOwner(t *testing.T) {
 	db := newWorkflowTestDB(t)
 	svc := NewWorkflowService(db, logger.New(), nil, nil)

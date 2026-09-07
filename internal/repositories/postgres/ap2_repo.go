@@ -1381,7 +1381,7 @@ func (r *ap2Repository) GetNegotiationsByAgent(ctx context.Context, agentID stri
 
 func (r *ap2Repository) UpdateNegotiationStatus(ctx context.Context, id, status string) error {
 	updates := map[string]interface{}{"status": status}
-	if status == "expired" {
+	if status == "expired" || status == "failed" {
 		updates["completed_at"] = time.Now().UTC()
 	}
 	result := r.db.WithContext(ctx).

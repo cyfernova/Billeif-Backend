@@ -10,7 +10,7 @@ mock_provider "aws" {
 
   mock_resource "aws_lambda_invocation" {
     defaults = {
-      result = "{\"status\":\"applied\",\"version\":61,\"latest_version\":61,\"dirty\":false,\"manifest_checksum\":\"ac3012b70fc8263e0e4647ea4c18d8d9af2e6cf9eeeca04d27f8b02454d39fa6\"}"
+      result = "{\"status\":\"applied\",\"version\":64,\"latest_version\":64,\"dirty\":false,\"manifest_checksum\":\"282ee9e6131264897503fe6bb21559ee4f2ccb82758b9d55ea33c5da060415c7\"}"
     }
   }
 
@@ -322,7 +322,7 @@ run "http_execution_role_is_dedicated_and_least_privilege" {
 
   assert {
     condition = (
-      length(data.aws_iam_policy_document.lambda_http_app.statement) == 18 &&
+      length(data.aws_iam_policy_document.lambda_http_app.statement) == 19 &&
       toset(flatten([
         for statement in data.aws_iam_policy_document.lambda_http_app.statement : statement.actions
         ])) == toset([
@@ -393,6 +393,12 @@ run "http_execution_role_is_dedicated_and_least_privilege" {
         if statement.sid == "HTTPFinalInvoiceReads" &&
         toset(statement.actions) == toset(["s3:GetObject"]) &&
         toset(statement.resources) == toset(["${aws_s3_bucket.invoices_pdf.arn}/invoices/*/*/v*/final.pdf"])
+      ]) == 1 &&
+      length([
+        for statement in data.aws_iam_policy_document.lambda_http_app.statement : statement
+        if statement.sid == "HTTPDocumentPDFReads" &&
+        toset(statement.actions) == toset(["s3:GetObject"]) &&
+        toset(statement.resources) == toset(["${aws_s3_bucket.invoices_pdf.arn}/documents/*/*/*.pdf"])
       ]) == 1 &&
       length([
         for statement in data.aws_iam_policy_document.lambda_http_app.statement : statement

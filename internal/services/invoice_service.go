@@ -57,6 +57,7 @@ func WithInvoiceAccounting(accounting *AccountingService) InvoiceServiceOption {
 }
 
 type InvoiceService struct {
+	actorUsers   InvoiceActorRepository
 	db           *gorm.DB
 	cfg          *config.Config
 	repo         interfaces.CanonicalInvoiceRepository
@@ -274,9 +275,9 @@ func (s *InvoiceService) Create(ctx context.Context, input CreateInvoiceInput) (
 	if err != nil {
 		return nil, err
 	}
-	actor := actorFromContext(ctx)
-	if _, err := uuid.Parse(actor.UserID); err != nil {
-		return nil, fmt.Errorf("invoice create actor is required")
+	actor, err := s.invoiceActor(ctx, "create")
+	if err != nil {
+		return nil, err
 	}
 	replay, err := s.repo.ReplayCompletedDraft(
 		ctx,

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -36,6 +37,7 @@ type websocketTicketConsumer interface {
 type websocketConnectionRegistry interface {
 	RegisterConnectionWithBusiness(ctx context.Context, connectionID, userID, businessID string) error
 	UnregisterConnection(ctx context.Context, connectionID string) error
+	SendHeartbeat(ctx context.Context, connectionID string) error
 }
 
 func initWSRuntime() {
@@ -103,12 +105,32 @@ func handleWebSocket(ctx context.Context, req events.APIGatewayWebsocketProxyReq
 		return events.APIGatewayProxyResponse{StatusCode: 200, Body: "disconnected"}, nil
 
 	case "$default":
-		// Incoming messages can be routed here for custom handling if needed.
-		return events.APIGatewayProxyResponse{StatusCode: 200, Body: "ok"}, nil
+		return handleWebSocketMessage(ctx, req, wsSvc, wsLog), nil
 
 	default:
 		return events.APIGatewayProxyResponse{StatusCode: 200, Body: "ok"}, nil
 	}
+}
+
+func handleWebSocketMessage(ctx context.Context, req events.APIGatewayWebsocketProxyRequest, connections websocketConnectionRegistry, log *logger.Logger) events.APIGatewayProxyResponse {
+	var message struct {
+		Action string `json:"action"`
+		Type   string `json:"type"`
+	}
+	if err := json.Unmarshal([]byte(req.Body), &message); err != nil {
+		return events.APIGatewayProxyResponse{StatusCode: 400, Body: "invalid message"}
+	}
+	if message.Action != "ping" && message.Type != "ping" {
+		return events.APIGatewayProxyResponse{StatusCode: 200, Body: "ok"}
+	}
+	if req.RequestContext.ConnectionID == "" {
+		return events.APIGatewayProxyResponse{StatusCode: 400, Body: "missing connection"}
+	}
+	if err := connections.SendHeartbeat(ctx, req.RequestContext.ConnectionID); err != nil {
+		log.Error("websocket heartbeat failed", "connection_id", req.RequestContext.ConnectionID, "error", err)
+		return events.APIGatewayProxyResponse{StatusCode: 500, Body: "heartbeat failed"}
+	}
+	return events.APIGatewayProxyResponse{StatusCode: 200, Body: "ok"}
 }
 
 func handleWebSocketConnect(

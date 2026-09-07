@@ -727,6 +727,13 @@ data "aws_iam_policy_document" "lambda_http_app" {
   }
 
   statement {
+    sid       = "HTTPDocumentPDFReads"
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.invoices_pdf.arn}/documents/*/*/*.pdf"]
+  }
+
+  statement {
     sid       = "HTTPBulkImportResultReads"
     effect    = "Allow"
     actions   = ["s3:GetObject"]

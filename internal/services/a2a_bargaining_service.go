@@ -62,6 +62,12 @@ type A2ABargainingService struct {
 	sessionsLock                sync.RWMutex
 	sessionLocks                map[string]*sync.Mutex
 	ungovernedExecutionDisabled bool
+	governance                  *A2AGovernanceAdapter
+}
+
+func (s *A2ABargainingService) WithGovernance(adapter *A2AGovernanceAdapter) *A2ABargainingService {
+	s.governance = adapter
+	return s
 }
 
 func (s *A2ABargainingService) DisableUngovernedExecution() *A2ABargainingService {
@@ -219,8 +225,21 @@ func (s *A2ABargainingService) StartAutonomousNegotiation(
 	scope A2ANegotiationScope,
 	req *AutonomousNegotiationRequest,
 ) (*A2ASession, error) {
-	if s.ungovernedExecutionDisabled {
+	if s.ungovernedExecutionDisabled && !s.governance.Ready(ctx, scope.BusinessID) {
 		return nil, ErrA2AGovernanceRequired
+	}
+	if s.governance != nil {
+		if req == nil || req.CallbackURL != "" || s.cfg == nil {
+			return nil, ErrAgentToolDenied
+		}
+		copyRequest := *req
+		if copyRequest.MaxRounds == 0 {
+			copyRequest.MaxRounds = 5
+		}
+		if copyRequest.MaxRounds < 1 || copyRequest.MaxRounds > s.cfg.AIGovernance.MaxSteps {
+			return nil, ErrAgentToolDenied
+		}
+		req = &copyRequest
 	}
 	return s.startNegotiation(ctx, scope, req)
 }
@@ -269,7 +288,17 @@ func (s *A2ABargainingService) startNegotiation(
 	if maxRounds == 0 {
 		maxRounds = 5
 	}
+	if s.governance != nil {
+		maxRounds, err = s.governance.negotiationRoundLimit(ctx, req.BuyerAgentID, req.SellerAgentID, req.InitialAmount, maxRounds)
+		if err != nil {
+			return nil, err
+		}
+	}
 	negotiationID := generateA2ANegotiationID()
+	metadata := map[string]interface{}{}
+	if s.governance != nil {
+		metadata["governed_internal_negotiation"] = true
+	}
 	negotiation, err := s.bargaining.CreateNegotiation(ctx, &CreateNegotiationRequest{
 		BuyerAgentID:   req.BuyerAgentID,
 		SellerAgentID:  req.SellerAgentID,
@@ -279,6 +308,7 @@ func (s *A2ABargainingService) startNegotiation(
 		ReferencePrice: req.ReferencePrice,
 		MaxRounds:      maxRounds,
 		SessionID:      &negotiationID,
+		Metadata:       metadata,
 	})
 	if err != nil {
 		s.log.Error("failed to persist A2A negotiation", "error", err, "session_id", negotiationID)
@@ -527,7 +557,7 @@ func (s *A2ABargainingService) RunAutonomousNegotiationRound(
 	negotiationID string,
 	expectedRound int,
 ) error {
-	if s.ungovernedExecutionDisabled {
+	if s.ungovernedExecutionDisabled && s.governance == nil {
 		return ErrA2AGovernanceRequired
 	}
 	if sessionID == "" || negotiationID == "" || expectedRound <= 0 {
@@ -667,9 +697,25 @@ func (s *A2ABargainingService) RunAutonomousNegotiationRound(
 		return s.expireAutonomousNegotiation(ctx, session, sessionID, negotiationID)
 	}
 
-	decision, err := s.bargaining.GetLLMBargainingDecision(ctx, systemBargainingActorScope(), activeAgentID, activeAgentType, latestNeg.ID)
+	var decision *LLMBargainingResponse
+	if s.governance != nil {
+		decision, err = s.governance.Decide(ctx, latestNeg, activeAgentID, activeAgentType, nextRound)
+	} else {
+		decision, err = s.bargaining.GetLLMBargainingDecision(ctx, systemBargainingActorScope(), activeAgentID, activeAgentType, latestNeg.ID)
+	}
 	if err != nil {
 		s.log.Error("LLM decision failed", "error", err, "session_id", sessionID, "round", nextRound, "agent_id", activeAgentID)
+		if s.governance != nil {
+			// A governed attempt is durable and cannot be repeated after failure.
+			// Persist a terminal status so polling never implies work is ongoing.
+			persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			if statusErr := s.ap2Repo.UpdateNegotiationStatus(persistCtx, negotiationID, "failed"); statusErr != nil {
+				return fmt.Errorf("persist failed agent negotiation: %w", statusErr)
+			}
+			session.setStatusIfActive("failed")
+			return nil
+		}
 		return fmt.Errorf("LLM decision failed: %w", err)
 	}
 	latestProgress, err = s.GetAutonomousNegotiationProgress(ctx, sessionID, negotiationID)
