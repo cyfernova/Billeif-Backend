@@ -24,7 +24,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.68.8
 	github.com/awslabs/aws-lambda-go-api-proxy v0.16.2
 	github.com/boombuler/barcode v1.1.0
-	github.com/getsentry/sentry-go v0.48.0
+	github.com/getsentry/sentry-go v0.49.0
 	github.com/getsentry/sentry-go/gin v0.48.0
 	github.com/gin-contrib/cors v1.7.7
 	github.com/gin-gonic/gin v1.12.0
