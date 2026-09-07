@@ -141,6 +141,10 @@ func (registry *Registry) request(ctx context.Context, source AuthorizationSourc
 		}
 		return nil, ErrToolUnavailable
 	}
+	if contextErr := ctx.Err(); contextErr != nil {
+		response.Body.Close()
+		return nil, contextErr
+	}
 	defer response.Body.Close()
 
 	switch response.StatusCode {

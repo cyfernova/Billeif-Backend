@@ -5,12 +5,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
+}
 
 func TestExecuteHonorsConfiguredDeadlineWhileWaitingForResponseHeaders(t *testing.T) {
 	server, origin, roots, resolver, dialer := newInjectedTLSServer(t, http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
@@ -138,6 +145,26 @@ func TestCloseCancelsInFlightExecutionAndFutureCallsFailClosed(t *testing.T) {
 	}
 	if got := source.calls.Load(); got != callsBefore {
 		t.Fatalf("post-close Execute() called AuthorizationSource: before=%d after=%d", callsBefore, got)
+	}
+}
+
+func TestRequestReturnsCancellationWhenTransportRespondsAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	registry := &Registry{
+		origin: "https://example.com",
+		client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			cancel()
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("")),
+			}, nil
+		})},
+	}
+
+	result, err := registry.request(ctx, staticAuthorizationSource{value: testBearer}, toolPlan{})
+	if result != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("request() = (%s, %v), want canceled", result, err)
 	}
 }
 
