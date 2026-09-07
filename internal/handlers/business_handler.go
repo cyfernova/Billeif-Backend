@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 
+	"invoice-backend/internal/middleware"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/services"
 	"invoice-backend/internal/utils"
@@ -200,18 +202,18 @@ func (h *BusinessHandler) Delete(c *gin.Context) {
 	c.JSON(http.StatusNoContent, nil)
 }
 
-// UploadLogo generates a presigned URL for logo upload
-// @Summary Upload business logo
-// @Description Returns a presigned S3 URL and the exact headers required to upload a business logo. Uploads are limited to 5 MiB.
+// UploadLogo creates a tenant-bound pending logo upload.
+// @Summary Create business logo upload
+// @Description Creates an opaque pending upload whose checksum, metadata, MIME type, and size are bound into the signed request. JPEG, PNG, and WebP are supported up to 5 MiB.
 // @Tags Businesses
+// @Accept json
 // @Produce json
 // @Security BearerAuth
 // @Param id path string true "Business ID"
-// @Param Content-Type header string false "MIME type (default: image/png)"
-// @Param size_bytes query int true "Exact upload size in bytes" minimum(1) maximum(5242880)
-// @Success 200 {object} services.PresignedUpload
+// @Param input body services.BusinessLogoUploadInput true "Exact upload metadata"
+// @Success 201 {object} services.PendingUploadCreated
 // @Failure 400 {object} map[string]string
-// @Failure 413 {object} map[string]string
+// @Failure 404 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /business-profiles/{id}/logo [post]
 func (h *BusinessHandler) UploadLogo(c *gin.Context) {
@@ -221,20 +223,25 @@ func (h *BusinessHandler) UploadLogo(c *gin.Context) {
 		return
 	}
 	id := c.Param("id")
-	contentType, ok2 := validateImageContentType(c)
-	if !ok2 {
+	if middleware.GetBusinessID(c) != id {
+		c.JSON(http.StatusNotFound, gin.H{"error": "business not found"})
 		return
 	}
-	sizeBytes, ok := requireUploadSizeBytes(c, services.MaxBusinessLogoUploadBytes)
-	if !ok {
+	var input services.BusinessLogoUploadInput
+	if c.ShouldBindJSON(&input) != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid business logo upload"})
 		return
 	}
 
-	upload, err := h.svc.GetLogoUploadURLByOwner(c.Request.Context(), userID, id, contentType, sizeBytes)
+	upload, err := h.svc.CreateLogoUpload(c.Request.Context(), userID, id, input)
 	if err != nil {
 		log.Error("failed to generate business logo upload URL", "error", err, "business_id", id)
 		if isNotFoundErr(err) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "business not found"})
+			return
+		}
+		if errors.Is(err, services.ErrBusinessLogoInvalid) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid business logo upload"})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -242,5 +249,51 @@ func (h *BusinessHandler) UploadLogo(c *gin.Context) {
 	}
 	log.Info("business logo upload URL generated", "business_id", id)
 
-	c.JSON(http.StatusOK, upload)
+	c.JSON(http.StatusCreated, upload)
+}
+
+// CompleteLogo verifies and attaches a pending business logo.
+// @Summary Complete business logo upload
+// @Description Verifies the tenant- and uploader-bound object metadata, atomically attaches it once, and cleans up the replaced logo after commit.
+// @Tags Businesses
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Business ID"
+// @Param input body services.BusinessLogoCompletionInput true "Pending upload identity"
+// @Success 200 {object} services.BusinessLogoCompletion
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /business-profiles/{id}/logo/complete [post]
+func (h *BusinessHandler) CompleteLogo(c *gin.Context) {
+	userID, ok := requireUserScope(c)
+	if !ok {
+		return
+	}
+	businessID := c.Param("id")
+	if middleware.GetBusinessID(c) != businessID {
+		c.JSON(http.StatusNotFound, gin.H{"error": "business not found"})
+		return
+	}
+	var input services.BusinessLogoCompletionInput
+	if c.ShouldBindJSON(&input) != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid business logo completion"})
+		return
+	}
+	completed, err := h.svc.FinalizeLogoUpload(c.Request.Context(), userID, businessID, input.UploadID)
+	if err != nil {
+		if isNotFoundErr(err) || errors.Is(err, services.ErrPendingUploadNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "business logo upload not found"})
+			return
+		}
+		if errors.Is(err, services.ErrBusinessLogoInvalid) {
+			c.JSON(http.StatusConflict, gin.H{"error": "business logo upload could not be completed"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "business logo upload could not be completed"})
+		return
+	}
+	c.JSON(http.StatusOK, completed)
 }

@@ -16,6 +16,7 @@ import (
 	"invoice-backend/internal/emaildelivery"
 	postgresrepo "invoice-backend/internal/repositories/postgres"
 	"invoice-backend/pkg/logger"
+	"invoice-backend/pkg/operationsmetrics"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
@@ -34,7 +35,8 @@ type deliveryProcessor interface {
 }
 
 type emailDeliveryHandler struct {
-	worker deliveryProcessor
+	worker  deliveryProcessor
+	metrics *operationsmetrics.Emitter
 }
 
 func (h emailDeliveryHandler) Handle(
@@ -57,17 +59,19 @@ func (h emailDeliveryHandler) Handle(
 		}
 	}
 	for _, record := range event.Records {
+		failed := true
 		message, err := decodeDeliveryMessage(record.Body)
 		if err == nil {
 			messageContext, cancel := boundedMessageContext(ctx)
-			err = h.worker.Process(
+			failed = h.worker.Process(
 				messageContext,
 				message,
 				lambdaContext.AwsRequestID+":"+record.MessageId,
-			)
+			) != nil
 			cancel()
 		}
-		if err != nil {
+		emitDeliveryRecordMetrics(h.metrics, record, failed)
+		if failed {
 			response.BatchItemFailures = append(
 				response.BatchItemFailures,
 				events.SQSBatchItemFailure{ItemIdentifier: record.MessageId},
@@ -75,6 +79,18 @@ func (h emailDeliveryHandler) Handle(
 		}
 	}
 	return response, nil
+}
+
+// emitDeliveryRecordMetrics reports the bounded outcome of one processed
+// delivery record. Telemetry failures never turn into record failures.
+func emitDeliveryRecordMetrics(metrics *operationsmetrics.Emitter, record events.SQSMessage, failed bool) {
+	if metrics == nil {
+		return
+	}
+	_ = metrics.EmitRecordOutcome(operationsmetrics.RecordOutcome{
+		Category: operationsmetrics.CategoryDelivery, RateMetric: operationsmetrics.MetricDeliveryFailureRate,
+		Failed: failed, Attributes: record.Attributes,
+	})
 }
 
 func boundedMessageContext(parent context.Context) (context.Context, context.CancelFunc) {
@@ -174,7 +190,7 @@ func newEmailDeliveryHandler(ctx context.Context) (*emailDeliveryHandler, error)
 	if err != nil {
 		return nil, fmt.Errorf("initialize email delivery worker: %w", err)
 	}
-	return &emailDeliveryHandler{worker: worker}, nil
+	return &emailDeliveryHandler{worker: worker, metrics: operationsmetrics.NewRuntimeEmitter(cfg.Environment)}, nil
 }
 
 var (

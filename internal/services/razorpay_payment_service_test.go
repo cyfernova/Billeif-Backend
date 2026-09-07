@@ -18,18 +18,20 @@ import (
 	"invoice-backend/pkg/razorpay"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
 type fakeRazorpayServer struct {
-	server       *httptest.Server
-	mu           sync.Mutex
-	orderCount   int
-	lastAmount   int64
-	lastCurrency string
-	orders       map[string]razorpay.Order
-	payments     map[string]razorpay.Payment
+	server                *httptest.Server
+	mu                    sync.Mutex
+	orderCount            int
+	lastAmount            int64
+	lastCurrency          string
+	orders                map[string]razorpay.Order
+	payments              map[string]razorpay.Payment
+	dropNextOrderResponse bool
 }
 
 func newFakeRazorpayServer(t *testing.T) *fakeRazorpayServer {
@@ -49,13 +51,40 @@ func newFakeRazorpayServer(t *testing.T) *fakeRazorpayServer {
 			}
 			fake.mu.Lock()
 			defer fake.mu.Unlock()
+			for _, existing := range fake.orders {
+				if existing.Receipt == req.Receipt {
+					http.Error(w, "receipt already exists", http.StatusBadRequest)
+					return
+				}
+			}
 			fake.orderCount++
 			id := "order_test_" + req.Receipt
 			order := razorpay.Order{ID: id, Amount: req.Amount, Currency: req.Currency, Status: "created", Receipt: req.Receipt}
 			fake.lastAmount = req.Amount
 			fake.lastCurrency = req.Currency
 			fake.orders[id] = order
+			if fake.dropNextOrderResponse {
+				fake.dropNextOrderResponse = false
+				if hijacker, ok := w.(http.Hijacker); ok {
+					connection, _, hijackErr := hijacker.Hijack()
+					if hijackErr == nil {
+						_ = connection.Close()
+						return
+					}
+				}
+			}
 			_ = json.NewEncoder(w).Encode(order)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/orders":
+			receipt := r.URL.Query().Get("receipt")
+			fake.mu.Lock()
+			items := make([]razorpay.Order, 0, 1)
+			for _, order := range fake.orders {
+				if order.Receipt == receipt {
+					items = append(items, order)
+				}
+			}
+			fake.mu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"entity": "collection", "count": len(items), "items": items})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/orders/"):
 			id := strings.TrimPrefix(r.URL.Path, "/v1/orders/")
 			fake.mu.Lock()
@@ -101,6 +130,12 @@ func (f *fakeRazorpayServer) createCount() int {
 	return f.orderCount
 }
 
+func (f *fakeRazorpayServer) dropNextCreateResponse() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.dropNextOrderResponse = true
+}
+
 func newRazorpayPaymentTestService(t *testing.T) (*RazorpayPaymentService, *gorm.DB, *fakeRazorpayServer) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{
@@ -120,7 +155,16 @@ func newRazorpayPaymentTestService(t *testing.T) (*RazorpayPaymentService, *gorm
 			Timeout:       5,
 		},
 	}
-	return NewRazorpayPaymentService(cfg, db, logger.New()), db, fake
+	return NewRazorpayPaymentService(cfg, db, logger.New()).WithCapabilityGuard(&recordingCapabilityGuard{}), db, fake
+}
+
+func TestRazorpayCapabilityProbeDoesNotCreateOrder(t *testing.T) {
+	service, _, provider := newRazorpayPaymentTestService(t)
+
+	outcome := service.ProbeGlobalCapability(context.Background())
+
+	require.NoError(t, outcome.Err)
+	require.Equal(t, 0, provider.createCount())
 }
 
 func createRazorpayPaymentTestSchema(t *testing.T, db *gorm.DB) {
@@ -146,11 +190,24 @@ func createRazorpayPaymentTestSchema(t *testing.T, db *gorm.DB) {
 		`CREATE UNIQUE INDEX idx_payment_attempt_idempotency ON payment_attempts (user_id, business_id, idempotency_key)`,
 		`CREATE TABLE razorpay_webhook_events (
 			id TEXT PRIMARY KEY,
-			razorpay_event_id TEXT NOT NULL UNIQUE,
+			razorpay_event_id TEXT NOT NULL,
+			provider_mode TEXT NOT NULL DEFAULT 'legacy_unknown',
 			event_type TEXT NOT NULL,
+			payload_hash TEXT NOT NULL DEFAULT '',
+			signature_verified NUMERIC NOT NULL DEFAULT 0,
+			received_at DATETIME,
+			provider_occurred_at DATETIME,
+			processing_status TEXT NOT NULL DEFAULT 'processed',
+			attempt_count INTEGER NOT NULL DEFAULT 0,
+			sanitized_error_code TEXT,
 			processed_at DATETIME,
+			business_id TEXT,
+			subscription_id TEXT,
+			replay_count INTEGER NOT NULL DEFAULT 0,
+			last_replayed_at DATETIME,
 			created_at DATETIME
 		)`,
+		`CREATE UNIQUE INDEX ux_test_payment_webhook_event ON razorpay_webhook_events (provider_mode, razorpay_event_id)`,
 		`CREATE TABLE subscriptions (
 			id TEXT PRIMARY KEY,
 			business_id TEXT NOT NULL,
@@ -158,6 +215,8 @@ func createRazorpayPaymentTestSchema(t *testing.T, db *gorm.DB) {
 			plan_code TEXT,
 			catalog_version TEXT,
 			status TEXT NOT NULL DEFAULT 'active',
+			billing_mode TEXT NOT NULL DEFAULT 'free', provider_mode TEXT, provider_customer_id TEXT,
+			provider_subscription_id TEXT, provider_plan_id TEXT,
 			max_invoices INTEGER DEFAULT 10,
 			max_customers INTEGER DEFAULT 10,
 			max_users INTEGER DEFAULT 3,
@@ -165,6 +224,11 @@ func createRazorpayPaymentTestSchema(t *testing.T, db *gorm.DB) {
 			start_date DATETIME,
 			end_date DATETIME,
 			next_billing_date DATETIME,
+			period_start DATETIME, period_end DATETIME, next_renewal_at DATETIME, grace_deadline DATETIME,
+			cancel_at_period_end NUMERIC DEFAULT 0, cancellation_effective_at DATETIME, cancelled_at DATETIME,
+			pending_plan_id TEXT, pending_provider_plan_id TEXT, pending_plan_effective_at DATETIME,
+			last_provider_event_at DATETIME, last_provider_paid_count INTEGER DEFAULT 0,
+			reconciliation_code TEXT, lifecycle_version INTEGER DEFAULT 1,
 			created_at DATETIME,
 			updated_at DATETIME,
 			deleted_at DATETIME
@@ -230,6 +294,33 @@ func createRazorpayPaymentTestSchema(t *testing.T, db *gorm.DB) {
 	}
 }
 
+func TestRazorpayCreateOrderRejectsUnavailablePaymentCapabilityBeforeDatabaseOrProvider(t *testing.T) {
+	for _, fixture := range []struct {
+		name       string
+		targetType string
+		capability CapabilityKey
+	}{
+		{name: "plan payment", targetType: "plan", capability: CapabilityRazorpay},
+		{name: "storefront payment", targetType: "store_order", capability: CapabilityStorefrontPayments},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			guard := &recordingCapabilityGuard{err: &CapabilityUnavailableError{
+				Code: "capability_unavailable", Capability: fixture.capability,
+				State: CapabilityStateTemporarilyUnavailable, ReasonCode: ReasonProviderUnavailable,
+			}}
+			service := NewRazorpayPaymentService(&config.Config{}, nil, logger.New()).WithCapabilityGuard(guard)
+
+			_, err := service.CreateOrder(context.Background(), "biz-1", "user-1", RazorpayCreateOrderInput{TargetType: fixture.targetType})
+
+			var unavailable *CapabilityUnavailableError
+			require.ErrorAs(t, err, &unavailable)
+			require.Equal(t, fixture.capability, guard.request.Capability)
+			require.Equal(t, "biz-1", guard.request.BusinessID)
+			require.Equal(t, "user-1", guard.request.UserID)
+		})
+	}
+}
+
 func TestRazorpayPaymentCreateOrderServerAmountAndIdempotency(t *testing.T) {
 	svc, _, fake := newRazorpayPaymentTestService(t)
 	ctx := context.Background()
@@ -259,6 +350,94 @@ func TestRazorpayPaymentCreateOrderServerAmountAndIdempotency(t *testing.T) {
 	}
 	if fake.createCount() != 1 {
 		t.Fatalf("expected one Razorpay order, got %d", fake.createCount())
+	}
+}
+
+func TestRazorpayPaymentCreateOrderAllowsDistinctPendingAttempts(t *testing.T) {
+	svc, _, fake := newRazorpayPaymentTestService(t)
+	businessID := uuid.NewString()
+	for _, key := range []string{"idem-distinct-1", "idem-distinct-2"} {
+		if _, err := svc.CreateOrder(context.Background(), businessID, "user_1", RazorpayCreateOrderInput{
+			TargetType: models.PaymentAttemptTargetPlan, PlanID: "pro_monthly", IdempotencyKey: key,
+		}); err != nil {
+			t.Fatalf("create order for %s: %v", key, err)
+		}
+	}
+	if fake.createCount() != 2 {
+		t.Fatalf("expected two distinct provider orders, got %d", fake.createCount())
+	}
+}
+
+func TestRazorpayPaymentCreateOrderRecoversAmbiguousProviderSuccess(t *testing.T) {
+	svc, _, fake := newRazorpayPaymentTestService(t)
+	fake.dropNextCreateResponse()
+
+	order, err := svc.CreateOrder(context.Background(), uuid.NewString(), "user_1", RazorpayCreateOrderInput{
+		TargetType: models.PaymentAttemptTargetPlan, PlanID: "pro_monthly", IdempotencyKey: "idem-ambiguous",
+	})
+	if err != nil {
+		t.Fatalf("recover ambiguous provider success: %v", err)
+	}
+	if order.RazorpayOrderID == "" {
+		t.Fatal("expected recovered provider order id")
+	}
+	if fake.createCount() != 1 {
+		t.Fatalf("expected exactly one provider order, got %d", fake.createCount())
+	}
+}
+
+func TestRazorpayPaymentCreateOrderRetryRecoversAfterLocalPersistenceFailure(t *testing.T) {
+	svc, db, fake := newRazorpayPaymentTestService(t)
+	businessID := uuid.NewString()
+	input := RazorpayCreateOrderInput{
+		TargetType: models.PaymentAttemptTargetPlan, PlanID: "pro_monthly", IdempotencyKey: "idem-local-failure",
+	}
+	if err := db.Exec(`CREATE TRIGGER fail_provider_order_update
+		BEFORE UPDATE OF razorpay_order_id ON payment_attempts
+		WHEN NEW.razorpay_order_id <> ''
+		BEGIN SELECT RAISE(ABORT, 'forced local persistence failure'); END`).Error; err != nil {
+		t.Fatalf("create failure trigger: %v", err)
+	}
+	if _, err := svc.CreateOrder(context.Background(), businessID, "user_1", input); err == nil {
+		t.Fatal("expected local provider-order persistence failure")
+	}
+	if err := db.Exec("DROP TRIGGER fail_provider_order_update").Error; err != nil {
+		t.Fatalf("drop failure trigger: %v", err)
+	}
+
+	order, err := svc.CreateOrder(context.Background(), businessID, "user_1", input)
+	if err != nil {
+		t.Fatalf("recover persisted provider order: %v", err)
+	}
+	if order.RazorpayOrderID == "" {
+		t.Fatal("expected recovered provider order id")
+	}
+	if fake.createCount() != 1 {
+		t.Fatalf("expected retry not to create a second provider order, got %d", fake.createCount())
+	}
+}
+
+func TestRazorpayPaymentCreateOrderLocalFailureDoesNotBlockOtherAttempts(t *testing.T) {
+	svc, db, _ := newRazorpayPaymentTestService(t)
+	businessID := uuid.NewString()
+	if err := db.Exec(`CREATE TRIGGER fail_provider_order_update
+		BEFORE UPDATE OF razorpay_order_id ON payment_attempts
+		WHEN NEW.razorpay_order_id <> ''
+		BEGIN SELECT RAISE(ABORT, 'forced local persistence failure'); END`).Error; err != nil {
+		t.Fatalf("create failure trigger: %v", err)
+	}
+	if _, err := svc.CreateOrder(context.Background(), businessID, "user_1", RazorpayCreateOrderInput{
+		TargetType: models.PaymentAttemptTargetPlan, PlanID: "pro_monthly", IdempotencyKey: "idem-orphaned-local",
+	}); err == nil {
+		t.Fatal("expected local provider-order persistence failure")
+	}
+	if err := db.Exec("DROP TRIGGER fail_provider_order_update").Error; err != nil {
+		t.Fatalf("drop failure trigger: %v", err)
+	}
+	if _, err := svc.CreateOrder(context.Background(), businessID, "user_1", RazorpayCreateOrderInput{
+		TargetType: models.PaymentAttemptTargetPlan, PlanID: "rise_monthly", IdempotencyKey: "idem-independent",
+	}); err != nil {
+		t.Fatalf("independent payment attempt was blocked by recoverable attempt: %v", err)
 	}
 }
 
@@ -401,6 +580,19 @@ func TestRazorpayPaymentWebhookDuplicateIgnored(t *testing.T) {
 	if storeEventCount != 1 {
 		t.Fatalf("expected one store order event, got %d", storeEventCount)
 	}
+}
+
+func TestSubscriptionProviderSettingsUsePublicCatalogPlanIDs(t *testing.T) {
+	service := &RazorpayPaymentService{cfg: &config.Config{Razorpay: config.RazorpayConfig{
+		Mode: "test", PlanProID: "plan_pro", PlanRiseID: "plan_rise", PlanBizID: "plan_biz",
+	}}}
+
+	settings, err := service.SubscriptionProviderSettings(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{
+		"pro_monthly": "plan_pro", "rise_monthly": "plan_rise", "biz_monthly": "plan_biz",
+	}, settings.ProviderPlanIDs)
 }
 
 func hmacHex(message, secret string) string {

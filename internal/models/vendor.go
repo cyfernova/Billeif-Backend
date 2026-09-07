@@ -22,8 +22,8 @@ type Vendor struct {
 	PAN                     string         `gorm:"size:10" json:"pan,omitempty" validate:"omitempty,max=10"`
 	CompanyName             string         `gorm:"size:255" json:"company_name,omitempty"`
 	StateCode               string         `gorm:"size:10" json:"state_code,omitempty" validate:"omitempty,max=10"`
-	BillingJSON             string         `gorm:"type:jsonb;default:'{}'" json:"billing_address_json,omitempty"`
-	ShippingJSON            string         `gorm:"type:jsonb;default:'{}'" json:"shipping_address_json,omitempty"`
+	BillingJSON             string         `gorm:"column:billing_address_json;type:jsonb;default:'{}'" json:"billing_address_json,omitempty"`
+	ShippingJSON            string         `gorm:"column:shipping_address_json;type:jsonb;default:'{}'" json:"shipping_address_json,omitempty"`
 	WithholdingDefaultsJSON string         `gorm:"type:jsonb;default:'{}'" json:"withholding_defaults_json,omitempty"`
 	DefaultPriceListID      *string        `gorm:"index" json:"default_price_list_id,omitempty" validate:"omitempty,uuid"`
 	PreferencesJSON         string         `gorm:"type:jsonb;default:'{}'" json:"preferences_json,omitempty"`

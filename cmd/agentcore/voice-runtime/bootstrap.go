@@ -76,6 +76,7 @@ type runtimeDependencies struct {
 	Decoders        composition.DecoderFactory
 	Peers           webrtc.PeerFactory
 	Metrics         webrtc.SignalingMetrics
+	ToolGovernance  composition.ToolGovernanceFactory
 	Closers         []io.Closer
 }
 
@@ -192,7 +193,8 @@ func newRuntimeApplication(environment runtimeEnvironment, dependencies runtimeD
 		STT: dependencies.STT, Chat: dependencies.Chat,
 		LeaseRenewer: dependencies.LeaseRenewer, LeaseDuration: environment.leaseDuration,
 		LeaseHeartbeatInterval: heartbeatInterval, LeaseWriteTimeout: 2 * time.Second,
-		Tools:    tools.Config{Origin: environment.apiOrigin, Timeout: 3 * time.Second},
+		Tools:          tools.Config{Origin: environment.apiOrigin, Timeout: 3 * time.Second},
+		ToolGovernance: dependencies.ToolGovernance, RequireToolGovernance: true,
 		Decoders: dependencies.Decoders, Outputs: dependencies.Outputs,
 		MaxTokens: 180, FirstOutputTimeout: runtimeFirstOutputTimeout, TotalTimeout: runtimeTurnTimeout,
 		STTFinalTimeout: runtimeSTTFinalTimeout, STTWarmTimeout: runtimeSTTWarmTimeout,

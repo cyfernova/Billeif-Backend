@@ -58,6 +58,17 @@ variable "allowed_origins" {
   }
 }
 
+variable "platform_operator_group" {
+  description = "Explicit Cognito group whose verified members may use platform operator endpoints. Empty keeps the boundary disabled."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.platform_operator_group == trimspace(var.platform_operator_group) && (var.platform_operator_group == "" || can(regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", var.platform_operator_group)))
+    error_message = "platform_operator_group must be empty or a 1-128 character Cognito group name without whitespace."
+  }
+}
+
 variable "user_pool_name" {
   description = "Optional Billeif web Cognito User Pool name override."
   type        = string

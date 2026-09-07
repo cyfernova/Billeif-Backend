@@ -73,6 +73,16 @@ output "lambda_sqs_invoice_arn" {
   value       = aws_lambda_function.sqs_invoice.arn
 }
 
+output "bulk_import_queue_url" {
+  description = "Billeif durable bulk import SQS queue URL"
+  value       = aws_sqs_queue.bulk_import.url
+}
+
+output "lambda_bulk_import_arn" {
+  description = "Billeif durable bulk import worker Lambda ARN"
+  value       = aws_lambda_function.bulk_import.arn
+}
+
 output "lambda_sqs_email_delivery_arn" {
   description = "Billeif email delivery worker Lambda ARN"
   value       = aws_lambda_function.sqs_email_delivery.arn

@@ -76,11 +76,18 @@ type CredentialTokenResponse struct {
 // @Param input body AddPaymentMethodRequest true "Payment method details"
 // @Success 201 {object} PaymentMethodResponse
 // @Failure 400 {object} map[string]string
+// @Failure 403 {object} CapabilityMutationError
+// @Failure 422 {object} CapabilityMutationError
 // @Failure 500 {object} map[string]string
+// @Failure 503 {object} CapabilityMutationError
 // @Router /agents/credentials/payment-methods [post]
 func (h *CredentialHandler) AddPaymentMethod(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("credential_handler").With("operation", "add_payment_method")
 	userID := c.GetString("user_id")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 
 	var req AddPaymentMethodRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -90,6 +97,7 @@ func (h *CredentialHandler) AddPaymentMethod(c *gin.Context) {
 	}
 
 	addReq := &services.AddPaymentMethodRequest{
+		BusinessID:         businessID,
 		UserID:             userID,
 		CredentialType:     req.CredentialType,
 		RazorpayCustomerID: req.RazorpayCustomerID,
@@ -102,6 +110,9 @@ func (h *CredentialHandler) AddPaymentMethod(c *gin.Context) {
 	credential, err := h.svc.AddPaymentMethod(c.Request.Context(), addReq)
 	if err != nil {
 		log.Error("failed to add payment method", "error", err, "user_id", userID)
+		if writeSubscriptionControlError(c, err) {
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -178,15 +189,25 @@ func (h *CredentialHandler) GetPaymentMethod(c *gin.Context) {
 // @Security BearerAuth
 // @Param id path string true "Payment Method ID"
 // @Success 200 {object} map[string]string
+// @Failure 403 {object} CapabilityMutationError
+// @Failure 422 {object} CapabilityMutationError
 // @Failure 500 {object} map[string]string
+// @Failure 503 {object} CapabilityMutationError
 // @Router /agents/credentials/payment-methods/{id} [put]
 func (h *CredentialHandler) SetDefaultPaymentMethod(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("credential_handler").With("operation", "set_default_payment_method")
 	id := c.Param("id")
 	userID := c.GetString("user_id")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 
-	if err := h.svc.SetDefaultPaymentMethod(c.Request.Context(), userID, id); err != nil {
+	if err := h.svc.SetDefaultPaymentMethod(c.Request.Context(), businessID, userID, id); err != nil {
 		log.Error("failed to set default payment method", "error", err, "credential_id", id, "user_id", userID)
+		if writeSubscriptionControlError(c, err) {
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -203,15 +224,25 @@ func (h *CredentialHandler) SetDefaultPaymentMethod(c *gin.Context) {
 // @Security BearerAuth
 // @Param id path string true "Payment Method ID"
 // @Success 204 {string} string
+// @Failure 403 {object} CapabilityMutationError
+// @Failure 422 {object} CapabilityMutationError
 // @Failure 500 {object} map[string]string
+// @Failure 503 {object} CapabilityMutationError
 // @Router /agents/credentials/payment-methods/{id} [delete]
 func (h *CredentialHandler) DeletePaymentMethod(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("credential_handler").With("operation", "delete_payment_method")
 	id := c.Param("id")
 	userID := c.GetString("user_id")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 
-	if err := h.svc.DeletePaymentMethod(c.Request.Context(), userID, id); err != nil {
+	if err := h.svc.DeletePaymentMethod(c.Request.Context(), businessID, userID, id); err != nil {
 		log.Error("failed to delete payment method", "error", err, "credential_id", id, "user_id", userID)
+		if writeSubscriptionControlError(c, err) {
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -236,11 +267,18 @@ type GenerateTokenRequest struct {
 // @Param input body GenerateTokenRequest true "Token request"
 // @Success 201 {object} CredentialTokenResponse
 // @Failure 400 {object} map[string]string
+// @Failure 403 {object} CapabilityMutationError
+// @Failure 422 {object} CapabilityMutationError
 // @Failure 500 {object} map[string]string
+// @Failure 503 {object} CapabilityMutationError
 // @Router /agents/credentials/tokens [post]
 func (h *CredentialHandler) GenerateToken(c *gin.Context) {
 	log := logger.FromContext(c.Request.Context()).Named("credential_handler").With("operation", "generate_token")
 	userID := c.GetString("user_id")
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
 
 	var req GenerateTokenRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -250,6 +288,7 @@ func (h *CredentialHandler) GenerateToken(c *gin.Context) {
 	}
 
 	tokenReq := &services.GenerateTokenRequest{
+		BusinessID:       businessID,
 		CredentialID:     req.CredentialID,
 		PaymentMandateID: req.PaymentMandateID,
 		UserID:           userID,
@@ -258,6 +297,9 @@ func (h *CredentialHandler) GenerateToken(c *gin.Context) {
 	token, err := h.svc.GenerateCredentialToken(c.Request.Context(), tokenReq)
 	if err != nil {
 		log.Error("failed to generate credential token", "error", err, "user_id", userID, "credential_id", req.CredentialID)
+		if writeSubscriptionControlError(c, err) {
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

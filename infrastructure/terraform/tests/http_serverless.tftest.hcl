@@ -10,7 +10,7 @@ mock_provider "aws" {
 
   mock_resource "aws_lambda_invocation" {
     defaults = {
-      result = "{\"status\":\"applied\",\"version\":49,\"latest_version\":49,\"dirty\":false,\"manifest_checksum\":\"31b347c1fb7c8ef8af2056af21c5cea15698855f7de547ed2a9caacba7f3e17c\"}"
+      result = "{\"status\":\"applied\",\"version\":64,\"latest_version\":64,\"dirty\":false,\"manifest_checksum\":\"282ee9e6131264897503fe6bb21559ee4f2ccb82758b9d55ea33c5da060415c7\"}"
     }
   }
 
@@ -322,7 +322,7 @@ run "http_execution_role_is_dedicated_and_least_privilege" {
 
   assert {
     condition = (
-      length(data.aws_iam_policy_document.lambda_http_app.statement) == 16 &&
+      length(data.aws_iam_policy_document.lambda_http_app.statement) == 19 &&
       toset(flatten([
         for statement in data.aws_iam_policy_document.lambda_http_app.statement : statement.actions
         ])) == toset([
@@ -369,7 +369,17 @@ run "http_execution_role_is_dedicated_and_least_privilege" {
         toset(statement.actions) == toset(["s3:PutObject"]) &&
         toset(statement.resources) == toset([
           "${aws_s3_bucket.business_logos.arn}/logos/*",
+          "${aws_s3_bucket.business_logos.arn}/pending/*",
           "${aws_s3_bucket.business_logos.arn}/profile-pictures/*",
+        ])
+      ]) == 1 &&
+      length([
+        for statement in data.aws_iam_policy_document.lambda_http_app.statement : statement
+        if statement.sid == "HTTPBusinessLogoLifecycle" &&
+        toset(statement.actions) == toset(["s3:DeleteObject", "s3:GetObject"]) &&
+        toset(statement.resources) == toset([
+          "${aws_s3_bucket.business_logos.arn}/logos/*",
+          "${aws_s3_bucket.business_logos.arn}/pending/*",
         ])
       ]) == 1 &&
       length([
@@ -383,6 +393,12 @@ run "http_execution_role_is_dedicated_and_least_privilege" {
         if statement.sid == "HTTPFinalInvoiceReads" &&
         toset(statement.actions) == toset(["s3:GetObject"]) &&
         toset(statement.resources) == toset(["${aws_s3_bucket.invoices_pdf.arn}/invoices/*/*/v*/final.pdf"])
+      ]) == 1 &&
+      length([
+        for statement in data.aws_iam_policy_document.lambda_http_app.statement : statement
+        if statement.sid == "HTTPDocumentPDFReads" &&
+        toset(statement.actions) == toset(["s3:GetObject"]) &&
+        toset(statement.resources) == toset(["${aws_s3_bucket.invoices_pdf.arn}/documents/*/*/*.pdf"])
       ]) == 1 &&
       length([
         for statement in data.aws_iam_policy_document.lambda_http_app.statement : statement
@@ -458,6 +474,14 @@ run "http_execution_role_is_dedicated_and_least_privilege" {
     )
     error_message = "HTTP DynamoDB and WebSocket permissions must match the exact table, index, and stage routes used by management endpoints."
   }
+
+  assert {
+    condition = (
+      aws_dynamodb_table.ws_connections.ttl[0].attribute_name == "ttl" &&
+      aws_dynamodb_table.ws_connections.ttl[0].enabled == true
+    )
+    error_message = "WebSocket connection records must enable DynamoDB TTL for stale connection cleanup."
+  }
 }
 
 run "rest_api_is_streaming_only_without_detailed_metrics" {
@@ -501,5 +525,18 @@ run "launch_safe_throttling_allows_mobile_startup_bursts" {
       contains(split(",", aws_lambda_function.api_http.environment[0].variables["ALLOWED_ORIGINS"]), local.http_api_invoke_url)
     )
     error_message = "The application Lambda must allow both Billeif website origins and its invoke URL without using wildcard CORS."
+  }
+}
+
+run "operator_group_is_explicitly_configured" {
+  command = plan
+
+  variables {
+    platform_operator_group = "platform-operators"
+  }
+
+  assert {
+    condition     = aws_lambda_function.api_http.environment[0].variables["PLATFORM_OPERATOR_GROUP"] == "platform-operators"
+    error_message = "The HTTP Lambda must receive only the explicitly configured Cognito platform operator group."
   }
 }

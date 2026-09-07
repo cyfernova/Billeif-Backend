@@ -144,6 +144,7 @@ func createInvoiceDraftHandlerSchema(t *testing.T, db *gorm.DB) {
 			id TEXT PRIMARY KEY,
 			business_id TEXT NOT NULL,
 			customer_id TEXT,
+			branch_id TEXT,
 			version INTEGER NOT NULL DEFAULT 1,
 			project_id TEXT,
 			price_list_id TEXT,

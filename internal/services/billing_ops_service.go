@@ -12,12 +12,14 @@ import (
 	"time"
 
 	"invoice-backend/internal/config"
+	"invoice-backend/internal/idempotency"
 	"invoice-backend/internal/models"
 	"invoice-backend/internal/repositories/interfaces"
 	"invoice-backend/pkg/logger"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type BillingOpsService struct {
@@ -26,11 +28,22 @@ type BillingOpsService struct {
 	customerRepo interfaces.CustomerRepository
 	vendorRepo   interfaces.VendorRepository
 	productRepo  interfaces.ProductRepository
-	invoices     *InvoiceService
+	invoices     billingOpsInvoiceService
 	documents    *DocumentService
 	s3           *S3Service
 	permissions  PermissionChecker
+	capability   CapabilityGuard
 	log          *logger.Logger
+}
+
+func (s *BillingOpsService) WithCapabilityGuard(guard CapabilityGuard) *BillingOpsService {
+	s.capability = guard
+	return s
+}
+
+type billingOpsInvoiceService interface {
+	canonicalInvoiceCreator
+	GetByBusiness(ctx context.Context, businessID, id string) (*models.Invoice, error)
 }
 
 var ErrInvalidPartyGroupMember = errors.New("invalid party group member")
@@ -406,6 +419,12 @@ type InvoiceSubscriptionRunStats struct {
 	FailedRuns  int64 `json:"failed_runs"`
 }
 
+type InvoiceSubscriptionDispatchResult struct {
+	Due       int `json:"due"`
+	Completed int `json:"completed"`
+	Failed    int `json:"failed"`
+}
+
 func (s *BillingOpsService) CreatePartyGroup(ctx context.Context, input CreatePartyGroupInput) (*models.PartyGroup, error) {
 	if s.db == nil {
 		return nil, fmt.Errorf("database is not configured")
@@ -672,7 +691,10 @@ func (s *BillingOpsService) CreateSignatureProfile(ctx context.Context, input Cr
 		IsActive:      true,
 	}
 	if len(input.FileContent) > 0 && s.s3 != nil && s.cfg != nil {
-		key := path.Join("signature-profiles", input.BusinessID, uuid.NewString(), input.FileName)
+		key, err := tenantArtifactObjectKey("signature-profiles", input.BusinessID, uuid.NewString(), input.FileName)
+		if err != nil {
+			return nil, err
+		}
 		if err := s.s3.Upload(ctx, s.cfg.S3.BucketInvoices, key, input.FileContent, "application/x-pkcs12"); err != nil {
 			return nil, err
 		}
@@ -863,7 +885,17 @@ type CreateBulkJobInput struct {
 	RequestPayload map[string]interface{} `json:"request_payload,omitempty"`
 }
 
+var ErrLegacyBulkImportDisabled = errors.New("legacy bulk import intake is disabled")
+
 func (s *BillingOpsService) CreateBulkJob(ctx context.Context, input CreateBulkJobInput) (*models.BulkJob, error) {
+	if bulkJobIsImport(input.JobType) {
+		if err := requireCapability(ctx, s.capability, CapabilityRequest{
+			BusinessID: input.BusinessID, UserID: actorFromContext(ctx).UserID,
+			Platform: CapabilityPlatformWeb, Capability: CapabilityBulkImports,
+		}); err != nil {
+			return nil, err
+		}
+	}
 	switch input.JobType {
 	case models.BulkJobTypeImportCustomers:
 		if err := requireMutationPermission(ctx, s.permissions, input.BusinessID, PermissionCustomersCreate); err != nil {
@@ -873,6 +905,9 @@ func (s *BillingOpsService) CreateBulkJob(ctx context.Context, input CreateBulkJ
 		if err := requireMutationPermission(ctx, s.permissions, input.BusinessID, PermissionVendorsCreate); err != nil {
 			return nil, err
 		}
+	}
+	if bulkJobIsImport(input.JobType) {
+		return nil, ErrLegacyBulkImportDisabled
 	}
 	if s.db == nil {
 		return nil, fmt.Errorf("database is not configured")
@@ -890,7 +925,10 @@ func (s *BillingOpsService) CreateBulkJob(ctx context.Context, input CreateBulkJ
 	now := time.Now().UTC()
 	job.QueuedAt = &now
 	if len(input.FileContent) > 0 && s.s3 != nil && s.cfg != nil {
-		key := path.Join("bulk-jobs", input.BusinessID, uuid.NewString(), input.FileName)
+		key, err := tenantArtifactObjectKey("bulk-jobs", input.BusinessID, uuid.NewString(), input.FileName)
+		if err != nil {
+			return nil, err
+		}
 		if err := s.s3.Upload(ctx, s.cfg.S3.BucketInvoices, key, input.FileContent, input.ContentType); err != nil {
 			return nil, err
 		}
@@ -938,7 +976,20 @@ func (s *BillingOpsService) CreateBulkJob(ctx context.Context, input CreateBulkJ
 	return job, nil
 }
 
-func (s *BillingOpsService) ListBulkJobs(ctx context.Context, businessID string, page, limit int) ([]*models.BulkJob, int64, error) {
+func bulkJobIsImport(jobType string) bool {
+	switch jobType {
+	case models.BulkJobTypeImportCustomers,
+		models.BulkJobTypeImportVendors,
+		models.BulkJobTypeImportProducts,
+		models.BulkJobTypeImportInvoices,
+		models.BulkJobTypeImportDocuments:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *BillingOpsService) ListBulkJobs(ctx context.Context, businessID, uploaderID string, page, limit int) ([]*models.BulkJob, int64, error) {
 	if s.db == nil {
 		return nil, 0, fmt.Errorf("database is not configured")
 	}
@@ -949,7 +1000,7 @@ func (s *BillingOpsService) ListBulkJobs(ctx context.Context, businessID string,
 		limit = 20
 	}
 	query := s.db.WithContext(ctx).Model(&models.BulkJob{}).
-		Where("business_id = ? AND deleted_at IS NULL", businessID)
+		Where("business_id = ? AND created_by = ? AND deleted_at IS NULL", businessID, uploaderID)
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -969,7 +1020,7 @@ func (s *BillingOpsService) ListBulkJobs(ctx context.Context, businessID string,
 	return result, total, nil
 }
 
-func (s *BillingOpsService) GetBulkJob(ctx context.Context, businessID, id string) (*models.BulkJob, error) {
+func (s *BillingOpsService) GetBulkJob(ctx context.Context, businessID, uploaderID, id string) (*models.BulkJob, error) {
 	if s.db == nil {
 		return nil, fmt.Errorf("database is not configured")
 	}
@@ -977,7 +1028,7 @@ func (s *BillingOpsService) GetBulkJob(ctx context.Context, businessID, id strin
 	if err := s.db.WithContext(ctx).
 		Preload("Rows").
 		Preload("Artifacts").
-		Where("id = ? AND business_id = ? AND deleted_at IS NULL", id, businessID).
+		Where("id = ? AND business_id = ? AND created_by = ? AND deleted_at IS NULL", id, businessID, uploaderID).
 		First(&job).Error; err != nil {
 		return nil, err
 	}
@@ -1537,9 +1588,9 @@ func (s *BillingOpsService) decorateInvoiceSubscriptions(ctx context.Context, bu
 	return nil
 }
 
-func (s *BillingOpsService) DispatchDueInvoiceSubscriptions(ctx context.Context, limit int) ([]*models.InvoiceSubscriptionRun, error) {
+func (s *BillingOpsService) DispatchDueInvoiceSubscriptions(ctx context.Context, limit int) (InvoiceSubscriptionDispatchResult, error) {
 	if s.db == nil {
-		return nil, fmt.Errorf("database is not configured")
+		return InvoiceSubscriptionDispatchResult{}, fmt.Errorf("database is not configured")
 	}
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -1551,114 +1602,180 @@ func (s *BillingOpsService) DispatchDueInvoiceSubscriptions(ctx context.Context,
 		Order("next_run_at ASC").
 		Limit(limit).
 		Find(&subscriptions).Error; err != nil {
-		return nil, err
+		return InvoiceSubscriptionDispatchResult{}, err
 	}
+	result := InvoiceSubscriptionDispatchResult{Due: len(subscriptions)}
+	dispatchContext := scheduledInvoiceSubscriptionContext(ctx)
+	var dispatchErrors []error
 	for i := range subscriptions {
-		if err := rejectInvoiceSubscriptionAutoSend(subscriptions[i].AutoSend); err != nil {
-			return nil, fmt.Errorf("dispatch invoice subscription %s: %w", subscriptions[i].ID, err)
-		}
-	}
-	dispatched := make([]*models.InvoiceSubscriptionRun, 0, len(subscriptions))
-	for _, subscription := range subscriptions {
-		nextRunAt, err := cadenceNextRun(now, subscription.Cadence, subscription.Timezone)
-		if err != nil {
+		if subscriptions[i].NextRunAt == nil {
+			result.Failed++
+			dispatchErrors = append(dispatchErrors, fmt.Errorf("dispatch invoice subscription %s: scheduled time is required", subscriptions[i].ID))
 			continue
 		}
-		run := &models.InvoiceSubscriptionRun{
-			BusinessID:     subscription.BusinessID,
-			SubscriptionID: subscription.ID,
-			ScheduledFor:   now,
-			Status:         models.BulkJobStatusQueued,
-			IdempotencyKey: fmt.Sprintf("dispatch:%s:%d", subscription.ID, now.UnixNano()),
-			AttemptCount:   0,
+		scheduledFor := subscriptions[i].NextRunAt.UTC()
+		commandKey := scheduledInvoiceSubscriptionCommandKey(subscriptions[i].BusinessID, subscriptions[i].ID, scheduledFor)
+		_, err := s.generateInvoiceSubscription(
+			dispatchContext,
+			subscriptions[i].BusinessID,
+			subscriptions[i].ID,
+			commandKey,
+			&scheduledFor,
+		)
+		if err != nil {
+			result.Failed++
+			dispatchErrors = append(dispatchErrors, fmt.Errorf("dispatch invoice subscription %s: %w", subscriptions[i].ID, err))
+			continue
 		}
-		if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			if err := tx.Create(run).Error; err != nil {
-				return err
-			}
-			return tx.Model(&models.InvoiceSubscription{}).
-				Where("id = ?", subscription.ID).
-				Updates(map[string]interface{}{
-					"last_run_at": now,
-					"next_run_at": nextRunAt,
-				}).Error
-		}); err != nil {
-			return nil, err
-		}
-		dispatched = append(dispatched, run)
+		result.Completed++
 	}
-	return dispatched, nil
+	return result, errors.Join(dispatchErrors...)
 }
 
-func (s *BillingOpsService) GenerateInvoiceSubscriptionNow(ctx context.Context, businessID, subscriptionID string) (*models.InvoiceSubscriptionRun, error) {
+func (s *BillingOpsService) GenerateInvoiceSubscriptionNow(ctx context.Context, businessID, subscriptionID, idempotencyKey string) (*models.InvoiceSubscriptionRun, error) {
+	return s.generateInvoiceSubscription(ctx, businessID, subscriptionID, idempotencyKey, nil)
+}
+
+func (s *BillingOpsService) generateInvoiceSubscription(
+	ctx context.Context,
+	businessID string,
+	subscriptionID string,
+	idempotencyKey string,
+	scheduledFor *time.Time,
+) (*models.InvoiceSubscriptionRun, error) {
 	if s.db == nil {
 		return nil, fmt.Errorf("database is not configured")
 	}
-	subscription, err := s.GetInvoiceSubscription(ctx, businessID, subscriptionID)
+	if s.invoices == nil {
+		return nil, fmt.Errorf("canonical invoice creator is not configured")
+	}
+	runID, storedKey, err := invoiceSubscriptionRunIdentity(businessID, subscriptionID, idempotencyKey)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateInvoiceSubscriptionGeneration(subscription); err != nil {
-		return nil, err
-	}
-	scheduledFor := time.Now().UTC()
-	run := &models.InvoiceSubscriptionRun{
-		BusinessID:     businessID,
-		SubscriptionID: subscription.ID,
-		ScheduledFor:   scheduledFor,
-		Status:         models.BulkJobStatusProcessing,
-		IdempotencyKey: fmt.Sprintf("%s:%d", subscription.ID, scheduledFor.UnixNano()),
-		AttemptCount:   1,
-	}
-	if err := s.db.WithContext(ctx).Create(run).Error; err != nil {
-		return nil, err
-	}
-	items := invoiceSubscriptionCreateItems(subscription)
-	input := CreateInvoiceInput{
-		BusinessID:           businessID,
-		CustomerID:           subscription.CustomerID,
-		IdempotencyKey:       run.ID,
-		DueDate:              scheduledFor.AddDate(0, 0, 30),
-		Notes:                subscription.Notes,
-		Items:                items,
-		PriceListID:          pointerStringValue(subscription.PriceListID),
-		OriginSubscriptionID: subscription.ID,
-		OriginRunID:          run.ID,
-	}
-	invoice, err := s.invoices.CreateByBusiness(ctx, businessID, input)
-	if err != nil {
-		lastError := err.Error()
-		_ = s.db.WithContext(ctx).Model(&models.InvoiceSubscriptionRun{}).
-			Where("id = ?", run.ID).
-			Updates(map[string]interface{}{"status": models.BulkJobStatusFailed, "last_error": lastError}).Error
-		return nil, err
-	}
-	nextRunAt, cadenceErr := cadenceNextRun(scheduledFor, subscription.Cadence, subscription.Timezone)
-	if cadenceErr != nil {
-		nextRunAt = scheduledFor
-	}
-	run.Status = models.BulkJobStatusCompleted
-	run.InvoiceID = &invoice.ID
-	run.DocumentID = &invoice.ID
-	run.CompletedAt = &scheduledFor
-	subscription.LastRunAt = &scheduledFor
-	subscription.NextRunAt = &nextRunAt
+	var (
+		run           models.InvoiceSubscriptionRun
+		subscription  models.InvoiceSubscription
+		generationErr error
+		generated     bool
+	)
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Save(run).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Preload("Lines").
+			Where("id = ? AND business_id = ? AND deleted_at IS NULL", subscriptionID, businessID).
+			First(&subscription).Error; err != nil {
 			return err
 		}
-		return tx.Model(&models.InvoiceSubscription{}).
-			Where("id = ?", subscription.ID).
+		runScheduledFor := time.Now().UTC()
+		if scheduledFor != nil {
+			runScheduledFor = scheduledFor.UTC()
+		}
+		run = models.InvoiceSubscriptionRun{
+			ID: runID, BusinessID: businessID, SubscriptionID: subscription.ID,
+			ScheduledFor: runScheduledFor, Status: models.BulkJobStatusProcessing,
+			IdempotencyKey: storedKey,
+		}
+		claim := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&run)
+		if claim.Error != nil {
+			return claim.Error
+		}
+		if claim.RowsAffected == 0 {
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("business_id = ? AND subscription_id = ? AND idempotency_key = ? AND deleted_at IS NULL", businessID, subscriptionID, storedKey).
+				First(&run).Error; err != nil {
+				return err
+			}
+			if run.Status == models.BulkJobStatusCompleted && run.InvoiceID != nil && strings.TrimSpace(*run.InvoiceID) != "" {
+				return nil
+			}
+		}
+		if err := validateInvoiceSubscriptionGeneration(&subscription); err != nil {
+			return err
+		}
+		run.Status = models.BulkJobStatusProcessing
+		run.AttemptCount++
+		run.LastError = nil
+		if err := tx.Save(&run).Error; err != nil {
+			return err
+		}
+		input := CreateInvoiceInput{
+			BusinessID:           businessID,
+			CustomerID:           subscription.CustomerID,
+			IdempotencyKey:       run.ID,
+			DueDate:              run.ScheduledFor.AddDate(0, 0, 30),
+			Notes:                subscription.Notes,
+			Items:                invoiceSubscriptionCreateItems(&subscription),
+			PriceListID:          pointerStringValue(subscription.PriceListID),
+			OriginSubscriptionID: subscription.ID,
+			OriginRunID:          run.ID,
+		}
+		invoice, createErr := s.invoices.CreateByBusiness(ctx, businessID, input)
+		if createErr != nil {
+			lastError := createErr.Error()
+			run.Status = models.BulkJobStatusFailed
+			run.LastError = &lastError
+			generationErr = createErr
+			return tx.Save(&run).Error
+		}
+		nextRunAt, cadenceErr := cadenceNextRun(run.ScheduledFor, subscription.Cadence, subscription.Timezone)
+		if cadenceErr != nil {
+			return cadenceErr
+		}
+		completedAt := time.Now().UTC()
+		run.Status = models.BulkJobStatusCompleted
+		run.InvoiceID = &invoice.ID
+		run.DocumentID = &invoice.ID
+		run.CompletedAt = &completedAt
+		if err := tx.Save(&run).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&models.InvoiceSubscription{}).
+			Where("id = ? AND business_id = ?", subscription.ID, businessID).
 			Updates(map[string]interface{}{
-				"last_run_at": subscription.LastRunAt,
-				"next_run_at": subscription.NextRunAt,
-			}).Error
+				"last_run_at": completedAt,
+				"next_run_at": nextRunAt,
+			}).Error; err != nil {
+			return err
+		}
+		generated = true
+		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	_ = recordActivityLog(ctx, s.db, businessID, "invoice_subscription", subscription.ID, "generated", "", run, nil, map[string]interface{}{"invoice_id": invoice.ID})
-	return run, nil
+	if generationErr != nil {
+		return nil, generationErr
+	}
+	if generated {
+		_ = recordActivityLog(ctx, s.db, businessID, "invoice_subscription", subscription.ID, "generated", "", &run, nil, map[string]interface{}{"invoice_id": pointerStringValue(run.InvoiceID)})
+	}
+	return &run, nil
+}
+
+func scheduledInvoiceSubscriptionContext(ctx context.Context) context.Context {
+	actor := actorFromContext(ctx)
+	actor.UserID = uuid.NewSHA1(uuid.NameSpaceOID, []byte("billeif:scheduled-invoice-system")).String()
+	actor.Role = "system"
+	return ContextWithActor(ctx, actor)
+}
+
+func scheduledInvoiceSubscriptionCommandKey(businessID, subscriptionID string, scheduledFor time.Time) string {
+	material := strings.Join([]string{
+		"invoice-subscription-schedule",
+		strings.TrimSpace(businessID),
+		strings.TrimSpace(subscriptionID),
+		scheduledFor.UTC().Format(time.RFC3339Nano),
+	}, ":")
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(material)).String()
+}
+
+func invoiceSubscriptionRunIdentity(businessID, subscriptionID, idempotencyKey string) (string, string, error) {
+	key := strings.TrimSpace(idempotencyKey)
+	if _, err := uuid.Parse(key); err != nil {
+		return "", "", &idempotency.InvalidKeyError{}
+	}
+	material := strings.Join([]string{"invoice-subscription-run", strings.TrimSpace(businessID), strings.TrimSpace(subscriptionID), key}, ":")
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(material)).String(), material, nil
 }
 
 func invoiceSubscriptionCreateItems(subscription *models.InvoiceSubscription) []CreateInvoiceItemInput {

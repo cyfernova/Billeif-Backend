@@ -30,7 +30,7 @@ func TestProcessSQSEventAcknowledgesRetiredMessagesAndRetriesErrors(t *testing.T
 			{MessageId: "retired", Body: `{"type":"generate_pdf","invoice_id":"legacy-invoice"}`},
 			{MessageId: "malformed", Body: "not-json"},
 		},
-	}, process, log)
+	}, process, nil, log)
 
 	if len(response.BatchItemFailures) != 1 ||
 		response.BatchItemFailures[0].ItemIdentifier != "malformed" {

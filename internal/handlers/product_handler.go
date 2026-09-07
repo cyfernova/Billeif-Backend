@@ -2,9 +2,11 @@ package handlers
 
 import (
 	"context"
-	"invoice-backend/internal/models"
+	"errors"
 	"net/http"
 
+	"invoice-backend/internal/middleware"
+	"invoice-backend/internal/models"
 	"invoice-backend/internal/services"
 	"invoice-backend/internal/utils"
 	"invoice-backend/pkg/logger"
@@ -61,10 +63,16 @@ func (h *ProductHandler) Create(c *gin.Context) {
 		return
 	}
 	input.BusinessID = businessID
+	input.UserID = middleware.GetUserID(c)
+	input.Authorization = accountingPostingAuthorization(c, "product:new")
 
 	var product *models.Product
 	product, err := h.svc.Create(c.Request.Context(), input)
 	if err != nil {
+		if errors.Is(err, services.ErrAccountingPeriodLocked) {
+			writeAccountingStepUpRequired(c)
+			return
+		}
 		log.Error("failed to create product", "error", err, "business_id", input.BusinessID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -92,7 +100,6 @@ func (h *ProductHandler) Get(c *gin.Context) {
 	if !ok {
 		return
 	}
-
 	id := c.Param("id")
 	var product *models.Product
 	product, err := h.svc.GetByBusiness(c.Request.Context(), businessID, id)
@@ -174,6 +181,8 @@ func (h *ProductHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	input.UserID = middleware.GetUserID(c)
+	input.Authorization = accountingPostingAuthorization(c, "product:"+id)
 
 	businessID, ok := requireEffectiveBusinessScope(c, "")
 	if !ok {
@@ -183,6 +192,10 @@ func (h *ProductHandler) Update(c *gin.Context) {
 	var product *models.Product
 	product, err := h.svc.UpdateByBusiness(c.Request.Context(), businessID, id, input)
 	if err != nil {
+		if errors.Is(err, services.ErrAccountingPeriodLocked) {
+			writeAccountingStepUpRequired(c)
+			return
+		}
 		log.Error("failed to update product", "error", err, "product_id", id)
 		if isNotFoundErr(err) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
@@ -328,9 +341,15 @@ func (h *ProductHandler) AdjustStock(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	input.UserID = middleware.GetUserID(c)
+	input.Authorization = accountingPostingAuthorization(c, "product-stock:"+id)
 
 	product, err := h.svc.AdjustStockByBusiness(c.Request.Context(), businessID, id, input)
 	if err != nil {
+		if errors.Is(err, services.ErrAccountingPeriodLocked) {
+			writeAccountingStepUpRequired(c)
+			return
+		}
 		log.Error("failed to adjust stock", "error", err, "product_id", id)
 		if isNotFoundErr(err) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
