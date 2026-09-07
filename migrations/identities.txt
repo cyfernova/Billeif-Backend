@@ -61,3 +61,4 @@
 000061_ai_agent_governance
 000062_governed_bargaining
 000063_agent_bargaining_configs
+000064_warehouse_contact_status
