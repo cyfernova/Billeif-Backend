@@ -43,6 +43,7 @@ func NewPOSHandler(svc posService, log *logger.Logger) *POSHandler {
 // @Param input body services.CreatePOSSessionInput true "Session details"
 // @Success 201 {object} interface{}
 // @Failure 400 {object} map[string]string
+// @Failure 403 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /pos/sessions [post]
 func (h *POSHandler) CreateSession(c *gin.Context) {
@@ -61,6 +62,9 @@ func (h *POSHandler) CreateSession(c *gin.Context) {
 	}
 	session, err := h.svc.CreateSession(c.Request.Context(), businessID, userID, input)
 	if err != nil {
+		if writeSubscriptionControlError(c, err) {
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -78,6 +82,7 @@ func (h *POSHandler) CreateSession(c *gin.Context) {
 // @Param limit query int false "Page size"
 // @Success 200 {object} map[string]interface{}
 // @Failure 400 {object} map[string]string
+// @Failure 403 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /pos/sessions [get]
 func (h *POSHandler) ListSessions(c *gin.Context) {
@@ -92,6 +97,9 @@ func (h *POSHandler) ListSessions(c *gin.Context) {
 	page, limit := utils.ParsePagination(c)
 	sessions, total, err := h.svc.ListSessions(c.Request.Context(), businessID, userID, page, limit, c.Query("status"))
 	if err != nil {
+		if writeSubscriptionControlError(c, err) {
+			return
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
