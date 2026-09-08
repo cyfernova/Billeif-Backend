@@ -55,7 +55,7 @@ func (s *ProductMatchingService) FindMatchingProducts(ctx context.Context, inten
 	searchQuery := s.buildSearchQuery(intent)
 
 	// Search products in marketplace
-	products, total, err := s.marketplace.SearchProducts(ctx, searchQuery, 0, limit*3) // Get more to filter
+	products, total, err := s.marketplace.SearchProducts(ctx, searchQuery, 1, limit*3) // Get more to filter
 	if err != nil {
 		return nil, fmt.Errorf("failed to search products: %w", err)
 	}
@@ -152,7 +152,7 @@ func (s *ProductMatchingService) buildSearchQuery(intent *nlp.ShoppingIntent) st
 
 	// Build final query
 	if len(queryParts) == 0 {
-		return "*" // Match all if no search criteria
+		return "" // Repository uses an empty query to match all available products.
 	}
 
 	return strings.Join(queryParts, " ")
@@ -162,7 +162,7 @@ func (s *ProductMatchingService) buildSearchQuery(intent *nlp.ShoppingIntent) st
 func (s *ProductMatchingService) ValidateIntentAgainstInventory(ctx context.Context, intent *nlp.ShoppingIntent) (bool, error) {
 	searchQuery := s.buildSearchQuery(intent)
 
-	products, _, err := s.marketplace.SearchProducts(ctx, searchQuery, 0, 1)
+	products, _, err := s.marketplace.SearchProducts(ctx, searchQuery, 1, 1)
 	if err != nil {
 		return false, err
 	}

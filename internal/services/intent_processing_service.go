@@ -157,9 +157,8 @@ func (s *IntentProcessingService) ProcessIntent(ctx context.Context, req *Proces
 			return response
 		}
 
-		if len(alternatives) == 0 {
-			response.Error = "no matching products found and no alternatives available"
-			return response
+		if alternatives == nil {
+			alternatives = []*MatchedProduct{}
 		}
 
 		response.MatchResults = &MatchResults{
