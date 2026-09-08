@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -212,7 +215,7 @@ func (p *RuleBasedIntentParser) ParseIntent(ctx context.Context, naturalLanguage
 	intent := &ShoppingIntent{
 		RawIntent: naturalLanguage,
 		Keywords:  extractKeywords(naturalLanguage),
-		Quantity:  1,
+		Quantity:  extractQuantity(naturalLanguage),
 	}
 
 	// Extract price range if mentioned
@@ -237,6 +240,24 @@ func (p *RuleBasedIntentParser) ParseIntent(ctx context.Context, naturalLanguage
 }
 
 // Helper functions for rule-based parsing
+
+var shoppingQuantityPattern = regexp.MustCompile(`(?i)^\s*(?:please\s+)?(?:find|buy|get|order|need|i need|i want|show me)\s+([1-9][0-9]*)\s+([a-z]+)`)
+
+func extractQuantity(text string) int {
+	match := shoppingQuantityPattern.FindStringSubmatch(text)
+	if len(match) != 3 {
+		return 1
+	}
+	switch strings.ToLower(match[2]) {
+	case "rupees", "rs", "inr", "dollars", "usd", "euros", "eur":
+		return 1
+	}
+	quantity, err := strconv.Atoi(match[1])
+	if err != nil || quantity <= 0 {
+		return 1
+	}
+	return quantity
+}
 
 func extractKeywords(text string) []string {
 	// Simple keyword extraction (in production, use more sophisticated NLP)
@@ -273,6 +294,8 @@ func isSoon(text string) bool {
 }
 
 func contains(text, substring string) bool {
-	// Case-insensitive contains check
-	return len(text) > 0 && len(substring) > 0 && text != ""
+	words := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return r < 'a' || r > 'z'
+	})
+	return strings.Contains(" "+strings.Join(words, " ")+" ", " "+strings.ToLower(substring)+" ")
 }
