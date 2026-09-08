@@ -69,6 +69,31 @@ func TestDashboardConvertedPurchasesRequirePostedAccountingRecognition(t *testin
 	require.Equal(t, float64(250), result.TotalPayable)
 }
 
+func TestDashboardReceivablesExcludeUnissuedAndClosedInvoices(t *testing.T) {
+	db := newDashboardTestDB(t)
+	svc := NewDashboardService(db, logger.New())
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	svc.now = func() time.Time { return now }
+	for i, status := range []string{"draft", "void", "canceled", "cancelled", "paid", "issued", "sent", "partially_paid", "overdue"} {
+		for _, days := range []int{-1, 1} {
+			execDashboardSQL(t, db, `INSERT INTO invoices (id,business_id,status,balance_due,due_date,created_at) VALUES (?,?,?,?,?,?)`, fmt.Sprintf("%d-%d", i, days), "biz-1", status, 100, now.AddDate(0, 0, days), now)
+		}
+	}
+	execDashboardSQL(t, db, `INSERT INTO invoices (id,business_id,status,balance_due,due_date,deleted_at) VALUES
+		('other','biz-2','issued',900,?,NULL),
+		('deleted','biz-1','issued',900,?,?),
+		('credit','biz-1','issued',-500,?,NULL),
+		('settled','biz-1','issued',0,?,NULL)`, now, now, now, now, now)
+	result, err := svc.financeSummary(context.Background(), "biz-1")
+	require.NoError(t, err)
+	require.Equal(t, float64(800), result.TotalReceivable)
+	require.EqualValues(t, 5, result.OverdueInvoices)
+	require.Len(t, result.UpcomingDue, 3)
+	for _, invoice := range result.UpcomingDue {
+		require.Contains(t, []string{"issued", "sent", "partially_paid", "overdue"}, invoice.Status)
+	}
+}
+
 func TestDashboardServiceSummaryScopesByBusiness(t *testing.T) {
 	db := newDashboardTestDB(t)
 	svc := NewDashboardService(db, logger.New())

@@ -182,7 +182,8 @@ func (s *DashboardService) financeSummary(ctx context.Context, businessID string
 	if err != nil {
 		return DashboardFinanceSummary{}, err
 	}
-	totalReceivable, err := s.sum(ctx, "invoices", "balance_due", "business_id = ? AND deleted_at IS NULL AND status <> ?", businessID, "paid")
+	collectibleStatuses := []string{models.InvoiceStatusIssued, models.InvoiceStatusSent, models.InvoiceStatusPartiallyPaid, models.InvoiceStatusOverdue}
+	totalReceivable, err := s.sum(ctx, "invoices", "balance_due", "business_id = ? AND deleted_at IS NULL AND status IN ? AND balance_due > 0", businessID, collectibleStatuses)
 	if err != nil {
 		return DashboardFinanceSummary{}, err
 	}
@@ -211,7 +212,7 @@ func (s *DashboardService) financeSummary(ctx context.Context, businessID string
 	if err != nil {
 		return DashboardFinanceSummary{}, err
 	}
-	overdueInvoices, err := s.count(ctx, "invoices", "business_id = ? AND deleted_at IS NULL AND (status = ? OR (due_date < ? AND status <> ?))", businessID, "overdue", today, "paid")
+	overdueInvoices, err := s.count(ctx, "invoices", "business_id = ? AND deleted_at IS NULL AND status IN ? AND balance_due > 0 AND (status = ? OR due_date < ?)", businessID, collectibleStatuses, models.InvoiceStatusOverdue, today)
 	if err != nil {
 		return DashboardFinanceSummary{}, err
 	}
@@ -220,7 +221,7 @@ func (s *DashboardService) financeSummary(ctx context.Context, businessID string
 	if err != nil {
 		return DashboardFinanceSummary{}, err
 	}
-	upcomingDue, err := s.invoiceRecords(ctx, businessID, "invoices.business_id = ? AND invoices.deleted_at IS NULL AND invoices.status <> ? AND invoices.due_date >= ? AND invoices.due_date <= ?", []interface{}{businessID, "paid", today, nextWeek}, "invoices.due_date ASC", 3)
+	upcomingDue, err := s.invoiceRecords(ctx, businessID, "invoices.business_id = ? AND invoices.deleted_at IS NULL AND invoices.status IN ? AND invoices.balance_due > 0 AND invoices.due_date >= ? AND invoices.due_date <= ?", []interface{}{businessID, collectibleStatuses, today, nextWeek}, "invoices.due_date ASC", 3)
 	if err != nil {
 		return DashboardFinanceSummary{}, err
 	}
