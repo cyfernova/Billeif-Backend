@@ -907,6 +907,8 @@ func setupRouter(
 			registerDocumentResource("/packing-lists", h.PackingList)
 			registerDocumentResource("/shipping-labels", h.ShippingLabel)
 
+			protected.GET("/einvoices", middleware.RequireAllBranches(), middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.DocumentUtility.ListEInvoices)
+
 			invoices := protected.Group("/invoices")
 			{
 				invoices.Use(middleware.RequireAllBranches())

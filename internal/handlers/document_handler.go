@@ -474,6 +474,33 @@ func (h *DocumentUtilityHandler) ReviewEInvoice(c *gin.Context) {
 	c.JSON(http.StatusOK, review)
 }
 
+// ListEInvoices lists registered e-invoices across sales invoices and notes.
+// @Summary List e-invoices
+// @Tags Documents
+// @Produce json
+// @Security BearerAuth
+// @Param page query int false "Page number"
+// @Param limit query int false "Page size (maximum 100)"
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]string
+// @Router /einvoices [get]
+func (h *DocumentUtilityHandler) ListEInvoices(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	page, limit := utils.ParsePagination(c)
+	if limit > 100 {
+		limit = 100
+	}
+	items, total, err := h.tax.ListEInvoices(c.Request.Context(), businessID, page, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not load e-invoices"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": items, "total": total, "page": page, "limit": limit})
+}
+
 func (h *DocumentUtilityHandler) GetEInvoice(c *gin.Context) {
 	businessID, ok := requireBusinessScope(c)
 	if !ok {
