@@ -295,6 +295,8 @@ jobs:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           role-session-name: github-${{ github.run_id }}
 
+
+
       - name: Build Lambda artifacts
         run: make package-lambda
 
