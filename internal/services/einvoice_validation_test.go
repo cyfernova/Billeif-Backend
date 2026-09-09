@@ -60,3 +60,26 @@ func TestEInvoiceDocumentIssues(t *testing.T) {
 		})
 	}
 }
+
+func TestEInvoiceSubmissionRejectsUnfinalizedAndCancelledDocuments(t *testing.T) {
+	service := &TaxComplianceService{}
+	for _, test := range []struct {
+		name, draftState, status string
+		wantError                bool
+	}{
+		{"final issued", models.DocumentDraftStateFinal, models.DocumentStatusIssued, false},
+		{"draft marked issued", models.DocumentDraftStateDraft, models.DocumentStatusIssued, true},
+		{"final marked draft", models.DocumentDraftStateFinal, models.DocumentStatusDraft, true},
+		{"cancelled", models.DocumentDraftStateFinal, models.DocumentStatusCancelled, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			document := &models.Document{DraftState: test.draftState, Status: test.status, PartyGSTIN: "29ABCDE1234F1Z5", TaxMode: models.DocumentTaxModeGST, IssueDate: time.Now()}
+			err := service.validateDocumentForEInvoice(document)
+			if test.wantError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}

@@ -1030,8 +1030,11 @@ func (s *TaxComplianceService) validateDocumentForEInvoice(document *models.Docu
 	if document.TaxMode != models.DocumentTaxModeGST {
 		return fmt.Errorf("e-invoice requires GST mode")
 	}
-	if document.DraftState != models.DocumentDraftStateFinal && document.Status == models.DocumentStatusDraft {
+	if document.DraftState != models.DocumentDraftStateFinal || document.Status == models.DocumentStatusDraft {
 		return fmt.Errorf("document must be final before generating an e-invoice")
+	}
+	if document.Status == models.DocumentStatusCancelled {
+		return fmt.Errorf("cancelled documents cannot be registered as e-invoices")
 	}
 	if time.Since(document.IssueDate) > eInvoiceBackdateWindow {
 		return fmt.Errorf("document is outside the allowed e-invoice backdated window")
