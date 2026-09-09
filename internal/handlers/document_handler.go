@@ -10,6 +10,7 @@ import (
 	"invoice-backend/pkg/logger"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type DocumentHandler struct {
@@ -444,6 +445,33 @@ func (h *DocumentUtilityHandler) GenerateEInvoice(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusAccepted, job)
+}
+
+// ReviewEInvoice checks document data without submitting it to an IRP.
+// @Summary Review e-invoice document
+// @Tags Documents
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "Document ID"
+// @Success 200 {object} services.EInvoiceDocumentReview
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /documents/{id}/einvoice/review [get]
+func (h *DocumentUtilityHandler) ReviewEInvoice(c *gin.Context) {
+	businessID, ok := requireBusinessScope(c)
+	if !ok {
+		return
+	}
+	review, err := h.tax.ReviewEInvoiceDocument(c.Request.Context(), businessID, c.Param("id"))
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "document not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not review e-invoice"})
+		return
+	}
+	c.JSON(http.StatusOK, review)
 }
 
 func (h *DocumentUtilityHandler) GetEInvoice(c *gin.Context) {

@@ -950,6 +950,7 @@ func setupRouter(
 				documents.GET("/:id/compliance", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.DocumentUtility.GetComplianceStatus)
 				documents.POST("/:id/einvoice", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userHeavyRL, h.DocumentUtility.GenerateEInvoice)
 				documents.GET("/:id/einvoice", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.DocumentUtility.GetEInvoice)
+				documents.GET("/:id/einvoice/review", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.DocumentUtility.ReviewEInvoice)
 				documents.POST("/:id/einvoice/cancel", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userHeavyRL, h.DocumentUtility.CancelEInvoice)
 				documents.POST("/:id/ewaybill", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsManage), userHeavyRL, h.DocumentUtility.GenerateEWayBill)
 				documents.GET("/:id/ewaybill", middleware.RequirePermission(svcs.BusinessAuth, services.PermissionDocumentsExport), h.DocumentUtility.GetEWayBill)
