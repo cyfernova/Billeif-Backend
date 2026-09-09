@@ -516,6 +516,12 @@ func (service *AgentGovernanceService) watchExecution(executionCtx context.Conte
 				checkCtx, cancelCheck := context.WithTimeout(watchCtx, 250*time.Millisecond)
 				err := service.repository.CheckExecution(checkCtx, check)
 				cancelCheck()
+				// Stopping the watcher cancels an in-flight check, not the completed tool.
+				// The caller still performs a final durable governance check.
+				if errors.Is(err, context.Canceled) && watchCtx.Err() != nil {
+					done <- nil
+					return
+				}
 				if err != nil {
 					cancelExecution()
 					done <- err

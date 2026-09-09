@@ -33,6 +33,36 @@ func TestAgentToolRiskClassesAreExact(t *testing.T) {
 	}
 }
 
+type stoppingGovernanceRepository struct {
+	governanceRepositoryFake
+	started chan struct{}
+}
+
+func (r *stoppingGovernanceRepository) CheckExecution(ctx context.Context, _ interfaces.CheckAgentExecutionCommand) error {
+	close(r.started)
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestGovernanceWatcherShutdownDoesNotCancelCompletedExecution(t *testing.T) {
+	repository := &stoppingGovernanceRepository{started: make(chan struct{})}
+	service := &AgentGovernanceService{repository: repository, now: time.Now, executionCheckInterval: time.Millisecond}
+	executionCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stop := service.watchExecution(executionCtx, interfaces.CheckAgentExecutionCommand{}, cancel)
+	select {
+	case <-repository.started:
+	case <-time.After(time.Second):
+		t.Fatal("governance check did not start")
+	}
+	if err := stop(); err != nil {
+		t.Fatalf("normal watcher shutdown returned a governance failure: %v", err)
+	}
+	if err := executionCtx.Err(); err != nil {
+		t.Fatalf("normal watcher shutdown cancelled execution: %v", err)
+	}
+}
+
 func TestInvoiceAgentToolsUseExistingExportPermission(t *testing.T) {
 	for _, key := range []string{"list_invoices", "get_invoice"} {
 		policy, ok := AgentToolPolicyFor(key)
