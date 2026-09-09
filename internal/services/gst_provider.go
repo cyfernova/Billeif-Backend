@@ -277,7 +277,11 @@ func (p *configuredGSTProvider) GenerateEInvoice(ctx context.Context, req GSTEIn
 	if err != nil {
 		return nil, err
 	}
-	return parseEInvoiceResult(payload), nil
+	result := parseEInvoiceResult(payload)
+	if err := validateGSTEInvoiceResult(result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func (p *configuredGSTProvider) CancelEInvoice(ctx context.Context, req GSTCancelEInvoiceRequest) (*GSTCancelEInvoiceResult, error) {
@@ -547,6 +551,23 @@ func parseEInvoiceResult(payload map[string]interface{}) *GSTEInvoiceResult {
 		result.AckDate = ackAt
 	}
 	return result
+}
+
+func validateGSTEInvoiceResult(result *GSTEInvoiceResult) error {
+	if result == nil {
+		return errors.New("GST provider returned no e-invoice acknowledgement")
+	}
+	irn, err := hex.DecodeString(strings.TrimSpace(result.IRN))
+	if err != nil || len(irn) != sha256.Size {
+		return errors.New("GST provider returned an invalid invoice reference number")
+	}
+	if strings.TrimSpace(result.AckNumber) == "" || result.AckDate == nil || result.AckDate.IsZero() {
+		return errors.New("GST provider returned incomplete e-invoice acknowledgement details")
+	}
+	if strings.TrimSpace(result.SignedQRCodePayload) == "" && strings.TrimSpace(result.QRCodeURL) == "" {
+		return errors.New("GST provider returned no e-invoice QR code")
+	}
+	return nil
 }
 
 func parseEWayBillResult(payload map[string]interface{}) *GSTEWayBillResult {

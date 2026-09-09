@@ -81,7 +81,7 @@ func TestConfiguredGSTProviderUsesTenantCredentialForExecutionRequest(t *testing
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		accountAPIKey = r.Header.Get("X-Account-API-Key")
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"irn":"irn-1","ack_number":"ack-1"}`))
+		_, _ = w.Write([]byte(`{"irn":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","ack_number":"123456789012345","ack_date":"2026-09-09T10:00:00+05:30","signed_qr_code_payload":"provider-signed-qr"}`))
 	}))
 	defer server.Close()
 	provider := NewConfiguredGSTProvider(&config.Config{GST: config.GSTConfig{

@@ -624,6 +624,9 @@ func (s *TaxComplianceService) processGSTJob(ctx context.Context, job *models.GS
 			Payload:     reqPayload,
 			Credentials: &credentials,
 		})
+		if opErr == nil {
+			opErr = validateGSTEInvoiceResult(result)
+		}
 		s.recordGSTProviderOutcome(ctx, account, opErr)
 		if opErr == nil {
 			opErr = s.applyEInvoiceResult(ctx, document, job, account, result)
