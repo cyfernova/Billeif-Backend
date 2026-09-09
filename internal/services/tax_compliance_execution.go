@@ -1060,6 +1060,16 @@ func (s *TaxComplianceService) buildEInvoicePayload(ctx context.Context, documen
 	if err != nil {
 		return nil, err
 	}
+	if s.cfg != nil && strings.EqualFold(strings.TrimSpace(s.cfg.GST.Provider), "iris") {
+		if document.PartyID == nil || document.PartyType != models.DocumentPartyTypeCustomer {
+			return nil, fmt.Errorf("select a customer before registering the invoice")
+		}
+		customer, err := s.customerRepo.GetByID(ctx, *document.PartyID, document.BusinessID)
+		if err != nil {
+			return nil, fmt.Errorf("load invoice customer: %w", err)
+		}
+		return irpInvoicePayload(document, business, customer)
+	}
 	items := make([]map[string]interface{}, 0, len(document.Lines))
 	for _, line := range document.Lines {
 		items = append(items, map[string]interface{}{
