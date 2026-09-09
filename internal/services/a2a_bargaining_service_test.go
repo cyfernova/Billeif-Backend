@@ -223,6 +223,35 @@ func validA2ANegotiationRepo() *a2aNegotiationRepoFake {
 	}
 }
 
+func TestAutonomousSuccessorExpiresAtRoundLimit(t *testing.T) {
+	for _, initialStatus := range []string{"in_progress", "accepted", "stopped"} {
+		t.Run(initialStatus, func(t *testing.T) {
+			repo := validA2ANegotiationRepo()
+			sessionID := "a2a_round_limit"
+			repo.negotiations[a2aTestNegotiationID] = &models.BargainingNegotiation{
+				ID: a2aTestNegotiationID, SessionID: &sessionID,
+				UserID: a2aTestUserID, BusinessID: a2aTestBusinessID,
+				BuyerAgentID: a2aTestBuyerAgentID, SellerAgentID: a2aTestSellerAgentID,
+				Status: initialStatus, Rounds: 3, MaxRounds: 3, InitialAmount: 1250, CurrentAmount: 1062.5,
+			}
+			service := newA2ANegotiationServiceForTest(t, repo)
+			for range 2 {
+				if err := service.EnsureAutonomousNegotiationSuccessor(context.Background(), sessionID, a2aTestNegotiationID, 3); err != nil {
+					t.Fatal(err)
+				}
+			}
+			expected := initialStatus
+			if initialStatus == "in_progress" {
+				expected = "expired"
+			}
+			stored := repo.negotiations[a2aTestNegotiationID]
+			if stored.Status != expected || stored.Rounds != 3 || stored.CurrentAmount != 1062.5 {
+				t.Fatalf("unexpected persisted final round: %#v", stored)
+			}
+		})
+	}
+}
+
 func TestA2ABargainingStartPersistsAuthenticatedScopeBeforePublishingSession(t *testing.T) {
 	repo := validA2ANegotiationRepo()
 	service := newA2ANegotiationServiceForTest(t, repo)

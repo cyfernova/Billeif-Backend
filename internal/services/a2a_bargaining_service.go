@@ -791,19 +791,7 @@ func (s *A2ABargainingService) RunAutonomousNegotiationRound(
 		"max_rounds", sessionProgress.MaxRounds,
 		"current_amount", sessionProgress.CurrentAmount)
 
-	// Enqueue next round if not complete
-	if sessionProgress.Round < sessionProgress.MaxRounds && !isTerminalNegotiationStatus(sessionProgress.Status) {
-		if err := s.EnqueueNegotiationRound(ctx, sessionID, negotiationID, sessionProgress.Round); err != nil {
-			return fmt.Errorf(
-				"enqueue successor after bargaining round %d: %w",
-				sessionProgress.Round,
-				err,
-			)
-		}
-		s.log.Info("enqueued next round from service", "session_id", sessionID, "next_round", sessionProgress.Round+1)
-	}
-
-	return nil
+	return s.EnsureAutonomousNegotiationSuccessor(ctx, sessionID, negotiationID, sessionProgress.Round)
 }
 
 func (s *A2ABargainingService) expireAutonomousNegotiation(
@@ -861,8 +849,21 @@ func (s *A2ABargainingService) EnsureAutonomousNegotiationSuccessor(
 			progress.Round,
 		)
 	}
-	if progress.Round >= progress.MaxRounds || isTerminalNegotiationStatus(progress.Status) {
+	if isTerminalNegotiationStatus(progress.Status) {
 		return nil
+	}
+	if progress.MaxRounds > 0 && progress.Round >= progress.MaxRounds {
+		s.sessionsLock.RLock()
+		session := s.sessions[sessionID]
+		s.sessionsLock.RUnlock()
+		if session == nil {
+			session, err = s.reloadSessionFromDB(ctx, sessionID, negotiationID)
+			if err != nil {
+				return err
+			}
+		}
+		session.applyProgress(progress)
+		return s.expireAutonomousNegotiation(ctx, session, sessionID, negotiationID)
 	}
 	if !isActiveNegotiationStatus(progress.Status) {
 		return fmt.Errorf(
