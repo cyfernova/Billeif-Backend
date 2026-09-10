@@ -17,6 +17,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestLLMModelListAcceptsDeepSeekTransportHeaders(t *testing.T) {
+	header := http.Header{
+		"Content-Type":                     {"application/json"},
+		"Access-Control-Allow-Credentials": {"true"},
+		"X-Ds-Trace-Id":                    {"trace"},
+		"X-Cache":                          {"Miss from cloudfront"},
+		"Via":                              {"1.1 cloudfront"},
+		"X-Amz-Cf-Pop":                     {"CCU50-P1"},
+		"X-Amz-Cf-Id":                      {"request"},
+	}
+	require.True(t, llmModelListHeadersProveTerminalJSON(header))
+	header.Set("Link", "</models?page=2>; rel=next")
+	require.False(t, llmModelListHeadersProveTerminalJSON(header))
+}
+
 func TestLLMServiceChatSendsOpenAICompatibleRequest(t *testing.T) {
 	t.Parallel()
 

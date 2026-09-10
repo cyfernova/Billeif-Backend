@@ -107,7 +107,11 @@ func llmModelListHeadersProveTerminalJSON(header http.Header) bool {
 			"vary", "etag", "last-modified", "cache-control", "expires", "pragma",
 			"strict-transport-security", "alt-svc", "x-content-type-options", "x-frame-options",
 			"x-request-id", "request-id", "cf-ray", "cf-cache-status", "nel", "report-to",
-			"openai-processing-ms", "openai-version":
+			"openai-processing-ms", "openai-version",
+			"access-control-allow-credentials", "access-control-allow-origin",
+			"access-control-allow-methods", "access-control-allow-headers",
+			"access-control-expose-headers", "x-ds-trace-id", "x-cache", "via",
+			"x-amz-cf-pop", "x-amz-cf-id":
 			continue
 		}
 		if strings.HasPrefix(normalized, "x-ratelimit-") || strings.HasPrefix(normalized, "ratelimit-") {
