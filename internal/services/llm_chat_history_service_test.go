@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
+	"invoice-backend/internal/models"
 	"invoice-backend/pkg/logger"
 
 	"github.com/google/uuid"
@@ -115,6 +117,27 @@ func TestLLMChatHistoryServiceSaveExchangeCreatesConversationAndMessages(t *test
 	if history[1].WebSearch == nil || !history[1].WebSearch.Used {
 		raw, _ := json.Marshal(history[1].WebSearch)
 		t.Fatalf("expected assistant web search payload, got %s", raw)
+	}
+}
+
+func TestChatHistoryOrdersUserBeforeReplyWithSameTimestamp(t *testing.T) {
+	svc, db, businessID, userID := newLLMChatHistoryTestService(t)
+	conversationID := uuid.NewString()
+	conversation := models.LLMChatConversation{ID: conversationID, BusinessID: businessID, UserID: userID, Title: "Greeting"}
+	if err := db.Create(&conversation).Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	// A query plan may encounter the reply first when an exchange shares a timestamp.
+	for _, role := range []string{"assistant", "user"} {
+		message := models.LLMChatMessageRecord{ID: uuid.NewString(), ConversationID: conversationID, BusinessID: businessID, UserID: userID, Role: role, Content: role, CreatedAt: now}
+		if err := db.Create(&message).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	history, err := svc.ListMessages(context.Background(), businessID, userID, conversationID)
+	if err != nil || len(history) != 2 || history[0].Role != "user" || history[1].Role != "assistant" {
+		t.Fatalf("history order = %#v, error = %v", history, err)
 	}
 }
 

@@ -173,6 +173,8 @@ func (s *LLMChatHistoryService) ListMessages(ctx context.Context, businessID, us
 	if err := s.db.WithContext(ctx).
 		Where("conversation_id = ? AND business_id = ? AND user_id = ?", conversationID, businessID, userID).
 		Order("created_at ASC").
+		Order("CASE WHEN role = 'user' THEN 0 ELSE 1 END ASC").
+		Order("id ASC").
 		Find(&records).Error; err != nil {
 		return nil, err
 	}
