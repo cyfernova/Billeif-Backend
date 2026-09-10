@@ -81,6 +81,7 @@ type AgentToolPolicy struct {
 }
 
 var codeOwnedAgentToolCatalog = map[string]AgentToolPolicy{
+	"chat_response":       {Key: "chat_response", Permission: PermissionAgentsManage, Risk: RiskReadOnly, Enabled: true},
 	"list_invoices":       {Key: "list_invoices", Permission: PermissionDocumentsExport, Risk: RiskReadOnly, Enabled: true},
 	"get_invoice":         {Key: "get_invoice", Permission: PermissionDocumentsExport, Risk: RiskReadOnly, Enabled: true},
 	"list_customers":      {Key: "list_customers", Permission: "customers.view", Risk: RiskReadOnly, Enabled: false},

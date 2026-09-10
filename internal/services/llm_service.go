@@ -18,12 +18,13 @@ import (
 
 // LLMService handles interactions with LLM APIs
 type LLMService struct {
-	config   config.LLMConfig
-	appCfg   *config.Config
-	resolver ProviderConfigResolver
-	guard    CapabilityGuard
-	log      *logger.Logger
-	client   *http.Client
+	config       config.LLMConfig
+	appCfg       *config.Config
+	resolver     ProviderConfigResolver
+	guard        CapabilityGuard
+	governedChat *GovernedChatService
+	log          *logger.Logger
+	client       *http.Client
 }
 
 func (s *LLMService) WithCapabilityGuard(guard CapabilityGuard) *LLMService {
@@ -485,6 +486,10 @@ func (s *LLMService) Chat(ctx context.Context, messages []ChatMessage) (string, 
 }
 
 func (s *LLMService) ChatWithWebSearch(ctx context.Context, messages []ChatMessage) (*LLMChatResult, error) {
+	return s.chatWithWebSearchOptions(ctx, messages, LLMChatOptions{}, 0)
+}
+
+func (s *LLMService) chatWithWebSearchOptions(ctx context.Context, messages []ChatMessage, options LLMChatOptions, inputBudget int64) (*LLMChatResult, error) {
 	query := lastUserMessage(messages)
 	webSearch := &LLMWebSearchState{Used: false}
 	enrichedMessages := messages
@@ -502,7 +507,13 @@ func (s *LLMService) ChatWithWebSearch(ctx context.Context, messages []ChatMessa
 		enrichedMessages = withSearchContext(messages, query, results)
 	}
 
-	response, err := s.Chat(ctx, enrichedMessages)
+	if inputBudget > 0 {
+		encoded, err := json.Marshal(enrichedMessages)
+		if err != nil || int64(len(encoded)) > inputBudget {
+			return nil, fmt.Errorf("chat context exceeds configured input budget")
+		}
+	}
+	response, err := s.ChatWithOptions(ctx, enrichedMessages, options)
 	if err != nil {
 		return nil, err
 	}
@@ -516,8 +527,9 @@ func (s *LLMService) ChatWithWebSearchForBusiness(ctx context.Context, businessI
 	}); err != nil {
 		return nil, err
 	}
-	result, err := s.ChatWithWebSearch(ctx, messages)
-	return result, err
+	return s.governedChat.execute(ctx, businessID, userID, messages, func(callCtx context.Context) (*LLMChatResult, error) {
+		return s.chatWithWebSearchOptions(callCtx, messages, LLMChatOptions{MaxTokens: 2048, DisableThinking: true}, s.governedChat.config.AIGovernance.RunTokenBudget-2048)
+	})
 }
 
 // ChatWithOptions sends a chat request to the LLM with call-site-specific generation limits.
@@ -920,7 +932,16 @@ func truncateRunes(value string, limit int) string {
 func (s *LLMService) ProcessAgentIntent(ctx context.Context, intent string, contextInfo string) (string, error) {
 	log := logger.FromContext(ctx).With("service", "llm", "operation", "process_agent_intent")
 	log.Debug("processing agent intent", "intent_length", len(intent), "has_context", contextInfo != "")
+	response, err := s.Chat(ctx, agentIntentMessages(intent, contextInfo))
+	if err != nil {
+		log.Error("agent intent processing failed", "error", err)
+		return "", err
+	}
+	log.Info("agent intent processed", "response_length", len(response))
+	return response, nil
+}
 
+func agentIntentMessages(intent, contextInfo string) []ChatMessage {
 	systemPrompt := `# AI Assistant Idea Generator - Base Template
 
 ## Core Purpose
@@ -947,19 +968,11 @@ For each assistant idea, provide:
 		systemPrompt += fmt.Sprintf("\n\n## Additional Context\n%s", contextInfo)
 	}
 
-	messages := []ChatMessage{
+	return []ChatMessage{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: intent},
 	}
 
-	response, err := s.Chat(ctx, messages)
-	if err != nil {
-		log.Error("agent intent processing failed", "error", err)
-		return "", err
-	}
-
-	log.Info("agent intent processed", "response_length", len(response))
-	return response, nil
 }
 
 // ProcessAgentIntentForBusiness applies the runtime AI capability preflight before provider execution.
@@ -970,6 +983,9 @@ func (s *LLMService) ProcessAgentIntentForBusiness(ctx context.Context, business
 	}); err != nil {
 		return "", err
 	}
-	response, err := s.ProcessAgentIntent(ctx, intent, contextInfo)
-	return response, err
+	result, err := s.ChatWithWebSearchForBusiness(ctx, businessID, userID, agentIntentMessages(intent, contextInfo))
+	if err != nil {
+		return "", err
+	}
+	return result.Response, nil
 }

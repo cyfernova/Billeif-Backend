@@ -238,6 +238,21 @@ func TestCapabilityQuotaSerializesZeroValuesExplicitly(t *testing.T) {
 	require.JSONEq(t, `{"limited":true,"limit":0,"used":0,"remaining":0,"available":false}`, string(raw))
 }
 
+func TestGovernedChatDoesNotEnableVoice(t *testing.T) {
+	service := NewCapabilityService(CapabilityServiceOptions{
+		Configuration: config.CapabilityConfiguration{AI: true, Voice: true},
+		Permissions:   staticCapabilityPermissions{PermissionAgentsView: true, PermissionVoiceUse: true},
+		Setup:         staticCapabilitySetup{snapshot: CapabilityBusinessSetup{BusinessExists: true, Voice: true}},
+		AIGovernance:  readyCapabilityAIGovernance{}, GovernedChatExecution: true,
+	})
+	chat, err := service.Evaluate(context.Background(), CapabilityRequest{BusinessID: "biz-1", UserID: "user-1", Platform: CapabilityPlatformIOS, Capability: CapabilityAI})
+	require.NoError(t, err)
+	require.NotEqual(t, ReasonAIGovernanceUnavailable, chat.ReasonCode)
+	voice, err := service.Evaluate(context.Background(), CapabilityRequest{BusinessID: "biz-1", UserID: "user-1", Platform: CapabilityPlatformIOS, Capability: CapabilityVoice})
+	require.NoError(t, err)
+	require.Equal(t, ReasonAIGovernanceUnavailable, voice.ReasonCode)
+}
+
 func TestCapabilityServiceSeparatesHealthEntitlementPermissionAndFinalState(t *testing.T) {
 	now := time.Date(2026, 9, 1, 11, 0, 0, 0, time.UTC)
 	retryAt := now.Add(time.Minute)

@@ -182,6 +182,7 @@ type CapabilityServiceOptions struct {
 		ReadyForBusiness(context.Context, string) bool
 	}
 	GovernedModelExecution bool
+	GovernedChatExecution  bool
 }
 
 type CapabilityService struct {
@@ -196,6 +197,7 @@ type CapabilityService struct {
 		ReadyForBusiness(context.Context, string) bool
 	}
 	governedModelExecution bool
+	governedChatExecution  bool
 }
 
 type capabilityDefinition struct {
@@ -242,6 +244,7 @@ func NewCapabilityService(opts CapabilityServiceOptions) *CapabilityService {
 		now:                    opts.Now,
 		aiGovernance:           opts.AIGovernance,
 		governedModelExecution: opts.GovernedModelExecution,
+		governedChatExecution:  opts.GovernedChatExecution,
 	}
 }
 
@@ -377,7 +380,8 @@ func (s *CapabilityService) evaluateDefinition(ctx context.Context, request Capa
 		}
 	}
 	requiresGovernedModel := definition.Key == CapabilityAI || definition.Key == CapabilityVoice
-	aiGovernanceReady := !requiresGovernedModel || (s.governedModelExecution && s.aiGovernance != nil && s.aiGovernance.ReadyForBusiness(ctx, request.BusinessID))
+	modelExecutionReady := s.governedModelExecution || (definition.Key == CapabilityAI && s.governedChatExecution)
+	aiGovernanceReady := !requiresGovernedModel || (modelExecutionReady && s.aiGovernance != nil && s.aiGovernance.ReadyForBusiness(ctx, request.BusinessID))
 
 	switch {
 	case !definition.Supported:

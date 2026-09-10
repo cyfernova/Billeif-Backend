@@ -235,6 +235,7 @@ func NewContainer(
 	marketplaceSvc := NewMarketplaceService(ap2Repo, log)
 	productMatchingSvc := NewProductMatchingService(marketplaceSvc, log)
 	llmSvc := NewLLMServiceWithResolver(cfg, resolver, log)
+	llmSvc.WithGovernedChat(agentGovernanceSvc, ap2Repo, userRepo, cfg)
 	intentProcessingSvc, _ := NewIntentProcessingService(productMatchingSvc, marketplaceSvc, log, shoppingIntentLLMClient{llm: llmSvc})
 	llmChatHistorySvc := NewLLMChatHistoryService(db, log)
 	sarvamTTSSvc := NewSarvamTTSService(cfg, resolver, nil, log)
@@ -327,13 +328,14 @@ func NewContainer(
 	capabilityConfiguration := config.CapabilityConfigurationSnapshot(cfg)
 	capabilityBusinessHealth := NewCapabilityBusinessHealthReader(capabilityProviderHealthRepo, nil)
 	capabilitySvc = NewCapabilityService(CapabilityServiceOptions{
-		Configuration:  capabilityConfiguration,
-		Entitlements:   taxComplianceSvc.entitlements,
-		Permissions:    businessAuthSvc,
-		Setup:          NewDBCapabilityBusinessSetupReader(db),
-		GlobalHealth:   capabilityGlobalHealth,
-		BusinessHealth: capabilityBusinessHealth,
-		AIGovernance:   agentGovernanceSvc,
+		Configuration:         capabilityConfiguration,
+		Entitlements:          taxComplianceSvc.entitlements,
+		Permissions:           businessAuthSvc,
+		Setup:                 NewDBCapabilityBusinessSetupReader(db),
+		GlobalHealth:          capabilityGlobalHealth,
+		BusinessHealth:        capabilityBusinessHealth,
+		AIGovernance:          agentGovernanceSvc,
+		GovernedChatExecution: true,
 	})
 	pendingUploadSvc := NewPendingUploadService(securityRepo, s3Svc, FailClosedUploadScanner{}, PendingUploadOptions{Bucket: cfg.S3.BucketDrive})
 	logoUploadSvc := NewPendingUploadService(securityRepo, s3Svc, nil, PendingUploadOptions{Bucket: cfg.S3.BucketLogos})
