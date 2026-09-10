@@ -125,7 +125,7 @@ func NewA2AGovernanceAdapter(executor *AgentGovernanceService, users ReportUserR
 }
 
 func (a *A2AGovernanceAdapter) Ready(ctx context.Context, businessID string) bool {
-	return a != nil && a.proposals != nil && a.config != nil && a.users != nil && a.llm != nil && a.executor.ReadyForBusiness(ctx, businessID) && a.config.LLM.Model == "deepseek-v4-flash" && a.config.AIGovernance.SpendCurrency == "USD" && a.config.AIGovernance.RunTokenBudget >= 10000
+	return a != nil && a.proposals != nil && a.config != nil && a.users != nil && a.llm != nil && a.executor.ReadyForBusiness(ctx, businessID) && a.config.LLM.Model == "deepseek-flash" && a.config.AIGovernance.SpendCurrency == "USD" && a.config.AIGovernance.RunTokenBudget >= 10000
 }
 
 func (a *A2AGovernanceAdapter) Decide(ctx context.Context, negotiation *models.BargainingNegotiation, agentID, role string, round int) (*LLMBargainingResponse, error) {

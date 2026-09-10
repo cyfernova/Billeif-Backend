@@ -45,7 +45,7 @@ func TestGovernedBargainingProposalPersistsWithTenantScopeAndReplay(t *testing.T
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"{\"action\":\"counteroffer\",\"proposed_amount\":1050,\"reason\":\"A better offer\"}"}}]}`))
 	}))
 	defer server.Close()
-	cfg := &config.Config{LLM: config.LLMConfig{APIURL: server.URL, APIKey: "local-test-key", Model: "deepseek-v4-flash"}, AIGovernance: config.AIGovernanceConfig{ExecutionEnabled: true, SpendCurrency: "USD", RunTokenBudget: 10000, BusinessDailyLimitMicros: 1000000, AgentDailyLimitMicros: 250000, MaxDuration: 5 * time.Minute, ProviderFailureThreshold: 3, ProviderCooldown: time.Minute}}
+	cfg := &config.Config{LLM: config.LLMConfig{APIURL: server.URL, APIKey: "local-test-key", Model: "deepseek-flash"}, AIGovernance: config.AIGovernanceConfig{ExecutionEnabled: true, SpendCurrency: "USD", RunTokenBudget: 10000, BusinessDailyLimitMicros: 1000000, AgentDailyLimitMicros: 250000, MaxDuration: 5 * time.Minute, ProviderFailureThreshold: 3, ProviderCooldown: time.Minute}}
 	executor := NewAgentGovernanceService(AgentGovernanceServiceConfig{ExecutionEnabled: true, Repository: repo, Permissions: allowGovernancePermission{}})
 	users := invoiceActorRepositoryStub{bySubject: func(string) (*models.User, error) { return &models.User{ID: fixture.userID}, nil }}
 	adapter := NewA2AGovernanceAdapter(executor, users, NewLLMService(cfg.LLM, logger.New()), cfg)

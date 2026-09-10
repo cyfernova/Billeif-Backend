@@ -54,7 +54,7 @@ func TestGovernedChatScopeBudgetAndDenial(t *testing.T) {
 			if test.foreign {
 				owner = "someone-else"
 			}
-			cfg := &config.Config{LLM: config.LLMConfig{Model: "deepseek-v4-flash"}, AIGovernance: config.AIGovernanceConfig{RunTokenBudget: 10000, SpendCurrency: "USD", MaxDuration: time.Minute}}
+			cfg := &config.Config{LLM: config.LLMConfig{Model: "deepseek-flash"}, AIGovernance: config.AIGovernanceConfig{RunTokenBudget: 10000, SpendCurrency: "USD", MaxDuration: time.Minute}}
 			if test.oversized {
 				cfg.AIGovernance.RunTokenBudget = 2048
 			}

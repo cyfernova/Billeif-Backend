@@ -64,7 +64,7 @@ func (g *GovernedChatService) execute(ctx context.Context, businessID, subject s
 	policy := g.config.AIGovernance
 	// A byte is a conservative input-token upper bound for text requests.
 	tokens := int64(len(payload)) + 2048
-	if tokens > policy.RunTokenBudget || policy.SpendCurrency != "USD" || g.config.LLM.Model != "deepseek-v4-flash" {
+	if tokens > policy.RunTokenBudget || policy.SpendCurrency != "USD" || g.config.LLM.Model != "deepseek-flash" {
 		return nil, fmt.Errorf("%w: chat exceeds configured model budget", ErrAgentToolDenied)
 	}
 	digest := sha256.Sum256(payload)
