@@ -517,8 +517,9 @@ func (service *AgentGovernanceService) watchExecution(executionCtx context.Conte
 				err := service.repository.CheckExecution(checkCtx, check)
 				cancelCheck()
 				// Stopping the watcher cancels an in-flight check, not the completed tool.
+				// Drivers may report a rolled-back transaction instead of context.Canceled.
 				// The caller still performs a final durable governance check.
-				if errors.Is(err, context.Canceled) && watchCtx.Err() != nil {
+				if watchCtx.Err() != nil {
 					done <- nil
 					return
 				}

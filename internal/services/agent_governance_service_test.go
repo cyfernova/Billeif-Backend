@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -35,31 +36,39 @@ func TestAgentToolRiskClassesAreExact(t *testing.T) {
 
 type stoppingGovernanceRepository struct {
 	governanceRepositoryFake
-	started chan struct{}
+	started       chan struct{}
+	shutdownError error
 }
 
 func (r *stoppingGovernanceRepository) CheckExecution(ctx context.Context, _ interfaces.CheckAgentExecutionCommand) error {
 	close(r.started)
 	<-ctx.Done()
+	if r.shutdownError != nil {
+		return r.shutdownError
+	}
 	return ctx.Err()
 }
 
 func TestGovernanceWatcherShutdownDoesNotCancelCompletedExecution(t *testing.T) {
-	repository := &stoppingGovernanceRepository{started: make(chan struct{})}
-	service := &AgentGovernanceService{repository: repository, now: time.Now, executionCheckInterval: time.Millisecond}
-	executionCtx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	stop := service.watchExecution(executionCtx, interfaces.CheckAgentExecutionCommand{}, cancel)
-	select {
-	case <-repository.started:
-	case <-time.After(time.Second):
-		t.Fatal("governance check did not start")
-	}
-	if err := stop(); err != nil {
-		t.Fatalf("normal watcher shutdown returned a governance failure: %v", err)
-	}
-	if err := executionCtx.Err(); err != nil {
-		t.Fatalf("normal watcher shutdown cancelled execution: %v", err)
+	for _, shutdownError := range []error{context.Canceled, sql.ErrTxDone} {
+		t.Run(shutdownError.Error(), func(t *testing.T) {
+			repository := &stoppingGovernanceRepository{started: make(chan struct{}), shutdownError: shutdownError}
+			service := &AgentGovernanceService{repository: repository, now: time.Now, executionCheckInterval: time.Millisecond}
+			executionCtx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			stop := service.watchExecution(executionCtx, interfaces.CheckAgentExecutionCommand{}, cancel)
+			select {
+			case <-repository.started:
+			case <-time.After(time.Second):
+				t.Fatal("governance check did not start")
+			}
+			if err := stop(); err != nil {
+				t.Fatalf("normal watcher shutdown returned a governance failure: %v", err)
+			}
+			if err := executionCtx.Err(); err != nil {
+				t.Fatalf("normal watcher shutdown cancelled execution: %v", err)
+			}
+		})
 	}
 }
 
