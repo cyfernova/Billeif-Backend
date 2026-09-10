@@ -45,12 +45,16 @@ func TestGovernedChatScopeBudgetAndDenial(t *testing.T) {
 	for _, test := range []struct {
 		name                       string
 		denied, foreign, oversized bool
+		signInOwner                bool
 	}{
-		{name: "success"}, {name: "paused execution", denied: true}, {name: "foreign owner", foreign: true}, {name: "budget exceeded", oversized: true},
+		{name: "success"}, {name: "sign-in owner", signInOwner: true}, {name: "paused execution", denied: true}, {name: "foreign owner", foreign: true}, {name: "budget exceeded", oversized: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			executor := &chatTestExecutor{denied: test.denied}
 			owner := chatActorID
+			if test.signInOwner {
+				owner = "subject"
+			}
 			if test.foreign {
 				owner = "someone-else"
 			}

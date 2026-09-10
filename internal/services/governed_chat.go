@@ -45,7 +45,7 @@ func (g *GovernedChatService) execute(ctx context.Context, businessID, subject s
 			return nil, readErr
 		}
 		for _, agent := range agents {
-			if agent != nil && agent.BusinessID == businessID && agent.OwnerID == actorID && agent.IsActive {
+			if agent != nil && agent.BusinessID == businessID && (agent.OwnerID == actorID || agent.OwnerID == subject) && agent.IsActive {
 				agentID = agent.ID
 				break
 			}
