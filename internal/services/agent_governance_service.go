@@ -394,7 +394,7 @@ func (service *AgentGovernanceService) ExecuteTool(ctx context.Context, request 
 			FailureCode: "governance_pre_dispatch_denied", SpendReservationID: execution.SpendReservationID, Now: service.now().UTC(),
 		})
 		if completeErr != nil || completedTool == nil || completedTool.Status != status {
-			return nil, ErrAgentToolExecutionFailed
+			return nil, fmt.Errorf("%w: persist pre-dispatch tool denial", ErrAgentToolExecutionFailed)
 		}
 		runStatus := terminalRunStatus(status)
 		completedRun, completeErr := service.repository.CompleteRun(persistCtx, interfaces.CompleteAgentRunCommand{
@@ -403,9 +403,9 @@ func (service *AgentGovernanceService) ExecuteTool(ctx context.Context, request 
 			FinalDisposition: runStatus, Now: service.now().UTC(),
 		})
 		if completeErr != nil || completedRun == nil || completedRun.Status != runStatus {
-			return nil, ErrAgentToolExecutionFailed
+			return nil, fmt.Errorf("%w: persist pre-dispatch run denial", ErrAgentToolExecutionFailed)
 		}
-		return nil, ErrAgentToolExecutionFailed
+		return nil, fmt.Errorf("%w: pre-dispatch check", ErrAgentToolExecutionFailed)
 	}
 	admission, err := service.repository.AdmitProvider(ctx, interfaces.ProviderAdmissionCommand{
 		ProviderKey: request.ProviderKey, FailureThreshold: request.ProviderFailureThreshold,
@@ -422,7 +422,7 @@ func (service *AgentGovernanceService) ExecuteTool(ctx context.Context, request 
 			RequestHash: requestHash, Status: "blocked", FailureCode: "provider_circuit_open",
 			FinalDisposition: "blocked", Now: service.now().UTC(),
 		})
-		return nil, ErrAgentToolExecutionFailed
+		return nil, fmt.Errorf("%w: provider admission", ErrAgentToolExecutionFailed)
 	}
 	executionCtx, cancelExecution := context.WithDeadline(ctx, request.DeadlineAt)
 	stopWatcher := service.watchExecution(executionCtx, check, cancelExecution)
@@ -483,7 +483,7 @@ func (service *AgentGovernanceService) ExecuteTool(ctx context.Context, request 
 	}
 	completedTool, err := service.repository.CompleteToolExecution(persistCtx, completion)
 	if err != nil || completedTool == nil || completedTool.Status != completion.Status {
-		return nil, ErrAgentToolExecutionFailed
+		return nil, fmt.Errorf("%w: persist tool completion", ErrAgentToolExecutionFailed)
 	}
 	runStatus := terminalRunStatus(completion.Status)
 	completedRun, err := service.repository.CompleteRun(persistCtx, interfaces.CompleteAgentRunCommand{
@@ -493,10 +493,10 @@ func (service *AgentGovernanceService) ExecuteTool(ctx context.Context, request 
 		CostMicros: completion.CostMicros, Now: service.now().UTC(),
 	})
 	if err != nil || completedRun == nil || completedRun.Status != runStatus {
-		return nil, ErrAgentToolExecutionFailed
+		return nil, fmt.Errorf("%w: persist run completion", ErrAgentToolExecutionFailed)
 	}
 	if invokeErr != nil || outcomeErr != nil || completion.Status != "succeeded" {
-		return nil, ErrAgentToolExecutionFailed
+		return nil, fmt.Errorf("%w: %s (%s)", ErrAgentToolExecutionFailed, completion.FailureCode, completion.Status)
 	}
 	return invocation.Output, nil
 }
