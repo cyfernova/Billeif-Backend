@@ -17,6 +17,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestChatSearchRoutingIgnoresCapitalization(t *testing.T) {
+	for _, query := range []string{"Hello. Please greet me.", "HELLO", "Thanks. Can you help me?", "Write A Short Greeting"} {
+		require.False(t, shouldUseWebSearch(query), query)
+	}
+	for _, query := range []string{"Search the web for DeepSeek", "Who is Mira Murati?", "latest GST update today"} {
+		require.True(t, shouldUseWebSearch(query), query)
+	}
+}
+
 func TestLLMModelListAcceptsDeepSeekTransportHeaders(t *testing.T) {
 	header := http.Header{
 		"Content-Type":                     {"application/json"},

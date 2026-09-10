@@ -837,7 +837,7 @@ func shouldUseWebSearch(query string) bool {
 	if isLocalAppWorkflowQuery(normalized) {
 		return false
 	}
-	return asksForExternalContext(query, normalized)
+	return asksForExternalContext(normalized)
 }
 
 func isLocalAppWorkflowQuery(normalized string) bool {
@@ -855,58 +855,15 @@ func isLocalAppWorkflowQuery(normalized string) bool {
 	return containsAny(normalized, localTerms) && containsAny(normalized, workflowTerms)
 }
 
-func asksForExternalContext(original, normalized string) bool {
+func asksForExternalContext(normalized string) bool {
 	externalQuestionPatterns := []string{
 		"who is ", "who are ", "what is ", "what are ", "when is ", "when did ", "where is ",
 		"where did ", "why did ", "tell me about ", "explain ", "compare ", "rate of ",
 		"rates for ", "deadline for ", "due date for ", "rules for ", "law for ", "regulation",
 		"compliance for ", "price of ", "cost of ", "status of ",
 	}
-	if containsAny(normalized, externalQuestionPatterns) {
-		return true
-	}
-	return containsLikelyExternalEntity(original)
-}
-
-func containsLikelyExternalEntity(query string) bool {
-	knownTerms := map[string]struct{}{
-		"i": {}, "billeif": {}, "gst": {}, "gstin": {}, "irn": {}, "inr": {}, "upi": {}, "pdf": {},
-		"invoice": {}, "invoices": {}, "customer": {}, "customers": {}, "product": {}, "products": {},
-		"payment": {}, "payments": {}, "report": {}, "reports": {}, "order": {}, "orders": {},
-	}
-	words := strings.FieldsFunc(query, func(r rune) bool {
-		return r == ' ' || r == '\n' || r == '\t' || r == ',' || r == '.' || r == '?' || r == '!' || r == ':' || r == ';' || r == '(' || r == ')' || r == '"' || r == '\''
-	})
-	for i, word := range words {
-		cleaned := strings.Trim(word, "-_/")
-		if len(cleaned) < 3 {
-			continue
-		}
-		lower := strings.ToLower(cleaned)
-		if _, known := knownTerms[lower]; known {
-			continue
-		}
-		if isAllCapsWord(cleaned) {
-			return true
-		}
-		if i > 0 && cleaned[0] >= 'A' && cleaned[0] <= 'Z' {
-			return true
-		}
-	}
-	return false
-}
-
-func isAllCapsWord(value string) bool {
-	hasLetter := false
-	for _, r := range value {
-		if r >= 'a' && r <= 'z' {
-			return false
-		}
-		if r >= 'A' && r <= 'Z' {
-			hasLetter = true
-		}
-	}
-	return hasLetter
+	// Capitalization alone does not imply a need for external facts.
+	return containsAny(normalized, externalQuestionPatterns)
 }
 
 func containsAny(value string, needles []string) bool {
