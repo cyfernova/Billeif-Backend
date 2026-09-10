@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -65,6 +66,11 @@ type LLMIntentParser struct {
 // LLMClient interface for interacting with LLM services
 type LLMClient interface {
 	Call(ctx context.Context, prompt string) (string, error)
+}
+
+// NewIntentParserWithClient reuses an application's configured provider client.
+func NewIntentParserWithClient(client LLMClient) *LLMIntentParser {
+	return &LLMIntentParser{client: client, timeout: 10 * time.Second}
 }
 
 // NewLLMIntentParser creates a new LLM-based intent parser
@@ -131,6 +137,17 @@ func (p *LLMIntentParser) ParseIntent(ctx context.Context, naturalLanguage strin
 		result.Error = fmt.Sprintf("Failed to parse LLM response: %v", err)
 		result.Parsed = false
 		return result, nil // Return nil error since parsing failed gracefully
+	}
+	if strings.TrimSpace(strings.Join(intent.Keywords, " ")+strings.Join(intent.Categories, " ")) == "" {
+		result.Error = "Describe the product you want to find."
+		return result, nil
+	}
+	if intent.Quantity < 0 || (intent.PriceRange != nil && (math.IsNaN(intent.PriceRange.Min) || math.IsInf(intent.PriceRange.Min, 0) || math.IsNaN(intent.PriceRange.Max) || math.IsInf(intent.PriceRange.Max, 0) || intent.PriceRange.Min < 0 || intent.PriceRange.Max <= 0 || intent.PriceRange.Min > intent.PriceRange.Max)) {
+		result.Error = "The shopping quantity or budget could not be understood."
+		return result, nil
+	}
+	if intent.Quantity == 0 {
+		intent.Quantity = 1
 	}
 
 	intent.RawIntent = naturalLanguage

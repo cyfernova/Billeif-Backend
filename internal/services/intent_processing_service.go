@@ -35,7 +35,13 @@ type ProcessIntentResponse struct {
 }
 
 // NewIntentProcessingService creates a new intent processing service
-func NewIntentProcessingService(productMatching *ProductMatchingService, marketplace *MarketplaceService, log *logger.Logger) (*IntentProcessingService, error) {
+func NewIntentProcessingService(productMatching *ProductMatchingService, marketplace *MarketplaceService, log *logger.Logger, clients ...nlp.LLMClient) (*IntentProcessingService, error) {
+	if len(clients) > 0 && clients[0] != nil {
+		return &IntentProcessingService{
+			intentParser:    nlp.NewIntentParserWithClient(clients[0]),
+			productMatching: productMatching, marketplace: marketplace, log: log,
+		}, nil
+	}
 	// Create intent parser based on configuration
 	var parser nlp.IntentParser
 	var ideaGenerator *nlp.IdeaGenerator
@@ -107,6 +113,12 @@ func NewIntentProcessingService(productMatching *ProductMatchingService, marketp
 		marketplace:     marketplace,
 		log:             log,
 	}, nil
+}
+
+type shoppingIntentLLMClient struct{ llm *LLMService }
+
+func (client shoppingIntentLLMClient) Call(ctx context.Context, prompt string) (string, error) {
+	return client.llm.ChatWithOptions(ctx, []ChatMessage{{Role: "user", Content: prompt}}, LLMChatOptions{MaxTokens: 1024, DisableThinking: true})
 }
 
 // ProcessIntent processes a natural language shopping intent

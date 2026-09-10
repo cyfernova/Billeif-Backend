@@ -123,6 +123,10 @@ func (h *IntentHandler) ValidateIntent(c *gin.Context) {
 	}
 
 	result := h.intentProcessing.ProcessIntent(c.Request.Context(), parseReq)
+	if !result.Success || result.ParseResult == nil || result.MatchResults == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"valid": false, "error": result.Error})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"valid":            result.Success,
@@ -155,7 +159,7 @@ func (h *IntentHandler) ParseIntent(c *gin.Context) {
 
 	// Parse the intent using ParseIntentOnly
 	parseResult, err := h.intentProcessing.ParseIntentOnly(c.Request.Context(), req.Intent)
-	if err != nil {
+	if err != nil || parseResult == nil || !parseResult.Parsed || parseResult.Intent == nil {
 		h.log.Error("intent parsing failed", "error", err, "user_id", userID)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "failed to parse intent",

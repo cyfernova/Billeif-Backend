@@ -234,8 +234,8 @@ func NewContainer(
 	reportSvc := NewReportService(cfg, reportingRepo, log).WithBusinessTimezoneProvider(businessRepo).WithUserRepository(userRepo)
 	marketplaceSvc := NewMarketplaceService(ap2Repo, log)
 	productMatchingSvc := NewProductMatchingService(marketplaceSvc, log)
-	intentProcessingSvc, _ := NewIntentProcessingService(productMatchingSvc, marketplaceSvc, log)
 	llmSvc := NewLLMServiceWithResolver(cfg, resolver, log)
+	intentProcessingSvc, _ := NewIntentProcessingService(productMatchingSvc, marketplaceSvc, log, shoppingIntentLLMClient{llm: llmSvc})
 	llmChatHistorySvc := NewLLMChatHistoryService(db, log)
 	sarvamTTSSvc := NewSarvamTTSService(cfg, resolver, nil, log)
 

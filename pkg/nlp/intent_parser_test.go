@@ -5,6 +5,26 @@ import (
 	"testing"
 )
 
+type intentClientResponse string
+
+func (response intentClientResponse) Call(context.Context, string) (string, error) {
+	return string(response), nil
+}
+
+func TestConfiguredIntentParserRejectsUnusableSearch(t *testing.T) {
+	for _, response := range []string{`{}`, `null`, `{"keywords":[" "]}`, `{"keywords":["chairs"],"quantity":-2}`, `{"keywords":["chairs"],"price_range":{"min":5000,"max":1000}}`, `not json`} {
+		t.Run(response, func(t *testing.T) {
+			result, err := NewIntentParserWithClient(intentClientResponse(response)).ParseIntent(context.Background(), "Find chairs")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Parsed || result.Error == "" {
+				t.Fatalf("unusable extraction accepted: %#v", result)
+			}
+		})
+	}
+}
+
 func TestRuleParserQuantityAndUrgency(t *testing.T) {
 	for _, tc := range []struct {
 		input    string
