@@ -11,6 +11,28 @@ func (response intentClientResponse) Call(context.Context, string) (string, erro
 	return string(response), nil
 }
 
+func TestIntentDoesNotInventCategoryOrDeliveryRestrictions(t *testing.T) {
+	response := intentClientResponse(`{"keywords":["UI QA Product"],"categories":["electronics"],"quantity":1,"max_delivery_days":7}`)
+	result, err := NewIntentParserWithClient(response).ParseIntent(context.Background(), "Find UI QA Product under 2000 rupees")
+	if err != nil || !result.Parsed {
+		t.Fatalf("parse failed: %v %#v", err, result)
+	}
+	if len(result.Intent.Categories) != 0 || result.Intent.MaxDeliveryDays != nil {
+		t.Fatalf("invented restrictions retained: %#v", result.Intent)
+	}
+}
+
+func TestIntentPreservesRequestedCategoryAndDelivery(t *testing.T) {
+	response := intentClientResponse(`{"keywords":["printer"],"categories":["electronics"],"max_delivery_days":3,"delivery_evidence":"delivered within 3 days"}`)
+	result, err := NewIntentParserWithClient(response).ParseIntent(context.Background(), "Find an electronics printer delivered within 3 days")
+	if err != nil || !result.Parsed {
+		t.Fatalf("parse failed: %v %#v", err, result)
+	}
+	if len(result.Intent.Categories) != 1 || result.Intent.Categories[0] != "electronics" || result.Intent.MaxDeliveryDays == nil || *result.Intent.MaxDeliveryDays != 3 {
+		t.Fatalf("requested restrictions lost: %#v", result.Intent)
+	}
+}
+
 func TestConfiguredIntentParserRejectsUnusableSearch(t *testing.T) {
 	for _, response := range []string{`{}`, `null`, `{"keywords":[" "]}`, `{"keywords":["chairs"],"quantity":-2}`, `{"keywords":["chairs"],"price_range":{"min":5000,"max":1000}}`, `not json`} {
 		t.Run(response, func(t *testing.T) {

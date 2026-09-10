@@ -132,11 +132,28 @@ func (p *LLMIntentParser) ParseIntent(ctx context.Context, naturalLanguage strin
 		RawResponse: response,
 	}
 
-	intent := &ShoppingIntent{}
-	if err := json.Unmarshal([]byte(response), intent); err != nil {
+	var extraction struct {
+		ShoppingIntent
+		DeliveryEvidence string `json:"delivery_evidence"`
+	}
+	if err := json.Unmarshal([]byte(response), &extraction); err != nil {
 		result.Error = fmt.Sprintf("Failed to parse LLM response: %v", err)
 		result.Parsed = false
 		return result, nil // Return nil error since parsing failed gracefully
+	}
+	intent := &extraction.ShoppingIntent
+	// Inferred category labels must not exclude a product the user named.
+	requestedCategories := make([]string, 0, len(intent.Categories))
+	for _, category := range intent.Categories {
+		if category = strings.TrimSpace(category); category != "" && strings.Contains(strings.ToLower(naturalLanguage), strings.ToLower(category)) {
+			requestedCategories = append(requestedCategories, category)
+		}
+	}
+	intent.Categories = requestedCategories
+	evidence := strings.TrimSpace(extraction.DeliveryEvidence)
+	if evidence == "" || !strings.Contains(strings.ToLower(naturalLanguage), strings.ToLower(evidence)) {
+		intent.DeliveryDate = nil
+		intent.MaxDeliveryDays = nil
 	}
 	if strings.TrimSpace(strings.Join(intent.Keywords, " ")+strings.Join(intent.Categories, " ")) == "" {
 		result.Error = "Describe the product you want to find."
@@ -188,10 +205,11 @@ Rules:
 - Return ONLY valid JSON, no explanations
 - Include only fields that are explicitly mentioned or strongly implied
 - For price ranges, infer reasonable defaults if not specified (omit if not mentioned)
-- Categories should be general product categories (electronics, clothing, etc.)
+- Categories are hard restrictions: include only category names explicitly stated in the user query, copied verbatim. Do not infer a category from a product name; otherwise return [].
 - Keywords should be product-specific search terms
 - Urgency: "low" for flexible, "medium" for normal, "high" for soon, "urgent" for ASAP
 - Default quantity to 1 if not mentioned
+- Do not invent a delivery deadline. Include max_delivery_days or delivery_date only when requested; include delivery_evidence containing the exact phrase from the user query that requests that deadline. Otherwise omit all three fields.
 - Return empty arrays for categories/keywords if not determinable, but omit other fields if not mentioned
 - Ensure all numeric values are numbers, not strings`, userIntent)
 }
