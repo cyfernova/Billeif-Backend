@@ -325,6 +325,7 @@ func NewContainer(
 		Resolve: razorpayPaymentSvc.SubscriptionProviderSettings,
 	}, log)
 	capabilityGlobalHealth := NewCapabilityGlobalHealthCache(CapabilityGlobalHealthCacheOptions{})
+	llmSvc.WithHealthCache(capabilityGlobalHealth)
 	capabilityConfiguration := config.CapabilityConfigurationSnapshot(cfg)
 	capabilityBusinessHealth := NewCapabilityBusinessHealthReader(capabilityProviderHealthRepo, nil)
 	capabilitySvc = NewCapabilityService(CapabilityServiceOptions{

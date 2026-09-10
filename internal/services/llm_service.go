@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -23,12 +24,18 @@ type LLMService struct {
 	resolver     ProviderConfigResolver
 	guard        CapabilityGuard
 	governedChat *GovernedChatService
+	healthCache  *CapabilityGlobalHealthCache
 	log          *logger.Logger
 	client       *http.Client
 }
 
 func (s *LLMService) WithCapabilityGuard(guard CapabilityGuard) *LLMService {
 	s.guard = guard
+	return s
+}
+
+func (s *LLMService) WithHealthCache(cache *CapabilityGlobalHealthCache) *LLMService {
+	s.healthCache = cache
 	return s
 }
 
@@ -83,6 +90,12 @@ func (s *LLMService) ProbeGlobalCapability(ctx context.Context) CapabilityProvid
 		return CapabilityProviderOutcome{Err: &providerHTTPError{status: resp.StatusCode}}
 	}
 	if !llmModelListHeadersProveTerminalJSON(resp.Header) {
+		names := make([]string, 0, len(resp.Header))
+		for name := range resp.Header {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		s.log.Warn("LLM model probe has unsupported response headers", "header_names", names)
 		return CapabilityProviderOutcome{Err: ErrCapabilityProbeUnsupported}
 	}
 	present, complete := inspectLLMModelList(resp.Body, strings.TrimSpace(providerCfg.Model))
@@ -525,6 +538,19 @@ func (s *LLMService) chatWithWebSearchOptions(ctx context.Context, messages []Ch
 }
 
 func (s *LLMService) ChatWithWebSearchForBusiness(ctx context.Context, businessID, userID string, messages []ChatMessage) (*LLMChatResult, error) {
+	if s.healthCache != nil {
+		fact, found := s.healthCache.CustomerFact(CapabilityAI)
+		if !found || fact.Stale {
+			probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			outcome := s.ProbeGlobalCapability(probeCtx)
+			cancel()
+			if !errors.Is(outcome.Err, ErrCapabilityProbeUnsupported) {
+				if err := NewCapabilityGlobalHealthRecorder(s.healthCache, nil).RecordGlobalOutcome(CapabilityAI, outcome); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
 	if err := requireCapability(ctx, s.guard, CapabilityRequest{
 		BusinessID: businessID, UserID: userID,
 		Platform: CapabilityPlatformWeb, Capability: CapabilityAI,

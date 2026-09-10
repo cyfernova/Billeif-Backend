@@ -32,6 +32,24 @@ func TestLLMModelListAcceptsDeepSeekTransportHeaders(t *testing.T) {
 	require.False(t, llmModelListHeadersProveTerminalJSON(header))
 }
 
+func TestBusinessChatRefreshesMissingHealthOnlyOnce(t *testing.T) {
+	calls := 0
+	cache := NewCapabilityGlobalHealthCache(CapabilityGlobalHealthCacheOptions{})
+	service := NewLLMService(config.LLMConfig{APIKey: "test", APIURL: "https://api.deepseek.com/chat/completions", Model: "model", Timeout: 1}, logger.New()).WithHealthCache(cache).WithCapabilityGuard(&recordingCapabilityGuard{err: errors.New("denied")})
+	service.client.Transport = llmProbeRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		return llmProbeResponse(r, http.StatusOK, nil, `{"object":"list","data":[{"id":"model","object":"model","owned_by":"test"}]}`), nil
+	})
+	for i := 0; i < 2; i++ {
+		_, err := service.ChatWithWebSearchForBusiness(context.Background(), "business", "user", []ChatMessage{{Role: "user", Content: "hello"}})
+		require.Error(t, err)
+	}
+	fact, found := cache.CustomerFact(CapabilityAI)
+	require.True(t, found)
+	require.Equal(t, CapabilityProviderHealthy, fact.Status)
+	require.Equal(t, 1, calls)
+}
+
 func TestLLMServiceChatSendsOpenAICompatibleRequest(t *testing.T) {
 	t.Parallel()
 
