@@ -521,6 +521,9 @@ func (s *BillingOpsService) GetPartyGroup(ctx context.Context, businessID, id st
 		First(&group).Error; err != nil {
 		return nil, err
 	}
+	if err := s.decoratePartyGroups(ctx, businessID, []*models.PartyGroup{&group}); err != nil {
+		return nil, err
+	}
 	return &group, nil
 }
 
