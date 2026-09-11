@@ -316,6 +316,10 @@ jobs:
           api_key = os.environ.pop('EXA_API_KEY', '').strip()
           if not api_key:
               sys.exit('The Exa API key is missing or empty.')
+          subprocess.run(
+              ['aws', 'configure', 'set', 'region', 'ap-south-1', '--profile', 'default'],
+              check=True, capture_output=True,
+          )
           payload = json.dumps({
               'SecretId': '/billeif/dev/providers/exa',
               'SecretString': json.dumps({'api_key': api_key}),
