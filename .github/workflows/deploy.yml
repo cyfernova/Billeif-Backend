@@ -10,11 +10,6 @@ on:
       - main
       - master
   workflow_dispatch:
-    inputs:
-      sync_exa_secret:
-        description: Store the existing GitHub Exa key in AWS Secrets Manager
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -299,66 +294,6 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           role-session-name: github-${{ github.run_id }}
-
-      - name: Store existing Exa API key
-        if: github.event_name == 'workflow_dispatch' && inputs.sync_exa_secret
-        env:
-          EXA_API_KEY: ${{ secrets.TF_VAR_EXA_API_KEY }}
-          AWS_PROFILE: default
-          AWS_DEFAULT_PROFILE: default
-        shell: python
-        run: |
-          import configparser
-          import json
-          import os
-          import re
-          import subprocess
-          import sys
-          import tempfile
-
-          api_key = os.environ.pop('EXA_API_KEY', '').strip()
-          if not api_key:
-              sys.exit('The Exa API key is missing or empty.')
-          subprocess.run(
-              ['aws', 'configure', 'set', 'region', 'ap-south-1', '--profile', 'default'],
-              check=True, capture_output=True,
-          )
-          payload = json.dumps({
-              'SecretId': '/billeif/dev/providers/exa',
-              'SecretString': json.dumps({'api_key': api_key}),
-          })
-          credentials = configparser.ConfigParser(interpolation=None)
-          credentials['default'] = {
-              'aws_access_key_id': os.environ['AWS_ACCESS_KEY_ID'],
-              'aws_secret_access_key': os.environ['AWS_SECRET_ACCESS_KEY'],
-              'aws_session_token': os.environ['AWS_SESSION_TOKEN'],
-          }
-          with tempfile.NamedTemporaryFile(mode='w+', encoding='utf-8') as payload_file, \
-                  tempfile.NamedTemporaryFile(mode='w+', encoding='utf-8') as credentials_file:
-              payload_file.write(payload)
-              payload_file.flush()
-              credentials.write(credentials_file)
-              credentials_file.flush()
-              command_env = dict(os.environ, AWS_SHARED_CREDENTIALS_FILE=credentials_file.name)
-              result = subprocess.run(
-                  ['aws', 'secretsmanager', 'put-secret-value', '--profile', 'default',
-                   '--region', 'ap-south-1', '--cli-input-json', 'file://' + payload_file.name,
-                   '--output', 'json'],
-                  env=command_env, text=True, capture_output=True, check=False,
-              )
-          if result.returncode:
-              error_code = re.search(r'An error occurred \(([A-Za-z0-9_.]+)\)', result.stderr)
-              if error_code:
-                  sys.exit('Exa secret sync failed: ' + error_code.group(1))
-              for diagnostic in ['Unable to locate credentials', 'could not be found',
-                                 'Error parsing parameter', 'Could not connect to the endpoint URL']:
-                  if diagnostic in result.stderr:
-                      sys.exit('Exa secret sync failed: ' + diagnostic)
-              sys.exit('Exa secret sync failed with exit code ' + str(result.returncode))
-          stored = json.loads(result.stdout)
-          if 'AWSCURRENT' not in stored.get('VersionStages', []):
-              sys.exit('The stored Exa version is not current.')
-          print('Exa API key stored as AWSCURRENT; value omitted.')
 
       - name: Build Lambda artifacts
         run: make package-lambda
