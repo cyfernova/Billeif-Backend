@@ -652,7 +652,7 @@ func (s *BillingOpsService) ListActivityLogs(ctx context.Context, filter Activit
 		return nil, 0, err
 	}
 	var rows []models.ActivityLog
-	if err := query.Order("created_at DESC").
+	if err := query.Order("created_at DESC, id DESC").
 		Offset((filter.Page - 1) * filter.Limit).
 		Limit(filter.Limit).
 		Find(&rows).Error; err != nil {

@@ -40,7 +40,7 @@ func (r *paymentRepository) GetByBusinessID(ctx context.Context, businessID stri
 	query := r.db.WithContext(ctx).
 		Model(&models.Payment{}).
 		Where("business_id = ? AND deleted_at IS NULL", businessID).
-		Order("payment_date DESC")
+		Order("payment_date DESC, created_at DESC, id DESC")
 
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -64,7 +64,7 @@ func (r *paymentRepository) GetByInvoiceID(ctx context.Context, invoiceID string
 
 	offset := (page - 1) * limit
 
-	query := r.db.WithContext(ctx).Model(&models.Payment{}).Where("invoice_id = ? AND deleted_at IS NULL", invoiceID).Order("payment_date DESC")
+	query := r.db.WithContext(ctx).Model(&models.Payment{}).Where("invoice_id = ? AND deleted_at IS NULL", invoiceID).Order("payment_date DESC, created_at DESC, id DESC")
 
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
