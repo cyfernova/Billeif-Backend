@@ -308,6 +308,7 @@ jobs:
           AWS_DEFAULT_PROFILE: default
         shell: python
         run: |
+          import configparser
           import json
           import os
           import re
@@ -326,14 +327,24 @@ jobs:
               'SecretId': '/billeif/dev/providers/exa',
               'SecretString': json.dumps({'api_key': api_key}),
           })
-          with tempfile.NamedTemporaryFile(mode='w+', encoding='utf-8') as payload_file:
+          credentials = configparser.ConfigParser(interpolation=None)
+          credentials['default'] = {
+              'aws_access_key_id': os.environ['AWS_ACCESS_KEY_ID'],
+              'aws_secret_access_key': os.environ['AWS_SECRET_ACCESS_KEY'],
+              'aws_session_token': os.environ['AWS_SESSION_TOKEN'],
+          }
+          with tempfile.NamedTemporaryFile(mode='w+', encoding='utf-8') as payload_file, \
+                  tempfile.NamedTemporaryFile(mode='w+', encoding='utf-8') as credentials_file:
               payload_file.write(payload)
               payload_file.flush()
+              credentials.write(credentials_file)
+              credentials_file.flush()
+              command_env = dict(os.environ, AWS_SHARED_CREDENTIALS_FILE=credentials_file.name)
               result = subprocess.run(
                   ['aws', 'secretsmanager', 'put-secret-value', '--profile', 'default',
                    '--region', 'ap-south-1', '--cli-input-json', 'file://' + payload_file.name,
                    '--output', 'json'],
-                  text=True, capture_output=True, check=False,
+                  env=command_env, text=True, capture_output=True, check=False,
               )
           if result.returncode:
               error_code = re.search(r'An error occurred \(([A-Za-z0-9_.]+)\)', result.stderr)
