@@ -678,9 +678,11 @@ func (s *LLMService) searchExa(ctx context.Context, query string) ([]LLMSearchRe
 	log := logger.FromContext(ctx).With("service", "llm", "operation", "exa_search")
 	providerCfg, err := s.providerConfig(ctx, config.SecretExa)
 	if err != nil {
+		log.Warn("Exa search unavailable", "failure_kind", "credential_resolution")
 		return nil, fmt.Errorf("resolve Exa credentials: %w", err)
 	}
 	if strings.TrimSpace(providerCfg.ExaAPIKey) == "" {
+		log.Warn("Exa search unavailable", "failure_kind", "missing_credentials")
 		return nil, fmt.Errorf("web search is required for this question but EXA_API_KEY is not configured")
 	}
 	endpoint := strings.TrimSpace(providerCfg.ExaBaseURL)
@@ -729,6 +731,7 @@ func (s *LLMService) searchExa(ctx context.Context, query string) ([]LLMSearchRe
 		return nil, fmt.Errorf("read Exa search response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		log.Warn("Exa search rejected", "status", resp.StatusCode)
 		return nil, &providerHTTPError{status: resp.StatusCode}
 	}
 
