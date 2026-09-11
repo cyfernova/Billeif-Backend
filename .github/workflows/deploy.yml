@@ -120,7 +120,7 @@ jobs:
         run: make test-agentcore
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       - name: Build AgentCore ARM64 binary
         run: make build-agentcore
@@ -397,7 +397,7 @@ jobs:
 
       - name: Set up Docker Buildx for AgentCore voice
         if: env.PUBLISH_VOICE_AGENTCORE_IMAGE == 'true'
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       - name: Publish immutable AgentCore ARM64 image
         if: env.PUBLISH_VOICE_AGENTCORE_IMAGE == 'true'
