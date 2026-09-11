@@ -310,8 +310,10 @@ jobs:
         run: |
           import json
           import os
+          import re
           import subprocess
           import sys
+          import tempfile
 
           api_key = os.environ.pop('EXA_API_KEY', '').strip()
           if not api_key:
@@ -324,13 +326,24 @@ jobs:
               'SecretId': '/billeif/dev/providers/exa',
               'SecretString': json.dumps({'api_key': api_key}),
           })
-          result = subprocess.run(
-              ['aws', 'secretsmanager', 'put-secret-value', '--region', 'ap-south-1',
-               '--cli-input-json', 'file:///dev/stdin', '--output', 'json'],
-              input=payload, text=True, capture_output=True, check=False,
-          )
+          with tempfile.NamedTemporaryFile(mode='w+', encoding='utf-8') as payload_file:
+              payload_file.write(payload)
+              payload_file.flush()
+              result = subprocess.run(
+                  ['aws', 'secretsmanager', 'put-secret-value', '--profile', 'default',
+                   '--region', 'ap-south-1', '--cli-input-json', 'file://' + payload_file.name,
+                   '--output', 'json'],
+                  text=True, capture_output=True, check=False,
+              )
           if result.returncode:
-              sys.exit('Exa secret sync failed. Check deployment role permissions.')
+              error_code = re.search(r'An error occurred \(([A-Za-z0-9_.]+)\)', result.stderr)
+              if error_code:
+                  sys.exit('Exa secret sync failed: ' + error_code.group(1))
+              for diagnostic in ['Unable to locate credentials', 'could not be found',
+                                 'Error parsing parameter', 'Could not connect to the endpoint URL']:
+                  if diagnostic in result.stderr:
+                      sys.exit('Exa secret sync failed: ' + diagnostic)
+              sys.exit('Exa secret sync failed with exit code ' + str(result.returncode))
           stored = json.loads(result.stdout)
           if 'AWSCURRENT' not in stored.get('VersionStages', []):
               sys.exit('The stored Exa version is not current.')
