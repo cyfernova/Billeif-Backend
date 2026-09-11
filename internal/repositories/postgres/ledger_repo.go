@@ -27,7 +27,7 @@ func (r *ledgerRepository) GetByBusinessID(ctx context.Context, businessID strin
 
 	offset := (page - 1) * limit
 
-	query := r.db.WithContext(ctx).Model(&models.LedgerEntry{}).Where("business_id = ?", businessID).Order("entry_date DESC")
+	query := r.db.WithContext(ctx).Model(&models.LedgerEntry{}).Where("business_id = ?", businessID).Order("entry_date DESC, created_at DESC, id DESC")
 
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
